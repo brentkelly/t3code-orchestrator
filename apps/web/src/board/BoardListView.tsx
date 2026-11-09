@@ -7,7 +7,7 @@
  */
 import {
   BoardCardId,
-  boardNewPhaseHeadingStage,
+  boardProjectFirstStageId,
   boardStageWithRole,
   isBoardCardWorking,
   isBoardDeferredStage,
@@ -1154,11 +1154,7 @@ function BoardListNewGroupDialog({
           projectId: project,
           title: title.trim(),
           heading: true,
-          stage: boardNewPhaseHeadingStage(
-            stages,
-            parent !== undefined && boardShellGroup(shells, parent)?.target === "own",
-            project,
-          ),
+          stage: boardProjectFirstStageId(stages, project),
           ...(parent === undefined ? {} : { parentCardId: parent.cardId }),
           ...(ids.length === 0 ? {} : { adoptCardIds: ids }),
           keyPrefix: keyPrefixFor(project),

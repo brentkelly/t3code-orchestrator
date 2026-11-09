@@ -14,8 +14,8 @@ import {
   BOARD_SEED_STAGES,
   areBoardStagesAdjacent,
   isBoardDeferredStage,
+  boardCreateDefaultStage,
   boardStageBeforeBuild,
-  boardStageIndex,
   boardStageWithRole,
   boardCardWorktreeIsCancelledWork,
   boardCardWorktreeKept,
@@ -635,20 +635,11 @@ function EnvironmentBoard({
     [groupVmByCard],
   );
   const parentGroup = parentShell === null ? null : boardShellGroup(groupShells, parentShell);
-  // The first stage a card may be created in here: under an own-branch group,
-  // the floor its children live from.
-  const floorStageId = boardStageBeforeBuild(stageState)?.stageId ?? null;
-  const firstStageId =
-    parentGroup?.target === "own" && floorStageId !== null
-      ? floorStageId
-      : (orderedStages[0]?.stageId ?? null);
-  const canCreateIn = useCallback(
-    (stageId: BoardStageId) =>
-      !isBoardDeferredStage(stageId) &&
-      (parentGroup?.target !== "own" ||
-        floorStageId === null ||
-        boardStageIndex(stageState, stageId) >= boardStageIndex(stageState, floorStageId)),
-    [floorStageId, parentGroup?.target, stageState],
+  // Where a new card lands by default: Planning inside a started group (T3O-53).
+  const defaultCreateStageId = boardCreateDefaultStage(
+    stageState,
+    parentGroup?.started === true,
+    parentShell?.projectId ?? scopeProjectId,
   );
   // Ancestors of this sub-board's group, root first: the breadcrumb, and
   // where Back goes (one level up).
@@ -1584,7 +1575,7 @@ function EnvironmentBoard({
     }));
   }, [projects, scope.kind, scopeProjectId, parentShell?.projectId]);
 
-  const canCreate = addProjects.length > 0 && firstStageId !== null;
+  const canCreate = addProjects.length > 0;
 
   return (
     <BoardWorkersContext.Provider value={cardWorkersState}>
@@ -1599,7 +1590,7 @@ function EnvironmentBoard({
           />
           <BoardCardFilterField onQueryChange={setQuery} query={query} />
           {canCreate ? (
-            <Button onClick={() => openCreate(firstStageId)} size="xs">
+            <Button onClick={() => openCreate(defaultCreateStageId)} size="xs">
               <PlusIcon />
               {/* Same treatment as the mode tabs: on a phone the icon carries it. */}
               <span className="max-sm:sr-only">New card</span>
@@ -1793,7 +1784,7 @@ function EnvironmentBoard({
                   attentionFor={attentionFor}
                   childAttentionFor={childAttentionFor}
                   childRunningFor={childRunningFor}
-                  addProjects={canCreateIn(stage.stageId) ? addProjects : []}
+                  addProjects={isBoardDeferredStage(stage.stageId) ? [] : addProjects}
                   cards={visibleColumns[stage.stageId] ?? EMPTY_CARDS}
                   labelsById={labelsById}
                   collapsed={collapsed}
@@ -1980,7 +1971,7 @@ function EnvironmentBoard({
           defaultProjectId={
             scope.kind === "sub-board" ? (parentShell?.projectId ?? null) : scopeProjectId
           }
-          defaultStage={createStage ?? firstStageId ?? BOARD_SEED_STAGES[0]!.stageId}
+          defaultStage={createStage ?? defaultCreateStageId}
           environmentId={environmentId}
           onOpenChange={(open) => {
             if (!open) setCreateStage(null);

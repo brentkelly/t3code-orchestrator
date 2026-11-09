@@ -61,7 +61,6 @@ import {
   type BoardPlansProposeCommand,
   type BoardPlanWriteCommand,
   BOARD_SEED_STAGE_IDS,
-  boardProjectFirstStageId,
   type BoardSettings,
   type BoardState,
   unmetBoardCardDependencies,
@@ -1389,7 +1388,6 @@ export const boardHandlers = {
       const projectTitle = projects.find((project) => project.id === projectId)?.title ?? "";
       const board = yield* readBoardState(deps);
       const labels = yield* resolveLabelIds(board, input.labels ?? []);
-      const stage = input.stage ?? boardProjectFirstStageId(board, projectId);
       // Pre-validate dependencies for the friendlier tool-shaped message; the
       // decider re-checks existence inside the one atomic create below.
       const dependsOn = input.dependsOn ?? [];
@@ -1431,7 +1429,9 @@ export const boardHandlers = {
         ...(input.brief === undefined ? {} : { brief: input.brief }),
         ...(dependsOn.length > 0 ? { dependsOn } : {}),
         labels,
-        stage,
+        // No default here: the decider picks it, and it alone sees whether
+        // the parent group has started (T3O-53).
+        ...(input.stage === undefined ? {} : { stage: input.stage }),
         ...(parent === undefined ? {} : { parentCardId: parent.id }),
         // No `orderKey`: the decider places the card at the bottom of the
         // stage's column (T3O-27), which is the only place that can see the

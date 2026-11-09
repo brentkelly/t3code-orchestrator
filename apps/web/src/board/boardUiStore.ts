@@ -158,8 +158,8 @@ interface BoardUiStore extends BoardUiState {
 /** The first column starts collapsed to a rail (D13): it is the one column that
     grows without bound (the intake/backlog) and it is not where attention
     belongs. `isFirstStage` comes from the read-model stage order — and is
-    passed false for every sub-board column (t3o-25), where the first rendered
-    column is the materialisation floor the children queue in, not an intake. */
+    passed false for every sub-board column (t3o-25), whose columns hold the
+    group's own work, not an intake. */
 export function isBoardColumnCollapsed(
   collapsedByStage: Partial<Record<string, boolean>>,
   stageKey: string,

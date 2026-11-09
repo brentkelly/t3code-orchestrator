@@ -363,17 +363,6 @@ export function boardDropRefusal(input: {
     }
     return null;
   }
-  // An own-branch group's children are materialised work, from Ready onward.
-  const parent = boardShellAncestors(shells, card)[0];
-  const floor = boardStageBeforeBuild(stages);
-  if (
-    parent !== undefined &&
-    floor !== null &&
-    boardShellGroup(shells, parent)?.target === "own" &&
-    boardStageIndex(stages, toStage) < boardStageIndex(stages, floor.stageId)
-  ) {
-    return `${parent.key} has its own integration branch, so its cards live from ${floor.label} onward.`;
-  }
   const group = boardShellGroup(shells, card);
   if (group === null) return null;
   const build = boardStageWithRole(stages, "build");

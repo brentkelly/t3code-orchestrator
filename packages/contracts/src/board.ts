@@ -4542,22 +4542,6 @@ export function boardCardIntegrationAncestor<
   return null;
 }
 
-/** A sub-board plan card may occupy the materialisation floor or anything
-    after it (t3o-23, D3) — draggable back out of Building to the floor
-    (reverse states), never into ideation stages. Falls back to the
-    build-onward rule when the build stage is first (no floor exists, which
-    also means no card can have been materialised on this board). */
-export function isBoardStageAtOrAfterSubBoardFloor(
-  board: BoardState,
-  stageId: BoardStageId,
-): boolean {
-  const floor = boardSubBoardFloorStage(board);
-  if (floor === null) return isBoardStageAtOrAfterBuild(board, stageId);
-  const floorIndex = boardStageIndex(board, floor.stageId);
-  const stageIndex = boardStageIndex(board, stageId);
-  return stageIndex >= 0 && floorIndex >= 0 && stageIndex >= floorIndex;
-}
-
 /**
  * Why a card's project cannot be changed (T3O-33, D1/D4), or `null` when it
  * can. ONE predicate, shared by the decider's refusals and the card detail's

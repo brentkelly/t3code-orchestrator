@@ -1,7 +1,7 @@
 import { BoardPlanId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { boardSplitGateRecommended, boardSplitGateView } from "./boardSplitGate";
+import { boardSplitGateView } from "./boardSplitGate";
 
 const plan = (key: string, input?: { planned?: boolean; after?: ReadonlyArray<string> }) => ({
   planId: BoardPlanId.make(`card::${key}`),
@@ -76,18 +76,5 @@ describe("boardSplitGateView", () => {
     });
     expect(view.mix).toBe("all need planning");
     expect(view.autoBuildNote).toBe("You start each child yourself.");
-  });
-
-  it("pre-selects inherit when an own-branch recommendation has a child still to plan", () => {
-    const recommendation = { autoBuild: true, mergeTarget: "own" } as const;
-    expect(
-      boardSplitGateRecommended({
-        plans: [plan("a"), plan("b", { planned: false })],
-        recommendation,
-      }),
-    ).toEqual({ autoBuild: true, mergeTarget: "inherit" });
-    expect(boardSplitGateRecommended({ plans: [plan("a"), plan("b")], recommendation })).toEqual(
-      recommendation,
-    );
   });
 });

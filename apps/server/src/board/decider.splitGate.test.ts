@@ -381,18 +381,21 @@ it.layer(NodeServices.layer)("split gate (T3O-31)", (it) => {
     }),
   );
 
-  it.effect("never gives an own branch to a split with Needs-planning children", () =>
+  it.effect("gives an own branch to a split with Needs-planning children (T3O-53)", () =>
     Effect.gen(function* () {
       const plans = [
         makePlan({ key: "p1", ordinal: 0 }),
         makePlan({ key: "p2", ordinal: 1, planned: false }),
       ];
-      // A human who chose own is told why; their children could never leave Backlog.
-      const refused = yield* Effect.flip(
-        decideEvents(approve({ mergeTarget: "own" }), makeBoard({ plans })),
-      );
-      assert.include(String(refused), "still need planning");
-      // A recommendation of own falls back to inherit.
+      const createdStages = (events: ReadonlyArray<PlannedBoardEvent>) =>
+        events.flatMap((event) =>
+          event.type === "board.card-created" ? [String(event.payload.stage)] : [],
+        );
+      // A human who chose own gets it; the unplanned child lands in Backlog to be planned.
+      const chosen = yield* decideEvents(approve({ mergeTarget: "own" }), makeBoard({ plans }));
+      expect(approvedEvent(chosen).payload.card.group?.target).toBe("own");
+      expect(createdStages(chosen)).toEqual(["ready", "backlog"]);
+      // A recommendation of own is honoured as is.
       const approved = approvedEvent(
         yield* decideEvents(
           approve(),
@@ -405,7 +408,7 @@ it.layer(NodeServices.layer)("split gate (T3O-31)", (it) => {
           }),
         ),
       );
-      expect(approved.payload.card.group).toMatchObject({ target: "inherit", autoBuild: true });
+      expect(approved.payload.card.group).toMatchObject({ target: "own", autoBuild: true });
     }),
   );
 

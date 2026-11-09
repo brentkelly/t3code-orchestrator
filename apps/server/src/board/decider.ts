@@ -46,7 +46,6 @@ import {
   type BoardAutomationChanged,
   resolveBoardCardAutomationIn,
   boardSubBoardFloorStage,
-  isBoardStageAtOrAfterSubBoardFloor,
   boardOrderKeyBetween,
   boardCardPullRequestsEqual,
   boardPullRequestPredatesCard,
@@ -76,7 +75,7 @@ import {
   boardCardAncestors,
   boardCardGroupOf,
   boardCardInheritedDependsOn,
-  boardNewPhaseHeadingStage,
+  boardCreateDefaultStage,
   boardProjectFirstStageId,
   boardProjectStagesInOrder,
   boardCardGroupsEqual,
@@ -1787,8 +1786,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // A card may be created into any stage (D10) — `BOARD_CREATABLE_STAGES`
       // is gone; Mode governs worktree/slot on entry, so creation and dragging
       // follow an identical path. The target stage must exist.
-      // A heading with no stage under an own-branch group lands on the floor,
-      // the first stage that group's children may hold (T3O-28).
+      // A heading with no stage lands in the project's first stage; a card
+      // with no stage joins a started parent group in Planning (T3O-53).
       const createParent =
         command.parentCardId === undefined
           ? undefined
@@ -1796,12 +1795,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const stage =
         command.stage ??
         (command.heading === true
-          ? boardNewPhaseHeadingStage(
+          ? boardProjectFirstStageId(board, command.projectId)
+          : boardCreateDefaultStage(
               board,
-              createParent !== undefined && boardCardGroupOf(board, createParent)?.target === "own",
+              createParent !== undefined && boardCardGroupOf(board, createParent)?.started === true,
               command.projectId,
-            )
-          : boardProjectFirstStageId(board, command.projectId));
+            ));
       // Deferred (T3O-27) is a system stage outside the stage list, open only
       // inside a group.
       if (isBoardDeferredStage(stage)) {
@@ -1844,19 +1843,6 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         }
         const refusal = groupParentRefusal(board, parent);
         if (refusal !== null) return yield* invariant(command, refusal);
-        // A fully planned split's children are materialised work (t3o-23,
-        // D3): they live from the materialisation floor onward. An `inherit`
-        // group holds unplanned work anywhere in the pipeline.
-        if (
-          !isBoardDeferredStage(stage) &&
-          boardCardGroupOf(board, parent)?.target === "own" &&
-          !isBoardStageAtOrAfterSubBoardFloor(board, stage)
-        ) {
-          return yield* invariant(
-            command,
-            `A card inside '${parent.key}' cannot be created in '${stage}'; that group's children live from the materialisation floor onward.`,
-          );
-        }
       }
 
       // Initial dependencies (t3o-06): dedupe and require each to exist. A
@@ -2170,27 +2156,6 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         pipeline: pipelineMove,
       });
       if (adjacencyRefusal !== null) return yield* invariant(command, adjacencyRefusal);
-      // Sub-board plan cards (t3o-23, D3) are materialised work, restricted
-      // to the materialisation floor and beyond — draggable back out of
-      // Building to the floor (reverse states), but no override reopens the
-      // ideation stages.
-      const parentGroup =
-        card.parentCardId === null
-          ? null
-          : (() => {
-              const parent = board.cards.find((candidate) => candidate.id === card.parentCardId);
-              return parent === undefined ? null : boardCardGroupOf(board, parent);
-            })();
-      if (
-        parentGroup?.target === "own" &&
-        !toDeferred &&
-        !isBoardStageAtOrAfterSubBoardFloor(board, command.toStage)
-      ) {
-        return yield* invariant(
-          command,
-          `Card '${command.cardId}' is a sub-board plan card and cannot enter '${command.toStage}'.`,
-        );
-      }
       // A split parent's review describes an integration branch (t3o-28, D2),
       // so it cannot pass the build-role stage while a child is still working
       // — that description would be a lie. Everything BELOW that ceiling is
@@ -2565,17 +2530,6 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           parent === null && isBoardDeferredStage(mover.stage)
             ? boardProjectFirstStageId(board, mover.projectId)
             : mover.stage;
-        if (
-          parent !== null &&
-          nextParentGroup?.target === "own" &&
-          !isBoardDeferredStage(stage) &&
-          !isBoardStageAtOrAfterSubBoardFloor(board, stage)
-        ) {
-          return yield* invariant(
-            command,
-            `Card '${mover.key}' cannot move inside '${parent.key}' from '${stage}'; that group's children live from the materialisation floor onward.`,
-          );
-        }
         const next: BoardCard = {
           ...mover,
           parentCardId: command.parentCardId,
@@ -2749,19 +2703,6 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           return yield* invariant(
             command,
             `Can't give '${card.key}' its own branch while the worktree of its cancelled work is still there; it can once that worktree is reclaimed.`,
-          );
-        }
-        const belowFloor = board.cards.find(
-          (child) =>
-            child.parentCardId === card.id &&
-            child.archivedAt === null &&
-            !isBoardDeferredStage(child.stage) &&
-            !isBoardStageAtOrAfterSubBoardFloor(board, child.stage),
-        );
-        if (belowFloor !== undefined) {
-          return yield* invariant(
-            command,
-            `Can't give '${card.key}' its own branch while '${belowFloor.key}' is in '${belowFloor.stage}'; that group's children live from the materialisation floor onward. Move it on or out first.`,
           );
         }
       }
@@ -4621,25 +4562,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // planned on its own (T3O-31); a planned one lands on the floor.
       const backlog = boardProjectFirstStageId(board, card.projectId);
       const recommendation = boardSplitRecommendationOf(board, card);
-      // An own group's children live from the floor onward, so a child that
-      // lands in Backlog to be planned could never move again. A human who
-      // chose `own` is told; a recommendation falls back to inherit.
-      const anyUnplanned = boardCardPlans(board, command.cardId).some(
-        (plan) => !isBoardPlanPlanned(plan),
-      );
-      if (command.mergeTarget === "own" && anyUnplanned) {
-        return yield* invariant(
-          command,
-          `Can't give '${card.key}' its own branch while some of its cards still need planning; an own branch's cards start at '${boardSubBoardFloorStage(board)?.label ?? "Ready"}'. Choose inherit, or plan every card first.`,
-        );
-      }
-      const recommendedTarget =
-        recommendation.mergeTarget === "own" && anyUnplanned
-          ? "inherit"
-          : recommendation.mergeTarget;
       const settings = {
         autoBuild: command.autoBuild ?? recommendation.autoBuild,
-        target: command.mergeTarget ?? recommendedTarget,
+        target: command.mergeTarget ?? recommendation.mergeTarget,
         ...(command.autoPlan === undefined ? {} : { autoPlan: command.autoPlan }),
         ...(command.autoMerge === undefined ? {} : { autoMerge: command.autoMerge }),
       };

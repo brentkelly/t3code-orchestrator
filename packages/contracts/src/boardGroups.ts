@@ -493,8 +493,7 @@ export type BoardNewPhasePlan =
       readonly group: BoardCard;
       /** Where the new heading sits: beside the group, under its parent. */
       readonly parentCardId: BoardCardId | null;
-      /** The heading's stage: the first stage, or the floor under an `own`
-          parent, whose children live from there onward. */
+      /** The heading's stage: its project's first stage. */
       readonly headingStage: BoardStageId;
       /** The deferred cards to move, in board order. */
       readonly cardIds: ReadonlyArray<BoardCardId>;
@@ -502,15 +501,16 @@ export type BoardNewPhasePlan =
       readonly cardStage: BoardStageId;
     };
 
-/** A new phase heading's stage: its project's first stage, or the floor under
-    an `own` parent, whose children live from there onward. */
-export function boardNewPhaseHeadingStage(
+/** Where a card created with no stage lands (T3O-53): Planning under a parent
+    group that has started, so it joins the running work instead of stalling
+    the group in Backlog; otherwise the project's first stage. */
+export function boardCreateDefaultStage(
   board: BoardState,
-  parentOwn: boolean,
+  parentStarted: boolean,
   projectId: ProjectId | null,
 ): BoardStageId {
   const first = boardProjectFirstStageId(board, projectId);
-  return parentOwn ? (boardStageBeforeBuild(board)?.stageId ?? first) : first;
+  return parentStarted ? (boardStageWithRole(board, "plan")?.stageId ?? first) : first;
 }
 
 export function boardNewPhasePlan(
@@ -538,16 +538,11 @@ export function boardNewPhasePlan(
     };
   }
   const first = boardProjectFirstStageId(board, group.projectId);
-  const parent =
-    group.parentCardId === null
-      ? undefined
-      : board.cards.find((card) => card.id === group.parentCardId);
-  const parentOwn = parent !== undefined && boardCardGroupOf(board, parent)?.target === "own";
   return {
     kind: "ok",
     group,
     parentCardId: group.parentCardId,
-    headingStage: boardNewPhaseHeadingStage(board, parentOwn, group.projectId),
+    headingStage: first,
     cardIds: deferred.filter((card) => wanted.has(card.id)).map((card) => card.id),
     cardStage: first,
   };

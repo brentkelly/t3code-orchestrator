@@ -425,7 +425,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
-  it.effect("keeps sub-board plan cards out of the early stages, override or not", () =>
+  it.effect("lets a sub-board plan card move back into the early stages (T3O-53)", () =>
     Effect.gen(function* () {
       const board: BoardState = {
         cards: [
@@ -438,13 +438,12 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         ],
         nextCardNumberByProject: {},
       };
-      const failure = yield* decideFail(
+      const back = yield* decide(
         moveCommand({ cardId: "card-child", toStage: "sprint", override: true }),
         makeReadModel({ board }),
       );
-      assert.include(String(failure), "sub-board plan card");
+      assert.strictEqual(back.type, "board.card-moved");
 
-      // Ready-onward stays open to it.
       const allowed = yield* decide(
         moveCommand({ cardId: "card-child", toStage: "building" }),
         makeReadModel({ board }),
