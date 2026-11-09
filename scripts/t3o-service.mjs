@@ -34,6 +34,7 @@ import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 
 import { selectCliRuntimeExternalDependencies } from "./lib/cli-external-packages.ts";
+import { applyPnpmPatches, readPatchedDependencies } from "./lib/pnpm-patches.ts";
 
 const repoRoot = NodeURL.fileURLToPath(new URL("..", import.meta.url));
 const user = NodeOS.userInfo().username;
@@ -229,7 +230,7 @@ function buildUnit() {
  * actually left external. Versions are pinned to what the worktree resolved, so
  * the service runs the code the bundle was built against rather than whatever a
  * range happens to pick up later. npm is skipped entirely when nothing moved,
- * but the pnpm patches are re-applied either way (see applyPnpmPatches).
+ * but the pnpm patches are re-applied either way (see syncPnpmPatches).
  */
 function syncRuntimeDependencies() {
   const declared = JSON.parse(
@@ -269,7 +270,7 @@ function syncRuntimeDependencies() {
     run("npm", ["install", "--no-audit", "--no-fund"], { cwd: appDir });
   }
 
-  applyPnpmPatches();
+  syncPnpmPatches();
 }
 
 /**
@@ -283,61 +284,28 @@ function syncRuntimeDependencies() {
  * the port serves nothing.
  *
  * npm hoists, so every patched package -- a declared root or one of their
- * transitive dependencies -- sits at the top level of node_modules and this
+ * transitive dependencies -- sits at the top level of node_modules and a
  * single-level scan finds them all. It runs on every sync, including the path
  * where nothing was installed, because editing a patch moves no version and
  * would otherwise never reach the app directory.
  *
- * Applying is idempotent: an already-patched package reverse-applies cleanly
- * and is skipped. A patch edited since it was applied matches neither
- * direction and stops the sync, which is the right outcome -- the alternative
- * is a half-patched package nobody notices until the server will not start.
+ * An already-patched package is skipped. One carrying an older version of its
+ * patch (the patch was edited between commits) is reinstalled pristine and
+ * patched again; only a patch that still will not apply stops the sync. See
+ * scripts/lib/pnpm-patches.ts.
  */
-function applyPnpmPatches() {
-  const workspace = NodeFS.readFileSync(NodePath.join(repoRoot, "pnpm-workspace.yaml"), "utf8");
-  // The block is flat `name@version: patches/<file>` entries, keys sometimes
-  // quoted. Reading it beats hardcoding a list that would drift on every sync.
-  const block = workspace.match(/^patchedDependencies:\n((?:[ \t]+\S.*\n)*)/m)?.[1] ?? "";
-  const patches = new Map(
-    [...block.matchAll(/^\s+"?([^"\s:]+)"?:\s*(\S+)\s*$/gm)].map(([, key, file]) => [key, file]),
-  );
-  if (patches.size === 0) {
-    fail("no patchedDependencies found in pnpm-workspace.yaml — has the format changed?");
-  }
-
-  const modulesDir = NodePath.join(appDir, "node_modules");
-  const installed = NodeFS.readdirSync(modulesDir, { withFileTypes: true }).flatMap((entry) => {
-    if (!entry.isDirectory() || entry.name.startsWith(".")) return [];
-    if (!entry.name.startsWith("@")) return [entry.name];
-    return NodeFS.readdirSync(NodePath.join(modulesDir, entry.name)).map(
-      (scoped) => `${entry.name}/${scoped}`,
-    );
-  });
-
-  for (const name of installed) {
-    const packageDir = NodePath.join(modulesDir, name);
-    const packageJson = NodePath.join(packageDir, "package.json");
-    if (!NodeFS.existsSync(packageJson)) continue;
-    const { version } = JSON.parse(NodeFS.readFileSync(packageJson, "utf8"));
-    const patch = patches.get(`${name}@${version}`);
-    if (patch === undefined) continue;
-
-    const patchPath = NodePath.join(repoRoot, patch);
-    const applied =
-      run("git", ["apply", "--reverse", "--check", patchPath], {
-        cwd: packageDir,
-        stdio: "ignore",
-        allowFailure: true,
-      }) === 0;
-    if (applied) continue;
-
-    console.log(`[t3o-service] Patching ${name}@${version} with ${patch}...`);
-    if (run("git", ["apply", patchPath], { cwd: packageDir, allowFailure: true }) !== 0) {
-      fail(
-        `could not apply ${patch} to ${packageDir}.\n` +
-          `Delete the install and let it rebuild: rm -rf ${modulesDir}`,
-      );
-    }
+function syncPnpmPatches() {
+  try {
+    applyPnpmPatches({
+      repoRoot,
+      modulesDir: NodePath.join(appDir, "node_modules"),
+      patches: readPatchedDependencies(
+        NodeFS.readFileSync(NodePath.join(repoRoot, "pnpm-workspace.yaml"), "utf8"),
+      ),
+      reinstall: () => run("npm", ["install", "--no-audit", "--no-fund"], { cwd: appDir }),
+    });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
 }
 
