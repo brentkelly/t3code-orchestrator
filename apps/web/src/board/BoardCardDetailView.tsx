@@ -51,6 +51,7 @@ import {
   type BoardCardId,
   type BoardCardProjectLock,
   type BoardCardShell,
+  type BoardReviewCarryRuling,
   type BoardCardThreadLink,
   type BoardCardThreadShell,
   type BoardCardThreadState,
@@ -508,6 +509,10 @@ export interface BoardCardDetailViewProps {
   /** Run one more review round from the pane's "Run round N+1" (T3O-39, D6).
       The same RPC the rail button calls, so the two cannot disagree. */
   readonly onResumeReview?: (() => void) | undefined;
+  /** Rule on a stuck review loop and run another round (T3O-51). */
+  readonly onReviewRuling?:
+    | ((ruling: BoardReviewCarryRuling, note: string | null) => void)
+    | undefined;
   /** Reopen a review round whose recorded payload cannot be read (T3O-14). */
   readonly onReopenReviewStep?: ((stepId: string) => void) | undefined;
   readonly onSetReviewRounds?: ((rounds: number) => void) | undefined;
@@ -1843,6 +1848,10 @@ function ActionsSection({
             props.reviewMaxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS,
             props.reviewOverrides?.stopAfterRound ?? null,
             props.reviewOverrides?.runThroughRound ?? null,
+            {
+              carriedFindings: props.reviewOverrides?.carriedFindings ?? {},
+              stuckWaivedThrough: props.reviewOverrides?.stuckWaivedThrough ?? null,
+            },
           )
         : null;
   const onStopAfterRound = props.onStopAfterRound;
@@ -3312,6 +3321,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onSetRoundModel={props.onSetReviewRoundModel}
                 phaseRuntimeMode={props.reviewPhaseRuntimeMode}
                 onResume={props.onResumeReview}
+                onRuling={onReviewStage ? props.onReviewRuling : undefined}
                 onReopenStep={props.onReopenReviewStep}
                 onSetRounds={props.onSetReviewRounds}
                 overrides={props.reviewOverrides}

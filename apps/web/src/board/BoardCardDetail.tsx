@@ -50,6 +50,7 @@ import {
   effectiveBoardReviewRounds,
   EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
   type BoardCardReviewOverrides,
+  type BoardReviewCarryRuling,
   type BoardCardStageModelOverride,
   boardShellAncestorIds,
   boardShellAutoMergeArmedByCard,
@@ -904,6 +905,7 @@ export function BoardCardDetail({
         configured: reviewExecution.rounds,
         overrides: card.reviewOverrides,
         roundsStarted: reviewRoundsRecorded,
+        completions: detail?.stepCompletions ?? [],
       })
     : undefined;
   const reviewPhaseRuntimeMode = isBoardReviewStageExecution(reviewExecution)
@@ -1002,9 +1004,15 @@ export function BoardCardDetail({
   /** "Another review round" / "Request review" (T3O-39, D6). One RPC behind
       both the rail button and the pane's "Run round N+1": the server writes
       the override, records why, and moves the card, in that order. */
-  const onRequestReviewRound = () => {
+  const onRequestReviewRound = (carry?: {
+    readonly ruling: BoardReviewCarryRuling;
+    readonly note: string | null;
+  }) => {
     setFeedback(null);
-    void requestReviewRound({ environmentId, input: { cardId: card.id } }).then((result) => {
+    void requestReviewRound({
+      environmentId,
+      input: { cardId: card.id, ...(carry === undefined ? {} : { carry }) },
+    }).then((result) => {
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
         return;
@@ -1652,7 +1660,8 @@ export function BoardCardDetail({
       // the same verb (T3O-39, D6), so they are the same call: the server
       // resolves the round from the ledger, writes the override before it
       // moves the card, and there is no client-side patch to keep in agreement.
-      onResumeReview={onRequestReviewRound}
+      onResumeReview={() => onRequestReviewRound()}
+      onReviewRuling={(ruling, note) => onRequestReviewRound({ ruling, note })}
       onSetReviewRoundModel={(round, model) =>
         patchReviewOverrides({
           roundModels: Object.fromEntries(

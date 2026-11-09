@@ -273,6 +273,27 @@ textarea{font-family:var(--font-sans)}
                     </div>
 
                     <sc-for list="{{ s.rows }}" as="r" hint-placeholder-count="4">
+                      <sc-if value="{{ r.isPhases }}" hint-placeholder-val="{{ false }}">
+                        <div style="display:flex;flex-direction:column;gap:6px;padding:10px 0 4px">
+                          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                            <span style="font:400 13.5px var(--font-sans)">Each round</span>
+                            <span style="flex:1"></span>
+                            <sc-for list="{{ r.phases }}" as="ph" hint-placeholder-count="3">
+                              <sc-if value="{{ ph.notFirst }}" hint-placeholder-val="{{ false }}">
+                                <span style="color:var(--muted-fg);font:400 12px var(--font-sans)">→</span>
+                              </sc-if>
+                              <span style="display:inline-flex;align-items:center;gap:5px;flex:none;padding:1px 8px 1px 3px;border:1px solid var(--border);border-radius:99px;background:var(--card);font:500 12px var(--font-sans);color:var(--fg)"><span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 3px;border-radius:99px;background:var(--muted);font:600 9.5px var(--font-mono);color:var(--muted-fg)">{{ ph.n }}</span>{{ ph.name }}</span>
+                            </sc-for>
+                          </div>
+                          <div style="display:flex;align-items:flex-start;gap:6px;justify-content:flex-end">
+                            <span style="flex:none;font:400 12px/1.5 var(--font-sans);color:var(--muted-fg)">↳</span>
+                            <sc-for list="{{ r.follow }}" as="fl" hint-placeholder-count="2">
+                              <span style="display:inline-flex;align-items:center;gap:5px;flex:none;padding:1px 8px 1px 3px;border:1px dashed var(--input);border-radius:99px;font:500 11.5px var(--font-sans);color:var(--muted-fg)"><span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 3px;border-radius:99px;background:var(--muted);font:600 9.5px var(--font-mono);color:var(--muted-fg)">{{ fl.n }}</span>{{ fl.name }}</span>
+                            </sc-for>
+                          </div>
+                          <p style="margin:0;align-self:flex-end;max-width:52ch;text-align:right;font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ r.footnote }}</p>
+                        </div>
+                      </sc-if>
                       <sc-if value="{{ r.isHeader }}" hint-placeholder-val="{{ false }}">
                         <div style="display:flex;align-items:center;gap:8px;margin:16px 0 2px">
                           <span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex:none;border-radius:99px;border:1px solid var(--border);background:var(--muted);font:600 10.5px var(--font-mono);color:var(--muted-fg)">{{ r.step }}</span>
@@ -1010,7 +1031,7 @@ class Component extends DCLogic {
         prompt: "Implement the card's brief on its branch. Run the project's checks until they pass, then report completion through your completion tool. Ask any blocking question through your question tool rather than in prose.",
         pre: "Card T3-42 in core.agent.advisor.\nStage 5 of 9 · Building. The card brief, the agreed plan and the worktree branch are attached.", post: "When you are done, summarise what changed in two or three sentences and record completion with board_complete. Do not move the card yourself." },
       { id: "review", name: "Code review", key: "review", auto: true, loop: true, rounds: 5, model: "claude-opus-4",
-        note: "A loop: review, triage, adjudicate, repeat until a pass raises no blocking findings or the round cap stops it." },
+        note: "A loop: review, triage, adjudicate, repeat until a pass raises no blocking findings, the adjudicator rules a round found nothing new, a finding gets stuck for a human, or the round cap stops it." },
       { id: "qa", name: "Visual QA", key: "qa", auto: true, def: false, only: "web", model: "claude-sonnet-4",
         prompt: "Open the preview deploy at desktop, tablet and phone widths in light and dark. Compare against the card's screenshots and report each visual regression as a finding with a screenshot.", pre: "", post: "" },
       { id: "ci", name: "CI", key: "ci", auto: true, ci: true, def: false, attempts: 2, model: "claude-sonnet-4", prompt: FIX_PROMPT,
@@ -1193,6 +1214,10 @@ class Component extends DCLogic {
     if (s.loop) {
       rows.push(this.numberRow("Rounds", s.rounds, v => this.patch(s.id, "rounds", v), { min: 1, max: 20, hint: "Stops early on a clean review pass." }));
       rows.push(this.modelRow(s, (k, v) => this.patch(s.id, k, v)));
+      rows.push({ isPhases: true,
+        phases: [{ n: "1", name: "Review" }, { n: "2", name: "Triage" }, { n: "3", name: "Adjudicate" }].map((p, i) => ({ ...p, notFirst: i > 0 })),
+        follow: [{ n: "2b", name: "Re-triage" }, { n: "3b", name: "Re-adjudicate" }],
+        footnote: "Only when the adjudicator overrules a finding, inside the same round, and they don't use a round. Re-triage and Re-adjudicate reuse the Triage and Adjudicate phase prompts and models." });
       return rows;
     }
     if (s.prompt != null) rows.push(this.promptRow("Prompt", s.id, s.prompt, v => this.patch(s.id, "prompt", v), s.pre, s.post));

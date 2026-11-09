@@ -865,6 +865,177 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  /** Run one review-loop phase to a recorded success on the caller's thread. */
+  const recordPhase = Effect.fn("recordPhase")(function* (
+    own: { readonly ownCard: BoardCardId; readonly ownThread: ThreadId },
+    stepId: string,
+    payload: unknown,
+  ) {
+    const suffix = `${own.ownCard}-${stepId}`;
+    yield* startStep({ ...own, suffix, stepId });
+    yield* boardHandlers
+      .board_complete_step({ stepId, outcome: "succeeded", summary: stepId, payload })
+      .pipe(withScope(own.ownThread));
+    yield* settleStep({ ...own, suffix, stepId });
+  });
+
+  it.effect("T3O-51: refuses reserved and duplicate finding ids from a reviewer", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("review-ids");
+      yield* startStep({ ...own, suffix: "review-ids", stepId: "review@1" });
+      const finding = (id: string) => ({ id, severity: "critical", title: "x" });
+      for (const findings of [[finding("carried:r1:f1")], [finding("f1"), finding("f1")]]) {
+        const failure = yield* Effect.flip(
+          boardHandlers
+            .board_complete_step({
+              stepId: "review@1",
+              outcome: "succeeded",
+              summary: "Reviewed",
+              payload: { reviewedSha: "abc", findings },
+            })
+            .pipe(withScope(own.ownThread)),
+        );
+        assert.strictEqual(failure.code, "invalid-input");
+      }
+    }),
+  );
+
+  it.effect(
+    "T3O-51: an adjudication must say anotherRound, and re-triage must cover every id",
+    () =>
+      Effect.gen(function* () {
+        yield* seed();
+        const own = yield* seedOwnCard("adjudicate-flag");
+        yield* recordPhase(own, "review@1", {
+          reviewedSha: "abc",
+          findings: [{ id: "f1", severity: "critical", title: "x" }],
+        });
+        yield* recordPhase(own, "triage@1", {
+          fixedSha: "abc",
+          dispositions: [{ findingId: "f1", action: "rejected", note: "no" }],
+        });
+        yield* startStep({ ...own, suffix: "adjudicate-flag", stepId: "adjudicate@1" });
+        const verdicts = [{ findingId: "f1", verdict: "rejection-unjustified", note: "yes" }];
+        const failure = yield* Effect.flip(
+          boardHandlers
+            .board_complete_step({
+              stepId: "adjudicate@1",
+              outcome: "succeeded",
+              summary: "Ruled",
+              payload: { verdicts },
+            })
+            .pipe(withScope(own.ownThread)),
+        );
+        assert.strictEqual(failure.code, "invalid-input");
+        assert.include(failure.message, "anotherRound");
+        yield* boardHandlers
+          .board_complete_step({
+            stepId: "adjudicate@1",
+            outcome: "succeeded",
+            summary: "Ruled",
+            payload: { verdicts, anotherRound: true },
+          })
+          .pipe(withScope(own.ownThread));
+        yield* settleStep({ ...own, suffix: "adjudicate-flag", stepId: "adjudicate@1" });
+
+        yield* startStep({ ...own, suffix: "retriage", stepId: "retriage@1" });
+        const missing = yield* Effect.flip(
+          boardHandlers
+            .board_complete_step({
+              stepId: "retriage@1",
+              outcome: "succeeded",
+              summary: "Re-triaged",
+              payload: { fixedSha: "abc", dispositions: [] },
+            })
+            .pipe(withScope(own.ownThread)),
+        );
+        assert.strictEqual(missing.code, "invalid-input");
+        assert.include(missing.message, "'f1'");
+      }),
+  );
+
+  it.effect("T3O-51: a review caller reads no earlier review-loop steps", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("fresh-eyes");
+      yield* recordPhase(own, "review@1", {
+        reviewedSha: "abc",
+        findings: [{ id: "f1", severity: "critical", title: "x" }],
+      });
+      yield* recordPhase(own, "triage@1", {
+        fixedSha: "def",
+        dispositions: [{ findingId: "f1", action: "fixed", note: "done" }],
+      });
+      yield* recordPhase(own, "adjudicate@1", {
+        verdicts: [{ findingId: "f1", verdict: "fix-upheld", note: "ok" }],
+        anotherRound: true,
+      });
+      // A triage attempt that never recorded a completion is still a
+      // review-loop thread, named only by its link role.
+      const engine = yield* boardStackEngine;
+      const triageThread = ThreadId.make("thread-fresh-eyes-triage");
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-fresh-eyes-triage"),
+        threadId: triageThread,
+        projectId: own.ownProject,
+        title: "Triage",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "board.card.link-thread",
+        commandId: CommandId.make("cmd-link-fresh-eyes-triage"),
+        cardId: own.ownCard,
+        threadId: triageThread,
+        role: "triage@1",
+        createdAt: t0,
+      });
+      yield* startStep({ ...own, suffix: "review-2", stepId: "review@2" });
+      const reviewer = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.deepStrictEqual(
+        reviewer.steps.map((step) => step.stepId),
+        [],
+      );
+      assert.notInclude(
+        reviewer.card.threadLinks.map((link) => link.threadId),
+        triageThread,
+      );
+      assert.notInclude(
+        reviewer.threads.map((entry) => entry.threadId),
+        triageThread,
+      );
+      assert.include(
+        reviewer.card.threadLinks.map((link) => link.threadId),
+        own.ownThread,
+      );
+      yield* boardHandlers
+        .board_complete_step({
+          stepId: "review@2",
+          outcome: "succeeded",
+          summary: "clean",
+          payload: { reviewedSha: "def", findings: [] },
+        })
+        .pipe(withScope(own.ownThread));
+      yield* settleStep({ ...own, suffix: "review-2", stepId: "review@2" });
+      // Any other caller still reads the whole history.
+      const after = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.include(
+        after.card.threadLinks.map((link) => link.threadId),
+        triageThread,
+      );
+      assert.includeMembers(
+        after.steps.map((step) => step.stepId),
+        ["triage@1", "adjudicate@1"],
+      );
+    }),
+  );
+
   it.effect("refuses a review payload of the wrong shape rather than pinning it", () =>
     Effect.gen(function* () {
       yield* seed();

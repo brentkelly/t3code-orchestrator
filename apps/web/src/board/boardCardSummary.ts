@@ -60,6 +60,14 @@ export type BoardCardSummaryItem =
       readonly rejected: number;
       readonly open: number;
       readonly disputed: number;
+      readonly escalated: number;
+    }
+  /** A human advanced the card past a stuck review round (T3O-51): not a
+      pass, and not a call for a human either — just the record. */
+  | {
+      readonly kind: "review-advanced";
+      readonly round: number;
+      readonly unreviewedFixes: number;
     };
 
 export interface BoardCardSummary {
@@ -156,6 +164,7 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
           rejected: card.issuesRejected ?? 0,
           open: card.issuesOpen ?? 0,
           disputed: card.issuesDisputed ?? 0,
+          escalated: card.issuesEscalated ?? 0,
         });
       }
       break;
@@ -163,6 +172,13 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
     case "merge":
       // PR state and check summary. The PR number itself rides the meta row
       // (`boardCardMeta`); a check summary has no data source until t3o-11.
+      if (card.reviewOutcome === "advanced" && card.reviewAdvancedRound !== undefined) {
+        items.push({
+          kind: "review-advanced",
+          round: card.reviewAdvancedRound,
+          unreviewedFixes: card.reviewUnreviewedFixes ?? 0,
+        });
+      }
       break;
 
     case "done":

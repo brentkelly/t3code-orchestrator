@@ -21,6 +21,7 @@ import {
   effectiveBoardStageRole,
 } from "./board.ts";
 import {
+  composeBoardReviewFollowUpPrompt,
   BOARD_AUTO_PLAN_INSTRUCTION,
   boardAutoPlanInstruction,
   BOARD_ENVELOPE_DECISION_LOG,
@@ -365,16 +366,141 @@ describe("review phase envelope", () => {
     );
   });
 
-  it("points every phase after the first review at the prior payloads", () => {
+  it("points triage and adjudicate at the prior payloads, never the reviewer (T3O-51)", () => {
     expect(boardReviewPhasePreamble({ phase: "review", round: 1, rounds: 5 })).not.toContain(
       "board_get_card_context",
     );
     expect(boardReviewPhasePreamble({ phase: "triage", round: 1, rounds: 5 })).toContain(
       "board_get_card_context",
     );
-    expect(boardReviewPhasePreamble({ phase: "review", round: 2, rounds: 5 })).toContain(
-      "board_get_card_context",
-    );
+    // Fresh eyes on every round: the review@N prompt has no history pointer.
+    for (const round of [2, 5]) {
+      const prompt = composeBoardReviewPhasePrompt({
+        phase: "review",
+        round,
+        rounds: 5,
+        prompt: DEFAULT_BOARD_REVIEW_PHASE_PROMPT,
+      });
+      expect(prompt).not.toContain("board_get_card_context");
+      expect(prompt).not.toContain("`steps` payloads");
+      expect(prompt).not.toContain("Status of round-");
+    }
+    // The step envelope points a reviewer at the brief only.
+    const envelope = composeStepPrompt({
+      card: { key: "T3O-1", title: "t", stage: "review" },
+      stageLabel: "Code review",
+      step: { stepId: "review@2", stepLabel: "Review · round 2", prompt: "x", humanInLoop: false },
+      role: "review",
+    });
+    expect(envelope).toContain("board_get_card_context for the brief only");
+    const triage = composeStepPrompt({
+      card: { key: "T3O-1", title: "t", stage: "review" },
+      stageLabel: "Code review",
+      step: { stepId: "triage@2", stepLabel: "Triage · round 2", prompt: "x", humanInLoop: false },
+      role: "review",
+    });
+    expect(triage).toContain("prior progress");
+  });
+
+  it("T3O-51: lists carried findings to triage and the adjudicator, and dismissals to all three", () => {
+    const carried = [
+      {
+        finding: {
+          id: "carried:r1:f1",
+          severity: "critical" as const,
+          file: "a.ts",
+          line: 3,
+          title: "Broken thing",
+          detail: "why",
+          carried: true,
+        },
+        triageAction: null,
+        triageNote: "",
+        rulingVerdict: null,
+        rulingNote: "",
+        retriageAction: null,
+        retriageNote: "",
+      },
+    ];
+    const dismissals = [
+      {
+        findingId: "carried:r2:f9",
+        origRound: 2,
+        severity: "improvement" as const,
+        title: "Not a bug",
+        file: null,
+        line: null,
+        detail: "",
+        rulingNote: "",
+        round: 3,
+      },
+    ];
+    for (const phase of ["triage", "adjudicate"] as const) {
+      const prompt = composeBoardReviewPhasePrompt({
+        phase,
+        round: 3,
+        rounds: 5,
+        prompt: "p",
+        carried,
+        dismissals,
+      });
+      expect(prompt).toContain("`carried:r1:f1`");
+      expect(prompt).toContain("A human ordered these findings fixed");
+      expect(prompt).toContain("`carried:r2:f9`");
+    }
+    const review = composeBoardReviewPhasePrompt({
+      phase: "review",
+      round: 3,
+      rounds: 5,
+      prompt: "p",
+      carried,
+      dismissals,
+    });
+    expect(review).not.toContain("carried:r1:f1");
+    expect(review).toContain("Do not raise them again");
+    expect(boardReviewPhaseProtocol({ phase: "adjudicate", round: 1 })).toContain("anotherRound");
+  });
+
+  it("T3O-51: composes the follow-up passes around the overruled findings", () => {
+    const findings = [
+      {
+        finding: {
+          id: "f1",
+          severity: "critical" as const,
+          file: "a.ts",
+          line: 3,
+          title: "Broken thing",
+          detail: "",
+          carried: false,
+        },
+        triageAction: "rejected" as const,
+        triageNote: "not a bug",
+        rulingVerdict: "rejection-unjustified" as const,
+        rulingNote: "it is a bug",
+        retriageAction: null,
+        retriageNote: "",
+      },
+    ];
+    const retriage = composeBoardReviewFollowUpPrompt({
+      phase: "retriage",
+      round: 1,
+      rounds: 5,
+      prompt: DEFAULT_BOARD_TRIAGE_PHASE_PROMPT,
+      findings,
+    });
+    expect(retriage).toContain("Re-triage step, round 1");
+    expect(retriage).toContain("`f1`");
+    expect(retriage).toContain("Ruling: rejection-unjustified — it is a bug");
+    expect(retriage).toContain('"escalated"');
+    const readjudicate = composeBoardReviewFollowUpPrompt({
+      phase: "readjudicate",
+      round: 1,
+      rounds: 5,
+      prompt: DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT,
+      findings,
+    });
+    expect(readjudicate).toContain("final ruling before a human is called");
+    expect(readjudicate).toContain("anotherRound");
   });
 
   it("keeps the payload mechanics in the protocol even when the editable prompt is rewritten", () => {
@@ -444,9 +570,10 @@ describe("review phase envelope", () => {
     // Bold "Severity (i/N): title" summary line + suggested-fix line.
     expect(review).toContain("<Severity> (<i>/<N>): <title>");
     expect(review).toContain("**Suggested fix:**");
-    // High-level summary in the review body, plus the re-review status table.
+    // High-level summary in the review body. No re-review status table: the
+    // reviewer reads no earlier rounds (T3O-51).
     expect(review).toContain("## High-level summary");
-    expect(review).toContain("Status of round-");
+    expect(review).not.toContain("Status of round-");
     // The forced protocol stays free of this craft — it is not enforced.
     expect(boardReviewPhaseProtocol({ phase: "review", round: 1 })).not.toContain("[!CAUTION]");
     expect(boardReviewPhaseProtocol({ phase: "review", round: 1 })).not.toContain(

@@ -31,6 +31,9 @@ const REVIEW_SHELL_FIELDS = [
   "issuesRejected",
   "issuesOpen",
   "issuesDisputed",
+  "issuesEscalated",
+  "reviewAdvancedRound",
+  "reviewUnreviewedFixes",
 ] as const satisfies ReadonlyArray<keyof BoardCardShell>;
 
 /** The stall slice (T3O-22, D10) — carried as a group for the same reason
@@ -373,6 +376,13 @@ export function applyBoardShellStreamEvent(
               issuesRejected: event.summary.issuesRejected,
               issuesOpen: event.summary.issuesOpen,
               issuesDisputed: event.summary.issuesDisputed,
+              issuesEscalated: event.summary.issuesEscalated,
+              ...(event.summary.advancedRound === null
+                ? {}
+                : {
+                    reviewAdvancedRound: event.summary.advancedRound,
+                    reviewUnreviewedFixes: event.summary.unreviewedFixes,
+                  }),
             };
       });
       return { ...snapshot, cards: nextCards };

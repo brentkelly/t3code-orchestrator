@@ -154,10 +154,11 @@ it.effect("D6: a converged card at merge gets the override written BEFORE it mov
         // re-plan a loop that still reads converged and bounce the card back.
         const relevant = (yield* commands)
           .filter(
-            (command) => command.type === "board.card.update" || command.type === "board.card.move",
+            (command) =>
+              command.type === "board.card.set-review-carry" || command.type === "board.card.move",
           )
           .map((command) => command.type);
-        assert.deepStrictEqual(relevant, ["board.card.update", "board.card.move"]);
+        assert.deepStrictEqual(relevant, ["board.card.set-review-carry", "board.card.move"]);
       }),
   ),
 );
@@ -420,5 +421,123 @@ it.effect("refuses a card that does not exist", () =>
           outcome: "unknown-card",
         });
       }),
+  ),
+);
+
+// ── T3O-51: a stuck loop takes a ruling, never a plain request ───────────────
+
+const stuckCompletion = (stepId: string, payload: unknown) => ({
+  cardId,
+  stepId,
+  outcome: "succeeded" as const,
+  summary: stepId,
+  payload: JSON.stringify(payload),
+  threadId: null,
+  completedAt: NOW,
+});
+
+/** Z5-291's round 1: the dispute survived re-triage and re-adjudication. */
+const stuckRound = [
+  stuckCompletion("review@1", {
+    reviewedSha: "sha-reviewed",
+    findings: [{ id: "f1", severity: "critical", title: "Broken", file: "a.ts", line: 2 }],
+  }),
+  stuckCompletion("triage@1", {
+    fixedSha: "sha-reviewed",
+    dispositions: [{ findingId: "f1", action: "rejected", note: "not a bug" }],
+  }),
+  stuckCompletion("adjudicate@1", {
+    verdicts: [{ findingId: "f1", verdict: "rejection-unjustified", note: "it is" }],
+    anotherRound: true,
+  }),
+  stuckCompletion("retriage@1", {
+    fixedSha: "sha-reviewed",
+    dispositions: [{ findingId: "f1", action: "rejected", note: "still not" }],
+  }),
+  stuckCompletion("readjudicate@1", {
+    verdicts: [{ findingId: "f1", verdict: "rejection-unjustified", note: "still is" }],
+    anotherRound: true,
+  }),
+];
+
+const stuckBoard = () => ({
+  board: {
+    cards: [card(String(BOARD_SEED_STAGE_IDS.review))],
+    stepStates: [settledReviewStep("readjudicate@1")],
+    stepCompletions: stuckRound,
+    nextCardNumberByProject: {},
+  },
+  settings: settings(),
+});
+
+it.effect("T3O-51: a plain request on a stuck loop is refused and writes nothing", () =>
+  withGovernor(stuckBoard(), ({ reactor, board }) =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* reactor.requestReviewRound(cardId), { outcome: "stuck" });
+      yield* reactor.drain;
+      assert.strictEqual(cardOf(yield* board).reviewOverrides, null);
+    }),
+  ),
+);
+
+it.effect("T3O-51: a ruling on a loop that is not stuck is refused", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [card(String(BOARD_SEED_STAGE_IDS.merge))],
+        stepStates: [settledReviewStep()],
+        stepCompletions: [convergedRound],
+        nextCardNumberByProject: {},
+      },
+      settings: settings(),
+    },
+    ({ reactor }) =>
+      Effect.gen(function* () {
+        assert.deepStrictEqual(
+          yield* reactor.requestReviewRound(cardId, { ruling: "fix", note: null }),
+          { outcome: "not-stuck" },
+        );
+      }),
+  ),
+);
+
+it.effect("T3O-51: Fix it waives the stuck round, carries the finding, and runs round 2", () =>
+  withGovernor(stuckBoard(), ({ reactor, board, pumpDomain }) =>
+    Effect.gen(function* () {
+      const result = yield* reactor.requestReviewRound(cardId, {
+        ruling: "fix",
+        note: "do it properly",
+      });
+      yield* reactor.drain;
+      assert.deepStrictEqual(result, { outcome: "started", round: 2 });
+      const overrides = cardOf(yield* board).reviewOverrides;
+      assert.strictEqual(overrides?.stuckWaivedThrough, 1);
+      assert.strictEqual(overrides?.runThroughRound, 2);
+      const carried = overrides?.carriedFindings["2"];
+      assert.strictEqual(carried?.ruling, "fix");
+      assert.strictEqual(carried?.note, "do it properly");
+      assert.deepStrictEqual(
+        carried?.findings.map((f) => [f.findingId, f.origRound, f.rulingNote]),
+        [["carried:r1:f1", 1, "still is"]],
+      );
+
+      // The write's own arrival re-plans the card in place: round 2 runs.
+      yield* pumpDomain(cardUpdated(cardOf(yield* board), 20));
+      assert.strictEqual(boardCardStepState(yield* board, cardId)?.stepId, "review@2");
+    }),
+  ),
+);
+
+it.effect("T3O-51: Reviewer is wrong records a dismissal and runs round 2", () =>
+  withGovernor(stuckBoard(), ({ reactor, board }) =>
+    Effect.gen(function* () {
+      const result = yield* reactor.requestReviewRound(cardId, { ruling: "dismiss", note: null });
+      yield* reactor.drain;
+      assert.deepStrictEqual(result, { outcome: "started", round: 2 });
+      assert.strictEqual(
+        cardOf(yield* board).reviewOverrides?.carriedFindings["2"]?.ruling,
+        "dismiss",
+      );
+    }),
   ),
 );

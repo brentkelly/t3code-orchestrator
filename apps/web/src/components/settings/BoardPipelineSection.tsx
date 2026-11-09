@@ -1996,6 +1996,47 @@ function ReviewStageBody(props: {
             ariaLabel="Open pull requests as drafts"
             onChange={(checked) => set({ draftPullRequests: checked })}
           />
+          {/* The loop's shape (T3O-51): the follow-ups are machinery with no
+              settings of their own, so they show here and nowhere else. */}
+          <div className="flex flex-col gap-1.5 py-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[13.5px]">Each round</span>
+              <span className="flex-1" />
+              {BOARD_REVIEW_PHASE_IDS.map((phaseId, index) => (
+                <span key={phaseId} className="flex items-center gap-2">
+                  {index === 0 ? null : <span className="text-xs text-muted-foreground">→</span>}
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card py-px pl-[3px] pr-2 text-xs font-medium">
+                    <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-[3px] font-mono text-[9.5px] font-semibold text-muted-foreground">
+                      {index + 1}
+                    </span>
+                    {BOARD_REVIEW_PHASE_LABELS[phaseId]}
+                  </span>
+                </span>
+              ))}
+            </div>
+            <div className="flex items-start justify-end gap-1.5">
+              <span className="text-xs text-muted-foreground">↳</span>
+              {[
+                { n: "2b", name: "Re-triage" },
+                { n: "3b", name: "Re-adjudicate" },
+              ].map((follow) => (
+                <span
+                  key={follow.n}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-input py-px pl-[3px] pr-2 text-[11.5px] font-medium text-muted-foreground"
+                >
+                  <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-[3px] font-mono text-[9.5px] font-semibold text-muted-foreground">
+                    {follow.n}
+                  </span>
+                  {follow.name}
+                </span>
+              ))}
+            </div>
+            <p className="m-0 max-w-[52ch] self-end text-right text-[11.5px]/[1.5] text-pretty text-muted-foreground">
+              Only when the adjudicator overrules a finding, inside the same round, and they don't
+              use a round. Re-triage and Re-adjudicate reuse the Triage and Adjudicate phase prompts
+              and models.
+            </p>
+          </div>
           {BOARD_REVIEW_PHASE_IDS.map((phaseId, index) => {
             const phase = exec.phases[phaseId];
             return (
@@ -2021,7 +2062,10 @@ function ReviewStageBody(props: {
                         stage: stage.stageId,
                       },
                       stageLabel: stage.label,
-                      step: { stepLabel: reviewStepLabel(phaseId, 1) },
+                      step: {
+                        stepId: reviewStepId(phaseId, 1),
+                        stepLabel: reviewStepLabel(phaseId, 1),
+                      },
                     }),
                     boardReviewPhasePreamble({ phase: phaseId, round: 1, rounds: exec.rounds }),
                   ].join("\n\n")}

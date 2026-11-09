@@ -70,6 +70,10 @@ import {
   boardCardUnfinishedChildren,
   boardCardStepState,
   boardReviewRoundsStarted,
+  boardReviewStuckState,
+  boardReviewCarryFromStuck,
+  type BoardReviewCarry,
+  type BoardRequestReviewRoundInput,
   boardRunLabel,
   boardSelectedStepLabel,
   boardNextStageId,
@@ -98,7 +102,6 @@ import {
   DEFAULT_BOARD_BUILD_STAGE_EXECUTION,
   DEFAULT_BOARD_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
-  EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
   EMPTY_BOARD_STATE,
   effectiveBoardStageRole,
   isBoardCardPullRequestTerminal,
@@ -309,6 +312,8 @@ export type BoardRequestReviewRoundResult =
   | { readonly outcome: "step-running" }
   | { readonly outcome: "no-branch" }
   | { readonly outcome: "unknown-card" }
+  | { readonly outcome: "not-stuck" }
+  | { readonly outcome: "stuck" }
   | { readonly outcome: "failed" };
 
 /** What "Remove worktree" did (T3O-52, D5), for the RPC to turn into a
@@ -468,6 +473,7 @@ export interface SupervisorReactorShape {
   ) => Effect.Effect<BoardSkipCiResult>;
   readonly requestReviewRound: (
     cardId: BoardCardId,
+    carry?: BoardRequestReviewRoundInput["carry"] | undefined,
   ) => Effect.Effect<BoardRequestReviewRoundResult>;
   /** Retry CI and "Send back to review anyway" (T3O-49): a human's way out
       of a stopped or held CI pass. */
@@ -4118,17 +4124,8 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
     if (!landed || reviewStage === null) return;
-    yield* dispatch({
-      type: "board.card.update",
-      commandId: yield* commandId("ci-send-back-round"),
-      cardId: card.id,
-      reviewOverrides: {
-        ...(card.reviewOverrides ?? EMPTY_BOARD_CARD_REVIEW_OVERRIDES),
-        runThroughRound: round,
-        stopAfterRound: null,
-      },
-      createdAt: yield* nowIso,
-    });
+    const opened = yield* openReviewRound({ cardId: card.id, round, reason: "ci-send-back-round" });
+    if (!opened) return;
     yield* dispatch({
       type: "board.card.pipeline-move",
       commandId: yield* commandId("ci-send-back-move"),
@@ -7659,6 +7656,33 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * Open review round `round` on a card (T3O-51): the one write behind every
+   * path that books another round — a human's request or ruling, and CI's
+   * send-back. It asks for the round and clears a pending stop; a human's
+   * ruling on a stuck loop also waives the stuck round and carries the ruling
+   * in. All in one `set-review-carry`, awaited, so a caller's stage move can
+   * never land before it.
+   */
+  const openReviewRound = Effect.fn("board-supervisor-openReviewRound")(function* (input: {
+    readonly cardId: BoardCardId;
+    readonly round: number;
+    readonly reason: string;
+    readonly stuckRound?: number;
+    readonly carry?: BoardReviewCarry;
+  }) {
+    return yield* dispatchLanded({
+      type: "board.card.set-review-carry",
+      commandId: yield* commandId(input.reason),
+      cardId: input.cardId,
+      runThroughRound: input.round,
+      clearStopAfterRound: true,
+      ...(input.stuckRound === undefined ? {} : { stuckWaivedThrough: input.stuckRound }),
+      ...(input.carry === undefined ? {} : { carry: { round: input.round, entry: input.carry } }),
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /**
    * "Another review round" / "Request review" (T3O-39, D6) — the one verb
    * behind all three entry points: the rail button at Code review, the rail
    * button at Ready for merge, and the Review pane's "Run round N+1".
@@ -7688,6 +7712,7 @@ const make = Effect.gen(function* () {
    */
   const requestReviewRound = Effect.fn("board-supervisor-requestReviewRound")(function* (
     cardId: BoardCardId,
+    carry?: BoardRequestReviewRoundInput["carry"] | undefined,
   ) {
     const card = yield* readCard(cardId);
     if (card === null || card.archivedAt !== null) return { outcome: "unknown-card" } as const;
@@ -7715,32 +7740,38 @@ const make = Effect.gen(function* () {
       return { outcome: "step-running" } as const;
     }
 
+    // A stuck loop (T3O-51) takes a ruling, never a plain request: a fresh
+    // round would only re-raise the same dispute. A ruling on a loop that is
+    // not stuck is a stale client.
+    const completions = boardCardStepCompletions(board, card.id);
+    const stuck = boardReviewStuckState({ completions, overrides: card.reviewOverrides });
+    if (carry === undefined && stuck !== null) return { outcome: "stuck" } as const;
+    if (carry !== undefined && stuck === null) return { outcome: "not-stuck" } as const;
+
     // One past the highest round the loop has entered — the same number the
     // decider clamps to, so the write it validates is the write it was sent.
-    const round =
-      boardReviewRoundsStarted({
-        completions: boardCardStepCompletions(board, card.id),
-        liveStepId: null,
-      }) + 1;
+    const round = boardReviewRoundsStarted({ completions, liveStepId: null }) + 1;
 
     // A Merge click that hit a conflict leaves the merge ARMED, and a card must
     // not walk back through review still armed — the stale-base return disarms
     // for exactly this reason, and this is the same trip for a different cause.
     disarmPendingMerge(card.id);
 
-    const landed = yield* dispatchLanded({
-      type: "board.card.update",
-      commandId: yield* commandId("request-review-round"),
+    const landed = yield* openReviewRound({
       cardId: card.id,
-      reviewOverrides: {
-        ...(card.reviewOverrides ?? EMPTY_BOARD_CARD_REVIEW_OVERRIDES),
-        runThroughRound: round,
-        // The request is the later decision, so it supersedes a pending hold.
-        // Said outright rather than left to the decider's reconciliation, so a
-        // reader of this call can see what the card ends up with.
-        stopAfterRound: null,
-      },
-      createdAt: yield* nowIso,
+      round,
+      reason: "request-review-round",
+      ...(carry === undefined || stuck === null
+        ? {}
+        : {
+            stuckRound: stuck.round,
+            carry: boardReviewCarryFromStuck({
+              round: stuck.round,
+              findings: stuck.findings,
+              ruling: carry.ruling,
+              note: carry.note,
+            }),
+          }),
     });
     if (!landed) return { outcome: "failed" } as const;
 
@@ -7753,9 +7784,13 @@ const make = Effect.gen(function* () {
       cardId: card.id,
       kind: "card-review-round-requested",
       detail:
-        round === 1
-          ? "Requested a first review round on this branch."
-          : `Requested review round ${round} on this branch.`,
+        carry?.ruling === "fix"
+          ? `Asked for the stuck findings to be fixed in review round ${round}.`
+          : carry?.ruling === "dismiss"
+            ? `Ruled the stuck findings not issues and requested review round ${round}.`
+            : round === 1
+              ? "Requested a first review round on this branch."
+              : `Requested review round ${round} on this branch.`,
       createdAt: yield* nowIso,
     });
 
@@ -11819,8 +11854,8 @@ const make = Effect.gen(function* () {
           ),
         ),
       ),
-    requestReviewRound: (cardId) =>
-      requestReviewRound(cardId).pipe(
+    requestReviewRound: (cardId, carry) =>
+      requestReviewRound(cardId, carry).pipe(
         Effect.catchCause((cause) =>
           // Total for the same reason the other two are: an RPC handler owes
           // the user a response, and a read-model hiccup must read as "the

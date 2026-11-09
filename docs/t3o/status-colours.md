@@ -129,6 +129,11 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   stopped at the round-trip limit and a human decides — retry, send back, or skip. In Settings, a
   `t3o.json` waiting to import is violet (a human decides whether to take it), and the override
   and parallel-step markers are neutral: they describe a setting, not work.
+- **A stuck review loop is violet; an advanced one is neutral (T3O-51).** `Stuck` means triage and
+  the adjudicator still disagree after a second pass and the loop waits for a human's ruling, so it
+  is violet, and only while the card is in Code review. Once a human advances the card past it, the
+  loop reads `Advanced past stuck round N`: not green, because nothing was signed off, and not
+  violet or amber, because nobody is waited on. An escalated finding is violet too.
 - **The Summary pane's Heads-up tags and check tiles follow it too.** Plan change is violet (it
   waits on a human's read), Not done is amber, and Shortcut is neutral, never blue, because blue
   means running. A failing check tile is amber, not red.

@@ -157,7 +157,13 @@ export function BoardCardReviewBlock({
           {/* One chip slot, and the held flag owns it: "the loop stopped without
               converging" outranks "it is triaging" every time. */}
           {held ? (
-            <span className="inline-flex shrink-0 items-center rounded bg-amber-500/18 px-1.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
+            <span
+              className={
+                round?.outcome === "stuck"
+                  ? "inline-flex shrink-0 items-center rounded bg-attention/16 px-1.5 text-[10px] font-medium uppercase tracking-wide text-attention-foreground"
+                  : "inline-flex shrink-0 items-center rounded bg-amber-500/18 px-1.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300"
+              }
+            >
               {round?.outcome === undefined
                 ? "No convergence"
                 : boardReviewHeldLabel(round.outcome)}
@@ -175,7 +181,9 @@ export function BoardCardReviewBlock({
             held
               ? round.outcome === "stopped"
                 ? " — stopped, no convergence"
-                : " — no convergence"
+                : round.outcome === "stuck"
+                  ? " — stuck, needs your call"
+                  : " — no convergence"
               : ""
           }`}
         >
@@ -184,7 +192,9 @@ export function BoardCardReviewBlock({
               held
                 ? round.outcome === "stopped"
                   ? " — stopped, no convergence"
-                  : " — no convergence"
+                  : round.outcome === "stuck"
+                    ? " — stuck, needs your call"
+                    : " — no convergence"
                 : ""
             }`}
             className="flex items-center"
@@ -205,6 +215,7 @@ export function BoardCardReviewBlock({
           {issues === undefined ? null : (
             <IssueTally
               disputed={issues.disputed}
+              escalated={issues.escalated}
               fixed={issues.fixed}
               open={issues.open}
               rejected={issues.rejected}
@@ -363,19 +374,18 @@ function IssueTally({
   rejected,
   open,
   disputed,
+  escalated,
 }: {
   readonly fixed: number;
   readonly rejected: number;
   readonly open: number;
   readonly disputed: number;
+  readonly escalated: number;
 }) {
+  const text = `${fixed} fixed · ${rejected} rejected · ${open} open · ${disputed} disputed${escalated > 0 ? ` · ${escalated} escalated` : ""}`;
   return (
-    <BoardHint
-      label={`${fixed} fixed · ${rejected} rejected · ${open} open · ${disputed} disputed`}
-    >
-      <span className="text-[10.5px] font-medium text-muted-foreground">
-        {fixed} fixed · {rejected} rejected · {open} open · {disputed} disputed
-      </span>
+    <BoardHint label={text}>
+      <span className="text-[10.5px] font-medium text-muted-foreground">{text}</span>
     </BoardHint>
   );
 }
@@ -393,6 +403,16 @@ function SummaryItem({ item }: { readonly item: BoardCardSummaryItem }) {
       // Not inline: the plan bar is its own full-width row (`BoardCardPlansRow`,
       // rendered by the card itself) so its segments can stretch the card.
       return null;
+    case "review-advanced":
+      // Neutral: not a pass, and not a call for a human (T3O-51).
+      return (
+        <span className="text-[10.5px] font-medium text-muted-foreground">
+          Advanced past stuck round {item.round}
+          {item.unreviewedFixes > 0
+            ? ` · ${item.unreviewedFixes} ${item.unreviewedFixes === 1 ? "fix" : "fixes"} not re-reviewed`
+            : ""}
+        </span>
+      );
     case "round":
     case "step":
     case "severity":

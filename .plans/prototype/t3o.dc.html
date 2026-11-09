@@ -1421,17 +1421,71 @@ a:hover{text-decoration:underline}
                 <div style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">{{ review.counts }}</div>
               </div>
               <sc-if value="{{ review.exhausted }}" hint-placeholder-val="{{ false }}">
-              <div style="flex:none;display:flex;flex-direction:column;gap:11px;padding:13px 14px;border:1px solid color-mix(in srgb,var(--warning) 45%,transparent);border-radius:12px;background:color-mix(in srgb,var(--warning) 7%,var(--card))">
+              <div style="{{ review.holdBoxStyle }}">
                 <div style="display:flex;align-items:center;gap:9px">
-                  <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:none;border-radius:7px;background:color-mix(in srgb,var(--warning) 18%,transparent);color:var(--warning-fg);font:600 12px var(--font-mono)">!</span>
-                  <div style="font:600 12.5px var(--font-sans);color:var(--fg)">Round limit reached without convergence</div>
+                  <span style="{{ review.holdIconStyle }}">!</span>
+                  <div style="font:600 12.5px var(--font-sans);color:var(--fg)">{{ review.holdTitle }}</div>
                 </div>
                 <div style="font:400 11.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ review.holdNote }}</div>
                 <div style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ review.outstandingLine }}</div>
-                <div style="display:flex;align-items:center;gap:8px">
-                  <button type="button" onClick="{{ review.runMore }}" style="display:inline-flex;align-items:center;justify-content:center;gap:7px;height:30px;padding:0 12px;flex:none;border-radius:8px;font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);border:1px solid var(--primary);background:var(--primary);color:var(--primary-fg)">{{ review.runMoreLabel }}</button>
+                <sc-if value="{{ review.stuck }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-direction:column;gap:8px">
+                    <sc-for list="{{ review.stuckRows }}" as="sk" hint-placeholder-count="2">
+                      <div style="display:flex;flex-direction:column;gap:8px;padding:10px 11px;border:1px solid var(--border);border-radius:10px;background:var(--card)">
+                        <div style="display:flex;align-items:flex-start;gap:8px">
+                          <span style="{{ sk.sevStyle }}">{{ sk.sev }}</span>
+                          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                            <span style="font:500 12.5px/1.45 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ sk.title }}</span>
+                            <span style="font:400 10.5px var(--font-mono);color:var(--muted-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ sk.file }}</span>
+                          </div>
+                          <sc-if value="{{ sk.escTag }}" hint-placeholder-val="{{ false }}">
+                            <span style="display:inline-flex;align-items:center;height:18px;padding:0 7px;flex:none;border-radius:6px;font:500 10.5px var(--font-sans);border:1px solid var(--border);background:color-mix(in srgb,var(--attention) 12%,transparent);color:var(--attention-fg)">escalated</span>
+                          </sc-if>
+                          <sc-if value="{{ sk.carTag }}" hint-placeholder-val="{{ false }}">
+                            <span style="display:inline-flex;align-items:center;height:18px;padding:0 7px;flex:none;border-radius:6px;font:500 10.5px var(--font-sans);border:1px solid var(--border);background:var(--muted);color:var(--muted-fg)">{{ sk.carLabel }}</span>
+                          </sc-if>
+                        </div>
+                        <sc-if value="{{ sk.hasCarNote }}" hint-placeholder-val="{{ false }}">
+                          <span style="font:400 11px/1.45 var(--font-sans);color:var(--muted-fg);font-style:italic;text-wrap:pretty">{{ sk.carNote }}</span>
+                        </sc-if>
+                        <div style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:8px">
+                          <div style="display:flex;flex-direction:column;gap:4px;padding:8px 9px;border-radius:8px;background:var(--muted)">
+                            <span style="font:600 10px var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--muted-fg)">{{ sk.triageLabel }}</span>
+                            <span style="font:400 11.5px/1.5 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ sk.triageText }}</span>
+                          </div>
+                          <div style="display:flex;flex-direction:column;gap:4px;padding:8px 9px;border-radius:8px;background:var(--muted)">
+                            <span style="font:600 10px var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--muted-fg)">{{ sk.ruleLabel }}</span>
+                            <span style="font:400 11.5px/1.5 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ sk.ruleText }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <sc-if value="{{ review.stuck }}" hint-placeholder-val="{{ false }}">
+                    <button type="button" onClick="{{ review.toggleFix }}" title="Side with the adjudicator" style="{{ review.fixBtnStyle }}">{{ review.fixLabel }}</button>
+                  </sc-if>
+                  <sc-if value="{{ review.showRunMore }}" hint-placeholder-val="{{ true }}">
+                    <button type="button" onClick="{{ review.runMore }}" style="display:inline-flex;align-items:center;justify-content:center;gap:7px;height:30px;padding:0 12px;flex:none;border-radius:8px;font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);border:1px solid var(--primary);background:var(--primary);color:var(--primary-fg)">{{ review.runMoreLabel }}</button>
+                  </sc-if>
                   <button type="button" onClick="{{ review.forceAdvance }}" style="display:inline-flex;align-items:center;justify-content:center;gap:7px;height:30px;padding:0 12px;flex:none;border-radius:8px;font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);border:1px solid var(--input);background:var(--popover);color:var(--fg)">Advance to Ready for merge</button>
                 </div>
+                <sc-if value="{{ review.fixOpen }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-direction:column;gap:8px;padding:10px 11px;border:1px solid var(--border);border-radius:10px;background:var(--card)">
+                    <span style="font:500 12px var(--font-sans);color:var(--fg)">{{ review.fixFormTitle }}</span>
+                    <textarea value="{{ review.fixNote }}" onChange="{{ review.setFixNote }}" rows="{{ 3 }}" placeholder="Guidance for the fix, e.g. use approach X" style="display:block;width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:400 12px/1.5 var(--font-sans);resize:vertical"></textarea>
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">Optional · goes to triage with the findings</span>
+                      <span style="flex:1"></span>
+                      <button type="button" onClick="{{ review.toggleFix }}" style="height:28px;padding:0 10px;flex:none;border:none;border-radius:8px;background:transparent;color:var(--muted-fg);font:500 12px var(--font-sans);cursor:pointer" style-hover="color:var(--fg)">Cancel</button>
+                      <button type="button" onClick="{{ review.confirmFix }}" style="display:inline-flex;align-items:center;height:28px;padding:0 11px;flex:none;border:1px solid var(--primary);border-radius:8px;background:var(--primary);color:var(--primary-fg);font:500 12px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)">{{ review.confirmFixLabel }}</button>
+                    </div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ review.stuck }}" hint-placeholder-val="{{ false }}">
+                  <div style="font:400 11px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ review.fixLine }}</div>
+                </sc-if>
               </div>
               </sc-if>
               <sc-for list="{{ review.rounds }}" as="r" hint-placeholder-count="2">
@@ -1450,9 +1504,51 @@ a:hover{text-decoration:underline}
                   </div>
                   <sc-if value="{{ r.open }}" hint-placeholder-val="{{ false }}">
                     <div style="display:flex;flex-direction:column">
-                      <sc-for list="{{ r.steps }}" as="s" hint-placeholder-count="4">
+                      <sc-if value="{{ r.carried }}" hint-placeholder-val="{{ false }}">
+                        <div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px 10px;border-top:1px solid var(--border);background:color-mix(in srgb,var(--fg) 2.5%,transparent)">
+                          <div style="display:flex;align-items:flex-start;gap:10px">
+                            <span style="width:20px;height:20px;flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;border:1px dashed var(--input);background:var(--card);font:600 8.5px var(--font-mono);color:var(--muted-fg)">{{ r.carried.icon }}</span>
+                            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                              <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+                                <span style="display:inline-flex;align-items:center;height:18px;padding:0 7px;flex:none;border-radius:6px;font:500 10.5px var(--font-sans);border:1px solid var(--border);background:var(--card);color:var(--fg);text-transform:uppercase;letter-spacing:.04em;font-size:10px">Must-fix</span>
+                                <span style="font:500 12.5px var(--font-sans);color:var(--fg)">{{ r.carried.title }}</span>
+                                <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ r.carried.when }}</span>
+                              </div>
+                              <span style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ r.carried.sub }}</span>
+                              <sc-if value="{{ r.carried.hasNote }}" hint-placeholder-val="{{ false }}">
+                                <div style="display:flex;gap:6px;margin-top:3px;padding:6px 9px;border-left:2px solid var(--input);font:400 11.5px/1.5 var(--font-sans);color:var(--fg);text-wrap:pretty">
+                                  <span style="flex:none;font-weight:600;color:var(--muted-fg)">{{ r.carried.noteBy }}:</span>
+                                  <span>{{ r.carried.note }}</span>
+                                </div>
+                              </sc-if>
+                            </div>
+                          </div>
+                          <div style="padding:0 0 0 30px;display:flex;flex-direction:column;gap:2px">
+                            <sc-for list="{{ r.carried.rows }}" as="i" hint-placeholder-count="1">
+                              <div onClick="{{ i.openOnForge }}" title="{{ i.linkTip }}" style="{{ i.rowStyle }}" style-hover="background:color-mix(in srgb,var(--fg) 4%,transparent)">
+                                <span style="{{ i.sevStyle }}">{{ i.sev }}</span>
+                                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                                  <span style="font:400 12.5px/1.45 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ i.title }}</span>
+                                  <span style="font:400 10.5px var(--font-mono);color:var(--muted-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ i.file }}</span>
+                                </div>
+                                <span style="{{ i.resStyle }}">{{ i.res }}</span>
+                                <sc-if value="{{ i.hasVerdict }}" hint-placeholder-val="{{ false }}">
+                                  <span title="{{ i.verdictTip }}" style="{{ i.verdictStyle }}">{{ i.verdict }}</span>
+                                </sc-if>
+                              </div>
+                            </sc-for>
+                          </div>
+                        </div>
+                      </sc-if>
+                      <sc-for list="{{ r.steps }}" as="s" hint-placeholder-count="3">
+                        <sc-if value="{{ s.followHead }}" hint-placeholder-val="{{ false }}">
+                          <div style="{{ s.followHeadStyle }}">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path></svg>
+                            <span style="font:500 11px var(--font-sans);color:var(--fg)">{{ s.followLabel }}</span>
+                            <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ s.followSub }}</span>
+                          </div>
+                        </sc-if>
                         <div style="{{ s.style }}">
-                          <sc-if value="{{ s.plain }}" hint-placeholder-val="{{ true }}">
                           <span style="position:relative;display:inline-flex;flex:none">
                             <span style="{{ s.dotStyle }}">{{ s.index }}</span>
                             <sc-if value="{{ s.markOk }}" hint-placeholder-val="{{ false }}">
@@ -1465,10 +1561,6 @@ a:hover{text-decoration:underline}
                               <span style="position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--muted-fg);box-shadow:0 0 0 1.5px var(--card)"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="M6 12h12"></path></svg></span>
                             </sc-if>
                           </span>
-                          </sc-if>
-                          <sc-if value="{{ s.awaits }}" hint-placeholder-val="{{ false }}">
-                            <span title="Waiting on you" style="{{ s.dotStyle }}">!</span>
-                          </sc-if>
                           <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
                             <div data-shine="{{ s.live }}" style="{{ s.nameStyle }}">{{ s.name }}</div>
                             <div style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ s.note }}</div>
@@ -1488,10 +1580,38 @@ a:hover{text-decoration:underline}
                                 <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
                                   <span style="font:400 12.5px/1.45 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ i.title }}</span>
                                   <span style="font:400 10.5px var(--font-mono);color:var(--muted-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ i.file }}</span>
+                                  <sc-if value="{{ i.passesOpen }}" hint-placeholder-val="{{ false }}">
+                                    <div onClick="{{ i.togglePasses }}" style="display:flex;flex-direction:column;gap:6px;margin-top:5px;padding:7px 0 2px 10px;border-left:2px solid var(--border);cursor:default">
+                                      <sc-for list="{{ i.passes }}" as="ps" hint-placeholder-count="2">
+                                        <div style="display:flex;flex-direction:column;gap:2px">
+                                          <div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap">
+                                            <span style="font:600 10px var(--font-mono);color:var(--muted-fg)">{{ ps.label }}</span>
+                                            <span style="font:500 11px var(--font-sans);color:var(--fg)">{{ ps.head }}</span>
+                                            <sc-if value="{{ ps.hasVerdict }}" hint-placeholder-val="{{ false }}">
+                                              <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">→</span>
+                                              <span style="{{ ps.verdictStyle }}">{{ ps.verdict }}</span>
+                                            </sc-if>
+                                          </div>
+                                          <sc-if value="{{ ps.hasArg }}" hint-placeholder-val="{{ false }}">
+                                            <span style="padding-left:14px;font:400 11px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ps.arg }}</span>
+                                          </sc-if>
+                                          <sc-if value="{{ ps.hasRuling }}" hint-placeholder-val="{{ false }}">
+                                            <span style="padding-left:14px;font:400 11px/1.45 var(--font-sans);color:var(--muted-fg);font-style:italic;text-wrap:pretty">Ruling: {{ ps.ruling }}</span>
+                                          </sc-if>
+                                        </div>
+                                      </sc-for>
+                                    </div>
+                                  </sc-if>
                                 </div>
                                 <span style="{{ i.resStyle }}">{{ i.res }}</span>
                                 <sc-if value="{{ i.hasVerdict }}" hint-placeholder-val="{{ false }}">
-                                  <span style="{{ i.verdictStyle }}">{{ i.verdict }}</span>
+                                  <span title="{{ i.verdictTip }}" style="{{ i.verdictStyle }}">{{ i.verdict }}</span>
+                                </sc-if>
+                                <sc-if value="{{ i.hasPasses }}" hint-placeholder-val="{{ false }}">
+                                  <button type="button" onClick="{{ i.togglePasses }}" title="{{ i.passesTip }}" style="display:inline-flex;align-items:center;gap:3px;height:18px;padding:0 5px 0 6px;flex:none;border:1px dashed var(--input);border-radius:6px;background:transparent;color:var(--muted-fg);font:500 10.5px var(--font-sans);cursor:pointer" style-hover="color:var(--fg);border-style:solid">
+                                    {{ i.passesLabel }}
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="transform:{{ i.passesCaret }};transition:transform .12s ease"><path d="m6 9 6 6 6-6"></path></svg>
+                                  </button>
                                 </sc-if>
                               </div>
                             </sc-for>
@@ -3230,7 +3350,7 @@ a:hover{text-decoration:underline}
   </sc-if>
 
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;defaultMode&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;threads&quot;,&quot;board&quot;],&quot;default&quot;:&quot;board&quot;,&quot;tsType&quot;:&quot;\&quot;threads\&quot; | \&quot;board\&quot;&quot;},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light&quot;,&quot;tsType&quot;:&quot;\&quot;light\&quot; | \&quot;dark\&quot;&quot;},&quot;density&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;comfortable&quot;,&quot;compact&quot;],&quot;default&quot;:&quot;comfortable&quot;,&quot;tsType&quot;:&quot;\&quot;comfortable\&quot; | \&quot;compact\&quot;&quot;},&quot;showKeys&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;boardAutoMerge&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Board defaults&quot;},&quot;defaultScope&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;advisor&quot;,&quot;web&quot;,&quot;relay&quot;,&quot;all&quot;],&quot;default&quot;:&quot;all&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;ciScenario&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;seeded&quot;,&quot;sync-conflict&quot;,&quot;checks-appearing&quot;,&quot;head-unpushed&quot;,&quot;checks-none&quot;,&quot;forge-unreadable&quot;],&quot;default&quot;:&quot;seeded&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;CI demo states&quot;}}">
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;defaultMode&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;threads&quot;,&quot;board&quot;],&quot;default&quot;:&quot;board&quot;,&quot;tsType&quot;:&quot;\&quot;threads\&quot; | \&quot;board\&quot;&quot;},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light&quot;,&quot;tsType&quot;:&quot;\&quot;light\&quot; | \&quot;dark\&quot;&quot;},&quot;density&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;comfortable&quot;,&quot;compact&quot;],&quot;default&quot;:&quot;comfortable&quot;,&quot;tsType&quot;:&quot;\&quot;comfortable\&quot; | \&quot;compact\&quot;&quot;},&quot;showKeys&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;boardAutoMerge&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Board defaults&quot;},&quot;defaultScope&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;advisor&quot;,&quot;web&quot;,&quot;relay&quot;,&quot;all&quot;],&quot;default&quot;:&quot;all&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;ciScenario&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;seeded&quot;,&quot;sync-conflict&quot;,&quot;checks-appearing&quot;,&quot;head-unpushed&quot;,&quot;checks-none&quot;,&quot;forge-unreadable&quot;],&quot;default&quot;:&quot;seeded&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;CI demo states&quot;},&quot;reviewDemo&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;stuck&quot;,&quot;fix-it-upheld&quot;,&quot;fix-it-stuck-again&quot;],&quot;default&quot;:&quot;stuck&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Review demo states&quot;}}">
 const STAGES = [
   { id: "backlog", name: "Backlog", dot: "#a1a1aa", action: "Add to sprint" },
   { id: "sprint", name: "Sprint", dot: "#a1a1aa", action: "Begin planning" },
@@ -3724,16 +3844,47 @@ const BUILD_SUMMARIES = {
   },
 };
 
-// Code review runs an adversarial loop on the PR: up to `max` rounds, each with a
-// brand-new fresh-eyes reviewer thread, a triage thread, a re-assessment, and an
-// adjudication thread only when the two disagree.
+// Code review runs an adversarial loop on the PR: up to `max` rounds. Each round is
+// a fresh-eyes review (diff and brief only, no history), triage (fix or reject each
+// finding) and adjudication (rules on every fix and rejection, and says whether
+// another round is needed). When the adjudicator overrules something, the same round
+// runs a follow-up on just those findings: re-triage (fix, argue again, or escalate),
+// then re-adjudication on whatever was fixed or argued again. The follow-up belongs
+// to the round and doesn't use up a round of the budget.
 const REVIEW_STEPS = [
-  { id: "review", name: "Fresh-eyes review", short: "Review" },
-  { id: "triage", name: "Triage & respond", short: "Triage" },
-  { id: "assess", name: "Reviewer re-assessment", short: "Assess" },
-  { id: "adjudicate", name: "Adjudication", short: "Adjudicate" },
+  { id: "review", name: "Fresh-eyes review", short: "Review", n: "1" },
+  { id: "triage", name: "Triage & respond", short: "Triage", n: "2" },
+  { id: "adjudicate", name: "Adjudication", short: "Adjudicate", n: "3" },
+  { id: "retriage", name: "Re-triage", short: "Re-triage", n: "2b", follow: true },
+  { id: "readjudicate", name: "Re-adjudication", short: "Re-adjudicate", n: "3b", follow: true },
 ];
-const ISS = (sev, title, file, resolution, verdict) => ({ sev, title, file, resolution, verdict });
+// verdict: upheld | incomplete | absent (on a fix), justified | unjustified (on a
+// rejection), or pending. `x` carries triage's argument (note), the adjudicator's
+// ruling, and `re`, the second pass: { action: fixed | rejected | escalated,
+// verdict, note, ruling }.
+const ISS = (sev, title, file, resolution, verdict, x) => ({ sev, title, file, resolution, verdict, ...(x || {}) });
+const OVERRULED = ["incomplete", "absent", "unjustified"];
+const VERDICT_LABEL = {
+  upheld: "fix upheld", incomplete: "fix incomplete", absent: "fix absent",
+  justified: "rejection justified", unjustified: "rejection unjustified", pending: "pending",
+};
+const RE_ACTION = { fixed: "fixed", rejected: "argued again", escalated: "escalated" };
+// Latest state of a finding across both passes.
+const issueLatest = (i) =>
+  i.re
+    ? { action: i.re.action, verdict: i.re.action === "escalated" ? null : i.re.verdict || "pending", second: true }
+    : { action: i.resolution, verdict: i.verdict, second: false };
+// Still disputed after re-adjudication, or escalated by re-triage, or a carried
+// must-fix whose fix the adjudicator turned down: a human decides.
+const issueStuck = (i) =>
+  (!!i.re && (i.re.action === "escalated" || OVERRULED.indexOf(i.re.verdict) >= 0)) ||
+  (!!i.carry && OVERRULED.indexOf(i.verdict) >= 0);
+// A round can open with must-fix findings carried in, either by a human's "Fix it"
+// on a Stuck round or by CI sending the card back. `carried` = { kind: fix | ci,
+// from (round), by, step (CI step), when, note, issues }. Carried findings skip
+// the fresh-eyes review: triage can only fix them, and the adjudicator checks the
+// fix. A failed check makes the round Stuck; there is no re-triage for them.
+const roundAll = (r) => ((r.carried && r.carried.issues) || []).concat(r.issues || []);
 const REVIEWS = {
   "T3-182": {
     forge: "GitHub",
@@ -3748,32 +3899,40 @@ const REVIEWS = {
         n: 1,
         when: "2d ago",
         outcome: "Changes requested",
-        steps: { review: "done", triage: "done", assess: "done", adjudicate: "done" },
-        ruling: "Ruled with the reviewer on the duplicated channel list; the naming rejection stands.",
+        steps: { review: "done", triage: "done", adjudicate: "done", retriage: "done", readjudicate: "done" },
+        ruling: "Overruled two responses. The follow-up settled both: the schema fix is complete now, and the duplication rejection stands with the new CI check.",
         issues: [
-          ISS("critical", "Preload widens the channel allow-list at runtime", "apps/desktop/src/preload.ts", "fixed", "accepted"),
-          ISS("critical", "Schema errors are swallowed and fall back to any", "packages/contracts/src/ipc.ts", "fixed", "accepted"),
-          ISS("improvement", "Channel names duplicated between schema and preload", "apps/desktop/src/preload.ts", "rejected", "disputed"),
-          ISS("improvement", "No test for the unlisted-channel failure path", "packages/contracts/test/ipc.test.ts", "fixed", "accepted"),
-          ISS("nitpick", "Exported type name shadows the DOM Event type", "packages/contracts/src/ipc.ts", "rejected", "accepted"),
+          ISS("critical", "Preload widens the channel allow-list at runtime", "apps/desktop/src/preload.ts", "fixed", "upheld"),
+          ISS("critical", "Schema errors are swallowed and fall back to any", "packages/contracts/src/ipc.ts", "fixed", "incomplete", {
+            note: "Decode errors now throw instead of falling back to any.",
+            ruling: "The invoke path throws, but the event path still falls back to any.",
+            re: { action: "fixed", verdict: "upheld", note: "The event path now decodes through the same schema and throws on failure.", ruling: "Both paths throw on a decode error. Fix upheld." },
+          }),
+          ISS("improvement", "Channel names duplicated between schema and preload", "apps/desktop/src/preload.ts", "rejected", "unjustified", {
+            note: "Naming preference; the lists match today.",
+            ruling: "Matching today isn't the point: nothing stops the two lists drifting.",
+            re: { action: "rejected", verdict: "justified", note: "The preload list is generated from the schema, and a new CI check fails on any hand edit, so the two can't drift.", ruling: "With the CI check in place they can't drift. Rejection justified." },
+          }),
+          ISS("improvement", "No test for the unlisted-channel failure path", "packages/contracts/test/ipc.test.ts", "fixed", "upheld"),
+          ISS("nitpick", "Exported type name shadows the DOM Event type", "packages/contracts/src/ipc.ts", "rejected", "justified"),
         ],
       },
       {
         n: 2,
         when: "yesterday",
         outcome: "Changes requested",
-        steps: { review: "done", triage: "done", assess: "done", adjudicate: "skipped" },
+        steps: { review: "done", triage: "done", adjudicate: "done" },
         issues: [
-          ISS("critical", "Generated preload drops the transferable list on ports", "apps/desktop/src/preload.ts", "fixed", "accepted"),
-          ISS("improvement", "Codegen output is not checked in, so CI diffs it twice", "packages/contracts/scripts/gen.ts", "fixed", "accepted"),
-          ISS("nitpick", "Channel doc comments lost in generation", "packages/contracts/src/ipc.ts", "rejected", "accepted"),
+          ISS("critical", "Generated preload drops the transferable list on ports", "apps/desktop/src/preload.ts", "fixed", "upheld"),
+          ISS("improvement", "Codegen output is not checked in, so CI diffs it twice", "packages/contracts/scripts/gen.ts", "fixed", "upheld"),
+          ISS("nitpick", "Channel doc comments lost in generation", "packages/contracts/src/ipc.ts", "rejected", "justified"),
         ],
       },
       {
         n: 3,
         when: "40m ago",
         outcome: "",
-        steps: { review: "done", triage: "active", assess: "pending", adjudicate: "pending" },
+        steps: { review: "done", triage: "active", adjudicate: "pending" },
         issues: [
           ISS("critical", "Renderer can still call an unlisted channel through the legacy shim", "apps/desktop/src/legacy-bridge.ts", "fixed", "pending"),
           ISS("improvement", "Schema version is not pinned across the process boundary", "packages/contracts/src/ipc.ts", "open", "pending"),
@@ -3796,56 +3955,63 @@ const REVIEWS = {
         n: 1,
         when: "4d ago",
         outcome: "Changes requested",
-        steps: { review: "done", triage: "done", assess: "done", adjudicate: "skipped" },
+        steps: { review: "done", triage: "done", adjudicate: "done" },
         issues: [
-          ISS("critical", "Reparenting mutates the span while it is still streaming", "packages/client-runtime/src/compaction.ts", "fixed", "accepted"),
-          ISS("improvement", "Orphan detection walks the whole timeline per span", "apps/web/src/state/timeline.ts", "fixed", "accepted"),
+          ISS("critical", "Reparenting mutates the span while it is still streaming", "packages/client-runtime/src/compaction.ts", "fixed", "upheld"),
+          ISS("improvement", "Orphan detection walks the whole timeline per span", "apps/web/src/state/timeline.ts", "fixed", "upheld"),
         ],
       },
       {
         n: 2,
         when: "3d ago",
         outcome: "Changes requested",
-        steps: { review: "done", triage: "done", assess: "done", adjudicate: "done" },
+        steps: { review: "done", triage: "done", adjudicate: "done" },
         ruling: "Ruled with the implementer: the index is fine to keep in memory for now.",
         issues: [
-          ISS("critical", "Span index is rebuilt on every event, not incrementally", "apps/web/src/state/timeline.ts", "rejected", "disputed"),
-          ISS("improvement", "Summary turn id is derived twice with different rules", "packages/client-runtime/src/compaction.ts", "fixed", "accepted"),
+          ISS("critical", "Span index is rebuilt on every event, not incrementally", "apps/web/src/state/timeline.ts", "rejected", "justified", {
+            note: "The rebuild is bounded by the visible window, not the whole timeline.",
+            ruling: "Bounded by the window, so not on the hot path. Rejection justified.",
+          }),
+          ISS("improvement", "Summary turn id is derived twice with different rules", "packages/client-runtime/src/compaction.ts", "fixed", "upheld"),
         ],
       },
       {
         n: 3,
         when: "2d ago",
         outcome: "Changes requested",
-        steps: { review: "done", triage: "done", assess: "done", adjudicate: "done" },
-        ruling: "Ruled with the reviewer: the dropped-span path needs a test before merge.",
+        steps: { review: "done", triage: "done", adjudicate: "done" },
+        ruling: "All fixes upheld. New blocking findings this round, so another round is needed.",
         issues: [
-          ISS("critical", "Dropped spans leave their tool result unclaimed", "packages/client-runtime/src/compaction.ts", "fixed", "accepted"),
-          ISS("improvement", "No test covers a compaction mid-tool-call", "packages/client-runtime/test/compaction.test.ts", "fixed", "disputed"),
-          ISS("nitpick", "Reparent helper is exported but unused elsewhere", "packages/client-runtime/src/compaction.ts", "rejected", "accepted"),
+          ISS("critical", "Dropped spans leave their tool result unclaimed", "packages/client-runtime/src/compaction.ts", "fixed", "upheld"),
+          ISS("improvement", "No test covers a compaction mid-tool-call", "packages/client-runtime/test/compaction.test.ts", "fixed", "upheld"),
+          ISS("nitpick", "Reparent helper is exported but unused elsewhere", "packages/client-runtime/src/compaction.ts", "rejected", "justified"),
         ],
       },
       {
         n: 4,
         when: "yesterday",
         outcome: "Changes requested",
-        steps: { review: "done", triage: "done", assess: "done", adjudicate: "done" },
-        ruling: "Ruled with the reviewer on ordering; the reviewer's second point was withdrawn.",
+        steps: { review: "done", triage: "done", adjudicate: "done", retriage: "done", readjudicate: "done" },
+        ruling: "Overruled the rejection on the index rebuild; re-triage fixed it and the fix was upheld.",
         issues: [
-          ISS("critical", "Reparented spans land out of order after a reconnect", "apps/web/src/state/timeline.ts", "fixed", "accepted"),
-          ISS("improvement", "Ordering fix reintroduces the full index rebuild", "apps/web/src/state/timeline.ts", "rejected", "disputed"),
+          ISS("critical", "Reparented spans land out of order after a reconnect", "apps/web/src/state/timeline.ts", "fixed", "upheld"),
+          ISS("improvement", "Ordering fix reintroduces the full index rebuild", "apps/web/src/state/timeline.ts", "rejected", "unjustified", {
+            note: "The rebuild only runs on reconnect.",
+            ruling: "It runs on every reconnect event, which is the hot path on a flaky socket.",
+            re: { action: "fixed", verdict: "upheld", note: "Reconnect now patches the index in place.", ruling: "Index is patched incrementally. Fix upheld." },
+          }),
         ],
       },
       {
         n: 5,
         when: "3h ago",
         outcome: "No convergence",
-        steps: { review: "done", triage: "done", assess: "done", adjudicate: "done" },
-        ruling: "Round limit reached before the two threads agreed. Loop stopped, nothing auto-approved.",
+        steps: { review: "done", triage: "done", adjudicate: "done" },
+        ruling: "Both blocking fixes upheld, but the round still raised blocking findings, so another round is needed. Round limit reached; nothing auto-approved.",
         issues: [
-          ISS("critical", "Index rebuild is back to O(n) per event on the hot path", "apps/web/src/state/timeline.ts", "rejected", "disputed"),
-          ISS("improvement", "Ordering guarantee is asserted in a comment, not a test", "packages/client-runtime/test/compaction.test.ts", "open", "disputed"),
-          ISS("nitpick", "Two helpers now do the same reparenting", "packages/client-runtime/src/compaction.ts", "fixed", "accepted"),
+          ISS("critical", "Index patch skips spans whose parent was summarised mid-reconnect", "apps/web/src/state/timeline.ts", "fixed", "upheld"),
+          ISS("improvement", "Ordering guarantee is asserted in a comment, not a test", "packages/client-runtime/test/compaction.test.ts", "fixed", "upheld"),
+          ISS("nitpick", "Two helpers now do the same reparenting", "packages/client-runtime/src/compaction.ts", "fixed", "upheld"),
         ],
       },
     ],
@@ -3863,24 +4029,201 @@ const REVIEWS = {
         n: 1,
         when: "yesterday",
         outcome: "Changes requested",
-        steps: { review: "done", triage: "done", assess: "done", adjudicate: "skipped" },
+        steps: { review: "done", triage: "done", adjudicate: "done" },
         issues: [
-          ISS("critical", "Queue drops the oldest frame before the metric is emitted", "infra/relay/src/fanout.ts", "fixed", "accepted"),
-          ISS("improvement", "Only the happy path is covered by the new test", "infra/relay/test/fanout.test.ts", "fixed", "accepted"),
+          ISS("critical", "Queue drops the oldest frame before the metric is emitted", "infra/relay/src/fanout.ts", "fixed", "upheld"),
+          ISS("improvement", "Only the happy path is covered by the new test", "infra/relay/test/fanout.test.ts", "fixed", "upheld"),
         ],
       },
       {
         n: 2,
         when: "2h ago",
-        outcome: "",
-        steps: { review: "done", triage: "done", assess: "done", adjudicate: "await" },
+        outcome: "Stuck",
+        steps: { review: "done", triage: "done", adjudicate: "done", retriage: "done", readjudicate: "done" },
+        ruling: "Overruled two responses. After re-triage, one rejection is still unjustified and one finding was escalated to you.",
         issues: [
-          ISS("critical", "Bounded queue size is global, not per subscriber class", "infra/relay/src/fanout.ts", "rejected", "disputed"),
-          ISS("improvement", "Drop metric has no subscriber label, so it is unattributable", "infra/relay/src/metrics.ts", "fixed", "accepted"),
+          ISS("critical", "Bounded queue size is global, not per subscriber class", "infra/relay/src/fanout.ts", "rejected", "unjustified", {
+            note: "A per-class budget needs a config surface this card doesn't have. The global cap is the agreed v1.",
+            ruling: "The plan names per-subscriber queues. A shared size lets one slow class starve the others, which is the bug this card exists to fix.",
+            re: {
+              action: "rejected",
+              verdict: "unjustified",
+              note: "Every subscriber does get its own bounded queue, as the plan says. Only the size is shared. Per-class sizing is a follow-up card, not a defect in this one.",
+              ruling: "A bounded queue per subscriber doesn't stop starvation while the size is shared. Still unjustified.",
+            },
+          }),
+          ISS("improvement", "Drop metric has no subscriber label, so it is unattributable", "infra/relay/src/metrics.ts", "fixed", "absent", {
+            note: "Added a subscriber dimension to the drop metric.",
+            ruling: "No label in the diff. The counter is still emitted without one.",
+            re: {
+              action: "escalated",
+              note: "I disagree that this belongs here. A per-subscriber label would blow up metric cardinality in production; that's an ops policy call, not a code one. A human should decide.",
+            },
+          }),
+          ISS("improvement", "Queue-length gauge never resets after a subscriber leaves", "infra/relay/src/metrics.ts", "fixed", "upheld"),
+          ISS("nitpick", "Metric name doesn't use the relay_ prefix", "infra/relay/src/metrics.ts", "fixed", "upheld"),
         ],
       },
     ],
   },
+  "RL-15": {
+    forge: "GitHub",
+    repo: "mesh/relay",
+    pr: 90,
+    prTitle: "feat(relay): per-subscriber drop metric",
+    branch: "feat/drop-metric → main",
+    checks: "9 checks passing",
+    max: 5,
+    rounds: [
+      {
+        n: 1,
+        when: "3h ago",
+        outcome: "Changes requested",
+        steps: { review: "done", triage: "done", adjudicate: "done" },
+        issues: [
+          ISS("critical", "Counter increments before the frame is actually dropped", "infra/relay/src/fanout.rs", "fixed", "upheld"),
+          ISS("improvement", "No test for a subscriber that recovers", "infra/relay/tests/drop.rs", "fixed", "upheld"),
+        ],
+      },
+      {
+        n: 2,
+        when: "50m ago",
+        outcome: "Nothing new",
+        steps: { review: "done", triage: "done", adjudicate: "done" },
+        ruling: "The round's blocking findings repeat points settled in round 1. Every rejection is justified, no code changed, and no further round is needed.",
+        issues: [
+          ISS("critical", "Drop counter isn't reset when a subscriber reconnects", "infra/relay/src/metrics.rs", "rejected", "justified", {
+            note: "Counters are monotonic by convention; rate() already handles resets.",
+            ruling: "Correct by convention. Rejection justified.",
+          }),
+          ISS("improvement", "Counter label uses the raw subscriber id", "infra/relay/src/metrics.rs", "rejected", "justified", {
+            note: "The label is the subscriber class, one of 12 values, not the connection id.",
+            ruling: "Bounded label set. Rejection justified.",
+          }),
+          ISS("nitpick", "Help text says frames, the unit is messages", "infra/relay/src/metrics.rs", "rejected", "justified"),
+        ],
+      },
+      {
+        n: 3,
+        when: "18m ago",
+        outcome: "",
+        carried: {
+          kind: "ci",
+          step: "Test",
+          when: "18m ago",
+          note: "Both fix attempts used. 3 tests in fanout::backpressure still fail, which points at the bounded-queue design rather than a slip in the code.",
+          issues: [
+            ISS("critical", "3 tests in fanout::backpressure still fail after 2 fix attempts", "infra/relay/src/fanout.rs", "open", "pending", { carry: true }),
+          ],
+        },
+        steps: { review: "done", triage: "active", adjudicate: "pending" },
+        issues: [
+          ISS("improvement", "Drop counter and queue trim aren't atomic under contention", "infra/relay/src/fanout.rs", "open", "pending"),
+        ],
+      },
+    ],
+  },
+  // Header fields (forge, repo, PR, branch) come from the card.
+  "T3-203": {
+    rounds: [
+      {
+        n: 1,
+        when: "2h ago",
+        outcome: "Changes requested",
+        steps: { review: "done", triage: "done", adjudicate: "done" },
+        issues: [
+          ISS("critical", "Group column follows the first child, not the furthest-behind one", "apps/web/src/board/deriveStage.ts", "fixed", "upheld"),
+          ISS("improvement", "Blocked children aren't counted while the group is collapsed", "apps/web/src/board/GroupCard.tsx", "fixed", "upheld"),
+        ],
+      },
+      {
+        n: 2,
+        when: "35m ago",
+        outcome: "Nothing new",
+        steps: { review: "done", triage: "done", adjudicate: "done" },
+        ruling: "The round's blocking findings re-open choices the plan already settled. Every rejection is justified, no code changed, and no further round is needed.",
+        issues: [
+          ISS("critical", "deriveStage ignores archived children", "apps/web/src/board/deriveStage.ts", "rejected", "justified", {
+            note: "Deliberate: the brief says a group sits where its live children are.",
+            ruling: "Matches the brief. Rejection justified.",
+          }),
+          ISS("improvement", "Progress counts planning children as not started", "apps/web/src/board/GroupCard.tsx", "rejected", "justified", {
+            note: "Planning counts as not started for progress, as agreed in the plan.",
+            ruling: "Agreed in the plan. Rejection justified.",
+          }),
+          ISS("nitpick", "GroupCard props type is exported but only used here", "apps/web/src/board/GroupCard.tsx", "rejected", "justified"),
+        ],
+      },
+    ],
+  },
+};
+
+// Review demo states for RL-14 (Tweaks › Review demo states): what happens after
+// "Fix it" on its Stuck round 2.
+const RL14_CARRY_NOTE = "Size queues per subscriber class from the SubscriberClass table. Label the drop metric by class, not connection id.";
+const REVIEW_DEMOS = {
+  "fix-it-upheld": [
+    {
+      n: 3,
+      when: "1h ago",
+      outcome: "Changes requested",
+      carried: {
+        kind: "fix", from: 2, by: "brent", when: "1h ago", note: RL14_CARRY_NOTE,
+        issues: [
+          ISS("critical", "Bounded queue size is global, not per subscriber class", "infra/relay/src/fanout.ts", "fixed", "upheld", {
+            carry: true, fromRound: 2,
+            note: "Queue size now comes from SubscriberClass.queueCap, so a slow class can only fill its own queues.",
+            ruling: "Each class has its own cap; one slow class can't starve the rest. Fix upheld.",
+          }),
+          ISS("improvement", "Drop metric has no subscriber label, so it is unattributable", "infra/relay/src/metrics.ts", "fixed", "upheld", {
+            carry: true, fromRound: 2,
+            note: "Added the subscriber class as a label (12 values), not the connection id.",
+            ruling: "Bounded label added. Fix upheld.",
+          }),
+        ],
+      },
+      steps: { review: "done", triage: "done", adjudicate: "done" },
+      ruling: "Both carried fixes upheld. The round raised a new blocking finding, so another round is needed.",
+      issues: [
+        ISS("improvement", "Class cap is read once at startup, so a config reload is ignored", "infra/relay/src/fanout.ts", "fixed", "upheld"),
+        ISS("nitpick", "queueCap has no doc comment", "infra/relay/src/fanout.ts", "rejected", "justified"),
+      ],
+    },
+    {
+      n: 4,
+      when: "6m ago",
+      outcome: "",
+      steps: { review: "active", triage: "pending", adjudicate: "pending" },
+      issues: [],
+    },
+  ],
+  "fix-it-stuck-again": [
+    {
+      n: 3,
+      when: "40m ago",
+      outcome: "Stuck",
+      carried: {
+        kind: "fix", from: 2, by: "brent", when: "1h ago", note: RL14_CARRY_NOTE,
+        issues: [
+          ISS("critical", "Bounded queue size is global, not per subscriber class", "infra/relay/src/fanout.ts", "fixed", "incomplete", {
+            carry: true, fromRound: 2,
+            note: "Queue size now comes from SubscriberClass.queueCap.",
+            ruling: "Only the push path reads queueCap. The replay path still allocates with the global size, so a slow class can still starve the others after a reconnect.",
+          }),
+          ISS("improvement", "Drop metric has no subscriber label, so it is unattributable", "infra/relay/src/metrics.ts", "fixed", "upheld", {
+            carry: true, fromRound: 2,
+            note: "Added the subscriber class as a label (12 values), not the connection id.",
+            ruling: "Bounded label added. Fix upheld.",
+          }),
+        ],
+      },
+      steps: { review: "done", triage: "done", adjudicate: "done" },
+      ruling: "The carried queue-size fix is incomplete. It was must-fix, so the loop stops at the end of this round for you.",
+      issues: [
+        ISS("nitpick", "queueCap has no doc comment", "infra/relay/src/fanout.ts", "fixed", "upheld"),
+      ],
+    },
+  ],
 };
 
 // Agent todo lists: one list per thread on a card, index 0 = the main thread.
@@ -4132,6 +4475,8 @@ class Component extends DCLogic {
       rvLimit: {},
       limitOpen: false,
       rvStop: {},
+      rvIss: {},
+      rvFix: {},
       autoStart: {},
       autoMerge: cards.reduce((m, c) => (c.autoMerge ? ((m[c.id] = true), m) : m), {}),
       autoPlanCard: {},
@@ -4269,9 +4614,13 @@ class Component extends DCLogic {
               ? "PR #" + rs.rv.pr + " is open on " + rs.rv.forge + ". " + rs.roundLabel + " of the adversarial loop is " +
                 (rs.step
                   ? "at " + rs.step.name.toLowerCase() + "."
-                  : rs.exhausted
-                    ? "stopped at the round limit without convergence."
-                    : "settled.") +
+                  : rs.stuck
+                    ? "stuck: triage and the adjudicator still disagree, so it's holding for your call."
+                    : rs.exhausted
+                      ? "stopped at the round limit without convergence."
+                      : rs.nothingNew
+                        ? "settled: the adjudicator ruled the last round found nothing new."
+                        : "settled.") +
                 " " + rs.found + " issues raised so far, " + rs.fixed + " fixed and " + rs.rejected + " rejected."
               : "PR is up and checks are green. Waiting on review feedback.",
       ql: kind === "planning" && c.qs
@@ -4634,20 +4983,27 @@ class Component extends DCLogic {
     let rvOut = null;
     const live = this.reviewFor(c);
     if (live) {
-      const all = [].concat.apply([], live.rounds.map((r) => r.issues));
+      const all = [].concat.apply([], live.rounds.map(roundAll));
       const last = live.rounds[live.rounds.length - 1];
       const inProgress = !last.outcome;
-      const stuck = last.outcome === "No convergence";
-      const disputed = last.issues.filter((i) => i.verdict === "disputed");
+      const limitHit = last.outcome === "No convergence";
+      const stuck = last.outcome === "Stuck";
+      const nothingNew = last.outcome === "Nothing new";
+      const held = stuck || limitHit;
+      const stuckIss = roundAll(last).filter(issueStuck);
+      const lat = all.map(issueLatest);
+      const escN = lat.filter((l) => l.action === "escalated").length;
+      const upheldRej = last.issues.filter((i) => i.verdict === "justified").length;
       rvOut = {
-        badge: inProgress ? "Round " + last.n + " in progress" : last.outcome,
+        badge: inProgress ? "Round " + last.n + " in progress" : nothingNew ? "Converged" : last.outcome,
         badgeStyle: inProgress
           ? "display:inline-flex;align-items:center;height:18px;padding:0 7px;flex:none;border-radius:6px;font:500 10.5px var(--font-sans);background:var(--accent);color:var(--fg)"
-          : chip(stuck ? "warning" : "success"),
+          : chip(stuck ? "attention" : limitHit ? "warning" : "success"),
         stats: live.rounds.length + (live.rounds.length === 1 ? " round" : " rounds") + " · " +
-          all.filter((i) => i.resolution === "fixed").length + " fixed · " +
-          all.filter((i) => i.resolution === "rejected").length + " rejected · " +
-          all.filter((i) => i.resolution === "open").length + " open",
+          lat.filter((l) => l.action === "fixed").length + " fixed · " +
+          lat.filter((l) => l.action === "rejected").length + " rejected · " +
+          lat.filter((l) => l.action === "open").length + " open" +
+          (escN ? " · " + escN + " escalated" : ""),
         rulings: live.rounds.filter((r) => r.ruling).map((r) => ({ n: "R" + r.n, parts: segs(r.ruling) })),
       };
       rvOut.hasRulings = rvOut.rulings.length > 0;
@@ -4655,15 +5011,22 @@ class Component extends DCLogic {
         inProgress
           ? "The reviewer raised " + last.issues.length + " issues this round; triage is running now."
           : stuck
-            ? "The loop hit its round limit before the reviewer and implementer agreed. Nothing was auto-approved."
-            : "The reviewer and implementer agreed. The PR is clear to merge.",
+            ? "Round " + last.n + " ended with " + stuckIss.length + (stuckIss.length === 1 ? " finding" : " findings") + " that triage and the adjudicator still disagree on. The loop is holding for your call."
+            : limitHit
+              ? "The loop hit its round limit with blocking findings still turning up. Nothing was auto-approved."
+              : nothingNew
+                ? "Adjudicator ruled round " + last.n + " found nothing new: it upheld " + upheldRej + (upheldRej === 1 ? " rejection" : " rejections") + " and no code changed. The PR is clear to merge."
+                : "The reviewer and implementer agreed. The PR is clear to merge.",
       );
-      if (stuck)
+      if (held)
         attention.unshift({
           src: "Review",
           parts: segs(
-            "Review stopped after " + live.rounds.length + " rounds without agreement. Still disputed: " +
-              disputed.map((i) => i.title.charAt(0).toLowerCase() + i.title.slice(1)).join("; ") + ".",
+            stuck
+              ? "Review is stuck on round " + last.n + ". Needs your call: " +
+                  stuckIss.map((i) => i.title.charAt(0).toLowerCase() + i.title.slice(1) + (i.re && i.re.action === "escalated" ? " (escalated)" : i.carry ? " (carried fix failed)" : "")).join("; ") + "."
+              : "Review stopped after " + live.rounds.length + " rounds without converging. Round " + last.n + " still raised " +
+                  last.issues.filter((i) => i.sev !== "nitpick").length + " blocking findings.",
           ),
         });
     } else {
@@ -4703,8 +5066,13 @@ class Component extends DCLogic {
   reviewFor(c) {
     if (!c || c.status !== "review") return null;
     this._rv = this._rv || {};
-    if (this._rv[c.key]) return this._rv[c.key];
-    let rv = REVIEWS[c.key];
+    const demo = c.key === "RL-14" ? this.props.reviewDemo || "stuck" : "";
+    const cacheKey = c.key + (demo ? ":" + demo : "");
+    if (this._rv[cacheKey]) return this._rv[cacheKey];
+    const seeded = REVIEWS[c.key];
+    let rv = seeded && seeded.forge ? seeded : null;
+    // Copy the round list so a demo state never leaks into the seeded data.
+    if (rv) rv = { ...rv, rounds: rv.rounds.concat(REVIEW_DEMOS[demo] || []) };
     if (!rv) {
       const par = c.parentKey ? this.cardByKey(c.parentKey) : null;
       const files = (c.pr && c.pr.files) || ["apps/web/src/components/BoardView.tsx"];
@@ -4725,26 +5093,27 @@ class Component extends DCLogic {
             n: 1,
             when: "5h ago",
             outcome: "Changes requested",
-            steps: { review: "done", triage: "done", assess: "done", adjudicate: "skipped" },
+            steps: { review: "done", triage: "done", adjudicate: "done" },
             issues: [
-              ISS("critical", "Edge case in the new branch is unreachable from the caller", files[0], "fixed", "accepted"),
-              ISS("improvement", "Test only covers the happy path", files[Math.min(1, files.length - 1)], "fixed", "accepted"),
+              ISS("critical", "Edge case in the new branch is unreachable from the caller", files[0], "fixed", "upheld"),
+              ISS("improvement", "Test only covers the happy path", files[Math.min(1, files.length - 1)], "fixed", "upheld"),
             ],
           },
           {
             n: 2,
             when: "1h ago",
             outcome: "Converged",
-            steps: { review: "done", triage: "done", assess: "done", adjudicate: "skipped" },
+            steps: { review: "done", triage: "done", adjudicate: "done" },
             issues: [
-              ISS("improvement", "Caller now guards the branch, but the guard is untested", files[Math.min(1, files.length - 1)], "fixed", "accepted"),
-              ISS("nitpick", "Helper name no longer matches what it returns", files[0], "fixed", "accepted"),
+              ISS("nitpick", "Guard comment still describes the old branch", files[Math.min(1, files.length - 1)], "fixed", "upheld"),
+              ISS("nitpick", "Helper name no longer matches what it returns", files[0], "rejected", "justified"),
             ],
           },
         ],
       };
+      if (seeded && seeded.rounds) rv.rounds = seeded.rounds;
     }
-    this._rv[c.key] = rv;
+    this._rv[cacheKey] = rv;
     return rv;
   }
 
@@ -5240,42 +5609,61 @@ class Component extends DCLogic {
     const cur = rv.rounds[rv.rounds.length - 1];
     const stepId =
       REVIEW_STEPS.map((s) => s.id).find(
-        (id) => cur.steps[id] === "active" || cur.steps[id] === "await",
+        (id) => cur.steps[id] === "active",
       ) || null;
-    let found = 0, fixed = 0, rejected = 0, open = 0, disputed = 0;
+    // Counts follow each finding's latest pass, so an escalated finding is counted
+    // as escalated, not as the rejection it started as. Disputed and escalated
+    // only count in the latest round: once a human has picked a side on a Stuck
+    // round, those findings are settled (or carried in as must-fix).
+    let found = 0, fixed = 0, rejected = 0, open = 0, disputed = 0, escalated = 0;
     rv.rounds.forEach((r) =>
-      (r.issues || []).forEach((i) => {
+      roundAll(r).forEach((i) => {
+        const L = issueLatest(i);
         found++;
-        if (i.resolution === "fixed") fixed++;
-        else if (i.resolution === "rejected") rejected++;
+        if (L.action === "fixed") fixed++;
+        else if (L.action === "rejected") rejected++;
+        else if (L.action === "escalated") { if (r === cur) escalated++; }
         else open++;
-        if (i.verdict === "disputed") disputed++;
+        if (r === cur && issueStuck(i) && L.action !== "escalated") disputed++;
       }),
     );
-    // A round closes clean only when nothing is left open and nothing is still
-    // disputed. Hit the round limit without that and the loop stops where it is:
-    // no automatic hand-off to Ready for merge.
-    const unsettled = (cur.issues || []).filter(
-      (i) => i.resolution === "open" || i.verdict === "disputed",
-    ).length;
+    // How the loop ended, read off the last round once nothing is running:
+    // Converged (nothing blocking raised), Nothing new (adjudicator ruled the
+    // round found nothing new), Stuck (still disputed after the follow-up, or
+    // escalated), No convergence (round limit). Stuck and the round limit hold
+    // the card: no automatic hand-off to Ready for merge.
+    const outcome = cur.outcome || "";
+    const stuck = !stepId && outcome === "Stuck";
+    const limitHit = !stepId && outcome === "No convergence";
+    const nothingNew = !stepId && outcome === "Nothing new";
+    const curIss = roundAll(cur);
+    const stuckIssues = stuck ? curIss.filter(issueStuck) : [];
+    const blockingNow = (cur.issues || []).filter((i) => i.sev !== "nitpick").length;
+    const unsettled = stuck ? stuckIssues.length : limitHit ? blockingNow : 0;
     const wfRounds = this.workflowOf(c).rounds;
     const cap = wfRounds ? Math.min(rv.max, wfRounds) : rv.max;
     const limit = this.state.rvLimit[c.id] !== undefined ? this.state.rvLimit[c.id] : cap;
-    // Nothing running and the last round closed dirty: the loop is stalled and
-    // holds, whether or not the user has since raised the budget.
-    const exhausted = !stepId && unsettled > 0;
+    // Nothing running and the loop stopped without converging: it holds,
+    // whether or not the user has since raised the budget.
+    const exhausted = stuck || limitHit;
+    const step = REVIEW_STEPS.find((s) => s.id === stepId) || null;
     return {
       rv,
       cur,
       stepId,
-      step: REVIEW_STEPS.find((s) => s.id === stepId) || null,
-      awaiting: !!stepId && cur.steps[stepId] === "await",
+      step,
+      stepTitle: step ? (step.follow ? step.short + " · round " + cur.n : step.name) : "",
       settled: !stepId && !exhausted,
       exhausted,
+      stuck,
+      limitHit,
+      nothingNew,
+      stuckIssues,
+      blockingNow,
       unsettled,
       limit,
       stopAfter: !!this.state.rvStop[c.id],
-      found, fixed, rejected, open, disputed,
+      found, fixed, rejected, open, disputed, escalated,
       roundLabel: "Round " + cur.n + " of " + limit,
     };
   }
@@ -5293,38 +5681,84 @@ class Component extends DCLogic {
   }
 
   roundCounts(r) {
-    const iss = r.issues || [];
+    const fresh = r.issues || [];
+    const car = (r.carried && r.carried.issues) || [];
+    const iss = roundAll(r);
+    const lat = iss.map(issueLatest);
+    const firstDone = fresh.filter((i) => i.verdict && i.verdict !== "pending");
+    const re = iss.filter((i) => !!i.re);
+    const reRuled = re.filter((i) => i.re.action !== "escalated" && i.re.verdict && i.re.verdict !== "pending");
     return {
-      found: iss.length,
-      blocking: iss.filter((i) => i.sev === "critical").length,
-      fixed: iss.filter((i) => i.resolution === "fixed").length,
-      rejected: iss.filter((i) => i.resolution === "rejected").length,
-      open: iss.filter((i) => i.resolution === "open").length,
-      disputed: iss.filter((i) => i.verdict === "disputed").length,
-      accepted: iss.filter((i) => i.verdict === "accepted").length,
+      found: fresh.length,
+      blocking: fresh.filter((i) => i.sev !== "nitpick").length,
+      fixed: lat.filter((l) => l.action === "fixed").length,
+      rejected: lat.filter((l) => l.action === "rejected").length,
+      open: lat.filter((l) => l.action === "open").length,
+      escalated: lat.filter((l) => l.action === "escalated").length,
+      disputed: iss.filter((i) => issueStuck(i) && !(i.re && i.re.action === "escalated")).length,
+      // Carried must-fix findings.
+      cN: car.length,
+      cFixed: car.filter((i) => i.resolution === "fixed").length,
+      cUpheld: car.filter((i) => i.verdict === "upheld").length,
+      cFailed: car.filter((i) => OVERRULED.indexOf(i.verdict) >= 0).length,
+      // First pass: what the adjudicator upheld and what it overruled.
+      upheld: firstDone.filter((i) => OVERRULED.indexOf(i.verdict) < 0).length,
+      overruled: firstDone.filter((i) => OVERRULED.indexOf(i.verdict) >= 0).length,
+      justified: firstDone.filter((i) => i.verdict === "justified").length,
+      // Second pass.
+      reFixed: re.filter((i) => i.re.action === "fixed").length,
+      reArgued: re.filter((i) => i.re.action === "rejected").length,
+      reEscalated: re.filter((i) => i.re.action === "escalated").length,
+      reUpheld: reRuled.filter((i) => OVERRULED.indexOf(i.re.verdict) < 0).length,
+      reDisputed: reRuled.filter((i) => OVERRULED.indexOf(i.re.verdict) >= 0).length,
     };
   }
 
   stepNote(r, id, state) {
     const k = this.roundCounts(r);
-    if (state === "pending")
-      return id === "adjudicate" ? "Only runs if the two threads disagree." : "Not started.";
+    const and = (parts) => parts.filter(Boolean).join(", ");
+    if (state === "pending") return "Not started.";
     if (id === "review")
       return state === "active"
-        ? "A brand-new thread is reading the diff with no history of this PR."
-        : k.found + " issues recorded, " + k.blocking + " critical.";
+        ? "A brand-new thread is reading the diff and the brief, with no history from earlier rounds."
+        : k.found + (k.found === 1 ? " issue" : " issues") + " recorded, " + k.blocking + " blocking.";
     if (id === "triage")
       return state === "active"
-        ? k.fixed + " fixed, " + k.rejected + " rejected, " + k.open + " still being worked."
-        : k.fixed + " fixed, " + k.rejected + " rejected with a written rationale.";
-    if (id === "assess")
-      return state === "active"
-        ? "Reviewer is re-reading the fixes and the rejections."
-        : k.disputed
-          ? k.accepted + " responses accepted, " + k.disputed + " disputed."
-          : "All responses accepted.";
-    if (state === "skipped") return "No disagreement — skipped.";
-    if (state === "await") return "Reviewer and implementer disagree. Your ruling ends the round.";
+        ? k.fixed + " fixed, " + k.rejected + " rejected, " + k.open + " still being worked." +
+            (k.cN ? " Carried must-fix: fix only." : "")
+        : (r.issues || []).filter((i) => i.resolution === "fixed").length + " fixed, " +
+            (r.issues || []).filter((i) => i.resolution === "rejected").length + " rejected with a written rationale." +
+            (k.cN ? " " + k.cFixed + " of " + k.cN + " carried must-fix fixed." : "");
+    if (id === "adjudicate") {
+      if (state === "active") return "Ruling on each fix and rejection, and whether another round is needed.";
+      if (k.cFailed)
+        return k.cFailed + " carried " + (k.cFailed === 1 ? "fix" : "fixes") + " not good enough. Must-fix, so the loop stops at the end of this round for you." +
+          (k.overruled ? " " + k.overruled + " other overruled; re-triage takes those." : "");
+      if (k.cN && !k.overruled && r.outcome !== "Converged" && r.outcome !== "Nothing new")
+        return k.cUpheld + " carried " + (k.cUpheld === 1 ? "fix" : "fixes") + " upheld; everything else upheld. Another round is needed.";
+      if (k.overruled)
+        return k.upheld + " upheld, " + k.overruled + " overruled. Re-triage takes the overruled " + (k.overruled === 1 ? "finding" : "findings") + " in this round.";
+      if (r.outcome === "Nothing new")
+        return "All " + k.justified + " rejections justified and no code changed. Ruled the round found nothing new; no further round needed.";
+      if (r.outcome === "Converged") return "All responses upheld. No further round needed.";
+      return "All responses upheld. Another round is needed.";
+    }
+    if (id === "retriage") {
+      const n = k.reFixed + k.reArgued + k.reEscalated;
+      if (state === "active") return "Answering " + k.overruled + " overruled " + (k.overruled === 1 ? "finding" : "findings") + ": fix it, argue again, or escalate.";
+      return and([
+        k.reFixed && k.reFixed + " fixed",
+        k.reArgued && k.reArgued + " argued again",
+        k.reEscalated && k.reEscalated + " escalated to you",
+      ]) + " (" + n + " overruled).";
+    }
+    if (id === "readjudicate") {
+      if (state === "active") return "Final ruling on " + (k.reFixed + k.reArgued) + " re-triaged " + (k.reFixed + k.reArgued === 1 ? "finding" : "findings") + " before a human is called.";
+      return and([
+        k.reUpheld && k.reUpheld + " upheld",
+        k.reDisputed && k.reDisputed + " still disputed",
+      ]) + "." + (k.reEscalated ? " Escalated findings skip this ruling." : "");
+    }
     return r.ruling || "Ruling recorded.";
   }
 
@@ -5341,7 +5775,7 @@ class Component extends DCLogic {
           who: "you",
           text:
             "Review the full diff of PR #" + rv.pr +
-            " (" + rv.branch + ") as an adversarial reviewer. You have no history with this change. Record every issue you can defend.",
+            " (" + rv.branch + ") against the brief as an adversarial reviewer. You have no history with this change. Record every finding you can defend as critical, improvement or nitpick.",
         },
       ];
       out.push({
@@ -5358,14 +5792,22 @@ class Component extends DCLogic {
       const opn = iss.filter((i) => i.resolution === "open");
       const out = [
         { who: "event", text: "Triage · round " + r.n },
-        { who: "you", text: "Take each issue from the round " + r.n + " reviewer. Fix it or reject it with a rationale. No silent skips." },
+        {
+          who: "you",
+          text:
+            (r.carried
+              ? "Must-fix, carried " + (r.carried.kind === "ci" ? "back from CI" : "from round " + r.carried.from) + ". Fix these; rejecting or escalating isn't an option:\n" +
+                listOf(r.carried.issues) + (r.carried.note ? "\n\nGuidance: " + r.carried.note : "") + "\n\nThen: "
+              : "") +
+            "Take each issue from the round " + r.n + " reviewer. Fix it or reject it with a rationale. No silent skips.",
+        },
         {
           who: "claude",
           text:
             (fixed.length ? "Fixed:\n" + listOf(fixed) + "\n\n" : "") +
             (rej.length
-              ? "Rejected:\n" + listOf(rej) +
-                "\n\nRationale: these are stylistic or already covered by the generated contract — changing them widens the diff without changing behaviour."
+              ? "Rejected:\n" +
+                rej.map((i, n) => line(i, n + 1) + (i.note ? "\n    Why: " + i.note : "")).join("\n")
               : ""),
         },
       ];
@@ -5373,33 +5815,51 @@ class Component extends DCLogic {
         out.push({ who: "claude", text: "Still working:\n" + listOf(opn) });
       return out;
     }
-    if (stepId === "assess") {
-      const disp = iss.filter((i) => i.verdict === "disputed");
-      const out = [
-        { who: "event", text: "Reviewer re-assessment · round " + r.n },
-        { who: "you", text: "Here are the fixes and the rejections from triage. Assess whether each response is acceptable." },
+    if (stepId === "retriage") {
+      const re = iss.filter((i) => !!i.re);
+      return [
+        { who: "event", text: "Re-triage · round " + r.n },
+        { who: "you", text: "The adjudicator overruled these. For each one: fix it, reject it again with a new argument, or escalate it if you flatly disagree and a human should decide." },
         {
           who: "claude",
-          text: disp.length
-            ? "Accepted " + k.accepted + " of " + iss.length + ". Not accepting:\n\n" + listOf(disp) +
-              "\n\nThe rationale does not address the failure mode I described — the duplication is what lets the two lists drift."
-            : "Accepted all " + iss.length + " responses. Nothing outstanding from my side this round.",
+          text: re
+            .map((i, n) => n + 1 + ". [" + RE_ACTION[i.re.action] + "] " + i.title + "\n    " + i.file + (i.re.note ? "\n    " + i.re.note : ""))
+            .join("\n"),
+        },
+      ];
+    }
+    if (stepId === "readjudicate") {
+      const re = iss.filter((i) => !!i.re && i.re.action !== "escalated");
+      const esc = iss.filter((i) => !!i.re && i.re.action === "escalated");
+      const out = [
+        { who: "event", text: "Re-adjudicate · round " + r.n },
+        { who: "you", text: "Final ruling on what re-triage fixed or argued again. Anything still disputed goes to a human." },
+        {
+          who: "claude",
+          text:
+            re
+              .map((i, n) => n + 1 + ". [" + VERDICT_LABEL[i.re.verdict || "pending"] + "] " + i.title + (i.re.ruling ? "\n    " + i.re.ruling : ""))
+              .join("\n") +
+            (k.reDisputed || esc.length
+              ? "\n\nThe loop stops at the end of this round and holds for a human" + (esc.length ? "; " + esc.length + " escalated " + (esc.length === 1 ? "finding was" : "findings were") + " not re-ruled." : ".")
+              : "\n\nNothing left in dispute."),
         },
       ];
       return out;
     }
-    const disp = iss.filter((i) => i.verdict === "disputed");
-    const out = [{ who: "event", text: "Adjudication · round " + r.n }];
-    if (disp.length)
+    const ruled = roundAll(r).filter((i) => i.verdict && i.verdict !== "pending");
+    const out = [
+      { who: "event", text: "Adjudication · round " + r.n },
+      { who: "you", text: "Rule on each fix and rejection from triage: fix upheld, incomplete or absent; rejection justified or unjustified. Then say whether another round is needed." },
+    ];
+    if (ruled.length)
       out.push({
         who: "claude",
-        text:
-          "Disagreement on:\n" + listOf(disp) +
-          "\n\nReviewer: this is a real drift risk and cheap to remove.\nImplementer: the duplication is generated, so the two cannot drift.",
+        text: ruled
+          .map((i, n) => n + 1 + ". [" + VERDICT_LABEL[i.verdict] + (i.carry ? " · carried must-fix" : "") + "] " + i.title + (i.ruling ? "\n    " + i.ruling : ""))
+          .join("\n"),
       });
-    if (r.steps.adjudicate === "await")
-      out.push({ who: "claude", q: true, text: "Which stands — the reviewer's issue, or the rejection? I'll apply the ruling and close the round either way." });
-    else if (r.ruling) out.push({ who: "claude", text: r.ruling });
+    if (r.steps.adjudicate === "done") out.push({ who: "claude", text: r.ruling || this.stepNote(r, "adjudicate", "done") });
     return out;
   }
 
@@ -5413,20 +5873,63 @@ class Component extends DCLogic {
     });
   }
 
+  // One finding row. The latest state leads (re-triage's action and the
+  // re-ruling when there was a second pass); the full history stays folded
+  // behind a "2 passes" toggle.
   issueVm(i, r, card, sevStyle, tagStyle) {
     const rv = this.reviewFor(card);
+    const L = issueLatest(i);
+    const stuck = issueStuck(i);
+    const key = card.id + ":" + r.n + ":" + i.title;
+    const passesOpen = !!(this.state.rvIss || {})[key];
+    const actTone = (a) => (a === "fixed" ? "good" : a === "escalated" ? "attn" : a === "open" ? "info" : "plain");
+    const verdictTone = (v, final) => (OVERRULED.indexOf(v) < 0 ? "plain" : final ? "attn" : "bad");
+    const verdictWord = (v) => (v === "upheld" || v === "justified" ? v : VERDICT_LABEL[v].split(" ")[1]);
+    const showV = !!L.verdict && L.verdict !== "pending";
+    const pass = (label, who, act, v, arg, ruling, final) => ({
+      label,
+      head: who + " " + act,
+      hasVerdict: !!v,
+      verdict: v ? VERDICT_LABEL[v] : "",
+      verdictStyle:
+        "font:500 11px var(--font-sans);" +
+        (v && OVERRULED.indexOf(v) >= 0
+          ? final ? "color:var(--attention-fg)" : "color:var(--destructive-fg)"
+          : "color:var(--muted-fg)"),
+      arg: arg || "",
+      hasArg: !!arg,
+      ruling: ruling || "",
+      hasRuling: !!ruling,
+    });
+    const passes = i.re
+      ? [
+          pass("1", "Triage", i.resolution, i.verdict, i.note, i.ruling, false),
+          i.re.action === "escalated"
+            ? pass("2", "Re-triage", "escalated to you", null, i.re.note, "", true)
+            : pass("2", "Re-triage", i.re.action === "rejected" ? "argued again" : "fixed", i.re.verdict, i.re.note, i.re.ruling, true),
+        ]
+      : [];
     return {
       sev: i.sev,
       sevStyle: sevStyle(i.sev),
       title: i.title,
       file: i.file,
-      res: i.resolution === "open" ? "in progress" : i.resolution,
-      resStyle: tagStyle(
-        i.resolution === "fixed" ? "good" : i.resolution === "rejected" ? "plain" : "info",
-      ),
-      hasVerdict: i.verdict === "disputed" || i.verdict === "accepted",
-      verdict: i.verdict === "disputed" ? "disputed" : "accepted",
-      verdictStyle: tagStyle(i.verdict === "disputed" ? "bad" : "plain"),
+      res: L.action === "open" ? "in progress" : L.second ? RE_ACTION[L.action] : L.action,
+      resStyle: tagStyle(actTone(L.action)),
+      hasVerdict: showV,
+      verdict: showV ? (L.second && stuck ? "still " + verdictWord(L.verdict) : verdictWord(L.verdict)) : "",
+      verdictTip: showV ? (L.second ? "Re-adjudication: " : "Adjudication: ") + VERDICT_LABEL[L.verdict] : "",
+      verdictStyle: tagStyle(showV ? verdictTone(L.verdict, L.second || !!i.carry) : "plain"),
+      hasPasses: !!i.re,
+      passesOpen,
+      passesLabel: "2 passes",
+      passesTip: passesOpen ? "Hide the history" : "Show triage → ruling → re-triage → re-ruling",
+      passesCaret: passesOpen ? "rotate(180deg)" : "none",
+      togglePasses: (e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        this.setState((s) => ({ rvIss: { ...(s.rvIss || {}), [key]: !(s.rvIss || {})[key] } }));
+      },
+      passes,
       linkTip: "Open on " + rv.forge + " — " + i.file + " (PR #" + rv.pr + ", round " + r.n + ")",
       openOnForge: (e) => {
         if (e && e.preventDefault) e.preventDefault();
@@ -5528,7 +6031,7 @@ class Component extends DCLogic {
     rs.cur.issues = [];
     rs.cur.ruling = "";
     rs.cur.outcome = "";
-    rs.cur.steps = { review: "active", triage: "pending", assess: "pending", adjudicate: "pending" };
+    rs.cur.steps = { review: "active", triage: "pending", adjudicate: "pending" };
     this.forceUpdate();
   }
 
@@ -5540,7 +6043,29 @@ class Component extends DCLogic {
   }
 
   // Kick off more rounds past the limit, on whatever model/effort is set now.
-  extendReview(card, extra) {
+  // "Fix it" on a Stuck round: side with the adjudicator. The stuck findings are
+  // carried into the next round as must-fix, with the human's optional guidance.
+  // That round stays inside the budget unless the stuck round was the last one.
+  fixAndRun(card, note) {
+    const rs = this.reviewState(card);
+    if (!rs || !rs.stuck) return;
+    const carried = {
+      kind: "fix",
+      from: rs.cur.n,
+      by: "brent",
+      when: "now",
+      note: (note || "").trim(),
+      issues: rs.stuckIssues.map((i) => ISS(i.sev, i.title, i.file, "open", "pending", { carry: true, fromRound: rs.cur.n })),
+    };
+    this.extendReview(card, rs.cur.n >= rs.limit ? 1 : 0, carried);
+    this.setState((s) => {
+      const rvFix = { ...s.rvFix };
+      delete rvFix[card.id];
+      return { rvFix };
+    });
+  }
+
+  extendReview(card, extra, carried) {
     const rv = this.reviewFor(card);
     if (!rv) return;
     const rs = this.reviewState(card);
@@ -5557,7 +6082,8 @@ class Component extends DCLogic {
       outcome: "",
       model: this.resolvedModel(rv),
       effort: this.resolvedEffort(rv),
-      steps: { review: "active", triage: "pending", assess: "pending", adjudicate: "pending" },
+      steps: { review: "active", triage: "pending", adjudicate: "pending" },
+      ...(carried ? { carried } : {}),
       issues: [],
     });
     this.setState((s) => {
@@ -7816,21 +8342,21 @@ class Component extends DCLogic {
             prLabel: "#" + rs.rv.pr,
             roundLabel: rs.roundLabel,
             stepLabel: rs.step
-              ? rs.awaiting
-                ? "Adjudicating"
-                : { review: "Reviewing", triage: "Triaging", assess: "Assessing", adjudicate: "Adjudicating" }[rs.step.id]
-              : rs.exhausted
-                ? "No convergence"
-                : "Settled",
-            spinning: !!rs.step && !rs.awaiting,
+              ? { review: "Reviewing", triage: "Triaging", adjudicate: "Adjudicating", retriage: "Re-triaging", readjudicate: "Re-adjudicating" }[rs.step.id]
+              : rs.stuck
+                ? "Stuck"
+                : rs.exhausted
+                  ? "No convergence"
+                  : "Settled",
+            spinning: !!rs.step,
             tally: this.triple(rs.cur.issues || []).label,
             tallyTip: "This round: " + this.triple(rs.cur.issues || []).tip,
             stepStyle:
               "display:inline-flex;align-items:center;gap:5px;height:16px;padding:0 6px;flex:none;border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;" +
-              (rs.exhausted
+              (rs.stuck
+                ? "background:color-mix(in srgb,var(--attention) 16%,transparent);color:var(--attention-fg)"
+                : rs.exhausted
                 ? "background:color-mix(in srgb,var(--warning) 18%,transparent);color:var(--warning-fg)"
-                : rs.awaiting
-                  ? "background:color-mix(in srgb,var(--attention) 16%,transparent);color:var(--attention-fg)"
                   : rs.settled
                     ? "background:color-mix(in srgb,var(--success) 16%,transparent);color:var(--success-fg)"
                     : "background:color-mix(in srgb,var(--fg) 8%,transparent);color:var(--fg)"),
@@ -7841,12 +8367,12 @@ class Component extends DCLogic {
               return {
                 style:
                   "flex:1;height:5px;border-radius:2px;background:" +
-                  (rs.exhausted
+                  (rs.limitHit
                     ? "color-mix(in srgb,var(--warning) 55%,transparent)"
                     : past
                       ? "color-mix(in srgb,var(--fg) 30%,transparent)"
                       : now
-                        ? rs.awaiting
+                        ? rs.stuck
                           ? "var(--attention)"
                           : "color-mix(in srgb,var(--fg) 60%,transparent)"
                         : "transparent") +
@@ -7856,7 +8382,8 @@ class Component extends DCLogic {
             counts:
               rs.fixed + " fixed · " + rs.rejected + " rejected" +
               (rs.open ? " · " + rs.open + " open" : "") +
-              (rs.disputed ? " · " + rs.disputed + " disputed" : ""),
+              (rs.disputed ? " · " + rs.disputed + " disputed" : "") +
+              (rs.escalated ? " · " + rs.escalated + " escalated" : ""),
           }
         : null;
       const armed = blocked && (this.autoBuildsFor(c) || !!this.state.autoStart[c.id]);
@@ -9150,7 +9677,9 @@ class Component extends DCLogic {
             ? "color-mix(in srgb,var(--destructive) 10%,transparent);color:var(--destructive-fg)"
             : tone === "info"
               ? "color-mix(in srgb,var(--info) 12%,transparent);color:var(--info-fg)"
-              : "var(--muted);color:var(--muted-fg)");
+              : tone === "attn"
+                ? "color-mix(in srgb,var(--attention) 12%,transparent);color:var(--attention-fg)"
+                : "var(--muted);color:var(--muted-fg)");
       // Which future round's settings drawer is open (clicking a greyed pill).
       const plannedN =
         st.rvPlan && st.rvPlan > reviewData.cur.n && st.rvPlan <= reviewData.limit
@@ -9161,19 +9690,22 @@ class Component extends DCLogic {
         (on ? "color:var(--fg);cursor:pointer" : "color:color-mix(in srgb,var(--muted-fg) 45%,transparent);cursor:not-allowed");
       reviewVm = {
         roundLabel: reviewData.roundLabel,
-        spinning: !!reviewData.step && !reviewData.awaiting,
-        statusLine: reviewData.exhausted
-          ? "Round limit reached · no convergence"
-          : reviewData.settled
-            ? "Loop settled — no issues outstanding."
-            : reviewData.step.name +
-              (reviewData.awaiting ? " · waiting on your ruling" : " · running now"),
+        spinning: !!reviewData.step,
+        statusLine: reviewData.stuck
+          ? "Stuck · waiting on your call"
+          : reviewData.exhausted
+            ? "Round limit reached · no convergence"
+            : reviewData.nothingNew
+              ? "Converged · adjudicator ruled nothing new"
+              : reviewData.settled
+                ? "Loop settled — no issues outstanding."
+                : reviewData.stepTitle + " · running now",
         statusStyle:
           "display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;flex:none;border-radius:7px;font:500 11.5px var(--font-sans);" +
-          (reviewData.exhausted
+          (reviewData.stuck
+            ? "background:color-mix(in srgb,var(--attention) 14%,transparent);color:var(--attention-fg)"
+            : reviewData.exhausted
             ? "background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning-fg)"
-            : reviewData.awaiting
-              ? "background:color-mix(in srgb,var(--attention) 14%,transparent);color:var(--attention-fg)"
               : reviewData.settled
                 ? "background:color-mix(in srgb,var(--success) 14%,transparent);color:var(--success-fg)"
                 : "background:var(--accent);color:var(--fg)"),
@@ -9198,7 +9730,9 @@ class Component extends DCLogic {
           reviewData.fixed + " fixed",
           reviewData.rejected + " rejected",
           reviewData.open + " open",
-        ].join("  ·  "),
+        ]
+          .concat(reviewData.escalated ? [reviewData.escalated + " escalated"] : [])
+          .join("  ·  "),
         segs: Array.apply(null, { length: reviewData.limit }).map((x, i) => {
           const n = i + 1;
           const past = n < reviewData.cur.n;
@@ -9221,10 +9755,10 @@ class Component extends DCLogic {
               (past
                 ? "background:color-mix(in srgb,var(--fg) 10%,transparent);color:var(--muted-fg)"
                 : now
-                  ? (reviewData.exhausted
+                  ? (reviewData.stuck
+                      ? "background:color-mix(in srgb,var(--attention) 18%,transparent);color:var(--attention-fg)"
+                      : reviewData.exhausted
                       ? "background:color-mix(in srgb,var(--warning) 22%,transparent);color:var(--warning-fg)"
-                      : reviewData.awaiting
-                        ? "background:color-mix(in srgb,var(--attention) 16%,transparent);color:var(--attention-fg)"
                         : "background:var(--fg);color:var(--bg)")
                   : "background:transparent;box-shadow:inset 0 0 0 1px var(--border);color:color-mix(in srgb,var(--muted-fg) 60%,transparent)") +
               (n === openN || n === plannedN
@@ -9257,69 +9791,87 @@ class Component extends DCLogic {
                 ? "Re-run past the round limit on " + r.model + " at " + (r.effort || "").toLowerCase() + " effort"
                 : "",
               toggle: () => showRound(open ? null : r.n),
+              // Must-fix findings carried into this round, by "Fix it" or by CI.
+              carried:
+                r.carried && r.carried.issues.length
+                  ? {
+                      title:
+                        r.carried.kind === "ci"
+                          ? "Sent back from CI · " + r.carried.step + " still failing"
+                          : "Carried from round " + r.carried.from + " by " + r.carried.by,
+                      when: r.carried.when,
+                      icon: r.carried.kind === "ci" ? "CI" : "R" + r.carried.from,
+                      sub: "Must-fix · triage can only fix " + (r.carried.issues.length === 1 ? "it" : "these") + "; the adjudicator checks the fix",
+                      hasNote: !!r.carried.note,
+                      note: r.carried.note,
+                      noteBy: r.carried.kind === "ci" ? "CI" : r.carried.by,
+                      rows: r.carried.issues.map((i) => this.issueVm(i, r, active, sevStyle, tagStyle)),
+                    }
+                  : null,
               badge: r.outcome || (isCur ? "In progress" : "Settled"),
               badgeStyle: tagStyle(
-                r.outcome === "Changes requested" ? "bad" : isCur ? (reviewData.awaiting ? "info" : "plain") : "good",
+                r.outcome === "Changes requested"
+                  ? "bad"
+                  : r.outcome === "Stuck"
+                    ? "attn"
+                    : r.outcome === "Converged" || r.outcome === "Nothing new"
+                      ? "good"
+                      : isCur ? "plain" : "good",
               ),
               tally: this.triple(r.issues || []).label,
               tallyTip: this.triple(r.issues || []).tip,
               tallyStyle:
                 "font:500 10.5px var(--font-mono);letter-spacing:.02em;flex:none;padding:0 6px;height:18px;display:inline-flex;align-items:center;border-radius:5px;background:color-mix(in srgb,var(--fg) 6%,transparent);color:var(--muted-fg);cursor:default",
               summary:
-                k.fixed + " fixed · " + k.rejected + " rejected" +
-                (k.open ? " · " + k.open + " open" : "") +
-                (k.disputed ? " · " + k.disputed + " disputed" : ""),
+                r.outcome === "Nothing new"
+                  ? k.justified + (k.justified === 1 ? " rejection" : " rejections") + " upheld · no code changed"
+                  : k.fixed + " fixed · " + k.rejected + " rejected" +
+                    (k.open ? " · " + k.open + " open" : "") +
+                    (k.disputed ? " · " + k.disputed + " disputed" : "") +
+                    (k.escalated ? " · " + k.escalated + " escalated" : ""),
               style:
                 "flex:none;border:1px solid " +
-                (isCur && reviewData.awaiting
+                (isCur && reviewData.stuck
                   ? "color-mix(in srgb,var(--attention) 45%,transparent)"
                   : "var(--border)") +
                 ";border-radius:12px;background:var(--card);box-shadow:var(--shadow-xs);overflow:hidden",
               headStyle:
                 "display:flex;align-items:center;gap:9px;padding:10px 12px;cursor:pointer;background:" +
                 (isCur ? "color-mix(in srgb,var(--fg) 2.5%,transparent)" : "transparent"),
-              steps: REVIEW_STEPS.map((s, si) => {
+              // The three base phases always show. Re-triage and re-adjudicate show
+              // only in rounds that had them, inset under Adjudication as a follow-up
+              // inside the same round.
+              steps: REVIEW_STEPS.filter((s) => !s.follow || !!r.steps[s.id]).map((s, si, arr) => {
                 const state = r.steps[s.id] || "pending";
-                const live = state === "active" || state === "await";
+                const live = state === "active";
                 const iss = r.issues || [];
-                const set =
-                  s.id === "review"
-                    ? iss
-                    : s.id === "triage"
-                      ? iss.filter((i) => i.resolution !== "open")
-                      : s.id === "assess"
-                        ? iss.filter((i) => i.verdict === "disputed")
-                        : iss.filter((i) => i.verdict === "disputed");
-                const word =
-                  s.id === "review" ? "found" : s.id === "triage" ? "handled" : "disputed";
-                const tri = this.triple(set);
+                const firstFollow = s.follow && !arr[si - 1].follow;
+                const fk = firstFollow ? this.roundCounts(r) : null;
                 return {
                   name: s.name,
-                  hasTally: false,
-                  tally: tri.label,
-                  tallyTip: tri.tip + " " + word,
-                  tallyStyle:
-                    "font:500 10.5px var(--font-mono);letter-spacing:.02em;flex:none;padding:0 6px;height:18px;display:inline-flex;align-items:center;border-radius:5px;background:" +
-                    (tri.total ? "color-mix(in srgb,var(--fg) 6%,transparent)" : "transparent") +
-                    ";color:var(--muted-fg);cursor:default",
                   note: this.stepNote(r, s.id, state),
-                  index: si + 1,
+                  index: s.n,
                   live: state === "active",
-                  awaits: state === "await",
-                  plain: state !== "await",
                   markOk: state === "done",
                   markFail: false,
                   markSkip: false,
+                  isFollow: !!s.follow,
+                  followHead: firstFollow,
+                  followLabel: firstFollow
+                    ? "Follow-up on " + fk.overruled + " overruled " + (fk.overruled === 1 ? "finding" : "findings")
+                    : "",
+                  followSub: "Same round · doesn't use a round",
+                  followHeadStyle:
+                    "display:flex;align-items:center;gap:8px;margin-left:21px;padding:7px 12px 3px 15px;border-left:2px solid var(--border)",
                   nameStyle: "font:500 12.5px var(--font-sans);color:var(--fg);width:fit-content" + (state === "active" ? this.shineStyle("var(--fg)", "color-mix(in srgb,var(--fg) 25%,var(--card))") : ""),
                   dotStyle:
-                    "width:20px;height:20px;flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;font:600 10px var(--font-sans);" +
+                    "flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;" +
+                    (s.follow ? "width:22px;height:18px;font:600 9.5px var(--font-sans);" : "width:20px;height:20px;font:600 10px var(--font-sans);") +
                     (state === "done"
                       ? "background:color-mix(in srgb,var(--fg) 8%,transparent);color:var(--fg)"
                       : state === "active"
                         ? "background:var(--info);color:#fff"
-                        : state === "await"
-                          ? "background:var(--attention);color:#fff"
-                          : "box-shadow:inset 0 0 0 1px var(--border);color:color-mix(in srgb,var(--muted-fg) 70%,transparent)"),
+                        : "box-shadow:inset 0 0 0 1px var(--border);color:color-mix(in srgb,var(--muted-fg) 70%,transparent)"),
                   hasThread: state === "done" || live,
                   btnLabel: live ? "Live thread" : "Thread",
                   btnStyle:
@@ -9330,43 +9882,110 @@ class Component extends DCLogic {
                     ";color:" +
                     (live ? "var(--info-fg)" : "var(--fg)"),
                   openThread: () => this.openReviewThread(active, r, s.id),
-                  spinStyle:
-                    "width:20px;height:20px;flex:none;border-radius:99px;border:2px solid color-mix(in srgb,var(--fg) 15%,transparent);border-top-color:var(--fg);animation:t3spin .8s linear infinite",
                   hasIssues: s.id === "review" && iss.length > 0,
                   issues:
                     s.id === "review"
                       ? iss.map((i) => this.issueVm(i, r, active, sevStyle, tagStyle))
                       : [],
-                  style:
-                    "display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-top:1px solid var(--border)",
+                  style: s.follow
+                    ? "display:flex;align-items:flex-start;gap:10px;margin-left:21px;padding:7px 12px 9px 13px;border-left:2px solid var(--border)"
+                    : "display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-top:1px solid var(--border)",
                 };
               }),
-              hasIssues: false,
-              issues: (r.issues || []).map((i) => ({
-                sev: i.sev,
-                sevStyle: sevStyle(i.sev),
-                title: i.title,
-                file: i.file,
-                res: i.resolution === "open" ? "in progress" : i.resolution,
-                resStyle: tagStyle(
-                  i.resolution === "fixed" ? "good" : i.resolution === "rejected" ? "plain" : "info",
-                ),
-                hasVerdict: i.verdict === "disputed" || i.verdict === "accepted",
-                verdict: i.verdict === "disputed" ? "disputed" : "accepted",
-                verdictStyle: tagStyle(i.verdict === "disputed" ? "bad" : "plain"),
-              })),
             };
           }),
         exhausted: reviewData.exhausted,
+        stuck: reviewData.stuck,
         showCta: !reviewData.exhausted,
-        holdNote:
-          "All " + rv.max + " rounds ran and round " + reviewData.cur.n +
-          " still closed with " + reviewData.unsettled + " unsettled " +
-          (reviewData.unsettled === 1 ? "issue" : "issues") +
-          ". The loop stops here and will not hand the task to Ready for merge on its own.",
-        outstandingLine:
-          reviewData.unsettled + " unsettled this round · " +
-          reviewData.disputed + " disputed across the loop",
+        holdTitle: reviewData.stuck
+          ? (reviewData.stuckIssues.some((i) => i.carry) ? "Stuck again on round " : "Stuck on round ") + reviewData.cur.n + " · your call"
+          : "Round limit reached without convergence",
+        holdBoxStyle:
+          "flex:none;display:flex;flex-direction:column;gap:11px;padding:13px 14px;border-radius:12px;" +
+          (reviewData.stuck
+            ? "border:1px solid color-mix(in srgb,var(--attention) 45%,transparent);background:color-mix(in srgb,var(--attention) 6%,var(--card))"
+            : "border:1px solid color-mix(in srgb,var(--warning) 45%,transparent);background:color-mix(in srgb,var(--warning) 7%,var(--card))"),
+        holdIconStyle:
+          "display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:none;border-radius:7px;font:600 12px var(--font-mono);" +
+          (reviewData.stuck
+            ? "background:color-mix(in srgb,var(--attention) 18%,transparent);color:var(--attention-fg)"
+            : "background:color-mix(in srgb,var(--warning) 18%,transparent);color:var(--warning-fg)"),
+        holdNote: reviewData.stuck
+          ? (() => {
+              const n = reviewData.stuckIssues.length;
+              const nc = reviewData.stuckIssues.filter((i) => i.carry).length;
+              const others = roundAll(reviewData.cur).length - n;
+              return (
+                (nc
+                  ? "The adjudicator turned down the fix for " + (nc === 1 ? "a finding" : nc + " findings") + " carried in as must-fix" +
+                    (n > nc ? ", and re-triage didn't settle " + (n - nc === 1 ? "one more" : n - nc + " more") : "")
+                  : "Re-triage and re-adjudication didn't settle " + (n === 1 ? "this finding" : "these " + n + " findings")) +
+                ", so the loop stopped at the end of round " + reviewData.cur.n + " and won't hand the task to Ready for merge on its own." +
+                (others > 0 ? " The round's other " + others + (others === 1 ? " finding was" : " findings were") + " settled." : "")
+              );
+            })()
+          : "All " + rv.max + " rounds ran and round " + reviewData.cur.n +
+            " still raised " + reviewData.unsettled + " blocking " +
+            (reviewData.unsettled === 1 ? "finding" : "findings") +
+            ", so the adjudicator wanted another round. The loop stops here and will not hand the task to Ready for merge on its own.",
+        outstandingLine: reviewData.stuck
+          ? [
+              [reviewData.stuckIssues.filter((i) => i.carry).length, " carried fix turned down"],
+              [reviewData.stuckIssues.filter((i) => i.re && i.re.action !== "escalated").length, " still disputed"],
+              [reviewData.stuckIssues.filter((i) => i.re && i.re.action === "escalated").length, " escalated"],
+            ]
+              .filter((x) => x[0] > 0)
+              .map((x) => x[0] + x[1])
+              .concat(["round " + reviewData.cur.n + " of " + reviewData.limit + " used"])
+              .join(" · ")
+          : reviewData.unsettled + " blocking this round · " + reviewData.cur.n + " of " + reviewData.limit + " rounds used",
+        // Each stuck finding, with triage's last word and the adjudicator's ruling
+        // side by side so a human can pick a side.
+        stuckRows: reviewData.stuckIssues.map((i) => {
+          const car = !!i.carry;
+          const esc = !car && i.re.action === "escalated";
+          const cn = car && reviewData.cur.carried ? reviewData.cur.carried.note : "";
+          return {
+            sev: i.sev,
+            sevStyle: sevStyle(i.sev),
+            title: i.title,
+            file: i.file,
+            triageLabel: car ? "Triage's fix" : esc ? "Triage escalated" : "Triage argued again",
+            triageText: (car ? i.note : i.re.note || i.note) || "",
+            ruleLabel: car
+              ? "Adjudicator ruled · " + VERDICT_LABEL[i.verdict]
+              : esc
+                ? "Adjudicator ruled · " + VERDICT_LABEL[i.verdict]
+                : "Adjudicator ruled · still " + VERDICT_LABEL[i.re.verdict].split(" ")[1],
+            ruleText: (car || esc ? i.ruling : i.re.ruling) || "",
+            escTag: esc,
+            carTag: car,
+            carLabel: car ? "carried from round " + i.fromRound : "",
+            hasCarNote: !!cn,
+            carNote: cn ? "Your guidance: " + cn : "",
+          };
+        }),
+        // Stuck: "Fix it" (side with the adjudicator) opens an inline note, then
+        // carries every stuck finding into the next round as must-fix.
+        showRunMore: !reviewData.stuck,
+        fixOpen: reviewData.stuck && !!st.rvFix[active.id],
+        fixLabel: "Fix it and run another round",
+        fixBtnStyle:
+          "display:inline-flex;align-items:center;justify-content:center;gap:7px;height:30px;padding:0 12px;flex:none;border-radius:8px;font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);border:1px solid var(--primary);" +
+          (st.rvFix[active.id] ? "background:color-mix(in srgb,var(--primary) 12%,var(--popover));color:var(--fg)" : "background:var(--primary);color:var(--primary-fg)"),
+        toggleFix: () =>
+          this.setState((s) => ({ rvFix: { ...s.rvFix, [active.id]: s.rvFix[active.id] ? null : { note: "" } } })),
+        fixNote: (st.rvFix[active.id] && st.rvFix[active.id].note) || "",
+        setFixNote: (e) => {
+          const v = e.target.value;
+          this.setState((s) => ({ rvFix: { ...s.rvFix, [active.id]: { note: v } } }));
+        },
+        fixFormTitle:
+          "Carry " + (reviewData.stuckIssues.length === 1 ? "this finding" : "all " + reviewData.stuckIssues.length + " findings") +
+          " into round " + (reviewData.cur.n + 1) + " as must-fix",
+        confirmFixLabel: "Fix it · run round " + (reviewData.cur.n + 1),
+        confirmFix: () => this.fixAndRun(active, (st.rvFix[active.id] && st.rvFix[active.id].note) || ""),
+        fixLine: "Fix it carries these findings into the next round as must-fix. Everything else in that round is reviewed fresh.",
         runMoreLabel: "Run round " + (reviewData.cur.n + 1),
         runMore: () => this.extendReview(active, 1),
         // A settled loop can still be pushed one round further by hand.
@@ -9401,30 +10020,30 @@ class Component extends DCLogic {
         effortOpts: [{ value: "inherit", label: "Same effort as round " + reviewData.cur.n }].concat(
           ["Low", "Medium", "High"].map((e) => ({ value: e, label: e + " effort" })),
         ),
-        ctaNote: reviewData.settled
+        ctaNote: reviewData.nothingNew
+          ? (() => {
+              const j = (reviewData.cur.issues || []).filter((i) => i.verdict === "justified").length;
+              return "Adjudicator ruled round " + reviewData.cur.n + " found nothing new. It upheld " + j +
+                (j === 1 ? " rejection" : " rejections") + ", no code changed, and no further round is needed.";
+            })()
+          : reviewData.settled
           ? "Every issue is closed and the reviewer signed off."
-          : reviewData.awaiting
-            ? "The loop is paused until the disagreement is settled."
-            : "Round " + reviewData.cur.n + " of " + reviewData.limit + " · the loop stops early once a round closes clean.",
+          : "Round " + reviewData.cur.n + " of " + reviewData.limit + " · the loop stops early once a round closes clean.",
         ctaLabel: reviewData.settled
           ? "Approve review"
-          : reviewData.awaiting || !reviewData.step
-            ? "Adjudicate now"
-            : "Open " + reviewData.step.short.toLowerCase() + " thread",
+          : "Open " + (reviewData.step ? reviewData.step.short.toLowerCase() : "review") + " thread",
         ctaStyle:
           "display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 12px;flex:none;border-radius:8px;font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);" +
           (reviewData.settled
             ? "border:1px solid var(--primary);background:var(--primary);color:var(--primary-fg)"
-            : reviewData.awaiting
-              ? "border:1px solid color-mix(in srgb,var(--attention) 50%,transparent);background:color-mix(in srgb,var(--attention) 12%,var(--popover));color:var(--attention-fg)"
-              : "border:1px solid var(--input);background:var(--popover);color:var(--fg)"),
+            : "border:1px solid var(--input);background:var(--popover);color:var(--fg)"),
         cta: () => {
           if (reviewData.settled) {
             const next = this.nextStage(active);
             if (next) this.setStatus(active.id, next.id);
             return;
           }
-          this.openReviewThread(active, reviewData.cur, reviewData.stepId || "adjudicate");
+          this.openReviewThread(active, reviewData.cur, reviewData.stepId || "review");
         },
       };
     }

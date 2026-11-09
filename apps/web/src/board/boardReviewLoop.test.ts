@@ -110,7 +110,14 @@ describe("deriveBoardReviewLoop", () => {
     expect(loop.rounds).toHaveLength(2);
     expect(loop.rounds[0]?.outcome).toBe("changes-requested");
     expect(loop.rounds[0]?.findings[0]?.resolution).toBe("fixed");
-    expect(loop.totals).toEqual({ raised: 1, fixed: 1, rejected: 0, open: 0, disputed: 0 });
+    expect(loop.totals).toEqual({
+      raised: 1,
+      fixed: 1,
+      rejected: 0,
+      open: 0,
+      disputed: 0,
+      escalated: 0,
+    });
   });
 
   it("a struck-down disposition reads disputed", () => {
@@ -217,5 +224,91 @@ describe("deriveBoardReviewLoop", () => {
   it("ignores failed completions, exactly as the executor does", () => {
     const loop = deriveBoardReviewLoop([completion("review@1", review([]), "failed")], 5);
     expect(loop.next).toEqual({ phase: "review", round: 1 });
+  });
+});
+
+describe("binding adjudication in the pane (T3O-51)", () => {
+  const disputed = [
+    completion("review@1", review([finding("critical")])),
+    completion("triage@1", {
+      fixedSha: "sha",
+      dispositions: [{ findingId: "f1", action: "rejected", note: "not a bug" }],
+    }),
+    completion("adjudicate@1", {
+      verdicts: [{ findingId: "f1", verdict: "rejection-unjustified", note: "it is" }],
+      anotherRound: true,
+    }),
+  ];
+
+  it("shows re-triage as a follow-up phase of the round while it is due", () => {
+    const loop = deriveBoardReviewLoop(disputed, 5);
+    expect(loop.next).toEqual({ phase: "retriage", round: 1 });
+    expect(loop.rounds[0]?.phases.map((p) => [p.phase, p.status])).toEqual([
+      ["review", "done"],
+      ["triage", "done"],
+      ["adjudicate", "done"],
+      ["retriage", "running"],
+    ]);
+  });
+
+  it("an escalation stops the loop stuck, and the finding reads escalated", () => {
+    const loop = deriveBoardReviewLoop(
+      [
+        ...disputed,
+        completion("retriage@1", {
+          fixedSha: "sha",
+          dispositions: [{ findingId: "f1", action: "escalated", note: "human please" }],
+        }),
+      ],
+      5,
+    );
+    expect(loop.status).toBe("stuck");
+    expect(loop.rounds[0]?.outcome).toBe("stuck");
+    expect(loop.rounds[0]?.findings[0]?.resolution).toBe("escalated");
+    expect(loop.stuckFindings.map((f) => f.findingId)).toEqual(["f1"]);
+    expect(loop.totals.escalated).toBe(1);
+  });
+
+  it("a carried fix joins the next round, marked with where it came from", () => {
+    const loop = deriveBoardReviewLoop(
+      [
+        ...disputed,
+        completion("retriage@1", {
+          fixedSha: "sha",
+          dispositions: [{ findingId: "f1", action: "escalated", note: "" }],
+        }),
+        completion("review@2", review([])),
+      ],
+      5,
+      null,
+      2,
+      {
+        stuckWaivedThrough: 1,
+        carriedFindings: {
+          "2": {
+            ruling: "fix",
+            note: "use approach X",
+            findings: [
+              {
+                findingId: "carried:r1:f1",
+                origRound: 1,
+                severity: "critical",
+                title: "critical thing",
+                file: "src/x.ts",
+                line: 3,
+                detail: "",
+                rulingNote: "it is",
+              },
+            ],
+          },
+        },
+      },
+    );
+    expect(loop.next).toEqual({ phase: "triage", round: 2 });
+    const round2 = loop.rounds.find((round) => round.round === 2);
+    expect(round2?.carriedRuling).toEqual({ fromRound: 1, note: "use approach X" });
+    expect(round2?.findings.map((f) => [f.finding.id, f.carriedFrom])).toEqual([
+      ["carried:r1:f1", 1],
+    ]);
   });
 });

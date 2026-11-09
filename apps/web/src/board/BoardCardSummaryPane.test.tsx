@@ -15,7 +15,7 @@ const empty: BoardCardWorkSummary = {
     empty: true,
     currentRound: 0,
     maxRounds: 5,
-    counts: { raised: 0, fixed: 0, rejected: 0, open: 0, disputed: 0 },
+    counts: { raised: 0, fixed: 0, rejected: 0, open: 0, disputed: 0, escalated: 0 },
     outstanding: [],
   },
   build: {
@@ -86,7 +86,7 @@ describe("BoardCardSummaryPane", () => {
         empty: false,
         currentRound: 1,
         maxRounds: 5,
-        counts: { raised: 3, fixed: 1, rejected: 1, open: 1, disputed: 0 },
+        counts: { raised: 3, fixed: 1, rejected: 1, open: 1, disputed: 0, escalated: 0 },
         outstanding: [{ id: "f1", title: "Null deref" }],
       },
       pullRequest,

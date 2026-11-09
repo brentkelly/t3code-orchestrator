@@ -26,8 +26,17 @@
  * Everything here is pure string composition: no SQL, no git, no thread
  * handles — unit-testable without a server, and safe to import from the web.
  */
-import type { BoardCardPullRequest, BoardReviewPhaseId, BoardStageRole } from "./board.ts";
+import type {
+  BoardCardPullRequest,
+  BoardReviewCarriedFinding,
+  BoardReviewFollowUpFinding,
+  BoardReviewFollowUpPhase,
+  BoardReviewPhaseId,
+  BoardStageRole,
+} from "./board.ts";
 import {
+  BOARD_REVIEW_STEP_PHASE_LABELS,
+  parseReviewStepId,
   BOARD_CI_FIX_PAYLOAD_SHAPE,
   BOARD_CI_AGENT_PAYLOAD_SHAPE,
   BOARD_BUILD_SUMMARY_PAYLOAD_SHAPE,
@@ -184,7 +193,9 @@ function completionCall(step: Pick<ComposeStepPromptStep, "stepId" | "stepLabel"
     id put `Stage: 3f2a1b9c-…` into that stage's system prompt. */
 export function boardStepPreamble(
   input: Pick<ComposeStepPromptInput, "card" | "stageLabel"> & {
-    readonly step: Pick<ComposeStepPromptStep, "stepLabel">;
+    readonly step: Pick<ComposeStepPromptStep, "stepLabel"> & {
+      readonly stepId?: string | undefined;
+    };
     /** The stage's effective role (T3O-5, D9): only a `plan`-role step gets the
         project-root caveat on the base-branch line. */
     readonly role?: BoardStageRole | null;
@@ -197,7 +208,12 @@ export function boardStepPreamble(
     step.stepLabel === null ? `Stage: ${stage}.` : `Stage: ${stage}. Step: ${step.stepLabel}.`,
     ...boardBaseBranchLines({ baseBranch: card.baseBranch ?? null, role: input.role ?? null }),
     ...boardLinkedPullRequestLines(card.pullRequest ?? null),
-    `Call board_get_card_context for the brief, plan, dependencies and prior progress.`,
+    // A review step reads with fresh eyes (T3O-51): earlier rounds' findings
+    // and rulings are triage's and the adjudicator's to weigh, not the
+    // reviewer's, so the pointer stops at the brief.
+    parseReviewStepId(step.stepId ?? "")?.phase === "review"
+      ? `Call board_get_card_context for the brief only. Do not read earlier review rounds: judge the code as it stands.`
+      : `Call board_get_card_context for the brief, plan, dependencies and prior progress.`,
   ].join("\n");
 }
 
@@ -407,11 +423,69 @@ export function boardReviewPhasePreamble(input: {
 }): string {
   const { phase, round, rounds } = input;
   const header = `Code review, ${BOARD_REVIEW_PHASE_LABELS[phase]} phase, round ${round} of up to ${rounds}.`;
+  // The reviewer is fresh-eyes on every round (T3O-51): only triage and the
+  // adjudicator read the history.
   const priorContext =
-    round > 1 || phase !== "review"
+    phase !== "review"
       ? "Call board_get_card_context first and read the `steps` payloads: they carry every prior phase's findings, dispositions and verdicts for this card."
       : "";
   return priorContext.length > 0 ? `${header}\n${priorContext}` : header;
+}
+
+/** The rule that keeps the adjudicator consistent across rounds (T3O-51). */
+export const BOARD_REVIEW_ADJUDICATOR_CONSISTENCY =
+  "A finding ruled rejection-justified in an earlier round stays settled unless later commits changed the code it concerns; overturning it requires naming that change in your note.";
+
+function boardReviewFindingLine(finding: {
+  readonly id: string;
+  readonly severity: string;
+  readonly title: string;
+  readonly file: string | null;
+  readonly line: number | null;
+}): string {
+  const where =
+    finding.file === null
+      ? ""
+      : ` (${finding.file}${finding.line === null ? "" : `:${finding.line}`})`;
+  return `- \`${finding.id}\` [${finding.severity}] ${finding.title}${where}`;
+}
+
+/** The human's dismissals, listed to the reviewer, triage and the adjudicator
+    as final rulings (T3O-51). Empty when there are none. */
+export function boardReviewDismissalsBlock(input: {
+  readonly phase: BoardReviewPhaseId | BoardReviewFollowUpPhase;
+  readonly dismissals: ReadonlyArray<BoardReviewCarriedFinding & { readonly round: number }>;
+}): string {
+  if (input.dismissals.length === 0) return "";
+  const lines = input.dismissals.map(
+    (d) =>
+      `${boardReviewFindingLine({ id: d.findingId, severity: d.severity, title: d.title, file: d.file, line: d.line })} — dismissed by a human in round ${d.round}`,
+  );
+  const rule =
+    input.phase === "review"
+      ? "A human ruled these are not issues. Do not raise them again."
+      : input.phase === "triage" || input.phase === "retriage"
+        ? "A human ruled these are not issues; the ruling is final. If one is raised again, reject it citing the human ruling."
+        : "A human ruled these are not issues; the ruling is final. If one is raised again and triage rejected it, rule rejection-justified.";
+  return [rule, ...lines].join("\n");
+}
+
+/** The carried "fix" findings a round must resolve (T3O-51), for triage and
+    the adjudicator. The reviewer is not told: the board adds them itself. */
+function boardReviewCarriedBlock(input: {
+  readonly phase: BoardReviewPhaseId;
+  readonly carried: ReadonlyArray<BoardReviewFollowUpFinding>;
+}): string {
+  if (input.carried.length === 0 || input.phase === "review") return "";
+  const lines = input.carried.map((c) => {
+    const detail = c.finding.detail.trim();
+    return `${boardReviewFindingLine(c.finding)}${detail.length > 0 ? `\n  ${detail}` : ""}`;
+  });
+  const rule =
+    input.phase === "triage"
+      ? "A human ordered these findings fixed this round. They are blocking and must-fix: fix each one and give a disposition for every id below, with action fixed. Rejecting one is not an option."
+      : "A human ordered these findings fixed this round. Give a verdict for every id below; only fix-upheld, fix-incomplete or fix-absent apply to them.";
+  return [rule, ...lines].join("\n");
 }
 
 /** A review phase's forced MACHINE CONTRACT (t3o-20, rebalanced) — the one
@@ -434,10 +508,90 @@ export function boardReviewPhaseProtocol(input: {
         "If you cannot produce a valid findings payload, complete with outcome failed instead. Never complete succeeded with an empty or malformed payload.",
       ].join(" ");
     case "triage":
-      return 'To finish this phase, complete with a succeeded outcome and a JSON payload { fixedSha, dispositions: [{ findingId, action: "fixed" | "rejected", note }] }.';
+      return [
+        'To finish this phase, complete with a succeeded outcome and a JSON payload { fixedSha, dispositions: [{ findingId, action: "fixed" | "rejected", note }] }.',
+        "You may reject a finding raised again by citing an earlier round's justified rejection or a human dismissal, unless later fixes changed the picture.",
+      ].join(" ");
     case "adjudicate":
-      return "To finish this phase, complete with a succeeded outcome and a JSON payload { verdicts: [{ findingId, verdict, note }] }, where `verdict` is one of fix-upheld, fix-incomplete, fix-absent, rejection-justified, rejection-unjustified.";
+      return [
+        "To finish this phase, complete with a succeeded outcome and a JSON payload { verdicts: [{ findingId, verdict, note }], anotherRound }, where `verdict` is one of fix-upheld, fix-incomplete, fix-absent, rejection-justified, rejection-unjustified.",
+        BOARD_REVIEW_ADJUDICATOR_CONSISTENCY,
+        "Set `anotherRound` to false only if this round raised nothing new beyond points already settled; otherwise true. The system ignores false if a blocking fix landed.",
+        "A ruling against triage (rejection-unjustified, fix-absent or fix-incomplete) on a blocking finding sends it straight back to triage in this round for one more pass.",
+      ].join(" ");
   }
+}
+
+/** A follow-up pass's forced machine contract (T3O-51). */
+export function boardReviewFollowUpProtocol(phase: BoardReviewFollowUpPhase): string {
+  return phase === "retriage"
+    ? 'To finish this step, complete with a succeeded outcome and a JSON payload { fixedSha, dispositions: [{ findingId, action: "fixed" | "rejected" | "escalated", note }] }, with a disposition for every listed id.'
+    : "To finish this step, complete with a succeeded outcome and a JSON payload { verdicts: [{ findingId, verdict, note }], anotherRound }, with a verdict for every listed id. Set `anotherRound` to false only if this round raised nothing new beyond points already settled; the system ignores false if a blocking fix landed.";
+}
+
+/**
+ * Compose a follow-up pass's prompt (T3O-51): re-triage or re-adjudicate,
+ * inside the same round, on just the findings the adjudicator overruled. It
+ * reuses the triage or adjudicate phase's own prompt, behind a fixed
+ * preamble naming the findings.
+ */
+export function composeBoardReviewFollowUpPrompt(input: {
+  readonly phase: BoardReviewFollowUpPhase;
+  readonly round: number;
+  readonly rounds: number;
+  /** The triage (for re-triage) or adjudicate (for re-adjudicate) prompt. */
+  readonly prompt: string;
+  readonly findings: ReadonlyArray<BoardReviewFollowUpFinding>;
+  readonly dismissals?: ReadonlyArray<BoardReviewCarriedFinding & { readonly round: number }>;
+  readonly draftPullRequests?: boolean;
+}): string {
+  const header = `Code review, ${BOARD_REVIEW_STEP_PHASE_LABELS[input.phase]} step, round ${input.round} of up to ${input.rounds}.\nCall board_get_card_context first and read the \`steps\` payloads: they carry every prior phase's findings, dispositions and verdicts for this card.`;
+  const listed = input.findings.map((f) => {
+    const lines = [boardReviewFindingLine(f.finding)];
+    if (f.finding.carried) lines.push("  A human ordered this fixed.");
+    if (f.triageAction !== null) {
+      lines.push(
+        `  Triage: ${f.triageAction}${f.triageNote.trim() === "" ? "" : ` — ${f.triageNote.trim()}`}`,
+      );
+    }
+    if (f.rulingVerdict !== null) {
+      lines.push(
+        `  Ruling: ${f.rulingVerdict}${f.rulingNote.trim() === "" ? "" : ` — ${f.rulingNote.trim()}`}`,
+      );
+    }
+    if (f.retriageAction !== null) {
+      lines.push(
+        `  Re-triage: ${f.retriageAction}${f.retriageNote.trim() === "" ? "" : ` — ${f.retriageNote.trim()}`}`,
+      );
+    }
+    return lines.join("\n");
+  });
+  const anyCarried = input.findings.some((f) => f.finding.carried);
+  const preamble =
+    input.phase === "retriage"
+      ? [
+          "The adjudicator overruled you on these findings. Fix each if you can. Reject again only with a reason that directly answers the ruling, not the same argument. Escalate only if you still flatly disagree; escalating stops the loop for a human, so resolve the finding yourself whenever you can. Give a disposition for every listed id.",
+          anyCarried
+            ? "For a finding a human ordered fixed, your earlier fix was ruled incomplete: complete the fix, or escalate if it cannot be done. Rejecting it is not an option."
+            : "",
+        ]
+      : [
+          `This is the final ruling before a human is called. Triage answered your ruling on these findings; weigh the new argument on its merits, and give a verdict for every listed id. ${BOARD_REVIEW_ADJUDICATOR_CONSISTENCY}`,
+          anyCarried
+            ? "For a finding a human ordered fixed, only fix-upheld, fix-incomplete or fix-absent apply."
+            : "",
+        ];
+  return [
+    header,
+    ...preamble,
+    listed.join("\n"),
+    boardReviewDismissalsBlock({ phase: input.phase, dismissals: input.dismissals ?? [] }),
+    input.prompt.trim(),
+    input.draftPullRequests === true ? BOARD_DRAFT_PULL_REQUEST_KEEP : "",
+    boardReviewFollowUpProtocol(input.phase),
+  ]
+    .filter((part) => part.trim().length > 0)
+    .join("\n\n");
 }
 
 /** How to open a draft on each forge, and what to do around it (T3O-12).
@@ -487,6 +641,10 @@ export function composeBoardReviewPhasePrompt(input: {
   /** The CI failure that sent the card back (T3O-44): a must-fix finding for
       the review and triage of the round that follows. */
   readonly ciFinding?: { readonly stepName: string | null; readonly finding: string } | null;
+  /** Findings a human carried into this round as must-fix (T3O-51). */
+  readonly carried?: ReadonlyArray<BoardReviewFollowUpFinding>;
+  /** Findings a human ruled not issues, at or before this round (T3O-51). */
+  readonly dismissals?: ReadonlyArray<BoardReviewCarriedFinding & { readonly round: number }>;
 }): string {
   const ci =
     input.ciFinding == null || input.phase === "adjudicate"
@@ -499,6 +657,8 @@ export function composeBoardReviewPhasePrompt(input: {
     boardReviewPhasePreamble(input),
     input.prompt.trim(),
     ci,
+    boardReviewCarriedBlock({ phase: input.phase, carried: input.carried ?? [] }),
+    boardReviewDismissalsBlock({ phase: input.phase, dismissals: input.dismissals ?? [] }),
     boardDraftPullRequestLine({
       draftPullRequests: input.draftPullRequests === true,
       phase: input.phase,

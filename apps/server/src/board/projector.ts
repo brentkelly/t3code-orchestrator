@@ -1093,6 +1093,15 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
       });
 
     case "board.card-moved":
+      // An Advance past a stuck review loop carries the summary it changed
+      // (T3O-51); every other move leaves the client's last value.
+      return Option.some({
+        kind: "card-upserted",
+        sequence: event.sequence,
+        card: boardCardShellFromCard(event.payload.card, undefined, {
+          reviewSummary: event.payload.reviewSummary ?? undefined,
+        }),
+      });
     // T3O-33: the card's `projectId` and `key` are both on the shell, so the
     // board relabels and recolours it live.
     case "board.card-project-changed":

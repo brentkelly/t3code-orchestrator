@@ -13,6 +13,8 @@ import {
   assignBoardKeyPrefix,
   boardAppendOrderKey,
   boardBuildStepPayloadDefect,
+  boardReviewCompletionDefect,
+  parseReviewStepId,
   boardCardPlans,
   boardCardStepCompletions,
   boardCardStepState,
@@ -989,6 +991,30 @@ export const boardHandlers = {
         .boardCardThreads(card.id)
         .pipe(Effect.mapError(internalError));
       const dependencies = describeDependencies(board, card);
+      // A reviewer reads with fresh eyes (T3O-51): when the caller is the
+      // card's live `review@N` step, earlier review-loop steps and their
+      // threads are left out. A caller the board cannot place gets it all.
+      const liveStep = boardCardStepState(board, card.id);
+      const reviewCaller =
+        liveStep !== null &&
+        !isBoardTerminalStepStatus(liveStep.status) &&
+        liveStep.threadId === deps.scope.thread.threadId &&
+        parseReviewStepId(liveStep.stepId)?.phase === "review";
+      // Link roles name every review-loop thread, including attempts that
+      // never recorded a completion; completions cover links since dropped.
+      const reviewLoopThreadIds = new Set<string>(
+        [
+          ...card.threadLinks
+            .filter((link) => parseReviewStepId(link.role) !== null)
+            .map((link) => link.threadId),
+          ...boardCardStepCompletions(board, card.id)
+            .filter((completion) => parseReviewStepId(completion.stepId) !== null)
+            .map((completion) => completion.threadId),
+        ].filter(
+          (threadId): threadId is NonNullable<typeof threadId> =>
+            threadId !== null && threadId !== deps.scope.thread.threadId,
+        ),
+      );
       // A running plan review's instructions (T3O-39), so a re-orienting agent
       // picks the review up where it was.
       const settings = yield* readBoardSettings;
@@ -1019,7 +1045,14 @@ export const boardHandlers = {
         );
       }
       return {
-        card,
+        card: reviewCaller
+          ? {
+              ...card,
+              threadLinks: card.threadLinks.filter(
+                (link) => !reviewLoopThreadIds.has(link.threadId),
+              ),
+            }
+          : card,
         brief: detail?.brief ?? null,
         briefVersion: boardBriefVersion(detail?.brief ?? null),
         // Pull, not push (K3): every linked thread lists the brief's files
@@ -1030,7 +1063,11 @@ export const boardHandlers = {
           card,
         }),
         dependencies,
-        steps: boardCardStepCompletions(board, card.id),
+        steps: reviewCaller
+          ? boardCardStepCompletions(board, card.id).filter(
+              (completion) => parseReviewStepId(completion.stepId) === null,
+            )
+          : boardCardStepCompletions(board, card.id),
         currentStep: (() => {
           // The live step, the half of the orientation contract `steps` never
           // carried (t3o-19). A settled row is not "current": once the work is
@@ -1048,7 +1085,9 @@ export const boardHandlers = {
         })(),
         plans: boardCardPlans(board, card.id),
         activity,
-        threads,
+        threads: reviewCaller
+          ? threads.filter((entry) => !reviewLoopThreadIds.has(entry.threadId))
+          : threads,
         ancestors: yield* describeAncestors(deps, board, card),
         sourcePlan: yield* describeSourcePlan(deps, board, card, detail?.brief ?? null),
         decisions: sortBoardCardDecisions(detail?.decisions ?? []).slice(0, CONTEXT_DECISIONS_MAX),
@@ -1174,6 +1213,19 @@ export const boardHandlers = {
         const defect = boardStepPayloadDefect({ stepId, payload });
         if (defect !== null) {
           return yield* new BoardToolError({ code: "invalid-input", message: defect });
+        }
+        // The round's own rules on a new review-loop write (T3O-51): every
+        // listed finding answered, a human's must-fix never rejected, and the
+        // adjudicator's `anotherRound` stated. Never in the decider, which
+        // also judges records written before these rules.
+        const roundDefect = boardReviewCompletionDefect({
+          stepId,
+          payload,
+          completions: boardCardStepCompletions(board, card.id),
+          carriedFindings: card.reviewOverrides?.carriedFindings ?? {},
+        });
+        if (roundDefect !== null) {
+          return yield* new BoardToolError({ code: "invalid-input", message: roundDefect });
         }
         // The build-role stage's step (its id is the stage id) owes the
         // structured summary the Summary pane renders (T3O-21). Checked here

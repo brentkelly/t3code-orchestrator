@@ -2938,6 +2938,8 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         maxRounds: card.reviewOverrides?.rounds ?? null,
         stopAfterRound: card.reviewOverrides?.stopAfterRound ?? null,
         runThroughRound: card.reviewOverrides?.runThroughRound ?? null,
+        carriedFindings: card.reviewOverrides?.carriedFindings ?? {},
+        stuckWaivedThrough: card.reviewOverrides?.stuckWaivedThrough ?? null,
       });
       yield* queries.updateBoardCardReviewSummaryRow({ cardId: card.id, reviewSummary: summary });
     }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.reviewSummary:query")));
@@ -3147,6 +3149,11 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
 
       case "board.card-moved":
         yield* upsertCard(event.payload.card);
+        // A human's Advance past a stuck review loop writes its waiver in the
+        // move (T3O-51), which changes what the loop's counts mean.
+        if (event.payload.reviewSummary !== undefined) {
+          yield* refreshReviewSummary(event.payload.card);
+        }
         yield* recordActivity({
           event,
           cardId: event.payload.cardId,

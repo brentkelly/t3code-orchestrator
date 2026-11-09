@@ -106,6 +106,7 @@ import {
   isBoardParkedStepStatus,
   isBoardTerminalStepStatus,
   isEmptyBoardCardReviewOverrides,
+  EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
   readBoardPlanReviewReport,
   pickNextBoardLabelColour,
   BOARD_CARD_ATTACHMENTS_MAX,
@@ -1061,11 +1062,57 @@ function reviewSummaryAfter(input: {
         ),
         input.completion,
       ],
-      maxRounds: input.card.reviewOverrides?.rounds ?? null,
-      stopAfterRound: input.card.reviewOverrides?.stopAfterRound ?? null,
-      runThroughRound: input.card.reviewOverrides?.runThroughRound ?? null,
+      ...reviewSummaryOverrideInputs(input.card.reviewOverrides),
     }) ?? undefined
   );
+}
+
+/** The override half of `deriveBoardCardReviewSummary`'s input, so every
+    caller passes the T3O-51 carry fields as well as the t3o-22 ones. */
+function reviewSummaryOverrideInputs(overrides: BoardCardReviewOverrides | null) {
+  return {
+    maxRounds: overrides?.rounds ?? null,
+    stopAfterRound: overrides?.stopAfterRound ?? null,
+    runThroughRound: overrides?.runThroughRound ?? null,
+    carriedFindings: overrides?.carriedFindings ?? {},
+    stuckWaivedThrough: overrides?.stuckWaivedThrough ?? null,
+  };
+}
+
+/** The card's review summary under the given overrides, or null with no
+    review history. */
+function boardCardReviewSummary(
+  board: BoardState,
+  cardId: BoardCardId,
+  overrides: BoardCardReviewOverrides | null,
+): BoardCardReviewSummary | null {
+  return deriveBoardCardReviewSummary({
+    completions: boardCardStepCompletions(board, cardId),
+    ...reviewSummaryOverrideInputs(overrides),
+  });
+}
+
+/** The round a card's review loop is stuck on (T3O-51), or null. */
+export function boardCardStuckReviewRound(board: BoardState, card: BoardCard): number | null {
+  const summary = boardCardReviewSummary(board, card.id, card.reviewOverrides);
+  return summary?.outcome === "stuck" ? summary.roundCurrent : null;
+}
+
+/**
+ * Keep the server-only carry fields (T3O-51) through a client's override
+ * write, whatever the client sent — including `reviewOverrides: null`. Only
+ * `board.card.set-review-carry` writes them.
+ */
+function keepReviewCarry(
+  next: BoardCardReviewOverrides | null,
+  stored: BoardCardReviewOverrides | null,
+): BoardCardReviewOverrides | null {
+  const merged: BoardCardReviewOverrides = {
+    ...(next ?? EMPTY_BOARD_CARD_REVIEW_OVERRIDES),
+    carriedFindings: stored?.carriedFindings ?? {},
+    stuckWaivedThrough: stored?.stuckWaivedThrough ?? null,
+  };
+  return isEmptyBoardCardReviewOverrides(merged) ? null : merged;
 }
 
 /**
@@ -2244,6 +2291,37 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         }
       }
 
+      // A stuck review loop (T3O-51) leaves the review stage forward only by a
+      // human's Advance, which takes responsibility for the code as it stands:
+      // the waiver lands in this same event, so nothing re-plans in between.
+      // Any other mover — an agent, automation, a worker — is refused.
+      const fromStage = boardStageById(board, card.stage);
+      const leavingReviewForward =
+        fromStage !== null &&
+        effectiveBoardStageRole(fromStage) === "review" &&
+        !toDeferred &&
+        boardStageIndex(board, command.toStage) > boardStageIndex(board, card.stage);
+      const stuckRound = leavingReviewForward ? boardCardStuckReviewRound(board, card) : null;
+      if (
+        stuckRound !== null &&
+        !(command.type === "board.card.move" && command.cause === "human")
+      ) {
+        return yield* invariant(
+          command,
+          `Review is stuck on card '${card.key}'; a human must Advance or resolve it.`,
+        );
+      }
+      const advancedOverrides =
+        stuckRound === null
+          ? null
+          : ({
+              ...(card.reviewOverrides ?? EMPTY_BOARD_CARD_REVIEW_OVERRIDES),
+              stuckWaivedThrough: Math.max(
+                card.reviewOverrides?.stuckWaivedThrough ?? 0,
+                stuckRound,
+              ),
+            } satisfies BoardCardReviewOverrides);
+
       const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
       // ── The round boundary ────────────────────────────────────────────
       //
@@ -2336,8 +2414,13 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         ...(command.type === "board.card.move" && command.cause === "human"
           ? { ciRoundTrips: 0 }
           : {}),
+        ...(advancedOverrides === null ? {} : { reviewOverrides: advancedOverrides }),
         updatedAt: command.createdAt,
       };
+      const advancedSummary =
+        advancedOverrides === null
+          ? null
+          : boardCardReviewSummary(board, command.cardId, advancedOverrides);
       const moved: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
@@ -2351,6 +2434,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           toStage: command.toStage,
           card: nextCard,
           ...(disarmed.changed === null ? {} : { automationChanged: disarmed.changed }),
+          ...(advancedSummary === null ? {} : { reviewSummary: advancedSummary }),
         },
       };
       // A move across the done-role boundary changes what this card means as a
@@ -2838,14 +2922,17 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const reviewOverrides =
         command.reviewOverrides === undefined
           ? card.reviewOverrides
-          : command.reviewOverrides === null
-            ? null
-            : yield* validateReviewOverrides({
-                board,
-                command,
-                card,
-                proposed: command.reviewOverrides,
-              });
+          : keepReviewCarry(
+              command.reviewOverrides === null
+                ? null
+                : yield* validateReviewOverrides({
+                    board,
+                    command,
+                    card,
+                    proposed: command.reviewOverrides,
+                  }),
+              card.reviewOverrides,
+            );
 
       // Per-stage model overrides, validated before the card is built for the
       // same reason (t3o-29, D1): an entry keyed by a stage the board does not
@@ -2996,12 +3083,11 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ...(command.reviewOverrides === undefined
             ? {}
             : (() => {
-                const summary = deriveBoardCardReviewSummary({
-                  completions: boardCardStepCompletions(board, command.cardId),
-                  maxRounds: nextCard.reviewOverrides?.rounds ?? null,
-                  stopAfterRound: nextCard.reviewOverrides?.stopAfterRound ?? null,
-                  runThroughRound: nextCard.reviewOverrides?.runThroughRound ?? null,
-                });
+                const summary = boardCardReviewSummary(
+                  board,
+                  command.cardId,
+                  nextCard.reviewOverrides,
+                );
                 return summary === null ? {} : { reviewSummary: summary };
               })()),
           ...(edits.edit === undefined ? {} : { edit: edits.edit }),
@@ -5113,6 +5199,88 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           pullRequest: next,
           transition,
           card: nextCard,
+        },
+      };
+    }
+
+    case "board.card.set-review-carry": {
+      // The review loop's server-only fields (T3O-51), written together so a
+      // round is opened, a stuck round waived and a ruling carried in one
+      // event — never a waiver that lands after the move it was for.
+      const card = yield* requireActiveBoardCard({ board, command });
+      const stored = card.reviewOverrides ?? EMPTY_BOARD_CARD_REVIEW_OVERRIDES;
+      const stepState = boardCardStepState(board, card.id);
+      const roundsStarted = boardReviewRoundsStarted({
+        completions: boardCardStepCompletions(board, card.id),
+        liveStepId:
+          stepState === null || isBoardTerminalStepStatus(stepState.status)
+            ? null
+            : stepState.stepId,
+      });
+      if (
+        command.runThroughRound === undefined &&
+        command.clearStopAfterRound === undefined &&
+        command.stuckWaivedThrough === undefined &&
+        command.carry === undefined
+      ) {
+        return yield* invariant(command, `Review carry for card '${card.id}' carries no changes.`);
+      }
+      // The same clamp a client's request gets (T3O-39, D5): only the next
+      // round can be asked for.
+      if (command.runThroughRound !== undefined && command.runThroughRound > roundsStarted + 1) {
+        return yield* invariant(
+          command,
+          `Cannot ask card '${card.id}' to run through review round ${command.runThroughRound}: only round ${roundsStarted + 1} can be requested next.`,
+        );
+      }
+      if (command.stuckWaivedThrough !== undefined && command.stuckWaivedThrough > roundsStarted) {
+        return yield* invariant(
+          command,
+          `Cannot waive review round ${command.stuckWaivedThrough} on card '${card.id}': only ${roundsStarted} round(s) have started.`,
+        );
+      }
+      if (command.carry !== undefined) {
+        const key = String(command.carry.round);
+        if (stored.carriedFindings[key] !== undefined) {
+          return yield* invariant(
+            command,
+            `Card '${card.id}' already carries a ruling into review round ${command.carry.round}.`,
+          );
+        }
+        if (command.carry.round <= roundsStarted) {
+          return yield* invariant(
+            command,
+            `Cannot carry findings into review round ${command.carry.round} on card '${card.id}': it has already started.`,
+          );
+        }
+      }
+      const next: BoardCardReviewOverrides = {
+        ...stored,
+        runThroughRound: command.runThroughRound ?? stored.runThroughRound,
+        stopAfterRound: command.clearStopAfterRound === true ? null : stored.stopAfterRound,
+        stuckWaivedThrough:
+          command.stuckWaivedThrough === undefined
+            ? stored.stuckWaivedThrough
+            : Math.max(stored.stuckWaivedThrough ?? 0, command.stuckWaivedThrough),
+        carriedFindings:
+          command.carry === undefined
+            ? stored.carriedFindings
+            : { ...stored.carriedFindings, [String(command.carry.round)]: command.carry.entry },
+      };
+      const reviewOverrides = isEmptyBoardCardReviewOverrides(next) ? null : next;
+      const nextCard: BoardCard = { ...card, reviewOverrides, updatedAt: command.createdAt };
+      const summary = boardCardReviewSummary(board, card.id, reviewOverrides);
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-updated",
+        payload: {
+          cardId: command.cardId,
+          card: nextCard,
+          ...(summary === null ? {} : { reviewSummary: summary }),
         },
       };
     }

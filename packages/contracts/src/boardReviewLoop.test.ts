@@ -28,8 +28,10 @@ import {
   deriveBoardCardReviewSummary,
   effectiveBoardReviewRounds,
   resolveBoardCardReviewOutcome,
+  boardReviewDismissals,
   BoardCard,
   BoardCardId,
+  BoardCardReviewSummary,
   type BoardReviewFinding,
   type BoardStepCompletion,
 } from "./board.ts";
@@ -551,7 +553,14 @@ describe("boardReviewRoundsStarted / effectiveBoardReviewRounds", () => {
     assert.strictEqual(
       effectiveBoardReviewRounds({
         configured: 5,
-        overrides: { rounds: 1, stopAfterRound: null, roundModels: {}, runThroughRound: null },
+        overrides: {
+          rounds: 1,
+          stopAfterRound: null,
+          roundModels: {},
+          runThroughRound: null,
+          carriedFindings: {},
+          stuckWaivedThrough: null,
+        },
         roundsStarted: 3,
       }),
       3,
@@ -564,7 +573,14 @@ describe("boardReviewRoundsStarted / effectiveBoardReviewRounds", () => {
     assert.strictEqual(
       effectiveBoardReviewRounds({
         configured: 5,
-        overrides: { rounds: 99, stopAfterRound: null, roundModels: {}, runThroughRound: null },
+        overrides: {
+          rounds: 99,
+          stopAfterRound: null,
+          roundModels: {},
+          runThroughRound: null,
+          carriedFindings: {},
+          stuckWaivedThrough: null,
+        },
         roundsStarted: 0,
       }),
       99,
@@ -819,5 +835,590 @@ describe("an unreadable loop is held (T3O-14)", () => {
     });
     assert.strictEqual(repaired.status, "running");
     assert.deepStrictEqual(repaired.next, { phase: "triage", round: 1 });
+  });
+});
+
+describe("T3O-51: a ruling binds inside its round", () => {
+  const sha = (round: number) => `sha-${round}`;
+  const triage = (
+    round: number,
+    actions: Record<string, "fixed" | "rejected">,
+    fixedSha = sha(round),
+  ) =>
+    completion(`triage@${round}`, {
+      fixedSha,
+      dispositions: Object.entries(actions).map(([findingId, action]) => ({
+        findingId,
+        action,
+        note: `${action} it`,
+      })),
+    });
+  const adjudicate = (
+    round: number,
+    verdicts: Record<string, string>,
+    anotherRound: boolean | "absent" = true,
+    phase: "adjudicate" | "readjudicate" = "adjudicate",
+  ) =>
+    completion(`${phase}@${round}`, {
+      verdicts: Object.entries(verdicts).map(([findingId, verdict]) => ({
+        findingId,
+        verdict,
+        note: `ruled ${verdict}`,
+      })),
+      ...(anotherRound === "absent" ? {} : { anotherRound }),
+    });
+  const retriage = (
+    round: number,
+    actions: Record<string, "fixed" | "rejected" | "escalated">,
+    fixedSha = sha(round),
+  ) =>
+    completion(`retriage@${round}`, {
+      fixedSha,
+      dispositions: Object.entries(actions).map(([findingId, action]) => ({
+        findingId,
+        action,
+        note: `re-${action}`,
+      })),
+    });
+  const readjudicate = (round: number, verdicts: Record<string, string>, anotherRound = true) =>
+    adjudicate(round, verdicts, anotherRound, "readjudicate");
+
+  type Carry = Parameters<typeof boardReviewLoopWalk>[0]["carriedFindings"];
+  const walkWith = (
+    completions: ReadonlyArray<BoardStepCompletion>,
+    options: {
+      maxRounds?: number;
+      stopAfterRound?: number | null;
+      runThroughRound?: number | null;
+      carriedFindings?: Carry;
+      stuckWaivedThrough?: number | null;
+    } = {},
+  ) =>
+    boardReviewLoopWalk({
+      completions,
+      maxRounds: options.maxRounds ?? 10,
+      stopAfterRound: options.stopAfterRound ?? null,
+      runThroughRound: options.runThroughRound ?? null,
+      carriedFindings: options.carriedFindings ?? {},
+      stuckWaivedThrough: options.stuckWaivedThrough ?? null,
+    });
+
+  /** Z5-291's round: rejected, ruled unjustified, rejected again. */
+  const disputedRound = (round: number) => [
+    review(round, [finding("critical", "f1")]),
+    triage(round, { f1: "rejected" }),
+    adjudicate(round, { f1: "rejection-unjustified" }),
+  ];
+
+  const carriedFix = (round: number, origRound = round - 1) => ({
+    [String(round)]: {
+      ruling: "fix" as const,
+      note: null,
+      findings: [
+        {
+          findingId: `carried:r${origRound}:f1`,
+          origRound,
+          severity: "critical" as const,
+          title: "critical thing",
+          file: "src/x.ts",
+          line: 1,
+          detail: "",
+          rulingNote: "ruled fix-incomplete",
+        },
+      ],
+    },
+  });
+
+  it("Z5-291: a rejection overruled twice stops the loop stuck in round 1", () => {
+    const completions = [
+      ...disputedRound(1),
+      retriage(1, { f1: "rejected" }),
+      readjudicate(1, { f1: "rejection-unjustified" }),
+    ];
+    const result = walkWith(completions);
+    assert.strictEqual(result.status, "stuck");
+    assert.strictEqual(result.currentRound, 1);
+    assert.deepStrictEqual(
+      result.stuckFindings?.map((f) => [f.findingId, f.round, f.triageAction, f.rulingVerdict]),
+      [["f1", 1, "rejected", "rejection-unjustified"]],
+    );
+    // Stuck beats the budget on the last round.
+    assert.strictEqual(walkWith(completions, { maxRounds: 1 }).status, "stuck");
+    assert.isTrue(isBoardReviewLoopHeld("stuck"));
+    assert.strictEqual(boardReviewHeldLabel("stuck"), "Stuck");
+  });
+
+  it("runs re-triage on the overruled findings, then re-adjudicate", () => {
+    assert.deepStrictEqual(walkWith(disputedRound(1)).next, { phase: "retriage", round: 1 });
+    assert.deepStrictEqual(walkWith([...disputedRound(1), retriage(1, { f1: "fixed" })]).next, {
+      phase: "readjudicate",
+      round: 1,
+    });
+  });
+
+  it("continues when the second pass settles the dispute", () => {
+    const justified = [
+      ...disputedRound(1),
+      retriage(1, { f1: "rejected" }),
+      readjudicate(1, { f1: "rejection-justified" }),
+    ];
+    assert.deepStrictEqual(walkWith(justified).next, { phase: "review", round: 2 });
+    const refixed = [
+      ...disputedRound(1),
+      retriage(1, { f1: "fixed" }),
+      readjudicate(1, { f1: "fix-upheld" }),
+    ];
+    assert.deepStrictEqual(walkWith(refixed).next, { phase: "review", round: 2 });
+  });
+
+  it("goes stuck when a re-fix is still incomplete", () => {
+    const result = walkWith([
+      ...disputedRound(1),
+      retriage(1, { f1: "fixed" }),
+      readjudicate(1, { f1: "fix-incomplete" }),
+    ]);
+    assert.strictEqual(result.status, "stuck");
+    assert.strictEqual(result.unreviewedFixes, 1);
+  });
+
+  it("an escalation stops the round with no re-adjudication", () => {
+    const result = walkWith([...disputedRound(1), retriage(1, { f1: "escalated" })]);
+    assert.strictEqual(result.status, "stuck");
+    assert.strictEqual(result.stuckFindings?.[0]?.triageAction, "escalated");
+  });
+
+  it("a missing re-triage disposition is stuck, not settled", () => {
+    assert.strictEqual(walkWith([...disputedRound(1), retriage(1, {})]).status, "stuck");
+  });
+
+  it("never re-triages an overruled nitpick", () => {
+    const completions = [
+      review(1, [finding("critical", "f1"), finding("nitpick", "n1")]),
+      triage(1, { f1: "fixed", n1: "rejected" }),
+      adjudicate(1, { f1: "fix-upheld", n1: "rejection-unjustified" }),
+    ];
+    assert.deepStrictEqual(walkWith(completions).next, { phase: "review", round: 2 });
+  });
+
+  it("finishes the round before stopping on one stuck finding beside fixed ones", () => {
+    const completions = [
+      review(1, [finding("critical", "f1"), finding("improvement", "f2")]),
+      triage(1, { f1: "rejected", f2: "fixed" }),
+      adjudicate(1, { f1: "rejection-unjustified", f2: "fix-upheld" }),
+    ];
+    assert.deepStrictEqual(walkWith(completions).next, { phase: "retriage", round: 1 });
+    const result = walkWith([...completions, retriage(1, { f1: "escalated" })]);
+    assert.strictEqual(result.status, "stuck");
+    assert.deepStrictEqual(
+      result.stuckFindings?.map((f) => f.findingId),
+      ["f1"],
+    );
+    assert.strictEqual(result.unreviewedFixes, 1);
+  });
+
+  it("a gate round gets the second pass like a budget round", () => {
+    const completions = [
+      review(1, []),
+      completion("sync@1", { rebasedSha: "rebased" }),
+      ...disputedRound(2),
+    ];
+    assert.deepStrictEqual(walkWith(completions, { maxRounds: 1 }).next, {
+      phase: "retriage",
+      round: 2,
+    });
+  });
+
+  it("keeps the old rule for an adjudication written before T3O-51", () => {
+    const old = [
+      review(1, [finding("critical", "f1")]),
+      triage(1, { f1: "rejected" }),
+      adjudicate(1, { f1: "rejection-unjustified" }, "absent"),
+    ];
+    assert.deepStrictEqual(walkWith(old).next, { phase: "review", round: 2 });
+    // A held round-cap card stays round-cap and plans nothing.
+    assert.strictEqual(walkWith(old, { maxRounds: 1 }).status, "round-cap");
+  });
+
+  it("never plans a second pass behind a recorded next review", () => {
+    const completions = [...disputedRound(1), review(2, [])];
+    assert.strictEqual(walkWith(completions).status, "converged");
+  });
+
+  describe("anotherRound=false", () => {
+    const settledRound = (extra: ReadonlyArray<BoardStepCompletion> = []) => [
+      review(1, [finding("critical", "f1")]),
+      triage(1, { f1: "rejected" }),
+      adjudicate(1, { f1: "rejection-justified" }, false),
+      ...extra,
+    ];
+
+    it("converges when nothing changed and every blocking finding was rightly rejected", () => {
+      const result = walkWith(settledRound());
+      assert.strictEqual(result.status, "converged");
+      assert.strictEqual(result.convergedBy, "adjudicator");
+    });
+
+    it("still converges when only nitpick fixes landed", () => {
+      const result = walkWith([
+        review(1, [finding("critical", "f1"), finding("nitpick", "n1")]),
+        triage(1, { f1: "rejected", n1: "fixed" }, "new-sha"),
+        adjudicate(1, { f1: "rejection-justified", n1: "fix-upheld" }, false),
+      ]);
+      assert.strictEqual(result.status, "converged");
+    });
+
+    it("is refused when a blocking fix landed", () => {
+      const result = walkWith([
+        review(1, [finding("critical", "f1")]),
+        triage(1, { f1: "fixed" }, "new-sha"),
+        adjudicate(1, { f1: "fix-upheld" }, false),
+      ]);
+      assert.deepStrictEqual(result.next, { phase: "review", round: 2 });
+    });
+
+    it("a blocking fix with no new commit does not count as landed", () => {
+      const result = walkWith([
+        review(1, [finding("critical", "f1")]),
+        triage(1, { f1: "fixed" }, "sha-1"),
+        adjudicate(1, { f1: "fix-upheld" }, false),
+      ]);
+      assert.strictEqual(result.status, "converged");
+    });
+
+    it("is refused when triage pushed a commit while fixing nothing", () => {
+      const result = walkWith([
+        review(1, [finding("critical", "f1")]),
+        triage(1, { f1: "rejected" }, "other-sha"),
+        adjudicate(1, { f1: "rejection-justified" }, false),
+      ]);
+      assert.deepStrictEqual(result.next, { phase: "review", round: 2 });
+    });
+
+    it("is refused while a blocking finding is still open", () => {
+      const result = walkWith([
+        review(1, [finding("critical", "f1"), finding("critical", "f2")]),
+        triage(1, { f1: "rejected" }),
+        adjudicate(1, { f1: "rejection-justified" }, false),
+      ]);
+      assert.deepStrictEqual(result.next, { phase: "review", round: 2 });
+    });
+
+    it("matches abbreviated SHAs", () => {
+      const result = walkWith([
+        completion("review@1", {
+          reviewedSha: "abcdef1234",
+          findings: [finding("critical", "f1")],
+        }),
+        triage(1, { f1: "rejected" }, "abcdef1"),
+        adjudicate(1, { f1: "rejection-justified" }, false),
+      ]);
+      assert.strictEqual(result.status, "converged");
+    });
+
+    it("a requested round outranks the early exit", () => {
+      assert.deepStrictEqual(walkWith(settledRound(), { runThroughRound: 2 }).next, {
+        phase: "review",
+        round: 2,
+      });
+    });
+
+    it("the re-adjudication's flag wins over the first one's", () => {
+      const completions = [
+        review(1, [finding("critical", "f1")]),
+        triage(1, { f1: "rejected" }),
+        adjudicate(1, { f1: "rejection-unjustified" }, true),
+        retriage(1, { f1: "rejected" }),
+        readjudicate(1, { f1: "rejection-justified" }, false),
+      ];
+      assert.strictEqual(walkWith(completions).status, "converged");
+      const flipped = [
+        review(1, [finding("critical", "f1")]),
+        triage(1, { f1: "rejected" }),
+        adjudicate(1, { f1: "rejection-unjustified" }, false),
+        retriage(1, { f1: "rejected" }),
+        readjudicate(1, { f1: "rejection-justified" }, true),
+      ];
+      assert.deepStrictEqual(walkWith(flipped).next, { phase: "review", round: 2 });
+    });
+  });
+
+  describe("passing a stuck round", () => {
+    const stuckRound = [
+      ...disputedRound(1),
+      retriage(1, { f1: "rejected" }),
+      readjudicate(1, { f1: "rejection-unjustified" }),
+    ];
+
+    it("a plain requested round does not pass it; a waiver does", () => {
+      assert.strictEqual(walkWith(stuckRound, { runThroughRound: 2 }).status, "stuck");
+      const advanced = walkWith(stuckRound, { stuckWaivedThrough: 1 });
+      assert.strictEqual(advanced.status, "advanced");
+      assert.strictEqual(advanced.currentRound, 1);
+      assert.isFalse(isBoardReviewLoopHeld("advanced"));
+      assert.deepStrictEqual(
+        walkWith(stuckRound, { stuckWaivedThrough: 1, runThroughRound: 2 }).next,
+        { phase: "review", round: 2 },
+      );
+    });
+
+    it("a recorded sync still gates a waived round", () => {
+      assert.deepStrictEqual(
+        walkWith([...stuckRound, completion("sync@1", { rebasedSha: "r" })], {
+          stuckWaivedThrough: 1,
+        }).next,
+        { phase: "review", round: 2 },
+      );
+    });
+  });
+
+  describe("carried findings", () => {
+    // Round 1 stuck; the human's Fix it waived it and carried f1 into round 2.
+    const round1 = [...disputedRound(1), retriage(1, { f1: "escalated" })];
+    const fixIt = { stuckWaivedThrough: 1, runThroughRound: 2 } as const;
+    it("a carried fix joins the round even when the reviewer omits it", () => {
+      const carried = carriedFix(2);
+      const completions = [...round1, review(2, [])];
+      assert.deepStrictEqual(walkWith(completions, { ...fixIt, carriedFindings: carried }).next, {
+        phase: "triage",
+        round: 2,
+      });
+      assert.deepStrictEqual(
+        walkWith([...completions, triage(2, { "carried:r1:f1": "fixed" })], {
+          ...fixIt,
+          carriedFindings: carried,
+        }).next,
+        { phase: "adjudicate", round: 2 },
+      );
+    });
+
+    it("an upheld carried fix continues to a fresh round", () => {
+      const result = walkWith(
+        [
+          ...round1,
+          review(2, []),
+          triage(2, { "carried:r1:f1": "fixed" }, "new"),
+          adjudicate(2, { "carried:r1:f1": "fix-upheld" }),
+        ],
+        { ...fixIt, carriedFindings: carriedFix(2), maxRounds: 2 },
+      );
+      // Not round-cap: the walk's caller floors the budget past a landed fix.
+      assert.strictEqual(result.status, "round-cap");
+      assert.strictEqual(
+        effectiveBoardReviewRounds({
+          configured: 2,
+          overrides: {
+            rounds: null,
+            stopAfterRound: null,
+            roundModels: {},
+            runThroughRound: 2,
+            carriedFindings: carriedFix(2),
+            stuckWaivedThrough: 1,
+          },
+          roundsStarted: 2,
+          completions: [review(2, []), triage(2, { "carried:r1:f1": "fixed" }, "new")],
+        }),
+        3,
+      );
+    });
+
+    it("an incomplete carried fix gets re-triage, then sticks if still incomplete", () => {
+      const base = [
+        ...round1,
+        review(2, []),
+        triage(2, { "carried:r1:f1": "fixed" }),
+        adjudicate(2, { "carried:r1:f1": "fix-incomplete" }),
+      ];
+      const opts = { ...fixIt, carriedFindings: carriedFix(2) };
+      assert.deepStrictEqual(walkWith(base, opts).next, { phase: "retriage", round: 2 });
+      const upheld = [
+        ...base,
+        retriage(2, { "carried:r1:f1": "fixed" }),
+        readjudicate(2, { "carried:r1:f1": "fix-upheld" }),
+      ];
+      assert.deepStrictEqual(walkWith(upheld, opts).next, { phase: "review", round: 3 });
+      const again = [
+        ...base,
+        retriage(2, { "carried:r1:f1": "fixed" }),
+        readjudicate(2, { "carried:r1:f1": "fix-incomplete" }),
+      ];
+      const result = walkWith(again, opts);
+      assert.strictEqual(result.status, "stuck");
+      assert.strictEqual(result.stuckFindings?.[0]?.carriedFrom, 1);
+    });
+
+    it("a reviewer id that collides with a carried id is read once, as the carried one", () => {
+      const result = walkWith(
+        [
+          ...round1,
+          review(2, [finding("nitpick", "carried:r1:f1")]),
+          triage(2, { "carried:r1:f1": "fixed" }),
+        ],
+        { ...fixIt, carriedFindings: carriedFix(2) },
+      );
+      // Still blocking — the carried finding forces adjudication.
+      assert.deepStrictEqual(result.next, { phase: "adjudicate", round: 2 });
+    });
+
+    it("a dismissal never forces blocking or stuck", () => {
+      const dismissed = {
+        "2": { ...carriedFix(2)["2"]!, ruling: "dismiss" as const },
+      };
+      assert.strictEqual(
+        walkWith([...round1, review(2, [])], { ...fixIt, carriedFindings: dismissed }).status,
+        "converged",
+      );
+    });
+
+    it("the latest ruling per finding wins", () => {
+      const fix = carriedFix(2)["2"]!;
+      const both = {
+        "2": { ...fix, ruling: "dismiss" as const },
+        "4": fix,
+      };
+      assert.deepStrictEqual(
+        boardReviewDismissals(both, 3).map((d) => d.findingId),
+        ["carried:r1:f1"],
+      );
+      assert.deepStrictEqual(boardReviewDismissals(both, 4), []);
+      const reversed = { "2": fix, "4": { ...fix, ruling: "dismiss" as const } };
+      assert.deepStrictEqual(boardReviewDismissals(reversed, 3), []);
+      assert.strictEqual(boardReviewDismissals(reversed, 4).length, 1);
+    });
+
+    it("two Fix its in a row reach a fresh round and replay never re-blocks", () => {
+      const stuckCarry = (round: number) => [
+        review(round, []),
+        triage(round, { "carried:r1:f1": "fixed" }),
+        adjudicate(round, { "carried:r1:f1": "fix-incomplete" }),
+        retriage(round, { "carried:r1:f1": "escalated" }),
+      ];
+      const carried = { ...carriedFix(2), ...carriedFix(3, 1) };
+      const completions = [
+        ...disputedRound(1),
+        retriage(1, { f1: "escalated" }),
+        ...stuckCarry(2),
+        ...stuckCarry(3),
+      ];
+      assert.strictEqual(
+        walkWith(completions, { carriedFindings: carried, stuckWaivedThrough: 2 }).status,
+        "stuck",
+      );
+      assert.deepStrictEqual(
+        walkWith(completions, {
+          carriedFindings: carried,
+          stuckWaivedThrough: 3,
+          runThroughRound: 4,
+        }).next,
+        { phase: "review", round: 4 },
+      );
+    });
+  });
+
+  describe("the summary", () => {
+    it("resolves by the latest pass and counts escalations in the latest round", () => {
+      const summary = deriveBoardCardReviewSummary({
+        completions: [...disputedRound(1), retriage(1, { f1: "escalated" })],
+        maxRounds: null,
+        stopAfterRound: null,
+        runThroughRound: null,
+      });
+      assert.strictEqual(summary?.outcome, "stuck");
+      assert.strictEqual(summary?.issuesEscalated, 1);
+      assert.strictEqual(summary?.issuesDisputed, 0);
+    });
+
+    it("an advanced loop carries its round and unreviewed fixes", () => {
+      const summary = deriveBoardCardReviewSummary({
+        completions: [
+          review(1, [finding("critical", "f1"), finding("critical", "f2")]),
+          triage(1, { f1: "rejected", f2: "fixed" }),
+          adjudicate(1, { f1: "rejection-unjustified", f2: "fix-upheld" }),
+          retriage(1, { f1: "escalated" }),
+        ],
+        maxRounds: null,
+        stopAfterRound: null,
+        runThroughRound: null,
+        stuckWaivedThrough: 1,
+      });
+      assert.strictEqual(summary?.outcome, "advanced");
+      assert.strictEqual(summary?.advancedRound, 1);
+      assert.strictEqual(summary?.unreviewedFixes, 1);
+    });
+
+    it("a carried finding resolves once, as its latest pass", () => {
+      const summary = deriveBoardCardReviewSummary({
+        completions: [
+          ...disputedRound(1),
+          retriage(1, { f1: "escalated" }),
+          review(2, []),
+          triage(2, { "carried:r1:f1": "fixed" }),
+          adjudicate(2, { "carried:r1:f1": "fix-upheld" }),
+        ],
+        maxRounds: null,
+        stopAfterRound: null,
+        runThroughRound: 2,
+        carriedFindings: carriedFix(2),
+        stuckWaivedThrough: 1,
+      });
+      assert.strictEqual(summary?.severityCritical, 1);
+      assert.strictEqual(summary?.issuesFixed, 1);
+      assert.strictEqual(summary?.issuesEscalated, 0);
+    });
+
+    it("decodes a summary written before T3O-51", () => {
+      const decoded = Schema.decodeSync(BoardCardReviewSummary)({
+        roundCurrent: 1,
+        roundMax: null,
+        outcome: "converged",
+        heldOutcome: "round-cap",
+        roundComplete: true,
+        severityCritical: 0,
+        severityImprovement: 0,
+        severityNitpick: 0,
+        issuesFixed: 0,
+        issuesRejected: 0,
+        issuesOpen: 0,
+        issuesDisputed: 0,
+      });
+      assert.strictEqual(decoded.issuesEscalated, 0);
+      assert.strictEqual(decoded.advancedRound, null);
+    });
+  });
+
+  it("holds the follow-up phases to their own payload shapes", () => {
+    assert.isNotNull(
+      boardStepPayloadDefect({ stepId: "retriage@1", payload: JSON.stringify({ verdicts: [] }) }),
+    );
+    assert.isNull(
+      boardStepPayloadDefect({
+        stepId: "retriage@1",
+        payload: JSON.stringify({
+          fixedSha: "a",
+          dispositions: [{ findingId: "f", action: "escalated", note: "" }],
+        }),
+      }),
+    );
+    assert.isNull(
+      boardStepPayloadDefect({
+        stepId: "readjudicate@1",
+        payload: JSON.stringify({ verdicts: [], anotherRound: false }),
+      }),
+    );
+    // Only re-triage may escalate.
+    assert.isNotNull(
+      boardStepPayloadDefect({
+        stepId: "triage@1",
+        payload: JSON.stringify({
+          fixedSha: "a",
+          dispositions: [{ findingId: "f", action: "escalated", note: "" }],
+        }),
+      }),
+    );
+  });
+
+  it("halts on an unreadable follow-up record", () => {
+    const result = walkWith([...disputedRound(1), completion("retriage@1", { nope: true })]);
+    assert.strictEqual(result.status, "unreadable");
+    assert.strictEqual(result.unreadableStepId, "retriage@1");
   });
 });

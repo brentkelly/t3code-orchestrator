@@ -687,6 +687,9 @@ describe("board shell reducer", () => {
       issuesRejected: 1,
       issuesOpen: 2,
       issuesDisputed: 1,
+      issuesEscalated: 0,
+      advancedRound: null,
+      unreviewedFixes: 0,
     };
     const reviewed = applyBoardShellStreamEvent(held, {
       kind: "card-review",
@@ -746,6 +749,9 @@ describe("board shell reducer", () => {
         issuesRejected: 0,
         issuesOpen: 1,
         issuesDisputed: 0,
+        issuesEscalated: 0,
+        advancedRound: null,
+        unreviewedFixes: 0,
       },
     });
     // The upsert carries a NEW budget (the `+` edit raised it to 6).
@@ -766,6 +772,9 @@ describe("board shell reducer", () => {
           issuesRejected: 0,
           issuesOpen: 1,
           issuesDisputed: 0,
+          issuesEscalated: 0,
+          advancedRound: null,
+          unreviewedFixes: 0,
         },
       }),
     });
@@ -797,6 +806,9 @@ describe("board shell reducer", () => {
         issuesRejected: 1,
         issuesOpen: 2,
         issuesDisputed: 1,
+        issuesEscalated: 0,
+        advancedRound: null,
+        unreviewedFixes: 0,
       },
     });
 

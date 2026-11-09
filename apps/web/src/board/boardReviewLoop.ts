@@ -8,12 +8,14 @@
  * - a round with no findings at all converges immediately;
  * - a round with only nitpicks runs one triage pass, then converges without
  *   adjudication or another round;
- * - a round with blocking findings runs triage, then adjudication, then the
- *   next round's review;
+ * - a round with blocking findings runs triage, then adjudication; when the
+ *   adjudicator overrules triage, re-triage and re-adjudication follow inside
+ *   the round (T3O-51), and a dispute that survives them stops the loop
+ *   `stuck` for a human;
  * - a malformed payload on any phase halts the loop (a review's is never read
  *   as "no findings", and no phase's is read as "it said nothing");
- * - running out of rounds ends the loop like a converged one — the card moves
- *   on — with the open findings still recorded here.
+ * - running out of rounds holds the loop (`round-cap`) with the open findings
+ *   still recorded here — it never reads as a pass.
  *
  * The executor itself lives server-side (it also owns prompts, models and
  * step dispatch); what is mirrored here is only the pure phase-order walk.
@@ -21,10 +23,17 @@
 import {
   BOARD_REVIEW_PHASE_IDS,
   BoardAdjudicatePayload,
+  BoardRetriagePayload,
   BoardReviewPayload,
+  boardReviewCarriedFixFindings,
+  boardReviewDismissals,
   boardReviewFindingResolution,
   boardReviewLoopWalk,
   BoardTriagePayload,
+  type BoardReviewCarry,
+  type BoardReviewFollowUpPhase,
+  type BoardReviewRetriageAction,
+  type BoardReviewStuckFinding,
   isBoardReviewBlockingSeverity,
   parseBoardStepPayloadJson,
   parseReviewStepId,
@@ -44,6 +53,7 @@ import * as Schema from "effect/Schema";
 const decodeReviewPayload = Schema.decodeUnknownOption(BoardReviewPayload);
 const decodeTriagePayload = Schema.decodeUnknownOption(BoardTriagePayload);
 const decodeAdjudicatePayload = Schema.decodeUnknownOption(BoardAdjudicatePayload);
+const decodeRetriagePayload = Schema.decodeUnknownOption(BoardRetriagePayload);
 
 /** Re-exported from contracts, where the folding rule now lives so the pane
     and the column card's summary agree on what "fixed" means. */
@@ -58,12 +68,27 @@ export interface BoardReviewLoopFinding {
   readonly dispositionNote: string;
   readonly verdict: BoardReviewVerdict | null;
   readonly verdictNote: string;
+  /** The second pass, when the adjudicator overruled triage (T3O-51). */
+  readonly retriage: BoardReviewRetriageAction | null;
+  readonly retriageNote: string;
+  readonly reverdict: BoardReviewVerdict | null;
+  readonly reverdictNote: string;
+  /** The round this finding was first raised in, when a human carried it in
+      as must-fix; null for the reviewer's own. */
+  readonly carriedFrom: number | null;
+}
+
+/** A finding a human ruled not an issue, at or before this round (T3O-51). */
+export interface BoardReviewLoopDismissal {
+  readonly findingId: string;
+  readonly title: string;
+  readonly round: number;
 }
 
 export type BoardReviewPhaseStatus = "done" | "running" | "pending" | "skipped";
 
 export interface BoardReviewLoopPhase {
-  readonly phase: BoardReviewPhaseId;
+  readonly phase: BoardReviewPhaseId | BoardReviewFollowUpPhase;
   readonly status: BoardReviewPhaseStatus;
   /** The completed phase's thread, so the pane can deep-link into it. */
   readonly threadId: ThreadId | null;
@@ -78,12 +103,19 @@ export type BoardReviewRoundOutcome =
   /** The round raised blocking findings and ran its full phase sequence. */
   | "changes-requested"
   /** One of the round's phases recorded a payload nothing can read. */
-  | "unreadable";
+  | "unreadable"
+  /** A dispute survived the round's second pass (T3O-51). */
+  | "stuck";
 
 export interface BoardReviewLoopRound {
   readonly round: number;
   readonly outcome: BoardReviewRoundOutcome;
   readonly reviewMalformed: boolean;
+  /** The human's ruling carried INTO this round (T3O-51): `fix` opens it
+      with must-fix findings. */
+  readonly carriedRuling: { readonly fromRound: number; readonly note: string | null } | null;
+  /** Findings a human dismissed by this round. */
+  readonly dismissals: ReadonlyArray<BoardReviewLoopDismissal>;
   /** The round's phase whose payload the board cannot read, when the loop
       halted on it — what the Reopen affordance names and repairs (T3O-14).
       `reviewMalformed` stays beside it because a broken REVIEW is the one that
@@ -100,7 +132,10 @@ export interface BoardReviewLoopRound {
     readonly rejected: number;
     readonly open: number;
     readonly disputed: number;
+    readonly escalated: number;
   };
+  /** The round's phases in order. The follow-ups appear only when they ran or
+      are due (T3O-51). */
   readonly phases: ReadonlyArray<BoardReviewLoopPhase>;
   /** The round's most recent phase completion, for the head's timestamp. */
   readonly completedAt: string | null;
@@ -117,6 +152,9 @@ export interface BoardReviewLoopRound {
  *                   move on (t3o-22, D1): nothing was signed off.
  *  - `stopped`    — the user held the loop after a round, budget remaining.
  *  - `unreadable` — a review phase recorded a payload nothing can read.
+ *  - `stuck`      — a dispute survived re-triage and re-adjudication; a human
+ *                   must rule (T3O-51).
+ *  - `advanced`   — a human advanced the card past a stuck round.
  */
 export type BoardReviewLoopStatus = BoardReviewLoopOutcome;
 
@@ -126,8 +164,14 @@ export interface BoardReviewLoop {
   /** The round the loop is in (or ended on). At least 1. */
   readonly currentRound: number;
   /** The phase the loop runs next, while it still runs. */
-  readonly next: { readonly phase: BoardReviewPhaseId; readonly round: number } | null;
+  readonly next: { readonly phase: BoardReviewStepPhase; readonly round: number } | null;
   readonly status: BoardReviewLoopStatus;
+  /** What a stuck loop stopped on (T3O-51); empty otherwise. */
+  readonly stuckFindings: ReadonlyArray<BoardReviewStuckFinding>;
+  /** The stuck (or advanced-past) round's fixes no review has read. */
+  readonly unreviewedFixes: number;
+  /** Set when the adjudicator ended the loop: nothing new was raised. */
+  readonly convergedBy: "adjudicator" | null;
   /** The step id the loop halted `unreadable` on, null otherwise — the record
       the pane's Reopen sends back (T3O-14). */
   readonly unreadableStepId: string | null;
@@ -137,6 +181,7 @@ export interface BoardReviewLoop {
     readonly rejected: number;
     readonly open: number;
     readonly disputed: number;
+    readonly escalated: number;
   };
 }
 
@@ -160,6 +205,11 @@ export function deriveBoardReviewLoop(
       more pass (T3O-39, D13). Without it the pane reports `converged` while
       the executor is dispatching round N+1. */
   runThroughRound: number | null = null,
+  /** The card's server-written carry fields (T3O-51). */
+  carry: {
+    readonly carriedFindings: Readonly<Record<string, BoardReviewCarry>>;
+    readonly stuckWaivedThrough: number | null;
+  } = { carriedFindings: {}, stuckWaivedThrough: null },
 ): BoardReviewLoop {
   const byStep = new Map<string, BoardStepCompletion>();
   let highestRound = 0;
@@ -175,12 +225,15 @@ export function deriveBoardReviewLoop(
   // It is bounded by the EFFECTIVE cap exactly as the executor's is — a round
   // recorded beyond a since-lowered cap is history the executor will never
   // re-enter, so it is rendered below but never treated as "still running".
-  const { next, status, currentRound, unreadableStepId } = boardReviewLoopWalk({
+  const walk = boardReviewLoopWalk({
     completions,
     maxRounds,
     stopAfterRound,
     runThroughRound,
+    carriedFindings: carry.carriedFindings,
+    stuckWaivedThrough: carry.stuckWaivedThrough,
   });
+  const { next, status, currentRound, unreadableStepId } = walk;
   const unreadable = unreadableStepId === null ? null : parseReviewStepId(unreadableStepId);
 
   const roundModels: BoardReviewLoopRound[] = [];
@@ -190,51 +243,94 @@ export function deriveBoardReviewLoop(
     const review = byStep.get(`review@${round}`);
     const triage = byStep.get(`triage@${round}`);
     const adjudicate = byStep.get(`adjudicate@${round}`);
+    const retriage = byStep.get(`retriage@${round}`);
+    const readjudicate = byStep.get(`readjudicate@${round}`);
     if (review === undefined && triage === undefined && adjudicate === undefined) {
       // The round exists only as "the loop is about to run its review".
       if (next === null || next.round !== round) continue;
     }
 
-    const reviewPayload = review
-      ? decodeReviewPayload(parseBoardStepPayloadJson(review.payload))
-      : Option.none();
-    const triagePayload = triage
-      ? decodeTriagePayload(parseBoardStepPayloadJson(triage.payload))
-      : Option.none();
-    const adjudicatePayload = adjudicate
-      ? decodeAdjudicatePayload(parseBoardStepPayloadJson(adjudicate.payload))
-      : Option.none();
-    const reviewMalformed = review !== undefined && Option.isNone(reviewPayload);
+    const decodeOf = <A>(
+      completion: BoardStepCompletion | undefined,
+      decode: (value: unknown) => Option.Option<A>,
+    ): A | null =>
+      completion === undefined
+        ? null
+        : Option.getOrNull(decode(parseBoardStepPayloadJson(completion.payload)));
+    const reviewPayload = decodeOf(review, decodeReviewPayload);
+    const triagePayload = decodeOf(triage, decodeTriagePayload);
+    const adjudicatePayload = decodeOf(adjudicate, decodeAdjudicatePayload);
+    const retriagePayload = decodeOf(retriage, decodeRetriagePayload);
+    const readjudicatePayload = decodeOf(readjudicate, decodeAdjudicatePayload);
+    const reviewMalformed = review !== undefined && reviewPayload === null;
 
-    const rawFindings = Option.isSome(reviewPayload) ? reviewPayload.value.findings : [];
-    const dispositions = new Map(
-      (Option.isSome(triagePayload) ? triagePayload.value.dispositions : []).map((d) => [
-        d.findingId,
-        d,
-      ]),
-    );
-    const verdicts = new Map(
-      (Option.isSome(adjudicatePayload) ? adjudicatePayload.value.verdicts : []).map((v) => [
-        v.findingId,
-        v,
-      ]),
-    );
-    const findings: BoardReviewLoopFinding[] = rawFindings.map((finding) => {
+    // A human's Fix it carries findings into this round as must-fix; the board
+    // adds them itself, so they join the round whatever the reviewer said.
+    const carryEntry = carry.carriedFindings[String(round)];
+    const carried = boardReviewCarriedFixFindings(carry.carriedFindings, round);
+    const carriedIds = new Set(carried.map((entry) => entry.findingId));
+    const rawFindings: ReadonlyArray<BoardReviewFinding & { readonly carriedFrom: number | null }> =
+      reviewPayload === null
+        ? []
+        : [
+            ...reviewPayload.findings
+              .filter((finding) => !carriedIds.has(finding.id))
+              .map((finding) => ({ ...finding, carriedFrom: null })),
+            ...carried.map((entry) => ({
+              id: entry.findingId,
+              severity: entry.severity,
+              file: entry.file,
+              line: entry.line,
+              title: entry.title,
+              detail: entry.detail,
+              carriedFrom: entry.origRound,
+            })),
+          ];
+    const byId = <T extends { readonly findingId: string }>(list: ReadonlyArray<T> | undefined) =>
+      new Map((list ?? []).map((item) => [item.findingId, item]));
+    const dispositions = byId(triagePayload?.dispositions);
+    const verdicts = byId(adjudicatePayload?.verdicts);
+    const redispositions = byId(retriagePayload?.dispositions);
+    const reverdicts = byId(readjudicatePayload?.verdicts);
+    const findings: BoardReviewLoopFinding[] = rawFindings.map(({ carriedFrom, ...finding }) => {
       const disposition = dispositions.get(finding.id);
       const verdict = verdicts.get(finding.id);
+      const redisposition = redispositions.get(finding.id);
+      const reverdict = reverdicts.get(finding.id);
       return {
         finding,
-        resolution: boardReviewFindingResolution(disposition, verdict),
+        // The latest pass decides where the finding stands.
+        resolution: boardReviewFindingResolution(
+          redisposition ?? disposition,
+          reverdict ?? verdict,
+        ),
         disposition: disposition?.action ?? null,
         dispositionNote: disposition?.note ?? "",
         verdict: verdict?.verdict ?? null,
         verdictNote: verdict?.note ?? "",
+        retriage: redisposition?.action ?? null,
+        retriageNote: redisposition?.note ?? "",
+        reverdict: reverdict?.verdict ?? null,
+        reverdictNote: reverdict?.note ?? "",
+        carriedFrom,
       };
     });
 
-    const blocking = rawFindings.filter((f) => isBoardReviewBlockingSeverity(f.severity)).length;
+    const blocking = rawFindings.filter(
+      (f) => f.carriedFrom !== null || isBoardReviewBlockingSeverity(f.severity),
+    ).length;
+    const completionOf = (phase: BoardReviewPhaseId | BoardReviewFollowUpPhase) =>
+      phase === "review"
+        ? review
+        : phase === "triage"
+          ? triage
+          : phase === "adjudicate"
+            ? adjudicate
+            : phase === "retriage"
+              ? retriage
+              : readjudicate;
     const phaseStatus = (phase: BoardReviewPhaseId): BoardReviewPhaseStatus => {
-      const completion = phase === "review" ? review : phase === "triage" ? triage : adjudicate;
+      const completion = completionOf(phase);
       if (completion !== undefined) return "done";
       if (next !== null && next.round === round && next.phase === phase) return "running";
       // A round beyond the walk (recorded before the cap was lowered) will
@@ -247,17 +343,33 @@ export function deriveBoardReviewLoop(
       if (phase === "triage") return rawFindings.length === 0 ? "skipped" : "pending";
       return blocking === 0 ? "skipped" : "pending";
     };
-    const phases: BoardReviewLoopPhase[] = BOARD_REVIEW_PHASE_IDS.map((phase) => {
-      const completion = phase === "review" ? review : phase === "triage" ? triage : adjudicate;
+    const phaseOf = (
+      phase: BoardReviewPhaseId | BoardReviewFollowUpPhase,
+      status: BoardReviewPhaseStatus,
+    ): BoardReviewLoopPhase => {
+      const completion = completionOf(phase);
       return {
         phase,
-        status: phaseStatus(phase),
+        status,
         threadId: completion?.threadId ?? null,
         completedAt: completion?.completedAt ?? null,
       };
+    };
+    // The follow-ups show only once they ran or are due: most rounds never
+    // summon them.
+    const followUps = (["retriage", "readjudicate"] as const).flatMap((phase) => {
+      if (completionOf(phase) !== undefined) return [phaseOf(phase, "done")];
+      if (next !== null && next.round === round && next.phase === phase) {
+        return [phaseOf(phase, "running")];
+      }
+      return [];
     });
+    const phases: BoardReviewLoopPhase[] = [
+      ...BOARD_REVIEW_PHASE_IDS.map((phase) => phaseOf(phase, phaseStatus(phase))),
+      ...followUps,
+    ];
 
-    const stamps = [review, triage, adjudicate]
+    const stamps = [review, triage, adjudicate, retriage, readjudicate]
       .filter((completion) => completion !== undefined)
       .map((completion) => completion.completedAt)
       .sort();
@@ -272,10 +384,19 @@ export function deriveBoardReviewLoop(
           ? "unreadable"
           : !roundDone
             ? "in-progress"
-            : blocking > 0
-              ? "changes-requested"
-              : "clean",
+            : status === "stuck" && currentRound === round
+              ? "stuck"
+              : blocking > 0
+                ? "changes-requested"
+                : "clean",
       reviewMalformed,
+      carriedRuling:
+        carryEntry?.ruling === "fix" ? { fromRound: round - 1, note: carryEntry.note } : null,
+      dismissals: boardReviewDismissals(carry.carriedFindings, round).map((dismissal) => ({
+        findingId: dismissal.findingId,
+        title: dismissal.title,
+        round: dismissal.round - 1,
+      })),
       unreadablePhase,
       findings,
       severities: {
@@ -288,6 +409,7 @@ export function deriveBoardReviewLoop(
         rejected: findings.filter((f) => f.resolution === "rejected").length,
         open: findings.filter((f) => f.resolution === "open").length,
         disputed: findings.filter((f) => f.resolution === "disputed").length,
+        escalated: findings.filter((f) => f.resolution === "escalated").length,
       },
       phases,
       completedAt: stamps.length > 0 ? (stamps[stamps.length - 1] ?? null) : null,
@@ -303,12 +425,16 @@ export function deriveBoardReviewLoop(
     next,
     status,
     unreadableStepId,
+    stuckFindings: walk.stuckFindings ?? [],
+    unreviewedFixes: walk.unreviewedFixes ?? 0,
+    convergedBy: walk.convergedBy ?? null,
     totals: {
       raised: all.length,
       fixed: all.filter((f) => f.resolution === "fixed").length,
       rejected: all.filter((f) => f.resolution === "rejected").length,
       open: all.filter((f) => f.resolution === "open").length,
       disputed: all.filter((f) => f.resolution === "disputed").length,
+      escalated: all.filter((f) => f.resolution === "escalated").length,
     },
   };
 }

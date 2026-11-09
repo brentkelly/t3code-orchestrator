@@ -61,3 +61,33 @@ The Review pane offers the same thing under a different name. A loop that stoppe
 — out of rounds, or held because you asked it to stop — shows **Run round N+1** beside **Advance
 anyway**. It is the same action as the button in the action column; the pane just explains, with
 counts, why the loop stopped where it did.
+
+## When the review is stuck
+
+When the adjudicator rules against the author on a blocking finding, the round does not just roll
+on to the next one. The author gets one more pass in the same round, to fix the finding, argue
+again with a better reason, or escalate it to you, and the adjudicator rules once more. If they
+still disagree, or the author escalated, the loop stops and the card shows **Stuck** in violet. The
+review pane lists each stuck finding with the author's argument beside the adjudicator's ruling.
+
+You have three choices, and each one applies to every finding listed:
+
+- **Fix it and run round N+1** sides with the adjudicator. The next round must fix the findings: the
+  author cannot reject them, and the adjudicator checks the fix. Add a note to steer the fix.
+- **Reviewer is wrong, run round N+1** sides with the author. The findings are settled as not issues,
+  and later rounds are told not to raise them again. It reads **Accept as is** when the stuck
+  finding is one you already ordered fixed.
+- **Advance anyway** moves the card on with the code as it stands. Nothing is ruled, and the card
+  says how many fixes from the stuck round no review has read.
+
+**Run round N+1** and the budget controls are hidden while the loop is stuck, because another plain
+round would only raise the same dispute. Only a person can move a stuck card out of Code review.
+
+The adjudicator can also end the loop early. When a round raises nothing new beyond points already
+settled and no blocking fix landed, it can rule that no further round is needed, and the pane says
+so.
+
+Each review round now reads the code with fresh eyes: the reviewer does not see earlier rounds, only
+your unresolved pull request comments and the findings you ruled not issues. A review prompt still
+set to the old default switches to the new one by itself. One you edited is kept as it is, so edit it
+again if it still asks the reviewer to read earlier rounds.

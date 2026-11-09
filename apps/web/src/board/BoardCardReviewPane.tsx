@@ -11,11 +11,12 @@
  * Lazy, like the plan pane — a card that never reaches review pays nothing.
  */
 import {
-  BOARD_REVIEW_PHASE_IDS,
   boardReviewRoundsStarted,
   isBoardReviewLoopHeld,
   parseReviewStepId,
   type BoardCardReviewOverrides,
+  type BoardReviewCarryRuling,
+  type BoardReviewFollowUpPhase,
   type BoardReviewPhaseId,
   type BoardReviewStepPhase,
   type BoardReviewRoundOverride,
@@ -49,10 +50,12 @@ import {
 } from "./boardReviewLoop";
 import { useBoardServerProviders, useBoardSettings } from "./useBoardEnvironmentId";
 
-const PHASE_NAMES: Record<BoardReviewPhaseId, string> = {
+const PHASE_NAMES: Record<BoardReviewPhaseId | BoardReviewFollowUpPhase, string> = {
   review: "Fresh-eyes review",
   triage: "Triage & respond",
   adjudicate: "Adjudication",
+  retriage: "Re-triage",
+  readjudicate: "Re-adjudication",
 };
 
 /** How the pane names a phase whose payload it cannot read. Short agent nouns
@@ -62,6 +65,8 @@ const UNREADABLE_PHASE_NAMES: Record<BoardReviewStepPhase, string> = {
   review: "reviewer",
   triage: "triager",
   adjudicate: "adjudicator",
+  retriage: "re-triager",
+  readjudicate: "re-adjudicator",
   sync: "base sync",
 };
 
@@ -83,6 +88,7 @@ const RESOLUTION_LABELS: Record<BoardReviewLoopFinding["resolution"], string> = 
   fixed: "fixed",
   rejected: "rejected",
   disputed: "disputed",
+  escalated: "escalated",
 };
 
 const RESOLUTION_STYLES: Record<BoardReviewLoopFinding["resolution"], string> = {
@@ -90,11 +96,31 @@ const RESOLUTION_STYLES: Record<BoardReviewLoopFinding["resolution"], string> = 
   fixed: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   rejected: "border-border bg-muted text-muted-foreground",
   disputed: "border-destructive/40 bg-destructive/10 text-destructive-foreground",
+  // Violet: an escalated finding waits on a human (docs/t3o/status-colours.md).
+  escalated: "border-attention/40 bg-attention/12 text-attention-foreground",
 };
 
-/** A finding's row: severity chip, title and file, then where it stands. */
+const VERDICT_WORDS: Record<NonNullable<BoardReviewLoopFinding["verdict"]>, string> = {
+  "fix-upheld": "fix upheld",
+  "fix-incomplete": "fix incomplete",
+  "fix-absent": "fix absent",
+  "rejection-justified": "rejection justified",
+  "rejection-unjustified": "rejection unjustified",
+};
+
+/** A finding's row: severity chip, title and file, then where it stands. The
+    latest pass leads; a finding the adjudicator overruled keeps its earlier
+    passes one click away (T3O-51). */
 function FindingRow({ entry }: { readonly entry: BoardReviewLoopFinding }) {
   const { finding } = entry;
+  const [showPasses, setShowPasses] = useState(false);
+  const secondPass = entry.retriage !== null;
+  const latestNote = [
+    entry.reverdictNote,
+    entry.retriageNote,
+    entry.verdictNote,
+    entry.dispositionNote,
+  ].find((note) => note.trim().length > 0);
   return (
     <div className="flex items-start gap-2.5 rounded-lg px-2 py-1.5 -mx-2">
       <span
@@ -113,10 +139,34 @@ function FindingRow({ entry }: { readonly entry: BoardReviewLoopFinding }) {
             {finding.line !== null ? `:${finding.line}` : ""}
           </span>
         ) : null}
-        {entry.dispositionNote.trim().length > 0 || entry.verdictNote.trim().length > 0 ? (
-          <span className="text-[11px]/[1.4] text-muted-foreground">
-            {entry.verdictNote.trim().length > 0 ? entry.verdictNote : entry.dispositionNote}
+        {entry.carriedFrom !== null ? (
+          <span className="text-[11px] text-muted-foreground">
+            Carried from round {entry.carriedFrom} · must-fix
           </span>
+        ) : null}
+        {latestNote === undefined ? null : (
+          <span className="text-[11px]/[1.4] text-muted-foreground">{latestNote}</span>
+        )}
+        {secondPass ? (
+          <button
+            className="w-fit text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            onClick={() => setShowPasses((open) => !open)}
+            type="button"
+          >
+            {showPasses ? "Hide the history" : "2 passes"}
+          </button>
+        ) : null}
+        {secondPass && showPasses ? (
+          <ol className="flex flex-col gap-0.5 text-[11px]/[1.45] text-muted-foreground">
+            <li>
+              Triage: {entry.disposition ?? "no answer"}
+              {entry.verdict === null ? "" : ` → ${VERDICT_WORDS[entry.verdict]}`}
+            </li>
+            <li>
+              Re-triage: {entry.retriage === "rejected" ? "argued again" : entry.retriage}
+              {entry.reverdict === null ? "" : ` → ${VERDICT_WORDS[entry.reverdict]}`}
+            </li>
+          </ol>
         ) : null}
       </div>
       <span
@@ -148,7 +198,7 @@ const PHASE_BADGE: Record<ShownPhaseStatus, BoardStepBadgeState> = {
 /** The per-phase prose, written from the round's actual numbers. */
 function phaseNote(
   round: BoardReviewLoopRound,
-  phase: BoardReviewPhaseId,
+  phase: BoardReviewPhaseId | BoardReviewFollowUpPhase,
   status: ShownPhaseStatus,
 ): string {
   // Its step stalled before it finished — or before it ever had a thread, as a
@@ -178,12 +228,40 @@ function phaseNote(
     if (status === "done") return `${fixed} fixed, ${rejected} rejected with a written rationale.`;
     return "Not started.";
   }
+  if (phase === "retriage") {
+    const answered = findings.filter((f) => f.retriage !== null);
+    if (status === "running")
+      return "Answering the overruled findings: fix it, argue again, or escalate.";
+    const fixed = answered.filter((f) => f.retriage === "fixed").length;
+    const argued = answered.filter((f) => f.retriage === "rejected").length;
+    const escalated = answered.filter((f) => f.retriage === "escalated").length;
+    return `${fixed} fixed, ${argued} argued again, ${escalated} escalated to you.`;
+  }
+  if (phase === "readjudicate") {
+    if (status === "running") return "The final ruling on what re-triage fixed or argued again.";
+    const ruled = findings.filter((f) => f.reverdict !== null);
+    const held = ruled.filter(
+      (f) => f.reverdict === "fix-upheld" || f.reverdict === "rejection-justified",
+    ).length;
+    return held === ruled.length
+      ? "Every re-triaged response held up."
+      : `${ruled.length - held} still disputed — the loop holds for your call.`;
+  }
   if (status === "skipped") return "Only runs when a finding blocks the round.";
   if (status === "running") return "An independent adjudicator is checking the fixes.";
-  if (status === "done")
-    return counts.disputed > 0
-      ? `${counts.disputed} ${counts.disputed === 1 ? "response" : "responses"} disputed — the next round re-reads them.`
-      : "Every response held up.";
+  if (status === "done") {
+    const overruled = findings.filter(
+      (f) =>
+        f.verdict === "fix-incomplete" ||
+        f.verdict === "fix-absent" ||
+        f.verdict === "rejection-unjustified",
+    ).length;
+    return overruled > 0
+      ? `${overruled} ${overruled === 1 ? "response" : "responses"} overruled — re-triage takes ${overruled === 1 ? "it" : "them"} in this round.`
+      : counts.disputed > 0
+        ? `${counts.disputed} ${counts.disputed === 1 ? "response" : "responses"} disputed.`
+        : "Every response held up.";
+  }
   return "Not started.";
 }
 
@@ -214,6 +292,12 @@ function roundBadge(
         label: "Changes requested",
         className: "border-destructive/40 bg-destructive/10 text-destructive-foreground",
       };
+    case "stuck":
+      // Violet: the round waits on a human's ruling (docs/t3o/status-colours.md).
+      return {
+        label: "Stuck",
+        className: "border-attention/40 bg-attention/12 text-attention-foreground",
+      };
     case "unreadable":
       // Amber, like every other held ending (docs/t3o/status-colours.md:
       // blocked is amber). It was destructive red until T3O-14, which made
@@ -233,6 +317,7 @@ function roundSummary(round: BoardReviewLoopRound): string {
   const parts = [`${round.counts.fixed} fixed`, `${round.counts.rejected} rejected`];
   if (round.counts.open > 0) parts.push(`${round.counts.open} open`);
   if (round.counts.disputed > 0) parts.push(`${round.counts.disputed} disputed`);
+  if (round.counts.escalated > 0) parts.push(`${round.counts.escalated} escalated`);
   return parts.join(" · ");
 }
 
@@ -303,12 +388,45 @@ function Round({
       </button>
       {open ? (
         <div className="flex flex-col">
-          {BOARD_REVIEW_PHASE_IDS.map((phaseId, index) => {
-            const phase = round.phases.find((p) => p.phase === phaseId);
-            if (phase === undefined) return null;
+          {round.carriedRuling === null ? null : (
+            <div className="flex flex-col gap-1 border-t border-border bg-foreground/2 px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border bg-card px-[7px] text-[10px] font-medium uppercase tracking-[.04em] text-foreground">
+                  Must-fix
+                </span>
+                <span className="text-[12.5px] font-medium text-foreground">
+                  Carried from round {round.carriedRuling.fromRound}
+                </span>
+              </div>
+              <span className="text-pretty text-[11.5px]/[1.5] text-muted-foreground">
+                You sided with the adjudicator. Triage must fix{" "}
+                {round.findings.filter((f) => f.carriedFrom !== null).length === 1
+                  ? "this finding"
+                  : "these findings"}{" "}
+                and the adjudicator checks the fix.
+              </span>
+              {round.carriedRuling.note === null ? null : (
+                <span className="border-l-2 border-input pl-2 text-pretty text-[11.5px]/[1.5] text-foreground">
+                  {round.carriedRuling.note}
+                </span>
+              )}
+            </div>
+          )}
+          {round.dismissals.length === 0 ? null : (
+            <div className="flex flex-col gap-0.5 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+              {round.dismissals.map((dismissal) => (
+                <span key={dismissal.findingId}>
+                  Dismissed by you in round {dismissal.round}: {dismissal.title}
+                </span>
+              ))}
+            </div>
+          )}
+          {round.phases.map((phase, index) => {
+            const phaseId = phase.phase;
+            const followUp = phaseId === "retriage" || phaseId === "readjudicate";
             const status = boardReviewPhaseShownStatus(phase.status, { offStage, stalled });
             return (
-              <div key={phaseId} className="border-t border-border">
+              <div key={phaseId} className={cn("border-t border-border", followUp ? "pl-6" : "")}>
                 <div className="flex items-start gap-2.5 px-3 py-2.5">
                   <BoardStepBadge index={index + 1} state={PHASE_BADGE[status]} />
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -371,7 +489,12 @@ function statusPill(
           className: "bg-muted text-muted-foreground",
         };
       }
-      const phase = loop.next === null ? "Review" : PHASE_NAMES[loop.next.phase];
+      const phase =
+        loop.next === null
+          ? "Review"
+          : loop.next.phase === "sync"
+            ? "Sync base"
+            : PHASE_NAMES[loop.next.phase];
       // A stalled step is not "waiting to run": nothing will run it until
       // someone acts (T3O-13). Amber, as the card's own "Needs a human" chip
       // is — a stop with no question to answer is not violet
@@ -396,9 +519,26 @@ function statusPill(
     }
     case "converged":
       return {
-        label: "Loop settled — nothing blocking",
+        label:
+          loop.convergedBy === "adjudicator"
+            ? "Loop settled — adjudicator ruled nothing new"
+            : "Loop settled — nothing blocking",
         spinning: false,
         className: "bg-success/14 text-success-foreground",
+      };
+    case "stuck":
+      // Violet: a human's ruling is what the loop waits on.
+      return {
+        label: `Stuck on round ${loop.currentRound} — needs your call`,
+        spinning: false,
+        className: "bg-attention/12 text-attention-foreground",
+      };
+    case "advanced":
+      // Neither a pass nor a call for a human: neutral.
+      return {
+        label: `Advanced past stuck round ${loop.currentRound}`,
+        spinning: false,
+        className: "bg-muted text-muted-foreground",
       };
     case "round-cap":
       return {
@@ -442,7 +582,13 @@ function footerNote(
         return `Round ${loop.currentRound} of ${loop.maxRounds} · the loop stopped. Continue it, restart the phase, or move the card on from the card's actions.`;
       return `Round ${loop.currentRound} of ${loop.maxRounds} · the loop stops early once a round closes clean.`;
     case "converged":
-      return "A round closed with nothing blocking, so the loop is settled.";
+      return loop.convergedBy === "adjudicator"
+        ? "The adjudicator ruled the last round raised nothing new beyond points already settled, and no code changed, so the loop is settled."
+        : "A round closed with nothing blocking, so the loop is settled.";
+    case "stuck":
+      return "Triage and the adjudicator still disagree after a second pass, so the loop is holding for your call.";
+    case "advanced":
+      return `You advanced the card past stuck round ${loop.currentRound}${loop.unreviewedFixes > 0 ? ` · ${loop.unreviewedFixes} ${loop.unreviewedFixes === 1 ? "fix" : "fixes"} not re-reviewed` : ""}. Nothing was signed off.`;
     case "round-cap":
       return "Every round ran without a clean pass, so the loop stopped at its limit. Nothing was signed off, and the card stays here until you extend the loop or advance it yourself.";
     case "stopped":
@@ -514,6 +660,194 @@ function NoConvergenceBlock({
             Advance anyway
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The block a STUCK loop puts above its rounds (T3O-51): what triage and the
+ * adjudicator still disagree on, side by side, and the three rulings a human
+ * can make. Every action applies to all the listed findings at once.
+ */
+function StuckBlock({
+  loop,
+  onRuling,
+  onAdvance,
+}: {
+  readonly loop: BoardReviewLoop;
+  readonly onRuling?: ((ruling: BoardReviewCarryRuling, note: string | null) => void) | undefined;
+  readonly onAdvance?: (() => void) | undefined;
+}) {
+  const [form, setForm] = useState<BoardReviewCarryRuling | null>(null);
+  const [note, setNote] = useState("");
+  const findings = loop.stuckFindings;
+  const allCarried = findings.length > 0 && findings.every((f) => f.carriedFrom !== null);
+  const dismissLabel = allCarried ? "Accept as is" : "Reviewer is wrong";
+  const next = loop.currentRound + 1;
+  const submit = () => {
+    if (form === null || onRuling === undefined) return;
+    const trimmed = note.trim();
+    onRuling(form, trimmed.length === 0 ? null : trimmed);
+    setForm(null);
+    setNote("");
+  };
+  return (
+    <div className="flex shrink-0 flex-col gap-[11px] rounded-xl border border-attention/40 bg-attention/6 px-3.5 py-3">
+      <div className="flex items-center gap-2.5">
+        <span className="inline-flex size-[22px] shrink-0 items-center justify-center rounded-[7px] bg-attention/16 font-mono text-[12px] font-semibold text-attention-foreground">
+          !
+        </span>
+        <div className="text-[12.5px] font-semibold text-foreground">
+          Review is stuck on round {loop.currentRound}
+        </div>
+      </div>
+      <div className="text-pretty text-[11.5px]/[1.55] text-muted-foreground">
+        Round {loop.currentRound} ended with {findings.length}{" "}
+        {findings.length === 1 ? "finding" : "findings"} that triage and the adjudicator still
+        disagree on after a second pass. The loop is holding for your call.
+      </div>
+      <div className="flex flex-col gap-2">
+        {findings.map((finding) => (
+          <div
+            key={finding.findingId}
+            className="flex flex-col gap-2 rounded-[10px] border border-border bg-card px-[11px] py-2.5"
+          >
+            <div className="flex items-start gap-2">
+              <span
+                className={cn(
+                  "mt-px inline-flex h-4 shrink-0 items-center rounded-[5px] px-1.5 text-[10px] font-medium uppercase tracking-[.03em]",
+                  SEVERITY_STYLES[finding.severity],
+                )}
+              >
+                {finding.severity}
+              </span>
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="text-pretty text-[12.5px]/[1.45] font-medium text-foreground">
+                  {finding.title}
+                </span>
+                {finding.file === null ? null : (
+                  <span className="truncate font-mono text-[10.5px] text-muted-foreground">
+                    {finding.file}
+                    {finding.line === null ? "" : `:${finding.line}`}
+                  </span>
+                )}
+              </div>
+              {finding.triageAction === "escalated" ? (
+                <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border bg-attention/12 px-[7px] text-[10.5px] font-medium text-attention-foreground">
+                  escalated
+                </span>
+              ) : finding.carriedFrom !== null ? (
+                <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground">
+                  carried fix failed
+                </span>
+              ) : null}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1 rounded-lg bg-muted px-[9px] py-2">
+                <span className="text-[10px] font-semibold uppercase tracking-[.06em] text-muted-foreground">
+                  Triage{finding.triageAction === null ? "" : ` · ${finding.triageAction}`}
+                </span>
+                <span className="text-pretty text-[11.5px]/[1.5] text-foreground">
+                  {finding.triageNote.trim().length > 0
+                    ? finding.triageNote
+                    : "No answer recorded."}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1 rounded-lg bg-muted px-[9px] py-2">
+                <span className="text-[10px] font-semibold uppercase tracking-[.06em] text-muted-foreground">
+                  Ruling
+                  {finding.rulingVerdict === null
+                    ? ""
+                    : ` · ${VERDICT_WORDS[finding.rulingVerdict]}`}
+                </span>
+                <span className="text-pretty text-[11.5px]/[1.5] text-foreground">
+                  {finding.rulingNote.trim().length > 0
+                    ? finding.rulingNote
+                    : "No ruling recorded."}
+                </span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {onRuling === undefined ? null : (
+          <>
+            <BoardHint label={`Side with the adjudicator: round ${next} must fix these`}>
+              <button
+                className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary bg-primary px-3 text-[12.5px] font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
+                onClick={() => setForm(form === "fix" ? null : "fix")}
+                type="button"
+              >
+                Fix it and run round {next}
+              </button>
+            </BoardHint>
+            <BoardHint label="Side with triage: these are settled as not issues">
+              <button
+                className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-input bg-popover px-3 text-[12.5px] font-medium text-foreground shadow-xs hover:bg-accent"
+                onClick={() => setForm(form === "dismiss" ? null : "dismiss")}
+                type="button"
+              >
+                {dismissLabel}, run round {next}
+              </button>
+            </BoardHint>
+          </>
+        )}
+        {onAdvance === undefined ? null : (
+          <button
+            className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-input bg-popover px-3 text-[12.5px] font-medium text-foreground shadow-xs hover:bg-accent"
+            onClick={onAdvance}
+            type="button"
+          >
+            Advance anyway
+          </button>
+        )}
+      </div>
+      {form === null ? null : (
+        <div className="flex flex-col gap-2 rounded-[10px] border border-border bg-card px-[11px] py-2.5">
+          <span className="text-[12px] font-medium text-foreground">
+            {form === "fix"
+              ? `Fix ${findings.length === 1 ? "this finding" : "these findings"} in round ${next}`
+              : `Rule ${findings.length === 1 ? "this finding" : "these findings"} not an issue`}
+          </span>
+          <textarea
+            className="block w-full resize-y rounded-lg border border-input bg-popover px-2.5 py-2 text-[12px]/[1.5] text-foreground"
+            onChange={(event) => setNote(event.target.value)}
+            placeholder={
+              form === "fix" ? "Guidance for the fix, e.g. use approach X" : "Why, for the record"
+            }
+            rows={3}
+            value={note}
+          />
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-muted-foreground">
+              Optional ·{" "}
+              {form === "fix" ? "goes to triage with the findings" : "kept with the ruling"}
+            </span>
+            <span className="flex-1" />
+            <button
+              className="h-7 shrink-0 rounded-lg px-2.5 text-[12px] font-medium text-muted-foreground hover:text-foreground"
+              onClick={() => setForm(null)}
+              type="button"
+            >
+              Cancel
+            </button>
+            <button
+              className="inline-flex h-7 shrink-0 items-center rounded-lg border border-primary bg-primary px-[11px] text-[12px] font-medium text-primary-foreground shadow-xs"
+              onClick={submit}
+              type="button"
+            >
+              Run round {next}
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="text-pretty text-[11px]/[1.5] text-muted-foreground">
+        {findings.length > 1 ? "Each action applies to all the findings above. " : ""}
+        {loop.unreviewedFixes > 0
+          ? `${loop.unreviewedFixes} ${loop.unreviewedFixes === 1 ? "fix" : "fixes"} from round ${loop.currentRound} ${loop.unreviewedFixes === 1 ? "has" : "have"} not been re-reviewed; advancing takes them as they stand.`
+          : "Advancing takes the code as it stands."}
       </div>
     </div>
   );
@@ -675,6 +1009,7 @@ export function BoardCardReviewPane({
   onSetRoundModel,
   phaseRuntimeMode,
   onAdvance,
+  onRuling,
   onReopenStep,
   onBackToThread,
   onOpenThread,
@@ -723,6 +1058,8 @@ export function BoardCardReviewPane({
   readonly phaseRuntimeMode?: RuntimeMode | undefined;
   /** Move the card on despite a loop that never converged (D8). */
   readonly onAdvance?: (() => void) | undefined;
+  /** Rule on a stuck loop's findings and run another round (T3O-51). */
+  readonly onRuling?: ((ruling: BoardReviewCarryRuling, note: string | null) => void) | undefined;
   /** Send a round's review back because its recorded payload cannot be read
       (T3O-14). Absent leaves the halt visible but unfixable from here. */
   readonly onReopenStep?: ((stepId: string) => void) | undefined;
@@ -736,7 +1073,12 @@ export function BoardCardReviewPane({
     maxRounds,
     overrides?.stopAfterRound ?? null,
     overrides?.runThroughRound ?? null,
+    {
+      carriedFindings: overrides?.carriedFindings ?? {},
+      stuckWaivedThrough: overrides?.stuckWaivedThrough ?? null,
+    },
   );
+  const stuck = loop.status === "stuck";
   // Which FUTURE round's settings drawer is open. Separate from `openRound`,
   // which expands a round that has run: a round with history is something to
   // read, one without is something to configure.
@@ -789,6 +1131,7 @@ export function BoardCardReviewPane({
     `${loop.totals.rejected} rejected`,
     ...(loop.totals.open > 0 ? [`${loop.totals.open} open`] : []),
     ...(loop.totals.disputed > 0 ? [`${loop.totals.disputed} disputed`] : []),
+    ...(loop.totals.escalated > 0 ? [`${loop.totals.escalated} escalated`] : []),
   ].join(" · ");
 
   return (
@@ -857,7 +1200,8 @@ export function BoardCardReviewPane({
                 </BoardHint>
               );
             })}
-            {onSetRounds === undefined ? null : (
+            {/* A stuck loop takes a ruling, not a budget (T3O-51). */}
+            {onSetRounds === undefined || stuck ? null : (
               <span className="ml-1 flex shrink-0 items-center">
                 <BoardHint
                   label={
@@ -909,6 +1253,8 @@ export function BoardCardReviewPane({
             phase={unreadablePhase}
             round={loop.currentRound}
           />
+        ) : stuck ? (
+          <StuckBlock loop={loop} onAdvance={onAdvance} onRuling={onRuling} />
         ) : held ? (
           <NoConvergenceBlock loop={loop} onAdvance={onAdvance} onRunAnotherRound={onResume} />
         ) : null}

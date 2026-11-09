@@ -18,6 +18,12 @@
  * prompt, and the AGENT runs `git` in its worktree and records the payload.
  */
 import {
+  boardReviewDismissals,
+  boardReviewRoundResolution,
+  composeBoardReviewFollowUpPrompt,
+  isBoardReviewStuckRoundWaived,
+  type BoardReviewFollowUpFinding,
+  type BoardReviewFollowUpPhase,
   boardReviewRoundsStarted,
   boardStepPayloadDefect,
   BoardReviewPayload,
@@ -26,7 +32,6 @@ import {
   DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
   effectiveBoardReviewRounds,
   effectiveBoardRuntimeMode,
-  isBoardReviewBlockingSeverity,
   isBoardReviewStageExecution,
   parseBoardStepPayloadJson,
   parseReviewStepId,
@@ -149,13 +154,14 @@ function resolvePhaseRuntimeMode(input: {
  * The pure loop state machine (D1/D3/D8): a completions array in, a decision
  * out. Walks rounds from 1; the first round whose phase sequence is incomplete
  * yields the next phase to run. Within a round, any findings at all run one
- * triage pass, and only blocking findings run adjudication. At the END of the
- * round the executor — never the agent — applies the loop check: another round
- * runs only when the round raised a blocking (critical/improvement) finding
- * AND rounds remain. Only the CONVERGENCE arm ends `succeeded`, so only a loop
- * that actually passed may auto-advance (t3o-22, D1); running out of rounds, a
- * user's stop, and a malformed payload all terminate `blocked` and leave the
- * card in Code review with its findings.
+ * triage pass, and only blocking findings run adjudication; a ruling against
+ * triage binds inside the round through one re-triage and one re-adjudicate
+ * pass, and a dispute that survives them stops the loop stuck (T3O-51). The
+ * round rules live in contracts (`boardReviewRoundResolution`). Only the
+ * CONVERGENCE exit ends `succeeded`, so only a loop that actually passed may
+ * auto-advance (t3o-22, D1); a stuck round, running out of rounds, a user's
+ * stop, and a malformed payload all terminate `blocked` and leave the card in
+ * Code review with its findings.
  */
 export function reviewLoopDecision(input: {
   readonly review: BoardStageExecutionReview;
@@ -200,9 +206,15 @@ export function reviewLoopDecision(input: {
       completions: input.completions,
       liveStepId: input.liveStepId,
     }),
+    completions: input.completions,
   });
+  const carriedFindings = overrides?.carriedFindings ?? {};
 
-  const runPhase = (phase: BoardReviewPhaseId, round: number): BoardStagePlan => {
+  const runPhase = (
+    phase: BoardReviewPhaseId,
+    round: number,
+    carried: ReadonlyArray<BoardReviewFollowUpFinding>,
+  ): BoardStagePlan => {
     const phaseConfig = review.phases[phase];
     return {
       kind: "run",
@@ -226,6 +238,8 @@ export function reviewLoopDecision(input: {
         // A card CI sent back (T3O-44) carries the failure into the round it
         // opened only, so later rounds can converge once triage fixed it.
         ciFinding: input.ciFinding?.round === round ? input.ciFinding : null,
+        carried,
+        dismissals: boardReviewDismissals(carriedFindings, round),
       }),
       model: resolvePhaseModel({
         phase,
@@ -246,6 +260,50 @@ export function reviewLoopDecision(input: {
       // the base tip fresh when it starts and carries it forward for the
       // round's later steps.
       recordBaseTip: phase === "review",
+    };
+  };
+
+  // A follow-up pass (T3O-51): re-triage or re-adjudicate inside the round,
+  // on just the findings the adjudicator overruled. Machinery like sync, but
+  // it runs as the phase it follows up — that phase's prompt, model and
+  // limits — since it is the same job asked again.
+  const runFollowUp = (
+    phase: BoardReviewFollowUpPhase,
+    round: number,
+    findings: ReadonlyArray<BoardReviewFollowUpFinding>,
+  ): BoardStagePlan => {
+    const basePhase: BoardReviewPhaseId = phase === "retriage" ? "triage" : "adjudicate";
+    const phaseConfig = review.phases[basePhase];
+    return {
+      kind: "run",
+      round,
+      stepId: reviewStepId(phase, round),
+      stepLabel: reviewStepLabel(phase, round),
+      prompt: composeBoardReviewFollowUpPrompt({
+        phase,
+        round,
+        rounds: Math.max(rounds, round),
+        prompt: phaseConfig.prompt,
+        findings,
+        dismissals: boardReviewDismissals(carriedFindings, round),
+        draftPullRequests: review.draftPullRequests,
+      }),
+      model: resolvePhaseModel({
+        phase: basePhase,
+        phaseConfig,
+        fallback: config.model,
+        roundOverride: undefined,
+        cardOverride: config.cardOverride,
+      }),
+      runtimeMode: resolvePhaseRuntimeMode({
+        phase: basePhase,
+        phaseConfig,
+        roundOverride: undefined,
+        cardOverride: config.cardOverride,
+      }),
+      timeoutMs: phaseConfig.timeoutMs,
+      maxAttempts: phaseConfig.maxAttempts,
+      recordBaseTip: false,
     };
   };
 
@@ -272,112 +330,76 @@ export function reviewLoopDecision(input: {
     recordBaseTip: false,
   });
 
+  // The CONVERGE EXIT (T3O-51): one helper for every arm that ends a round
+  // without another review — a clean round, the adjudicator's early exit, and
+  // a stuck round a human passed — so each honours the same holds in order.
+  //
+  // A sync that already ran owes its gate round UNCONDITIONALLY (t3o-24): the
+  // branch was already rebased and force-pushed, and only the gate round
+  // restores review coverage over it. A stale base with no sync yet plans one
+  // — unless the user's stop holds here (t3o-22, D5), which is safe because
+  // the review→merge crossing and the Merge click re-measure. Then a round a
+  // human asked for outranks the exit (T3O-39, D3); self-clearing once run.
+  const convergeExit = (round: number, passed: boolean): BoardStagePlan | "continue" => {
+    const syncStep = done.get(reviewStepId("sync", round));
+    if (syncStep !== undefined) {
+      // A sync whose `{ rebasedSha }` cannot be read leaves the gate round
+      // with no recorded tip to have been rebased onto.
+      if (unreadableStep(syncStep)) return { kind: "complete", outcome: "blocked" };
+      return "continue";
+    }
+    if (input.baseStale) {
+      if (overrides?.stopAfterRound === round) return { kind: "complete", outcome: "blocked" };
+      return runSync(round);
+    }
+    if (round < (overrides?.runThroughRound ?? 0)) return "continue";
+    // Only a round that actually passed completes `succeeded` and may
+    // auto-advance. A waived stuck round ends `advanced`, which never does:
+    // the human already moved the card, and dragging it back must not start a
+    // paid round by itself.
+    return { kind: "complete", outcome: passed ? "succeeded" : "blocked" };
+  };
+
   for (let round = 1; ; round++) {
     // A gate round (t3o-24, D3) is owed by the previous round's recorded sync
-    // step and runs whatever the budget says — it is a gate, not a negotiation,
-    // so it consumes neither the `rounds` budget nor the card's overrides.
-    // Only a budget round is stopped by the cap.
+    // step and runs whatever the budget says — it is a gate, not a negotiation
+    // — so only a budget round is stopped by the cap.
     const gateRound = round > 1 && done.get(reviewStepId("sync", round - 1)) !== undefined;
     if (round > rounds && !gateRound) break;
-    const reviewStep = done.get(reviewStepId("review", round));
-    if (reviewStep === undefined) return runPhase("review", round);
-
-    const reviewPayload = parseReviewPayload(reviewStep.payload);
-    if (!reviewPayload.ok) {
-      // A malformed/absent review payload must never be read as "no findings"
-      // (D4). The healthy path is the agent completing the phase `failed`, which
-      // the reactor's recovery ladder retries and, on exhaustion, escalates. But
-      // a phase that recorded `succeeded` with an unreadable payload is a broken
-      // reviewer whose completion is idempotently pinned — it can neither be
-      // re-run nor be trusted — so the loop terminates `blocked` (the card stays
-      // in Code review with the unreadable round visible, D9) rather than either
-      // converging on unreviewed code or re-escalating forever on every re-plan.
-      return { kind: "complete", outcome: "blocked" };
-    }
-    const findings = reviewPayload.value.findings;
-    const blocking = findings.some((f) => isBoardReviewBlockingSeverity(f.severity));
-
-    // Any findings at all — blocking or not — get one triage pass, so even a
-    // nitpick-only round gives the author a chance to fix or decline them.
-    // A genuinely clean round has nothing to triage and skips straight to the
-    // loop check.
-    const triageStep = done.get(reviewStepId("triage", round));
-    if (findings.length > 0) {
-      if (triageStep === undefined) return runPhase("triage", round);
-      // Same halt as a broken review, one phase over (T3O-14): a `succeeded`
-      // record whose payload nothing can read is pinned, so it can neither be
-      // re-run nor be trusted, and advancing past it would hand the next phase
-      // a round whose dispositions vanished. `blocked` keeps the card in Code
-      // review, where the pane offers the Reopen that repairs it.
-      if (unreadableStep(triageStep)) return { kind: "complete", outcome: "blocked" };
-    }
-    // Only blocking findings summon the adjudicator — there is no fix/reject
-    // dispute to rule on when nothing blocked.
-    const adjudicateStep = done.get(reviewStepId("adjudicate", round));
-    if (blocking) {
-      if (adjudicateStep === undefined) return runPhase("adjudicate", round);
-      if (unreadableStep(adjudicateStep)) return { kind: "complete", outcome: "blocked" };
-    }
-
-    // The round's phases are done. The LOOP CHECK is the executor's, never the
-    // agent's: another round runs only when this round raised a blocking
-    // finding AND rounds remain. A non-blocking round CONVERGED — the one exit
-    // that is a verdict, so it alone completes `succeeded` and lets the stage
-    // auto-advance. Unless the base moved underneath the reviewed diff
-    // (t3o-24): a recorded sync step at this round means the gate round that
-    // follows owns the verdict, so the walk moves on to it; a stale base with
-    // no sync yet plans one instead of completing — the crossing into merge is
-    // never offered a diff that was not reviewed against the base it merges
-    // into. `baseStale` is measured against the LAST round's recorded tip, so
-    // once a gate round starts (re-recording the tip) a base that stays put
-    // reads fresh again and this arm converges.
-    if (!blocking) {
-      // A sync that already ran owes its gate round UNCONDITIONALLY — the
-      // branch was already rebased and force-pushed, and only the gate round
-      // restores review coverage over it — so the walk continues past every
-      // hold here.
-      const syncStep = done.get(reviewStepId("sync", round));
-      if (syncStep !== undefined) {
-        // A sync whose `{ rebasedSha }` cannot be read leaves the gate round
-        // with no recorded tip to have been rebased onto, so it halts like any
-        // other broken record rather than gating on a fiction.
-        if (unreadableStep(syncStep)) return { kind: "complete", outcome: "blocked" };
+    // The round's phases, second pass and stuck rule live in contracts so the
+    // walk, the completion handler and this executor share one definition.
+    // A malformed record is never read as "no findings" (D4): it halts the
+    // loop `blocked`, where the pane offers the Reopen that repairs it.
+    const resolution = boardReviewRoundResolution({ round, done, carriedFindings });
+    switch (resolution.kind) {
+      case "run":
+        return resolution.phase === "retriage" || resolution.phase === "readjudicate"
+          ? runFollowUp(resolution.phase, round, resolution.findings)
+          : runPhase(resolution.phase, round, resolution.findings);
+      case "unreadable":
+        return { kind: "complete", outcome: "blocked" };
+      case "continue":
+        // The user asked the loop to hold after this round (t3o-22, D5),
+        // checked before the budget because a stop outranks rounds that merely
+        // remain. Otherwise the next round re-reads the branch.
+        if (overrides?.stopAfterRound === round) return { kind: "complete", outcome: "blocked" };
         continue;
-      }
-      if (input.baseStale) {
-        // A stop the user asked for outranks the sync step exactly as it
-        // outranks rounds that merely remain (t3o-22, D5): an unattended
-        // rebase-and-force-push past an explicit hold is a decision someone
-        // already made against. Holding here is safe — the review→merge
-        // crossing and the Merge click re-measure, so nothing merges
-        // unreviewed while the card waits. Clearing the stop re-enters the
-        // loop and plans the sync.
-        if (overrides?.stopAfterRound === round) {
+      case "stuck": {
+        // A dispute survived the second pass (T3O-51): stop for a human,
+        // ahead of the stop and the budget, until a human passes the round.
+        if (!isBoardReviewStuckRoundWaived(overrides?.stuckWaivedThrough, round)) {
           return { kind: "complete", outcome: "blocked" };
         }
-        return runSync(round);
+        const exit = convergeExit(round, false);
+        if (exit === "continue") continue;
+        return exit;
       }
-      // The one thing that outranks convergence (T3O-39, D3): a human asked
-      // this loop for another pass over the same branch, so a round that
-      // closed clean still owes it. LAST in this arm, deliberately — a stale
-      // base plans its sync first, because a round reviewing the diff against
-      // a base it is no longer built on is not the pass that was asked for
-      // (and the gate round that rebase owes satisfies the request anyway).
-      //
-      // Self-clearing: once round N has run, `N < N` is false and the loop
-      // converges here as it always did.
-      if (round < (overrides?.runThroughRound ?? 0)) continue;
-      return { kind: "complete", outcome: "succeeded" };
+      case "converge": {
+        const exit = convergeExit(round, true);
+        if (exit === "continue") continue;
+        return exit;
+      }
     }
-    // The user asked the loop to hold after this round (t3o-22, D5). Checked
-    // BEFORE the budget because a stop is a decision someone made and outranks
-    // rounds that merely remain. Terminates like the cap: the card stays in
-    // Code review with its findings, and nothing advances.
-    if (overrides?.stopAfterRound === round) {
-      return { kind: "complete", outcome: "blocked" };
-    }
-    // Blocking findings and rounds remain: the next round's review re-reads
-    // the branch with the triage fixes on it.
   }
 
   // The ROUND CAP (t3o-22, D1). Every round ran and none closed clean, so the

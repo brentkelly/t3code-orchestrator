@@ -133,8 +133,191 @@ const overrides = (patch: Partial<BoardCardReviewOverrides>): BoardCardReviewOve
   stopAfterRound: null,
   roundModels: {},
   runThroughRound: null,
+  carriedFindings: {},
+  stuckWaivedThrough: null,
   ...patch,
 });
+
+// ── T3O-51 fixtures: binding adjudication, re-triage and the stuck stop ──
+
+const t3o51 = {
+  triage: (round: number, actions: Record<string, "fixed" | "rejected">, fixedSha = "sha-review") =>
+    completion(`triage@${round}`, {
+      fixedSha,
+      dispositions: Object.entries(actions).map(([findingId, action]) => ({
+        findingId,
+        action,
+        note: `${action} it`,
+      })),
+    }),
+  adjudicate: (
+    round: number,
+    verdicts: Record<string, string>,
+    anotherRound: boolean | "absent" = true,
+    phase: "adjudicate" | "readjudicate" = "adjudicate",
+  ) =>
+    completion(`${phase}@${round}`, {
+      verdicts: Object.entries(verdicts).map(([findingId, verdict]) => ({
+        findingId,
+        verdict,
+        note: `ruled ${verdict}`,
+      })),
+      ...(anotherRound === "absent" ? {} : { anotherRound }),
+    }),
+  retriage: (
+    round: number,
+    actions: Record<string, "fixed" | "rejected" | "escalated">,
+    fixedSha = "sha-review",
+  ) =>
+    completion(`retriage@${round}`, {
+      fixedSha,
+      dispositions: Object.entries(actions).map(([findingId, action]) => ({
+        findingId,
+        action,
+        note: `re-${action}`,
+      })),
+    }),
+};
+
+/** Z5-291's round: rejected, ruled unjustified, rejected again, still unjustified. */
+const z5291Round = (round: number) => [
+  completion(`review@${round}`, reviewPayload([finding("critical", "f1")])),
+  t3o51.triage(round, { f1: "rejected" }),
+  t3o51.adjudicate(round, { f1: "rejection-unjustified" }),
+  t3o51.retriage(round, { f1: "rejected" }),
+  t3o51.adjudicate(round, { f1: "rejection-unjustified" }, true, "readjudicate"),
+];
+
+const carriedFix = (round: number, origRound: number) => ({
+  [String(round)]: {
+    ruling: "fix" as const,
+    note: null,
+    findings: [
+      {
+        findingId: `carried:r${origRound}:f1`,
+        origRound,
+        severity: "critical" as const,
+        title: "critical thing",
+        file: "src/x.ts",
+        line: 1,
+        detail: "",
+        rulingNote: "ruled rejection-unjustified",
+      },
+    ],
+  },
+});
+
+const t3o51Scenarios = [
+  {
+    name: "T3O-51: Z5-291 stuck in round 1",
+    completions: z5291Round(1),
+    rounds: 10,
+    stopAfterRound: null,
+  },
+  {
+    name: "T3O-51: stuck on the last budget round",
+    completions: z5291Round(1),
+    rounds: 1,
+    stopAfterRound: null,
+  },
+  {
+    name: "T3O-51: re-triage due",
+    completions: z5291Round(1).slice(0, 3),
+    rounds: 5,
+    stopAfterRound: null,
+  },
+  {
+    name: "T3O-51: re-adjudicate due",
+    completions: z5291Round(1).slice(0, 4),
+    rounds: 5,
+    stopAfterRound: null,
+  },
+  {
+    name: "T3O-51: escalated, no re-adjudication",
+    completions: [...z5291Round(1).slice(0, 3), t3o51.retriage(1, { f1: "escalated" })],
+    rounds: 5,
+    stopAfterRound: null,
+  },
+  {
+    name: "T3O-51: a waived stuck round ends advanced",
+    completions: z5291Round(1),
+    rounds: 5,
+    stopAfterRound: null,
+    stuckWaivedThrough: 1,
+  },
+  {
+    name: "T3O-51: a plain request does not pass a stuck round",
+    completions: z5291Round(1),
+    rounds: 5,
+    stopAfterRound: null,
+    runThroughRound: 2,
+  },
+  {
+    name: "T3O-51: Fix it at the budget runs the carried round",
+    completions: z5291Round(1),
+    rounds: 1,
+    stopAfterRound: null,
+    runThroughRound: 2,
+    stuckWaivedThrough: 1,
+    carriedFindings: carriedFix(2, 1),
+  },
+  {
+    name: "T3O-51: the carried fix landed, so one more round is owed past the budget",
+    completions: [
+      ...z5291Round(1),
+      completion("review@2", reviewPayload([])),
+      t3o51.triage(2, { "carried:r1:f1": "fixed" }, "new-sha"),
+      t3o51.adjudicate(2, { "carried:r1:f1": "fix-upheld" }),
+    ],
+    rounds: 1,
+    stopAfterRound: null,
+    runThroughRound: 2,
+    stuckWaivedThrough: 1,
+    carriedFindings: carriedFix(2, 1),
+  },
+  {
+    name: "T3O-51: the adjudicator ends a loop of settled re-raises",
+    completions: [
+      completion("review@1", reviewPayload([finding("critical", "f1")])),
+      t3o51.triage(1, { f1: "rejected" }),
+      t3o51.adjudicate(1, { f1: "rejection-justified" }, false),
+    ],
+    rounds: 5,
+    stopAfterRound: null,
+  },
+  {
+    name: "T3O-51: the early exit is refused when a blocking fix landed",
+    completions: [
+      completion("review@1", reviewPayload([finding("critical", "f1")])),
+      t3o51.triage(1, { f1: "fixed" }, "new-sha"),
+      t3o51.adjudicate(1, { f1: "fix-upheld" }, false),
+    ],
+    rounds: 5,
+    stopAfterRound: null,
+  },
+  {
+    name: "T3O-51: an old held round-cap card stays round-cap",
+    completions: [
+      completion("review@1", reviewPayload([finding("critical", "f1")])),
+      t3o51.triage(1, { f1: "rejected" }),
+      t3o51.adjudicate(1, { f1: "rejection-unjustified" }, "absent"),
+    ],
+    rounds: 1,
+    stopAfterRound: null,
+  },
+  {
+    name: "T3O-51: an unreadable re-triage halts",
+    completions: [...z5291Round(1).slice(0, 3), completion("retriage@1", { nope: 1 })],
+    rounds: 5,
+    stopAfterRound: null,
+  },
+  {
+    name: "T3O-51: stuck outranks the user's stop",
+    completions: z5291Round(1),
+    rounds: 5,
+    stopAfterRound: 1,
+  },
+];
 
 describe("reviewStepId / parseReviewStepId (D8)", () => {
   it("round-trips a round-scoped step id", () => {
@@ -556,7 +739,11 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
       /** T3O-39: the card's request for one more round, which both copies of
           the walk must honour identically. Omitted means none. */
       readonly runThroughRound?: number | null;
+      /** T3O-51: the server-written carry fields. */
+      readonly carriedFindings?: BoardCardReviewOverrides["carriedFindings"];
+      readonly stuckWaivedThrough?: number | null;
     }> = [
+      ...t3o51Scenarios,
       { name: "nothing run yet", completions: [], rounds: 5, stopAfterRound: null },
       {
         name: "clean round 1",
@@ -700,10 +887,20 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
 
     for (const scenario of scenarios) {
       const runThroughRound = scenario.runThroughRound ?? null;
+      const carriedFindings = scenario.carriedFindings ?? {};
+      const stuckWaivedThrough = scenario.stuckWaivedThrough ?? null;
       const cardOverrides =
-        scenario.stopAfterRound === null && runThroughRound === null
+        scenario.stopAfterRound === null &&
+        runThroughRound === null &&
+        stuckWaivedThrough === null &&
+        Object.keys(carriedFindings).length === 0
           ? null
-          : overrides({ stopAfterRound: scenario.stopAfterRound, runThroughRound });
+          : overrides({
+              stopAfterRound: scenario.stopAfterRound,
+              runThroughRound,
+              carriedFindings,
+              stuckWaivedThrough,
+            });
       const executorPlan = plan(
         scenario.completions,
         reviewExec({ rounds: scenario.rounds }),
@@ -721,9 +918,12 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
             completions: scenario.completions,
             liveStepId: null,
           }),
+          completions: scenario.completions,
         }),
         stopAfterRound: scenario.stopAfterRound,
         runThroughRound,
+        carriedFindings,
+        stuckWaivedThrough,
       });
 
       // converged ⇔ succeeded; every held/halted ending ⇔ blocked; and while
@@ -869,6 +1069,132 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
 });
 
 const decodeReviewExecution = Schema.decodeUnknownSync(BoardStageExecutionReview);
+
+describe("binding adjudication and the stuck stop (T3O-51)", () => {
+  it("Z5-291: a dispute that survives the second pass stops the loop in round 1", () => {
+    expect(plan(z5291Round(1), reviewExec({ rounds: 10 }))).toEqual({
+      kind: "complete",
+      outcome: "blocked",
+    });
+    // Before the brief's fix, round 2 ran here.
+    expect(plan(z5291Round(1).slice(0, 3))).toMatchObject({ kind: "run", stepId: "retriage@1" });
+  });
+
+  it("re-triage reuses triage's settings and lists the overruled findings", () => {
+    const triageModel: BoardModelSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-haiku-5-5",
+    };
+    const execution = reviewExec({
+      phases: {
+        ...DEFAULT_BOARD_REVIEW_STAGE_EXECUTION.phases,
+        triage: {
+          ...DEFAULT_BOARD_REVIEW_STAGE_EXECUTION.phases.triage,
+          prompt: "TRIAGE PROMPT",
+          model: triageModel,
+          timeoutMs: 1234,
+        },
+      },
+    });
+    const next = plan(z5291Round(1).slice(0, 3), execution);
+    if (next.kind !== "run") throw new Error("expected a run");
+    expect(next.stepLabel).toBe("Re-triage · round 1");
+    expect(next.model).toEqual(triageModel);
+    expect(next.timeoutMs).toBe(1234);
+    expect(next.recordBaseTip).toBe(false);
+    expect(next.prompt).toContain("TRIAGE PROMPT");
+    expect(next.prompt).toContain("`f1`");
+    expect(next.prompt).toContain("Ruling: rejection-unjustified");
+  });
+
+  it("re-adjudicate runs only on the findings re-triage answered, not escalated ones", () => {
+    const completions = [
+      completion("review@1", reviewPayload([finding("critical", "f1"), finding("critical", "f2")])),
+      t3o51.triage(1, { f1: "rejected", f2: "rejected" }),
+      t3o51.adjudicate(1, { f1: "rejection-unjustified", f2: "rejection-unjustified" }),
+      t3o51.retriage(1, { f1: "fixed", f2: "escalated" }),
+    ];
+    const next = plan(completions);
+    if (next.kind !== "run") throw new Error("expected a run");
+    expect(next.stepId).toBe("readjudicate@1");
+    expect(next.prompt).toContain("`f1`");
+    expect(next.prompt).not.toContain("`f2`");
+    // The round still finishes before stopping for the escalation.
+    expect(
+      plan([...completions, t3o51.adjudicate(1, { f1: "fix-upheld" }, true, "readjudicate")]),
+    ).toEqual({ kind: "complete", outcome: "blocked" });
+  });
+
+  it("a waived stuck round with a stale base syncs first, and holds on the user's stop", () => {
+    const waived = overrides({ stuckWaivedThrough: 1 });
+    expect(plan(z5291Round(1), undefined, waived, null, true)).toMatchObject({
+      kind: "run",
+      stepId: "sync@1",
+    });
+    expect(
+      plan(
+        z5291Round(1),
+        undefined,
+        overrides({ stuckWaivedThrough: 1, stopAfterRound: 1 }),
+        null,
+        true,
+      ),
+    ).toEqual({ kind: "complete", outcome: "blocked" });
+    // Advanced, fresh base: nothing re-plans, and it never auto-advances.
+    expect(plan(z5291Round(1), undefined, waived)).toEqual({
+      kind: "complete",
+      outcome: "blocked",
+    });
+    // A later CI send-back or request opens round 2.
+    expect(
+      plan(z5291Round(1), undefined, overrides({ stuckWaivedThrough: 1, runThroughRound: 2 })),
+    ).toMatchObject({ kind: "run", stepId: "review@2" });
+  });
+
+  it("a carried fix is listed to triage and the adjudicator, never the reviewer", () => {
+    const fixIt = overrides({
+      stuckWaivedThrough: 1,
+      runThroughRound: 2,
+      carriedFindings: carriedFix(2, 1),
+    });
+    const review = plan(z5291Round(1), reviewExec({ rounds: 1 }), fixIt);
+    if (review.kind !== "run") throw new Error("expected a run");
+    expect(review.stepId).toBe("review@2");
+    expect(review.prompt).not.toContain("carried:r1:f1");
+    const triage = plan(
+      [...z5291Round(1), completion("review@2", reviewPayload([]))],
+      reviewExec({ rounds: 1 }),
+      fixIt,
+    );
+    if (triage.kind !== "run") throw new Error("expected a run");
+    expect(triage.stepId).toBe("triage@2");
+    expect(triage.prompt).toContain("`carried:r1:f1`");
+  });
+
+  it("human dismissals reach the reviewer, triage and the adjudicator", () => {
+    const dismissed = overrides({
+      stuckWaivedThrough: 1,
+      runThroughRound: 2,
+      carriedFindings: { "2": { ...carriedFix(2, 1)["2"]!, ruling: "dismiss" } },
+    });
+    const review = plan(z5291Round(1), undefined, dismissed);
+    if (review.kind !== "run") throw new Error("expected a run");
+    expect(review.prompt).toContain("Do not raise them again");
+    // A dismissed finding raised again and ruled justified continues.
+    expect(
+      plan(
+        [
+          ...z5291Round(1),
+          completion("review@2", reviewPayload([finding("critical", "again")])),
+          t3o51.triage(2, { again: "rejected" }),
+          t3o51.adjudicate(2, { again: "rejection-justified" }),
+        ],
+        undefined,
+        dismissed,
+      ),
+    ).toMatchObject({ kind: "run", stepId: "review@3" });
+  });
+});
 
 describe("draft pull requests (T3O-12)", () => {
   const promptOf = (result: BoardStagePlan): string => (result.kind === "run" ? result.prompt : "");

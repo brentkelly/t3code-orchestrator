@@ -31,6 +31,10 @@ workers. The user-facing guide is `docs/user/board-workers.md`.
 violet (`--attention`) means waiting on a human, amber means blocked. Read
 `docs/t3o/status-colours.md` before giving any status indicator a colour.
 
+**The design prototype** lives in `.plans/prototype/` and is published as a claude.ai design
+artifact. The Docs MCP tools and plain fetches can't read it, but a headless browser can. When
+asked to download or update the prototype, follow `docs/t3o/prototype-sync.md`.
+
 ### Plans are tracked here
 
 Upstream's "Plans and work artifacts" section below says not to commit plans and gitignores
