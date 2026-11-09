@@ -272,6 +272,22 @@ export const BOARD_ENVELOPE_REGROUP_GUARD =
     move guard. The completion sentence names a `stepId` only on a stepped stage
     (t3o-19, D3/D6) — and it is the ONE place that names it, so a review agent
     is not told the same id twice. */
+/** What a step does when it is truly blocked (T3O-55), as one sentence.
+    Triage and adjudication never reach a human that way: triage fixes or
+    rejects each finding, and only the adjudicator escalates one. */
+export function boardBlockedInstruction(stepId: string): string {
+  switch (parseReviewStepId(stepId)?.phase) {
+    case "triage":
+    case "retriage":
+      return "Nobody will answer a question here: never raise a user-input request or complete blocked. Fix each finding, or reject it with your reasoning; the adjudicator decides whether a human is needed.";
+    case "adjudicate":
+    case "readjudicate":
+      return "Nobody will answer a question here: never raise a user-input request or complete blocked. Rule on every finding yourself, and give the `escalated` verdict, with your reason, only to a finding that genuinely needs a human.";
+    default:
+      return `If you are truly blocked and need a human decision, ${BOARD_ENVELOPE_QUESTION_MECHANISM}; never end a turn with an unanswered question in prose.`;
+  }
+}
+
 export function boardStepPostamble(input: {
   readonly humanInLoop: boolean;
   readonly role: BoardStageRole | null;
@@ -300,7 +316,7 @@ export function boardStepPostamble(input: {
         // Claude 5-era models, so asking for one made agents report a missing
         // tool. The supervisor still reads a plan tool when a provider emits one.
         `Commit as you go: the supervisor watches for new commits and activity to tell a productive long job from a wedged one, and a run that shows neither will be nudged and eventually escalated.`,
-        `If you are truly blocked and need a human decision, ${BOARD_ENVELOPE_QUESTION_MECHANISM}; never end a turn with an unanswered question in prose.`,
+        boardBlockedInstruction(step.stepId),
         BOARD_ENVELOPE_REGROUP_GUARD,
       ];
   const deliverable =
@@ -483,7 +499,7 @@ function boardReviewCarriedBlock(input: {
   });
   const rule =
     input.phase === "triage"
-      ? "A human ordered these findings fixed this round. They are blocking and must-fix: fix each one and give a disposition for every id below, with action fixed. Rejecting one is not an option."
+      ? "A human ordered these findings fixed this round. They are blocking and must-fix: fix each one and give a disposition for every id below. Reject one only if it genuinely cannot be done, with a note saying why."
       : "A human ordered these findings fixed this round. Give a verdict for every id below; only fix-upheld, fix-incomplete or fix-absent apply to them.";
   return [rule, ...lines].join("\n");
 }
@@ -511,13 +527,15 @@ export function boardReviewPhaseProtocol(input: {
       return [
         'To finish this phase, complete with a succeeded outcome and a JSON payload { fixedSha, dispositions: [{ findingId, action: "fixed" | "rejected", note }] }.',
         "You may reject a finding raised again by citing an earlier round's justified rejection or a human dismissal, unless later fixes changed the picture.",
+        BOARD_REVIEW_TRIAGE_NEVER_ASKS,
       ].join(" ");
     case "adjudicate":
       return [
-        "To finish this phase, complete with a succeeded outcome and a JSON payload { verdicts: [{ findingId, verdict, note }], anotherRound }, where `verdict` is one of fix-upheld, fix-incomplete, fix-absent, rejection-justified, rejection-unjustified.",
+        "To finish this phase, complete with a succeeded outcome and a JSON payload { verdicts: [{ findingId, verdict, note }], anotherRound }, where `verdict` is one of fix-upheld, fix-incomplete, fix-absent, rejection-justified, rejection-unjustified, escalated.",
         BOARD_REVIEW_ADJUDICATOR_CONSISTENCY,
         "Set `anotherRound` to false only if this round raised nothing new beyond points already settled; otherwise true. The system ignores false if a blocking fix landed.",
         "A ruling against triage (rejection-unjustified, fix-absent or fix-incomplete) on a blocking finding sends it straight back to triage in this round for one more pass.",
+        BOARD_REVIEW_ADJUDICATOR_ESCALATION,
       ].join(" ");
   }
 }
@@ -525,9 +543,19 @@ export function boardReviewPhaseProtocol(input: {
 /** A follow-up pass's forced machine contract (T3O-51). */
 export function boardReviewFollowUpProtocol(phase: BoardReviewFollowUpPhase): string {
   return phase === "retriage"
-    ? 'To finish this step, complete with a succeeded outcome and a JSON payload { fixedSha, dispositions: [{ findingId, action: "fixed" | "rejected" | "escalated", note }] }, with a disposition for every listed id.'
-    : "To finish this step, complete with a succeeded outcome and a JSON payload { verdicts: [{ findingId, verdict, note }], anotherRound }, with a verdict for every listed id. Set `anotherRound` to false only if this round raised nothing new beyond points already settled; the system ignores false if a blocking fix landed.";
+    ? `To finish this step, complete with a succeeded outcome and a JSON payload { fixedSha, dispositions: [{ findingId, action: "fixed" | "rejected", note }] }, with a disposition for every listed id. ${BOARD_REVIEW_TRIAGE_NEVER_ASKS}`
+    : `To finish this step, complete with a succeeded outcome and a JSON payload { verdicts: [{ findingId, verdict, note }], anotherRound }, with a verdict for every listed id, where \`verdict\` is one of fix-upheld, fix-incomplete, fix-absent, rejection-justified, rejection-unjustified, escalated. Set \`anotherRound\` to false only if this round raised nothing new beyond points already settled; the system ignores false if a blocking fix landed. ${BOARD_REVIEW_ADJUDICATOR_ESCALATION}`;
 }
+
+/** Triage's forced never-ask rule (T3O-55). It sits in the machine contract,
+    not the editable prompt, so it holds for a custom prompt too. */
+const BOARD_REVIEW_TRIAGE_NEVER_ASKS =
+  "Triage never stops for a human: never ask a question, raise a user-input request, or complete blocked. Every finding is fixed or rejected. Reject a finding that falls outside this card's brief, or needs a product or scope decision, saying so; this outranks any instruction above to reject only with concrete evidence, and the adjudicator decides whether a human is needed. Complete failed only if your tooling is broken: failed re-runs the step.";
+
+/** The adjudicator's escalation rule (T3O-55): the only way a review finding
+    reaches a human. */
+const BOARD_REVIEW_ADJUDICATOR_ESCALATION =
+  "Rule on every finding yourself. The `escalated` verdict hands a finding to a human and stops the loop; it does not send the finding back to triage. Use it only on a rejected blocking finding, and only when there is a genuine reason you cannot decide — a product or scope call the card's brief does not settle, or a risk only the owner can accept. Uncertainty or difficulty is not a reason: weigh the evidence and rule. Its note must say why a human is needed. Judge a scope or product rejection against the card's brief, not the code. Escalation is the only way to reach a human: never ask a question, raise a user-input request, or complete blocked.";
 
 /**
  * Compose a follow-up pass's prompt (T3O-51): re-triage or re-adjudicate,
@@ -570,9 +598,9 @@ export function composeBoardReviewFollowUpPrompt(input: {
   const preamble =
     input.phase === "retriage"
       ? [
-          "The adjudicator overruled you on these findings. Fix each if you can. Reject again only with a reason that directly answers the ruling, not the same argument. Escalate only if you still flatly disagree; escalating stops the loop for a human, so resolve the finding yourself whenever you can. Give a disposition for every listed id.",
+          "The adjudicator overruled you on these findings. Fix each if you can. Reject again only with a reason that directly answers the ruling, not the same argument; the adjudicator rules last. Give a disposition for every listed id.",
           anyCarried
-            ? "For a finding a human ordered fixed, your earlier fix was ruled incomplete: complete the fix, or escalate if it cannot be done. Rejecting it is not an option."
+            ? "For a finding a human ordered fixed, your earlier fix was ruled incomplete: complete the fix, or reject it with a note saying why it cannot be done."
             : "",
         ]
       : [

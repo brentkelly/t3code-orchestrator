@@ -113,6 +113,40 @@ describe("boardStepPostamble (envelope split)", () => {
     expect(hitl).not.toContain("running unattended");
   });
 
+  it("T3O-55: triage and adjudication steps are told to decide, never to ask a human", () => {
+    const postambleFor = (stepId: string) =>
+      boardStepPostamble({
+        humanInLoop: false,
+        role: null,
+        step: { stepId, stepLabel: "x" },
+      });
+    for (const stepId of ["triage@1", "retriage@2", "adjudicate@1", "readjudicate@3"]) {
+      const postamble = postambleFor(stepId);
+      expect(postamble).not.toContain(BOARD_ENVELOPE_QUESTION_MECHANISM);
+      expect(postamble).toContain("never raise a user-input request or complete blocked");
+    }
+    expect(postambleFor("adjudicate@1")).toContain("`escalated`");
+    for (const stepId of ["review@1", "sync@1", "building"]) {
+      expect(postambleFor(stepId)).toContain(BOARD_ENVELOPE_QUESTION_MECHANISM);
+    }
+    // The rule is forced: it survives a rewritten editable prompt.
+    for (const phase of ["triage", "adjudicate"] as const) {
+      const prompt = composeBoardReviewPhasePrompt({
+        phase,
+        round: 1,
+        rounds: 5,
+        prompt: "Rewritten from scratch.",
+      });
+      expect(prompt).toContain("complete blocked");
+    }
+    expect(boardReviewPhaseProtocol({ phase: "triage", round: 1 })).toContain(
+      "outranks any instruction above to reject only with concrete evidence",
+    );
+    expect(boardReviewPhaseProtocol({ phase: "adjudicate", round: 1 })).toContain(
+      "rejection-unjustified, escalated",
+    );
+  });
+
   it("names no provider: the question mechanism is neutral wording every runtime can follow", () => {
     const postamble = boardStepPostamble({
       humanInLoop: false,
@@ -491,7 +525,9 @@ describe("review phase envelope", () => {
     expect(retriage).toContain("Re-triage step, round 1");
     expect(retriage).toContain("`f1`");
     expect(retriage).toContain("Ruling: rejection-unjustified — it is a bug");
-    expect(retriage).toContain('"escalated"');
+    expect(retriage).not.toContain('"escalated"');
+    expect(retriage).toContain("Triage never stops for a human");
+    expect(retriage).not.toContain(BOARD_ENVELOPE_QUESTION_MECHANISM);
     const readjudicate = composeBoardReviewFollowUpPrompt({
       phase: "readjudicate",
       round: 1,
@@ -501,6 +537,8 @@ describe("review phase envelope", () => {
     });
     expect(readjudicate).toContain("final ruling before a human is called");
     expect(readjudicate).toContain("anotherRound");
+    expect(readjudicate).toContain("escalated");
+    expect(readjudicate).toContain("Escalation is the only way to reach a human");
   });
 
   it("keeps the payload mechanics in the protocol even when the editable prompt is rewritten", () => {

@@ -13,6 +13,7 @@ import {
   assignBoardKeyPrefix,
   boardAppendOrderKey,
   boardBuildStepPayloadDefect,
+  boardReviewBlockedOutcomeRefusal,
   boardReviewCompletionDefect,
   parseReviewStepId,
   boardCardPlans,
@@ -1202,6 +1203,14 @@ export const boardHandlers = {
           // that reported no structured result usually swallowed one.
           message: `The summary is ${utf8ByteLength(input.summary)} bytes, over the ${BOARD_STEP_SUMMARY_MAX_BYTES}-byte cap. Summarise in a few sentences; details belong in the payload.${payload === null ? " No payload argument arrived with it: if this summary contains one, resend it as the separate `payload` argument rather than shortening it away." : ""}`,
         });
+      }
+      // Triage and adjudication never park for a human (T3O-55): triage fixes
+      // or rejects, and only the adjudicator escalates, per finding.
+      if (recordable && input.outcome === "blocked") {
+        const refusal = boardReviewBlockedOutcomeRefusal(stepId);
+        if (refusal !== null) {
+          return yield* new BoardToolError({ code: "invalid-input", message: refusal });
+        }
       }
       // A step that must produce structured output may not record a success
       // that nothing can read (T3O-14). Refused HERE, before the command is
