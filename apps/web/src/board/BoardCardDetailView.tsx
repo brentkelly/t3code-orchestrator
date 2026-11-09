@@ -187,6 +187,7 @@ import { deriveBoardPlanRows } from "./boardPlanRows";
 import { boardCardHasSummaryPane, deriveBoardCardWorkSummary } from "./boardCardWorkSummary";
 import { boardStageLabel } from "./boardStages";
 import type { BoardQueueInfo } from "./boardQueueInfo";
+import { boardCardAutomationForwardAction } from "./boardCardAutomationForward";
 import {
   boardCiAwareNextStageId,
   boardStagePrimaryAction,
@@ -695,6 +696,11 @@ export interface BoardCardDetailViewProps {
       the shells and the board settings it resolves against. Null hides it —
       a done or archived card has nothing left to automate. */
   readonly automation?: ReactNode;
+  /** Resolved Auto-build (T3O-25): Planning's forward button reads Begin
+      build when this will start the card after Ready. Absent is off. */
+  readonly autoBuild?:
+    | { readonly value: boolean; readonly waitingForGroupStart: boolean }
+    | undefined;
   /** The card's resolved Auto-merge, for the header chip (T3O-38). */
   readonly autoMergeArmed?: boolean | undefined;
   /** Whether that Auto-merge comes from the board-wide setting, which makes
@@ -1807,7 +1813,16 @@ function ActionsSection({
     blocked: card.blocked,
     ciEntryLive: card.ci !== null,
   };
-  const primaryAction = boardStagePrimaryAction(props.stages, card.stage, actionContext);
+  const primaryAction = boardCardAutomationForwardAction(
+    boardStagePrimaryAction(props.stages, card.stage, actionContext),
+    {
+      stages: props.stages,
+      stage: card.stage,
+      autoBuild: props.autoBuild ?? { value: false, waitingForGroupStart: false },
+      unmetCount: unmet.length,
+      isGroup: group !== null,
+    },
+  );
   const forward =
     primaryAction !== null && !archived && (group === null || primaryAction.kind === "merge")
       ? primaryAction

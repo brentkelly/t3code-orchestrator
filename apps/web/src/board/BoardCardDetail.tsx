@@ -116,7 +116,11 @@ import {
 import { BoardPlanningExitConfirmDialog } from "./BoardPlanningExitConfirmDialog";
 import { BoardArchiveGroupDialog } from "./BoardGroupDialogs";
 import { BoardCardAutomation } from "./BoardCardAutomation";
-import { boardCardPlanningFinishedFromDetail } from "./boardCardAutomation";
+import {
+  boardCardPlanningFinishedFromDetail,
+  resolveBoardShellAutomation,
+} from "./boardCardAutomation";
+import { boardCardHumanInLoopProp } from "./boardCardAutomationForward";
 import {
   boardGroupNote,
   boardShellGroup,
@@ -1232,8 +1236,25 @@ export function BoardCardDetail({
           ownBranch: boardShellGroup(groupShells, cardShell)?.target === "own",
         };
   // The Automation section (T3O-38). A done or archived card has nothing left
-  // to automate, so it gets none.
+  // to automate, so it gets none. Resolve once here so Actions and HIL read
+  // the same Auto-build the section's switches do.
   const automationGroup = groupView === null || cardShell === undefined ? null : cardShell;
+  const planningFinished = boardCardPlanningFinishedFromDetail({
+    stages: stageState,
+    stage: card.stage,
+    stepCompletions: detail?.stepCompletions ?? [],
+    stepLive:
+      cardShell?.stepRunning === true ||
+      cardShell?.queued === true ||
+      (cardShell?.stepAwaiting ?? null) !== null,
+  });
+  const resolvedAutomation = resolveBoardShellAutomation({
+    shells: groupShells,
+    stages: stageState,
+    card,
+    boardWideAutoMerge,
+    planningFinished,
+  });
   const automation =
     card.archivedAt !== null ||
     boardStageWithRole(stageState, "done")?.stageId === card.stage ? null : (
@@ -1243,15 +1264,7 @@ export function BoardCardDetail({
         environmentId={environmentId}
         group={automationGroup}
         inPlanning={boardStageWithRole(stageState, "plan")?.stageId === card.stage}
-        planningFinished={boardCardPlanningFinishedFromDetail({
-          stages: stageState,
-          stage: card.stage,
-          stepCompletions: detail?.stepCompletions ?? [],
-          stepLive:
-            cardShell?.stepRunning === true ||
-            cardShell?.queued === true ||
-            (cardShell?.stepAwaiting ?? null) !== null,
-        })}
+        planningFinished={planningFinished}
         shells={groupShells}
         stages={stageState}
       />
@@ -1340,7 +1353,10 @@ export function BoardCardDetail({
               )
           : undefined
       }
-      humanInLoop={humanInLoop}
+      humanInLoop={boardCardHumanInLoopProp({
+        autoBuildValue: resolvedAutomation.autoBuild.value,
+        humanInLoop,
+      })}
       onSetHumanInLoop={(value) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, humanInLoop: value } }))
       }
@@ -1632,6 +1648,10 @@ export function BoardCardDetail({
         runCommand(updateCard({ environmentId, input: { cardId: card.id, scheduledStartAt } }))
       }
       automation={automation}
+      autoBuild={{
+        value: resolvedAutomation.autoBuild.value,
+        waitingForGroupStart: resolvedAutomation.autoBuild.waitingForGroupStart,
+      }}
       autoMergeArmed={autoMergeArmed}
       autoMergeFromBoardSetting={boardWideAutoMerge}
       boardMergeStrategy={boardMergeStrategy}

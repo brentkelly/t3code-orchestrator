@@ -1533,6 +1533,43 @@ describe("BoardCardDetailPanel done marks", () => {
     expect(html).toContain("Merge PR #110");
   });
 
+  it("says Begin build at Planning when Auto-build will start and deps are met", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        autoBuild={{ value: true, waitingForGroupStart: false }}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.planning })}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain("Begin build");
+    expect(html).not.toContain("Move to Ready");
+  });
+
+  it("hides Human in the loop when the prop is null", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
+        humanInLoop={null}
+        projectName="P"
+      />,
+    );
+    expect(html).not.toContain("Human in the loop");
+  });
+
+  it("shows Human in the loop at Building when the prop is set", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
+        humanInLoop={{ value: true, explicit: false, basis: "plan" }}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain("Human in the loop");
+  });
+
   it("says nothing about a missing pull request away from the merge stage", () => {
     // A card in Code review with no pull request is also wrong, but it has a
     // running step and its own notices, and the window before the build opens
