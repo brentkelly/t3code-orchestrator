@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Reads the on-disk staged package.json unsigned-mac cases write.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -247,16 +251,27 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         ? (installRecords.get(path) ?? previousInstallRecord)
         : undefined;
       if (installRecord !== undefined) return Effect.succeed(installRecord);
-      return path === "/missing/resources/package-type" && options.packageType !== undefined
-        ? Effect.succeed(options.packageType)
-        : Effect.fail(
-            PlatformError.systemError({
-              module: "FileSystem",
-              method: "readFileString",
-              _tag: "NotFound",
-              pathOrDescriptor: path,
-            }),
-          );
+      if (path === "/missing/resources/package-type" && options.packageType !== undefined) {
+        return Effect.succeed(options.packageType);
+      }
+      // T3o: unsigned-mac cases write `{ t3oCodeSigned: false }` under appPath.
+      const appPackageJson =
+        options.appPath === undefined ? undefined : NodePath.join(options.appPath, "package.json");
+      if (appPackageJson !== undefined && path === appPackageJson) {
+        try {
+          return Effect.succeed(NodeFS.readFileSync(path, "utf8"));
+        } catch {
+          // Fall through to NotFound, same as a missing stamp.
+        }
+      }
+      return Effect.fail(
+        PlatformError.systemError({
+          module: "FileSystem",
+          method: "readFileString",
+          _tag: "NotFound",
+          pathOrDescriptor: path,
+        }),
+      );
     },
     makeDirectory: () => Effect.void,
     writeFileString: (path, data) =>
@@ -272,7 +287,14 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       }),
   });
 
-  const provided = DesktopUpdates.layer.pipe(
+  // T3o: ElectronShell must be in the construction context so makeInstallGate
+  // can open the release page. provideMerge after the layer is fully built is
+  // too late — `make` has already captured a missing shell.
+  const layerShell = options.shell
+    ? Layer.succeed(ElectronShell.ElectronShell, options.shell)
+    : Layer.empty;
+  const layer = DesktopUpdates.layer.pipe(
+    Layer.provideMerge(layerShell),
     Layer.provide(layerFileSystem),
     Layer.provideMerge(layerUpdater),
     Layer.provideMerge(layerWindow),
@@ -290,9 +312,6 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     Layer.provideMerge(layerEnvironment),
     Layer.provideMerge(NodeServices.layer),
   );
-  const layer = options.shell
-    ? provided.pipe(Layer.provideMerge(Layer.succeed(ElectronShell.ElectronShell, options.shell)))
-    : provided;
 
   return {
     layer,
