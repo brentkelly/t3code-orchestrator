@@ -14,6 +14,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   boardCardAutomationForwardAction,
   boardCardHumanInLoopProp,
+  boardPlanningExitConfirmCopyForMove,
 } from "./boardCardAutomationForward";
 import { boardStagePrimaryAction, type BoardStagePrimaryAction } from "./boardStageActions";
 
@@ -149,6 +150,83 @@ describe("boardCardAutomationForwardAction", () => {
       label: "Begin build",
       toStage: ready,
       emphasised: true,
+    });
+  });
+});
+
+describe("boardPlanningExitConfirmCopyForMove", () => {
+  const cardKey = "T3O-25";
+  const readyLabel = "Ready";
+
+  it("uses Begin build when Auto-build will start and deps are met", () => {
+    expect(
+      boardPlanningExitConfirmCopyForMove({
+        cardKey,
+        toStageLabel: readyLabel,
+        stages,
+        fromStage: BOARD_SEED_STAGE_IDS.planning,
+        toStage: BOARD_SEED_STAGE_IDS.ready,
+        autoBuild: autoBuildOn,
+        unmetCount: 0,
+        isGroup: false,
+      }),
+    ).toEqual({
+      title: "Begin build for T3O-25 without a plan?",
+      confirmLabel: "Begin build",
+      extra: "Auto-build will start the card once it reaches Ready.",
+    });
+  });
+
+  it("keeps Move to Ready when Auto-build is off", () => {
+    expect(
+      boardPlanningExitConfirmCopyForMove({
+        cardKey,
+        toStageLabel: readyLabel,
+        stages,
+        fromStage: BOARD_SEED_STAGE_IDS.planning,
+        toStage: BOARD_SEED_STAGE_IDS.ready,
+        autoBuild: autoBuildOff,
+        unmetCount: 0,
+        isGroup: false,
+      }),
+    ).toEqual({
+      title: "Move T3O-25 to Ready without a plan?",
+      confirmLabel: "Move to Ready",
+      extra: null,
+    });
+  });
+
+  it("keeps Move to Ready when a dependency is unmet", () => {
+    expect(
+      boardPlanningExitConfirmCopyForMove({
+        cardKey,
+        toStageLabel: readyLabel,
+        stages,
+        fromStage: BOARD_SEED_STAGE_IDS.planning,
+        toStage: BOARD_SEED_STAGE_IDS.ready,
+        autoBuild: autoBuildOn,
+        unmetCount: 1,
+        isGroup: false,
+      }).confirmLabel,
+    ).toBe("Move to Ready");
+  });
+
+  it("does not relabel a hop that is not Planning to Ready", () => {
+    expect(
+      boardPlanningExitConfirmCopyForMove({
+        cardKey,
+        toStageLabel: "Building",
+        stages,
+        fromStage: BOARD_SEED_STAGE_IDS.planning,
+        toStage: BOARD_SEED_STAGE_IDS.building,
+        autoBuild: autoBuildOn,
+        unmetCount: 0,
+        isGroup: false,
+      }),
+    ).toEqual({
+      title: "Move T3O-25 to Building without a plan?",
+      confirmLabel: "Move to Building",
+      extra: null,
     });
   });
 });

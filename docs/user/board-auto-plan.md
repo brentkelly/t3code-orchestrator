@@ -24,9 +24,10 @@ automations are on. It has three switches:
 - **Auto-build**: once the plan is approved, the card starts building by itself as soon as its
   dependencies are done. With Auto-plan on too, the plan is approved for you, so the card runs
   unattended all the way to Ready for merge. With Auto-build on and nothing blocking the start,
-  Planning's forward button reads **Begin build** (it still moves to Ready, then starts), and
-  **Human in the loop** is hidden because Auto-build runs the build unattended — turn Auto-build
-  off if you want to drive the build in conversation.
+  Planning's forward button reads **Begin build** (it still moves to Ready, then starts), the
+  confirm if no plan is written matches that label, and **Human in the loop** is hidden because
+  Auto-build runs the build unattended — turn Auto-build off if you want to drive the build in
+  conversation.
 - **Auto-merge**: the card merges itself once it reaches Ready for merge. See
   [auto-merge](board-auto-merge.md).
 

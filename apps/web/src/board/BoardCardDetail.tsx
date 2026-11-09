@@ -120,7 +120,10 @@ import {
   boardCardPlanningFinishedFromDetail,
   resolveBoardShellAutomation,
 } from "./boardCardAutomation";
-import { boardCardHumanInLoopProp } from "./boardCardAutomationForward";
+import {
+  boardCardHumanInLoopProp,
+  boardPlanningExitConfirmCopyForMove,
+} from "./boardCardAutomationForward";
 import {
   boardGroupNote,
   boardShellGroup,
@@ -1709,6 +1712,33 @@ export function BoardCardDetail({
     />
   );
 
+  const planningExitUnmetCount = [
+    ...dependencies,
+    ...detail.groupDependencies.map((dependency) => ({
+      known: true as const,
+      archived: dependency.archivedAt !== null,
+      stage: dependency.stage,
+    })),
+  ].filter(
+    (dependency) => !dependency.known || (!dependency.archived && dependency.stage !== "done"),
+  ).length;
+  const planningExitCopy =
+    unplannedMove === null
+      ? { title: "", confirmLabel: "", extra: null }
+      : boardPlanningExitConfirmCopyForMove({
+          cardKey: card.key,
+          toStageLabel: boardStageLabel(stages, unplannedMove),
+          stages,
+          fromStage: card.stage,
+          toStage: unplannedMove,
+          autoBuild: {
+            value: resolvedAutomation.autoBuild.value,
+            waitingForGroupStart: resolvedAutomation.autoBuild.waitingForGroupStart,
+          },
+          unmetCount: planningExitUnmetCount,
+          isGroup: groupView !== null,
+        });
+
   return (
     <>
       <BoardPlanningExitConfirmDialog
@@ -1716,9 +1746,8 @@ export function BoardCardDetail({
         onOpenChange={(open) => {
           if (!open) setUnplannedMove(null);
         }}
-        cardKey={card.key}
+        copy={planningExitCopy}
         fromStageLabel={boardStageLabel(stages, card.stage)}
-        toStageLabel={unplannedMove === null ? "" : boardStageLabel(stages, unplannedMove)}
         onConfirm={() => {
           if (unplannedMove !== null) moveStage(unplannedMove);
         }}

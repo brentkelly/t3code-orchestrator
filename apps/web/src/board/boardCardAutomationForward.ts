@@ -11,7 +11,7 @@ import {
   type BoardState,
 } from "@t3tools/contracts";
 
-import type { BoardStagePrimaryAction } from "./boardStageActions";
+import { boardStagePrimaryAction, type BoardStagePrimaryAction } from "./boardStageActions";
 
 /** A `BoardState` view over a bare stage list, so `boardStageBeforeBuild`
     cannot fall back to the seed pipeline on a customised list. */
@@ -49,6 +49,65 @@ export function boardCardAutomationForwardAction(
   const willStart = input.autoBuild.value && !input.autoBuild.waitingForGroupStart;
   if (!willStart || input.unmetCount !== 0) return primary;
   return { ...primary, label: "Begin build", emphasised: true };
+}
+
+/** Copy for the no-plan Planning-exit confirm (T3O-19), matching the
+    rewritten Begin build label when that rewrite applies to this hop. */
+function boardPlanningExitConfirmCopy(input: {
+  readonly cardKey: string;
+  readonly toStageLabel: string;
+  readonly primary: BoardStagePrimaryAction | null;
+  readonly toStage: BoardStageId;
+}): {
+  readonly title: string;
+  readonly confirmLabel: string;
+  readonly extra: string | null;
+} {
+  const beginBuild =
+    input.primary?.kind === "move" &&
+    input.primary.toStage === input.toStage &&
+    input.primary.label === "Begin build";
+  if (beginBuild) {
+    return {
+      title: `Begin build for ${input.cardKey} without a plan?`,
+      confirmLabel: "Begin build",
+      extra: `Auto-build will start the card once it reaches ${input.toStageLabel}.`,
+    };
+  }
+  return {
+    title: `Move ${input.cardKey} to ${input.toStageLabel} without a plan?`,
+    confirmLabel: `Move to ${input.toStageLabel}`,
+    extra: null,
+  };
+}
+
+/** The no-plan confirm for a Planning exit, with Auto-build rewrite applied. */
+export function boardPlanningExitConfirmCopyForMove(input: {
+  readonly cardKey: string;
+  readonly toStageLabel: string;
+  readonly stages: ReadonlyArray<BoardStageDefinition>;
+  readonly fromStage: BoardStageId;
+  readonly toStage: BoardStageId;
+  readonly autoBuild: BoardCardAutomationForwardAutoBuild;
+  readonly unmetCount: number;
+  readonly isGroup: boolean;
+}): ReturnType<typeof boardPlanningExitConfirmCopy> {
+  const primary = boardCardAutomationForwardAction(
+    boardStagePrimaryAction(input.stages, input.fromStage),
+    {
+      stages: input.stages,
+      stage: input.fromStage,
+      autoBuild: input.autoBuild,
+      unmetCount: input.unmetCount,
+      isGroup: input.isGroup,
+    },
+  );
+  return boardPlanningExitConfirmCopy({
+    cardKey: input.cardKey,
+    toStageLabel: input.toStageLabel,
+    toStage: input.toStage,
+    primary,
+  });
 }
 
 /** Hide Human in the loop while resolved Auto-build owns the build. */
