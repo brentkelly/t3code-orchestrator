@@ -1620,6 +1620,15 @@ describe("T3O-51: a ruling binds inside its round", () => {
           ),
           "'carried:r0:f1'",
         );
+        assert.include(
+          defect(
+            "adjudicate@1",
+            verdicts({ "carried:r0:f1": ["escalated", "why"] }),
+            [completion("review@1", "not json"), triage(1, { "carried:r0:f1": "rejected" })],
+            carried,
+          ),
+          "'carried:r0:f1'",
+        );
         assert.isNull(
           defect("readjudicate@1", verdicts({ f1: ["escalated", "owner's risk"] }), [
             ...disputedRound(1),

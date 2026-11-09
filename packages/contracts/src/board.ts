@@ -12247,13 +12247,11 @@ export function boardReviewCompletionDefect(input: {
         );
       }
     }
-    if (blockingIds !== null) {
-      const notBlocking = escalations.filter(
-        (v) => carriedIds.has(v.findingId) || !blockingIds.has(v.findingId),
-      );
-      if (notBlocking.length > 0) {
-        return `Only a rejected blocking finding can be escalated, and never one a human already ordered fixed; ${listIds(notBlocking.map((v) => v.findingId))} cannot be. Rule on them yourself and complete the step again.`;
-      }
+    const notBlocking = escalations.filter(
+      (v) => carriedIds.has(v.findingId) || (blockingIds !== null && !blockingIds.has(v.findingId)),
+    );
+    if (notBlocking.length > 0) {
+      return `Only a rejected blocking finding can be escalated, and never one a human already ordered fixed; ${listIds(notBlocking.map((v) => v.findingId))} cannot be. Rule on them yourself and complete the step again.`;
     }
   }
   return null;

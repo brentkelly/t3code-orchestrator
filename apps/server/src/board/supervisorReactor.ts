@@ -907,12 +907,13 @@ const make = Effect.gen(function* () {
   /** Thread → the run the board interrupted to recover a review step that
       asked a question (T3O-55). Its Stop and question are the board's own; the
       next turn end clears it. */
-  const boardInterruptedRuns = new Map<string, string>();
-  /** `cardId stepId attempt` keys whose question the board already answered
-      (T3O-55): a second question in the same attempt is recovered instead. */
-  const answeredReviewQuestions = new Set<string>();
-  const reviewQuestionKey = (state: BoardCardStepState) =>
-    `${state.cardId} ${state.stepId} ${state.attempt}`;
+  const boardInterruptedRuns = new Set<string>();
+  /** Card → the `stepId attempt` whose question the board already answered
+      (T3O-55): a second question in the same attempt is recovered instead.
+      Keyed by card so a later step or attempt replaces it. */
+  const answeredReviewQuestions = new Map<string, string>();
+  const answeredReviewQuestion = (state: BoardCardStepState) =>
+    answeredReviewQuestions.get(state.cardId) === `${state.stepId} ${state.attempt}`;
   /** The live thread is still running the run auto-plan interrupted. */
   const stillOnSteeredRun = (threadId: ThreadId) =>
     Effect.gen(function* () {
@@ -7911,7 +7912,7 @@ const make = Effect.gen(function* () {
       // already answered is resuming: the projection may still show the
       // question.
       if (found.state.status === "running" && isReviewDecidingStep(found.state)) {
-        if (!answeredReviewQuestions.has(reviewQuestionKey(found.state))) {
+        if (!answeredReviewQuestion(found.state)) {
           yield* handleReviewStepQuestion(found.card, found.state);
         }
         return;
@@ -8945,9 +8946,8 @@ const make = Effect.gen(function* () {
       const threadId = state.threadId;
       const answer = boardReviewQuestionAnswer(state.stepId);
       if (threadId === null || answer === null) return;
-      const key = reviewQuestionKey(state);
-      if (!answeredReviewQuestions.has(key)) {
-        answeredReviewQuestions.add(key);
+      if (!answeredReviewQuestion(state)) {
+        answeredReviewQuestions.set(state.cardId, `${state.stepId} ${state.attempt}`);
         const answered = yield* threads
           .answerPendingInput({
             commandId: yield* commandId("review-answer"),
@@ -8964,7 +8964,7 @@ const make = Effect.gen(function* () {
       }
       const shell = yield* liveThread(threadId);
       if (shell?.activeTurnRef != null) {
-        boardInterruptedRuns.set(String(threadId), shell.activeTurnRef);
+        boardInterruptedRuns.add(String(threadId));
         const interrupted = yield* optional(
           "thread.interrupt",
           threads.interrupt({ commandId: yield* commandId("review-interrupt"), threadId }),
