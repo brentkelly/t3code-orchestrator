@@ -46,6 +46,7 @@
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 interface GitenvFileCache {
@@ -89,6 +90,16 @@ function realpathOrSelf(target: string): string {
   }
 }
 
+function expandTilde(path: string): string {
+  if (path === "~") {
+    return NodeOS.homedir();
+  }
+  if (path.startsWith("~/") || path.startsWith("~\\")) {
+    return NodePath.join(NodeOS.homedir(), path.slice(2));
+  }
+  return path;
+}
+
 function parseGitenv(text: string): ReadonlyMap<string, string> {
   const entries = new Map<string, string>();
   for (const rawLine of text.split(/\r?\n/)) {
@@ -100,7 +111,7 @@ function parseGitenv(text: string): ReadonlyMap<string, string> {
     if (separator <= 0) {
       continue;
     }
-    const key = line.slice(0, separator).trim();
+    const key = expandTilde(line.slice(0, separator).trim());
     const value = line.slice(separator + 1).trim();
     if (key.length === 0 || value.length === 0 || !NodePath.isAbsolute(key)) {
       continue;
