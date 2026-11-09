@@ -1574,6 +1574,51 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("board_create_card with no stage joins a started group in Planning (T3O-53)", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const groupWith = (title: string, start: boolean) =>
+        Effect.gen(function* () {
+          const group = yield* boardHandlers
+            .board_create_card({ projectId, title, stage: BoardStageId.make("ready") })
+            .pipe(withScope(orphanThread));
+          yield* boardHandlers
+            .board_create_card({
+              projectId,
+              title: `Inside ${title}`,
+              stage: BoardStageId.make("ready"),
+              parentCardId: group.key,
+              approved: true,
+            })
+            .pipe(withScope(orphanThread));
+          if (start) {
+            yield* boardHandlers
+              .board_move_card({ cardId: group.cardId, toStage: BoardStageId.make("building") })
+              .pipe(withScope(orphanThread));
+          }
+          return group;
+        });
+      const started = yield* groupWith("Started", true);
+      const idle = yield* groupWith("Idle", false);
+      const stageOf = (parentCardId: string) =>
+        boardHandlers
+          .board_create_card({ projectId, title: "Follow-up", parentCardId })
+          .pipe(
+            withScope(orphanThread),
+            Effect.flatMap((created) =>
+              boardHandlers.board_list_cards({}).pipe(
+                withScope(orphanThread),
+                Effect.map(
+                  (listed) => listed.cards.find((card) => card.cardId === created.cardId)?.stage,
+                ),
+              ),
+            ),
+          );
+      assert.strictEqual(yield* stageOf(started.key), "planning");
+      assert.strictEqual(yield* stageOf(idle.key), "backlog");
+    }),
+  );
+
   it.effect("board_create_card lands the new card at the bottom of the stage's column", () =>
     Effect.gen(function* () {
       yield* seed();

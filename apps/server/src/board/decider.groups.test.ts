@@ -143,6 +143,31 @@ const settings = (
   createdAt: NOW,
 });
 
+/** The stage a card created under `parent` lands in. */
+const createdStage = (
+  readModel: BoardOrchestrationReadModel,
+  parent: string,
+  stage: string | undefined,
+) =>
+  decideEvents(
+    {
+      type: "board.card.create",
+      commandId: CommandId.make(`cmd-create-under-${parent}`),
+      cardId: BoardCardId.make("new-child"),
+      projectId,
+      title: "Follow-up",
+      ...(stage === undefined ? {} : { stage: BoardStageId.make(stage) }),
+      parentCardId: BoardCardId.make(parent),
+      createdAt: NOW,
+    },
+    readModel,
+  ).pipe(
+    Effect.map((events) => {
+      const created = events.find((event) => event.type === "board.card-created");
+      return created?.type === "board.card-created" ? String(created.payload.stage) : null;
+    }),
+  );
+
 /** Where each card ends up after the decision's events. */
 function stagesAfter(
   events: ReadonlyArray<PlannedBoardEvent>,
@@ -469,20 +494,48 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
     }),
   );
 
-  it.effect("refuses indenting a pre-floor card into an own group", () =>
+  it.effect("an own group takes a card in any stage (T3O-53)", () =>
     Effect.gen(function* () {
       const cards = [
-        card("g", "sprint", { group: group("sprint", { target: "own" }) }),
+        card("g", "building", { group: group("ready", { target: "own", started: true }) }),
         child("a", "ready", "g"),
+        child("p", "planning", "g"),
         card("x", "backlog"),
       ];
-      const failure = yield* decideFail(moveCards(["x"], "g"), model(cards));
-      assert.include(String(failure), "live from the materialisation floor onward");
-      const ready = cards.map((c) =>
-        c.id === "x" ? { ...c, stage: BoardStageId.make("ready") } : c,
-      );
-      const events = yield* decideEvents(moveCards(["x"], "g"), model(ready));
-      expect(stagesAfter(events).get("x")?.card.parentCardId).toBe(BoardCardId.make("g"));
+      // Indented as it stands: a regroup never moves the card's stage.
+      const indented = stagesAfter(yield* decideEvents(moveCards(["x"], "g"), model(cards)));
+      expect(indented.get("x")?.card.parentCardId).toBe(BoardCardId.make("g"));
+      expect(indented.get("x")?.stage).toBe("backlog");
+      // A child drops back to Planning, and is created there.
+      const moved = yield* decideEvents(move("a", "planning"), model(cards));
+      expect(stagesAfter(moved).get("a")?.stage).toBe("planning");
+      expect(yield* createdStage(model(cards), "g", "planning")).toBe("planning");
+    }),
+  );
+
+  it.effect("a card created with no stage joins a started group in Planning (T3O-53)", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("own", "building", { group: group("ready", { target: "own", started: true }) }),
+        child("a", "building", "own"),
+        card("inh", "building", { group: group("sprint", { started: true }) }),
+        child("b", "building", "inh"),
+        card("idle", "sprint", { group: group("sprint", { target: "own" }) }),
+        child("c", "ready", "idle"),
+        // An unstarted group nested in a started one.
+        child("nest", "ready", "own", { group: group("ready") }),
+        child("d", "ready", "nest"),
+      ];
+      const rows: ReadonlyArray<readonly [string, string | undefined, string]> = [
+        ["own", undefined, "planning"],
+        ["inh", undefined, "planning"],
+        ["own", "backlog", "backlog"],
+        ["idle", undefined, "backlog"],
+        ["nest", undefined, "backlog"],
+      ];
+      for (const [parent, stage, expected] of rows) {
+        expect(yield* createdStage(model(cards), parent, stage)).toBe(expected);
+      }
     }),
   );
 
@@ -714,21 +767,16 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
     }),
   );
 
-  it.effect("refuses giving a group its own branch while a child is before the floor", () =>
+  it.effect("gives a group its own branch whatever stage its children are in (T3O-53)", () =>
     Effect.gen(function* () {
       const cards = [
         card("g", "sprint", { group: group("sprint") }),
         child("a", "ready", "g"),
         child("b", "backlog", "g"),
+        child("p", "planning", "g"),
         child("d", BOARD_DEFERRED_STAGE_ID, "g"),
       ];
-      const failure = yield* decideFail(settings("g", { target: "own" }), model(cards));
-      assert.include(String(failure), "is in 'backlog'");
-      // Deferred children wait outside the pipeline, so they do not block it.
-      const ready = cards.map((c) =>
-        c.id === "b" ? { ...c, stage: BoardStageId.make("ready") } : c,
-      );
-      const events = yield* decideEvents(settings("g", { target: "own" }), model(ready));
+      const events = yield* decideEvents(settings("g", { target: "own" }), model(cards));
       expect(stagesAfter(events).get("g")?.card.group?.target).toBe("own");
     }),
   );
@@ -1376,7 +1424,7 @@ it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
     }),
   );
 
-  it.effect("a heading created under an own-branch group lands on its floor", () =>
+  it.effect("a heading created under an own-branch group lands in the first stage", () =>
     Effect.gen(function* () {
       const cards = [
         card("g", "building", { group: group("ready", { target: "own", started: true }) }),
@@ -1410,7 +1458,7 @@ it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
       );
       const created = events.find((event) => event.type === "board.card-created");
       assert.ok(created?.type === "board.card-created");
-      expect(created.payload.stage).toBe("ready");
+      expect(created.payload.stage).toBe("backlog");
       const after = stagesAfter(events);
       expect(after.get("s1")?.card.parentCardId).toBe(BoardCardId.make("h9"));
       expect(after.get("b2")?.card.parentCardId).toBe(BoardCardId.make("h9"));

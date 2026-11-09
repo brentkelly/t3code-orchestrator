@@ -889,7 +889,7 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
 
   // ── The floor restriction on children ────────────────────────────────
 
-  it.effect("lets a child drop back to the floor stage but never below it", () =>
+  it.effect("lets a child drop back out of the build, to the floor and before it", () =>
     Effect.gen(function* () {
       const board = makeBoard({
         parent: { stage: "building" },
@@ -900,11 +900,11 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
         makeReadModel(board),
       );
       assert.strictEqual(allowed[0]!.type, "board.card-moved");
-      const failure = yield* decideFail(
+      const planning = yield* decideEvents(
         moveCommand({ cardId: "card-child", toStage: "planning", override: true }),
         makeReadModel(board),
       );
-      assert.include(String(failure), "sub-board plan card");
+      assert.strictEqual(planning[0]!.type, "board.card-moved");
     }),
   );
 
@@ -1071,14 +1071,15 @@ it.layer(NodeServices.layer)("sub-board child create (t3o-25)", (it) => {
     }),
   );
 
-  it.effect("refuses a split child created before the materialisation floor", () =>
+  it.effect("creates a split child before the materialisation floor (T3O-53)", () =>
     Effect.gen(function* () {
       // A parent that already split is a fully planned (own-branch) group.
-      const failure = yield* decideFail(
+      const events = yield* decideEvents(
         createCommand({ parentCardId: "card-parent", stage: "planning" }),
         makeReadModel(makeBoard({ extraCards: [makeChild("card-child", "ready")] })),
       );
-      assert.include(String(failure), "materialisation floor");
+      assert.ok(events[0]?.type === "board.card-created");
+      expect(events[0].payload.stage).toBe("planning");
     }),
   );
 

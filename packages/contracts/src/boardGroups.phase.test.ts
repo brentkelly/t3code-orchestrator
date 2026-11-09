@@ -136,7 +136,7 @@ describe("boardNewPhasePlan", () => {
     expect(boardNewPhasePlan(board([leaf]), leaf.id, [leaf.id]).kind).toBe("refused");
   });
 
-  it("puts the heading on the floor under an own-branch parent", () => {
+  it("puts the heading in the first stage under an own-branch parent too", () => {
     const outer = card("g5", { key: "T3O-50", group: groupOf(undefined, "own") });
     const inner = card("g6", { key: "T3O-60", parentCardId: outer.id, group: groupOf() });
     const parked = card("c7", {
@@ -148,7 +148,7 @@ describe("boardNewPhasePlan", () => {
     expect(plan).toMatchObject({
       kind: "ok",
       parentCardId: outer.id,
-      headingStage: "ready",
+      headingStage: "backlog",
       cardStage: "backlog",
     });
   });
