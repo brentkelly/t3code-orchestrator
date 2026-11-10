@@ -79,13 +79,21 @@ function Chip({ label, tone }: { readonly label: string; readonly tone: BoardCiC
     pass, with the line it came from one click away. */
 function HeadlineBox({
   headline,
+  held,
   onShowInLog,
 }: {
   readonly headline: BoardCiHeadline;
+  readonly held: boolean;
   readonly onShowInLog: (() => void) | undefined;
 }) {
   return (
-    <div className="flex shrink-0 flex-col gap-1 rounded-xl border border-warning/40 bg-warning/5 px-3.5 py-3">
+    <div
+      className={cn(
+        "flex shrink-0 flex-col gap-1 rounded-xl border px-3.5 py-3",
+        // Amber is held or blocked only (docs/t3o/status-colours.md).
+        held || headline.machine ? "border-warning/40 bg-warning/5" : "border-border bg-card",
+      )}
+    >
       <div className="flex min-w-0 items-center gap-2">
         <span className="min-w-0 truncate text-[12.5px] font-semibold text-foreground">
           {headline.what}
@@ -580,6 +588,7 @@ export function BoardCardCiPane({
         {paneHeadline === null ? null : (
           <HeadlineBox
             headline={paneHeadline.headline}
+            held={live && ci?.phase === "held"}
             onShowInLog={
               current === undefined ||
               current.logDir === null ||
