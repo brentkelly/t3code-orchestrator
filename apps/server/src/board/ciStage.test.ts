@@ -875,6 +875,56 @@ it.effect("a failed agent verdict is the pass's failure: a fix agent gets it", (
   }),
 );
 
+it.effect("with the pass record unreadable, the fix's issues still name the step that failed", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const subject = card("agent-lost", review);
+    const agentStep: BoardCiStep = {
+      kind: "agent",
+      id: "audit",
+      name: "Audit",
+      parallel: false,
+      prompt: "Audit it.",
+      model: null,
+      timeoutMinutes: 30,
+    };
+    const board = boardWith([subject], mixedConfig([SCRIPT_A, agentStep]));
+    yield* withGovernor({ board, settings, ciPassesUnreadable: true }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, subject, 1);
+        const stepId = boardCiAgentStepId((yield* live(h, subject.id)).ci!.runId, 1);
+        yield* h.pumpDomain(
+          fixCompleted(
+            subject.id,
+            stepId,
+            { verdict: "failed", summary: "Bad", failures: [{ title: "Irreversible" }] },
+            2,
+          ),
+        );
+        const fix = (yield* h.commands).find(
+          (command) =>
+            command.type === "board.card.select-step" &&
+            (command as { stepId: string }).stepId.startsWith("ci-fix@"),
+        ) as { prompt: string; stepId: string } | undefined;
+        assert.isDefined(fix);
+        assert.include(fix!.prompt, "[s1-1] Audit: Irreversible");
+        yield* h.pumpDomain(
+          fixCompleted(
+            subject.id,
+            fix!.stepId,
+            { verdict: "cannot-fix", issues: [{ id: "s1-1", status: "cannot-fix" }] },
+            3,
+          ),
+        );
+        assert.strictEqual(
+          (yield* live(h, subject.id)).ci?.stopReason,
+          "The fix agent couldn't fix Audit.",
+        );
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
 const FORGE: BoardCiStep = {
   kind: "forge-checks",
   id: "gh",

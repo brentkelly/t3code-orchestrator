@@ -3903,6 +3903,27 @@ const make = Effect.gen(function* () {
           ]
         : [],
     );
+    // Issue ids name a step by its index (`s<index>`), so the fallback keeps
+    // its step's real index; a failure naming no step gets an id naming none.
+    const fallbackIssues = (failure: BoardCiFailure) => {
+      const at = shellSteps.findIndex((step) => step.name === failure.stepName);
+      if (at < 0) {
+        return boardCiFixIssues([{ name: failure.stepName, status: failure.status }]).map(
+          (issue) => ({ ...issue, id: issue.id.replace(/^s0/, "ci") }),
+        );
+      }
+      return boardCiFixIssues(
+        shellSteps.map((step, index) =>
+          index !== at
+            ? { name: step.name, status: "passed" as const }
+            : {
+                name: step.name,
+                status: failure.status,
+                ...(failure.result == null ? {} : { result: failure.result }),
+              },
+        ),
+      );
+    };
     const failures =
       fromShell.length > 0
         ? fromShell
@@ -3921,10 +3942,7 @@ const make = Effect.gen(function* () {
       cardId: card.id,
       settledStepId: null,
       ciFailures: failures,
-      ciIssues:
-        fromShell.length > 0
-          ? boardCiFixIssues(shellSteps)
-          : boardCiFixIssues([{ name: failures[0]!.stepName, status: failures[0]!.status }]),
+      ciIssues: fromShell.length > 0 ? boardCiFixIssues(shellSteps) : fallbackIssues(failures[0]!),
       fixThreadId: null,
     });
   });
@@ -4223,9 +4241,6 @@ const make = Effect.gen(function* () {
       readonly stepName: string | null;
       readonly finding: string;
       readonly fixThreadId: ThreadId | null;
-      /** A human's "Send back to review anyway": the round-trip count starts
-          again. */
-      readonly byHuman?: boolean;
     },
   ) {
     const board = yield* readBoard;
@@ -4248,7 +4263,7 @@ const make = Effect.gen(function* () {
         finding: input.finding,
         round,
         fixThreadId: input.fixThreadId,
-        ...(input.byHuman === true ? { byHuman: true } : {}),
+        byHuman: true,
       },
       createdAt: yield* nowIso,
     });
@@ -4545,7 +4560,6 @@ const make = Effect.gen(function* () {
           ? boardCiSendBackFinding(read.failures)
           : (card.ci.stopReason ?? "A human sent the card back from CI."),
       fixThreadId: null,
-      byHuman: true,
     });
     return { outcome: "sent-back" } as const;
   });
