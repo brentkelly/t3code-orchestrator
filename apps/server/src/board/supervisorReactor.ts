@@ -29,6 +29,7 @@ import {
   type BoardCiForgeChecksReading,
   boardCiAgentStepId,
   composeBoardCiAgentStepPrompt,
+  type BoardCiHeadline,
   type BoardCiStep,
   type BoardCiPassStep,
   DEFAULT_BOARD_CI_MAX_ROUND_TRIPS,
@@ -243,7 +244,8 @@ import {
 import { stageExecutorFor } from "./stageExecutor.ts";
 import { BoardCiRunner, boardCiLogDir } from "./ci/BoardCiRunner.ts";
 import { remoteCiRunner } from "./ci/remoteCiRunner.ts";
-import { boardCiLowDiskReason } from "./ci/diskSpace.ts";
+import { boardCiMachineHoldReason } from "./ci/ciFailureHeadline.ts";
+import { boardCiHostName, boardCiLowDiskReason } from "./ci/diskSpace.ts";
 import { WorkerConnections } from "./workers/WorkerConnections.ts";
 import { BOARD_HUMAN_ACTOR_FALLBACK_NAME, boardActivityActorFor } from "./activityActors.ts";
 import {
@@ -339,6 +341,9 @@ type BoardCardReclaimAttempt =
   | { readonly outcome: "kept"; readonly reason: string | null }
   | { readonly outcome: "busy" }
   | { readonly outcome: "failed" };
+
+/** How a CI hold marks the pass beyond its reason (T3O-61). */
+type CiHoldOptions = { readonly machine?: boolean; readonly headline?: BoardCiHeadline };
 
 const isThreadCommandFailed = Schema.is(ThreadCommandFailedError);
 
@@ -3838,7 +3843,7 @@ const make = Effect.gen(function* () {
     card: BoardCard,
     runId: string,
     detail: string,
-    options: { readonly machine?: boolean } = {},
+    options: CiHoldOptions = {},
   ) {
     if (forgeSteps.get(String(card.id))?.runId === runId) forgeSteps.delete(String(card.id));
     const reason = withCiRetryHint(detail);
@@ -3852,10 +3857,15 @@ const make = Effect.gen(function* () {
         result: "interrupted",
         reason,
         ...(options.machine === true ? { machine: true } : {}),
+        ...(options.headline === undefined ? {} : { headline: options.headline }),
       },
       createdAt: yield* nowIso,
     });
-    if (!held) return false;
+    if (!held) {
+      // The sweep holds the pass later; this keeps the hold's own words.
+      ciLostResults.set(runId, { hold: { detail, options } });
+      return false;
+    }
     // A segment started after a Stop's cancel but before its hold landed
     // would otherwise run on the held pass with nothing to stop it.
     if ((yield* cancelCiRun(card.id, runId)) !== null) yield* schedule();
@@ -3904,7 +3914,16 @@ const make = Effect.gen(function* () {
    * word the hold the sweep makes. Nothing re-sends them — a resend that
    * keeps failing is its own wedge.
    */
-  const ciLostResults = new Map<string, { readonly exitCode: number | null }>();
+  const ciLostResults = new Map<
+    string,
+    | { readonly exitCode: number | null }
+    | {
+        readonly hold: {
+          readonly detail: string;
+          readonly options: CiHoldOptions;
+        };
+      }
+  >();
 
   /** Cards the last sweep found with a pass nothing is running, by card, with
       the run it saw. A second sighting of the same run holds it (T3O-59). */
@@ -3932,12 +3951,13 @@ const make = Effect.gen(function* () {
     return true;
   };
 
-  /** The hold's words for an orphaned pass: what's known of how it ended. */
-  const ciOrphanReason = (runId: string): string => {
+  /** The hold for an orphaned pass: what's known of how it ended. */
+  const ciOrphanHold = (runId: string): readonly [string, CiHoldOptions] => {
     const lost = ciLostResults.get(runId);
-    if (lost === undefined) return "The CI run stopped without reporting a result. Retry CI.";
+    if (lost === undefined) return ["The CI run stopped without reporting a result. Retry CI.", {}];
+    if ("hold" in lost) return [lost.hold.detail, lost.hold.options];
     const code = lost.exitCode === null ? "" : ` (exit code ${lost.exitCode})`;
-    return `The CI script ended${code} but its result couldn't be saved. Retry CI.`;
+    return [`The CI script ended${code} but its result couldn't be saved. Retry CI.`, {}];
   };
 
   /** Hold every pass that has had nothing behind it on two sweeps in a row
@@ -3955,7 +3975,7 @@ const make = Effect.gen(function* () {
         ciSuspectPasses.set(String(card.id), runId);
         continue;
       }
-      yield* holdCiPass(card, runId, ciOrphanReason(runId));
+      yield* holdCiPass(card, runId, ...ciOrphanHold(runId));
     }
     for (const cardId of ciSuspectPasses.keys()) {
       if (!seen.has(cardId)) ciSuspectPasses.delete(cardId);
@@ -4480,6 +4500,23 @@ const make = Effect.gen(function* () {
       yield* runCiSegment(card.id, finished.runId, steps, finished.segmentEnd);
       return;
     }
+    // T3O-61: a machine problem is held for a human before any failure is
+    // recorded, so no fix agent starts and no fix or round trip is used.
+    const verdict = finished.outcome.headline;
+    if (verdict?.machine === true) {
+      const board = yield* readBoard;
+      const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+      const where =
+        workerId === BOARD_LOCAL_WORKER_ID
+          ? boardCiHostName()
+          : ((board.workers ?? []).find((worker) => worker.id === workerId)?.label ??
+            String(workerId));
+      yield* holdCiPass(card, finished.runId, boardCiMachineHoldReason(verdict, where), {
+        machine: true,
+        headline: verdict,
+      });
+      return;
+    }
     const recorded = yield* dispatchLanded({
       type: "board.card.record-ci",
       commandId: yield* commandId("ci-finish"),
@@ -4509,6 +4546,7 @@ const make = Effect.gen(function* () {
             exitCode: null,
             tail: "",
             logPath: null,
+            headline: finished.outcome.headline ?? null,
           }
         : {
             runId: finished.runId,
@@ -4519,6 +4557,7 @@ const make = Effect.gen(function* () {
             tail: step.tail,
             logPath: pass?.logDir == null ? null : `${pass.logDir}/${index}.log`,
             result: step.result ?? null,
+            headline: finished.outcome.headline ?? step.headline ?? null,
           };
     yield* continueCi({
       cardId: card.id,

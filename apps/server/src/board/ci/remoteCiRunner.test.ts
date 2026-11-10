@@ -199,3 +199,55 @@ it.effect("a later segment's parallel steps, offset and result detail cross the 
     assert.deepStrictEqual(seen, [{ index: 0, step: reported }]);
   }),
 );
+
+it.effect("a worker's headline is clamped here, so a long reason can't break the stream", () =>
+  Effect.gen(function* () {
+    const loose = {
+      what: "w".repeat(300),
+      why: `Missing system library: ${"x".repeat(1_000)}`,
+      machine: true,
+      logLine: 12,
+      logOffset: -3,
+      source: "something-new",
+      hint: "Install it.",
+    };
+    const wire = yield* Schema.decodeUnknownEffect(Schema.Array(BoardWorkerCiProgress))([
+      { _tag: "step", index: 0, step: { ...step, headline: loose } },
+      {
+        ...toWireCiDone({ result: "failed", failedIndex: 0, exitCode: 1 }),
+        headline: loose,
+      },
+    ]);
+    const seen: BoardCiStepProgress[] = [];
+    const result = yield* remoteCiRunner(connected(wire), worker).run(request, (progress) =>
+      Effect.sync(() => seen.push(progress)),
+    );
+    const headline = result.result === "failed" ? result.headline : undefined;
+    assert.strictEqual(headline?.what.length, 80);
+    assert.strictEqual(headline?.why.length, 160);
+    assert.deepInclude(headline, {
+      machine: true,
+      logLine: 12,
+      logOffset: null,
+      source: "pattern",
+      hint: "Install it.",
+    });
+    assert.deepStrictEqual(seen[0]!.step.headline, headline);
+  }),
+);
+
+it.effect("a failed result's headline crosses the wire", () =>
+  Effect.gen(function* () {
+    const headline = {
+      what: "Panel → lint",
+      why: "No files to lint",
+      machine: false,
+      logLine: 3,
+      logOffset: 40,
+      source: "failure-line" as const,
+    };
+    const wire = toWireCiDone({ result: "failed", failedIndex: 0, exitCode: 1, headline });
+    const result = yield* remoteCiRunner(connected([wire]), worker).run(request, () => Effect.void);
+    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, exitCode: 1, headline });
+  }),
+);

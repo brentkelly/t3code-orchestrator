@@ -84,7 +84,19 @@ it.live("stops at the first failing step", () =>
       ]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, exitCode: 3 });
+    assert.deepStrictEqual(result, {
+      result: "failed",
+      failedIndex: 0,
+      exitCode: 3,
+      headline: {
+        what: "Fails",
+        why: "broken",
+        machine: false,
+        logLine: 1,
+        logOffset: 0,
+        source: "last-line",
+      },
+    });
     const last = events.at(-1)!;
     assert.strictEqual(last.step.status, "failed");
     assert.strictEqual(last.step.exitCode, 3);
@@ -103,7 +115,12 @@ it.live("times a step out and kills it", () =>
       request(cwd, [{ name: "Hangs", command: "sleep 30", timeoutMinutes: 0.0005 }]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, exitCode: null });
+    assert.deepInclude(result, { result: "failed", failedIndex: 0, exitCode: null });
+    assert.deepInclude(result.result === "failed" ? result.headline : undefined, {
+      what: "Hangs",
+      source: "exit",
+      machine: false,
+    });
     assert.strictEqual(events.at(-1)!.step.status, "timed-out");
     assert.include(events.at(-1)!.step.tail, "timed out");
   }),
@@ -337,7 +354,11 @@ it.live("runs a parallel group together and stops later groups once it finishes"
       ]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 1, exitCode: 7 });
+    assert.deepInclude(result, { result: "failed", failedIndex: 1, exitCode: 7 });
+    assert.strictEqual(
+      result.result === "failed" ? result.headline?.why : null,
+      "Exited with code 7",
+    );
     const finals = events.filter((event) => event.step.status !== "running");
     assert.deepStrictEqual(
       finals.map((event) => [event.index, event.step.status, event.step.exitCode]),
@@ -366,7 +387,7 @@ it.live("reads the step's result file, which adds detail and never overrides the
       summary: "1 of 3 failed",
       failures: [{ title: "boom", file: "src/a.ts", line: 4 }],
     });
-    assert.include(final.tail, "weren't { title, detail?, file?, line? }");
+    assert.include(final.tail, "weren't { title, detail?, file?, line?, machine? }");
   }),
 );
 
@@ -384,7 +405,11 @@ it.live("fails a group that leaves tracked changes in the worktree", () =>
       request(cwd, [{ name: "Formats", command: "echo two > tracked.txt", timeoutMinutes: 1 }]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, exitCode: 0 });
+    assert.deepInclude(result, { result: "failed", failedIndex: 0, exitCode: 0 });
+    assert.strictEqual(
+      result.result === "failed" ? result.headline?.why : null,
+      "Left tracked changes in the worktree: tracked.txt",
+    );
     assert.include(events.at(-1)!.step.tail, "left tracked changes");
     // An edit that was there before the group ran is not the group's.
     const again = yield* runBoardCiPass(
@@ -397,7 +422,7 @@ it.live("fails a group that leaves tracked changes in the worktree", () =>
       request(cwd, [{ name: "Formats", command: "echo three > tracked.txt", timeoutMinutes: 1 }]),
       () => Effect.void,
     );
-    assert.deepStrictEqual(reedit, { result: "failed", failedIndex: 0, exitCode: 0 });
+    assert.deepInclude(reedit, { result: "failed", failedIndex: 0, exitCode: 0 });
   }),
 );
 
@@ -535,5 +560,76 @@ it.live("reports a script's progress while it runs, and its settled row keeps th
     assert.isUndefined(settled.silentSince);
     // Progress lines stay in the raw log.
     assert.include(settled.tail, "::t3o-progress::");
+  }),
+);
+
+it.live("a failed step's headline points at its line and byte offset in <n>.log", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { events, emit } = collect();
+    const script = [
+      "echo 'naïve start'",
+      "printf 'partial'; printf ' line\\n'",
+      `echo '::t3o-failure::{"step":"lint","reason":"No files to lint"}'`,
+      "echo 'error: later'",
+      "exit 1",
+    ].join("; ");
+    const result = yield* runBoardCiPass(
+      request(cwd, [
+        { name: "Ok", command: "true", timeoutMinutes: 1 },
+        { name: "Panel", command: script, timeoutMinutes: 1 },
+      ]),
+      emit,
+    );
+    assert.strictEqual(result.result, "failed");
+    const headline = result.result === "failed" ? result.headline : undefined;
+    assert.deepInclude(headline, {
+      what: "Panel → lint",
+      why: "No files to lint",
+      machine: false,
+      logLine: 3,
+      source: "failure-line",
+    });
+    const log = NodeFS.readFileSync(NodePath.join(cwd, ".t3", "ci", "run-1", "1.log"));
+    const from = log.subarray(headline!.logOffset!).toString("utf8");
+    assert.isTrue(from.startsWith("::t3o-failure::"));
+    assert.deepStrictEqual(events.at(-1)!.step.headline, headline);
+  }),
+);
+
+it.live("a missing tool is a machine problem, and an empty result file is said", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { emit } = collect();
+    const result = yield* runBoardCiPass(
+      request(cwd, [
+        {
+          name: "Browser",
+          command: ': > "$T3O_CI_RESULT"; t3o-no-such-tool-xyz --run',
+          timeoutMinutes: 1,
+        },
+      ]),
+      emit,
+    );
+    assert.strictEqual(result.result, "failed");
+    const headline = result.result === "failed" ? result.headline : undefined;
+    assert.strictEqual(headline?.machine, true);
+    assert.strictEqual(
+      headline?.why,
+      "A tool the script needs isn't installed: t3o-no-such-tool-xyz (its result file was empty)",
+    );
+    assert.match(headline?.hint ?? "", /^Install t3o-no-such-tool-xyz\.$/);
+  }),
+);
+
+it.live("a passing step carries no headline", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { events, emit } = collect();
+    yield* runBoardCiPass(
+      request(cwd, [{ name: "Ok", command: "echo 'error: not really'", timeoutMinutes: 1 }]),
+      emit,
+    );
+    assert.isUndefined(events.at(-1)!.step.headline);
   }),
 );

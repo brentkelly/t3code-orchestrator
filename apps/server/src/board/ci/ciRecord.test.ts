@@ -11,6 +11,8 @@ import {
   ThreadId,
   type BoardCard,
   type BoardCardCi,
+  type BoardCiHeadline,
+  type BoardCiPassStep,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
@@ -177,4 +179,80 @@ it("a finish-pass recorded before held reasons existed still decodes", () => {
     runId: "run-1",
     result: "interrupted",
   });
+});
+
+const headline = (why: string, machine = false): BoardCiHeadline => ({
+  what: "Test",
+  why,
+  machine,
+  logLine: 4,
+  logOffset: 120,
+  source: "pattern",
+});
+
+const failedStep = (why: string): BoardCiPassStep => ({
+  name: "Test",
+  command: "vp test",
+  timeoutMinutes: 5,
+  status: "failed",
+  startedAt: NOW,
+  finishedAt: NOW,
+  exitCode: 1,
+  tail: "",
+  headline: headline(why),
+});
+
+it("T3O-61: the card heads with its first failing step, and the next pass clears it", () => {
+  const first = decideBoardCiRecord(
+    inCi("running"),
+    record({ kind: "step", runId: "run-1", index: 1, step: failedStep("first") }),
+  );
+  assert.isTrue(first.ok);
+  if (!first.ok) return;
+  assert.deepStrictEqual(first.payload.card.ci?.headline, headline("first"));
+  const second = decideBoardCiRecord(
+    first.payload.card,
+    record({ kind: "step", runId: "run-1", index: 0, step: failedStep("second") }),
+  );
+  assert.isTrue(second.ok && second.payload.card.ci?.headline?.why === "first");
+  if (!second.ok) return;
+  const restarted = decideBoardCiRecord(
+    second.payload.card,
+    record({
+      kind: "start-pass",
+      runId: "run-2",
+      entry: 1,
+      ordinal: 2,
+      steps: boardCiStepsFromLegacy([{ name: "Test", command: "vp test", timeoutMinutes: 5 }]),
+      maxFixAttempts: 2,
+      logDir: "/tmp/ci/run-2",
+      queued: false,
+      fixThreadId: null,
+    }),
+  );
+  assert.isTrue(restarted.ok && restarted.payload.card.ci?.headline === undefined);
+});
+
+it("T3O-61: a machine hold carries the headline when the step's own record hasn't landed", () => {
+  const decided = decideBoardCiRecord(
+    inCi("running"),
+    record({
+      kind: "finish-pass",
+      runId: "run-1",
+      result: "interrupted",
+      reason: "Machine problem on box: Missing system library: libnspr4.so. Then Retry CI.",
+      machine: true,
+      headline: headline("Missing system library: libnspr4.so", true),
+    }),
+  );
+  assert.isTrue(decided.ok);
+  if (!decided.ok) return;
+  assert.strictEqual(decided.payload.card.ci?.phase, "held");
+  assert.strictEqual(decided.payload.card.ci?.machine, true);
+  assert.deepStrictEqual(
+    decided.payload.card.ci?.headline,
+    headline("Missing system library: libnspr4.so", true),
+  );
+  assert.strictEqual(decided.payload.card.ciRoundTrips, 0);
+  assert.strictEqual(decided.payload.card.ci?.fixAttempts, 0);
 });

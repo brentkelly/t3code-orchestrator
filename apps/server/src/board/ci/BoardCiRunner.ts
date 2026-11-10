@@ -18,12 +18,14 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
   BOARD_CI_TAIL_LINES,
   boardCiStepGroups,
   parseBoardCiResultFile,
+  type BoardCiHeadline,
   type BoardCiPassStep,
   type BoardCiStepDefinition,
   type BoardCiStepResult,
@@ -41,7 +43,12 @@ import {
   type BoardCiStepLive,
   type BoardCiStepReporter,
 } from "./ciStepReporter.ts";
-import { boardCiLowDiskReason } from "./diskSpace.ts";
+import {
+  boardCiDirtyHeadline,
+  boardCiFailureHeadline,
+  BoardCiFailureFacts,
+} from "./ciFailureHeadline.ts";
+import { BoardDiskSpace, boardCiLowDiskReason } from "./diskSpace.ts";
 
 export interface BoardCiRunRequest {
   readonly runId: string;
@@ -70,6 +77,9 @@ export type BoardCiRunResult =
       /** The failed step's exit code (T3O-59), so a result that can't be
           saved can still say how the script ended. */
       readonly exitCode?: number | null;
+      /** The failed step's headline (T3O-61), so whether it is a machine
+          problem never waits on the step's own record landing. */
+      readonly headline?: BoardCiHeadline;
     }
   /** The pass could not run at all (a placed worker out of reach): not a CI
       failure, so no fix agent is started. */
@@ -201,6 +211,8 @@ export class BoardCiTail {
 interface StepExit {
   readonly status: "passed" | "failed" | "timed-out";
   readonly exitCode: number | null;
+  /** The signal that ended the shell, when one did (T3O-61). */
+  readonly signal?: string | null;
 }
 
 /** False when the group is already empty, so nothing is left to signal. */
@@ -379,9 +391,9 @@ export const runBoardCiStep = (input: {
         killTimer = setTimeout(() => timing.killGroup(child, "SIGKILL"), timing.killGraceMs);
       }
     };
-    const settleExit = (code: number | null) => {
-      if (timedOut) finish({ status: "timed-out", exitCode: code }, true);
-      else finish({ status: code === 0 ? "passed" : "failed", exitCode: code }, true);
+    const settleExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (timedOut) finish({ status: "timed-out", exitCode: code, signal }, true);
+      else finish({ status: code === 0 ? "passed" : "failed", exitCode: code, signal }, true);
     };
     const timer = setTimeout(() => {
       timedOut = true;
@@ -400,16 +412,16 @@ export const runBoardCiStep = (input: {
       input.tail.push(`\n[board] Could not run the step: ${error.message}\n`);
       finish({ status: "failed", exitCode: null }, true);
     });
-    child.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
       if (settled || drainTimer !== null) return;
       // What the step left running in its group is stopped with it.
       terminate();
       drainTimer = setTimeout(() => {
         destroyPipes();
-        settleExit(code);
+        settleExit(code, signal);
       }, timing.exitDrainMs);
     });
-    child.on("close", (code) => settleExit(code));
+    child.on("close", (code, signal) => settleExit(code, signal));
     return Effect.sync(() => {
       if (settled) return;
       settled = true;
@@ -424,14 +436,15 @@ export const runBoardCiStep = (input: {
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-/** Run a step with its output split into lines for its reporter (T3O-60)
-    and `onLine` (T3O-59). Node's callbacks only push onto a queue; a fiber
-    scoped to the step delivers them, and the last line lands before the
-    step's result. */
+/** Run a step with its output split into lines for its reporter (T3O-60),
+    `onLine` (T3O-59) and its failure facts (T3O-61). Node's callbacks only
+    push onto a queue; a fiber scoped to the step delivers them, and the last
+    line lands before the step's result. */
 const withStepLines = <A>(
   index: number,
   onLine: BoardCiRunRequest["onLine"],
   reporter: BoardCiStepReporter,
+  facts: BoardCiFailureFacts,
   run: (onOutput: (text: string) => void) => Effect.Effect<A>,
 ): Effect.Effect<A> =>
   Effect.scoped(
@@ -451,9 +464,15 @@ const withStepLines = <A>(
       );
       const result = yield* run((text) => {
         Queue.offerUnsafe(events, null);
-        for (const line of reader.push(text)) Queue.offerUnsafe(events, line);
+        for (const line of reader.push(text)) {
+          facts.push(line);
+          Queue.offerUnsafe(events, line);
+        }
       });
-      for (const line of reader.flush()) Queue.offerUnsafe(events, line);
+      for (const line of reader.flush()) {
+        facts.push(line);
+        Queue.offerUnsafe(events, line);
+      }
       Queue.endUnsafe(events);
       yield* Fiber.join(delivery);
       return result;
@@ -461,17 +480,21 @@ const withStepLines = <A>(
   );
 
 /** The step's `$T3O_CI_RESULT` file, if it wrote one. A malformed file is a
-    line in the tail, never a failure. */
-const readStepResult = (resultPath: string, tail: BoardCiTail): BoardCiStepResult | null => {
+    line in the tail, never a failure; an empty one is noted (T3O-61). */
+const readStepResult = (
+  resultPath: string,
+  tail: BoardCiTail,
+): { readonly result: BoardCiStepResult | null; readonly empty: boolean } => {
   let text: string;
   try {
     text = NodeFS.readFileSync(resultPath, "utf8");
   } catch {
-    return null;
+    return { result: null, empty: false };
   }
+  if (text.trim().length === 0) return { result: null, empty: true };
   const parsed = parseBoardCiResultFile(text);
   if (parsed.warning !== null) tail.push(`\n[board] ${parsed.warning}\n`);
-  return parsed.result;
+  return { result: parsed.result, empty: false };
 };
 
 const changedLines = (status: string | null): ReadonlyArray<string> =>
@@ -507,6 +530,13 @@ const trackedChanges = (cwd: string): Effect.Effect<string | null> =>
       (error, stdout) => resume(Effect.succeed(error === null ? stdout.trimEnd() : null)),
     );
   });
+
+/** The step's disk's free bytes now, for a disk headline; null when unknown. */
+const freeBytesNow = (path: string) =>
+  Effect.gen(function* () {
+    const disk = yield* BoardDiskSpace;
+    return yield* disk.freeBytes(path);
+  }).pipe(Effect.catchCause(() => Effect.succeed(null)));
 
 export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunner.run")(
   function* (request, emit) {
@@ -570,25 +600,47 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
             const fileIndex = index + (request.indexOffset ?? 0);
             const resultPath = NodePath.join(request.logDir, `${fileIndex}.result.json`);
             // The reporter's scope ends with the step, before its settled row.
+            const facts = new BoardCiFailureFacts();
             const { exit, progress } = yield* Effect.scoped(
               Effect.gen(function* () {
                 const reporter = yield* makeBoardCiStepReporter(running);
-                const exit = yield* withStepLines(fileIndex, request.onLine, reporter, (onOutput) =>
-                  runBoardCiStep({
-                    command: definition.command,
-                    cwd: request.cwd,
-                    timeoutMs: definition.timeoutMinutes * 60_000,
-                    tail,
-                    logPath: NodePath.join(request.logDir, `${fileIndex}.log`),
-                    resultPath,
-                    onOutput,
-                  }),
+                const exit = yield* withStepLines(
+                  fileIndex,
+                  request.onLine,
+                  reporter,
+                  facts,
+                  (onOutput) =>
+                    runBoardCiStep({
+                      command: definition.command,
+                      cwd: request.cwd,
+                      timeoutMs: definition.timeoutMinutes * 60_000,
+                      tail,
+                      logPath: NodePath.join(request.logDir, `${fileIndex}.log`),
+                      resultPath,
+                      onOutput,
+                    }),
                 );
                 return { exit, progress: reporter.progress() };
               }),
             );
-            const result = readStepResult(resultPath, tail);
-            return { index, base, startedAt, exit, tail, result, progress };
+            const { result, empty } = readStepResult(resultPath, tail);
+            // T3O-61: a failed step says what failed and why, read here, on
+            // the machine it ran on.
+            const headline =
+              exit.status === "passed"
+                ? null
+                : boardCiFailureHeadline(facts, {
+                    stepName: definition.name,
+                    status: exit.status,
+                    exitCode: exit.exitCode,
+                    signal: exit.signal ?? null,
+                    timeoutMinutes: definition.timeoutMinutes,
+                    result,
+                    resultEmpty: empty,
+                    host: NodeOS.hostname(),
+                    freeBytes: yield* freeBytesNow(request.cwd),
+                  });
+            return { index, base, startedAt, exit, tail, result, progress, headline };
           }),
         { concurrency: "unbounded" },
       );
@@ -602,13 +654,16 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
       const finishedAt = yield* nowIso;
       let failedIndex: number | null = null;
       let exitCode: number | null = null;
+      let failedHeadline: BoardCiHeadline | undefined;
       for (const step of settled) {
         const status =
           step.exit.status === "passed" && dirty.length > 0 ? "failed" : step.exit.status;
+        let headline = step.headline;
         if (status === "failed" && step.exit.status === "passed") {
           step.tail.push(
             `\n[board] The step group left tracked changes in the worktree:\n${dirty}\n`,
           );
+          headline = boardCiDirtyHeadline(step.base.name, dirty);
         }
         yield* emit({
           index: step.index,
@@ -622,14 +677,23 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
             ...(step.result === null ? {} : { result: step.result }),
             // T3O-60: a settled step keeps where its progress got to.
             ...(step.progress === undefined ? {} : { progress: step.progress }),
+            ...(headline === null ? {} : { headline }),
           },
         });
         if (status !== "passed" && failedIndex === null) {
           failedIndex = step.index;
           exitCode = step.exit.exitCode;
+          failedHeadline = headline ?? undefined;
         }
       }
-      if (failedIndex !== null) return { result: "failed", failedIndex, exitCode } as const;
+      if (failedIndex !== null) {
+        return {
+          result: "failed",
+          failedIndex,
+          exitCode,
+          ...(failedHeadline === undefined ? {} : { headline: failedHeadline }),
+        } as const;
+      }
     }
     return { result: "passed", failedIndex: null } as const;
   },

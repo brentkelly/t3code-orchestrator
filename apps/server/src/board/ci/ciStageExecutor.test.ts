@@ -119,6 +119,25 @@ describe("CiStageExecutor", () => {
     expect(next.finding).toContain("FAIL thing.test.ts");
   });
 
+  it("T3O-61: a send-back finding leads with what failed and why", () => {
+    const next = plan({
+      card: cardInCi(ci({ fixAttempts: 2 })),
+      ciFailure: {
+        ...failure,
+        headline: {
+          what: "Test → unit",
+          why: "FAIL thing.test.ts",
+          machine: false,
+          logLine: 12,
+          logOffset: 300,
+          source: "pattern",
+        },
+      },
+    });
+    if (next.kind !== "ci-return") return expect.unreachable();
+    expect(next.finding.split("\n")[0]).toBe("Test → unit: FAIL thing.test.ts (log line 12)");
+  });
+
   it("re-runs every step after a fix, and returns to review when told to", () => {
     const step = boardCiFixStepId(2, 1);
     expect(

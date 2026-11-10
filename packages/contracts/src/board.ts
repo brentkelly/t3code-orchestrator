@@ -1713,6 +1713,9 @@ export const BoardCiFailureDetail = Schema.Struct({
   detail: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_000))),
   file: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(500))),
   line: Schema.optionalKey(PositiveInt),
+  /** The script says this failure is the machine's, not the code's (T3O-61):
+      true holds the card with no fix agent, false rules a machine hold out. */
+  machine: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardCiFailureDetail = typeof BoardCiFailureDetail.Type;
 
@@ -1728,7 +1731,7 @@ const decodeFailureDetail = Schema.decodeUnknownOption(BoardCiFailureDetail);
 
 /**
  * Parse a script's `$T3O_CI_RESULT` file: `{ summary?, failures?: [{ title,
- * detail?, file?, line? }] }`. Invalid failures are dropped and at most
+ * detail?, file?, line?, machine? }] }`. Invalid failures are dropped and at most
  * `BOARD_CI_MAX_FAILURES` kept; a file that isn't that shape is a warning.
  */
 export function parseBoardCiResultFile(text: string): {
@@ -1759,7 +1762,7 @@ export function parseBoardCiResultFile(text: string): {
     result: { summary, failures: failures.slice(0, BOARD_CI_MAX_FAILURES) },
     warning:
       dropped > 0
-        ? `${dropped} of the step's reported failures weren't { title, detail?, file?, line? }; ignored.`
+        ? `${dropped} of the step's reported failures weren't { title, detail?, file?, line?, machine? }; ignored.`
         : null,
   };
 }
@@ -1811,6 +1814,40 @@ export function parseBoardCiProgressLine(line: string): {
       message: typeof record.message === "string" ? record.message.slice(0, 200) : null,
       done: count(record.done),
       total: count(record.total),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** The marker a script prints to say why it failed (T3O-61). */
+const BOARD_CI_FAILURE_MARKER = "::t3o-failure::";
+
+/** Longest sub-step name and reason a `::t3o-failure::` line keeps. */
+const BOARD_CI_FAILURE_STEP_MAX = 80;
+const BOARD_CI_FAILURE_REASON_MAX = 300;
+
+/** Parse one `::t3o-failure::{step?, reason, machine?}` output line, or null
+    when the line is not one, its JSON is unreadable or it has no reason. */
+export function parseBoardCiFailureLine(line: string): {
+  readonly step: string | null;
+  readonly reason: string;
+  readonly machine: boolean | null;
+} | null {
+  const at = line.indexOf(BOARD_CI_FAILURE_MARKER);
+  if (at < 0) return null;
+  try {
+    const raw = JSON.parse(line.slice(at + BOARD_CI_FAILURE_MARKER.length)) as unknown;
+    if (typeof raw !== "object" || raw === null) return null;
+    const record = raw as Record<string, unknown>;
+    const text = (value: unknown, max: number) =>
+      typeof value === "string" && value.trim().length > 0 ? value.trim().slice(0, max) : null;
+    const reason = text(record.reason, BOARD_CI_FAILURE_REASON_MAX);
+    if (reason === null) return null;
+    return {
+      step: text(record.step, BOARD_CI_FAILURE_STEP_MAX),
+      reason,
+      machine: typeof record.machine === "boolean" ? record.machine : null,
     };
   } catch {
     return null;
@@ -1898,6 +1935,87 @@ export const BoardCiProgress = Schema.Struct({
 });
 export type BoardCiProgress = typeof BoardCiProgress.Type;
 
+/** Most characters a CI headline's `what` and `why` keep (T3O-61). */
+const BOARD_CI_HEADLINE_WHAT_MAX = 80;
+const BOARD_CI_HEADLINE_WHY_MAX = 160;
+
+const BOARD_CI_HEADLINE_SOURCES = [
+  "failure-line",
+  "result-file",
+  "machine",
+  "pattern",
+  "last-line",
+  "exit",
+  "board",
+] as const;
+
+/**
+ * What a failed step says failed and why (T3O-61), picked by the runner from
+ * the step's own log and result file: `what` is the step (or `step → sub-step`),
+ * `why` the first real error, and where in `<n>.log` it came from. `machine`
+ * holds the card for a human instead of starting a fix agent; `hint` says what
+ * to fix on the machine.
+ */
+export const BoardCiHeadline = Schema.Struct({
+  what: TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_CI_HEADLINE_WHAT_MAX)),
+  why: TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_CI_HEADLINE_WHY_MAX)),
+  machine: Schema.Boolean,
+  /** The 1-based line of `<n>.log` the reason came from, and its byte offset. */
+  logLine: Schema.NullOr(PositiveInt),
+  logOffset: Schema.NullOr(NonNegativeInt),
+  source: Schema.Literals(BOARD_CI_HEADLINE_SOURCES),
+  hint: Schema.optionalKey(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_CI_HEADLINE_WHY_MAX)),
+  ),
+});
+export type BoardCiHeadline = typeof BoardCiHeadline.Type;
+
+const clipHeadlineText = (value: unknown, max: number): string | null => {
+  if (typeof value !== "string") return null;
+  const text = value.replace(/\s+/g, " ").trim();
+  if (text.length === 0) return null;
+  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
+};
+
+const headlineCount = (value: unknown, min: number): number | null =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= min ? value : null;
+
+/** A headline from loose input (a worker's wire, or the classifier), clamped
+    to `BoardCiHeadline`'s limits, or null when it has no what or why. */
+export function clampBoardCiHeadline(raw: {
+  readonly what: unknown;
+  readonly why: unknown;
+  readonly machine: unknown;
+  readonly logLine: unknown;
+  readonly logOffset: unknown;
+  readonly source: unknown;
+  readonly hint?: unknown;
+}): BoardCiHeadline | null {
+  const what = clipHeadlineText(raw.what, BOARD_CI_HEADLINE_WHAT_MAX);
+  const why = clipHeadlineText(raw.why, BOARD_CI_HEADLINE_WHY_MAX);
+  if (what === null || why === null) return null;
+  const hint = clipHeadlineText(raw.hint, BOARD_CI_HEADLINE_WHY_MAX);
+  const source = (BOARD_CI_HEADLINE_SOURCES as ReadonlyArray<unknown>).includes(raw.source)
+    ? (raw.source as BoardCiHeadline["source"])
+    : "pattern";
+  return {
+    what,
+    why,
+    machine: raw.machine === true,
+    logLine: headlineCount(raw.logLine, 1),
+    logOffset: headlineCount(raw.logOffset, 0),
+    source,
+    ...(hint === null ? {} : { hint }),
+  };
+}
+
+/** How a headline leads a fix prompt or a send-back finding (T3O-61). */
+export function boardCiHeadlineLead(
+  headline: Pick<BoardCiHeadline, "what" | "why" | "logLine">,
+): string {
+  return `${headline.what}: ${headline.why}${headline.logLine === null ? "" : ` (log line ${headline.logLine})`}`;
+}
+
 /** How much of a progress message the card shell carries. */
 export const BOARD_CI_SHELL_PROGRESS_MESSAGE_MAX = 80;
 
@@ -1961,6 +2079,9 @@ export const BoardCardCi = Schema.Struct({
   /** A held pass was held for a problem with the machine, not the code
       (T3O-59): a full disk, say. Drives the "Machine problem" label. */
   machine: Schema.optionalKey(Schema.Literal(true)),
+  /** What the pass's first failing step says failed and why (T3O-61), for
+      the card face; cleared when the next pass starts. */
+  headline: Schema.optionalKey(BoardCiHeadline),
 });
 export type BoardCardCi = typeof BoardCardCi.Type;
 
@@ -2027,6 +2148,8 @@ export const BoardCiPassStep = Schema.Struct({
   progress: Schema.optionalKey(BoardCiProgress),
   /** A running step has printed nothing since then (T3O-60). */
   silentSince: Schema.optionalKey(IsoDateTime),
+  /** A failed or timed-out step's headline: what failed and why (T3O-61). */
+  headline: Schema.optionalKey(BoardCiHeadline),
 });
 export type BoardCiPassStep = typeof BoardCiPassStep.Type;
 
@@ -6840,6 +6963,9 @@ export const BoardCardCiAction = Schema.Union([
     reason: Schema.optionalKey(TrimmedNonEmptyString),
     /** The hold is a machine problem, not the code's (T3O-59). */
     machine: Schema.optionalKey(Schema.Literal(true)),
+    /** The failing step's headline (T3O-61), for a pass held before its
+        step's own record landed. */
+    headline: Schema.optionalKey(BoardCiHeadline),
   }),
   Schema.Struct({ kind: Schema.Literal("begin-fix"), runId: TrimmedNonEmptyString }),
   Schema.Struct({

@@ -22,7 +22,7 @@ export type BoardCiRecordResult =
   | { readonly ok: false; readonly refusal: string };
 
 /** A held pass's reason rides every card shell, so it stays short. */
-const BOARD_CI_HOLD_REASON_CHARS = 400;
+export const BOARD_CI_HOLD_REASON_CHARS = 400;
 
 const refuse = (refusal: string): BoardCiRecordResult => ({ ok: false, refusal });
 
@@ -129,11 +129,14 @@ export function decideBoardCiRecord(
       const steps = current.steps.map((step, index) =>
         index === action.index ? boardCardCiSteps([action.step])[0]! : step,
       );
+      // T3O-61: the card heads with its pass's first failing step.
+      const headline = current.headline ?? action.step.headline;
       return done({
         ci: {
           ...current,
           steps,
           phase: current.phase === "queued" ? "running" : current.phase,
+          ...(headline === undefined ? {} : { headline }),
         },
         ciLastOutcome: card.ciLastOutcome,
       });
@@ -192,6 +195,9 @@ export function decideBoardCiRecord(
                 ? {}
                 : { stopReason: action.reason.slice(0, BOARD_CI_HOLD_REASON_CHARS).trimEnd() }),
               ...(action.machine === true ? { machine: true as const } : {}),
+              ...(current.headline === undefined && action.headline !== undefined
+                ? { headline: action.headline }
+                : {}),
             }
           : null;
       return done(

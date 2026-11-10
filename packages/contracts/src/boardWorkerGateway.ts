@@ -389,8 +389,21 @@ const WireCiStepResult = Schema.Struct({
       detail: Schema.optionalKey(Schema.String),
       file: Schema.optionalKey(TrimmedNonEmptyString),
       line: Schema.optionalKey(PositiveInt),
+      machine: Schema.optionalKey(Schema.Boolean),
     }),
   ),
+});
+
+/** `BoardCiHeadline` (T3O-61) with loose strings: the board clamps them, so
+    a worker's long reason can't fail the whole stream's decode. */
+const WireCiHeadline = Schema.Struct({
+  what: Schema.String,
+  why: Schema.String,
+  machine: Schema.Boolean,
+  logLine: Schema.NullOr(Schema.Number),
+  logOffset: Schema.NullOr(Schema.Number),
+  source: Schema.String,
+  hint: Schema.optionalKey(Schema.String),
 });
 
 /** One step's progress, then the pass's result. */
@@ -418,6 +431,7 @@ export const BoardWorkerCiProgress = Schema.Union([
         }),
       ),
       silentSince: Schema.optionalKey(Schema.String),
+      headline: Schema.optionalKey(WireCiHeadline),
     }),
   }),
   Schema.TaggedStruct("done", {
@@ -429,6 +443,8 @@ export const BoardWorkerCiProgress = Schema.Union([
     machine: Schema.optionalKey(Schema.Boolean),
     /** The failed step's exit code, when `result` is "failed" (T3O-59). */
     exitCode: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+    /** The failed step's headline (T3O-61): a machine one holds the card. */
+    headline: Schema.optionalKey(WireCiHeadline),
   }),
 ]);
 export type BoardWorkerCiProgress = typeof BoardWorkerCiProgress.Type;

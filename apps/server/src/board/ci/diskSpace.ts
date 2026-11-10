@@ -30,6 +30,9 @@ export class BoardDiskSpace extends Context.Reference<BoardDiskSpaceShape>(
   { defaultValue: () => ({ freeBytes: statfsFreeBytes }) },
 ) {}
 
+/** This server's machine, as a machine-problem reason names it (T3O-61). */
+export const boardCiHostName = (): string => NodeOS.hostname();
+
 /** Why `path`'s filesystem is too full for CI, or null when it isn't — or
     when it can't be read: a statfs error never blocks a pass. */
 export const boardCiLowDiskReason = Effect.fn("boardCiLowDiskReason")(function* (path: string) {
