@@ -6125,7 +6125,7 @@ const make = Effect.gen(function* () {
     });
     if (gone && !canRespawn) {
       yield* Effect.logWarning(
-        "board supervisor: cannot recover step — no thread and cannot respawn",
+        "board supervisor: cannot recover step: no thread and cannot respawn",
         { cardId: input.card.id, stepId: input.state.stepId },
       );
       return;
@@ -6675,7 +6675,7 @@ const make = Effect.gen(function* () {
         commandId: yield* commandId("branch-cleanup"),
         cardId: card.id,
         kind: "card-branch-kept",
-        detail: `Kept branch ${worktree.branch} — the merged pull request #${card.pullRequest.number} is on ${card.pullRequest.headBranch}, not this branch`,
+        detail: `Kept branch ${worktree.branch}: the merged pull request #${card.pullRequest.number} is on ${card.pullRequest.headBranch}, not this branch`,
         createdAt: yield* nowIso,
       });
       return;
@@ -6702,9 +6702,9 @@ const make = Effect.gen(function* () {
     ];
     const detail =
       deleted.length === 0
-        ? `Kept branch ${worktree.branch}${result.skippedReason === null ? "" : ` — ${result.skippedReason}`}`
+        ? `Kept branch ${worktree.branch}${result.skippedReason === null ? "" : `: ${result.skippedReason}`}`
         : `Deleted ${deleted.join(" and ")} branch ${worktree.branch}${
-            result.skippedReason === null ? "" : ` — ${result.skippedReason}`
+            result.skippedReason === null ? "" : `: ${result.skippedReason}`
           }`;
     yield* dispatch({
       type: "board.card.record-note",
@@ -9949,8 +9949,8 @@ const make = Effect.gen(function* () {
       const text = desired
         ? `Switching to human-in-the-loop: ask me anything you need directly, and it is fine to end a turn waiting on my answer. Call board_complete_step when the work is done.`
         : isReviewDecidingStep(state)
-          ? `Switching to unattended: do not stop to ask permission — make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished. ${boardBlockedInstruction(state.stepId)}`
-          : `Switching to unattended: do not stop to ask permission — make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished; if you are truly blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}, and never end a turn with an unanswered question in prose.`;
+          ? `Switching to unattended: do not stop to ask permission: make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished. ${boardBlockedInstruction(state.stepId)}`
+          : `Switching to unattended: do not stop to ask permission: make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished; if you are truly blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}, and never end a turn with an unanswered question in prose.`;
       yield* sendTurn({ threadId: state.threadId, text, runtimeMode: state.runtimeMode });
     }
     yield* dispatch({
@@ -10018,7 +10018,7 @@ const make = Effect.gen(function* () {
       ...(result.remoteDeleted ? ["remote"] : []),
       ...(result.localDeleted ? ["local"] : []),
     ];
-    const skipped = result.skippedReason === null ? "" : ` — ${result.skippedReason}`;
+    const skipped = result.skippedReason === null ? "" : `: ${result.skippedReason}`;
     yield* dispatchOptional({
       type: "board.card.record-note",
       commandId: yield* commandId("branch-cleanup"),

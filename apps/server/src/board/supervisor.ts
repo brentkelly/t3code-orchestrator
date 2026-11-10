@@ -359,7 +359,7 @@ export function boardBackgroundCheckInCharged(checkInsSent: number): boolean {
 export function boardBackgroundCheckInNudge(): string {
   return [
     `You ended your turn with background work still running (a background command, a monitor, or subagents), and this is a scheduled check-in on it.`,
-    `Actually verify it is still alive — check the process, its output file, or the task status — rather than assuming it is.`,
+    `Actually verify it is still alive (check the process, its output file, or the task status) rather than assuming it is.`,
     `If it has finished or died, deal with the result and carry on toward board_complete_step.`,
     `If it is genuinely still running, end your turn again; you will be woken when it reports.`,
   ].join(" ");
