@@ -10,6 +10,8 @@ import { Link } from "@tanstack/react-router";
 import {
   BOARD_CI_STOPPED_BY_YOU_REASON,
   isBoardCiStepFailure,
+  type BoardCardId,
+  type EnvironmentId,
   type BoardCardCi,
   type BoardCardCiLastOutcome,
   type BoardCiPass,
@@ -18,13 +20,16 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import {
+  CheckIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronsRightIcon,
+  CopyIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 
+import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowSecond } from "../hooks/useNowSecond";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -32,7 +37,11 @@ import {
   boardCiPaneStatus,
   boardCiPassOutcomeChip,
   boardCiPassSummary,
+  boardCiProgressFraction,
+  boardCiProgressLabel,
+  boardCiSilenceLabel,
   boardCiStepBadgeState,
+  boardCiStepLimit,
   boardCiTailMeta,
   formatBoardCiDuration,
   formatBoardCiTimer,
@@ -41,6 +50,12 @@ import {
 import { BOARD_CI_CHIP_CLASS } from "./BoardCardCiFace";
 import { BoardSectionHeading as SectionHeading } from "./BoardCardFields";
 import { BoardShimmerText, BoardStepBadge } from "./BoardStepBadge";
+import type { BoardCiLogTarget } from "./BoardCiLogDialog";
+
+// Lazy: the viewer and its log model load only when a log is opened.
+const BoardCiLogDialog = lazy(() =>
+  import("./BoardCiLogDialog").then((module) => ({ default: module.BoardCiLogDialog })),
+);
 
 const BUTTON_CLASS =
   "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-input bg-popover px-2.5 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent";
@@ -61,6 +76,70 @@ function Chip({ label, tone }: { readonly label: string; readonly tone: BoardCiC
 function RunningTimer({ startedAt }: { readonly startedAt: string }) {
   const nowMs = useNowSecond();
   return <>{formatBoardCiTimer(nowMs - Date.parse(startedAt))}</>;
+}
+
+/** "Running 12 / 60 min", the over-limit minutes in the warning tone, and
+    "No output for N min" on a silent step (T3O-60). */
+function RunningMeta({ step }: { readonly step: BoardCiPassStep }) {
+  const nowMs = useNowSecond();
+  const { elapsed, limit, over } = boardCiStepLimit(step, nowMs);
+  const silence = boardCiSilenceLabel(step.silentSince, nowMs);
+  return (
+    <span className="text-[11px] text-muted-foreground tabular-nums">
+      Running <span className={cn(over && "font-medium text-warning-foreground")}>{elapsed}</span> /{" "}
+      {limit} min
+      {silence === null ? null : <span className="text-warning-foreground">{` · ${silence}`}</span>}
+    </span>
+  );
+}
+
+/** A script's progress: its message, `128 / 212` and a bar. */
+function StepProgress({
+  progress,
+}: {
+  readonly progress: NonNullable<BoardCiPassStep["progress"]>;
+}) {
+  const fraction = boardCiProgressFraction(progress);
+  const label = boardCiProgressLabel(progress);
+  return (
+    <div className="flex flex-col gap-1 pt-0.5">
+      <div className="flex min-w-0 items-center gap-2 text-[11px]">
+        <span className="min-w-0 truncate text-foreground">{progress.message ?? ""}</span>
+        <span className="flex-1" />
+        {progress.done === null || label === null ? null : (
+          <span className="shrink-0 font-mono text-muted-foreground tabular-nums">{label}</span>
+        )}
+      </div>
+      {fraction === null ? null : (
+        <span className="h-1 w-full overflow-hidden rounded-full bg-muted">
+          <span
+            className="block h-full rounded-full bg-info"
+            style={{ width: `${Math.round(fraction * 100)}%` }}
+          />
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** The pass's log folder, copyable for a terminal (T3O-60). */
+function LogDirRow({ logDir }: { readonly logDir: string }) {
+  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "log folder" });
+  return (
+    <div className="flex min-w-0 items-center gap-2 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+      <span className="shrink-0">Logs</span>
+      <span className="min-w-0 flex-1 font-mono break-all">{logDir}</span>
+      <button
+        aria-label="Copy the log folder"
+        className="inline-flex h-[22px] shrink-0 items-center gap-1 rounded-md border border-border bg-popover px-[7px] font-medium hover:bg-accent hover:text-foreground"
+        onClick={() => copyToClipboard(logDir, undefined)}
+        type="button"
+      >
+        {isCopied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
+        {isCopied ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
 }
 
 const STATUS_WORD: Record<BoardCiPassStep["status"], string> = {
@@ -88,8 +167,11 @@ function StepRow({
   tailOpen,
   onToggleTail,
   onOpenThread,
+  onOpenLog,
 }: {
   readonly step: BoardCiPassStep;
+  /** Opens the step's log; absent when it has none to show. */
+  readonly onOpenLog?: (() => void) | undefined;
   readonly onOpenThread?: ((threadId: ThreadId) => void) | undefined;
   readonly index: number;
   /** The pass is the one running now, so a running step ticks and shimmers. */
@@ -138,6 +220,19 @@ function StepRow({
           </span>
           {step.note === undefined ? null : (
             <span className="text-[11px] text-muted-foreground">{step.note}</span>
+          )}
+          {running ? <RunningMeta step={step} /> : null}
+          {step.progress === undefined || step.status === "passed" ? null : (
+            <StepProgress progress={step.progress} />
+          )}
+          {onOpenLog === undefined ? null : (
+            <button
+              className="w-fit font-mono text-[11px] text-info-foreground hover:underline"
+              onClick={onOpenLog}
+              type="button"
+            >
+              ›_ {running ? "View live log" : "View log"}
+            </button>
           )}
           {step.threadId === undefined || onOpenThread === undefined ? null : (
             <button
@@ -231,12 +326,14 @@ function PassSteps({
   fixing,
   defaultTailOpen,
   onOpenThread,
+  onOpenLog,
 }: {
   readonly pass: BoardCiPass;
   readonly live: boolean;
   readonly fixing: boolean;
   readonly defaultTailOpen: boolean;
   readonly onOpenThread?: ((threadId: ThreadId) => void) | undefined;
+  readonly onOpenLog: (target: BoardCiLogTarget) => void;
 }) {
   // Null follows the default: open on the current pass, closed on earlier ones.
   const [tailOpen, setTailOpen] = useState<Readonly<Record<number, boolean>>>({});
@@ -251,6 +348,14 @@ function PassSteps({
             key={`${index}:${step.name}`}
             live={live}
             onOpenThread={onOpenThread}
+            onOpenLog={
+              // Only a script that started writes a log.
+              (step.kind ?? "script") === "script" &&
+              step.startedAt !== null &&
+              pass.logDir !== null
+                ? () => onOpenLog({ pass, index, live: live && step.status === "running" })
+                : undefined
+            }
             onToggleTail={() => setTailOpen((current) => ({ ...current, [index]: !open }))}
             step={step}
             tailOpen={open}
@@ -264,9 +369,11 @@ function PassSteps({
 function EarlierPass({
   pass,
   ci,
+  onOpenLog,
 }: {
   readonly pass: BoardCiPass;
   readonly ci: BoardCardCi | null | undefined;
+  readonly onOpenLog: (target: BoardCiLogTarget) => void;
 }) {
   const [open, setOpen] = useState(false);
   const chip = boardCiPassOutcomeChip(pass, ci);
@@ -294,7 +401,14 @@ function EarlierPass({
       </button>
       {open ? (
         <div className="flex flex-col border-t border-border">
-          <PassSteps defaultTailOpen={false} fixing={false} live={false} pass={pass} />
+          <PassSteps
+            defaultTailOpen={false}
+            fixing={false}
+            live={false}
+            onOpenLog={onOpenLog}
+            pass={pass}
+          />
+          {pass.logDir === null ? null : <LogDirRow logDir={pass.logDir} />}
         </div>
       ) : null}
     </div>
@@ -302,6 +416,8 @@ function EarlierPass({
 }
 
 export function BoardCardCiPane({
+  environmentId,
+  cardId,
   cardKey,
   inCi,
   ci,
@@ -318,6 +434,9 @@ export function BoardCardCiPane({
   onStopCi,
   onSendBack,
 }: {
+  /** T3O-60: where the card lives, for its step logs. */
+  readonly environmentId: EnvironmentId;
+  readonly cardId: BoardCardId;
   readonly cardKey: string;
   /** T3O-49: Retry CI on a stopped or held pass, and "Send back to review
       anyway" on a stopped one. Human-only. */
@@ -343,6 +462,7 @@ export function BoardCardCiPane({
   readonly onBackToThread: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const [logTarget, setLogTarget] = useState<BoardCiLogTarget | null>(null);
   const current = passes.at(-1);
   const earlier = passes.slice(0, -1).reverse();
   const live = current !== undefined && ci != null && ci.runId === current.runId && inCi;
@@ -356,6 +476,27 @@ export function BoardCardCiPane({
   const usedFixes = lastOutcome?.fixAttemptsUsed ?? 0;
   return (
     <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
+      {logTarget === null ? null : (
+        <Suspense fallback={null}>
+          <BoardCiLogDialog
+            cardId={cardId}
+            cardKey={cardKey}
+            environmentId={environmentId}
+            onClose={() => setLogTarget(null)}
+            target={(() => {
+              // The pass's latest row, so the header follows the step settling.
+              const pass =
+                passes.find((candidate) => candidate.runId === logTarget.pass.runId) ??
+                logTarget.pass;
+              return {
+                ...logTarget,
+                pass,
+                live: logTarget.live && pass.steps[logTarget.index]?.status === "running",
+              };
+            })()}
+          />
+        </Suspense>
+      )}
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pr-3 pl-3.5">
         <SectionHeading>Continuous integration</SectionHeading>
         {current === undefined ? null : (
@@ -524,14 +665,15 @@ export function BoardCardCiPane({
               defaultTailOpen
               fixing={fixing}
               live={live}
+              onOpenLog={setLogTarget}
               onOpenThread={onOpenThread}
               pass={current}
             />
             <div className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
               {current.steps.length} {current.steps.length === 1 ? "step" : "steps"} from the
               project&apos;s CI settings · run in order, stop at the first failure
-              {current.logDir === null ? "" : ` · full logs in ${current.logDir}`}
             </div>
+            {current.logDir === null ? null : <LogDirRow logDir={current.logDir} />}
             {projectId === undefined ? null : (
               <Link
                 className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground hover:text-foreground"
@@ -549,7 +691,7 @@ export function BoardCardCiPane({
               Earlier passes
             </span>
             {earlier.map((pass) => (
-              <EarlierPass ci={ci} key={pass.runId} pass={pass} />
+              <EarlierPass ci={ci} key={pass.runId} onOpenLog={setLogTarget} pass={pass} />
             ))}
           </div>
         )}

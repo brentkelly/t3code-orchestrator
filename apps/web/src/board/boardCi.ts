@@ -14,6 +14,7 @@ import {
   type BoardCardCiLastOutcome,
   type BoardCiPass,
   type BoardCiPassOutcome,
+  type BoardCiProgress,
   type BoardCiStepStatus,
 } from "@t3tools/contracts";
 
@@ -154,11 +155,22 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
           tooltip: `CI over ${total} ${total === 1 ? "step" : "steps"}`,
         };
       }
-      const startedMs = running.startedAt === null ? Number.NaN : Date.parse(running.startedAt);
-      const minutes = Number.isNaN(startedMs)
-        ? 0
-        : Math.max(0, Math.floor((nowMs - startedMs) / 60_000));
       const index = ci.steps.indexOf(running);
+      // T3O-60: a script reporting progress shows how far it got, not a timer.
+      const progress =
+        running.progress === undefined ? null : boardCiProgressLabel(running.progress);
+      if (progress !== null) {
+        return {
+          chip: { label: "Running", tone: "info" },
+          segments,
+          count,
+          detail: `${running.name} · ${progress}`,
+          tooltip: `Step ${index + 1} of ${total} running${
+            running.progress?.message == null ? "" : ` · ${running.progress.message}`
+          }`,
+        };
+      }
+      const minutes = boardCiElapsedMinutes(running.startedAt, nowMs);
       return {
         chip: { label: "Running", tone: "info" },
         segments,
@@ -320,4 +332,56 @@ export function boardCiTailMeta(tail: string): string {
   return `Output tail · last ${BOARD_CI_TAIL_LINES} lines${
     lines < BOARD_CI_TAIL_LINES ? ` (${lines} captured)` : ""
   }`;
+}
+
+/** Whole minutes since `startedAt`, never negative. */
+export function boardCiElapsedMinutes(startedAt: string | null, nowMs: number): number {
+  const startedMs = startedAt === null ? Number.NaN : Date.parse(startedAt);
+  return Number.isNaN(startedMs) ? 0 : Math.max(0, Math.floor((nowMs - startedMs) / 60_000));
+}
+
+/** A running step's time against its limit (T3O-60): `12 / 60 min`, and
+    whether it is over. */
+export function boardCiStepLimit(
+  step: { readonly startedAt: string | null; readonly timeoutMinutes: number },
+  nowMs: number,
+): { readonly elapsed: number; readonly limit: number; readonly over: boolean } {
+  const elapsed = boardCiElapsedMinutes(step.startedAt, nowMs);
+  return { elapsed, limit: step.timeoutMinutes, over: elapsed > step.timeoutMinutes };
+}
+
+/** How far a progress line says a step got, 0 to 1, or null with no total. */
+export function boardCiProgressFraction(
+  progress: Pick<BoardCiProgress, "done" | "total">,
+): number | null {
+  if (progress.done === null || progress.total === null || progress.total <= 0) return null;
+  return Math.min(1, progress.done / progress.total);
+}
+
+/** The progress count, `128 / 212` (or the message when there's no count),
+    or null when the line said nothing showable. */
+export function boardCiProgressLabel(
+  progress: Pick<BoardCiProgress, "done" | "total" | "message">,
+): string | null {
+  if (progress.done !== null && progress.total !== null) {
+    return `${progress.done} / ${progress.total}`;
+  }
+  if (progress.done !== null) return String(progress.done);
+  return progress.message;
+}
+
+/** "No output for N min" on a silent running step (T3O-60), or null. */
+export function boardCiSilenceLabel(silentSince: string | undefined, nowMs: number): string | null {
+  if (silentSince === undefined) return null;
+  return `No output for ${boardCiElapsedMinutes(silentSince, nowMs)} min`;
+}
+
+/** Download's file name: `<card>-<step>-pass<N>.log`. */
+export function boardCiLogFileName(cardKey: string, stepName: string, ordinal: number): string {
+  const step = stepName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${cardKey}-${step.length === 0 ? "step" : step}-pass${ordinal}.log`;
 }

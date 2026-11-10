@@ -12,6 +12,10 @@ import {
   boardCiPassOutcomeChip,
   boardCiSegments,
   boardCiSentBackBanner,
+  boardCiLogFileName,
+  boardCiProgressFraction,
+  boardCiSilenceLabel,
+  boardCiStepLimit,
   boardCiTailMeta,
   formatBoardCiDuration,
   formatBoardCiTimer,
@@ -69,6 +73,23 @@ describe("boardCiFace", () => {
     expect(face.chip).toEqual({ label: "Running", tone: "info" });
     expect(face.count).toBe("1/3");
     expect(face.detail).toBe("Lint · 3m");
+  });
+
+  it("shows a running script's progress instead of its timer (T3O-60)", () => {
+    const progress = { message: "Running unit tests", at: "2026-01-01T00:09:00.000Z" };
+    const running = (extra: Partial<BoardCardCiStep>) =>
+      boardCiFace(
+        ci({ steps: [{ ...step("Test", "running", "2026-01-01T00:06:30.000Z"), ...extra }] }),
+        NOW_MS,
+      ).detail;
+    expect(running({ progress: { ...progress, done: 128, total: 212 } })).toBe("Test · 128 / 212");
+    expect(running({ progress: { ...progress, done: null, total: null } })).toBe(
+      "Test · Running unit tests",
+    );
+    // A line with nothing showable falls back to the timer.
+    expect(running({ progress: { ...progress, message: null, done: null, total: null } })).toBe(
+      "Test · 3m",
+    );
   });
 
   it("says under a minute for a step that just started", () => {
@@ -225,5 +246,23 @@ describe("formatting", () => {
     expect(formatBoardCiTimer(14_900)).toBe("0:14");
     expect(formatBoardCiTimer(72_000)).toBe("1:12");
     expect(boardCiTailMeta("a\nb\n")).toBe("Output tail · last 200 lines (2 captured)");
+  });
+
+  it("reads a step's time against its limit, its silence, progress and log file name (T3O-60)", () => {
+    const startedAt = "2026-01-01T00:00:00.000Z";
+    expect(boardCiStepLimit({ startedAt, timeoutMinutes: 60 }, NOW_MS)).toEqual({
+      elapsed: 10,
+      limit: 60,
+      over: false,
+    });
+    expect(boardCiStepLimit({ startedAt, timeoutMinutes: 5 }, NOW_MS).over).toBe(true);
+    expect(boardCiSilenceLabel("2026-01-01T00:02:00.000Z", NOW_MS)).toBe("No output for 8 min");
+    expect(boardCiSilenceLabel(undefined, NOW_MS)).toBeNull();
+    expect(boardCiProgressFraction({ done: 53, total: 212 })).toBe(0.25);
+    expect(boardCiProgressFraction({ done: 300, total: 212 })).toBe(1);
+    expect(boardCiProgressFraction({ done: 3, total: 0 })).toBeNull();
+    expect(boardCiLogFileName("T3-185", "Unit tests (web)", 2)).toBe(
+      "T3-185-unit-tests-web-pass2.log",
+    );
   });
 });
