@@ -52,6 +52,13 @@ export function decideBoardCiRecord(
         return refuse(`Card '${card.key}' is not in CI, so no CI pass can start.`);
       }
       if (action.steps.length === 0) return refuse("A CI pass needs at least one step.");
+      // T3O-59: a fix's re-run only follows a pass still being fixed; one a
+      // human stopped or restarted meanwhile stays as they left it.
+      if (action.fixThreadId !== null && current?.phase !== "fixing") {
+        return refuse(
+          `Card '${card.key}' is no longer being fixed, so its fix's re-run can't start.`,
+        );
+      }
       const settled: BoardCiPassSettle[] = [];
       let activity: BoardCardCiRecordedPayload["activity"] = null;
       if (current !== null && current.runId !== action.runId) {
@@ -134,8 +141,19 @@ export function decideBoardCiRecord(
 
     case "finish-pass": {
       const live = current !== null && current.runId === action.runId;
+      // T3O-59: Stop CI and Retry run beside the serial worker, so a finish can
+      // arrive for a pass already settled or replaced. Its row settles; the
+      // card's pass is left alone.
+      const settledAlready = live && isBoardCiPassSettledPhase(current.phase);
+      const inCi = card.stage === BOARD_SEED_STAGE_IDS.ci && card.archivedAt === null;
       if (action.result === "passed") {
         if (!live) return refuse(`Pass ${action.runId} is not this card's current CI pass.`);
+        if (settledAlready) {
+          return done(
+            { ci: current, ciLastOutcome: card.ciLastOutcome },
+            { settled: [{ runId: action.runId, outcome: "passed", finishedAt: at }] },
+          );
+        }
         return done(
           { ci: { ...current, phase: "passed" }, ciLastOutcome: null },
           {
@@ -154,8 +172,14 @@ export function decideBoardCiRecord(
       // was archived): the row is settled. A card still live in CI is held,
       // its unfinished steps cancelled, until a human restarts or skips it.
       const outcome = action.result;
+      if (inCi && (!live || settledAlready)) {
+        return done(
+          { ci: current, ciLastOutcome: card.ciLastOutcome },
+          { settled: [{ runId: action.runId, outcome, finishedAt: at }] },
+        );
+      }
       const held =
-        live && card.stage === BOARD_SEED_STAGE_IDS.ci && card.archivedAt === null
+        live && inCi
           ? {
               ...current,
               phase: "held" as const,

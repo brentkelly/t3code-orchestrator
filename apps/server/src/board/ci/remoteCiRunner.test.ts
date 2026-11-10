@@ -98,7 +98,7 @@ it.effect("a machine problem on the worker keeps its machine flag across the wir
       toWireCiDone({
         result: "unavailable",
         failedIndex: null,
-        detail: "Disk nearly full on w1: 0.4 GB free.",
+        detail: "Disk nearly full on w1: 0.4 GiB free.",
         machine: true,
       }),
     );
@@ -106,7 +106,7 @@ it.effect("a machine problem on the worker keeps its machine flag across the wir
     assert.deepStrictEqual(result, {
       result: "unavailable",
       failedIndex: null,
-      detail: "Disk nearly full on w1: 0.4 GB free.",
+      detail: "Disk nearly full on w1: 0.4 GiB free.",
       machine: true,
     });
     // An older worker's `done` has no flag, and still decodes.

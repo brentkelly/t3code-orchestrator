@@ -6,7 +6,9 @@
 import {
   BOARD_SEED_STAGE_IDS,
   BoardCardRecordCiCommand,
+  boardCiStepsFromLegacy,
   CommandId,
+  ThreadId,
   type BoardCard,
   type BoardCardCi,
 } from "@t3tools/contracts";
@@ -48,7 +50,7 @@ it("a held pass keeps its reason and machine flag, its unfinished steps cancelle
       kind: "finish-pass",
       runId: "run-1",
       result: "interrupted",
-      reason: "Disk nearly full on z5: 0.4 GB free. Retry CI, or Skip CI.",
+      reason: "Disk nearly full on z5: 0.4 GiB free. Retry CI, or Skip CI.",
       machine: true,
     }),
   );
@@ -56,7 +58,10 @@ it("a held pass keeps its reason and machine flag, its unfinished steps cancelle
   if (!decided.ok) return;
   const held = decided.payload.card.ci!;
   assert.strictEqual(held.phase, "held");
-  assert.strictEqual(held.stopReason, "Disk nearly full on z5: 0.4 GB free. Retry CI, or Skip CI.");
+  assert.strictEqual(
+    held.stopReason,
+    "Disk nearly full on z5: 0.4 GiB free. Retry CI, or Skip CI.",
+  );
   assert.strictEqual(held.machine, true);
   assert.deepStrictEqual(
     held.steps.map((step) => step.status),
@@ -113,6 +118,50 @@ it("a fix starts only on a running pass", () => {
     record({ kind: "begin-fix", runId: "run-1" }),
   );
   assert.isTrue(running.ok && running.payload.card.ci?.phase === "fixing");
+});
+
+it("a late finish settles only its row: the card's newer or settled pass is left alone", () => {
+  // A hold for a pass Retry already replaced keeps the new pass.
+  const replaced = { ...inCi("running"), ci: { ...ci("running"), runId: "run-2" } };
+  const stale = decideBoardCiRecord(
+    replaced,
+    record({ kind: "finish-pass", runId: "run-1", result: "interrupted", reason: "Stopped." }),
+  );
+  assert.isTrue(stale.ok);
+  if (stale.ok) {
+    assert.deepStrictEqual(stale.payload.card.ci, replaced.ci);
+    assert.deepStrictEqual(stale.payload.settled, [
+      { runId: "run-1", outcome: "interrupted", finishedAt: NOW },
+    ]);
+  }
+  // A second hold keeps the first reason; a late pass doesn't undo a hold.
+  const held = { ...inCi("held"), ci: { ...ci("held"), stopReason: "Stopped by you." } };
+  for (const result of ["interrupted", "passed"] as const) {
+    const decided = decideBoardCiRecord(
+      held,
+      record({ kind: "finish-pass", runId: "run-1", result, reason: "Lost." }),
+    );
+    assert.isTrue(decided.ok, result);
+    if (decided.ok) assert.deepStrictEqual(decided.payload.card.ci, held.ci, result);
+  }
+});
+
+it("a fix's re-run starts only on a pass still being fixed", () => {
+  const start = (fixThreadId: ThreadId | null) =>
+    record({
+      kind: "start-pass",
+      runId: "run-2",
+      entry: 1,
+      ordinal: 2,
+      steps: boardCiStepsFromLegacy([{ name: "Test", command: "vp test", timeoutMinutes: 5 }]),
+      maxFixAttempts: 2,
+      logDir: "/tmp/ci/run-2",
+      queued: true,
+      fixThreadId,
+    });
+  assert.isFalse(decideBoardCiRecord(inCi("held"), start(ThreadId.make("thread-fix"))).ok);
+  assert.isTrue(decideBoardCiRecord(inCi("fixing"), start(ThreadId.make("thread-fix"))).ok);
+  assert.isTrue(decideBoardCiRecord(inCi("held"), start(null)).ok);
 });
 
 it("a finish-pass recorded before held reasons existed still decodes", () => {

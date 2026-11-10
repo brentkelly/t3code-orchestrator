@@ -36,5 +36,5 @@ export const boardCiLowDiskReason = Effect.fn("boardCiLowDiskReason")(function* 
   const disk = yield* BoardDiskSpace;
   const free = yield* disk.freeBytes(path).pipe(Effect.catchCause(() => Effect.succeed(null)));
   if (free === null || !Number.isFinite(free) || free >= BOARD_CI_MIN_FREE_BYTES) return null;
-  return `Disk nearly full on ${NodeOS.hostname()}: ${(free / 1e9).toFixed(1)} GB free.`;
+  return `Disk nearly full on ${NodeOS.hostname()}: ${(free / 1024 ** 3).toFixed(1)} GiB free.`;
 });

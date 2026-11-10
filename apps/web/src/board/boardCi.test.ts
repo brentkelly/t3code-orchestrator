@@ -106,14 +106,14 @@ describe("boardCiFace", () => {
     const machine = boardCiFace(
       ci({
         phase: "held",
-        stopReason: "Disk nearly full on z5: 0.4 GB free. Retry CI, or Skip CI.",
+        stopReason: "Disk nearly full on z5: 0.4 GiB free. Retry CI, or Skip CI.",
         machine: true,
         steps: [step("Test", "cancelled")],
       }),
       NOW_MS,
     );
     expect(machine.chip).toEqual({ label: "Machine problem", tone: "warning" });
-    expect(machine.detail).toBe("Disk nearly full on z5: 0.4 GB free. Retry CI, or Skip CI.");
+    expect(machine.detail).toBe("Disk nearly full on z5: 0.4 GiB free. Retry CI, or Skip CI.");
   });
 
   it("is a neutral Queued chip while waiting for a slot", () => {

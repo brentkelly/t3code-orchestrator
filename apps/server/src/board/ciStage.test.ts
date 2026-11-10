@@ -1248,14 +1248,14 @@ it.effect("a nearly full disk on this server holds the pass as a machine problem
           const held = (yield* live(h, subject.id)).ci;
           assert.strictEqual(held?.phase, "held");
           assert.strictEqual(held?.machine, true);
-          assert.match(held?.stopReason ?? "", /^Disk nearly full on .+: 0\.5 GB free\. Retry CI/);
+          assert.match(held?.stopReason ?? "", /^Disk nearly full on .+: 0\.5 GiB free\. Retry CI/);
           assert.isTrue(checked.every((path) => path.startsWith(stateDir)));
           assert.isAbove(checked.length, 0);
         }),
     ).pipe(
       Effect.provideService(BoardCiRunner, runner),
       Effect.provideService(BoardDiskSpace, {
-        freeBytes: (path) => Effect.sync(() => (checked.push(path), 0.5e9)),
+        freeBytes: (path) => Effect.sync(() => (checked.push(path), 0.5 * 1024 ** 3)),
       }),
     );
   }),

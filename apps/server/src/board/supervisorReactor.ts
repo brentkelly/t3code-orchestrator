@@ -3823,7 +3823,7 @@ const make = Effect.gen(function* () {
     detail: string,
     options: { readonly machine?: boolean } = {},
   ) {
-    forgeSteps.delete(String(card.id));
+    if (forgeSteps.get(String(card.id))?.runId === runId) forgeSteps.delete(String(card.id));
     const reason = withCiRetryHint(detail);
     const held = yield* dispatchLanded({
       type: "board.card.record-ci",
@@ -3841,6 +3841,10 @@ const make = Effect.gen(function* () {
     if (!held) return false;
     ciLostResults.delete(runId);
     ciSuspectPasses.delete(String(card.id));
+    // A pass replaced or settled meanwhile is left alone by the record, so
+    // only a hold that took is noted on the rail.
+    const after = (yield* readBoard).cards.find((candidate) => candidate.id === card.id);
+    if (after?.ci?.runId !== runId || after.ci.phase !== "held") return false;
     yield* holdInCi(card, reason);
     return true;
   });
@@ -4601,7 +4605,12 @@ const make = Effect.gen(function* () {
     forgeSteps.delete(String(card.id));
     const held = yield* holdCiPass(card, runId, "Stopped by you. Retry CI to run it again.");
     if (cancelled !== null || state !== null) yield* schedule();
-    return held ? ({ outcome: "stopped" } as const) : ({ outcome: "failed" } as const);
+    if (held) return { outcome: "stopped" } as const;
+    // The pass finished or was replaced before the stop's record landed.
+    const after = (yield* readBoard).cards.find((candidate) => candidate.id === cardId);
+    return after?.ci?.runId === runId && !isBoardCiPassSettledPhase(after.ci.phase)
+      ? ({ outcome: "failed" } as const)
+      : ({ outcome: "not-running" } as const);
   });
 
   /** A CI action's answer, with a fault answered as `failed`. */

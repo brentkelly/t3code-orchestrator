@@ -480,12 +480,14 @@ it.live("a full disk makes the pass unavailable as a machine problem before any 
     const result = yield* runBoardCiPass(
       request(cwd, [{ name: "Say", command: "touch ran", timeoutMinutes: 1 }]),
       emit,
-    ).pipe(Effect.provideService(BoardDiskSpace, { freeBytes: () => Effect.succeed(1.25e9) }));
+    ).pipe(
+      Effect.provideService(BoardDiskSpace, { freeBytes: () => Effect.succeed(1.25 * 1024 ** 3) }),
+    );
     assert.strictEqual(result.result, "unavailable");
     assert.isTrue(result.result === "unavailable" && result.machine === true);
     assert.match(
       result.result === "unavailable" ? result.detail : "",
-      /^Disk nearly full on .+: 1\.3 GB free\.$/,
+      /^Disk nearly full on .+: 1\.3 GiB free\.$/,
     );
     assert.lengthOf(events, 0);
     assert.isFalse(NodeFS.existsSync(NodePath.join(cwd, "ran")));
