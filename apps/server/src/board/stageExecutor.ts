@@ -29,6 +29,7 @@
  */
 import type {
   BoardCiAgentStepPayload,
+  BoardCiFixIssue,
   BoardCiStepResult,
   BoardCard,
   BoardCardStageModelOverride,
@@ -143,10 +144,13 @@ export interface BoardStageRunState {
    * is called with the settled state — so this only lets the seam express it.
    * Every other executor ignores it. */
   readonly settledStepId: string | null;
-  /** The CI step that just failed (T3O-44), when the reactor is asking the CI
-      executor what follows a failed pass; null otherwise. Reactor-resolved
-      from the pass record, because the output tail never rides the card. */
-  readonly ciFailure?: BoardCiFailure | null;
+  /** Every CI step that failed in the pass (T3O-44/57), in step order, when
+      the reactor is asking the CI executor what follows a failed pass; null
+      otherwise. Reactor-resolved from the pass record, because the output
+      tail never rides the card. Never empty when present. */
+  readonly ciFailures?: ReadonlyArray<BoardCiFailure> | null;
+  /** The fix issues of that pass (`boardCiFixIssues`), beside `ciFailures`. */
+  readonly ciIssues?: ReadonlyArray<BoardCiFixIssue>;
 }
 
 /** A failed CI step, as the fix agent needs to see it (T3O-44). */
@@ -217,12 +221,12 @@ export type BoardStagePlan =
       readonly index: number;
       readonly verdict: BoardCiAgentStepPayload | null;
     }
-  /** Send the card back to the review-role stage with `finding` as a
-      must-fix finding for a fresh round (T3O-44). */
+  /** Stop the card in CI for a human (T3O-57): fix attempts used up, the
+      fix agent couldn't fix something, or its verdict was unreadable. */
   | {
-      readonly kind: "ci-return";
+      readonly kind: "ci-stop";
       readonly stepName: string | null;
-      readonly finding: string;
+      readonly reason: string;
     };
 
 export interface BoardStagePlanInput {

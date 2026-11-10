@@ -160,8 +160,19 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
       });
       if (refusal !== null) return yield* refuse(command, refusal);
       return yield* emit(
-        nextConfig(current, { ci: { steps: command.steps } }, changedBy),
+        nextConfig(current, { ci: { ...current.ci, steps: command.steps } }, changedBy),
         "ci-steps",
+      );
+    }
+    case "board.project.set-ci-stop-on-failure": {
+      const { stopOnFailure: _previous, ...rest } = current.ci;
+      return yield* emit(
+        nextConfig(
+          current,
+          { ci: command.stopOnFailure ? rest : { ...rest, stopOnFailure: false } },
+          changedBy,
+        ),
+        "ci-stop-on-failure",
       );
     }
     case "board.project.set-ci-enabled": {

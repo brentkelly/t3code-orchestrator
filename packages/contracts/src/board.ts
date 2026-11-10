@@ -1906,8 +1906,9 @@ export const BoardCardCiPhase = Schema.Literals([
   "fixing",
   "passed",
   "held",
-  // T3O-49: stopped for a human — the round-trip limit, or an unresolved
-  // conflict. Violet; Retry CI, Send back anyway or Skip CI.
+  // T3O-49/57: stopped for a human — fix attempts used up, a fix the agent
+  // couldn't make, or an unresolved conflict. Violet; Retry CI, Send back
+  // anyway or Skip CI.
   "stopped",
 ]);
 export type BoardCardCiPhase = typeof BoardCardCiPhase.Type;
@@ -1930,6 +1931,11 @@ export const BoardCardCi = Schema.Struct({
   roundTrips: Schema.optionalKey(NonNegativeInt),
   /** Why CI stopped, while `phase` is `stopped`. */
   stopReason: Schema.optionalKey(TrimmedNonEmptyString),
+  /** The project's Stop on failure was No when this pass started (T3O-57):
+      every step runs even after one fails. Frozen for the pass. */
+  continueOnFailure: Schema.optionalKey(Schema.Literal(true)),
+  /** How many issues the current fix is working on (T3O-57). */
+  fixIssues: Schema.optionalKey(NonNegativeInt),
 });
 export type BoardCardCi = typeof BoardCardCi.Type;
 
@@ -3253,6 +3259,8 @@ export type BoardProjectConfigChange = typeof BoardProjectConfigChange.Type;
  *   project's "Run CI" switch.
  * - `overrides`: execution partials keyed by stage id.
  * - `ci.steps`: the project's CI steps, in order.
+ * - `ci.stopOnFailure`: stored only as `false` ("No", T3O-57); absent is Yes,
+ *   which keeps existing configs' version hashes.
  * - `dismissedImportSha`: the committed `t3o.json` blob "No thanks" answered.
  * - `warnings`: what an import ignored, and why.
  * - `version`: a hash of `stageSwitches`, `overrides` and `ci`, checked by
@@ -3261,7 +3269,10 @@ export type BoardProjectConfigChange = typeof BoardProjectConfigChange.Type;
 const BoardProjectStageConfigV2 = Schema.Struct({
   stageSwitches: Schema.Record(Schema.String, Schema.Boolean),
   overrides: Schema.Record(Schema.String, BoardStageExecutionPatchRef),
-  ci: Schema.Struct({ steps: BoardCiStepList }),
+  ci: Schema.Struct({
+    steps: BoardCiStepList,
+    stopOnFailure: Schema.optionalKey(Schema.Boolean),
+  }),
   dismissedImportSha: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -3370,8 +3381,14 @@ export function boardProjectConfigDifferenceCount(delta: BoardProjectStageDelta)
   return (
     Object.keys(delta.stageSwitches).length +
     Object.keys(delta.overrides).length +
-    (delta.ci.steps.length > 0 ? 1 : 0)
+    (delta.ci.steps.length > 0 ? 1 : 0) +
+    (boardCiStopsOnFailure(delta.ci) ? 0 : 1)
   );
+}
+
+/** A project's "Stop on failure" CI setting (T3O-57): absent is Yes. */
+export function boardCiStopsOnFailure(ci: { readonly stopOnFailure?: boolean }): boolean {
+  return ci.stopOnFailure !== false;
 }
 
 const BOARD_PATCH_PROMPT_KEYS = new Set(["prompt"]);
@@ -6235,6 +6252,20 @@ export const BoardProjectSetCiEnabledCommand = Schema.Struct({
 });
 export type BoardProjectSetCiEnabledCommand = typeof BoardProjectSetCiEnabledCommand.Type;
 
+/** The project's "Stop on failure" CI setting (T3O-57). It applies from the
+    next pass; a running pass keeps the setting it started with. */
+export const BoardProjectSetCiStopOnFailureCommand = Schema.Struct({
+  type: Schema.Literal("board.project.set-ci-stop-on-failure"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  stopOnFailure: Schema.Boolean,
+  expectedConfigVersion: BoardExpectedConfigVersion,
+  actor: BoardSettingsActor,
+  createdAt: IsoDateTime,
+});
+export type BoardProjectSetCiStopOnFailureCommand =
+  typeof BoardProjectSetCiStopOnFailureCommand.Type;
+
 /** Drop every difference: the project follows the global pipeline again. */
 export const BoardProjectResetCommand = Schema.Struct({
   type: Schema.Literal("board.project.reset"),
@@ -6256,7 +6287,10 @@ export const BoardProjectImportDelta = Schema.Struct({
         BoardStageExecutionPatch,
     ),
   ),
-  ci: Schema.Struct({ steps: Schema.Array(BoardCiStep) }),
+  ci: Schema.Struct({
+    steps: Schema.Array(BoardCiStep),
+    stopOnFailure: Schema.optionalKey(Schema.Boolean),
+  }),
   warnings: Schema.Array(Schema.String),
 });
 export type BoardProjectImportDelta = typeof BoardProjectImportDelta.Type;
@@ -6764,6 +6798,8 @@ export const BoardCardCiAction = Schema.Union([
     fixThreadId: Schema.NullOr(ThreadId),
     /** A human's Retry CI (T3O-49): fresh fix attempts and no round trips. */
     fresh: Schema.optionalKey(Schema.Boolean),
+    /** The project's Stop on failure is No (T3O-57), frozen on the pass. */
+    continueOnFailure: Schema.optionalKey(Schema.Literal(true)),
   }),
   Schema.Struct({
     kind: Schema.Literal("step"),
@@ -6776,7 +6812,12 @@ export const BoardCardCiAction = Schema.Union([
     runId: TrimmedNonEmptyString,
     result: Schema.Literals(["passed", "failed", "interrupted", "cancelled"]),
   }),
-  Schema.Struct({ kind: Schema.Literal("begin-fix"), runId: TrimmedNonEmptyString }),
+  Schema.Struct({
+    kind: Schema.Literal("begin-fix"),
+    runId: TrimmedNonEmptyString,
+    /** How many issues the fix works on (T3O-57). */
+    fixIssues: Schema.optionalKey(NonNegativeInt),
+  }),
   Schema.Struct({
     kind: Schema.Literal("send-back"),
     runId: Schema.NullOr(TrimmedNonEmptyString),
@@ -6795,6 +6836,8 @@ export const BoardCardCiAction = Schema.Union([
     runId: Schema.NullOr(TrimmedNonEmptyString),
     reason: TrimmedNonEmptyString,
     finding: Schema.String,
+    /** The fix agent that worked on the stopped pass (T3O-57). */
+    fixThreadId: Schema.optionalKey(ThreadId),
   }),
   Schema.Struct({ kind: Schema.Literal("skip"), actor: TrimmedNonEmptyString }),
 ]);
@@ -7779,6 +7822,7 @@ export const BoardProjectStageConfigSetPayload = Schema.Struct({
       "override",
       "ci-steps",
       "ci-enabled",
+      "ci-stop-on-failure",
       "reset",
       "import",
       "dismiss-import",
@@ -9511,6 +9555,7 @@ const BOARD_SETTINGS_COMMANDS = [
   BoardProjectSetStageOverrideCommand,
   BoardProjectSetCiStepsCommand,
   BoardProjectSetCiEnabledCommand,
+  BoardProjectSetCiStopOnFailureCommand,
   BoardProjectResetCommand,
   BoardProjectImportFileCommand,
   BoardProjectDismissImportCommand,
@@ -11540,16 +11585,119 @@ export function decodeBoardCiAgentStepPayload(
   return Option.getOrNull(decodeBoardCiAgentStepPayloadOption(parseBoardStepPayloadJson(payload)));
 }
 
-/** What a CI fix agent reports: it fixed the failure (the board re-runs every
-    step), or the card goes back to review with `finding`. */
+/** One issue's outcome in a fix agent's report (T3O-57). */
+export const BoardCiFixIssueReport = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  status: Schema.Literals(["resolved", "cannot-fix"]),
+  note: Schema.optionalKey(Schema.String),
+});
+export type BoardCiFixIssueReport = typeof BoardCiFixIssueReport.Type;
+
+/** What a CI fix agent reports (T3O-57): it fixed every failure (the board
+    re-runs every step), or `cannot-fix` with `finding` saying why, which
+    stops the card for a human. `return-to-review`, the T3O-44 word, means
+    the same as `cannot-fix`. `issues` gives each issue's outcome; one left
+    out reads resolved under `fixed` and open otherwise. */
 export const BoardCiFixPayload = Schema.Struct({
-  verdict: Schema.Literals(["fixed", "return-to-review"]),
-  finding: Schema.String,
+  verdict: Schema.Literals(["fixed", "cannot-fix", "return-to-review"]),
+  finding: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  issues: Schema.optionalKey(Schema.Array(BoardCiFixIssueReport)),
+  fixedSha: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type BoardCiFixPayload = typeof BoardCiFixPayload.Type;
 
 export const BOARD_CI_FIX_PAYLOAD_SHAPE =
-  '{ "verdict": "fixed" | "return-to-review", "finding": string }';
+  '{ "verdict": "fixed" | "cannot-fix", "issues": [{ "id": string, "status": "resolved" | "cannot-fix", "note"?: string }], "fixedSha"?: string, "finding": string }';
+
+/** The most issues one fix is handed; the rest roll into a last issue. */
+export const BOARD_CI_MAX_FIX_ISSUES = 30;
+
+/** One thing a CI fix agent must fix (T3O-57): a failure a step reported in
+    its result, or the step itself when it reported none. */
+export interface BoardCiFixIssue {
+  readonly id: string;
+  readonly stepIndex: number;
+  readonly stepName: string;
+  readonly title: string;
+  readonly file?: string;
+  readonly line?: number;
+  readonly detail?: string;
+}
+
+/**
+ * The issues of a failed pass, derived from its step rows (T3O-57): for each
+ * failed or timed-out step in order, one per reported failure, or one for the
+ * step. The fix prompt and the CI pane both read this, so they always agree.
+ * At most `BOARD_CI_MAX_FIX_ISSUES`; the rest roll into a last issue.
+ */
+export function boardCiFixIssues(
+  steps: ReadonlyArray<Pick<BoardCiPassStep, "name" | "status" | "result">>,
+): ReadonlyArray<BoardCiFixIssue> {
+  const all: BoardCiFixIssue[] = [];
+  for (const [stepIndex, step] of steps.entries()) {
+    if (!isBoardCiStepFailure(step.status)) continue;
+    const failures = step.result?.failures ?? [];
+    if (failures.length === 0) {
+      all.push({
+        id: `s${stepIndex}`,
+        stepIndex,
+        stepName: step.name,
+        title: `${step.name} ${step.status === "timed-out" ? "timed out" : "failed"}`,
+      });
+      continue;
+    }
+    for (const [n, failure] of failures.entries()) {
+      all.push({
+        id: `s${stepIndex}-${n + 1}`,
+        stepIndex,
+        stepName: step.name,
+        title: failure.title,
+        ...(failure.file === undefined ? {} : { file: failure.file }),
+        ...(failure.line === undefined ? {} : { line: failure.line }),
+        ...(failure.detail === undefined ? {} : { detail: failure.detail }),
+      });
+    }
+  }
+  if (all.length <= BOARD_CI_MAX_FIX_ISSUES) return all;
+  const kept = all.slice(0, BOARD_CI_MAX_FIX_ISSUES - 1);
+  const rest = all.slice(BOARD_CI_MAX_FIX_ISSUES - 1);
+  const restSteps = [...new Set(rest.map((issue) => issue.stepName))];
+  const first = rest[0]!;
+  return [
+    ...kept,
+    {
+      id: "more",
+      stepIndex: first.stepIndex,
+      stepName: first.stepName,
+      title: `and ${rest.length} more in ${restSteps.join(", ")}`,
+    },
+  ];
+}
+
+export type BoardCiFixIssueStatus = "open" | "resolved" | "cannot-fix";
+
+/** Each issue's status for display (T3O-57). A reported status wins; an issue
+    the report leaves out reads resolved under `fixed` and open otherwise.
+    With no report yet, every issue is open. */
+export function boardCiFixIssueOutcomes(
+  issues: ReadonlyArray<BoardCiFixIssue>,
+  payload: BoardCiFixPayload | null,
+): ReadonlyArray<{
+  readonly issue: BoardCiFixIssue;
+  readonly status: BoardCiFixIssueStatus;
+  readonly note: string | null;
+}> {
+  const reported = new Map((payload?.issues ?? []).map((entry) => [entry.id, entry]));
+  return issues.map((issue) => {
+    const entry = reported.get(issue.id);
+    if (entry !== undefined) return { issue, status: entry.status, note: entry.note ?? null };
+    return {
+      issue,
+      status: payload?.verdict === "fixed" ? ("resolved" as const) : ("open" as const),
+      note: null,
+    };
+  });
+}
 
 const decodeBoardCiFixPayloadOption = Schema.decodeUnknownOption(BoardCiFixPayload);
 
@@ -13318,15 +13466,17 @@ export const BoardStageExecutionBuild = Schema.Struct({
 });
 export type BoardStageExecutionBuild = typeof BoardStageExecutionBuild.Type;
 
-/** The CI fix agent's prompt (T3O-44), intent only: the envelope appends the
-    failure and the completion contract. */
+/** The CI fix agent's prompt (T3O-44/57), intent only: the envelope appends
+    the failures, the board's guard rails and the completion contract. */
 export const DEFAULT_BOARD_CI_FIX_PROMPT =
-  "This card must pass the project's CI steps to become ready for merge, and one of them just failed. If the failure is small and mechanical (lint, formatting, or an obviously broken test this card caused), fix it on the card's branch, commit and push. Otherwise don't fix it: return the card to review with a clear finding describing the failure.";
+  "This card must pass the project's CI steps to become ready for merge. Fix every failure CI reported, commit and push.";
 
-/** The fix attempts one CI entry allows before the card goes back to review. */
-export const DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS = 2;
+/** The fix attempts one CI entry allows before the card stops for a human. */
+export const DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS = 3;
 
-/** CI failure round trips allowed before the card stops for a human (T3O-49). */
+/** CI failure round trips allowed before the card stops for a human (T3O-49).
+    Unused since T3O-57, when CI stopped sending cards back by itself; kept so
+    stored settings still decode. */
 export const DEFAULT_BOARD_CI_MAX_ROUND_TRIPS = 3;
 export const BoardCiMaxRoundTrips = NonNegativeInt.check(Schema.isLessThanOrEqualTo(10));
 
@@ -13758,7 +13908,8 @@ export const BOARD_STAGE_EXECUTION_PATCH_KEYS: Readonly<
   review: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "rounds", "draftPullRequests", "phases"],
   merge: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "strategy", "autoMerge", "deleteBranchOnDone"],
   build: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "submit"],
-  ci: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "maxFixAttempts", "maxRoundTrips"],
+  // `maxRoundTrips` is not a key since T3O-57: a stored one is ignored.
+  ci: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "maxFixAttempts"],
 };
 
 /** The member a stage id resolves to in `resolveBoardStageExecution`: the

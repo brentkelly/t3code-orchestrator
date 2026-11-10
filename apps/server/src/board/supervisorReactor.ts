@@ -23,14 +23,15 @@ import {
   areBoardStagesAdjacent,
   isBoardCiActive,
   isBoardCiSwitchedOn,
+  boardCiFixIssues,
   boardCiNextSegment,
+  boardCiStopsOnFailure,
   boardCiPassStepsFromSnapshot,
   type BoardCiForgeChecksReading,
   boardCiAgentStepId,
   composeBoardCiAgentStepPrompt,
   type BoardCiStep,
   type BoardCiPassStep,
-  DEFAULT_BOARD_CI_MAX_ROUND_TRIPS,
   isBoardCiStepFailure,
   type BoardCiActionResult,
   isBoardCiPassSettledPhase,
@@ -156,6 +157,7 @@ import {
   boardCardMergesIntoIntegrationBranch,
   deriveBoardGroupStage,
   isBoardCardPlanned,
+  type BoardCiFixIssue,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -249,6 +251,7 @@ import {
   type BoardCiPassFinished,
 } from "./ci/ciPasses.ts";
 import type { BoardCiFailure, BoardStagePlan } from "./stageExecutor.ts";
+import { boardCiSendBackFinding } from "./ci/ciStageExecutor.ts";
 import { BoardWorkspaces, type BoardCardWorkspace } from "./workspace/BoardWorkspace.ts";
 import { planReviewInstructions, runningPlanReviewStep } from "./planReview.ts";
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
@@ -3140,7 +3143,7 @@ const make = Effect.gen(function* () {
       },
     });
     // CI (T3O-44): entering the stage, or restarting it, runs the steps.
-    if (plan.kind === "ci-pass" || plan.kind === "ci-return") {
+    if (plan.kind === "ci-pass" || plan.kind === "ci-stop") {
       // A pass already under way (the boot recovery got there first) is this
       // entry's pass; only a human's restart replaces it.
       if (!onDemand && ciPasses.current(card.id) !== null) return;
@@ -3506,6 +3509,8 @@ const make = Effect.gen(function* () {
         queued: true,
         fixThreadId: options.fixThreadId,
         ...(options.fresh === true ? { fresh: true } : {}),
+        // T3O-57: frozen on the pass, so a flip applies from the next one.
+        ...(boardCiStopsOnFailure(projectConfig.ci) ? {} : { continueOnFailure: true }),
       },
       createdAt: yield* nowIso,
     });
@@ -3538,6 +3543,20 @@ const make = Effect.gen(function* () {
       if (card.stage !== BOARD_SEED_STAGE_IDS.ci || card.ci?.runId !== runId) return;
       const segment = boardCiNextSegment(steps, from);
       if (segment.kind === "done") {
+        // T3O-57: fail closed. A pass whose record can't be read is held, and
+        // one with any failed step fails, whatever the setting.
+        const read = yield* ciPassFailures(card.id, runId);
+        if (read === null) {
+          yield* holdCiPass(card, runId, "CI lost track of this pass's steps. Retry CI, or Skip CI.");
+          return;
+        }
+        if (
+          read.failures.length > 0 ||
+          card.ci.steps.some((step) => isBoardCiStepFailure(step.status))
+        ) {
+          yield* failCiPass(card, runId);
+          return;
+        }
         const recorded = yield* dispatchLanded({
           type: "board.card.record-ci",
           commandId: yield* commandId("ci-finish"),
@@ -3712,10 +3731,6 @@ const make = Effect.gen(function* () {
         pass: ordinal,
         fixAttempt: card.ci.fixAttempts,
         maxFixAttempts: card.ci.maxFixAttempts,
-        roundTrip: card.ciRoundTrips,
-        maxRoundTrips: isBoardCiStageExecution(exec)
-          ? exec.maxRoundTrips
-          : DEFAULT_BOARD_CI_MAX_ROUND_TRIPS,
         earlier: card.ci.steps
           .slice(0, index)
           .map((entry) => ({ name: entry.name, status: entry.status })),
@@ -3790,6 +3805,150 @@ const make = Effect.gen(function* () {
       }),
     ),
   );
+
+  /**
+   * A pass's failures, read off its row (T3O-57): every failed or timed-out
+   * step in order, and the fix issues they make. Null when the row can't be
+   * read.
+   */
+  const ciPassFailures = Effect.fn("board-supervisor-ciPassFailures")(function* (
+    cardId: BoardCardId,
+    runId: string,
+  ) {
+    const detail = yield* boardQueries
+      .boardCardDetail(cardId)
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    const pass = detail?.ciPasses.find((candidate) => candidate.runId === runId);
+    if (pass === undefined) return null;
+    const failures: BoardCiFailure[] = [];
+    for (const [index, step] of pass.steps.entries()) {
+      if (!isBoardCiStepFailure(step.status)) continue;
+      const status = step.status === "timed-out" ? "timed-out" : "failed";
+      const result = step.result ?? null;
+      if (step.kind === "agent" || step.kind === "forge-checks") {
+        failures.push({
+          runId,
+          stepName: step.name,
+          command: step.kind === "agent" ? "agent step" : "forge checks",
+          status,
+          exitCode: null,
+          tail: step.tail.length > 0 ? step.tail : (step.note ?? ""),
+          logPath: null,
+          result,
+        });
+        continue;
+      }
+      failures.push({
+        runId,
+        stepName: step.name,
+        command: step.command,
+        status,
+        exitCode: step.exitCode,
+        tail: step.tail,
+        logPath: pass.logDir == null ? null : `${pass.logDir}/${index}.log`,
+        result,
+      });
+    }
+    return { steps: pass.steps, failures, issues: boardCiFixIssues(pass.steps) };
+  });
+
+  /**
+   * Fail a pass and ask the CI executor what follows (T3O-57), with every
+   * failure on the pass row. A row that can't be read, or lists none, falls
+   * back to the card's failed steps, then to `fallback`: the executor always
+   * gets at least one failure.
+   */
+  const failCiPass = Effect.fn("board-supervisor-failCiPass")(function* (
+    card: BoardCard,
+    runId: string,
+    fallback?: BoardCiFailure,
+  ) {
+    const recorded = yield* dispatchLanded({
+      type: "board.card.record-ci",
+      commandId: yield* commandId("ci-finish"),
+      cardId: card.id,
+      action: { kind: "finish-pass", runId, result: "failed" },
+      createdAt: yield* nowIso,
+    });
+    if (!recorded) return;
+    const read = yield* ciPassFailures(card.id, runId);
+    if (read !== null && read.failures.length > 0) {
+      yield* continueCi({
+        cardId: card.id,
+        settledStepId: null,
+        ciFailures: read.failures,
+        ciIssues: read.issues,
+        fixThreadId: null,
+      });
+      return;
+    }
+    const shellSteps = card.ci?.steps ?? [];
+    const fromShell: BoardCiFailure[] = shellSteps.flatMap((step) =>
+      isBoardCiStepFailure(step.status)
+        ? [
+            {
+              runId,
+              stepName: step.name,
+              command: "",
+              status: step.status === "timed-out" ? ("timed-out" as const) : ("failed" as const),
+              exitCode: null,
+              tail: "",
+              logPath: null,
+            },
+          ]
+        : [],
+    );
+    const failures =
+      fromShell.length > 0
+        ? fromShell
+        : [
+            fallback ?? {
+              runId,
+              stepName: "CI",
+              command: "",
+              status: "failed" as const,
+              exitCode: null,
+              tail: "",
+              logPath: null,
+            },
+          ];
+    yield* continueCi({
+      cardId: card.id,
+      settledStepId: null,
+      ciFailures: failures,
+      ciIssues:
+        fromShell.length > 0
+          ? boardCiFixIssues(shellSteps)
+          : boardCiFixIssues([{ name: failures[0]!.stepName, status: failures[0]!.status }]),
+      fixThreadId: null,
+    });
+  });
+
+  /** Stop the card in CI for a human (T3O-57), with why. A card with no CI
+      entry can't record a stop, so it is held with the reason instead. */
+  const stopCi = Effect.fn("board-supervisor-stopCi")(function* (
+    card: BoardCard,
+    reason: string,
+    fixThreadId: ThreadId | null,
+  ) {
+    if (card.ci === null) {
+      yield* holdInCi(card, reason);
+      return;
+    }
+    yield* dispatchLanded({
+      type: "board.card.record-ci",
+      commandId: yield* commandId("ci-stop"),
+      cardId: card.id,
+      action: {
+        kind: "stop",
+        runId: card.ci.runId,
+        reason,
+        finding: "",
+        ...(fixThreadId === null ? {} : { fixThreadId }),
+      },
+      createdAt: yield* nowIso,
+    });
+  });
 
   /** Settle a live pass as interrupted and hold the card for a human, with
       why, so Retry CI can start it again. */
@@ -3898,7 +4057,7 @@ const make = Effect.gen(function* () {
       ): Effect.Effect<void> =>
         Effect.gen(function* () {
           forgeSteps.delete(String(cardId));
-          yield* recordCiStep(card.id, entry.runId, entry.index, {
+          const recorded = yield* recordCiStep(card.id, entry.runId, entry.index, {
             ...row,
             status,
             finishedAt: yield* nowIso,
@@ -3906,30 +4065,18 @@ const make = Effect.gen(function* () {
             note,
             tail: status === "passed" ? "" : note,
           });
-          if (status === "passed") {
+          if (status === "passed" || (recorded && card.ci?.continueOnFailure === true)) {
             yield* runCiSegment(card.id, entry.runId, steps, entry.index + 1);
             return;
           }
-          yield* dispatch({
-            type: "board.card.record-ci",
-            commandId: yield* commandId("ci-finish"),
-            cardId: card.id,
-            action: { kind: "finish-pass", runId: entry.runId, result: "failed" },
-            createdAt: yield* nowIso,
-          });
-          yield* continueCi({
-            cardId: card.id,
-            settledStepId: null,
-            ciFailure: {
-              runId: entry.runId,
-              stepName: row.name,
-              command: "forge checks",
-              status: status === "timed-out" ? "timed-out" : "failed",
-              exitCode: null,
-              tail: note,
-              logPath: null,
-            },
-            fixThreadId: null,
+          yield* failCiPass(card, entry.runId, {
+            runId: entry.runId,
+            stepName: row.name,
+            command: "forge checks",
+            status: status === "timed-out" ? "timed-out" : "failed",
+            exitCode: null,
+            tail: note,
+            logPath: null,
           });
         }).pipe(
           Effect.catchCause((cause) =>
@@ -4031,38 +4178,28 @@ const make = Effect.gen(function* () {
       const summary =
         verdict === null ? "The agent step finished without a readable verdict." : verdict.summary;
       const passed = verdict?.verdict === "passed";
-      yield* recordCiStep(card.id, plan.runId, plan.index, {
+      const recorded = yield* recordCiStep(card.id, plan.runId, plan.index, {
         ...row,
         status: passed ? "passed" : "failed",
         finishedAt: yield* nowIso,
         result: { summary, failures },
         ...(threadId === null ? {} : { threadId }),
       });
-      if (passed) {
+      // T3O-57: without stop on failure a failed agent step is recorded and
+      // the pass carries on; the end of the pass fails it.
+      if (passed || (recorded && card.ci.continueOnFailure === true)) {
         yield* runCiSegment(card.id, plan.runId, steps, plan.index + 1);
         return;
       }
-      yield* dispatch({
-        type: "board.card.record-ci",
-        commandId: yield* commandId("ci-finish"),
-        cardId: card.id,
-        action: { kind: "finish-pass", runId: plan.runId, result: "failed" },
-        createdAt: yield* nowIso,
-      });
-      yield* continueCi({
-        cardId: card.id,
-        settledStepId: null,
-        ciFailure: {
-          runId: plan.runId,
-          stepName: row.name,
-          command: "agent step",
-          status: "failed",
-          exitCode: null,
-          tail: [summary, ...failures.map((failure) => `- ${failure.title}`)].join("\n"),
-          logPath: null,
-          result: { summary, failures },
-        },
-        fixThreadId: null,
+      yield* failCiPass(card, plan.runId, {
+        runId: plan.runId,
+        stepName: row.name,
+        command: "agent step",
+        status: "failed",
+        exitCode: null,
+        tail: [summary, ...failures.map((failure) => `- ${failure.title}`)].join("\n"),
+        logPath: null,
+        result: { summary, failures },
       });
     },
     Effect.catchCause((cause) =>
@@ -4073,51 +4210,21 @@ const make = Effect.gen(function* () {
   );
 
   /** Back to the review-role stage with the CI failure as a must-fix finding,
-      for a fresh round: one more round when the card had used them all. */
+      for a fresh round: one more round when the card had used them all. Only
+      a human's "Send back to review anyway" reaches it (T3O-57). */
   const sendBackFromCi = Effect.fn("board-supervisor-sendBackFromCi")(function* (
     card: BoardCard,
     input: {
       readonly stepName: string | null;
       readonly finding: string;
       readonly fixThreadId: ThreadId | null;
-      /** A human's "Send back to review anyway": past the limit, and the
-          round-trip count starts again. */
+      /** A human's "Send back to review anyway": the round-trip count starts
+          again. */
       readonly byHuman?: boolean;
     },
   ) {
     const board = yield* readBoard;
     const reviewStage = boardStageWithRole(board, "review");
-    // T3O-49: past the project's round-trip limit, CI stops for a human
-    // rather than bouncing the card back to review again.
-    if (input.byHuman !== true) {
-      const exec = resolveBoardStageExecution(
-        yield* boardSettings,
-        BOARD_SEED_STAGE_IDS.ci,
-        boardProjectStageConfig(board, card.projectId),
-      );
-      const maxRoundTrips = isBoardCiStageExecution(exec)
-        ? exec.maxRoundTrips
-        : DEFAULT_BOARD_CI_MAX_ROUND_TRIPS;
-      const roundTrips = card.ciRoundTrips;
-      if (roundTrips >= maxRoundTrips) {
-        yield* dispatchLanded({
-          type: "board.card.record-ci",
-          commandId: yield* commandId("ci-stop"),
-          cardId: card.id,
-          action: {
-            kind: "stop",
-            runId: card.ci?.runId ?? null,
-            reason:
-              maxRoundTrips === 0
-                ? `CI failed${input.stepName === null ? "" : ` at ${input.stepName}`}, and this project doesn't send cards back to review.`
-                : `CI failed${input.stepName === null ? "" : ` at ${input.stepName}`} after ${roundTrips} ${roundTrips === 1 ? "round trip" : "round trips"} to review.`,
-            finding: input.finding,
-          },
-          createdAt: yield* nowIso,
-        });
-        return;
-      }
-    }
     // A fresh round, through the same override "Another review round" writes:
     // it floors the budget, so a card that used every round gets one more.
     const round =
@@ -4157,7 +4264,8 @@ const make = Effect.gen(function* () {
   const continueCi = Effect.fn("board-supervisor-continueCi")(function* (input: {
     readonly cardId: BoardCardId;
     readonly settledStepId: string | null;
-    readonly ciFailure: BoardCiFailure | null;
+    readonly ciFailures: ReadonlyArray<BoardCiFailure> | null;
+    readonly ciIssues?: ReadonlyArray<BoardCiFixIssue>;
     readonly fixThreadId: ThreadId | null;
   }) {
     const board = yield* readBoard;
@@ -4194,13 +4302,15 @@ const make = Effect.gen(function* () {
         settledStepId: input.settledStepId,
         baseStale: false,
         baseRetargetedTo: null,
-        ciFailure: input.ciFailure,
+        ciFailures: input.ciFailures,
+        ...(input.ciIssues === undefined ? {} : { ciIssues: input.ciIssues }),
       },
     });
     yield* actOnCiPlan(card, plan, {
       fixThreadId: input.fixThreadId,
       stageLabel: stage.label,
       exec,
+      ...(input.ciIssues === undefined ? {} : { fixIssues: input.ciIssues.length }),
     });
   });
 
@@ -4211,6 +4321,8 @@ const make = Effect.gen(function* () {
       readonly fixThreadId: ThreadId | null;
       readonly stageLabel: string;
       readonly exec: ReturnType<typeof resolveBoardStageExecution>;
+      /** How many issues a fix plan works on (T3O-57). */
+      readonly fixIssues?: number;
     },
   ) {
     switch (plan.kind) {
@@ -4220,12 +4332,8 @@ const make = Effect.gen(function* () {
       case "ci-agent-done":
         yield* finishCiAgentStep(card, plan, context.fixThreadId);
         return;
-      case "ci-return":
-        yield* sendBackFromCi(card, {
-          stepName: plan.stepName,
-          finding: plan.finding,
-          fixThreadId: context.fixThreadId,
-        });
+      case "ci-stop":
+        yield* stopCi(card, plan.reason, context.fixThreadId);
         return;
       case "run": {
         if (card.ci === null) return;
@@ -4233,7 +4341,11 @@ const make = Effect.gen(function* () {
           type: "board.card.record-ci",
           commandId: yield* commandId("ci-begin-fix"),
           cardId: card.id,
-          action: { kind: "begin-fix", runId: card.ci.runId },
+          action: {
+            kind: "begin-fix",
+            runId: card.ci.runId,
+            ...(context.fixIssues === undefined ? {} : { fixIssues: context.fixIssues }),
+          },
           createdAt: yield* nowIso,
         });
         if (!began) return;
@@ -4298,47 +4410,29 @@ const make = Effect.gen(function* () {
       yield* runCiSegment(card.id, finished.runId, steps, finished.segmentEnd);
       return;
     }
-    const recorded = yield* dispatchLanded({
-      type: "board.card.record-ci",
-      commandId: yield* commandId("ci-finish"),
-      cardId: card.id,
-      action: { kind: "finish-pass", runId: finished.runId, result: "failed" },
-      createdAt: yield* nowIso,
-    });
-    if (!recorded) return;
-    const detail = yield* boardQueries
-      .boardCardDetail(card.id)
-      .pipe(Effect.catchCause(() => Effect.succeed(null)));
-    const pass = detail?.ciPasses.find((candidate) => candidate.runId === finished.runId);
     const index = finished.outcome.failedIndex ?? -1;
-    const step = pass?.steps[index];
-    const failure: BoardCiFailure =
-      step === undefined
-        ? {
-            runId: finished.runId,
-            stepName: card.ci.steps[index]?.name ?? "CI",
-            command: "",
-            status: "failed",
-            exitCode: null,
-            tail: "",
-            logPath: null,
-          }
-        : {
-            runId: finished.runId,
-            stepName: step.name,
-            command: step.command,
-            status: step.status === "timed-out" ? "timed-out" : "failed",
-            exitCode: step.exitCode,
-            tail: step.tail,
-            logPath: pass?.logDir == null ? null : `${pass.logDir}/${index}.log`,
-            result: step.result ?? null,
-          };
-    yield* continueCi({
-      cardId: card.id,
-      settledStepId: null,
-      ciFailure: failure,
-      fixThreadId: null,
-    });
+    const fallback: BoardCiFailure = {
+      runId: finished.runId,
+      stepName: card.ci.steps[index]?.name ?? "CI",
+      command: "",
+      status: "failed",
+      exitCode: null,
+      tail: "",
+      logPath: null,
+    };
+    // T3O-57: without stop on failure, a segment that ran every step carries
+    // on — but only when its failure is on the pass record, so a lost step
+    // record never turns a failed pass into a passed one.
+    if (card.ci.continueOnFailure === true && finished.outcome.ranAll) {
+      const { steps } = yield* ciPassSnapshot(card.id, finished.runId);
+      const read = yield* ciPassFailures(card.id, finished.runId);
+      const status = read?.steps[index]?.status;
+      if (steps !== null && status !== undefined && isBoardCiStepFailure(status)) {
+        yield* runCiSegment(card.id, finished.runId, steps, finished.segmentEnd);
+        return;
+      }
+    }
+    yield* failCiPass(card, finished.runId, fallback);
   });
 
   /** A card left CI (any move): stop its pass. The move itself settled the
@@ -4438,9 +4532,13 @@ const make = Effect.gen(function* () {
     if (card.ci.phase !== "stopped") return { outcome: "not-stopped" } as const;
     yield* ciPasses.cancel(card.id);
     const failed = card.ci.steps.find((step) => isBoardCiStepFailure(step.status));
+    const read = yield* ciPassFailures(card.id, card.ci.runId);
     yield* sendBackFromCi(card, {
       stepName: failed?.name ?? null,
-      finding: card.ci.stopReason ?? "A human sent the card back from CI.",
+      finding:
+        read !== null && read.failures.length > 0
+          ? boardCiSendBackFinding(read.failures)
+          : (card.ci.stopReason ?? "A human sent the card back from CI."),
       fixThreadId: null,
       byHuman: true,
     });
@@ -5060,10 +5158,10 @@ const make = Effect.gen(function* () {
         }
         return;
       }
-      // CI (T3O-44): a fix agent reported — re-run every step, or go back
-      // to review with its finding.
+      // CI (T3O-44/57): a fix agent reported — re-run every step, or stop
+      // for a human.
       case "ci-pass":
-      case "ci-return":
+      case "ci-stop":
       case "ci-agent-done":
         yield* actOnCiPlan(card, plan, {
           fixThreadId: state.threadId,

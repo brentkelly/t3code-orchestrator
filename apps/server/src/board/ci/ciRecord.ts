@@ -79,6 +79,7 @@ export function decideBoardCiRecord(
         phase: action.queued ? "queued" : "running",
         steps: boardCardCiSteps(steps),
         ...(roundTrips === 0 ? {} : { roundTrips }),
+        ...(action.continueOnFailure === true ? { continueOnFailure: true } : {}),
       };
       return done(
         { ci, ciLastOutcome: null, ciRoundTrips: roundTrips },
@@ -173,7 +174,12 @@ export function decideBoardCiRecord(
         return refuse(`Card '${card.key}' has used all ${current.maxFixAttempts} CI fixes.`);
       }
       return done({
-        ci: { ...current, phase: "fixing", fixAttempts: current.fixAttempts + 1 },
+        ci: {
+          ...current,
+          phase: "fixing",
+          fixAttempts: current.fixAttempts + 1,
+          ...(action.fixIssues === undefined ? {} : { fixIssues: action.fixIssues }),
+        },
         ciLastOutcome: card.ciLastOutcome,
       });
     }
@@ -224,14 +230,23 @@ export function decideBoardCiRecord(
       }
       return done(
         {
-          ci: { ...current, phase: "stopped", stopReason: action.reason },
+          ci: { ...current, phase: "stopped", stopReason: boardCiShellFinding(action.reason) },
           ciLastOutcome: card.ciLastOutcome,
         },
         {
           settled:
             action.runId === null
               ? []
-              : [{ runId: action.runId, outcome: "stopped", finishedAt: at }],
+              : [
+                  {
+                    runId: action.runId,
+                    outcome: "stopped",
+                    finishedAt: at,
+                    ...(action.fixThreadId === undefined
+                      ? {}
+                      : { fixThreadId: action.fixThreadId }),
+                  },
+                ],
           activity: { kind: "card-ci-stopped" },
         },
       );
