@@ -56,6 +56,8 @@ const globalModel: BoardModelSelection = {
   model: "gpt-5-codex",
 };
 
+const decodeStageExecution = Schema.decodeSync(BoardStageExecution);
+
 const card = makeBoardCard({ id: "card-1", stage: "review", orderKey: "a0" });
 
 const config = (
@@ -1056,7 +1058,7 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
   });
 
   it("falls back to the default review config when handed a non-review execution", () => {
-    const simple = Schema.decodeSync(BoardStageExecution)({});
+    const simple = decodeStageExecution({});
     const result = ReviewLoopExecutor.planNext({
       card,
       config: { ...config(), execution: simple },

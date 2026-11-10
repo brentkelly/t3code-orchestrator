@@ -47,6 +47,7 @@ import type {
 } from "./decisionContext.testkit.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
+const decodeClientCommandExit = Schema.decodeUnknownExit(BoardClientCommand);
 const projectId = ProjectId.make("project-1");
 const otherProjectId = ProjectId.make("project-2");
 
@@ -1794,7 +1795,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
 
   it.effect("keeps retire-thread out of the commands a client may send", () =>
     Effect.sync(() => {
-      const decoded = Schema.decodeUnknownExit(BoardClientCommand)({
+      const decoded = decodeClientCommandExit({
         type: "board.card.retire-thread",
         commandId: "cmd-retire",
         cardId: "card-a",
