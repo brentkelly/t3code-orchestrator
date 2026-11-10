@@ -342,6 +342,9 @@ type BoardCardReclaimAttempt =
   | { readonly outcome: "busy" }
   | { readonly outcome: "failed" };
 
+/** How a CI hold marks the pass beyond its reason (T3O-61). */
+type CiHoldOptions = { readonly machine?: boolean; readonly headline?: BoardCiHeadline };
+
 const isThreadCommandFailed = Schema.is(ThreadCommandFailedError);
 
 /**
@@ -3840,7 +3843,7 @@ const make = Effect.gen(function* () {
     card: BoardCard,
     runId: string,
     detail: string,
-    options: { readonly machine?: boolean; readonly headline?: BoardCiHeadline } = {},
+    options: CiHoldOptions = {},
   ) {
     if (forgeSteps.get(String(card.id))?.runId === runId) forgeSteps.delete(String(card.id));
     const reason = withCiRetryHint(detail);
@@ -3858,7 +3861,11 @@ const make = Effect.gen(function* () {
       },
       createdAt: yield* nowIso,
     });
-    if (!held) return false;
+    if (!held) {
+      // The sweep holds the pass later; this keeps the hold's own words.
+      ciLostResults.set(runId, { hold: { detail, options } });
+      return false;
+    }
     // A segment started after a Stop's cancel but before its hold landed
     // would otherwise run on the held pass with nothing to stop it.
     if ((yield* cancelCiRun(card.id, runId)) !== null) yield* schedule();
@@ -3907,7 +3914,16 @@ const make = Effect.gen(function* () {
    * word the hold the sweep makes. Nothing re-sends them — a resend that
    * keeps failing is its own wedge.
    */
-  const ciLostResults = new Map<string, { readonly exitCode: number | null }>();
+  const ciLostResults = new Map<
+    string,
+    | { readonly exitCode: number | null }
+    | {
+        readonly hold: {
+          readonly detail: string;
+          readonly options: CiHoldOptions;
+        };
+      }
+  >();
 
   /** Cards the last sweep found with a pass nothing is running, by card, with
       the run it saw. A second sighting of the same run holds it (T3O-59). */
@@ -3935,12 +3951,13 @@ const make = Effect.gen(function* () {
     return true;
   };
 
-  /** The hold's words for an orphaned pass: what's known of how it ended. */
-  const ciOrphanReason = (runId: string): string => {
+  /** The hold for an orphaned pass: what's known of how it ended. */
+  const ciOrphanHold = (runId: string): readonly [string, CiHoldOptions] => {
     const lost = ciLostResults.get(runId);
-    if (lost === undefined) return "The CI run stopped without reporting a result. Retry CI.";
+    if (lost === undefined) return ["The CI run stopped without reporting a result. Retry CI.", {}];
+    if ("hold" in lost) return [lost.hold.detail, lost.hold.options];
     const code = lost.exitCode === null ? "" : ` (exit code ${lost.exitCode})`;
-    return `The CI script ended${code} but its result couldn't be saved. Retry CI.`;
+    return [`The CI script ended${code} but its result couldn't be saved. Retry CI.`, {}];
   };
 
   /** Hold every pass that has had nothing behind it on two sweeps in a row
@@ -3958,7 +3975,7 @@ const make = Effect.gen(function* () {
         ciSuspectPasses.set(String(card.id), runId);
         continue;
       }
-      yield* holdCiPass(card, runId, ciOrphanReason(runId));
+      yield* holdCiPass(card, runId, ...ciOrphanHold(runId));
     }
     for (const cardId of ciSuspectPasses.keys()) {
       if (!seen.has(cardId)) ciSuspectPasses.delete(cardId);

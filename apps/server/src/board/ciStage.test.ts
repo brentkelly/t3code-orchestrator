@@ -1096,6 +1096,33 @@ const lastStepAndFinish = (action: RecordCiAction) =>
   action.kind === "finish-pass" || (action.kind === "step" && action.index === 1);
 
 it.effect(
+  "T3O-61: a machine hold that can't be saved keeps its reason when the sweep holds it",
+  () =>
+    Effect.gen(function* () {
+      const { runner } = yield* scriptedRunner([
+        { result: "failed", failedIndex: 1, exitCode: 127, headline: libraryHeadline },
+      ]);
+      const subject = card("machine-lost", review);
+      const { disk, onDispatch } = failingWrites(lastStepAndFinish);
+      yield* withGovernor({ board: boardWith([subject]), settings, onDispatch }, (h) =>
+        Effect.gen(function* () {
+          disk.full = true;
+          yield* enterCiAndRun(h, subject, 1);
+          disk.full = false;
+          assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "running");
+          yield* h.reactor.sweep;
+          yield* h.reactor.sweep;
+          const held = (yield* live(h, subject.id)).ci;
+          assert.strictEqual(held?.phase, "held");
+          assert.strictEqual(held?.machine, true);
+          assert.deepStrictEqual(held?.headline, libraryHeadline);
+          assert.match(held?.stopReason ?? "", /^Machine problem on .+: Missing system library/);
+        }),
+      ).pipe(Effect.provideService(BoardCiRunner, runner));
+    }),
+);
+
+it.effect(
   "a result whose record can't be saved is held on the second sweep with its exit code, and Retry CI runs it again",
   () =>
     Effect.gen(function* () {
