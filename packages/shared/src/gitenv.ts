@@ -355,6 +355,14 @@ function matchOf(entry: GitenvEntry, kind: GitenvEntryKind): GitenvTokenMatch {
   return { token: entry.token, digest, entry: { kind, key: entry.key } };
 }
 
+function sameRepo(a: GitHubRepoRef | null, b: GitHubRepoRef): boolean {
+  return (
+    a !== null &&
+    a.owner.toLowerCase() === b.owner.toLowerCase() &&
+    a.repo.toLowerCase() === b.repo.toLowerCase()
+  );
+}
+
 function matchRepo(
   entries: ReadonlyMap<string, GitenvEntry>,
   repo: GitHubRepoRef,
@@ -399,8 +407,9 @@ export function gitenvToken(
 
 /**
  * The token for a named GitHub repo, as git's credential `path=` or `gh -R`
- * names it: the folder entry for `cwd`'s main checkout first, then the repo
- * entry, then the owner entry.
+ * names it: the folder entry for `cwd`'s main checkout when that checkout's
+ * `origin` is the named repo, then the repo entry, then the owner entry. A
+ * submodule, a nested clone or a second remote never borrows the folder token.
  */
 export function gitenvTokenForRepo(input: {
   readonly owner: string;
@@ -413,7 +422,7 @@ export function gitenvTokenForRepo(input: {
   }
   const root = input.cwd === undefined ? null : resolveMainRepositoryRoot(input.cwd);
   const folder = root === null ? undefined : entries.get(root);
-  if (folder !== undefined) {
+  if (folder !== undefined && root !== null && sameRepo(githubRepoOfRoot(root), input)) {
     return matchOf(folder, "folder");
   }
   return matchRepo(entries, input);

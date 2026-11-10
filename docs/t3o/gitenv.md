@@ -49,7 +49,7 @@ folder or repo line only where a project needs a different identity, then retire
 `dist/t3oGitCredential.mjs` against this install's file (`--file <home>/userdata/gitenv`):
 
 - **`t3-git-credential`**, a git credential helper. It answers `get` for `https://github.com` with
-  the token for the repo git names in `path=` (the folder entry for the current checkout first),
+  the token for the repo git names in `path=` (the folder entry for the current checkout first, when its `origin` is that repo),
   or for the folder's `origin` when git sends no path. With no match it prints nothing, so git
   asks its next helper. `store` and `erase` do nothing.
 - **`gh`**, which works out the repo from `-R`/`--repo`, then `$GH_REPO`, then the folder's

@@ -32,6 +32,10 @@ function makeFixture() {
     NodePath.join(project, ".git", "config"),
     '[remote "origin"]\n\turl = git@github.com:Zeald/core.z5.git\n',
   );
+  NodeFS.writeFileSync(
+    NodePath.join(pinned, ".git", "config"),
+    '[remote "origin"]\n\turl = https://github.com/Zeald/open-design.git\n',
+  );
   const file = NodePath.join(base, "gitenv");
   NodeFS.writeFileSync(
     file,
@@ -97,6 +101,13 @@ describe("credentialAnswer", () => {
         pinned,
       ),
     ).toBe(`username=x-access-token\npassword=${FOLDER_TOKEN}\n`);
+    // A submodule or second remote naming another repo never borrows the folder entry.
+    expect(
+      credentialAnswer(
+        request({ protocol: "https", host: "github.com", path: "Zeald/core.z5.git" }),
+        pinned,
+      ),
+    ).toBe(`username=x-access-token\npassword=${OWNER_TOKEN}\n`);
   });
 
   it("stays silent for other hosts and protocols so git asks its next helper", () => {

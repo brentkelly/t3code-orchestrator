@@ -267,8 +267,9 @@ describe("gitenv owner and repo keys", () => {
     expect(gitenvToken(fixture.worktreeDir)?.token).toBe(OWNER_TOKEN);
   });
 
-  it("names a repo directly for the credential helper, a folder entry still first", () => {
+  it("names a repo directly for the credential helper, a folder entry first only for its own origin", () => {
     const fixture = makeFixture();
+    setOrigin(fixture.projectRoot, "https://github.com/zeald/Open-Design.git");
     writeGitenv(
       fixture,
       [
@@ -283,6 +284,13 @@ describe("gitenv owner and repo keys", () => {
     expect(
       gitenvTokenForRepo({ owner: "Zeald", repo: "open-design", cwd: fixture.worktreeDir })?.entry,
     ).toEqual({ kind: "folder", key: fixture.projectRoot });
+    // A submodule, nested clone or second remote naming another repo skips the folder entry.
+    expect(
+      gitenvTokenForRepo({ owner: "Zeald", repo: "core.z5", cwd: fixture.worktreeDir })?.entry,
+    ).toEqual({ kind: "owner", key: "github.com/Zeald" });
+    expect(
+      gitenvTokenForRepo({ owner: "brentkelly", repo: "t3o", cwd: fixture.projectRoot }),
+    ).toBeUndefined();
   });
 
   it("skips malformed GitHub keys", () => {

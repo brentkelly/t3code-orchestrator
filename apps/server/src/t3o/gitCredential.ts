@@ -60,8 +60,9 @@ function ownerRepoOf(value: string): GitHubRepoRef | null {
 
 /**
  * The answer to a credential `get`: the token for github.com over https, chosen by the repo
- * git names in `path=` (folder entry for `cwd` first), or by `cwd`'s origin when git sends no
- * path (`useHttpPath` off). Null means print nothing so git asks its next helper.
+ * git names in `path=` (folder entry for `cwd` first when its origin is that repo), or by
+ * `cwd`'s origin when git sends no path (`useHttpPath` off). Null means print nothing so git
+ * asks its next helper.
  */
 export function credentialAnswer(request: ReadonlyMap<string, string>, cwd: string): string | null {
   if (request.get("protocol") !== "https" || request.get("host")?.toLowerCase() !== "github.com") {
