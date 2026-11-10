@@ -39,24 +39,22 @@ const warnedRejected = new Set<string>();
  * only force a needless re-read. A refused gitenv token is logged once per entry and token,
  * naming the entry and never the value (T3O-58).
  */
-export const t3oInvalidateAmbientUnlessGitenv = <E, R>(
-  host: string,
-  refusedFingerprint: string,
-  invalidate: Effect.Effect<void, E, R>,
-) =>
-  Effect.gen(function* () {
-    const project = yield* T3oGitenvProject;
-    const match = project === null || host !== GITENV_HOST ? undefined : gitenvToken(project);
-    if (match === undefined || `${host}:${match.digest}` !== refusedFingerprint) {
-      return yield* invalidate;
-    }
-    const warned = `${match.entry.key}\u0000${match.digest}`;
-    if (warnedRejected.has(warned)) return;
-    warnedRejected.add(warned);
-    yield* Effect.logWarning(
-      `GitHub rejected the token from gitenv entry ${match.entry.key} (401); edit that line to rotate it.`,
-    );
-  });
+export const t3oInvalidateAmbientUnlessGitenv = Effect.fn("T3oGitenv.invalidateAmbient")(function* <
+  E,
+  R,
+>(host: string, refusedFingerprint: string, invalidate: Effect.Effect<void, E, R>) {
+  const project = yield* T3oGitenvProject;
+  const match = project === null || host !== GITENV_HOST ? undefined : gitenvToken(project);
+  if (match === undefined || `${host}:${match.digest}` !== refusedFingerprint) {
+    return yield* invalidate;
+  }
+  const warned = `${match.entry.key}\u0000${match.digest}`;
+  if (warnedRejected.has(warned)) return;
+  warnedRejected.add(warned);
+  yield* Effect.logWarning(
+    `GitHub rejected the token from gitenv entry ${match.entry.key} (401); edit that line to rotate it.`,
+  );
+});
 
 /**
  * The folder `gh auth token` runs from (T3O-58): the main checkout of the project the call acts

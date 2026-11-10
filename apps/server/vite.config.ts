@@ -84,7 +84,14 @@ export default mergeConfig(
     },
     pack: {
       // SEA embeds one entry; expose the history worker as a hidden subcommand.
-      entry: packExecutable ? ["src/bin.ts"] : ["src/bin.ts", "src/claude-history-worker.ts"],
+      entry: packExecutable
+        ? ["src/bin.ts"]
+        : [
+            "src/bin.ts",
+            "src/claude-history-worker.ts",
+            // T3o (T3O-58): git credential helper and gh shim, light enough for every fetch.
+            "src/t3oGitCredential.ts",
+          ],
       outDir: packExecutable ? "dist-exe" : "dist",
       sourcemap: !packExecutable,
       clean: true,
