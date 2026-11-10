@@ -450,7 +450,7 @@ export function boardReviewPhasePreamble(input: {
 }
 
 /** The rule that keeps the adjudicator consistent across rounds (T3O-51). */
-export const BOARD_REVIEW_ADJUDICATOR_CONSISTENCY =
+const BOARD_REVIEW_ADJUDICATOR_CONSISTENCY =
   "A finding ruled rejection-justified in an earlier round stays settled unless later commits changed the code it concerns; overturning it requires naming that change in your note.";
 
 function boardReviewFindingLine(finding: {
@@ -469,7 +469,7 @@ function boardReviewFindingLine(finding: {
 
 /** The human's dismissals, listed to the reviewer, triage and the adjudicator
     as final rulings (T3O-51). Empty when there are none. */
-export function boardReviewDismissalsBlock(input: {
+function boardReviewDismissalsBlock(input: {
   readonly phase: BoardReviewPhaseId | BoardReviewFollowUpPhase;
   readonly dismissals: ReadonlyArray<BoardReviewCarriedFinding & { readonly round: number }>;
 }): string {
@@ -542,7 +542,7 @@ export function boardReviewPhaseProtocol(input: {
 }
 
 /** A follow-up pass's forced machine contract (T3O-51). */
-export function boardReviewFollowUpProtocol(phase: BoardReviewFollowUpPhase): string {
+function boardReviewFollowUpProtocol(phase: BoardReviewFollowUpPhase): string {
   return phase === "retriage"
     ? `To finish this step, complete with a succeeded outcome and a JSON payload { fixedSha, dispositions: [{ findingId, action: "fixed" | "rejected", note }] }, with a disposition for every listed id. ${BOARD_REVIEW_TRIAGE_NEVER_ASKS}`
     : `To finish this step, complete with a succeeded outcome and a JSON payload { verdicts: [{ findingId, verdict, note }], anotherRound }, with a verdict for every listed id, where \`verdict\` is one of fix-upheld, fix-incomplete, fix-absent, rejection-justified, rejection-unjustified, escalated. Set \`anotherRound\` to false only if this round raised nothing new beyond points already settled; the system ignores false if a blocking fix landed. ${BOARD_REVIEW_ADJUDICATOR_ESCALATION}`;

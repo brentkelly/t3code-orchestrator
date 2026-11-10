@@ -23,7 +23,9 @@ import {
   type BoardState,
   type BoardWorkerId,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -236,272 +238,277 @@ const moveStep = (
   createdAt: NOW,
 });
 
-it.layer(NodeServices.layer)("worker removal and force-move decider (T3O-66)", (it) => {
-  it.effect("removal falls a card with nothing there back to the default, with a row", () =>
-    Effect.gen(function* () {
-      const events = yield* decideEvents(
-        removeWorker(workerA),
-        makeReadModel({ cards: [makeCard({ pinnedWorkerId: workerA })] }),
-      );
-      expect(events.map((event) => event.type)).toEqual([
-        "board.worker-removed",
-        "board.card-worker-removal",
-      ]);
-      const fallback = events[1]!;
-      assert.ok(fallback.type === "board.card-worker-removal");
-      expect(fallback.payload.outcome).toBe("fallback");
-      expect(fallback.payload.workerLabel).toBe("worker-a");
-      expect(fallback.payload.card.pinnedWorkerId).toBeNull();
-      expect(fallback.payload.card.placedWorkerId).toBeNull();
-      expect(fallback.payload.card.placementOrphaned).toBeNull();
-    }),
-  );
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+  "worker removal and force-move decider (T3O-66)",
+  (it) => {
+    it.effect("removal falls a card with nothing there back to the default, with a row", () =>
+      Effect.gen(function* () {
+        const events = yield* decideEvents(
+          removeWorker(workerA),
+          makeReadModel({ cards: [makeCard({ pinnedWorkerId: workerA })] }),
+        );
+        expect(events.map((event) => event.type)).toEqual([
+          "board.worker-removed",
+          "board.card-worker-removal",
+        ]);
+        const fallback = events[1]!;
+        assert.ok(fallback.type === "board.card-worker-removal");
+        expect(fallback.payload.outcome).toBe("fallback");
+        expect(fallback.payload.workerLabel).toBe("worker-a");
+        expect(fallback.payload.card.pinnedWorkerId).toBeNull();
+        expect(fallback.payload.card.placedWorkerId).toBeNull();
+        expect(fallback.payload.card.placementOrphaned).toBeNull();
+      }),
+    );
 
-  it.effect("removal leaves a card with a worktree there holding, placed where it was", () =>
-    Effect.gen(function* () {
-      const model = yield* apply(
-        removeWorker(workerA),
-        makeReadModel({
-          cards: [makeCard({ placedWorkerId: workerA, worktree: readyWorktree })],
-        }),
-      );
-      const card = model.board!.cards[0]!;
-      expect(card.placementOrphaned).toEqual({
-        workerId: workerA,
-        workerLabel: "worker-a",
-        orphanedAt: NOW,
-      });
-      expect(card.placedWorkerId).toBe(workerA);
-      expect(card.worktree?.path).toBe(readyWorktree.path);
-      expect(model.board!.workers?.map((worker) => worker.id)).toEqual([workerB]);
-    }),
-  );
-
-  it.effect("removal leaves a card with a step running there holding, worktree or not", () =>
-    Effect.gen(function* () {
-      const model = yield* apply(
-        removeWorker(workerA),
-        makeReadModel({
-          cards: [
-            makeCard({
-              stage: BoardStageId.make("planning"),
-              placedWorkerId: workerA,
-              threadLinks: [linkOn("thread-plan", workerA)],
-            }),
-          ],
-          stepStates: [makeStep("running", ThreadId.make("thread-plan"))],
-        }),
-      );
-      expect(model.board!.cards[0]!.placementOrphaned?.workerId).toBe(workerA);
-    }),
-  );
-
-  it.effect("removal leaves cards on other workers, and the default, alone", () =>
-    Effect.gen(function* () {
-      const events = yield* decideEvents(
-        removeWorker(workerA),
-        makeReadModel({
-          cards: [makeCard({ placedWorkerId: workerB, worktree: readyWorktree })],
-        }),
-      );
-      expect(events.map((event) => event.type)).toEqual(["board.worker-removed"]);
-    }),
-  );
-
-  it.effect("adding the worker back reattaches the cards its removal left holding", () =>
-    Effect.gen(function* () {
-      const removed = yield* apply(
-        removeWorker(workerA),
-        makeReadModel({
-          cards: [makeCard({ placedWorkerId: workerA, worktree: readyWorktree })],
-        }),
-      );
-      const events = yield* decideEvents(addWorker(workerA), removed);
-      expect(events.map((event) => event.type)).toEqual([
-        "board.worker-registered",
-        "board.card-worker-removal",
-      ]);
-      const readded = yield* apply(addWorker(workerA), removed);
-      const card = readded.board!.cards[0]!;
-      expect(card.placementOrphaned).toBeNull();
-      expect(card.placedWorkerId).toBe(workerA);
-      expect(card.worktree?.status).toBe("ready");
-    }),
-  );
-
-  it.effect("removing the worker a card is moving to fails the move, so it can go elsewhere", () =>
-    Effect.gen(function* () {
-      const moving = {
-        fromWorkerId: workerA,
-        toWorkerId: workerB,
-        status: "moving",
-        sha: null,
-        error: null,
-        startedAt: NOW,
-      } as const;
-      // Retired already: Move failed, and a human picks another worker.
-      const retired = makeReadModel({
-        cards: [
-          makeCard({
-            worktree: { ...readyWorktree, path: null, status: "reclaimed" },
-            workerMove: moving,
+    it.effect("removal leaves a card with a worktree there holding, placed where it was", () =>
+      Effect.gen(function* () {
+        const model = yield* apply(
+          removeWorker(workerA),
+          makeReadModel({
+            cards: [makeCard({ placedWorkerId: workerA, worktree: readyWorktree })],
           }),
-        ],
-      });
-      const events = yield* decideEvents(removeWorker(workerB), retired);
-      expect(events.map((event) => event.type)).toEqual([
-        "board.worker-removed",
-        "board.card-worker-move-recorded",
-      ]);
-      const model = yield* apply(removeWorker(workerB), retired);
-      const failed = model.board!.cards[0]!;
-      expect(failed.workerMove?.status).toBe("failed");
-      expect(failed.workerMove?.error).toContain("worker-b was removed");
-      // The mover's last step finds nothing moving.
-      const late = yield* Effect.flip(
-        decideEvents(moveStep({ phase: "done", worktreePath: "/worker-b/card-1" }), model),
-      );
-      expect(String(late)).toContain("not moving");
-      const retry = yield* decideEvents(
-        moveStep({ phase: "start", toWorkerId: workerA, sha: null }),
-        model,
-      );
-      expect(retry).toHaveLength(1);
+        );
+        const card = model.board!.cards[0]!;
+        expect(card.placementOrphaned).toEqual({
+          workerId: workerA,
+          workerLabel: "worker-a",
+          orphanedAt: NOW,
+        });
+        expect(card.placedWorkerId).toBe(workerA);
+        expect(card.worktree?.path).toBe(readyWorktree.path);
+        expect(model.board!.workers?.map((worker) => worker.id)).toEqual([workerB]);
+      }),
+    );
 
-      // Not retired yet: the card still holds its worktree, so it stays put.
-      const holding = yield* apply(
-        removeWorker(workerB),
-        makeReadModel({
-          cards: [
-            makeCard({ placedWorkerId: workerA, worktree: readyWorktree, workerMove: moving }),
-          ],
-        }),
-      );
-      expect(holding.board!.cards[0]!.workerMove).toBeNull();
-      expect(holding.board!.cards[0]!.placedWorkerId).toBe(workerA);
-    }),
-  );
-
-  it.effect("a move never lands on a worker the board no longer has", () =>
-    Effect.gen(function* () {
-      const failure = yield* Effect.flip(
-        decideEvents(
-          moveStep({ phase: "done", worktreePath: "/gone/card-1" }),
+    it.effect("removal leaves a card with a step running there holding, worktree or not", () =>
+      Effect.gen(function* () {
+        const model = yield* apply(
+          removeWorker(workerA),
           makeReadModel({
             cards: [
               makeCard({
-                worktree: { ...readyWorktree, path: null, status: "reclaimed" },
-                workerMove: {
-                  fromWorkerId: workerA,
-                  toWorkerId: EnvironmentId.make("env-gone"),
-                  status: "moving",
-                  sha: null,
-                  error: null,
-                  startedAt: NOW,
-                },
+                stage: BoardStageId.make("planning"),
+                placedWorkerId: workerA,
+                threadLinks: [linkOn("thread-plan", workerA)],
               }),
             ],
+            stepStates: [makeStep("running", ThreadId.make("thread-plan"))],
           }),
-        ),
-      );
-      expect(String(failure)).toContain("no longer registered");
-    }),
-  );
+        );
+        expect(model.board!.cards[0]!.placementOrphaned?.workerId).toBe(workerA);
+      }),
+    );
 
-  it.effect("a pin moves a held card with no worktree, ending the hold", () =>
-    Effect.gen(function* () {
-      const held = makeReadModel({
-        cards: [
-          makeCard({
-            placedWorkerId: workerA,
-            placementOrphaned: { workerId: workerA, workerLabel: "worker-a", orphanedAt: NOW },
+    it.effect("removal leaves cards on other workers, and the default, alone", () =>
+      Effect.gen(function* () {
+        const events = yield* decideEvents(
+          removeWorker(workerA),
+          makeReadModel({
+            cards: [makeCard({ placedWorkerId: workerB, worktree: readyWorktree })],
           }),
-        ],
-      });
-      const card = yield* cardAfter(pin(workerB), held);
-      expect(card.placementOrphaned).toBeNull();
-      expect(card.pinnedWorkerId).toBe(workerB);
-      // Pinning a held card to where it already points still ends the hold.
-      const same = yield* cardAfter(pin(null), held);
-      expect(same.placementOrphaned).toBeNull();
-    }),
-  );
+        );
+        expect(events.map((event) => event.type)).toEqual(["board.worker-removed"]);
+      }),
+    );
 
-  it.effect("a force-move starts over a step still running on the old worker", () =>
-    Effect.gen(function* () {
-      const running = makeReadModel({
-        cards: [makeCard({ placedWorkerId: workerA, worktree: readyWorktree })],
-        stepStates: [makeStep("running")],
-      });
-      const refused = yield* decideFail(
-        moveStep({ phase: "start", toWorkerId: workerB, sha: null }),
-        running,
-      );
-      expect(String(refused)).toContain("step running");
-      const events = yield* decideEvents(
-        moveStep({ phase: "start", toWorkerId: workerB, sha: "4e1a9c2", force: true }),
-        running,
-      );
-      expect(events).toHaveLength(1);
-    }),
-  );
-
-  it.effect("a force-move abandons the old worktree, then lands from the remote branch", () =>
-    Effect.gen(function* () {
-      let model = makeReadModel({
-        cards: [
-          makeCard({
-            placedWorkerId: workerA,
-            worktree: readyWorktree,
-            placementOrphaned: { workerId: workerA, workerLabel: "worker-a", orphanedAt: NOW },
+    it.effect("adding the worker back reattaches the cards its removal left holding", () =>
+      Effect.gen(function* () {
+        const removed = yield* apply(
+          removeWorker(workerA),
+          makeReadModel({
+            cards: [makeCard({ placedWorkerId: workerA, worktree: readyWorktree })],
           }),
-        ],
-      });
-      const abandoned = moveStep({ phase: "abandoned", worktreePath: readyWorktree.path });
-      for (const step of [
-        moveStep({ phase: "start", toWorkerId: workerB, sha: "4e1a9c2", force: true }),
-        abandoned,
-      ]) {
-        model = yield* apply(step, model);
-      }
-      const left = model.board!.cards[0]!;
-      expect(left.worktree?.status).toBe("reclaimed");
-      expect(left.worktree?.path).toBeNull();
-      expect(left.placedWorkerId).toBeNull();
-      expect(left.placementOrphaned).toBeNull();
-      expect(left.workerMove?.status).toBe("moving");
-      model = yield* apply(
-        moveStep({ phase: "done", worktreePath: "/worker-b/worktrees/card-1" }),
-        model,
-      );
-      const landed = model.board!.cards[0]!;
-      expect(landed.placedWorkerId).toBe(workerB);
-      expect(landed.worktree?.branch).toBe(readyWorktree.branch);
-      expect(landed.workerMove).toBeNull();
-    }),
-  );
+        );
+        const events = yield* decideEvents(addWorker(workerA), removed);
+        expect(events.map((event) => event.type)).toEqual([
+          "board.worker-registered",
+          "board.card-worker-removal",
+        ]);
+        const readded = yield* apply(addWorker(workerA), removed);
+        const card = readded.board!.cards[0]!;
+        expect(card.placementOrphaned).toBeNull();
+        expect(card.placedWorkerId).toBe(workerA);
+        expect(card.worktree?.status).toBe("ready");
+      }),
+    );
 
-  it.effect("a force-move with nothing on the remote forgets the branch and ends there", () =>
-    Effect.gen(function* () {
-      let model = makeReadModel({
-        cards: [makeCard({ placedWorkerId: workerA, worktree: readyWorktree })],
-      });
-      model = yield* apply(
-        moveStep({ phase: "start", toWorkerId: workerB, sha: null, force: true }),
-        model,
-      );
-      model = yield* apply(moveStep({ phase: "restarted" }), model);
-      const card = model.board!.cards[0]!;
-      expect(card.worktree).toBeNull();
-      expect(card.pinnedWorkerId).toBe(workerB);
-      expect(card.placedWorkerId).toBeNull();
-      expect(card.workerMove).toBeNull();
-      // The restart is the end of the move: nothing more can be recorded on it.
-      const after = yield* decideFail(
-        moveStep({ phase: "done", worktreePath: "/worker-b/worktrees/card-1" }),
-        model,
-      );
-      expect(String(after)).toContain("not moving");
-    }),
-  );
-});
+    it.effect(
+      "removing the worker a card is moving to fails the move, so it can go elsewhere",
+      () =>
+        Effect.gen(function* () {
+          const moving = {
+            fromWorkerId: workerA,
+            toWorkerId: workerB,
+            status: "moving",
+            sha: null,
+            error: null,
+            startedAt: NOW,
+          } as const;
+          // Retired already: Move failed, and a human picks another worker.
+          const retired = makeReadModel({
+            cards: [
+              makeCard({
+                worktree: { ...readyWorktree, path: null, status: "reclaimed" },
+                workerMove: moving,
+              }),
+            ],
+          });
+          const events = yield* decideEvents(removeWorker(workerB), retired);
+          expect(events.map((event) => event.type)).toEqual([
+            "board.worker-removed",
+            "board.card-worker-move-recorded",
+          ]);
+          const model = yield* apply(removeWorker(workerB), retired);
+          const failed = model.board!.cards[0]!;
+          expect(failed.workerMove?.status).toBe("failed");
+          expect(failed.workerMove?.error).toContain("worker-b was removed");
+          // The mover's last step finds nothing moving.
+          const late = yield* Effect.flip(
+            decideEvents(moveStep({ phase: "done", worktreePath: "/worker-b/card-1" }), model),
+          );
+          expect(String(late)).toContain("not moving");
+          const retry = yield* decideEvents(
+            moveStep({ phase: "start", toWorkerId: workerA, sha: null }),
+            model,
+          );
+          expect(retry).toHaveLength(1);
+
+          // Not retired yet: the card still holds its worktree, so it stays put.
+          const holding = yield* apply(
+            removeWorker(workerB),
+            makeReadModel({
+              cards: [
+                makeCard({ placedWorkerId: workerA, worktree: readyWorktree, workerMove: moving }),
+              ],
+            }),
+          );
+          expect(holding.board!.cards[0]!.workerMove).toBeNull();
+          expect(holding.board!.cards[0]!.placedWorkerId).toBe(workerA);
+        }),
+    );
+
+    it.effect("a move never lands on a worker the board no longer has", () =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(
+          decideEvents(
+            moveStep({ phase: "done", worktreePath: "/gone/card-1" }),
+            makeReadModel({
+              cards: [
+                makeCard({
+                  worktree: { ...readyWorktree, path: null, status: "reclaimed" },
+                  workerMove: {
+                    fromWorkerId: workerA,
+                    toWorkerId: EnvironmentId.make("env-gone"),
+                    status: "moving",
+                    sha: null,
+                    error: null,
+                    startedAt: NOW,
+                  },
+                }),
+              ],
+            }),
+          ),
+        );
+        expect(String(failure)).toContain("no longer registered");
+      }),
+    );
+
+    it.effect("a pin moves a held card with no worktree, ending the hold", () =>
+      Effect.gen(function* () {
+        const held = makeReadModel({
+          cards: [
+            makeCard({
+              placedWorkerId: workerA,
+              placementOrphaned: { workerId: workerA, workerLabel: "worker-a", orphanedAt: NOW },
+            }),
+          ],
+        });
+        const card = yield* cardAfter(pin(workerB), held);
+        expect(card.placementOrphaned).toBeNull();
+        expect(card.pinnedWorkerId).toBe(workerB);
+        // Pinning a held card to where it already points still ends the hold.
+        const same = yield* cardAfter(pin(null), held);
+        expect(same.placementOrphaned).toBeNull();
+      }),
+    );
+
+    it.effect("a force-move starts over a step still running on the old worker", () =>
+      Effect.gen(function* () {
+        const running = makeReadModel({
+          cards: [makeCard({ placedWorkerId: workerA, worktree: readyWorktree })],
+          stepStates: [makeStep("running")],
+        });
+        const refused = yield* decideFail(
+          moveStep({ phase: "start", toWorkerId: workerB, sha: null }),
+          running,
+        );
+        expect(String(refused)).toContain("step running");
+        const events = yield* decideEvents(
+          moveStep({ phase: "start", toWorkerId: workerB, sha: "4e1a9c2", force: true }),
+          running,
+        );
+        expect(events).toHaveLength(1);
+      }),
+    );
+
+    it.effect("a force-move abandons the old worktree, then lands from the remote branch", () =>
+      Effect.gen(function* () {
+        let model = makeReadModel({
+          cards: [
+            makeCard({
+              placedWorkerId: workerA,
+              worktree: readyWorktree,
+              placementOrphaned: { workerId: workerA, workerLabel: "worker-a", orphanedAt: NOW },
+            }),
+          ],
+        });
+        const abandoned = moveStep({ phase: "abandoned", worktreePath: readyWorktree.path });
+        for (const step of [
+          moveStep({ phase: "start", toWorkerId: workerB, sha: "4e1a9c2", force: true }),
+          abandoned,
+        ]) {
+          model = yield* apply(step, model);
+        }
+        const left = model.board!.cards[0]!;
+        expect(left.worktree?.status).toBe("reclaimed");
+        expect(left.worktree?.path).toBeNull();
+        expect(left.placedWorkerId).toBeNull();
+        expect(left.placementOrphaned).toBeNull();
+        expect(left.workerMove?.status).toBe("moving");
+        model = yield* apply(
+          moveStep({ phase: "done", worktreePath: "/worker-b/worktrees/card-1" }),
+          model,
+        );
+        const landed = model.board!.cards[0]!;
+        expect(landed.placedWorkerId).toBe(workerB);
+        expect(landed.worktree?.branch).toBe(readyWorktree.branch);
+        expect(landed.workerMove).toBeNull();
+      }),
+    );
+
+    it.effect("a force-move with nothing on the remote forgets the branch and ends there", () =>
+      Effect.gen(function* () {
+        let model = makeReadModel({
+          cards: [makeCard({ placedWorkerId: workerA, worktree: readyWorktree })],
+        });
+        model = yield* apply(
+          moveStep({ phase: "start", toWorkerId: workerB, sha: null, force: true }),
+          model,
+        );
+        model = yield* apply(moveStep({ phase: "restarted" }), model);
+        const card = model.board!.cards[0]!;
+        expect(card.worktree).toBeNull();
+        expect(card.pinnedWorkerId).toBe(workerB);
+        expect(card.placedWorkerId).toBeNull();
+        expect(card.workerMove).toBeNull();
+        // The restart is the end of the move: nothing more can be recorded on it.
+        const after = yield* decideFail(
+          moveStep({ phase: "done", worktreePath: "/worker-b/worktrees/card-1" }),
+          model,
+        );
+        expect(String(after)).toContain("not moving");
+      }),
+    );
+  },
+);

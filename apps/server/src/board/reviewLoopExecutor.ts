@@ -26,14 +26,12 @@ import {
   type BoardReviewFollowUpPhase,
   boardReviewRoundsStarted,
   boardStepPayloadDefect,
-  BoardReviewPayload,
   composeBoardReviewPhasePrompt,
   composeBoardSyncPhasePrompt,
   DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
   effectiveBoardReviewRounds,
   effectiveBoardRuntimeMode,
   isBoardReviewStageExecution,
-  parseBoardStepPayloadJson,
   parseReviewStepId,
   reviewStepId,
   reviewStepLabel,
@@ -48,8 +46,6 @@ import {
   type BoardStageExecutionReview,
   type BoardStepCompletion,
 } from "@t3tools/contracts";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
 import type { BoardStageExecutor, BoardStagePlan, BoardStagePlanInput } from "./stageExecutor.ts";
 
@@ -60,18 +56,6 @@ import type { BoardStageExecutor, BoardStagePlan, BoardStagePlanInput } from "./
  * findings" (D4) — it fails, so the loop cannot converge on a broken reviewer.
  */
 export type ParsedPayload<A> = { readonly ok: true; readonly value: A } | { readonly ok: false };
-
-const decodeReview = Schema.decodeUnknownOption(BoardReviewPayload);
-
-// Only the `review` phase's payload gates the loop (convergence is decided by
-// review, D3), so the executor parses only that for its findings. The
-// triage/adjudicate/sync payloads still have to be READABLE — a broken success
-// on any phase is a record the board can neither trust nor re-run (T3O-14) —
-// but their contents are the card-detail view's to decode, not the executor's.
-export function parseReviewPayload(payload: string | null): ParsedPayload<BoardReviewPayload> {
-  const decoded = decodeReview(parseBoardStepPayloadJson(payload));
-  return Option.isSome(decoded) ? { ok: true, value: decoded.value } : { ok: false };
-}
 
 /** Whether a recorded phase's payload is one nothing can read — the executor's
     half of the walk's identical check (T3O-14). */
@@ -163,7 +147,7 @@ function resolvePhaseRuntimeMode(input: {
  * stop, and a malformed payload all terminate `blocked` and leave the card in
  * Code review with its findings.
  */
-export function reviewLoopDecision(input: {
+function reviewLoopDecision(input: {
   readonly review: BoardStageExecutionReview;
   readonly config: BoardStagePlanInput["config"];
   readonly completions: ReadonlyArray<BoardStepCompletion>;

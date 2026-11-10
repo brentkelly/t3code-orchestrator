@@ -47,7 +47,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
@@ -101,16 +101,16 @@ export const boardPushRequestText = (branch: string) =>
 
 const refused = (detail: string) => ({ outcome: "refused", detail }) as const;
 
-export const makeBoardCardMover = Effect.gen(function* () {
+const makeBoardCardMover = Effect.gen(function* () {
   const engine = yield* BoardEngine;
   const workspaces = yield* BoardWorkspaces;
   const threads = yield* ThreadGateway;
   const placement = yield* BoardPlacement;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const running = yield* FiberSet.make();
 
   const commandId = (tag: string) =>
-    crypto.randomUUIDv4().pipe(
+    crypto.uuidV4().pipe(
       Effect.orDie,
       Effect.map((uuid) => CommandId.make(`server:board-${tag}:${uuid}`)),
     );

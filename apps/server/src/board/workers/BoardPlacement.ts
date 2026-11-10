@@ -45,7 +45,7 @@ export class BoardPlacement extends Context.Service<BoardPlacement, BoardPlaceme
  * comparable key. Clone progress and snapshot timestamps change far more often
  * than these and can never start a held card, so they are left out.
  */
-export const boardPlacementFacts = (state: BoardWorkersState): string =>
+const boardPlacementFacts = (state: BoardWorkersState): string =>
   JSON.stringify([
     state.workers.map((worker) => [
       worker.id,

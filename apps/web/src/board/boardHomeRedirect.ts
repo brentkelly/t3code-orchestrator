@@ -16,7 +16,7 @@
 import { redirect } from "@tanstack/react-router";
 
 export const BOARD_HOME_PATH = "/board";
-export const THREADS_HOME_PATH = "/";
+const THREADS_HOME_PATH = "/";
 
 /**
  * The auth-gate statuses this file branches on. Upstream assembles them in two

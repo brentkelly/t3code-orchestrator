@@ -6,7 +6,7 @@
  */
 export const T3O_DESKTOP_IDENTITY = {
   productName: "T3o",
-  /** Debian package, executable and Linux WM class. */
+  /** Debian package, executable and the .deb entry's StartupWMClass. */
   packageName: "t3o",
   description: "T3o — T3 Code with a supervised engineering board.",
   homepage: "https://github.com/brentkelly/t3code-orchestrator",
@@ -14,7 +14,6 @@ export const T3O_DESKTOP_IDENTITY = {
   appId: "com.brentkelly.t3o",
   devAppId: "com.brentkelly.t3o.dev",
   linuxWmClass: "t3o",
-  devLinuxWmClass: "t3o-dev",
   /**
    * The runtime-written portal identity entry. Deliberately not `t3o.desktop`: the .deb installs
    * that one, and a hidden per-user entry of the same id would shadow it out of the app menu.
@@ -35,9 +34,6 @@ export const T3O_DESKTOP_IDENTITY = {
 
 export const resolveT3oAppId = (isDevelopment: boolean): string =>
   isDevelopment ? T3O_DESKTOP_IDENTITY.devAppId : T3O_DESKTOP_IDENTITY.appId;
-
-export const resolveT3oLinuxWmClass = (isDevelopment: boolean): string =>
-  isDevelopment ? T3O_DESKTOP_IDENTITY.devLinuxWmClass : T3O_DESKTOP_IDENTITY.linuxWmClass;
 
 export const resolveT3oLinuxDesktopEntryName = (isDevelopment: boolean): string =>
   isDevelopment

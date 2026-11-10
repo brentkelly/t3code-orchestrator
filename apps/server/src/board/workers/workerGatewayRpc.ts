@@ -27,7 +27,7 @@ import { WorkerGatewayHost, type WorkerGatewayHostShape } from "./WorkerGatewayH
 type Method = keyof typeof BOARD_WORKER_GATEWAY_RPC_SCOPES;
 
 /** Run one gateway call on the host, its answer untyped for the wire. */
-export const runGatewayCall = (
+const runGatewayCall = (
   host: WorkerGatewayHostShape,
   call: BoardGatewayCall,
   caller: AuthSessionId,

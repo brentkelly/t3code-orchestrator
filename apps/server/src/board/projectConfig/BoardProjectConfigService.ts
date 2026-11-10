@@ -32,7 +32,7 @@ import {
   type BoardState,
   type ProjectId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
@@ -78,7 +78,7 @@ export const make = Effect.gen(function* () {
   const engine = yield* BoardEngine;
   const serverSettings = yield* ServerSettingsService;
   const projectFile = yield* BoardProjectFile;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
 
   const readBoard = engine.getReadModel.pipe(
     Effect.map((model): BoardState => model.board ?? EMPTY_BOARD_STATE),
@@ -224,9 +224,7 @@ export const make = Effect.gen(function* () {
       const next = resolveRead(board, yield* settings, input.projectId, read, now);
       const result = yield* send({
         type: "board.project.import-file",
-        commandId: CommandId.make(
-          `project-import:${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`,
-        ),
+        commandId: CommandId.make(`project-import:${yield* crypto.uuidV4().pipe(Effect.orDie)}`),
         projectId: input.projectId,
         blobSha: read.blobSha,
         delta: next.delta,
@@ -252,9 +250,7 @@ export const make = Effect.gen(function* () {
       if (written.blobSha !== null) {
         yield* send({
           type: "board.project.dismiss-import",
-          commandId: CommandId.make(
-            `project-export:${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`,
-          ),
+          commandId: CommandId.make(`project-export:${yield* crypto.uuidV4().pipe(Effect.orDie)}`),
           projectId,
           blobSha: written.blobSha,
           actor,

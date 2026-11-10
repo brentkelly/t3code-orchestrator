@@ -47,7 +47,7 @@ export const BOARD_CARD_GAP = 8;
  * cards came out darker than the board they sit on. Opaque values fix the
  * order by construction. Light mode keeps the tint, where it reads correctly.
  */
-export const BOARD_COLUMN_DARK_SURFACE = "dark:bg-[#131316]";
+const BOARD_COLUMN_DARK_SURFACE = "dark:bg-[#131316]";
 
 export interface BoardAddProject {
   readonly id: ProjectId;

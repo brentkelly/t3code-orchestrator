@@ -19,7 +19,7 @@ import {
   ThreadId,
   type BoardWorkerId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -303,7 +303,7 @@ export const ThreadGatewayRouterLive = Layer.effect(
       (environment) => environment.getEnvironmentId,
     );
     const fileSystem = yield* FileSystem.FileSystem;
-    const crypto = yield* Crypto.Crypto;
+    const digest = yield* Digest.Digest;
     const remotes = new Map<EnvironmentId, RemoteThreadGatewayShape>();
     return makeThreadGatewayRouter({
       local,
@@ -319,7 +319,7 @@ export const ThreadGatewayRouterLive = Layer.effect(
           local,
           centralEnvironmentId,
           fileSystem,
-          crypto,
+          digest,
         });
         remotes.set(workerId, created);
         return created;

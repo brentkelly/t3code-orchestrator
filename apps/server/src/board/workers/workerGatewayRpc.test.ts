@@ -12,7 +12,9 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -115,7 +117,7 @@ it.effect("a relayed call waits for its board's answer", () =>
         SESSION,
       );
       assert.deepStrictEqual(yield* Fiber.join(forwarded), { _tag: "success", value: 1 });
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   ),
 );
 
@@ -143,7 +145,7 @@ it.effect("a call a dropped stream left unanswered goes out again, under the sam
         SESSION,
       );
       assert.deepStrictEqual(yield* Fiber.join(forwarded), { _tag: "success", value: 2 });
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   ),
 );
 
@@ -160,7 +162,7 @@ it.effect("with no board listening, or no answer in time, the board is unreachab
       yield* Queue.take(sent);
       yield* TestClock.adjust("1 minute");
       assert.strictEqual((yield* Fiber.join(waiting)).reason, "timed-out");
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   ),
 );
 

@@ -45,7 +45,7 @@ export function applyBoardShellStreamItems(
 }
 
 /** The subscription input for a client holding `snapshot`. */
-export function boardSubscribeInput(snapshot: BoardShellSnapshot | null) {
+function boardSubscribeInput(snapshot: BoardShellSnapshot | null) {
   return snapshot === null ? {} : { afterSequence: snapshot.snapshotSequence };
 }
 

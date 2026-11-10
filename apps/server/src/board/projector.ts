@@ -2,7 +2,7 @@
  * T3o board projector — `projectBoardEvent`.
  *
  * Applies board events to the in-memory orchestration read model, delegated
- * to from the upstream projector behind the `isBoardEvent` predicate. Also
+ * to from the upstream projector behind a `board.` type-prefix check. Also
  * maps board events to card shell deltas for the shell stream (delegated to
  * from ws.ts behind the same predicate), which needs no projection re-read:
  * every board event payload carries the whole post-change card (and the
@@ -91,7 +91,6 @@ import {
   EMPTY_BOARD_STATE,
   isBoardConflictFixLive,
   isBoardChecksFixLive,
-  isBoardEvent,
   type BoardCard,
   type BoardCardId,
   type BoardCardStepState,
@@ -111,8 +110,6 @@ import * as Schema from "effect/Schema";
 import { toBoardProjectorDecodeError, type BoardProjectorDecodeError } from "./errors.ts";
 
 export type { BoardEvent };
-
-export { isBoardEvent };
 
 /** The board-only read model the decider and in-memory projector run on
     (T3O-56): the board slice, absent until the first board event. */

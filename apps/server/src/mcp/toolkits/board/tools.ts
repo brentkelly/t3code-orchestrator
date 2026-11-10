@@ -48,7 +48,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Path from "effect/Path";
 import { Tool, Toolkit } from "effect/ai";
 
@@ -105,7 +105,7 @@ const dependencies = [
   BoardEngine,
   BoardQueries,
   ThreadGateway,
-  Crypto.Crypto,
+  SecureRandom.SecureRandom,
   ServerSettings.ServerSettingsService,
   // The brief-attachment manifest (t3o-32) resolves absolute paths off the
   // state directory.
@@ -325,7 +325,7 @@ const BoardProjectListItem = Schema.Struct({
  */
 const NoParameters = Schema.Record(Schema.String, Schema.Never);
 
-export const BoardGetCardContextTool = Tool.make("board_get_card_context", {
+const BoardGetCardContextTool = Tool.make("board_get_card_context", {
   description:
     "Pull everything you need to work on your card: its title, brief, stage, dependency states, the work assigned right now, prior work and its outcomes, proposed plans, its recent activity, and the current todo list of every thread working on it. Activity is truncated to the most recent entries, so treat it as a tail, not the full history; the per-thread todo lists are how you pick up where you (or another thread on this card) left off. Call this first when you start work, and again whenever you need to re-orient. Your card is resolved from your thread — you never pass a card id. Fails if your thread is not linked to a card.",
   parameters: NoParameters,
@@ -337,7 +337,7 @@ export const BoardGetCardContextTool = Tool.make("board_get_card_context", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Idempotent, true);
 
-export const BoardCompleteStepTool = Tool.make("board_complete_step", {
+const BoardCompleteStepTool = Tool.make("board_complete_step", {
   description:
     "Report that your work on this stage is finished. Planning with plan review on: the first succeeded call after your plan is posted is not recorded; it replies completed: false with the review's instructions instead, so run the review and call again. THIS IS THE COMPLETION CONTRACT: the board considers the work done ONLY when you call this. If you finish your work but never call it, the board cannot tell you apart from an agent that crashed, and your work will be treated as failed and retried. Call it exactly once, at the very end, with outcome 'succeeded' when the work is done, 'blocked' when you need something you cannot get yourself, or 'failed' when you could not complete it; include a summary (max 2 KiB) and optional structured payload (max 16 KiB serialised). Triage and adjudicate steps (triage@N, retriage@N, adjudicate@N, readjudicate@N) cannot complete 'blocked': triage fixes or rejects each finding with its reasoning, and the adjudicator hands a finding to a human with the `escalated` verdict. OMIT stepId: the board resolves the work you were assigned from your own thread. Pass one only if your prompt explicitly gave you a stepId — stages that run several steps, such as the code review loop, always do — and then pass exactly that string; any other value is rejected. A review-loop step (review@N, triage@N, adjudicate@N, retriage@N, readjudicate@N, sync@N) or the Build stage's step may only succeed with the exact payload its prompt asked for: a succeeded call with a missing or malformed one is REFUSED rather than recorded, so complete with outcome 'failed' instead when you cannot produce it. Never put the payload inside the summary — it is a separate argument, and a summary carrying serialised call markup is rejected. Retry-safe: a repeat call with the same stepId re-returns a recorded 'succeeded' outcome unchanged, UNLESS that record's payload is unreadable, in which case your call repairs it; after a 'failed' or 'blocked' report, a later call on the live step records your new outcome (that is how a recovered retry reports success). Your card is resolved from your thread.",
   parameters: Schema.Struct({
@@ -382,7 +382,7 @@ export const BoardCompleteStepTool = Tool.make("board_complete_step", {
 
 // ── Board-scoped tools (explicit target) ───────────────────────────────
 
-export const BoardListCardsTool = Tool.make("board_list_cards", {
+const BoardListCardsTool = Tool.make("board_list_cards", {
   description:
     "List board cards, optionally filtered by project, stage, key, or a free-text match on the title. Use it to find a card id before creating a dependency or moving a card. Archived cards are left out unless you pass includeArchived, which is how you find the id of a card to unarchive or delete. Returns bounded summaries, each with the keys of the cards it depends on — read one card in full with board_get_card, or your own with board_get_card_context.",
   parameters: Schema.Struct({
@@ -400,7 +400,7 @@ export const BoardListCardsTool = Tool.make("board_list_cards", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Idempotent, true);
 
-export const BoardGetCardTool = Tool.make("board_get_card", {
+const BoardGetCardTool = Tool.make("board_get_card", {
   description:
     "Read any card on the board by key (e.g. 'Z5-39') or id: its title, stage, labels, blocked and archived state, parent card, base branch, brief, dependencies (with keys, titles and whether each is met), its plans with their full bodies, and its pull request (with linked: true when it was linked explicitly) plus the pull requests of earlier rounds. Read-only. Check pullRequest here before finishing work that linked one. Use it before editing another card, so you change what is there rather than writing blind. It returns briefVersion: pass that back as board_update_card's expectedBriefVersion to have your edit rejected if someone changed the brief after you read it. For your own card's assigned work, history and thread to-do lists use board_get_card_context instead.",
   parameters: Schema.Struct({
@@ -415,7 +415,7 @@ export const BoardGetCardTool = Tool.make("board_get_card", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Idempotent, true);
 
-export const BoardListProjectsTool = Tool.make("board_list_projects", {
+const BoardListProjectsTool = Tool.make("board_list_projects", {
   description:
     "List the projects on this server — each project's id, title, and workspace root. Call this to find the projectId to pass to board_create_card: the id is a UUID, NOT the title or folder name shown in the app, so never guess it from a name. Returns every non-deleted project.",
   parameters: NoParameters,
@@ -427,7 +427,7 @@ export const BoardListProjectsTool = Tool.make("board_list_projects", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Idempotent, true);
 
-export const BoardCreateCardTool = Tool.make("board_create_card", {
+const BoardCreateCardTool = Tool.make("board_create_card", {
   description:
     "Create a new board card and return its allocated key. Use it to populate a board conversationally — e.g. one card per feature. Omit projectId to create the card in this thread's own project (the common case); pass one only to target a different project. A projectId is matched first as a project id, then leniently against a project's title or workspace-root folder name, so a name from the app usually resolves — but the id from board_list_projects is unambiguous. An unresolvable projectId is rejected with the live project list. A card may be created into ANY existing stage. Omit stage for Backlog, or, under a parent group that has already started, for Planning, which begins a planning run; pass stage 'backlog' to park a card there instead. CAUTION: creating into an auto-executing stage (e.g. Building) starts an unattended agent run immediately, with a worktree and a concurrency slot — default to the early stages unless a human asked for mid-pipeline work; the build-onward dependency gate still applies. When you make a card for an existing pull request, pass pullRequest so the card tracks it (status, merge, settling) from the start — a url, or repository and number; it must be on the card's project repository, and a pull request the forge cannot find rejects the call before any card is made. NOT idempotent: a retried call creates a second card, so on a timeout list cards before retrying. Labels are named against the existing catalogue; an unknown label name is rejected with the live list rather than created, so create a new label with board_manage_labels first. dependsOn lists card ids this card waits on. parentCardId (a card key or id) creates the card inside that group. If that card is not a group yet, this turns it into one, which is regrouping: describe it to the user, get their explicit confirmation, and only then pass approved: true (the server refuses without it). A card already being built cannot become a group. Dependencies may cross groups; a dependency on a group is met when the whole group is done. A card cannot depend on a group it is inside, and a group cannot depend on a card inside it. mergeStrategy sets how this card's pull request merges (squash, merge or rebase); omit it to follow its group's strategy or the board default. An upstream-sync card must use merge, or the upstream ancestry is lost.",
   parameters: Schema.Struct({
@@ -451,7 +451,7 @@ export const BoardCreateCardTool = Tool.make("board_create_card", {
   dependencies,
 }).annotate(Tool.Title, "Create board card");
 
-export const BoardMoveCardTool = Tool.make("board_move_card", {
+const BoardMoveCardTool = Tool.make("board_move_card", {
   description:
     "Move a card to another stage, into another group, or both. A stage move obeys the same rules a human drag obeys: a blocked card (unmet dependencies) cannot cross into the build stage or beyond, and you have no privileged path around that. Set override to move to a non-adjacent stage (e.g. dragging backwards). A group's stage follows its children, so moving a group only places it before Building, or starts it at Building. CAUTION: the server does not require a human sign-off on forward moves — moving a card into an auto-executing stage starts an unattended agent run (worktree, concurrency slot). Use this for board tidying and explicitly requested moves, not to advance your own work; leave forward transitions to a human unless one asked you to make them. parentCardId (a card key or id, or null for the top level) moves the card into that group; pass afterCardId or beforeCardId to place it next to a card already there. With both, the regroup happens first and stays if the stage move is then refused. REGROUPING NEEDS A HUMAN: moving cards between groups changes how they build and where they merge, so before calling, describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses a regroup without it.",
   parameters: Schema.Struct({
@@ -470,7 +470,7 @@ export const BoardMoveCardTool = Tool.make("board_move_card", {
   dependencies,
 }).annotate(Tool.Title, "Move board card");
 
-export const BoardUpdateCardTool = Tool.make("board_update_card", {
+const BoardUpdateCardTool = Tool.make("board_update_card", {
   description:
     "Update a card's title, brief, labels, dependencies, external reference, or linked pull request. cardId takes the card's key (e.g. 'Z5-39') or id. Only the fields you pass change. REPLACING fields overwrite the whole value: title; brief (pass null to clear); labels (the whole label set, named against the catalogue; unknown names are rejected, so create a new label with board_manage_labels first); dependsOn (the whole dependency set); externalRef (null clears); pullRequest links a pull request to the card so it tracks its status, merge and settling just as if the card's own branch had opened it — a url, or repository and number, on the card's project repository, checked with the forge first. Use it to link a pull request to ANY card, not only your own, instead of setting externalRef. Linking the pull request the card already has changes nothing; pullRequest null removes an explicit link only, and a pull request found on the card's own branch reappears on the next refresh. ADDING fields keep what is there: briefAppend adds text to the end of the brief; briefSection replaces only the section under one markdown heading (e.g. '## Notes from Z5-34'), or adds it at the end if that heading is not there yet, so repeating the same call does not duplicate it (the section is closed by a '<!-- end <heading> -->' line; leave that line in place); addDependsOn and removeDependsOn add or remove single dependencies by key or id, leaving the rest alone (removing one that is not there does nothing); addLabels and removeLabels add or remove single labels by name, leaving the rest alone (adding one the card has, or removing one it does not, does nothing; a name that is no label at all is rejected; a deleted label can be removed but not added; a name in both is rejected). These are applied to the card as it is when your update lands, so prefer them to read-change-replace: they never overwrite an edit made before yours lands. They do not stop a later whole-brief replace (for example a person saving the brief in the board UI) from overwriting yours. Pass at most one of brief, briefAppend and briefSection, not dependsOn together with addDependsOn/removeDependsOn, and not labels together with addLabels/removeLabels. expectedBriefVersion (from board_get_card or board_get_card_context) makes any brief change fail if the brief changed since you read it; re-read and reapply when that happens. Any dependency change is rejected if it would form a cycle. Dependencies may cross groups; a dependency on a group is met when the whole group is done. A card cannot depend on a group it is inside, and a group cannot depend on a card inside it. planReview turns the card's adversarial plan review on or off and sets its rounds (1-20); null follows the Settings default. Rounds cannot change once a review has started, and turning it off stops a running review. mergeStrategy sets how this card's pull request merges (squash, merge or rebase), and null returns it to its group's strategy or the board default. An upstream-sync card must use merge, or the upstream ancestry is lost.",
   parameters: Schema.Struct({
@@ -513,7 +513,7 @@ const BoardCardWriteResult = Schema.Struct({
   key: TrimmedNonEmptyString,
 });
 
-export const BoardArchiveCardTool = Tool.make("board_archive_card", {
+const BoardArchiveCardTool = Tool.make("board_archive_card", {
   description:
     "Archive a card — the reversible way to take it off the board. The card, its threads, its history and its dependency edges all survive; it leaves the columns, stops gating the cards that depend on it, and is still readable in the archive. Use it for cards that are done with, duplicated, or no longer wanted. Rejected on a card that is already archived, on a card whose plan cards are still unfinished (finish or archive those first), and on YOUR OWN card — archiving reclaims the worktree you are running in and unarchiving does not bring it back, so ask a human to do it from the app. Allowed on a card ANOTHER agent is working on — it is the softer route board_delete_card points at — but it is not free there: the in-flight step is settled as abandoned, so that agent's turn is orphaned, and the card's checkout is reclaimed unless it holds uncommitted or unpushed work. Wait for the step to settle if you are only tidying. Reverse it with board_unarchive_card; use board_delete_card only when nothing should survive. ARCHIVING A WHOLE GROUP: pass confirmCardKey (the group's own key) to archive the group and every card inside it, Deferred ones included, for good — every thread stops, every pull request closes, and every worktree and branch is deleted, remote copies included. Unarchiving brings back the cards, plans and history, never the branch work. Describe exactly that to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
   parameters: Schema.Struct({
@@ -527,7 +527,7 @@ export const BoardArchiveCardTool = Tool.make("board_archive_card", {
   dependencies,
 }).annotate(Tool.Title, "Archive board card");
 
-export const BoardUnarchiveCardTool = Tool.make("board_unarchive_card", {
+const BoardUnarchiveCardTool = Tool.make("board_unarchive_card", {
   description:
     "Restore an archived card to its stage's column, re-arming the dependency edges pointing at it. Rejected on a card that is not archived. Find archived cards with board_list_cards.",
   parameters: Schema.Struct({ cardId: BoardCardId }),
@@ -536,7 +536,7 @@ export const BoardUnarchiveCardTool = Tool.make("board_unarchive_card", {
   dependencies,
 }).annotate(Tool.Title, "Unarchive board card");
 
-export const BoardDeleteCardTool = Tool.make("board_delete_card", {
+const BoardDeleteCardTool = Tool.make("board_delete_card", {
   description:
     "Delete a card outright. IRREVERSIBLE and not what you want in most cases: the card leaves the board entirely, its rows are purged from every board table, the threads linked to it are deleted with their whole conversation, and its worktree and board/* branches are reclaimed — unmerged work on that branch is gone. Its key is never re-issued. Prefer board_archive_card, which is reversible and keeps all of that; delete only when a human asked for a card and its history to be destroyed, or for a card created in error. Rejected on a card whose plan cards still exist (delete those first), on a card with WORK IN FLIGHT — a step that has not settled means an agent is inside that worktree, so archive it or wait instead — and on YOUR OWN card — deleting the card you are working on would delete this thread and the worktree you are running in, so ask a human to do it from the app.",
   parameters: Schema.Struct({ cardId: BoardCardId }),
@@ -555,7 +555,7 @@ const BoardRegroupResult = Schema.Struct({
 
 const regroupApproved = Schema.optional(Schema.Boolean);
 
-export const BoardIndentCardsTool = Tool.make("board_indent_cards", {
+const BoardIndentCardsTool = Tool.make("board_indent_cards", {
   description:
     "Indent cards one level: they move inside the card just above them, which becomes a group if it is not one yet. The cards must share a parent. A card already being built cannot become a group. Grouping alone never touches git. REGROUPING NEEDS A HUMAN: moving cards between groups changes how they build and where they merge, so before calling, describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses a regroup without it.",
   parameters: Schema.Struct({
@@ -568,7 +568,7 @@ export const BoardIndentCardsTool = Tool.make("board_indent_cards", {
   dependencies,
 }).annotate(Tool.Title, "Indent board cards");
 
-export const BoardOutdentCardsTool = Tool.make("board_outdent_cards", {
+const BoardOutdentCardsTool = Tool.make("board_outdent_cards", {
   description:
     "Outdent cards one level: they move out of their group to sit directly after it. The cards must share a parent. A group left with no cards becomes an ordinary card again, no further on than Sprint. REGROUPING NEEDS A HUMAN: moving cards between groups changes how they build and where they merge, so before calling, describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses a regroup without it.",
   parameters: Schema.Struct({
@@ -581,7 +581,7 @@ export const BoardOutdentCardsTool = Tool.make("board_outdent_cards", {
   dependencies,
 }).annotate(Tool.Title, "Outdent board cards");
 
-export const BoardGroupCardsTool = Tool.make("board_group_cards", {
+const BoardGroupCardsTool = Tool.make("board_group_cards", {
   description:
     "Put cards into a new group titled title, created beside them under their shared parent. The cards must share a parent. Returns the new group's key. REGROUPING NEEDS A HUMAN: moving cards between groups changes how they build and where they merge, so before calling, describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses a regroup without it.",
   parameters: Schema.Struct({
@@ -659,7 +659,7 @@ const BoardCancelCardWorkTool = Tool.make("board_cancel_card_work", {
   dependencies,
 }).annotate(Tool.Title, "Cancel a card's work and make it a group");
 
-export const BoardSetGroupSettingsTool = Tool.make("board_set_group_settings", {
+const BoardSetGroupSettingsTool = Tool.make("board_set_group_settings", {
   description:
     "Change a group's settings, which every child that does not set its own value inherits. target 'own' gives the group its own integration branch, which its children merge into and which is reviewed and merged to its own target once they are all done; 'inherit' passes the children through to wherever the group itself lands. Switching to 'own' turns autoMerge on and switching to 'inherit' turns it off, unless you pass autoMerge too. target is locked while any card inside has started building. autoBuild: ready children with their dependencies met start themselves once the group has been started; turning it off never stops a running child. autoMerge: children merge themselves, into the group's branch or wherever they land. autoPlan: children are planned by the agent without questions; their plans wait for approval unless autoBuild is on too. Only the fields you pass change, and they apply at once to inheriting children already under way. These settings decide how cards build and merge, so describe the change to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
   parameters: Schema.Struct({
@@ -688,7 +688,7 @@ const BoardManagedLabel = Schema.Struct({
   cardCount: Schema.Number,
 });
 
-export const BoardManageLabelsTool = Tool.make("board_manage_labels", {
+const BoardManageLabelsTool = Tool.make("board_manage_labels", {
   description:
     "List and manage the board's label catalogue. Labels are board-wide, shared by every project, and named case-insensitively: no two live labels share a name. action 'list' returns the catalogue (pass includeDeleted to see deleted labels too). action 'create' adds a label called name, with colour as a 6-digit hex such as '#3b82f6' or omitted to have one picked for you. To tag a card, create the label first if it does not exist, then pass it to board_update_card's addLabels. action 'update' renames a live label (newName) and/or recolours it (colour); a deleted label cannot be updated, so restore it first. action 'delete' retires a label: it leaves the catalogue, cards that carry it keep it shown muted, and it can be restored. Delete is refused while any non-archived card carries the label, naming those cards; pass force: true only when you mean to retire it from them too. action 'restore' brings a deleted label back, and is refused if a live label now has its name; prefer restore over creating a deleted name again. Every action returns labels: the whole catalogue for list, or the one label it touched, each with its colour and how many non-archived cards carry it. Every action, list included, is a board write: it needs your thread's live run and a client allowed to write.",
   parameters: Schema.Struct({
@@ -711,7 +711,7 @@ export const BoardManageLabelsTool = Tool.make("board_manage_labels", {
 
 // ── Plan tools ─────────────────────────────────────────────────────────
 
-export const BoardProposePlansTool = Tool.make("board_propose_plans", {
+const BoardProposePlansTool = Tool.make("board_propose_plans", {
   // T3o card 11: the array framing is inverted deliberately. Advertising "an
   // ordered set of plans" with a dependency graph read as "the expected output
   // is a decomposition", and a single plan read as under-using the tool — so
@@ -737,7 +737,7 @@ export const BoardProposePlansTool = Tool.make("board_propose_plans", {
   dependencies,
 }).annotate(Tool.Title, "Propose board plans");
 
-export const BoardGetPlanTool = Tool.make("board_get_plan", {
+const BoardGetPlanTool = Tool.make("board_get_plan", {
   description:
     "Read one plan of your card, or of a group your card sits in, with its metadata and full markdown body, by plan id (from board_get_card_context or board_propose_plans). Your card is resolved from your thread; a plan belonging to any other card is not returned.",
   parameters: Schema.Struct({
@@ -751,7 +751,7 @@ export const BoardGetPlanTool = Tool.make("board_get_plan", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Idempotent, true);
 
-export const BoardWritePlanTool = Tool.make("board_write_plan", {
+const BoardWritePlanTool = Tool.make("board_write_plan", {
   description:
     "Replace the markdown body of one of your card's plans. Rejected once the plan is locked — locking happens when the plan is materialised to a file at build time, after which the file is the single source of truth and you edit it directly instead. Your card is resolved from your thread.",
   parameters: Schema.Struct({

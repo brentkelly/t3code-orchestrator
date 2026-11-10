@@ -100,7 +100,7 @@ export type BoardLabelId = typeof BoardLabelId.Type;
     swatches below are all 6-digit, and free choice is allowed as long as it
     matches. Not branded: it stays a plain string so seed constants and test
     fixtures need no `.make`. */
-export const BOARD_LABEL_COLOUR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+const BOARD_LABEL_COLOUR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 export const BoardLabelColour = TrimmedNonEmptyString.check(
   Schema.isPattern(BOARD_LABEL_COLOUR_PATTERN),
 );
@@ -292,7 +292,7 @@ export function boardLabelsAreSeedOnly(labels: ReadonlyArray<BoardLabel>): boole
 export const LegacyBoardCardType = Schema.Literals(["feature", "bug", "chore"]);
 export type LegacyBoardCardType = typeof LegacyBoardCardType.Type;
 
-export function legacyBoardCardTypeLabelId(type: LegacyBoardCardType): BoardLabelId {
+function legacyBoardCardTypeLabelId(type: LegacyBoardCardType): BoardLabelId {
   return BOARD_SEED_LABEL_IDS[type];
 }
 
@@ -922,7 +922,7 @@ export function isBoardCardPullRequestTerminal(pullRequest: BoardCardPullRequest
  * branch and found nothing blocking; the other means the budget ran out with
  * findings still open and nobody signed anything off.
  */
-export const BOARD_REVIEW_LOOP_OUTCOMES = [
+const BOARD_REVIEW_LOOP_OUTCOMES = [
   /** A phase is due or in flight. */
   "running",
   /** A round closed with nothing blocking — the loop is settled. */
@@ -1065,7 +1065,7 @@ export function isEmptyBoardCardModelOverrides(overrides: BoardCardModelOverride
 
 /** The prefix every carried finding id starts with (T3O-51). Reserved: a
     reviewer may not mint an id with it. */
-export const BOARD_REVIEW_CARRIED_ID_PREFIX = "carried:";
+const BOARD_REVIEW_CARRIED_ID_PREFIX = "carried:";
 
 /** One finding a human carried out of a stuck round (T3O-51). `findingId` is
     `carried:r<origRound>:<origId>`, and carrying it again keeps that id. */
@@ -1084,7 +1084,7 @@ export type BoardReviewCarriedFinding = typeof BoardReviewCarriedFinding.Type;
 /** A human's ruling on a stuck round's findings, carried into a later round
     (T3O-51). `fix` sides with the adjudicator: the findings are must-fix.
     `dismiss` sides with triage: the findings are settled as not issues. */
-export const BOARD_REVIEW_CARRY_RULINGS = ["fix", "dismiss"] as const;
+const BOARD_REVIEW_CARRY_RULINGS = ["fix", "dismiss"] as const;
 export const BoardReviewCarryRuling = Schema.Literals(BOARD_REVIEW_CARRY_RULINGS);
 export type BoardReviewCarryRuling = typeof BoardReviewCarryRuling.Type;
 
@@ -1279,7 +1279,7 @@ export function readBoardPlanReviewReport(payload: string | null): {
  * - `other` — a structural refusal the board recognises and knows is
  *   permanent (a closed pull request, a base that no longer matches).
  */
-export const BOARD_CARD_AUTO_MERGE_CLASSIFICATIONS = [
+const BOARD_CARD_AUTO_MERGE_CLASSIFICATIONS = [
   "soft",
   "checks-failed",
   "approval-required",
@@ -2669,7 +2669,7 @@ export const BoardActivityId = TrimmedNonEmptyString.pipe(Schema.brand("BoardAct
 export type BoardActivityId = typeof BoardActivityId.Type;
 
 /** A step's terminal outcome (D4 completion contract). */
-export const BOARD_STEP_OUTCOMES = ["succeeded", "blocked", "failed"] as const;
+const BOARD_STEP_OUTCOMES = ["succeeded", "blocked", "failed"] as const;
 export const BoardStepOutcome = Schema.Literals(BOARD_STEP_OUTCOMES);
 export type BoardStepOutcome = typeof BoardStepOutcome.Type;
 
@@ -2745,7 +2745,7 @@ export type BoardStepStatus = typeof BoardStepStatus.Type;
 
 /** The terminal step statuses — a settled step, past which no recovery runs.
     A card whose step is in one of these is not being supervised. */
-export const BOARD_TERMINAL_STEP_STATUSES = ["succeeded", "failed", "abandoned"] as const;
+const BOARD_TERMINAL_STEP_STATUSES = ["succeeded", "failed", "abandoned"] as const;
 
 /** Whether a step status is terminal (settled). The single reader boot
     reconciliation and the reactor both use, so "still supervised" is one
@@ -2758,7 +2758,7 @@ export function isBoardTerminalStepStatus(status: BoardStepStatus): boolean {
     nothing until a human (or, from T3O-19, a schedule) acts. The single reader
     the decider's two resume paths share, so "what can be resumed" has one
     definition and a fourth parked status cannot be added to only half of it. */
-export const BOARD_PARKED_STEP_STATUSES = ["stalled", "awaiting-input", "paused"] as const;
+const BOARD_PARKED_STEP_STATUSES = ["stalled", "awaiting-input", "paused"] as const;
 
 /** Whether a step status is parked — see `BOARD_PARKED_STEP_STATUSES`. */
 export function isBoardParkedStepStatus(status: BoardStepStatus): boolean {
@@ -2780,7 +2780,7 @@ export function isBoardParkedStepStatus(status: BoardStepStatus): boolean {
  *   without completing the step and without asking anything. Renders amber,
  *   "Needs a human".
  */
-export const BOARD_STEP_AWAITING_REASONS = ["question", "stopped"] as const;
+const BOARD_STEP_AWAITING_REASONS = ["question", "stopped"] as const;
 export const BoardCardStepAwaitingReason = Schema.Literals(BOARD_STEP_AWAITING_REASONS);
 export type BoardCardStepAwaitingReason = typeof BoardCardStepAwaitingReason.Type;
 
@@ -2807,7 +2807,7 @@ export type BoardCardStepAwaitingReason = typeof BoardCardStepAwaitingReason.Typ
  * back from shoving an unanswered question, a human's pause or an exhausted
  * escalation back into work.
  */
-export const BOARD_STEP_STALLED_REASONS = [
+const BOARD_STEP_STALLED_REASONS = [
   "usage-limit",
   "waiting-retry",
   "gave-up",
@@ -2843,7 +2843,7 @@ export type BoardCardStepStalledReason = typeof BoardCardStepStalledReason.Type;
  * read. Every guard in the reactor and the decider branches on the status, so
  * `awaiting-input` keeps meaning exactly one thing.
  */
-export const BOARD_STEP_PARKED_REASONS = [...BOARD_STEP_AWAITING_REASONS, "paused"] as const;
+const BOARD_STEP_PARKED_REASONS = [...BOARD_STEP_AWAITING_REASONS, "paused"] as const;
 export const BoardCardStepParkedReason = Schema.Literals(BOARD_STEP_PARKED_REASONS);
 export type BoardCardStepParkedReason = typeof BoardCardStepParkedReason.Type;
 
@@ -3186,7 +3186,7 @@ export function boardPlanId(cardId: BoardCardId, key: string): BoardPlanId {
  * it is now sourced from the runtime `user-input.requested` event rather than
  * from a tool an agent had to remember to call.
  */
-export const BOARD_CARD_ACTIVITY_KINDS = [
+const BOARD_CARD_ACTIVITY_KINDS = [
   "card-created",
   "card-moved",
   /** The card was moved to another project (T3O-33), retiring its old key. */
@@ -3906,13 +3906,6 @@ export function boardStageEntryRecoveryCount(board: BoardState, cardId: BoardCar
     .reduce((total, state) => total + state.stageEntryRecoveries, 0);
 }
 
-/** Every card whose live step has given up (t3o-17, D3): the `stalled` set the
-    board surfaces so a human can find every card that needs rescuing without
-    opening each. */
-export function boardStalledStepStates(board: BoardState): ReadonlyArray<BoardCardStepState> {
-  return (board.stepStates ?? []).filter((state) => state.status === "stalled");
-}
-
 /**
  * Whether a `stalled` step is one the BOARD will start again by itself (T3O-22,
  * D7/D9) — a usage-limit park waiting for its provider's window, or a backoff rung
@@ -4407,7 +4400,7 @@ export function boardStageBeforeBuild(board: BoardState): BoardStageDefinition |
 
 // ── Automation (T3O-38) ────────────────────────────────────────────────
 
-export const BOARD_AUTOMATION_TOGGLES = ["autoPlan", "autoBuild", "autoMerge"] as const;
+const BOARD_AUTOMATION_TOGGLES = ["autoPlan", "autoBuild", "autoMerge"] as const;
 export type BoardAutomationToggle = (typeof BOARD_AUTOMATION_TOGGLES)[number];
 
 /** Each toggle's name as the card and the tools show it. */
@@ -4977,7 +4970,7 @@ export function deriveBoardCardPlanProgress(input: {
  * (a stalled step whose thread also has a pending question) and the face has
  * room for one, so the list IS the ranking.
  */
-export const BOARD_CARD_ATTENTION_REASONS = [
+const BOARD_CARD_ATTENTION_REASONS = [
   /** A human stopped the step and it is parked until they resume it (T3O-23).
    *
       Ranked FIRST because it is the definitive statement about the card's live
@@ -5077,7 +5070,7 @@ export const BOARD_ATTENTION_SETTLE_MS = 5_000;
  * Returns null for an unreadable or absent instant, so every caller composes a
  * label that simply omits the time rather than printing `Invalid Date`.
  */
-export function boardShortClock(iso: string | null | undefined): string | null {
+function boardShortClock(iso: string | null | undefined): string | null {
   if (iso == null) return null;
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return null;
@@ -8349,7 +8342,7 @@ const todoTextEncoder = new TextEncoder();
 /** Truncate on code-point boundaries (never splitting a surrogate pair),
     reserving room for the ellipsis, and trim before it so the result still
     decodes as a trimmed string on the receiving client. */
-export function boundBoardTodoText(text: string, maxBytes: number): string {
+function boundBoardTodoText(text: string, maxBytes: number): string {
   if (todoTextEncoder.encode(text).length <= maxBytes) return text;
   let kept = "";
   let keptBytes = 0;
@@ -9660,18 +9653,12 @@ export function isBoardCommand<Command extends { readonly type: string }>(
   return command.type.startsWith("board.");
 }
 
-export function isBoardEvent<Event extends { readonly type: string }>(
-  event: Event,
-): event is Extract<Event, { type: `board.${string}` }> {
-  return event.type.startsWith("board.");
-}
-
 /**
  * The board's registries: the client commands `board.dispatchCommand` takes and
  * the deltas `board.subscribeBoard` carries. These are the only places a new
  * board command/event/delta needs registering on the contracts side.
  */
-export const BOARD_CLIENT_COMMANDS = [
+const BOARD_CLIENT_COMMANDS = [
   BoardCardCreateCommand,
   BoardCardMoveCommand,
   BoardCardMoveCardsCommand,
@@ -9715,7 +9702,7 @@ export const BOARD_CLIENT_COMMANDS = [
  * the RPC seam layer. Adding another internal board command grows this
  * registry and touches no upstream-owned file.
  */
-export const BOARD_INTERNAL_COMMANDS = [
+const BOARD_INTERNAL_COMMANDS = [
   BoardCardSyncGroupsCommand,
   BoardCardProvisionWorktreeCommand,
   BoardCardRecordWorktreeCommand,
@@ -9882,7 +9869,7 @@ export const BOARD_EVENT_TYPES = [
   "board.card-ci-recorded",
 ] as const;
 
-export const BOARD_SHELL_STREAM_EVENTS = [
+const BOARD_SHELL_STREAM_EVENTS = [
   BoardCardUpsertedShellEvent,
   BoardCardRemovedShellEvent,
   BoardCardQueuedShellEvent,
@@ -11599,7 +11586,7 @@ export const DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY = 20;
 /** Finding severity, ported verbatim from the `pullrequest-review` skill (D5).
     `critical` and `improvement` block a review round; `nitpick` never does, so
     a round reporting only nitpicks converges. */
-export const BOARD_REVIEW_SEVERITIES = ["critical", "improvement", "nitpick"] as const;
+const BOARD_REVIEW_SEVERITIES = ["critical", "improvement", "nitpick"] as const;
 export const BoardReviewSeverity = Schema.Literals(BOARD_REVIEW_SEVERITIES);
 export type BoardReviewSeverity = typeof BoardReviewSeverity.Type;
 
@@ -11634,7 +11621,7 @@ export type BoardReviewPayload = typeof BoardReviewPayload.Type;
 
 /** A triage disposition (D4): for each blocking finding, either a fix or a
     reasoned rejection. */
-export const BOARD_REVIEW_TRIAGE_ACTIONS = ["fixed", "rejected"] as const;
+const BOARD_REVIEW_TRIAGE_ACTIONS = ["fixed", "rejected"] as const;
 export const BoardReviewTriageAction = Schema.Literals(BOARD_REVIEW_TRIAGE_ACTIONS);
 export type BoardReviewTriageAction = typeof BoardReviewTriageAction.Type;
 
@@ -11657,7 +11644,7 @@ export type BoardTriagePayload = typeof BoardTriagePayload.Type;
     `escalated` (T3O-55): the adjudicator hands a rejected blocking finding to
     a human. Triage never escalates; the adjudicator is the only way a finding
     reaches a human, and the round stops stuck without a re-triage pass. */
-export const BOARD_REVIEW_VERDICTS = [
+const BOARD_REVIEW_VERDICTS = [
   "fix-upheld",
   "fix-incomplete",
   "fix-absent",
@@ -11689,7 +11676,7 @@ export type BoardAdjudicatePayload = typeof BoardAdjudicatePayload.Type;
 /** A re-triage disposition (T3O-51): first-pass triage's two answers.
     `escalated` is legacy: re-triage could hand a finding to a human before
     T3O-55; stored records still decode, new completions are refused. */
-export const BOARD_REVIEW_RETRIAGE_ACTIONS = ["fixed", "rejected", "escalated"] as const;
+const BOARD_REVIEW_RETRIAGE_ACTIONS = ["fixed", "rejected", "escalated"] as const;
 export const BoardReviewRetriageAction = Schema.Literals(BOARD_REVIEW_RETRIAGE_ACTIONS);
 export type BoardReviewRetriageAction = typeof BoardReviewRetriageAction.Type;
 
@@ -12115,7 +12102,7 @@ export function boardStepPayloadDefect(input: {
 
 /** A Heads-up note on a build summary (T3O-21): a deviation from the plan,
     something left undone, or a shortcut taken. These never go in `areas`. */
-export const BOARD_BUILD_SUMMARY_NOTE_KINDS = ["plan_change", "not_done", "shortcut"] as const;
+const BOARD_BUILD_SUMMARY_NOTE_KINDS = ["plan_change", "not_done", "shortcut"] as const;
 export const BoardBuildSummaryNote = Schema.Struct({
   kind: Schema.Literals(BOARD_BUILD_SUMMARY_NOTE_KINDS),
   text: TrimmedNonEmptyString,
@@ -12126,12 +12113,7 @@ export type BoardBuildSummaryNoteKind = BoardBuildSummaryNote["kind"];
 
 /** One check the build agent ran or deliberately skipped. `fail_preexisting`
     is a failure this card did not cause. */
-export const BOARD_BUILD_SUMMARY_CHECK_STATUSES = [
-  "pass",
-  "not_run",
-  "fail_preexisting",
-  "fail",
-] as const;
+const BOARD_BUILD_SUMMARY_CHECK_STATUSES = ["pass", "not_run", "fail_preexisting", "fail"] as const;
 export const BoardBuildSummaryCheck = Schema.Struct({
   status: Schema.Literals(BOARD_BUILD_SUMMARY_CHECK_STATUSES),
   name: TrimmedNonEmptyString,
@@ -12259,7 +12241,7 @@ const BOARD_REVIEW_OVERRULING_VERDICTS: ReadonlySet<BoardReviewVerdict> = new Se
 ]);
 
 /** Whether two commit SHAs name the same commit, either possibly abbreviated. */
-export function boardReviewShaMatches(a: string, b: string): boolean {
+function boardReviewShaMatches(a: string, b: string): boolean {
   const left = a.trim().toLowerCase();
   const right = b.trim().toLowerCase();
   if (left.length === 0 || right.length === 0) return false;
@@ -12268,14 +12250,14 @@ export function boardReviewShaMatches(a: string, b: string): boolean {
 
 /** The id a finding is carried under (T3O-51): an already-carried finding
     keeps its id, so carrying it again still names the round it came from. */
-export function boardReviewCarriedFindingId(round: number, findingId: string): string {
+function boardReviewCarriedFindingId(round: number, findingId: string): string {
   return findingId.startsWith(BOARD_REVIEW_CARRIED_ID_PREFIX)
     ? findingId
     : `${BOARD_REVIEW_CARRIED_ID_PREFIX}r${round}:${findingId}`;
 }
 
 /** The round a carried id was first raised in, or null for a reviewer's id. */
-export function boardReviewCarriedOrigin(
+function boardReviewCarriedOrigin(
   findingId: string,
 ): { readonly round: number; readonly findingId: string } | null {
   const match = /^carried:r(\d+):(.+)$/.exec(findingId);
@@ -12748,7 +12730,7 @@ export function boardReviewQuestionAnswer(stepId: string): string | null {
 /** The lowest budget a human's Fix it leaves the loop (T3O-51): a round that
     carried "fix" findings and landed a fix owes one more round, so the fix is
     always reviewed, even past the budget. */
-export function boardReviewFixItFloor(input: {
+function boardReviewFixItFloor(input: {
   readonly completions: ReadonlyArray<BoardStepCompletion>;
   readonly carriedFindings: Readonly<Record<string, BoardReviewCarry>>;
 }): number {

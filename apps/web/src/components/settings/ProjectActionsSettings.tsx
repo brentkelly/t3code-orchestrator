@@ -91,6 +91,7 @@ export function ProjectActionsSettings() {
       runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
       waitForSetup: fileScript.runOnWorktreeCreate === true && fileScript.async === false,
       runOnSettle: fileScript.runOnSettle ?? false,
+      stopOnSettle: fileScript.stopOnSettle ?? false,
       runOnWorktreeRemove: fileScript.runOnWorktreeRemove ?? false, // T3o: T3O-23
       keybinding: null,
       previewUrl: fileScript.previewUrl ?? null,

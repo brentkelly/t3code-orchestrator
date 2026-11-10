@@ -20,7 +20,7 @@ export function useBoardWorkersState(): BoardWorkersState {
  * second, and every new summary would otherwise re-render every card on the
  * board.
  */
-export function boardWorkersCardView(state: BoardWorkersState): BoardWorkersState {
+function boardWorkersCardView(state: BoardWorkersState): BoardWorkersState {
   return {
     ...state,
     setups: state.setups.map((setup) => ({ ...setup, stage: null, percent: null })),

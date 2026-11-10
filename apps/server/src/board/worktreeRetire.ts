@@ -209,7 +209,7 @@ const findProcessesInDirectoryMac = (directory: string): Promise<ReadonlyArray<W
   });
 
 /** The host's process finder. Windows refuses to delete open files on its own. */
-export const findProcessesInDirectory = (
+const findProcessesInDirectory = (
   directory: string,
 ): Effect.Effect<ReadonlyArray<WorktreeProcess>> =>
   Effect.gen(function* () {
@@ -262,7 +262,7 @@ export type WorktreeHookExit =
  * a timeout can kill everything it started. Output goes to the server log one
  * line at a time, prefixed with the worktree path.
  */
-export const runWorktreeHook = Effect.fn("runWorktreeHook")(function* (run: WorktreeHookRun) {
+const runWorktreeHook = Effect.fn("runWorktreeHook")(function* (run: WorktreeHookRun) {
   // Windows has no process groups to kill; there the shell alone is stopped.
   const detached = (yield* HostProcessPlatform) !== "win32";
   const lines = yield* Queue.unbounded<string, Cause.Done>();
@@ -338,7 +338,7 @@ const hookFailure = (name: string, exit: WorktreeHookExit, timeoutMs: number): s
 };
 
 /** The project's remove scripts, in stored order. */
-export const worktreeRemoveScripts = (
+const worktreeRemoveScripts = (
   scripts: ReadonlyArray<ProjectScript>,
 ): ReadonlyArray<ProjectScript> => scripts.filter((script) => script.runOnWorktreeRemove === true);
 

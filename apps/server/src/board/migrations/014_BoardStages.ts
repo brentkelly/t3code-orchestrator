@@ -12,6 +12,7 @@
 // corrupt a running card; and drops `board_cards.recipe_snapshot`, the
 // card-level snapshot the frozen run row replaces (D1). Greenfield (D14): no
 // backfill, the dev database may be recreated.
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -91,10 +92,12 @@ export default Effect.gen(function* () {
     created_at: seed.at,
     updated_at: seed.at,
   }));
-  yield* sql`
-    INSERT INTO board_stages ${sql.insert(seedRows)}
-    ON CONFLICT (stage_id) DO NOTHING
-  `;
+  if (Arr.isArrayNonEmpty(seedRows)) {
+    yield* sql`
+      INSERT INTO board_stages ${sql.insert(seedRows)}
+      ON CONFLICT (stage_id) DO NOTHING
+    `;
+  }
 
   // Frozen execution config on the step-state row (D12). NOT NULL columns added
   // with defaults, as SQLite requires; every real row is written with resolved

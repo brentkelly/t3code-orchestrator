@@ -10,7 +10,7 @@
  */
 import type { BoardMcpRelayOutcome, BoardMcpRelayRequest, EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -82,7 +82,7 @@ export const makeBoardMcpRelayClient = Effect.gen(function* () {
     ]),
   );
   const fileSystem = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const scope = yield* Effect.scope;
   const inflight = new Map<string, Deferred.Deferred<BoardMcpRelayOutcome>>();
 
@@ -92,7 +92,7 @@ export const makeBoardMcpRelayClient = Effect.gen(function* () {
       connections
         .get(workerId)
         .pipe(
-          Effect.flatMap((rpc) => stageCardFilesOnWorker({ rpc, fileSystem, crypto, staging })),
+          Effect.flatMap((rpc) => stageCardFilesOnWorker({ rpc, fileSystem, digest, staging })),
         );
 
   const answer: BoardMcpRelayClientShape["answer"] = (workerId, request) =>

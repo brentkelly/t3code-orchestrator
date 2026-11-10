@@ -20,6 +20,7 @@ import {
   type RepositoryIdentity,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -44,7 +45,7 @@ import { makeFakeWorkerLayer } from "./workers.testkit.ts";
 
 export const CENTRAL_ID = EnvironmentId.make("env-central");
 export const WORKER_ID = EnvironmentId.make("env-w1");
-export const WORKER_URL = "http://w1:3773";
+const WORKER_URL = "http://w1:3773";
 
 /** The repository both servers have a checkout of. */
 export const REPOSITORY: RepositoryIdentity = {
@@ -61,11 +62,11 @@ export const REPOSITORY: RepositoryIdentity = {
 
 export const WORKER_PROJECT_ID = ProjectId.make("worker-project");
 /** The session the central server holds on the worker. */
-export const BOARD_SESSION_ID = AuthSessionId.make("session-board");
+const BOARD_SESSION_ID = AuthSessionId.make("session-board");
 export const WORKER_ROOT = "/home/worker/repo";
 
 /** The provider instance the worker reports — the one the harness's steps use. */
-export const WORKER_PROVIDER: BoardWorkerProvider = {
+const WORKER_PROVIDER: BoardWorkerProvider = {
   instanceId: ProviderInstanceId.make("codex"),
   driver: "codex",
   displayName: "Codex",
@@ -111,7 +112,7 @@ export const makeInProcessWorker = (
       threads.localLayer,
       relayStore.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3o-worker-" }),
-    ).pipe(Layer.provideMerge(NodeServices.layer));
+    ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
     // Built once: each build of the config makes a state directory of its own.
     const workerContext = yield* Layer.build(workerServices);
     const relayHost = yield* makeMcpRelayHost(options.relayTimeout).pipe(

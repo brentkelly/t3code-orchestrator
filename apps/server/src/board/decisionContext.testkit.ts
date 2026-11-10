@@ -42,7 +42,7 @@ export type BoardOrchestrationReadModel = BoardReadModel & {
 };
 
 /** The context the engine would load for `command`, read off a full model. */
-export function boardDecisionContextFromModel(
+function boardDecisionContextFromModel(
   command: BoardCommand,
   model: Pick<BoardOrchestrationReadModel, "projects" | "threads">,
   extra?: { readonly brief?: string | null },

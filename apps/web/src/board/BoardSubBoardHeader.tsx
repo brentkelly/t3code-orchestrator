@@ -129,11 +129,7 @@ export function BoardSubBoardHeader({
       {/* The chart is drawn from the group's PLANS (t3o-29, D3), so the toggle
           only exists once there are some. */}
       {(detail?.plans.length ?? 0) > 0 ? (
-        <button
-          className={boardHeaderButtonClass(chartOpen)}
-          onClick={onToggleChart}
-          type="button"
-        >
+        <button className={boardHeaderButtonClass(chartOpen)} onClick={onToggleChart} type="button">
           <Link2Icon />
           {chartOpen ? "Hide chart" : "Dependency chart"}
         </button>

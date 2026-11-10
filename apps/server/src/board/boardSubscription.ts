@@ -51,7 +51,7 @@ import { BoardWorkers } from "./workers/BoardWorkers.ts";
  * replayed link change is a `card-threads` read, and a snapshot is a handful of
  * bounded table scans. Matches the orchestration shell's own bound.
  */
-export const BOARD_RESUME_MAX_GAP = 1_000;
+const BOARD_RESUME_MAX_GAP = 1_000;
 
 /** The coalescing window, matching the orchestration shell's. */
 const BOARD_STREAM_WINDOW = Duration.millis(50);
@@ -157,7 +157,7 @@ const toSnapshotError = (message: string) => (cause: unknown) =>
 /** One `card-threads` delta per card with a live link, stamped with the board
     head (the client applies `card-threads` unguarded). A card whose links were
     all removed while the client was away is covered by the replayed unlink. */
-export const cardThreadsResync = (
+const cardThreadsResync = (
   queries: Pick<BoardQueriesShape, "boardAllCardThreads">,
   sequence: number,
 ): Effect.Effect<ReadonlyArray<BoardShellStreamItem>, BoardSnapshotError> =>

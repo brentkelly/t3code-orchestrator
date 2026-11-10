@@ -16,7 +16,9 @@ import {
   type BoardCard,
   type BoardState,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -149,7 +151,7 @@ const decideFail = (command: BoardCommand, readModel: BoardOrchestrationReadMode
 /** A card sitting in Ready, which is the state the whole feature is for. */
 const movable = makeCard({ id: "card-1", stage: "ready", key: "P1-4", cardNumber: 4 });
 
-it.layer(NodeServices.layer)("board.card.set-project", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board.card.set-project", (it) => {
   describe("refusals", () => {
     it.effect("refuses a card that does not exist", () =>
       Effect.gen(function* () {

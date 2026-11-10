@@ -46,7 +46,7 @@ const nextLink = (
 
 /** The pause before a run that ended is run again on the same link: one
     second, doubling to thirty while it keeps ending soon after it starts. */
-export const rerunDelay = (reruns: number): Duration.Duration =>
+const rerunDelay = (reruns: number): Duration.Duration =>
   Duration.seconds(Math.min(30, 2 ** Math.min(reruns, 5)));
 
 export const runPerOnlineWorker = (

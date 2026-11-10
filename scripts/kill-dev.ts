@@ -18,11 +18,7 @@ import * as NodeProcess from "node:process";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { resolveGitWorktreePath } from "@t3tools/shared/devHome";
-import {
-  HostProcessEnvironment,
-  HostProcessPlatform,
-  HostProcessWorkingDirectory,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -30,8 +26,8 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Argument, Command, Flag } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { BASE_SERVER_PORT, BASE_WEB_PORT, resolveOffset } from "./dev-runner.ts";
 
@@ -56,7 +52,7 @@ export interface ProcessEntry {
   readonly command: string;
 }
 
-export class KillDevUnsupportedPlatformError extends Schema.TaggedErrorClass<KillDevUnsupportedPlatformError>()(
+export class KillDevUnsupportedPlatformError extends Schema.TaggedError<KillDevUnsupportedPlatformError>()(
   "KillDevUnsupportedPlatformError",
   { platform: Schema.String },
 ) {
@@ -65,7 +61,7 @@ export class KillDevUnsupportedPlatformError extends Schema.TaggedErrorClass<Kil
   }
 }
 
-export class KillDevConfigurationError extends Schema.TaggedErrorClass<KillDevConfigurationError>()(
+export class KillDevConfigurationError extends Schema.TaggedError<KillDevConfigurationError>()(
   "KillDevConfigurationError",
   { cause: Schema.Defect() },
 ) {
@@ -364,69 +360,67 @@ function terminate(
   });
 }
 
-export function runKillDev(input: {
+export const runKillDev = Effect.fn("runKillDev")(function* (input: {
   readonly ports: ReadonlyArray<number>;
   readonly dryRun: boolean;
 }) {
-  return Effect.gen(function* () {
-    const platform = yield* HostProcessPlatform;
-    if (platform !== "linux" && platform !== "darwin" && platform !== "win32") {
-      return yield* new KillDevUnsupportedPlatformError({ platform });
-    }
+  const platform = yield* HostProcess.Platform;
+  if (platform !== "linux" && platform !== "darwin" && platform !== "win32") {
+    return yield* new KillDevUnsupportedPlatformError({ platform });
+  }
 
-    const environment = yield* HostProcessEnvironment;
-    const worktreePath = yield* resolveGitWorktreePath(yield* HostProcessWorkingDirectory);
-    const { offset, source } = yield* resolveOffset({
-      portOffset: parsePort(environment.T3CODE_PORT_OFFSET),
-      devInstance: environment.T3CODE_DEV_INSTANCE,
-      worktreePath,
-    }).pipe(Effect.catchCause((cause) => new KillDevConfigurationError({ cause })));
+  const environment = yield* HostProcess.Environment;
+  const worktreePath = yield* resolveGitWorktreePath(yield* HostProcess.WorkingDirectory);
+  const { offset, source } = yield* resolveOffset({
+    portOffset: parsePort(environment.T3CODE_PORT_OFFSET),
+    devInstance: environment.T3CODE_DEV_INSTANCE,
+    worktreePath,
+  }).pipe(Effect.catchCause((cause) => new KillDevConfigurationError({ cause })));
 
-    const ports = resolveKillPorts({
-      explicitPorts: input.ports,
-      serverPortOverride: parsePort(environment.T3CODE_PORT),
-      offset,
-    });
-
-    yield* Effect.logInfo(
-      `[kill] ports=${ports.join(", ")} source=${input.ports.length > 0 ? "explicit arguments" : source}`,
-    );
-
-    const table = yield* readProcessTable(platform);
-    const selfPid = NodeProcess.pid;
-
-    for (const port of ports) {
-      const listenerPids = yield* readListenerPids(port, platform);
-      if (listenerPids.length === 0) {
-        yield* Effect.logInfo(`[kill] port ${String(port)}: nothing listening`);
-        continue;
-      }
-
-      const targets = selectKillTargets({ table, listenerPids, selfPid });
-      const describe = targets
-        .map((pid) => {
-          const command = table.find((entry) => entry.pid === pid)?.command;
-          return command ? `${String(pid)} (${command.slice(0, 80)})` : String(pid);
-        })
-        .join("\n         ");
-
-      if (input.dryRun) {
-        yield* Effect.logInfo(`[kill] port ${String(port)}: would kill\n         ${describe}`);
-        continue;
-      }
-
-      yield* Effect.logInfo(`[kill] port ${String(port)}: killing\n         ${describe}`);
-      yield* terminate(targets, platform);
-
-      const remaining = yield* readListenerPids(port, platform);
-      yield* remaining.length === 0
-        ? Effect.logInfo(`[kill] port ${String(port)}: free`)
-        : Effect.logWarning(
-            `[kill] port ${String(port)}: still held by ${remaining.join(", ")} — another user's process, or one this shell may not signal.`,
-          );
-    }
+  const ports = resolveKillPorts({
+    explicitPorts: input.ports,
+    serverPortOverride: parsePort(environment.T3CODE_PORT),
+    offset,
   });
-}
+
+  yield* Effect.logInfo(
+    `[kill] ports=${ports.join(", ")} source=${input.ports.length > 0 ? "explicit arguments" : source}`,
+  );
+
+  const table = yield* readProcessTable(platform);
+  const selfPid = NodeProcess.pid;
+
+  for (const port of ports) {
+    const listenerPids = yield* readListenerPids(port, platform);
+    if (listenerPids.length === 0) {
+      yield* Effect.logInfo(`[kill] port ${String(port)}: nothing listening`);
+      continue;
+    }
+
+    const targets = selectKillTargets({ table, listenerPids, selfPid });
+    const describe = targets
+      .map((pid) => {
+        const command = table.find((entry) => entry.pid === pid)?.command;
+        return command ? `${String(pid)} (${command.slice(0, 80)})` : String(pid);
+      })
+      .join("\n         ");
+
+    if (input.dryRun) {
+      yield* Effect.logInfo(`[kill] port ${String(port)}: would kill\n         ${describe}`);
+      continue;
+    }
+
+    yield* Effect.logInfo(`[kill] port ${String(port)}: killing\n         ${describe}`);
+    yield* terminate(targets, platform);
+
+    const remaining = yield* readListenerPids(port, platform);
+    yield* remaining.length === 0
+      ? Effect.logInfo(`[kill] port ${String(port)}: free`)
+      : Effect.logWarning(
+          `[kill] port ${String(port)}: still held by ${remaining.join(", ")} — another user's process, or one this shell may not signal.`,
+        );
+  }
+});
 
 function parsePort(value: string | undefined): number | undefined {
   const trimmed = value?.trim();
@@ -438,11 +432,11 @@ function parsePort(value: string | undefined): number | undefined {
 }
 
 const killDevCli = Command.make("kill-dev", {
-  dryRun: Flag.boolean("dry-run").pipe(
+  dryRun: Flag.Boolean("dry-run").pipe(
     Flag.withDescription("List what would be killed, then exit without signalling anything."),
     Flag.withDefault(false),
   ),
-  ports: Argument.integer("port").pipe(
+  ports: Argument.Int("port").pipe(
     Argument.withDescription(
       "Ports to free. Defaults to this checkout's dev server and web ports.",
     ),

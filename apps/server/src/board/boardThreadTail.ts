@@ -54,7 +54,7 @@ export class BoardThreadTail extends Context.Service<BoardThreadTail, BoardThrea
   "t3/board/boardThreadTail",
 ) {}
 
-export const makeBoardThreadTail = Effect.gen(function* () {
+const makeBoardThreadTail = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const gateway = yield* ThreadGateway;
   const store = makeBoardEventStore(sql);

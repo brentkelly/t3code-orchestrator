@@ -29,6 +29,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import {
   createPendingAttachmentId,
@@ -41,7 +42,7 @@ import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { inferImageExtension } from "../imageMime.ts";
 
 /** Where every card's attachment folder lives. */
-export function boardAttachmentsRoot(input: {
+function boardAttachmentsRoot(input: {
   readonly path: Path.Path;
   readonly stateDir: string;
 }): string {
@@ -146,19 +147,32 @@ export function dedupeBoardAttachmentName(name: string, taken: ReadonlySet<strin
   }
 }
 
-export type BoardAttachmentClaimFailure =
-  | { readonly reason: "upload-missing"; readonly message: string; readonly cause?: unknown }
-  | { readonly reason: "rejected"; readonly message: string }
-  | { readonly reason: "storage"; readonly message: string; readonly cause?: unknown };
+const BoardAttachmentClaimFailure = Schema.Union([
+  Schema.Struct({
+    reason: Schema.Literal("upload-missing"),
+    message: Schema.String,
+    cause: Schema.optionalKey(Schema.Unknown),
+  }),
+  Schema.Struct({ reason: Schema.Literal("rejected"), message: Schema.String }),
+  Schema.Struct({
+    reason: Schema.Literal("storage"),
+    message: Schema.String,
+    cause: Schema.optionalKey(Schema.Unknown),
+  }),
+]);
+export type BoardAttachmentClaimFailure = typeof BoardAttachmentClaimFailure.Type;
 
-export class BoardAttachmentClaimError extends Error {
-  readonly _tag = "BoardAttachmentClaimError";
-  readonly failure: BoardAttachmentClaimFailure;
-  constructor(failure: BoardAttachmentClaimFailure) {
-    super(failure.message);
-    this.failure = failure;
+export class BoardAttachmentClaimError extends Schema.TaggedError<BoardAttachmentClaimError>()(
+  "BoardAttachmentClaimError",
+  { failure: BoardAttachmentClaimFailure },
+) {
+  override get message(): string {
+    return this.failure.message;
   }
 }
+
+const claimError = (failure: BoardAttachmentClaimFailure) =>
+  new BoardAttachmentClaimError({ failure });
 
 /**
  * Copy a pending upload into the card's folder and return the record to
@@ -184,8 +198,7 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const fail = (failure: BoardAttachmentClaimFailure) =>
-    Effect.fail(new BoardAttachmentClaimError(failure));
+  const fail = (failure: BoardAttachmentClaimFailure) => Effect.fail(claimError(failure));
 
   if (input.card.attachments.length >= BOARD_CARD_ATTACHMENTS_MAX) {
     return yield* fail({
@@ -234,13 +247,12 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
     });
   }
   const info = yield* fileSystem.stat(sourcePath).pipe(
-    Effect.mapError(
-      (cause) =>
-        new BoardAttachmentClaimError({
-          reason: "upload-missing",
-          message: `'${input.name}' was not found on the server. Attach it again.`,
-          cause,
-        }),
+    Effect.mapError((cause) =>
+      claimError({
+        reason: "upload-missing",
+        message: `'${input.name}' was not found on the server. Attach it again.`,
+        cause,
+      }),
     ),
   );
   if (Number(info.size) !== input.sizeBytes) {
@@ -267,13 +279,12 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
     mimeType,
   });
   yield* fileSystem.makeDirectory(dir, { recursive: true }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new BoardAttachmentClaimError({
-          reason: "storage",
-          message: `Failed to store '${preferred}' for card ${input.card.key}.`,
-          cause,
-        }),
+    Effect.mapError((cause) =>
+      claimError({
+        reason: "storage",
+        message: `Failed to store '${preferred}' for card ${input.card.key}.`,
+        cause,
+      }),
     ),
   );
   let name = dedupeBoardAttachmentName(preferred, taken);
@@ -301,7 +312,7 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
             exists && attempt < 100
               ? Effect.succeed(false)
               : Effect.fail(
-                  new BoardAttachmentClaimError({
+                  claimError({
                     reason: "storage",
                     message: `Failed to store '${name}' for card ${input.card.key}.`,
                     cause,
@@ -318,13 +329,12 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
     }
     yield* fileSystem.copyFile(sourcePath, target).pipe(
       Effect.tapError(() => fileSystem.remove(target).pipe(Effect.ignore)),
-      Effect.mapError(
-        (cause) =>
-          new BoardAttachmentClaimError({
-            reason: "storage",
-            message: `Failed to store '${name}' for card ${input.card.key}.`,
-            cause,
-          }),
+      Effect.mapError((cause) =>
+        claimError({
+          reason: "storage",
+          message: `Failed to store '${name}' for card ${input.card.key}.`,
+          cause,
+        }),
       ),
     );
     break;

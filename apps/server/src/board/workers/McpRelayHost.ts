@@ -30,11 +30,11 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -44,15 +44,16 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { SessionStore } from "../../auth/SessionStore.ts";
 
 /** The central server could not be asked, or did not answer in time. */
-export class McpRelayUnreachable extends Data.TaggedError("McpRelayUnreachable")<{
-  readonly reason: "not-connected" | "timed-out";
-}> {}
+export class McpRelayUnreachable extends Schema.TaggedError<McpRelayUnreachable>()(
+  "McpRelayUnreachable",
+  { reason: Schema.Literals(["not-connected", "timed-out"]) },
+) {}
 
 /** A session claimed a board another session holds, or answered a call it
     was never sent. */
-export class McpRelayRefused extends Data.TaggedError("McpRelayRefused")<{
-  readonly detail: string;
-}> {}
+export class McpRelayRefused extends Schema.TaggedError<McpRelayRefused>()("McpRelayRefused", {
+  detail: Schema.String,
+}) {}
 
 export type McpRelayCall = Omit<BoardMcpRelayRequest, "callId">;
 
@@ -120,7 +121,7 @@ export const makeMcpRelayHost = (
   sessionActive: (session: AuthSessionId) => Effect.Effect<boolean> = () => Effect.succeed(true),
 ) =>
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const scope = yield* Effect.scope;
     const pending = new Map<string, Pending>();
     const subscribers = new Map<EnvironmentId, Set<Subscriber>>();
@@ -164,7 +165,7 @@ export const makeMcpRelayHost = (
         if (listening === undefined || listening.size === 0) {
           return yield* new McpRelayUnreachable({ reason: "not-connected" });
         }
-        const callId = `relay:${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
+        const callId = `relay:${yield* crypto.uuidV4().pipe(Effect.orDie)}`;
         const entry: Pending = {
           central,
           request: { callId, ...call },

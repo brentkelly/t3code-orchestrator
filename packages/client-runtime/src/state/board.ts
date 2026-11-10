@@ -52,7 +52,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { boardThreadStateSource } from "@t3tools/shared/boardThreadState";
-import type * as Crypto from "effect/Crypto";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -598,7 +598,7 @@ export function planBoardQueueMoveToFront(input: {
 const BOARD_CARD_DETAIL_IDLE_TTL_MS = 5_000;
 
 export function createBoardEnvironmentAtoms<R, ER>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, ER>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | SecureRandom.SecureRandom | R, ER>,
   options: {
     readonly shellStateValueAtom: (
       environmentId: EnvironmentId,

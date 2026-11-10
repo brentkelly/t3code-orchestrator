@@ -58,7 +58,7 @@ export function boardThreadSessionStatus(
  * (upstream #14872), nor a monitor the agent is not waiting on (#24610).
  * Awaited monitors alone read as `monitoring`.
  */
-export function boardThreadBackgroundLiveness(
+function boardThreadBackgroundLiveness(
   thread: BoardThreadShellFields,
 ): "working" | "monitoring" | null {
   const status = boardThreadSessionStatus(thread);

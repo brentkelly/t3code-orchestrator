@@ -41,7 +41,7 @@ export function boardWorkerLabel(workerId: BoardWorkerId, state: BoardWorkersSta
 
 /** Where a card runs, as its shell and the board's default say: its bound
     worker (a pin, or where it holds a worktree), else the default. */
-export function boardCardWorker(
+function boardCardWorker(
   card: Pick<BoardCardShell, "workerId">,
   state: BoardWorkersState,
 ): { readonly workerId: BoardWorkerId; readonly bound: boolean } {
@@ -122,7 +122,7 @@ function setupOf(
 }
 
 /** Whether a worker has a checkout of a project (this server always does). */
-export function boardWorkerHasCheckout(
+function boardWorkerHasCheckout(
   worker: BoardWorkerView,
   projectRepositoryKey: string | null,
 ): boolean {
@@ -320,7 +320,7 @@ export function boardQueueReason(input: {
 /** Whether the board can't run anything on a worker now. `connecting` is a
     first dial, over in seconds, and is not trouble; a redial of a worker
     already offline stays `offline`. */
-export function boardWorkerOutOfReach(worker: BoardWorkerView): boolean {
+function boardWorkerOutOfReach(worker: BoardWorkerView): boolean {
   const state = worker.status.state;
   return state === "offline" || state === "unauthorized" || state === "incompatible";
 }

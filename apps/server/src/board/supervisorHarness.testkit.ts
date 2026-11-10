@@ -55,6 +55,7 @@ import {
 } from "@t3tools/contracts";
 
 import type { BoardMergeState } from "./boardMergeState.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -1305,7 +1306,7 @@ export function withGovernor(
         ),
       ),
     );
-  }).pipe(Effect.provide(NodeServices.layer));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 }
 
 /** A generic stage-crossing event. The reactor keys on `toStage`, so this is how

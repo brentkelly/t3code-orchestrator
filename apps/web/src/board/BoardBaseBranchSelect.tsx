@@ -9,8 +9,7 @@
  * upstream-owned file that a future sync has to reconcile. What IS shared is
  * everything underneath it, none of which needed a change: `usePaginatedBranches`
  * (which takes a `cwd`, not a thread), `VcsRef.isDefault` for the `default`
- * hint, `deriveLocalBranchNameFromRemoteRef` and
- * `shouldLoadNextBranchPageAfterScroll`, and the `Combobox` primitives.
+ * hint, `deriveLocalBranchNameFromRemoteRef`, and the `Combobox` primitives.
  *
  * A search input is not optional (D15): the mockup shows four branches and real
  * repositories have hundreds, which is why the query is paginated and
@@ -32,12 +31,12 @@ import {
   ComboboxTrigger,
 } from "../components/ui/combobox";
 import { cn } from "../lib/utils";
-import { shouldLoadNextBranchPageAfterScroll } from "../state/paginatedBranches";
 import { usePaginatedBranches } from "../state/queries";
 import {
   boardBaseBranchOptions,
   boardBaseBranchSelectedName,
   boardBaseBranchSelectionValue,
+  shouldLoadNextBranchPageAfterScroll,
 } from "./boardBaseBranch";
 
 export function BoardBaseBranchSelect({

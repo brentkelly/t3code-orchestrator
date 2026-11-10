@@ -15,10 +15,7 @@ import {
   type JoinPath,
 } from "./DesktopStatePaths.ts";
 // T3o: desktop identity.
-import {
-  resolveT3oLinuxDesktopEntryName,
-  resolveT3oLinuxWmClass,
-} from "../../../../scripts/lib/t3o-desktop-identity.ts";
+import { resolveT3oLinuxDesktopEntryName } from "../../../../scripts/lib/t3o-desktop-identity.ts";
 
 interface EarlyDesktopSettingsInput {
   readonly env: NodeJS.ProcessEnv;
@@ -31,7 +28,6 @@ type EarlyLinuxElectronOptionsInput = EarlyDesktopSettingsInput;
 
 export interface EarlyLinuxElectronOptions {
   readonly isDevelopment: boolean;
-  readonly linuxWmClass: string;
   readonly linuxDesktopEntryName: string;
   readonly passwordStore: LinuxPasswordStoreSwitch | null;
 }
@@ -151,8 +147,6 @@ export function resolveEarlyLinuxElectronOptions(
   const isDevelopment = isDevelopmentEnvironment(input.env);
   return {
     isDevelopment,
-    // T3o: own WM class.
-    linuxWmClass: resolveT3oLinuxWmClass(isDevelopment),
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
     passwordStore: resolveLinuxPasswordStoreSwitch({
       preference,

@@ -32,12 +32,14 @@ import {
   type BoardCiStepDefinition,
   type BoardCiStepResult,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import {
@@ -113,10 +115,15 @@ export function boardCiLogDir(worktreePath: string, runId: string): string {
 
 const CI_LOG_EXCLUDE = "/.t3/ci/";
 
+class BoardCiLogExcludeError extends Schema.TaggedError<BoardCiLogExcludeError>()(
+  "BoardCiLogExcludeError",
+  { excludePath: Schema.String, cause: Schema.Defect() },
+) {}
+
 /** Keep CI logs out of `git status` (worktree reclaim refuses an untracked
     file) and out of the fix agent's commits, in repos that don't ignore
     `.t3/`. `info/exclude` is shared by every worktree of the repository. */
-export const ensureCiLogsExcluded = (cwd: string): Effect.Effect<void> =>
+const ensureCiLogsExcluded = (cwd: string): Effect.Effect<void> =>
   Effect.callback<string | null>((resume) => {
     NodeChildProcess.execFile(
       "git",
@@ -128,14 +135,17 @@ export const ensureCiLogsExcluded = (cwd: string): Effect.Effect<void> =>
     Effect.flatMap((excludePath) =>
       excludePath === null || excludePath.length === 0
         ? Effect.void
-        : Effect.try(() => {
-            const current = NodeFS.existsSync(excludePath)
-              ? NodeFS.readFileSync(excludePath, "utf8")
-              : "";
-            if (current.split(/\r?\n/).includes(CI_LOG_EXCLUDE)) return;
-            NodeFS.mkdirSync(NodePath.dirname(excludePath), { recursive: true });
-            const separator = current.length === 0 || current.endsWith("\n") ? "" : "\n";
-            NodeFS.appendFileSync(excludePath, `${separator}${CI_LOG_EXCLUDE}\n`);
+        : Effect.try({
+            try: () => {
+              const current = NodeFS.existsSync(excludePath)
+                ? NodeFS.readFileSync(excludePath, "utf8")
+                : "";
+              if (current.split(/\r?\n/).includes(CI_LOG_EXCLUDE)) return;
+              NodeFS.mkdirSync(NodePath.dirname(excludePath), { recursive: true });
+              const separator = current.length === 0 || current.endsWith("\n") ? "" : "\n";
+              NodeFS.appendFileSync(excludePath, `${separator}${CI_LOG_EXCLUDE}\n`);
+            },
+            catch: (cause) => new BoardCiLogExcludeError({ excludePath, cause }),
           }),
     ),
     Effect.catchCause((cause) =>
@@ -311,7 +321,10 @@ const DEFAULT_STEP_TIMING: BoardCiStepTiming = {
     the surrounding fiber is interrupted. Every way out is bounded (T3O-59): a
     step past its time limit settles `timed-out` a grace after its kill even if
     the child never exits, and a log that won't flush is not waited on. */
-export const runBoardCiStep = (input: {
+export const runBoardCiStep = (input: BoardCiStepInput): Effect.Effect<StepExit> =>
+  Effect.flatMap(HostProcess.Environment, (hostEnv) => runStepWithEnv(input, hostEnv));
+
+interface BoardCiStepInput {
   readonly command: string;
   readonly cwd: string;
   readonly timeoutMs: number;
@@ -321,7 +334,12 @@ export const runBoardCiStep = (input: {
   /** Every chunk of output, as it arrives. Must not block. */
   readonly onOutput?: (text: string) => void;
   readonly timing?: BoardCiStepTiming;
-}): Effect.Effect<StepExit> =>
+}
+
+const runStepWithEnv = (
+  input: BoardCiStepInput,
+  hostEnv: NodeJS.ProcessEnv,
+): Effect.Effect<StepExit> =>
   Effect.callback<StepExit>((resume) => {
     const timing = input.timing ?? DEFAULT_STEP_TIMING;
     const log = NodeFS.createWriteStream(input.logPath, { flags: "w" });
@@ -343,7 +361,7 @@ export const runBoardCiStep = (input: {
       shell: true,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, CI: process.env.CI ?? "1", T3O_CI_RESULT: input.resultPath },
+      env: { ...hostEnv, CI: hostEnv.CI ?? "1", T3O_CI_RESULT: input.resultPath },
     });
     // Per-stream decoders keep a multi-byte character split across chunks whole.
     child.stdout?.setEncoding("utf8");

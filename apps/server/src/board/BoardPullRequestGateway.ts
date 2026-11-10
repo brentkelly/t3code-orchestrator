@@ -366,14 +366,13 @@ export const layer: Layer.Layer<
             }),
           );
         }),
-        Effect.catch((error) =>
-          Effect.fail(
+        Effect.mapError(
+          (error) =>
             new BoardPullRequestGatewayError({
               operation: "markReady",
               detail: failureDetail(error),
               refusal: refusalOf(error),
             }),
-          ),
         ),
       );
 
@@ -397,14 +396,13 @@ export const layer: Layer.Layer<
             ),
           );
         }),
-        Effect.catch((error) =>
-          Effect.fail(
+        Effect.mapError(
+          (error) =>
             new BoardPullRequestGatewayError({
               operation: "close",
               detail: failureDetail(error),
               refusal: refusalOf(error),
             }),
-          ),
         ),
       );
 
@@ -455,14 +453,13 @@ export const layer: Layer.Layer<
               mergeMethod: input.method,
             }),
           ),
-          Effect.catch((error) =>
-            Effect.fail(
+          Effect.mapError(
+            (error) =>
               new BoardPullRequestGatewayError({
                 operation: "merge",
                 detail: failureDetail(error),
                 refusal: refusalOf(error),
               }),
-            ),
           ),
         ),
       mergeState: (input) =>

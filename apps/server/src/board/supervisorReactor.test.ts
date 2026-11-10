@@ -17,6 +17,7 @@ import {
   type BoardState,
   type BoardEvent,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -247,7 +248,7 @@ function reconcileCommandObjects(input: {
     } as unknown as GitVcsDriver.GitVcsDriver["Service"];
 
     const setupStub = {
-      runForThread: () => Effect.succeed(undefined),
+      runForThread: () => Effect.undefined,
     } as unknown as BoardSetupScriptRunner["Service"];
 
     const deps = Layer.mergeAll(
@@ -320,7 +321,7 @@ function reconcileCommandObjects(input: {
         ),
       ),
     );
-  }).pipe(Effect.provide(NodeServices.layer));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 }
 
 function reconcileCommands(input: {

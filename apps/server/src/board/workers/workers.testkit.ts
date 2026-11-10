@@ -173,7 +173,7 @@ const linkedGateway = (
   };
 };
 
-export const makeFakeWorkers = Effect.sync(() => {
+const makeFakeWorkers = Effect.sync(() => {
   const workers = new Map<string, FakeWorker>();
 
   const add = (url: string, environmentId: string) =>
@@ -327,7 +327,7 @@ export const makeFakeWorkers = Effect.sync(() => {
 });
 
 /** An in-memory secret store. */
-export const makeMemorySecretStore = Effect.sync(() => {
+const makeMemorySecretStore = Effect.sync(() => {
   const secrets = new Map<string, Uint8Array>();
   /** While true, every `set` fails, as a full or read-only disk would. */
   const control = { failSets: false };

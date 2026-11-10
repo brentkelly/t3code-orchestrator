@@ -14,6 +14,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it as vitest } from "@effect/vitest";
 import {
@@ -49,12 +50,12 @@ const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
 });
 const GitLayer = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfigLayer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const TestLayer = worktreeRetirerTestLayer().pipe(
   Layer.provideMerge(GitLayer),
   Layer.provideMerge(ServerConfigLayer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const projectId = ProjectId.make("project-repo");
@@ -366,10 +367,16 @@ const scenario = (ws: BoardWorkspace, env: Env, forgeAsked: Array<string>) =>
     return out;
   });
 
-/** A transcript with its temp root and per-run repository name taken out. */
+/** A transcript with its temp root, per-run repository name and the worktree folder suffix
+    upstream hashes from the repository's own git dir taken out. */
 const normalise = (env: Env, label: string, transcript: unknown) =>
   JSON.parse(
-    JSON.stringify(transcript).split(env.root).join("<root>").split(`repo-${label}`).join("repo"),
+    JSON.stringify(transcript)
+      .split(env.root)
+      .join("<root>")
+      .split(`repo-${label}`)
+      .join("repo")
+      .replace(/-[0-9a-f]{16}(?=["/])/g, "-<hash>"),
   );
 
 vitest.layer(RepoTemplateLive)((it) => {

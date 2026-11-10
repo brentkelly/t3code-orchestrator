@@ -71,7 +71,7 @@ export const BOARD_LOCAL_WORKER_ID = "local" as const;
 export const BoardWorkerId = Schema.Union([Schema.Literal(BOARD_LOCAL_WORKER_ID), EnvironmentId]);
 export type BoardWorkerId = typeof BoardWorkerId.Type;
 
-export const BOARD_WORKER_LABEL_MAX_LENGTH = 64;
+const BOARD_WORKER_LABEL_MAX_LENGTH = 64;
 export const BoardWorkerLabel = TrimmedNonEmptyString.check(
   Schema.isMaxLength(BOARD_WORKER_LABEL_MAX_LENGTH),
 );

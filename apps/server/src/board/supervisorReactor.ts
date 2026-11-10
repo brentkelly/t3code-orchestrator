@@ -133,7 +133,6 @@ import {
   ThreadId,
   type ChatAttachment,
   type BoardCard,
-  type BoardWorkerGitError,
   type BoardWorkspaceIntegrationBranch,
   type BoardCardId,
   type BoardCheckCardWorktreeResult,
@@ -167,7 +166,7 @@ import {
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -206,7 +205,6 @@ import {
   stageBoardCardImagesAsPending,
 } from "./attachments.ts";
 import { BoardPlacement, boardPlacementGate } from "./workers/BoardPlacement.ts";
-import { WorkerRpcError } from "./workers/WorkerTransport.ts";
 import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
@@ -369,7 +367,7 @@ const spawnFailureLeft = (cause: Cause.Cause<unknown>) => {
   const error = Cause.findErrorOption(cause).pipe(Option.getOrUndefined);
   const reason = isThreadCommandFailed(error) ? error.cause : undefined;
   if (Predicate.isTagged(reason, "WorkerUnavailable")) return "worker-offline" as const;
-  if (reason instanceof WorkerRpcError) return "unknown" as const;
+  if (Predicate.isTagged(reason, "WorkerRpcError")) return "unknown" as const;
   return "none" as const;
 };
 
@@ -639,7 +637,7 @@ const isReviewDecidingStep = (state: Pick<BoardCardStepState, "stepId">): boolea
   boardReviewQuestionAnswer(state.stepId) !== null;
 
 const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const boardEngine = yield* BoardEngine;
   const boardQueries = yield* BoardQueries;
   const threads = yield* ThreadGateway;
@@ -663,10 +661,8 @@ const make = Effect.gen(function* () {
   const workerConnections = yield* Effect.serviceOption(WorkerConnections);
 
   const commandId = (tag: string) =>
-    crypto.randomUUIDv4().pipe(Effect.map((uuid) => CommandId.make(`server:board-${tag}:${uuid}`)));
-  const freshThreadId = crypto
-    .randomUUIDv4()
-    .pipe(Effect.map((uuid) => ThreadId.make(`thread-${uuid}`)));
+    crypto.uuidV4().pipe(Effect.map((uuid) => CommandId.make(`server:board-${tag}:${uuid}`)));
+  const freshThreadId = crypto.uuidV4().pipe(Effect.map((uuid) => ThreadId.make(`thread-${uuid}`)));
 
   const readBoard = boardEngine.getReadModel.pipe(
     Effect.map((model): BoardState => model.board ?? EMPTY_BOARD_STATE),
@@ -3517,7 +3513,7 @@ const make = Effect.gen(function* () {
       BOARD_SEED_STAGE_IDS.ci,
       boardProjectStageConfig(board, card.projectId),
     );
-    const runId = `ci-${yield* crypto.randomUUIDv4()}`;
+    const runId = `ci-${yield* crypto.uuidV4()}`;
     const landed = yield* dispatchLanded({
       type: "board.card.record-ci",
       commandId: yield* commandId("ci-start"),
@@ -7372,12 +7368,7 @@ const make = Effect.gen(function* () {
     }
     const removed = yield* forceRemoveWorktree(workspace, worktree.path).pipe(
       Effect.map((hookWarning) => ({ hookWarning })),
-      Effect.catch(
-        (
-          error,
-        ): Effect.Effect<{ readonly hookWarning: string | null } | null, BoardWorkerGitError> =>
-          error._tag === "WorkerUnavailable" ? Effect.succeed(null) : Effect.fail(error),
-      ),
+      Effect.catchTags({ WorkerUnavailable: () => Effect.succeed(null) }),
     );
     // The worker is out of reach: nothing was removed, and saying so beats
     // recording a removal that did not happen (T3O-64).
@@ -9980,7 +9971,7 @@ const make = Effect.gen(function* () {
     for (const link of card.threadLinks) {
       if (link.tombstonedAt !== null) continue;
       const shell = yield* liveThread(link.threadId).pipe(
-        Effect.catchCause(() => Effect.succeed(undefined)),
+        Effect.catchCause(() => Effect.undefined),
       );
       if (shell?.activeTurnRef == null) continue;
       yield* logged(

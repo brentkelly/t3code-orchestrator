@@ -47,7 +47,6 @@ import {
   type BoardProject,
   type BoardProjectDetail,
   type BoardThreadRecord,
-  type BoardThreadState,
   type BoardWorktreeThread,
   type ThreadCommandError,
   type ThreadSignal,
@@ -161,12 +160,9 @@ export const fromWireSignal = (signal: BoardGatewaySignal): ThreadSignal => {
   };
 };
 
-/** The wire state is the board's own shape; only the error is translated. */
-export const fromWireThreadState = (state: BoardGatewayThreadState): BoardThreadState => state;
-
 // ── Errors ─────────────────────────────────────────────────────────────
 
-export const toWireCommandError = (error: ThreadCommandError): BoardWorkerGatewayError =>
+const toWireCommandError = (error: ThreadCommandError): BoardWorkerGatewayError =>
   new BoardWorkerGatewayError({
     kind: error._tag === "ThreadCommandRefusedError" ? "refused" : "failed",
     operation: error.command,

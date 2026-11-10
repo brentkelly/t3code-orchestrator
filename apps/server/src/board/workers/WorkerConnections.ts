@@ -26,17 +26,17 @@ import {
   BOARD_WORKER_PROTOCOL_FLOOR,
   boardRepositoryGroupingKey,
   type BoardWorker,
-  type BoardWorkerConnectionState,
+  BoardWorkerConnectionState,
   type BoardWorkerHello,
   type BoardWorkerSnapshot,
   type BoardWorkerStatus,
-  type EnvironmentId,
+  EnvironmentId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -52,11 +52,14 @@ import {
 import { WorkerTransport, type WorkerLink, type WorkerRpc } from "./WorkerTransport.ts";
 
 /** A worker the board cannot use right now. */
-export class WorkerUnavailable extends Data.TaggedError("WorkerUnavailable")<{
-  readonly workerId: EnvironmentId;
-  readonly state: BoardWorkerConnectionState | "unknown";
-  readonly message: string;
-}> {}
+export class WorkerUnavailable extends Schema.TaggedError<WorkerUnavailable>()(
+  "WorkerUnavailable",
+  {
+    workerId: EnvironmentId,
+    state: Schema.Union([BoardWorkerConnectionState, Schema.Literal("unknown")]),
+    message: Schema.String,
+  },
+) {}
 
 /** What the central server knows about one worker at runtime. */
 export interface WorkerRuntime {
@@ -102,18 +105,18 @@ export const encodeWorkerToken = (token: string): Uint8Array => textEncoder.enco
 export const decodeWorkerToken = (bytes: Uint8Array): string => textDecoder.decode(bytes);
 
 /** Redial delays: quick at first, then every 30 seconds. */
-export function workerRedialDelay(failures: number): Duration.Duration {
+function workerRedialDelay(failures: number): Duration.Duration {
   return Duration.seconds(Math.min(30, 2 ** Math.min(failures, 5)));
 }
 
 /** How long before the board's session on a worker expires that it is renewed.
     A board server down for longer than the rest of the lifetime comes back to
     an expired session, which only a re-pair recovers. */
-export const SESSION_RENEW_AHEAD = Duration.days(7);
+const SESSION_RENEW_AHEAD = Duration.days(7);
 
 /** How long to hold a connection before renewing its session; null for a
     session that never expires. */
-export function sessionRenewalDelay(
+function sessionRenewalDelay(
   sessionExpiresAt: string | null,
   nowMillis: number,
 ): Duration.Duration | null {
@@ -127,7 +130,7 @@ export function sessionRenewalDelay(
 
 /** Delays between attempts at a renewal that failed: a minute at first,
     then hourly, well inside `SESSION_RENEW_AHEAD`. */
-export function sessionRenewalRetryDelay(failures: number): Duration.Duration {
+function sessionRenewalRetryDelay(failures: number): Duration.Duration {
   return Duration.minutes(Math.min(60, 2 ** Math.min(failures, 6)));
 }
 
