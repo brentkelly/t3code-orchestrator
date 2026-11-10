@@ -18,7 +18,12 @@ type WireCiDone = Extract<BoardWorkerCiProgress, { _tag: "done" }>;
 export function toWireCiDone(outcome: BoardCiRunResult): WireCiDone {
   return outcome.result === "unavailable"
     ? { _tag: "done", result: "unavailable", failedIndex: null, detail: outcome.detail }
-    : { _tag: "done", result: outcome.result, failedIndex: outcome.failedIndex };
+    : {
+        _tag: "done",
+        result: outcome.result,
+        failedIndex: outcome.failedIndex,
+        ranAll: outcome.ranAll,
+      };
 }
 
 function fromWireCiDone(done: WireCiDone): BoardCiRunResult {
@@ -28,7 +33,8 @@ function fromWireCiDone(done: WireCiDone): BoardCiRunResult {
         failedIndex: null,
         detail: done.detail ?? "CI couldn't run on the card's worker.",
       }
-    : { result: done.result, failedIndex: done.failedIndex };
+    : // An older worker sends no `ranAll`: it stopped at the first failure.
+      { result: done.result, failedIndex: done.failedIndex, ranAll: done.ranAll === true };
 }
 
 export const remoteCiRunner = (
@@ -45,6 +51,7 @@ export const remoteCiRunner = (
           worktreePath: request.cwd,
           steps: request.steps,
           ...(request.indexOffset === undefined ? {} : { indexOffset: request.indexOffset }),
+          ...(request.stopOnFailure === false ? { stopOnFailure: false } : {}),
         })
         .pipe(
           Stream.runForEach((progress) =>

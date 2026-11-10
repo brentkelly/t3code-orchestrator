@@ -50,8 +50,14 @@ it.effect("reports the worker's step progress and its result", () =>
       ]),
       worker,
     ).run(request, (progress) => Effect.sync(() => seen.push(progress)));
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0 });
+    // An older worker sends no `ranAll`: it stopped at the first failure.
+    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, ranAll: false });
     assert.deepStrictEqual(seen, [{ index: 0, step }]);
+    const ranAll = yield* remoteCiRunner(
+      connected([toWireCiDone({ result: "failed", failedIndex: 0, ranAll: true })]),
+      worker,
+    ).run(request, () => Effect.void);
+    assert.deepStrictEqual(ranAll, { result: "failed", failedIndex: 0, ranAll: true });
   }),
 );
 
@@ -90,7 +96,7 @@ it.effect("a pass the worker could not run arrives as unavailable, with its reas
   }),
 );
 
-it.effect("a later segment's parallel steps, offset and result detail cross the wire intact", () =>
+it.effect("a later segment's parallel steps, offset, stop-on-failure and result detail cross the wire intact", () =>
   Effect.gen(function* () {
     const sent: BoardWorkerRunCiInput[] = [];
     const reported = {
@@ -123,10 +129,12 @@ it.effect("a later segment's parallel steps, offset and result detail cross the 
           { name: "Test", command: "vp test", timeoutMinutes: 5, parallel: true },
         ],
         indexOffset: 2,
+        stopOnFailure: false,
       },
       (progress) => Effect.sync(() => seen.push(progress)),
     );
     assert.strictEqual(sent[0]?.indexOffset, 2);
+    assert.strictEqual(sent[0]?.stopOnFailure, false);
     assert.strictEqual(sent[0]?.steps[1]?.parallel, true);
     assert.deepStrictEqual(seen, [{ index: 0, step: reported }]);
   }),

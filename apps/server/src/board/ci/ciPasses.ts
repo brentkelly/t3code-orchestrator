@@ -40,6 +40,8 @@ export interface BoardCiPassRequest {
   /** The pass index of `steps[0]` (T3O-49): a pass runs its script groups
       in segments between agent and forge steps. */
   readonly indexOffset?: number;
+  /** False runs every step even after a failure (T3O-57). Absent is true. */
+  readonly stopOnFailure?: boolean;
   readonly limits: BoardConcurrencyLimit;
   /** Where the steps run; this server's runner when absent. */
   readonly runner?: BoardCiRunnerShape;
@@ -125,6 +127,7 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
             steps: request.steps,
             logDir: boardCiLogDir(request.worktreePath, request.runId),
             ...(request.indexOffset === undefined ? {} : { indexOffset: request.indexOffset }),
+            ...(request.stopOnFailure === false ? { stopOnFailure: false } : {}),
           },
           (progress) => record(request, progress.index, progress.step),
         )

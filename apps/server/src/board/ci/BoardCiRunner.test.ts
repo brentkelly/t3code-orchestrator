@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * The CI script runner (T3O-44) against real subprocesses: a pass, fail-fast,
- * a timeout, a cancel that kills the process group, and the output tail.
+ * The CI script runner (T3O-44) against real subprocesses: a pass, fail-fast
+ * and run-everything (T3O-57), a timeout, a cancel that kills the process group, and the output tail.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -49,7 +49,7 @@ it.live("runs every step in the worktree and passes", () =>
       ]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "passed", failedIndex: null });
+    assert.deepStrictEqual(result, { result: "passed", failedIndex: null, ranAll: true });
     assert.deepStrictEqual(
       events.map((event) => [event.index, event.step.status]),
       [
@@ -79,7 +79,7 @@ it.live("stops at the first failing step", () =>
       ]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0 });
+    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, ranAll: false });
     const last = events.at(-1)!;
     assert.strictEqual(last.step.status, "failed");
     assert.strictEqual(last.step.exitCode, 3);
@@ -98,7 +98,7 @@ it.live("times a step out and kills it", () =>
       request(cwd, [{ name: "Hangs", command: "sleep 30", timeoutMinutes: 0.0005 }]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0 });
+    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, ranAll: true });
     assert.strictEqual(events.at(-1)!.step.status, "timed-out");
     assert.include(events.at(-1)!.step.tail, "timed out");
   }),
@@ -115,7 +115,7 @@ it.live("a step settles when its shell exits, even if an escaped child holds the
       ]),
       () => Effect.void,
     );
-    assert.deepStrictEqual(result, { result: "passed", failedIndex: null });
+    assert.deepStrictEqual(result, { result: "passed", failedIndex: null, ranAll: true });
   }),
 );
 
@@ -128,7 +128,7 @@ it.live("a step's log is complete by the time the step settles", () =>
       ]),
       () => Effect.void,
     );
-    assert.deepStrictEqual(result, { result: "passed", failedIndex: null });
+    assert.deepStrictEqual(result, { result: "passed", failedIndex: null, ranAll: true });
     const log = NodeFS.statSync(NodePath.join(cwd, ".t3", "ci", "run-1", "0.log"));
     assert.strictEqual(log.size, 8_000_000);
   }),
@@ -155,7 +155,7 @@ it.live("a group member that ignores TERM is killed after the step exits", () =>
       request(cwd, [{ name: "Leaves one", command: stubborn, timeoutMinutes: 1 }]),
       () => Effect.void,
     );
-    assert.deepStrictEqual(result, { result: "passed", failedIndex: null });
+    assert.deepStrictEqual(result, { result: "passed", failedIndex: null, ranAll: true });
     yield* awaitExit(Number(NodeFS.readFileSync(pidFile, "utf8").trim()));
   }),
 );
@@ -168,7 +168,7 @@ it.live("a step that leaves nothing running arms no SIGKILL fallback", () =>
       request(cwd, [{ name: "Clean", command: "true", timeoutMinutes: 1 }]),
       () => Effect.void,
     );
-    assert.deepStrictEqual(result, { result: "passed", failedIndex: null });
+    assert.deepStrictEqual(result, { result: "passed", failedIndex: null, ranAll: true });
     // The exit's TERM finds the group empty, so no SIGKILL can later hit a reused pgid.
     assert.notInclude(
       timers.mock.calls.map((call) => call[1]),
@@ -332,7 +332,7 @@ it.live("runs a parallel group together and stops later groups once it finishes"
       ]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 1 });
+    assert.deepStrictEqual(result, { result: "failed", failedIndex: 1, ranAll: false });
     const finals = events.filter((event) => event.step.status !== "running");
     assert.deepStrictEqual(
       finals.map((event) => [event.index, event.step.status, event.step.exitCode]),
@@ -355,7 +355,7 @@ it.live("reads the step's result file, which adds detail and never overrides the
       request(cwd, [{ name: "Reports", command: `${write}; exit 0`, timeoutMinutes: 1 }]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "passed", failedIndex: null });
+    assert.deepStrictEqual(result, { result: "passed", failedIndex: null, ranAll: true });
     const final = events.at(-1)!.step;
     assert.deepStrictEqual(final.result, {
       summary: "1 of 3 failed",
@@ -379,19 +379,74 @@ it.live("fails a group that leaves tracked changes in the worktree", () =>
       request(cwd, [{ name: "Formats", command: "echo two > tracked.txt", timeoutMinutes: 1 }]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0 });
+    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, ranAll: true });
     assert.include(events.at(-1)!.step.tail, "left tracked changes");
     // An edit that was there before the group ran is not the group's.
     const again = yield* runBoardCiPass(
       request(cwd, [{ name: "Reads", command: "cat tracked.txt", timeoutMinutes: 1 }]),
       () => Effect.void,
     );
-    assert.deepStrictEqual(again, { result: "passed", failedIndex: null });
+    assert.deepStrictEqual(again, { result: "passed", failedIndex: null, ranAll: true });
     // Re-editing an already-dirty file is still this group's doing.
     const reedit = yield* runBoardCiPass(
       request(cwd, [{ name: "Formats", command: "echo three > tracked.txt", timeoutMinutes: 1 }]),
       () => Effect.void,
     );
-    assert.deepStrictEqual(reedit, { result: "failed", failedIndex: 0 });
+    assert.deepStrictEqual(reedit, { result: "failed", failedIndex: 0, ranAll: true });
+    // Without stop on failure the dirty group still fails, and the next runs
+    // against the changed tree (T3O-57).
+    const carriesOn = collect();
+    const continued = yield* runBoardCiPass(
+      {
+        ...request(cwd, [
+          { name: "Formats", command: "echo four > tracked.txt", timeoutMinutes: 1 },
+          { name: "Reads", command: "cat tracked.txt", timeoutMinutes: 1 },
+        ]),
+        stopOnFailure: false,
+      },
+      carriesOn.emit,
+    );
+    assert.deepStrictEqual(continued, { result: "failed", failedIndex: 0, ranAll: true });
+    const finals = carriesOn.events.filter((event) => event.step.status !== "running");
+    assert.deepStrictEqual(
+      finals.map((event) => [event.index, event.step.status]),
+      [
+        [0, "failed"],
+        [1, "passed"],
+      ],
+    );
+    assert.include(finals[1]!.step.tail, "four");
+  }),
+);
+
+it.live("without stop on failure, runs every step after a failure or a timeout", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { events, emit } = collect();
+    const result = yield* runBoardCiPass(
+      {
+        ...request(cwd, [
+          { name: "Build", command: "true", timeoutMinutes: 1 },
+          { name: "Fails", command: "exit 2", timeoutMinutes: 1 },
+          // A fractional minute: 0.0005 min is 30 ms.
+          { name: "Hangs", command: "sleep 30", timeoutMinutes: 0.0005 },
+          { name: "Still runs", command: "touch ran", timeoutMinutes: 1 },
+        ]),
+        stopOnFailure: false,
+      },
+      emit,
+    );
+    assert.deepStrictEqual(result, { result: "failed", failedIndex: 1, ranAll: true });
+    const finals = events.filter((event) => event.step.status !== "running");
+    assert.deepStrictEqual(
+      finals.map((event) => [event.index, event.step.status]),
+      [
+        [0, "passed"],
+        [1, "failed"],
+        [2, "timed-out"],
+        [3, "passed"],
+      ],
+    );
+    assert.isTrue(NodeFS.existsSync(NodePath.join(cwd, "ran")));
   }),
 );

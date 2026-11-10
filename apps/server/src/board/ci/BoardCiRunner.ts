@@ -4,8 +4,10 @@
  *
  * Each step is a shell command run with the worktree as its cwd, stdout and
  * stderr merged into one log. Steps run in groups (a step marked `parallel`
- * joins the one before it); groups run in order, and a failure stops later
- * groups once its own group finishes. The exit code alone decides a step; a
+ * joins the one before it); groups run in order. With stop on failure (the
+ * default) a failure stops later groups once its own group finishes; without
+ * it every group runs and the pass fails at the end (T3O-57). The exit code
+ * alone decides a step; a
  * result file at `$T3O_CI_RESULT` adds detail. A group that leaves tracked
  * changes in the worktree fails. Every step change is reported through
  * `emit`, with the last `BOARD_CI_TAIL_LINES` lines of output; the full log
@@ -42,6 +44,8 @@ export interface BoardCiRunRequest {
   /** The pass index of `steps[0]`, so a later segment's logs don't overwrite
       an earlier one's (T3O-49). */
   readonly indexOffset?: number;
+  /** False runs every group even after a failure (T3O-57). Absent is true. */
+  readonly stopOnFailure?: boolean;
 }
 
 export interface BoardCiStepProgress {
@@ -52,8 +56,10 @@ export interface BoardCiStepProgress {
 export type BoardCiRunResult =
   | {
       readonly result: "passed" | "failed";
-      /** The step that failed or timed out, or null on a pass. */
+      /** The first step that failed or timed out, or null on a pass. */
       readonly failedIndex: number | null;
+      /** Every step of the request ran, rather than stopping at a failure. */
+      readonly ranAll: boolean;
     }
   /** The pass could not run at all (a placed worker out of reach): not a CI
       failure, so no fix agent is started. */
@@ -368,7 +374,9 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
       kind: "script" as const,
       parallel: definition.parallel === true,
     }));
-    for (const group of boardCiStepGroups(indexed)) {
+    const groups = boardCiStepGroups(indexed);
+    let firstFailed: number | null = null;
+    for (const [groupIndex, group] of groups.entries()) {
       // What was already changed is not this group's doing.
       const before = changedSnapshot(request.cwd, yield* trackedChanges(request.cwd));
       const settled = yield* Effect.forEach(
@@ -440,9 +448,18 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
         });
         if (status !== "passed" && failedIndex === null) failedIndex = step.index;
       }
-      if (failedIndex !== null) return { result: "failed", failedIndex } as const;
+      if (failedIndex !== null && firstFailed === null) firstFailed = failedIndex;
+      if (firstFailed !== null && request.stopOnFailure !== false) {
+        return {
+          result: "failed",
+          failedIndex: firstFailed,
+          ranAll: groupIndex === groups.length - 1,
+        } as const;
+      }
     }
-    return { result: "passed", failedIndex: null } as const;
+    return firstFailed === null
+      ? ({ result: "passed", failedIndex: null, ranAll: true } as const)
+      : ({ result: "failed", failedIndex: firstFailed, ranAll: true } as const);
   },
 );
 
