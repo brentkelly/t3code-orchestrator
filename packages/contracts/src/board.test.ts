@@ -1839,29 +1839,27 @@ describe("cards that need a human (boardCardAttention)", () => {
       phase,
       steps: [],
     });
-    for (const stage of [BOARD_SEED_STAGE_IDS.building, BOARD_SEED_STAGE_IDS.ci]) {
-      for (const phase of ["queued", "running"] as const) {
-        expect(attention({ stage, held: true, ci: ci(phase) })).toBeNull();
-        expect(attention({ stage, stepAwaiting: "stopped", ci: ci(phase) })).toBeNull();
-      }
-      // `fixing` outlives a dead fix agent, so only its thread can veto.
-      expect(
-        attention({ stage, held: true, threadState: "failed", ci: ci("fixing") })?.reason,
-      ).toBe("held");
-      expect(attention({ stage, stepAwaiting: "stopped", ci: ci("fixing") })?.reason).toBe(
-        "stopped",
-      );
-      // Once the round settles the chip is back: stopped asks in its own words,
-      // a pass leaves the held claim standing.
-      expect(attention({ stage, held: true, ci: ci("stopped") })?.reason).toBe("ci-stopped");
-      expect(attention({ stage, held: true, ci: ci("passed") })?.reason).toBe("held");
-      expect(attention({ stage, held: true, ci: ci("held") })?.reason).toBe("held");
-      expect(attention({ stage, stepAwaiting: "stopped", ci: ci("passed") })?.reason).toBe(
-        "stopped",
-      );
+    // CI state only exists in the CI stage: the decider clears it on any move.
+    const stage = BOARD_SEED_STAGE_IDS.ci;
+    for (const phase of ["queued", "running"] as const) {
+      expect(attention({ stage, held: true, ci: ci(phase) })).toBeNull();
+      expect(attention({ stage, stepAwaiting: "stopped", ci: ci(phase) })).toBeNull();
     }
+    // `fixing` outlives a dead fix agent, so only its thread can veto.
+    expect(attention({ stage, held: true, threadState: "failed", ci: ci("fixing") })?.reason).toBe(
+      "held",
+    );
+    expect(attention({ stage, stepAwaiting: "stopped", ci: ci("fixing") })?.reason).toBe("stopped");
+    // Once the round settles the chip is back: stopped asks in its own words,
+    // a pass leaves the held claim standing.
+    expect(attention({ stage, held: true, ci: ci("stopped") })?.reason).toBe("ci-stopped");
+    expect(attention({ stage, held: true, ci: ci("passed") })?.reason).toBe("held");
+    expect(attention({ stage, held: true, ci: ci("held") })?.reason).toBe("held");
+    expect(attention({ stage, stepAwaiting: "stopped", ci: ci("passed") })?.reason).toBe("stopped");
     // Real asks stay true during CI.
-    expect(attention({ held: true, awaitingInput: true, ci: ci("running") })?.reason).toBe("input");
+    expect(attention({ stage, held: true, awaitingInput: true, ci: ci("running") })?.reason).toBe(
+      "input",
+    );
   });
 
   it("still parks a step whose threads are stopped or provably dead", () => {
