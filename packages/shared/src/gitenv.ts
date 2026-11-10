@@ -5,8 +5,11 @@
 /**
  * T3o gitenv — per-project GitHub token overrides (t3o-34).
  *
- * A hand-edited file at `<stateDir>/gitenv` maps project roots to PATs, one
- * `<project_root>=<pat>` per line (`#` comments and blank lines allowed). When
+ * A hand-edited file at `<stateDir>/gitenv` maps keys to PATs, one `<key>=<pat>`
+ * per line (`#` comments and blank lines allowed). A key is a project's
+ * absolute folder path, `github.com/<owner>/<repo>` or `github.com/<owner>`
+ * (T3O-58); a lookup tries them in that order, the repo coming from the main
+ * checkout's `origin` remote. When
  * a subprocess that talks to GitHub is spawned for a directory inside a
  * matched project, `{ GH_TOKEN, GITHUB_TOKEN }` is merged over its inherited
  * environment so `gh` — and https git auth through gh's credential helper —
@@ -48,10 +51,39 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+export type GitenvEntryKind = "folder" | "repo" | "owner";
+
+interface GitenvEntry {
+  /** The key as written in the file (a folder entry's resolved root), for messages. */
+  readonly key: string;
+  readonly token: string;
+}
+
+/** Which line of the file a token came from. Never carries the token. */
+export interface GitenvEntryRef {
+  readonly kind: GitenvEntryKind;
+  readonly key: string;
+}
+
+export interface GitenvTokenMatch {
+  readonly token: string;
+  /** Hex SHA-256 of the token; safe for cache keys and logs, the token itself never is. */
+  readonly digest: string;
+  readonly entry: GitenvEntryRef;
+}
+
+export interface GitHubRepoRef {
+  readonly owner: string;
+  readonly repo: string;
+}
+
+const GITHUB_KEY_PREFIX = "github.com/";
+
 interface GitenvFileCache {
   readonly mtimeMs: number;
   readonly size: number;
-  readonly entries: ReadonlyMap<string, string>;
+  /** Folder entries keyed by resolved main root; GitHub entries by lowercased `github.com/o[/r]`. */
+  readonly entries: ReadonlyMap<string, GitenvEntry>;
   /** Token → hex SHA-256, filled on first use and dropped with the file cache. */
   readonly digests: Map<string, string>;
 }
@@ -59,13 +91,20 @@ interface GitenvFileCache {
 let gitenvPath: string | undefined;
 let fileCache: GitenvFileCache | undefined;
 let warnedLoosePermissions = false;
+/** `.git/config` path → its `origin`'s GitHub repo, keyed by the config's mtime. */
+const repoCache = new Map<string, { readonly mtimeMs: number; readonly repo: GitHubRepoRef | null }>();
+
 
 /** Shortest value `scrubGitenvTokens` will redact. A real PAT is far longer;
     the floor keeps a placeholder value from mangling unrelated output. */
 const MIN_SCRUBBABLE_TOKEN_LENGTH = 16;
 
 export function initGitenv(stateDir: string): void {
-  const next = NodePath.join(stateDir, "gitenv");
+  initGitenvFile(NodePath.join(stateDir, "gitenv"));
+}
+
+/** Point the reader at a file directly; the credential helper's `--file`. */
+export function initGitenvFile(next: string): void {
   if (next === gitenvPath) {
     return;
   }
@@ -79,6 +118,7 @@ export function resetGitenvForTesting(): void {
   gitenvPath = undefined;
   fileCache = undefined;
   warnedLoosePermissions = false;
+  repoCache.clear();
 }
 
 function realpathOrSelf(target: string): string {
@@ -89,8 +129,21 @@ function realpathOrSelf(target: string): string {
   }
 }
 
-function parseGitenv(text: string): ReadonlyMap<string, string> {
-  const entries = new Map<string, string>();
+/** `github.com/<owner>` or `github.com/<owner>/<repo>(.git)`, as a lowercased map key. */
+function githubEntryKey(key: string): string | null {
+  const match = /^github\.com\/([^/\s]+)(?:\/([^/\s]+?))?\/?$/i.exec(key);
+  if (!match?.[1]) return null;
+  const repo = match[2]?.replace(/\.git$/i, "");
+  if (repo === "") return null;
+  return githubMapKey(match[1], repo);
+}
+
+function githubMapKey(owner: string, repo: string | undefined): string {
+  return `${GITHUB_KEY_PREFIX}${owner}${repo === undefined ? "" : `/${repo}`}`.toLowerCase();
+}
+
+function parseGitenv(text: string): ReadonlyMap<string, GitenvEntry> {
+  const entries = new Map<string, GitenvEntry>();
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#")) {
@@ -102,17 +155,26 @@ function parseGitenv(text: string): ReadonlyMap<string, string> {
     }
     const key = line.slice(0, separator).trim();
     const value = line.slice(separator + 1).trim();
-    if (key.length === 0 || value.length === 0 || !NodePath.isAbsolute(key)) {
+    if (key.length === 0 || value.length === 0) {
+      continue;
+    }
+    const githubKey = githubEntryKey(key);
+    if (githubKey !== null) {
+      entries.set(githubKey, { key, token: value });
+      continue;
+    }
+    if (!NodePath.isAbsolute(key)) {
       continue;
     }
     // Keys resolve to their main checkout exactly as lookups do, so an entry
     // keyed by a linked worktree's path still matches.
-    entries.set(resolveMainRepositoryRoot(key) ?? realpathOrSelf(key), value);
+    const root = resolveMainRepositoryRoot(key) ?? realpathOrSelf(key);
+    entries.set(root, { key: root, token: value });
   }
   return entries;
 }
 
-function readEntries(): ReadonlyMap<string, string> | undefined {
+function readEntries(): ReadonlyMap<string, GitenvEntry> | undefined {
   if (gitenvPath === undefined) {
     return undefined;
   }
@@ -215,16 +277,99 @@ function mainRootFromGitFile(gitFile: string, containingDir: string): string {
 }
 
 /**
+ * The GitHub repo of a remote URL: `https://github.com/O/R(.git)`,
+ * `git@github.com:O/R(.git)` or `ssh://git@github.com/O/R(.git)`. Any other
+ * host, or a URL of another shape, gives null.
+ */
+export function githubRepoFromUrl(url: string): GitHubRepoRef | null {
+  const trimmed = url.trim();
+  const match =
+    /^(?:https?|ssh|git\+ssh):\/\/(?:[^@/]+@)?github\.com(?::\d+)?\/([^/\s]+)\/([^/\s]+?)\/?$/i.exec(
+      trimmed,
+    ) ?? /^(?:[^@/:\s]+@)?github\.com:\/?([^/\s]+)\/([^/\s]+?)\/?$/i.exec(trimmed);
+  if (!match?.[1] || !match[2]) return null;
+  const repo = match[2].replace(/\.git$/i, "");
+  return repo === "" ? null : { owner: match[1], repo };
+}
+
+/** The `url` of `[remote "origin"]` in a git config file's text, or null. */
+export function originUrlFromGitConfig(text: string): string | null {
+  let inOrigin = false;
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.startsWith("[")) {
+      inOrigin = /^\[\s*remote\s+"origin"\s*\]$/.test(line);
+      continue;
+    }
+    if (!inOrigin) continue;
+    const match = /^url\s*=\s*(.+)$/i.exec(line);
+    if (match?.[1]) return match[1].trim().replace(/^"(.*)"$/, "$1");
+  }
+  return null;
+}
+
+/** The GitHub repo of a main checkout's `origin`, cached by its config's mtime. */
+function githubRepoOfRoot(root: string): GitHubRepoRef | null {
+  const configPath = NodePath.join(root, ".git", "config");
+  let mtimeMs: number;
+  try {
+    mtimeMs = NodeFS.statSync(configPath).mtimeMs;
+  } catch {
+    repoCache.delete(configPath);
+    return null;
+  }
+  const cached = repoCache.get(configPath);
+  if (cached?.mtimeMs === mtimeMs) return cached.repo;
+  let repo: GitHubRepoRef | null = null;
+  try {
+    const url = originUrlFromGitConfig(NodeFS.readFileSync(configPath, "utf8"));
+    repo = url === null ? null : githubRepoFromUrl(url);
+  } catch {
+    repo = null;
+  }
+  repoCache.set(configPath, { mtimeMs, repo });
+  return repo;
+}
+
+/** The GitHub repo a directory's main checkout pushes to (its `origin`), or null. */
+export function gitenvGitHubRepo(cwd: string | undefined): GitHubRepoRef | null {
+  if (cwd === undefined) return null;
+  const root = resolveMainRepositoryRoot(cwd);
+  return root === null ? null : githubRepoOfRoot(root);
+}
+
+function matchOf(entry: GitenvEntry, kind: GitenvEntryKind): GitenvTokenMatch {
+  // The API transport asks on every request; hash each token once per file read.
+  let digest = fileCache?.digests.get(entry.token);
+  if (digest === undefined) {
+    digest = NodeCrypto.createHash("sha256").update(entry.token).digest("hex");
+    fileCache?.digests.set(entry.token, digest);
+  }
+  return { token: entry.token, digest, entry: { kind, key: entry.key } };
+}
+
+function matchRepo(
+  entries: ReadonlyMap<string, GitenvEntry>,
+  repo: GitHubRepoRef,
+): GitenvTokenMatch | undefined {
+  const byRepo = entries.get(githubMapKey(repo.owner, repo.repo));
+  if (byRepo !== undefined) return matchOf(byRepo, "repo");
+  const byOwner = entries.get(githubMapKey(repo.owner, undefined));
+  return byOwner === undefined ? undefined : matchOf(byOwner, "owner");
+}
+
+/**
  * The matched project's token, or undefined when the file, an entry, or a
- * repository is absent. `root` is the main checkout the entry matched and
- * `digest` the token's hex SHA-256: both are safe for cache keys and
- * rate-limit scopes, the token itself never is. Used by the server's own
- * GitHub API transport (T3O-67), which sends the token as a bearer header
- * rather than through a spawn env.
+ * repository is absent. Tries the folder entry for the main checkout, then
+ * `github.com/<owner>/<repo>`, then `github.com/<owner>` for its `origin`.
+ * `root` is the main checkout the lookup resolved to, whichever entry matched,
+ * so batch keys still never mix projects. Used by the server's own GitHub API
+ * transport (T3O-67), which sends the token as a bearer header rather than
+ * through a spawn env.
  */
 export function gitenvToken(
   cwd: string | undefined,
-): { readonly root: string; readonly token: string; readonly digest: string } | undefined {
+): (GitenvTokenMatch & { readonly root: string }) | undefined {
   if (cwd === undefined) {
     return undefined;
   }
@@ -236,17 +381,35 @@ export function gitenvToken(
   if (root === null) {
     return undefined;
   }
-  const token = entries.get(root);
-  if (token === undefined) {
+  const folder = entries.get(root);
+  if (folder !== undefined) {
+    return { root, ...matchOf(folder, "folder") };
+  }
+  const repo = githubRepoOfRoot(root);
+  const match = repo === null ? undefined : matchRepo(entries, repo);
+  return match === undefined ? undefined : { root, ...match };
+}
+
+/**
+ * The token for a named GitHub repo, as git's credential `path=` or `gh -R`
+ * names it: the folder entry for `cwd`'s main checkout first, then the repo
+ * entry, then the owner entry.
+ */
+export function gitenvTokenForRepo(input: {
+  readonly owner: string;
+  readonly repo: string;
+  readonly cwd?: string | undefined;
+}): GitenvTokenMatch | undefined {
+  const entries = readEntries();
+  if (entries === undefined || entries.size === 0) {
     return undefined;
   }
-  // The API transport asks on every request; hash each token once per file read.
-  let digest = fileCache?.digests.get(token);
-  if (digest === undefined) {
-    digest = NodeCrypto.createHash("sha256").update(token).digest("hex");
-    fileCache?.digests.set(token, digest);
+  const root = input.cwd === undefined ? null : resolveMainRepositoryRoot(input.cwd);
+  const folder = root === null ? undefined : entries.get(root);
+  if (folder !== undefined) {
+    return matchOf(folder, "folder");
   }
-  return { root, token, digest };
+  return matchRepo(entries, input);
 }
 
 /**
@@ -288,7 +451,7 @@ export function scrubGitenvTokens(text: string): string {
     return text;
   }
   let scrubbed = text;
-  for (const token of entries.values()) {
+  for (const { token } of entries.values()) {
     // A usable GitHub token is far longer than this; the floor stops a
     // mistyped or placeholder value from blanket-replacing a common substring
     // across unrelated output.
