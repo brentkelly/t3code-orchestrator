@@ -33,7 +33,7 @@ export function toWireCiDone(outcome: BoardCiRunResult): WireCiDone {
     : { _tag: "done", result: outcome.result, failedIndex: outcome.failedIndex };
 }
 
-export function fromWireCiDone(done: WireCiDone): BoardCiRunResult {
+function fromWireCiDone(done: WireCiDone): BoardCiRunResult {
   return done.result === "unavailable"
     ? {
         result: "unavailable",

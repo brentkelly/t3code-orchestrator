@@ -19,8 +19,14 @@ import {
   type BoardEvent,
   type BoardState,
 } from "@t3tools/contracts";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
 import {
@@ -29,6 +35,8 @@ import {
   type BoardCiRunResult,
 } from "./ci/BoardCiRunner.ts";
 import { BOARD_CI_SLOT_INSTANCE } from "./ci/ciPasses.ts";
+import { BoardDiskSpace } from "./ci/diskSpace.ts";
+import { layerTest } from "../config.ts";
 import {
   NOW,
   buildingCard,
@@ -47,6 +55,7 @@ import {
   stepStatus,
   withGovernor,
   type Harness,
+  type HarnessCommand,
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
@@ -79,7 +88,9 @@ const configFrom = (raw: unknown) => {
 
 const ciConfig = (extra: Record<string, unknown> = {}) => configFrom(ciFile(extra)).config;
 
-type Script = BoardCiRunResult | "hang";
+/** `drop` is a worker connection closing mid-run: the stream is interrupted
+    under a pass nobody cancelled. */
+type Script = BoardCiRunResult | "hang" | "drop";
 
 /** A runner that plays back one script per pass, reporting each step it
     "runs" the way the real one does, and counts its calls. */
@@ -92,6 +103,7 @@ const scriptedRunner = (scripts: ReadonlyArray<Script>) =>
           const call = yield* Ref.getAndUpdate(calls, (n) => n + 1);
           const script = scripts[call] ?? { result: "passed", failedIndex: null };
           if (script === "hang") return yield* Effect.never;
+          if (script === "drop") return yield* Effect.interrupt;
           const last = script.failedIndex ?? request.steps.length - 1;
           for (const [index, step] of request.steps.entries()) {
             if (index > last) break;
@@ -967,5 +979,283 @@ it.effect("a forge-checks step with no pull request holds the card for a human",
           });
         }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+// ── T3O-59: a pass never wedges ──────────────────────────────────────────
+
+type RecordCiAction = Extract<HarnessCommand, { type: "board.card.record-ci" }>["action"];
+
+/** Fail the board's CI writes `lost` matches while `full` is set, the way a
+    full disk fails the board database's writes. */
+const failingWrites = (lost: (action: RecordCiAction) => boolean) => {
+  const disk = { full: false };
+  const onDispatch = (command: HarnessCommand) =>
+    disk.full && command.type === "board.card.record-ci" && lost(command.action)
+      ? Effect.die(new Error("SQLITE_FULL: database or disk is full"))
+      : Effect.void;
+  return { disk, onDispatch };
+};
+
+const lastStepAndFinish = (action: RecordCiAction) =>
+  action.kind === "finish-pass" || (action.kind === "step" && action.index === 1);
+
+it.effect(
+  "a result whose record can't be saved is held on the second sweep with its exit code, and Retry CI runs it again",
+  () =>
+    Effect.gen(function* () {
+      const { runner } = yield* scriptedRunner([
+        { result: "failed", failedIndex: 1, exitCode: 3 },
+        "hang",
+      ]);
+      const subject = card("lost", review);
+      const { disk, onDispatch } = failingWrites(lastStepAndFinish);
+      yield* withGovernor({ board: boardWith([subject]), settings, onDispatch }, (h) =>
+        Effect.gen(function* () {
+          disk.full = true;
+          yield* enterCiAndRun(h, subject, 1);
+          disk.full = false;
+          // The script's end was never recorded: the pass reads as running.
+          assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "running");
+          assert.isFalse(
+            (yield* h.commands).some(
+              (command) =>
+                command.type === "board.card.select-step" &&
+                (command as { stepId: string }).stepId.startsWith("ci-fix@"),
+            ),
+          );
+          yield* h.reactor.sweep;
+          assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "running");
+          yield* h.reactor.sweep;
+          const held = (yield* live(h, subject.id)).ci;
+          assert.strictEqual(held?.phase, "held");
+          assert.strictEqual(
+            held?.stopReason,
+            "The CI script ended (exit code 3) but its result couldn't be saved. Retry CI.",
+          );
+          const lost = held!.runId;
+          assert.deepStrictEqual(yield* h.reactor.retryCi(subject.id), { outcome: "retried" });
+          const retried = (yield* live(h, subject.id)).ci;
+          assert.notStrictEqual(retried?.runId, lost);
+          assert.strictEqual(retried?.phase, "queued");
+        }),
+      ).pipe(Effect.provideService(BoardCiRunner, runner));
+    }),
+);
+
+it.effect("Retry CI restarts a pass with nothing behind it before the sweep holds it", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([
+      { result: "failed", failedIndex: 1, exitCode: 3 },
+      "hang",
+    ]);
+    const subject = card("lost-retry", review);
+    const { disk, onDispatch } = failingWrites(lastStepAndFinish);
+    yield* withGovernor({ board: boardWith([subject]), settings, onDispatch }, (h) =>
+      Effect.gen(function* () {
+        disk.full = true;
+        yield* enterCiAndRun(h, subject, 1);
+        disk.full = false;
+        const stuck = (yield* live(h, subject.id)).ci!.runId;
+        assert.deepStrictEqual(yield* h.reactor.retryCi(subject.id), { outcome: "retried" });
+        assert.notStrictEqual((yield* live(h, subject.id)).ci?.runId, stuck);
+        const settled = ciRecords(yield* h.decided).flatMap((record) => record.payload.settled);
+        assert.isTrue(
+          settled.some((entry) => entry.runId === stuck && entry.outcome === "interrupted"),
+        );
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("a pass still running is never held by the sweep", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner(["hang"]);
+    const hanging = card("sweep-hang", review);
+    yield* withGovernor({ board: boardWith([hanging]), settings }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCi(h, hanging, 1);
+        yield* h.reactor.drain;
+        for (let sweep = 0; sweep < 3; sweep++) yield* h.reactor.sweep;
+        assert.strictEqual((yield* live(h, hanging.id)).ci?.phase, "queued");
+        assert.deepStrictEqual(yield* h.reactor.retryCi(hanging.id), { outcome: "running" });
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("an agent step at work is never held by the sweep", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const agentCard = card("sweep-agent", review);
+    const agentStep: BoardCiStep = {
+      kind: "agent",
+      id: "audit",
+      name: "Audit",
+      parallel: false,
+      prompt: "Audit it.",
+      model: null,
+      timeoutMinutes: 30,
+    };
+    yield* withGovernor(
+      { board: boardWith([agentCard], mixedConfig([SCRIPT_A, agentStep])), settings },
+      (h) =>
+        Effect.gen(function* () {
+          yield* enterCiAndRun(h, agentCard, 1);
+          assert.isNotNull(stepStatus(yield* h.board, agentCard.id));
+          for (let sweep = 0; sweep < 3; sweep++) yield* h.reactor.sweep;
+          assert.strictEqual((yield* live(h, agentCard.id)).ci?.phase, "running");
+          assert.deepStrictEqual(yield* h.reactor.retryCi(agentCard.id), { outcome: "running" });
+        }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("a lost result after an agent step is held: the agent's settled step doesn't count", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([
+      { result: "passed", failedIndex: null },
+      { result: "passed", failedIndex: null },
+    ]);
+    const subject = card("lost-mixed", review);
+    const agentStep: BoardCiStep = {
+      kind: "agent",
+      id: "audit",
+      name: "Audit",
+      parallel: false,
+      prompt: "Audit it.",
+      model: null,
+      timeoutMinutes: 30,
+    };
+    const { disk, onDispatch } = failingWrites((action) => action.kind === "finish-pass");
+    yield* withGovernor(
+      {
+        board: boardWith([subject], mixedConfig([SCRIPT_A, agentStep, SCRIPT_B])),
+        settings,
+        onDispatch,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* enterCiAndRun(h, subject, 1);
+          const stepId = boardCiAgentStepId((yield* live(h, subject.id)).ci!.runId, 1);
+          disk.full = true;
+          yield* h.pumpDomain(
+            fixCompleted(subject.id, stepId, { verdict: "passed", summary: "ok" }, 2),
+          );
+          yield* h.reactor.drainCi;
+          disk.full = false;
+          assert.strictEqual(cardStage(yield* h.board, subject.id), ci);
+          assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "running");
+          yield* h.reactor.sweep;
+          yield* h.reactor.sweep;
+          const held = (yield* live(h, subject.id)).ci;
+          assert.strictEqual(held?.phase, "held");
+          assert.include(held?.stopReason ?? "", "exit code 0");
+        }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("a worker connection that closes mid-run holds the pass as unable to run", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner(["drop"]);
+    const subject = card("dropped", review);
+    yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, subject, 1);
+        const held = (yield* live(h, subject.id)).ci;
+        assert.strictEqual(held?.phase, "held");
+        // Its own "Retry CI" isn't repeated.
+        assert.strictEqual(held?.stopReason, "The worker connection closed mid-run. Retry CI.");
+        assert.isUndefined(held?.machine);
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("Stop CI holds a queued or running pass, and Retry CI runs it again", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner(["hang", "hang"]);
+    const subject = card("stop", review);
+    yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCi(h, subject, 1);
+        yield* h.reactor.drain;
+        assert.deepStrictEqual(yield* h.reactor.retryCi(subject.id, "stop"), {
+          outcome: "stopped",
+        });
+        const held = (yield* live(h, subject.id)).ci;
+        assert.strictEqual(held?.phase, "held");
+        assert.strictEqual(held?.stopReason, "Stopped by you. Retry CI to run it again.");
+        assert.strictEqual(yield* h.slots.heldTotal, 0);
+        // Nothing left to stop.
+        assert.deepStrictEqual(yield* h.reactor.retryCi(subject.id, "stop"), {
+          outcome: "not-running",
+        });
+        assert.deepStrictEqual(yield* h.reactor.retryCi(subject.id), { outcome: "retried" });
+        const retried = (yield* live(h, subject.id)).ci;
+        assert.notStrictEqual(retried?.runId, held?.runId);
+        assert.strictEqual(retried?.phase, "queued");
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("Stop CI while a fix agent works abandons its step and holds the pass", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([{ result: "failed", failedIndex: 1, exitCode: 1 }]);
+    const subject = card("stop-fix", review);
+    yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, subject, 1);
+        assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "fixing");
+        assert.deepStrictEqual(yield* h.reactor.retryCi(subject.id, "stop"), {
+          outcome: "stopped",
+        });
+        yield* h.reactor.drain;
+        assert.strictEqual(stepStatus(yield* h.board, subject.id), "abandoned");
+        const held = (yield* live(h, subject.id)).ci;
+        assert.strictEqual(held?.phase, "held");
+        assert.strictEqual(held?.stopReason, "Stopped by you. Retry CI to run it again.");
+        assert.strictEqual(cardStage(yield* h.board, subject.id), ci);
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("a nearly full disk on this server holds the pass as a machine problem", () =>
+  Effect.gen(function* () {
+    const { runner, calls } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const subject = card("full-disk", review);
+    const stateDir = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-ci-disk-")),
+    );
+    const checked: string[] = [];
+    yield* withGovernor(
+      {
+        board: boardWith([subject]),
+        settings,
+        serverConfig: layerTest(process.cwd(), stateDir).pipe(
+          Layer.provide(NodeServices.layer),
+          Layer.orDie,
+        ),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* enterCiAndRun(h, subject, 1);
+          assert.strictEqual(yield* calls, 0);
+          const held = (yield* live(h, subject.id)).ci;
+          assert.strictEqual(held?.phase, "held");
+          assert.strictEqual(held?.machine, true);
+          assert.match(held?.stopReason ?? "", /^Disk nearly full on .+: 0\.5 GB free\. Retry CI/);
+          assert.isTrue(checked.every((path) => path.startsWith(stateDir)));
+          assert.isAbove(checked.length, 0);
+        }),
+    ).pipe(
+      Effect.provideService(BoardCiRunner, runner),
+      Effect.provideService(BoardDiskSpace, {
+        freeBytes: (path) => Effect.sync(() => (checked.push(path), 0.5e9)),
+      }),
+    );
   }),
 );

@@ -6,13 +6,15 @@
 import { BoardWorkerCiProgress, BoardWorkerRunCiInput, EnvironmentId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { WorkerUnavailable, type WorkerConnectionsShape } from "../workers/WorkerConnections.ts";
 import type { WorkerRpc } from "../workers/WorkerTransport.ts";
 import type { BoardCiStepProgress } from "./BoardCiRunner.ts";
-import { remoteCiRunner, toWireCiDone } from "./remoteCiRunner.ts";
+import { remoteCiRunBudgetMs, remoteCiRunner, toWireCiDone } from "./remoteCiRunner.ts";
 
 const worker = EnvironmentId.make("worker-1");
 const request = {
@@ -86,6 +88,62 @@ it.effect("a pass the worker could not run arrives as unavailable, with its reas
       result: "unavailable",
       failedIndex: null,
       detail: "CI couldn't write its logs.",
+    });
+  }),
+);
+
+it.effect("a machine problem on the worker keeps its machine flag across the wire", () =>
+  Effect.gen(function* () {
+    const done = Schema.decodeUnknownSync(BoardWorkerCiProgress)(
+      toWireCiDone({
+        result: "unavailable",
+        failedIndex: null,
+        detail: "Disk nearly full on w1: 0.4 GB free.",
+        machine: true,
+      }),
+    );
+    const result = yield* remoteCiRunner(connected([done]), worker).run(request, () => Effect.void);
+    assert.deepStrictEqual(result, {
+      result: "unavailable",
+      failedIndex: null,
+      detail: "Disk nearly full on w1: 0.4 GB free.",
+      machine: true,
+    });
+    // An older worker's `done` has no flag, and still decodes.
+    assert.deepStrictEqual(
+      Schema.decodeUnknownSync(BoardWorkerCiProgress)({
+        _tag: "done",
+        result: "unavailable",
+        failedIndex: null,
+        detail: "x",
+      }),
+      { _tag: "done", result: "unavailable", failedIndex: null, detail: "x" },
+    );
+  }),
+);
+
+it.effect("a worker that stays connected but never finishes is stopped at its budget", () =>
+  Effect.gen(function* () {
+    const steps = [
+      { name: "Lint", command: "vp lint", timeoutMinutes: 5 },
+      { name: "Types", command: "vp tsc", timeoutMinutes: 20, parallel: true },
+      { name: "Test", command: "vp test", timeoutMinutes: 30 },
+    ];
+    // The longest step of each group, summed, plus ten minutes.
+    assert.strictEqual(remoteCiRunBudgetMs(steps), (20 + 30 + 10) * 60_000);
+    const silent = {
+      get: () => Effect.succeed({ gateway: { runCi: () => Stream.never } } as unknown as WorkerRpc),
+    } satisfies Pick<WorkerConnectionsShape, "get">;
+    const fiber = yield* remoteCiRunner(silent, worker)
+      .run({ ...request, steps }, () => Effect.void)
+      .pipe(Effect.forkChild);
+    yield* TestClock.adjust("59 minutes");
+    assert.isUndefined(fiber.pollUnsafe());
+    yield* TestClock.adjust("1 minute");
+    assert.deepStrictEqual(yield* Fiber.join(fiber), {
+      result: "unavailable",
+      failedIndex: null,
+      detail: "The worker's CI run didn't finish within its time limits; stopped.",
     });
   }),
 );

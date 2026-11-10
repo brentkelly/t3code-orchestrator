@@ -4386,9 +4386,7 @@ const make = Effect.gen(function* () {
     Effect.suspend(() =>
       ciPasses.claim(finished.cardId, finished.token)
         ? handleClaimedCiPass(finished).pipe(
-            Effect.ensuring(
-              Effect.sync(() => ciPasses.settle(finished.cardId, finished.token)),
-            ),
+            Effect.ensuring(Effect.sync(() => ciPasses.settle(finished.cardId, finished.token))),
           )
         : Effect.void,
     );
