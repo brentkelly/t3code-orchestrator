@@ -104,8 +104,8 @@ export const remoteCiRunner = (
   connections: Pick<WorkerConnectionsShape, "get">,
   workerId: EnvironmentId,
 ): BoardCiRunnerShape => ({
-  run: (request, emit) =>
-    Effect.gen(function* () {
+  run: Effect.fn("RemoteCiRunner.run")(
+    function* (request, emit) {
       const result = yield* Ref.make<BoardCiRunResult | null>(null);
       const rpc = yield* connections.get(workerId);
       // A dropped connection already fails the stream at once: the client
@@ -136,15 +136,15 @@ export const remoteCiRunner = (
         detail: "The worker's CI run ended without a result.",
       };
       return outcome ?? ended;
-    }).pipe(
-      Effect.catch((cause) =>
-        Effect.succeed<BoardCiRunResult>({
-          result: "unavailable",
-          failedIndex: null,
-          detail: `CI couldn't run on the card's worker: ${
-            (cause as { readonly message?: string }).message ?? String(cause)
-          }`,
-        }),
-      ),
+    },
+    Effect.catch((cause) =>
+      Effect.succeed<BoardCiRunResult>({
+        result: "unavailable",
+        failedIndex: null,
+        detail: `CI couldn't run on the card's worker: ${
+          (cause as { readonly message?: string }).message ?? String(cause)
+        }`,
+      }),
     ),
+  ),
 });

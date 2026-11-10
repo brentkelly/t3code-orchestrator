@@ -152,20 +152,23 @@ export const BoardRelayStoreLive = Layer.effect(
           ),
           failed("relayCallOutcome"),
         ),
-      recordRelayCall: (callId, workerId, outcome) =>
-        Effect.gen(function* () {
-          const now = yield* DateTime.now;
-          const json = yield* encodeOutcome(outcome);
-          const cutoff = DateTime.formatIso(
-            DateTime.makeUnsafe(now.epochMilliseconds - RELAY_CALL_RETENTION_MS),
-          );
-          yield* sql`DELETE FROM board_mcp_relay_calls WHERE completed_at < ${cutoff}`;
-          yield* sql`
+      recordRelayCall: Effect.fn("BoardRelayStore.recordRelayCall")(function* (
+        callId,
+        workerId,
+        outcome,
+      ) {
+        const now = yield* DateTime.now;
+        const json = yield* encodeOutcome(outcome);
+        const cutoff = DateTime.formatIso(
+          DateTime.makeUnsafe(now.epochMilliseconds - RELAY_CALL_RETENTION_MS),
+        );
+        yield* sql`DELETE FROM board_mcp_relay_calls WHERE completed_at < ${cutoff}`;
+        yield* sql`
             INSERT INTO board_mcp_relay_calls (call_id, worker_id, outcome_json, completed_at)
             VALUES (${callId}, ${workerId}, ${json}, ${DateTime.formatIso(now)})
             ON CONFLICT (call_id) DO NOTHING
           `;
-        }).pipe(failed("recordRelayCall")),
+      }, failed("recordRelayCall")),
     } satisfies BoardRelayStoreShape;
   }),
 );

@@ -177,22 +177,23 @@ const make = Effect.gen(function* () {
     } as const;
   });
 
-  const readCommitted: BoardProjectFileShape["readCommitted"] = (projectId, options) =>
-    Effect.gen(function* () {
-      const root = yield* checkout(projectId);
-      if (root === null) return { kind: "unavailable", reason: NO_CHECKOUT } as const;
-      const cached = memo.get(String(projectId));
-      const now = yield* Clock.currentTimeMillis;
-      if (options?.refresh !== true && cached !== undefined && now - cached.at < MEMO_MS) {
-        return cached.read;
-      }
-      const result: BoardProjectFileRead = yield* read(root);
-      memo.set(String(projectId), { at: now, read: result });
-      return result;
-    });
+  const readCommitted: BoardProjectFileShape["readCommitted"] = Effect.fn(
+    "BoardProjectFile.readCommitted",
+  )(function* (projectId, options) {
+    const root = yield* checkout(projectId);
+    if (root === null) return { kind: "unavailable", reason: NO_CHECKOUT } as const;
+    const cached = memo.get(String(projectId));
+    const now = yield* Clock.currentTimeMillis;
+    if (options?.refresh !== true && cached !== undefined && now - cached.at < MEMO_MS) {
+      return cached.read;
+    }
+    const result: BoardProjectFileRead = yield* read(root);
+    memo.set(String(projectId), { at: now, read: result });
+    return result;
+  });
 
-  const write: BoardProjectFileShape["write"] = (projectId, content) =>
-    Effect.gen(function* () {
+  const write: BoardProjectFileShape["write"] = Effect.fn("BoardProjectFile.write")(
+    function* (projectId, content) {
       const root = yield* checkout(projectId);
       if (root === null) return { kind: "unavailable", reason: NO_CHECKOUT } as const;
       const filePath = path.join(root, T3O_PROJECT_FILE_NAME);
@@ -216,7 +217,8 @@ const make = Effect.gen(function* () {
         path: filePath,
         blobSha: yield* run(root, ["hash-object", "--", T3O_PROJECT_FILE_NAME]),
       } as const;
-    });
+    },
+  );
 
   return { readCommitted, write } satisfies BoardProjectFileShape;
 });

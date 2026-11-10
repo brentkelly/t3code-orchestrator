@@ -49,72 +49,70 @@ const nextLink = (
 const rerunDelay = (reruns: number): Duration.Duration =>
   Duration.seconds(Math.min(30, 2 ** Math.min(reruns, 5)));
 
-export const runPerOnlineWorker = (
+export const runPerOnlineWorker = Effect.fn("PerOnlineWorker.run")(function* (
   connections: WorkerConnectionsShape,
   name: string,
   run: (workerId: EnvironmentId, rpc: WorkerRpc) => Effect.Effect<void>,
   delay: (reruns: number) => Duration.Duration = rerunDelay,
-): Effect.Effect<void, never, Scope.Scope> =>
-  Effect.gen(function* () {
-    const fibers = yield* FiberMap.make<EnvironmentId>();
-    const started = new Set<EnvironmentId>();
-    const loop = (workerId: EnvironmentId) =>
-      Effect.gen(function* () {
-        let last: WorkerRpc | null = null;
-        let reruns = 0;
-        let pause: Duration.Duration | null = null;
-        while (true) {
-          // A run that ended on a link still up is run on it again after a
-          // pause; a new link (a redial) starts at once.
-          const rpc: WorkerRpc | null =
-            last === null
-              ? yield* nextLink(connections, workerId, null)
-              : yield* Effect.raceFirst(
-                  nextLink(connections, workerId, last),
-                  Effect.sleep(pause ?? delay(0)).pipe(
-                    Effect.andThen(nextLink(connections, workerId, null)),
-                  ),
-                );
-          if (rpc === null) return;
-          if (rpc !== last) {
-            reruns = 0;
-            pause = null;
-          }
-          last = rpc;
-          const startedAt = yield* Clock.currentTimeMillis;
-          yield* run(workerId, rpc).pipe(
-            Effect.catchCauseIf(
-              (cause) => !Cause.hasInterruptsOnly(cause),
-              (cause) =>
-                Effect.logWarning(`board ${name}: a worker's run ended`, {
-                  workerId,
-                  cause: Cause.pretty(cause),
-                }),
-            ),
-          );
-          // A run that outlasted its pause was healthy: the backoff starts over.
-          const ranFor = (yield* Clock.currentTimeMillis) - startedAt;
-          if (pause !== null && ranFor >= Duration.toMillis(pause)) reruns = 0;
-          pause = delay(reruns);
-          reruns += 1;
-        }
-      });
-    yield* connections.states.pipe(
-      Stream.runForEach((runtime) =>
-        Effect.gen(function* () {
-          for (const workerId of runtime.keys()) {
-            if (!(yield* FiberMap.has(fibers, workerId))) {
-              started.add(workerId);
-              yield* FiberMap.run(fibers, workerId, loop(workerId));
-            }
-          }
-          for (const workerId of started) {
-            if (runtime.has(workerId)) continue;
-            started.delete(workerId);
-            yield* FiberMap.remove(fibers, workerId);
-          }
-        }),
-      ),
-      Effect.forkScoped,
-    );
+): Effect.fn.Return<void, never, Scope.Scope> {
+  const fibers = yield* FiberMap.make<EnvironmentId>();
+  const started = new Set<EnvironmentId>();
+  const loop = Effect.fn("PerOnlineWorker.loop")(function* (workerId: EnvironmentId) {
+    let last: WorkerRpc | null = null;
+    let reruns = 0;
+    let pause: Duration.Duration | null = null;
+    while (true) {
+      // A run that ended on a link still up is run on it again after a
+      // pause; a new link (a redial) starts at once.
+      const rpc: WorkerRpc | null =
+        last === null
+          ? yield* nextLink(connections, workerId, null)
+          : yield* nextLink(connections, workerId, last).pipe(
+              Effect.timeoutOrElse({
+                duration: pause ?? delay(0),
+                orElse: () => nextLink(connections, workerId, null),
+              }),
+            );
+      if (rpc === null) return;
+      if (rpc !== last) {
+        reruns = 0;
+        pause = null;
+      }
+      last = rpc;
+      const startedAt = yield* Clock.currentTimeMillis;
+      yield* run(workerId, rpc).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning(`board ${name}: a worker's run ended`, {
+              workerId,
+              cause: Cause.pretty(cause),
+            }),
+        ),
+      );
+      // A run that outlasted its pause was healthy: the backoff starts over.
+      const ranFor = (yield* Clock.currentTimeMillis) - startedAt;
+      if (pause !== null && ranFor >= Duration.toMillis(pause)) reruns = 0;
+      pause = delay(reruns);
+      reruns += 1;
+    }
   });
+  yield* connections.states.pipe(
+    Stream.runForEach((runtime) =>
+      Effect.gen(function* () {
+        for (const workerId of runtime.keys()) {
+          if (!(yield* FiberMap.has(fibers, workerId))) {
+            started.add(workerId);
+            yield* FiberMap.run(fibers, workerId, loop(workerId));
+          }
+        }
+        for (const workerId of started) {
+          if (runtime.has(workerId)) continue;
+          started.delete(workerId);
+          yield* FiberMap.remove(fibers, workerId);
+        }
+      }),
+    ),
+    Effect.forkScoped,
+  );
+});

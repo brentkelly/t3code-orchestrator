@@ -105,7 +105,7 @@ export const WorkerSnapshotStoreLive = Layer.effect(
         ),
         [],
       ),
-      write: (record) =>
+      write: Effect.fn("WorkerSnapshotStore.write")((record) =>
         logged("board worker snapshot not saved")(
           sql`
             INSERT INTO board_worker_snapshots (
@@ -124,11 +124,13 @@ export const WorkerSnapshotStoreLive = Layer.effect(
           `.pipe(Effect.asVoid),
           undefined,
         ),
-      remove: (workerId) =>
+      ),
+      remove: Effect.fn("WorkerSnapshotStore.remove")((workerId) =>
         logged("board worker snapshot not removed")(
           sql`DELETE FROM board_worker_snapshots WHERE worker_id = ${workerId}`.pipe(Effect.asVoid),
           undefined,
         ),
+      ),
     };
   }),
 );

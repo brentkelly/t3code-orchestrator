@@ -107,7 +107,7 @@ const setup = (links: ReadonlyMap<string, BoardWorkerId> = new Map()) =>
     yield* env.connections.sync([registeredWorker]);
     yield* waitOnline(env.connections);
     const feed = yield* makeWorkerSignalFeed.pipe(
-      Effect.provide(Layer.succeed(WorkerConnections, env.connections)),
+      Effect.provideService(WorkerConnections, env.connections),
     );
     const fileSystem = yield* FileSystem.FileSystem;
     const digest = yield* Digest.Digest;

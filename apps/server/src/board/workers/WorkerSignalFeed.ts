@@ -62,34 +62,36 @@ export const makeWorkerSignalFeed = Effect.gen(function* () {
   const signals = yield* PubSub.unbounded<WorkerThreadSignal>();
   const todoChanges = yield* PubSub.unbounded<ThreadId>();
 
-  const follow = (workerId: EnvironmentId, rpc: WorkerRpc) =>
-    Effect.gen(function* () {
-      let cursor = yield* store.signalCursor(workerId);
-      if (cursor === null) {
-        cursor = yield* rpc.gateway.todoLogHead;
-        yield* store.saveSignalCursor(workerId, cursor);
-      }
-      yield* rpc.gateway.subscribeSignals(cursor).pipe(
-        Stream.runForEach((batch) =>
-          Effect.gen(function* () {
-            // A redelivered position (a stream reopened mid-batch) is skipped.
-            if (cursor !== null && batch.sequence <= cursor) return;
-            const batchSignals = batch.signals.map(fromWireSignal);
-            const todos = batchSignals.filter(isTodoSignal);
-            yield* sql.withTransaction(
-              Effect.forEach(todos, (signal) => projector.applyTodoSignal(signal), {
-                discard: true,
-              }).pipe(Effect.andThen(store.saveSignalCursor(workerId, batch.sequence))),
-            );
-            cursor = batch.sequence;
-            for (const signal of todos) yield* PubSub.publish(todoChanges, signal.threadId);
-            for (const signal of batchSignals) {
-              yield* PubSub.publish(signals, { workerId, signal });
-            }
-          }),
-        ),
-      );
-    });
+  const follow = Effect.fn("WorkerSignalFeed.follow")(function* (
+    workerId: EnvironmentId,
+    rpc: WorkerRpc,
+  ) {
+    let cursor = yield* store.signalCursor(workerId);
+    if (cursor === null) {
+      cursor = yield* rpc.gateway.todoLogHead;
+      yield* store.saveSignalCursor(workerId, cursor);
+    }
+    yield* rpc.gateway.subscribeSignals(cursor).pipe(
+      Stream.runForEach((batch) =>
+        Effect.gen(function* () {
+          // A redelivered position (a stream reopened mid-batch) is skipped.
+          if (cursor !== null && batch.sequence <= cursor) return;
+          const batchSignals = batch.signals.map(fromWireSignal);
+          const todos = batchSignals.filter(isTodoSignal);
+          yield* sql.withTransaction(
+            Effect.forEach(todos, (signal) => projector.applyTodoSignal(signal), {
+              discard: true,
+            }).pipe(Effect.andThen(store.saveSignalCursor(workerId, batch.sequence))),
+          );
+          cursor = batch.sequence;
+          for (const signal of todos) yield* PubSub.publish(todoChanges, signal.threadId);
+          for (const signal of batchSignals) {
+            yield* PubSub.publish(signals, { workerId, signal });
+          }
+        }),
+      ),
+    );
+  });
 
   yield* runPerOnlineWorker(connections, "signal feed", (workerId, rpc) =>
     follow(workerId, rpc).pipe(

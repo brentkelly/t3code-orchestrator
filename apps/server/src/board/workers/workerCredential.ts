@@ -96,71 +96,68 @@ interface WorkerResponse {
 
 /** One request to a worker: its status and JSON body (null when it has none).
     Fails only when the worker never answered. */
-const requestWorker = (request: HttpClientRequest.HttpClientRequest) =>
-  Effect.gen(function* () {
-    const http = yield* HttpClient.HttpClient;
-    const response = yield* http.execute(request).pipe(Effect.timeout(WORKER_HTTP_TIMEOUT));
-    const body = yield* response.json.pipe(Effect.orElseSucceed(() => null));
-    return { status: response.status, body } satisfies WorkerResponse;
-  });
+const requestWorker = Effect.fn("WorkerCredential.request")(function* (
+  request: HttpClientRequest.HttpClientRequest,
+) {
+  const http = yield* HttpClient.HttpClient;
+  const response = yield* http.execute(request).pipe(Effect.timeout(WORKER_HTTP_TIMEOUT));
+  const body = yield* response.json.pipe(Effect.orElseSucceed(() => null));
+  return { status: response.status, body } satisfies WorkerResponse;
+});
 
 const decodeDescriptor = Schema.decodeUnknownEffect(ExecutionEnvironmentDescriptor);
 
 /** The worker's environment descriptor. Unauthenticated; a failure to reach it
     is the board server failing to reach the worker. */
-export function fetchWorkerDescriptor(
+export const fetchWorkerDescriptor = Effect.fn("WorkerCredential.fetchDescriptor")(function* (
   httpBaseUrl: string,
-): Effect.Effect<ExecutionEnvironmentDescriptor, BoardWorkerAddError, HttpClient.HttpClient> {
-  return Effect.gen(function* () {
-    const response = yield* requestWorker(
-      HttpClientRequest.get(`${httpBaseUrl}/.well-known/t3/environment`),
-    ).pipe(Effect.mapError(() => unreachable(httpBaseUrl)));
-    if (response.status !== 200) return yield* unreachable(httpBaseUrl);
-    return yield* decodeDescriptor(response.body).pipe(
-      Effect.mapError(
-        () =>
-          new BoardWorkerAddError({
-            code: "incompatible",
-            message: `${hostOf(httpBaseUrl)} doesn't look like a T3o server.`,
-          }),
-      ),
-    );
-  });
-}
+): Effect.fn.Return<ExecutionEnvironmentDescriptor, BoardWorkerAddError, HttpClient.HttpClient> {
+  const response = yield* requestWorker(
+    HttpClientRequest.get(`${httpBaseUrl}/.well-known/t3/environment`),
+  ).pipe(Effect.mapError(() => unreachable(httpBaseUrl)));
+  if (response.status !== 200) return yield* unreachable(httpBaseUrl);
+  return yield* decodeDescriptor(response.body).pipe(
+    Effect.mapError(
+      () =>
+        new BoardWorkerAddError({
+          code: "incompatible",
+          message: `${hostOf(httpBaseUrl)} doesn't look like a T3o server.`,
+        }),
+    ),
+  );
+});
 
 const AccessTokenResponse = Schema.Struct({ access_token: Schema.String });
 const decodeAccessToken = Schema.decodeUnknownEffect(AccessTokenResponse);
 
 /** Spend the one-time token for the board's own bearer session. A refusal is
     an expired, used or wrong token; anything else is the network. */
-export function exchangeWorkerCredential(input: {
+export const exchangeWorkerCredential = Effect.fn("WorkerCredential.exchange")(function* (input: {
   readonly target: WorkerTarget;
   /** Shown on the worker under Settings → Sharing & access → Authorized clients. */
   readonly clientLabel: string;
-}): Effect.Effect<{ readonly accessToken: string }, BoardWorkerAddError, HttpClient.HttpClient> {
-  return Effect.gen(function* () {
-    const body = new URLSearchParams({
-      grant_type: AuthTokenExchangeGrantType,
-      subject_token: input.target.token,
-      subject_token_type: AuthEnvironmentBootstrapTokenType,
-      requested_token_type: AuthAccessTokenType,
-      client_label: input.clientLabel,
-      client_device_type: "bot",
-    });
-    const response = yield* requestWorker(
-      HttpClientRequest.post(`${input.target.httpBaseUrl}/oauth/token`).pipe(
-        HttpClientRequest.setHeader("accept", "application/json"),
-        HttpClientRequest.bodyText(body.toString(), "application/x-www-form-urlencoded"),
-      ),
-    ).pipe(Effect.mapError(() => unreachable(input.target.httpBaseUrl)));
-    if (response.status >= 400 && response.status < 500) return yield* invalidCredential();
-    if (response.status !== 200) return yield* unreachable(input.target.httpBaseUrl);
-    const decoded = yield* decodeAccessToken(response.body).pipe(
-      Effect.mapError(() => invalidCredential()),
-    );
-    return { accessToken: decoded.access_token };
+}): Effect.fn.Return<{ readonly accessToken: string }, BoardWorkerAddError, HttpClient.HttpClient> {
+  const body = new URLSearchParams({
+    grant_type: AuthTokenExchangeGrantType,
+    subject_token: input.target.token,
+    subject_token_type: AuthEnvironmentBootstrapTokenType,
+    requested_token_type: AuthAccessTokenType,
+    client_label: input.clientLabel,
+    client_device_type: "bot",
   });
-}
+  const response = yield* requestWorker(
+    HttpClientRequest.post(`${input.target.httpBaseUrl}/oauth/token`).pipe(
+      HttpClientRequest.setHeader("accept", "application/json"),
+      HttpClientRequest.bodyText(body.toString(), "application/x-www-form-urlencoded"),
+    ),
+  ).pipe(Effect.mapError(() => unreachable(input.target.httpBaseUrl)));
+  if (response.status >= 400 && response.status < 500) return yield* invalidCredential();
+  if (response.status !== 200) return yield* unreachable(input.target.httpBaseUrl);
+  const decoded = yield* decodeAccessToken(response.body).pipe(
+    Effect.mapError(() => invalidCredential()),
+  );
+  return { accessToken: decoded.access_token };
+});
 
 const BOARD_SESSION_LABEL_PREFIX = "T3o board (";
 

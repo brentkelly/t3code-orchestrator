@@ -557,11 +557,13 @@ const trackedChanges = (cwd: string): Effect.Effect<string | null> =>
   });
 
 /** The step's disk's free bytes now, for a disk headline; null when unknown. */
-const freeBytesNow = (path: string) =>
-  Effect.gen(function* () {
+const freeBytesNow = Effect.fn("BoardCiRunner.freeBytesNow")(
+  function* (path: string) {
     const disk = yield* BoardDiskSpace;
     return yield* disk.freeBytes(path);
-  }).pipe(Effect.catchCause(() => Effect.succeed(null)));
+  },
+  Effect.catchCause(() => Effect.succeed(null)),
+);
 
 export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunner.run")(
   function* (request, emit) {

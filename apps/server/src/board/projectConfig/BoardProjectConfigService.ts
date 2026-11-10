@@ -94,27 +94,28 @@ export const make = Effect.gen(function* () {
   const send = (command: BoardCommand) =>
     engine.dispatch(command).pipe(Effect.mapError(toSettingsError));
 
-  const dispatch: BoardProjectConfigServiceShape["dispatch"] = (command, actor) =>
-    Effect.gen(function* () {
-      if (command.type === "board.project.set-stage-override" && command.patch !== null) {
-        const board = yield* readBoard;
-        const normalized = normalizeBoardProjectDelta({
-          board,
-          settings: yield* settings,
-          delta: {
-            stageSwitches: {},
-            overrides: { [command.stageId]: command.patch },
-            ci: { steps: [] },
-          },
-        });
-        return yield* send({
-          ...command,
-          actor,
-          patch: normalized.overrides[command.stageId] ?? null,
-        });
-      }
-      return yield* send({ ...command, actor } as BoardCommand);
-    });
+  const dispatch: BoardProjectConfigServiceShape["dispatch"] = Effect.fn(
+    "BoardProjectConfigService.dispatch",
+  )(function* (command, actor) {
+    if (command.type === "board.project.set-stage-override" && command.patch !== null) {
+      const board = yield* readBoard;
+      const normalized = normalizeBoardProjectDelta({
+        board,
+        settings: yield* settings,
+        delta: {
+          stageSwitches: {},
+          overrides: { [command.stageId]: command.patch },
+          ci: { steps: [] },
+        },
+      });
+      return yield* send({
+        ...command,
+        actor,
+        patch: normalized.overrides[command.stageId] ?? null,
+      });
+    }
+    return yield* send({ ...command, actor } as BoardCommand);
+  });
 
   /** What importing a read would set, normalized, with what it creates. */
   const resolveRead = (
@@ -182,83 +183,86 @@ export const make = Effect.gen(function* () {
     };
   };
 
-  const importCandidates: BoardProjectConfigServiceShape["importCandidates"] = (input) =>
-    Effect.gen(function* () {
-      const board = yield* readBoard;
-      const globalSettings = yield* settings;
-      const now = yield* nowIso;
-      const reads = yield* Effect.forEach(
-        input.projectIds,
-        (projectId) =>
-          projectFile.readCommitted(projectId, { refresh: input.refresh === true }).pipe(
-            Effect.timeoutOrElse({
-              duration: "45 seconds",
-              orElse: () =>
-                Effect.succeed<BoardProjectFileRead>({
-                  kind: "unavailable",
-                  reason: "Reading t3o.json timed out.",
-                }),
-            }),
-          ),
-        { concurrency: 4 },
-      );
-      return input.projectIds.map((projectId, index) =>
-        candidateFor(board, globalSettings, projectId, reads[index]!, now),
-      );
-    });
+  const importCandidates: BoardProjectConfigServiceShape["importCandidates"] = Effect.fn(
+    "BoardProjectConfigService.importCandidates",
+  )(function* (input) {
+    const board = yield* readBoard;
+    const globalSettings = yield* settings;
+    const now = yield* nowIso;
+    const reads = yield* Effect.forEach(
+      input.projectIds,
+      (projectId) =>
+        projectFile.readCommitted(projectId, { refresh: input.refresh === true }).pipe(
+          Effect.timeoutOrElse({
+            duration: "45 seconds",
+            orElse: () =>
+              Effect.succeed<BoardProjectFileRead>({
+                kind: "unavailable",
+                reason: "Reading t3o.json timed out.",
+              }),
+          }),
+        ),
+      { concurrency: 4 },
+    );
+    return input.projectIds.map((projectId, index) =>
+      candidateFor(board, globalSettings, projectId, reads[index]!, now),
+    );
+  });
 
-  const importFile: BoardProjectConfigServiceShape["importFile"] = (input, actor) =>
-    Effect.gen(function* () {
-      const read = yield* projectFile.readCommitted(input.projectId, { refresh: true });
-      if (read.kind === "unavailable") {
-        return { outcome: "unavailable", reason: read.reason } as const;
-      }
-      if (read.kind === "none" || read.blobSha !== input.blobSha) {
-        return { outcome: "file-changed" } as const;
-      }
-      const board = yield* readBoard;
-      if (configOf(board, input.projectId).version !== input.expectedConfigVersion) {
-        return { outcome: "version-mismatch" } as const;
-      }
-      const now = yield* nowIso;
-      const next = resolveRead(board, yield* settings, input.projectId, read, now);
-      const result = yield* send({
-        type: "board.project.import-file",
-        commandId: CommandId.make(`project-import:${yield* crypto.uuidV4().pipe(Effect.orDie)}`),
-        projectId: input.projectId,
-        blobSha: read.blobSha,
-        delta: next.delta,
-        createStages: next.createStages,
-        expectedConfigVersion: input.expectedConfigVersion,
+  const importFile: BoardProjectConfigServiceShape["importFile"] = Effect.fn(
+    "BoardProjectConfigService.importFile",
+  )(function* (input, actor) {
+    const read = yield* projectFile.readCommitted(input.projectId, { refresh: true });
+    if (read.kind === "unavailable") {
+      return { outcome: "unavailable", reason: read.reason } as const;
+    }
+    if (read.kind === "none" || read.blobSha !== input.blobSha) {
+      return { outcome: "file-changed" } as const;
+    }
+    const board = yield* readBoard;
+    if (configOf(board, input.projectId).version !== input.expectedConfigVersion) {
+      return { outcome: "version-mismatch" } as const;
+    }
+    const now = yield* nowIso;
+    const next = resolveRead(board, yield* settings, input.projectId, read, now);
+    const result = yield* send({
+      type: "board.project.import-file",
+      commandId: CommandId.make(`project-import:${yield* crypto.uuidV4().pipe(Effect.orDie)}`),
+      projectId: input.projectId,
+      blobSha: read.blobSha,
+      delta: next.delta,
+      createStages: next.createStages,
+      expectedConfigVersion: input.expectedConfigVersion,
+      actor,
+      createdAt: now,
+    });
+    return { outcome: "imported", sequence: result.sequence } as const;
+  });
+
+  const exportFile: BoardProjectConfigServiceShape["exportFile"] = Effect.fn(
+    "BoardProjectConfigService.exportFile",
+  )(function* (projectId, actor) {
+    const board = yield* readBoard;
+    const content = `${encodePrettyJson(
+      buildT3oProjectFile({ board, config: configOf(board, projectId) }),
+    )}\n`;
+    const written = yield* projectFile.write(projectId, content);
+    if (written.kind === "unavailable") {
+      return { outcome: "download", content, reason: written.reason } as const;
+    }
+    // The file now matches the board, so its notice stays away once committed.
+    if (written.blobSha !== null) {
+      yield* send({
+        type: "board.project.dismiss-import",
+        commandId: CommandId.make(`project-export:${yield* crypto.uuidV4().pipe(Effect.orDie)}`),
+        projectId,
+        blobSha: written.blobSha,
         actor,
-        createdAt: now,
+        createdAt: yield* nowIso,
       });
-      return { outcome: "imported", sequence: result.sequence } as const;
-    });
-
-  const exportFile: BoardProjectConfigServiceShape["exportFile"] = (projectId, actor) =>
-    Effect.gen(function* () {
-      const board = yield* readBoard;
-      const content = `${encodePrettyJson(
-        buildT3oProjectFile({ board, config: configOf(board, projectId) }),
-      )}\n`;
-      const written = yield* projectFile.write(projectId, content);
-      if (written.kind === "unavailable") {
-        return { outcome: "download", content, reason: written.reason } as const;
-      }
-      // The file now matches the board, so its notice stays away once committed.
-      if (written.blobSha !== null) {
-        yield* send({
-          type: "board.project.dismiss-import",
-          commandId: CommandId.make(`project-export:${yield* crypto.uuidV4().pipe(Effect.orDie)}`),
-          projectId,
-          blobSha: written.blobSha,
-          actor,
-          createdAt: yield* nowIso,
-        });
-      }
-      return { outcome: "written", path: written.path, content } as const;
-    });
+    }
+    return { outcome: "written", path: written.path, content } as const;
+  });
 
   const getConfig: BoardProjectConfigServiceShape["getConfig"] = (projectId) =>
     readBoard.pipe(Effect.map((board) => ({ projectId, config: configOf(board, projectId) })));

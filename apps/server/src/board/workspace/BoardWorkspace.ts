@@ -166,12 +166,12 @@ export function bindBoardWorkspace(input: {
  * gone only loses its registration; anything else is probed, judged, and
  * retired only while the board still wants it gone.
  */
-export const reclaimThroughOperations = (
-  workspace: BoardWorkspaceOperations<BoardWorkspaceFailure> & { readonly workerId: string },
-  input: BoardWorkspaceReclaimInput,
-  stillWanted?: Effect.Effect<boolean>,
-) =>
-  Effect.gen(function* () {
+export const reclaimThroughOperations = Effect.fn("BoardWorkspace.reclaimThroughOperations")(
+  function* (
+    workspace: BoardWorkspaceOperations<BoardWorkspaceFailure> & { readonly workerId: string },
+    input: BoardWorkspaceReclaimInput,
+    stillWanted?: Effect.Effect<boolean>,
+  ) {
     const wanted = stillWanted ?? Effect.succeed(true);
     const gone = yield* workspace.goneWorktreePath({
       projectId: input.projectId,
@@ -220,7 +220,8 @@ export const reclaimThroughOperations = (
       reason: null,
       ...(retired.hookWarning === null ? {} : { hookWarning: retired.hookWarning }),
     } satisfies BoardCardWorktreeReclaimResult;
-  });
+  },
+);
 
 /** Where a card runs, when it is not here. Supplied by placement (T3O-65);
     tests supply their own. */

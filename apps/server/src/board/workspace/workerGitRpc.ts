@@ -98,29 +98,28 @@ const PROVISIONS_BRANCH: ReadonlySet<BoardWorkerGitOperation> = new Set([
 /** A branch the call names, not a path: one it provisions must not be this
     server's own board's (`centralMayUseBranch`), and one it deletes must be
     one the central board may delete here (`centralMayDeleteBranch`). */
-const guardBranch = (
+const guardBranch = Effect.fn("BoardWorkerGitRpc.guardBranch")(function* (
   workspaces: BoardWorkspacesShape,
   operation: BoardWorkerGitOperation,
   projectId: ProjectId,
   input: Record<string, unknown>,
-) =>
-  Effect.gen(function* () {
-    const branch = String(input["branch"]);
-    if (operation === "deleteCardBranch") {
-      if (yield* workspaces.centralMayDeleteBranch(projectId, branch)) return;
-      return yield* new BoardWorkerGitError({
-        operation,
-        detail: `${branch} belongs to this server's own board or a checkout the board didn't make.`,
-      });
-    }
-    if (!PROVISIONS_BRANCH.has(operation) || (yield* workspaces.centralMayUseBranch(branch))) {
-      return;
-    }
+) {
+  const branch = String(input["branch"]);
+  if (operation === "deleteCardBranch") {
+    if (yield* workspaces.centralMayDeleteBranch(projectId, branch)) return;
     return yield* new BoardWorkerGitError({
       operation,
-      detail: `${branch} belongs to this server's own board.`,
+      detail: `${branch} belongs to this server's own board or a checkout the board didn't make.`,
     });
+  }
+  if (!PROVISIONS_BRANCH.has(operation) || (yield* workspaces.centralMayUseBranch(branch))) {
+    return;
+  }
+  return yield* new BoardWorkerGitError({
+    operation,
+    detail: `${branch} belongs to this server's own board.`,
   });
+});
 
 const boardWorkerGitRpcHandlers = (
   currentSession: AuthenticatedSession,

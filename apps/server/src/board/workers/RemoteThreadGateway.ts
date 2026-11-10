@@ -97,13 +97,13 @@ const unavailableRead = (operation: string) => (cause: WorkerUnavailable) =>
  * spawn and again by a relayed card context, so a file added after the spawn
  * is on the worker by the time its path is handed out.
  */
-export const stageCardFilesOnWorker = (input: {
-  readonly rpc: WorkerRpc;
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly digest: Digest.Digest["Service"];
-  readonly staging: NonNullable<ThreadSpawnInput["stageAttachments"]>;
-}) =>
-  Effect.gen(function* () {
+export const stageCardFilesOnWorker = Effect.fn("RemoteThreadGateway.stageCardFiles")(
+  function* (input: {
+    readonly rpc: WorkerRpc;
+    readonly fileSystem: FileSystem.FileSystem;
+    readonly digest: Digest.Digest["Service"];
+    readonly staging: NonNullable<ThreadSpawnInput["stageAttachments"]>;
+  }) {
     const { rpc, staging } = input;
     const files = yield* Effect.forEach(staging.files, (file) =>
       input.fileSystem
@@ -130,7 +130,8 @@ export const stageCardFilesOnWorker = (input: {
         ...(needed.has(file.name) ? { contentBase64: Base64.encode(file.bytes) } : {}),
       })),
     });
-  });
+  },
+);
 
 export const makeRemoteThreadGateway = (
   deps: RemoteThreadGatewayDeps,
@@ -143,52 +144,55 @@ export const makeRemoteThreadGateway = (
   );
 
   /** The worker's checkout of a board project, with the project's own root. */
-  const checkoutFor = (projectId: ProjectId, threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const detail = yield* local.project(projectId).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ThreadCommandFailedError({
-              command: "spawn",
-              threadId,
-              detail: cause.detail,
-              cause,
-            }),
-        ),
-      );
-      const checkout: BoardWorkerCheckout | null =
-        detail === null
-          ? null
-          : resolveBoardWorkerCheckout(
-              boardRepositoryGroupingKey(detail.repositoryIdentity),
-              yield* checkouts,
-            );
-      if (detail === null || checkout === null) {
-        return yield* new ThreadCommandRefusedError({
-          command: "spawn",
-          threadId,
-          detail: `Project '${projectId}' has no checkout on worker ${workerId}.`,
-        });
-      }
-      return { checkout, centralRoot: detail.workspaceRoot };
-    });
+  const checkoutFor = Effect.fn("RemoteThreadGateway.checkoutFor")(function* (
+    projectId: ProjectId,
+    threadId: ThreadId,
+  ) {
+    const detail = yield* local.project(projectId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ThreadCommandFailedError({
+            command: "spawn",
+            threadId,
+            detail: cause.detail,
+            cause,
+          }),
+      ),
+    );
+    const checkout: BoardWorkerCheckout | null =
+      detail === null
+        ? null
+        : resolveBoardWorkerCheckout(
+            boardRepositoryGroupingKey(detail.repositoryIdentity),
+            yield* checkouts,
+          );
+    if (detail === null || checkout === null) {
+      return yield* new ThreadCommandRefusedError({
+        command: "spawn",
+        threadId,
+        detail: `Project '${projectId}' has no checkout on worker ${workerId}.`,
+      });
+    }
+    return { checkout, centralRoot: detail.workspaceRoot };
+  });
 
   /** The board project a worker project is a checkout of, or the worker's own
       id when none matches — a thread never loses its project. */
-  const centralProjectOf = (workerProjectId: ProjectId) =>
-    Effect.gen(function* () {
-      const key =
-        (yield* checkouts).find((checkout) => checkout.projectId === workerProjectId)
-          ?.repositoryKey ?? null;
-      if (key === null) return workerProjectId;
-      for (const project of yield* local.projects()) {
-        const detail = yield* local.project(project.id);
-        if (detail !== null && boardRepositoryGroupingKey(detail.repositoryIdentity) === key) {
-          return project.id;
-        }
+  const centralProjectOf = Effect.fn("RemoteThreadGateway.centralProjectOf")(function* (
+    workerProjectId: ProjectId,
+  ) {
+    const key =
+      (yield* checkouts).find((checkout) => checkout.projectId === workerProjectId)
+        ?.repositoryKey ?? null;
+    if (key === null) return workerProjectId;
+    for (const project of yield* local.projects()) {
+      const detail = yield* local.project(project.id);
+      if (detail !== null && boardRepositoryGroupingKey(detail.repositoryIdentity) === key) {
+        return project.id;
       }
-      return workerProjectId;
-    });
+    }
+    return workerProjectId;
+  });
 
   /** Copy a card's brief files onto the worker, sending only what changed. */
   const stage = (staging: NonNullable<ThreadSpawnInput["stageAttachments"]>, threadId: ThreadId) =>
@@ -237,37 +241,36 @@ export const makeRemoteThreadGateway = (
     );
 
   return {
-    spawn: (input) =>
-      Effect.gen(function* () {
-        const { checkout, centralRoot } = yield* checkoutFor(input.projectId, input.threadId);
-        if (input.stageAttachments !== undefined) {
-          yield* stage(input.stageAttachments, input.threadId);
-        }
-        const rpc = yield* link.pipe(Effect.mapError(unavailableCommand("spawn", input.threadId)));
-        yield* rpc.gateway
-          .spawn({
-            commandId: input.commandId,
-            threadId: input.threadId,
-            projectId: checkout.projectId,
-            title: input.title,
-            modelSelection: input.modelSelection,
-            runtimeMode: input.runtimeMode,
-            interactionMode: input.interactionMode,
-            branch: input.branch,
-            // A thread with no worktree runs in the project root, which is
-            // the worker's checkout; a worktree path is already the worker's.
-            worktreePath:
-              input.branch === null && input.worktreePath === centralRoot
-                ? checkout.workspaceRoot
-                : input.worktreePath,
-            text: input.text,
-            // Uploads live in this server's attachment store; the worker reads
-            // the brief's files from where they were staged instead.
-            attachments: [],
-            centralEnvironmentId: deps.centralEnvironmentId,
-          })
-          .pipe(Effect.mapError(fromWireCommandError("spawn", input.threadId)));
-      }),
+    spawn: Effect.fn("RemoteThreadGateway.spawn")(function* (input) {
+      const { checkout, centralRoot } = yield* checkoutFor(input.projectId, input.threadId);
+      if (input.stageAttachments !== undefined) {
+        yield* stage(input.stageAttachments, input.threadId);
+      }
+      const rpc = yield* link.pipe(Effect.mapError(unavailableCommand("spawn", input.threadId)));
+      yield* rpc.gateway
+        .spawn({
+          commandId: input.commandId,
+          threadId: input.threadId,
+          projectId: checkout.projectId,
+          title: input.title,
+          modelSelection: input.modelSelection,
+          runtimeMode: input.runtimeMode,
+          interactionMode: input.interactionMode,
+          branch: input.branch,
+          // A thread with no worktree runs in the project root, which is
+          // the worker's checkout; a worktree path is already the worker's.
+          worktreePath:
+            input.branch === null && input.worktreePath === centralRoot
+              ? checkout.workspaceRoot
+              : input.worktreePath,
+          text: input.text,
+          // Uploads live in this server's attachment store; the worker reads
+          // the brief's files from where they were staged instead.
+          attachments: [],
+          centralEnvironmentId: deps.centralEnvironmentId,
+        })
+        .pipe(Effect.mapError(fromWireCommandError("spawn", input.threadId)));
+    }),
     send: command("send", (rpc, input: Parameters<ThreadGatewayShape["send"]>[0]) =>
       rpc.gateway.send({ ...input, attachments: [] }),
     ),
@@ -288,20 +291,19 @@ export const makeRemoteThreadGateway = (
         (rpc, answer: Parameters<ThreadGatewayShape["answerPendingInput"]>[0]) =>
           rpc.gateway.answerPendingInput(answer),
       )(input).pipe(Effect.orElseSucceed(() => false)),
-    threadState: (threadId) =>
-      Effect.gen(function* () {
-        const rpc = yield* link.pipe(Effect.option);
-        if (rpc._tag === "None") return UNKNOWN_THREAD_STATE;
-        const answer = yield* rpc.value.gateway.threadState(threadId).pipe(Effect.result);
-        if (answer._tag === "Failure") {
-          // The link went between the lookup and the answer: still unknown.
-          if (answer.failure._tag === "WorkerRpcError") return UNKNOWN_THREAD_STATE;
-          return yield* fromWireReadError("threadState")(answer.failure);
-        }
-        const state = answer.success;
-        if (state === null) return null;
-        return { ...state, projectId: yield* centralProjectOf(state.projectId) };
-      }),
+    threadState: Effect.fn("RemoteThreadGateway.threadState")(function* (threadId) {
+      const rpc = yield* link.pipe(Effect.option);
+      if (rpc._tag === "None") return UNKNOWN_THREAD_STATE;
+      const answer = yield* rpc.value.gateway.threadState(threadId).pipe(Effect.result);
+      if (answer._tag === "Failure") {
+        // The link went between the lookup and the answer: still unknown.
+        if (answer.failure._tag === "WorkerRpcError") return UNKNOWN_THREAD_STATE;
+        return yield* fromWireReadError("threadState")(answer.failure);
+      }
+      const state = answer.success;
+      if (state === null) return null;
+      return { ...state, projectId: yield* centralProjectOf(state.projectId) };
+    }),
     threadRecords: (threadIds) =>
       read("threadRecords", (rpc) => rpc.gateway.threadRecords(threadIds)).pipe(
         Effect.map(

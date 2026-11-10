@@ -154,15 +154,12 @@ export function makeLocalBoardWorkspace(
 
   /** The project's checkout, or the operation fails naming why. */
   const rootOf = (operation: string, projectId: ProjectId) =>
-    deps
-      .projectRoot(projectId)
-      .pipe(
-        Effect.flatMap((root) =>
-          root === null || root.length === 0
-            ? Effect.fail(noCheckout(operation))
-            : Effect.succeed(root),
-        ),
-      );
+    deps.projectRoot(projectId).pipe(
+      Effect.filterOrFail(
+        (root): root is string => root !== null && root.length > 0,
+        () => noCheckout(operation),
+      ),
+    );
 
   /** A ref read that answers "" for anything but a clean exit. */
   const gitRef = (operation: string, cwd: string, args: ReadonlyArray<string>) =>
@@ -174,7 +171,7 @@ export function makeLocalBoardWorkspace(
       );
 
   const primaryRemote = (cwd: string) =>
-    git.resolvePrimaryRemoteName(cwd).pipe(Effect.catch(() => Effect.succeed(null)));
+    git.resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null));
 
   /** Fetch one remote branch into its remote-tracking ref; whether it worked. */
   const fetchRemoteBranch = (
@@ -208,38 +205,39 @@ export function makeLocalBoardWorkspace(
   // literal string 'HEAD') treated as a resolution failure rather than a
   // branch. `defaultBranch === ""` is the failure signal, `detachedHead` and
   // `unbornBranch` (a repository with no commits) disambiguate the message.
-  const resolveDefaultBranch: BoardWorkspace["resolveDefaultBranch"] = ({ projectId }) =>
-    Effect.gen(function* () {
-      const cwd = yield* rootOf("resolveDefaultBranch", projectId);
-      const ref = (args: ReadonlyArray<string>) =>
-        gitRef("boardCardWorktree.defaultBranch", cwd, args);
-      const originHead = yield* ref([
-        "symbolic-ref",
-        "--quiet",
-        "--short",
-        "refs/remotes/origin/HEAD",
-      ]);
-      const currentBranch = yield* ref(["rev-parse", "--abbrev-ref", "HEAD"]);
-      const defaultBranch =
-        originHead.startsWith("origin/") && originHead.length > "origin/".length
-          ? originHead.slice("origin/".length)
-          : currentBranch === "HEAD"
-            ? ""
-            : currentBranch;
-      // A repository with no commits yet (T3O-15): HEAD names a branch that does
-      // not exist, so `rev-parse` answers nothing while `symbolic-ref` still does.
-      // Only read on failure — it shapes the message, not the resolution.
-      const unbornBranch =
-        defaultBranch === "" && currentBranch === ""
-          ? yield* ref(["symbolic-ref", "--quiet", "--short", "HEAD"])
-          : "";
-      return {
-        defaultBranch,
-        detachedHead: currentBranch === "HEAD",
-        unbornBranch,
-        checkoutPath: cwd,
-      };
-    });
+  const resolveDefaultBranch: BoardWorkspace["resolveDefaultBranch"] = Effect.fn(
+    "LocalBoardWorkspace.resolveDefaultBranch",
+  )(function* ({ projectId }) {
+    const cwd = yield* rootOf("resolveDefaultBranch", projectId);
+    const ref = (args: ReadonlyArray<string>) =>
+      gitRef("boardCardWorktree.defaultBranch", cwd, args);
+    const originHead = yield* ref([
+      "symbolic-ref",
+      "--quiet",
+      "--short",
+      "refs/remotes/origin/HEAD",
+    ]);
+    const currentBranch = yield* ref(["rev-parse", "--abbrev-ref", "HEAD"]);
+    const defaultBranch =
+      originHead.startsWith("origin/") && originHead.length > "origin/".length
+        ? originHead.slice("origin/".length)
+        : currentBranch === "HEAD"
+          ? ""
+          : currentBranch;
+    // A repository with no commits yet (T3O-15): HEAD names a branch that does
+    // not exist, so `rev-parse` answers nothing while `symbolic-ref` still does.
+    // Only read on failure — it shapes the message, not the resolution.
+    const unbornBranch =
+      defaultBranch === "" && currentBranch === ""
+        ? yield* ref(["symbolic-ref", "--quiet", "--short", "HEAD"])
+        : "";
+    return {
+      defaultBranch,
+      detachedHead: currentBranch === "HEAD",
+      unbornBranch,
+      checkoutPath: cwd,
+    };
+  });
 
   /** The remote's default branch, for an orphan worktree with no card to name
       its base; `main` when the remote cannot say. */
@@ -249,7 +247,7 @@ export function makeLocalBoardWorkspace(
         git.resolvePrimaryRemoteName(cwd).pipe(
           Effect.flatMap((remote) => git.resolveDefaultBranchName(cwd, remote)),
           Effect.map((name) => name ?? "main"),
-          Effect.catch(() => Effect.succeed("main")),
+          Effect.orElseSucceed(() => "main"),
         ),
       ),
       Effect.map((branch) => ({ branch })),
@@ -267,51 +265,53 @@ export function makeLocalBoardWorkspace(
    * first. Idempotent: a base that already exists locally is the desired
    * state, and a raced creation is re-checked rather than treated as fatal.
    */
-  const ensureLocalBaseBranch: BoardWorkspace["ensureLocalBaseBranch"] = ({ projectId, base }) =>
-    Effect.gen(function* () {
-      const cwd = yield* rootOf("ensureLocalBaseBranch", projectId);
-      const ref = (args: ReadonlyArray<string>) => gitRef("boardCardWorktree.baseRef", cwd, args);
-      // Thunks, not effect values: each check is a fresh read of the ref.
-      const localExists = () =>
-        ref(["rev-parse", "--verify", "--quiet", `refs/heads/${base}`]).pipe(
-          Effect.map((sha) => sha !== ""),
-        );
-      if (yield* localExists()) return { exists: true };
-      const remoteName = yield* primaryRemote(cwd);
-      if (remoteName === null) return { exists: false };
-      const remoteExists = () =>
-        ref(["rev-parse", "--verify", "--quiet", `refs/remotes/${remoteName}/${base}`]).pipe(
-          Effect.map((sha) => sha !== ""),
-        );
-      if (!(yield* remoteExists())) {
-        yield* fetchRemoteBranch("boardCardWorktree.baseRef.fetch", cwd, remoteName, base);
-        if (!(yield* remoteExists())) return { exists: false };
-      }
-      yield* ref(["branch", base, `${remoteName}/${base}`]);
-      return { exists: yield* localExists() };
-    });
+  const ensureLocalBaseBranch: BoardWorkspace["ensureLocalBaseBranch"] = Effect.fn(
+    "LocalBoardWorkspace.ensureLocalBaseBranch",
+  )(function* ({ projectId, base }) {
+    const cwd = yield* rootOf("ensureLocalBaseBranch", projectId);
+    const ref = (args: ReadonlyArray<string>) => gitRef("boardCardWorktree.baseRef", cwd, args);
+    // Thunks, not effect values: each check is a fresh read of the ref.
+    const localExists = () =>
+      ref(["rev-parse", "--verify", "--quiet", `refs/heads/${base}`]).pipe(
+        Effect.map((sha) => sha !== ""),
+      );
+    if (yield* localExists()) return { exists: true };
+    const remoteName = yield* primaryRemote(cwd);
+    if (remoteName === null) return { exists: false };
+    const remoteExists = () =>
+      ref(["rev-parse", "--verify", "--quiet", `refs/remotes/${remoteName}/${base}`]).pipe(
+        Effect.map((sha) => sha !== ""),
+      );
+    if (!(yield* remoteExists())) {
+      yield* fetchRemoteBranch("boardCardWorktree.baseRef.fetch", cwd, remoteName, base);
+      if (!(yield* remoteExists())) return { exists: false };
+    }
+    yield* ref(["branch", base, `${remoteName}/${base}`]);
+    return { exists: yield* localExists() };
+  });
 
   const privateGitDir = (worktreePath: string) => worktreePrivateGitDir(git, worktreePath);
   const ownerOf = (worktreePath: string) => boardWorktreeOwner(deps, worktreePath);
 
-  const markCentralOwned = (worktreePath: string) =>
-    Effect.gen(function* () {
-      const dir = yield* privateGitDir(worktreePath);
-      if (dir === null) {
-        return yield* new BoardWorkerGitError({
-          operation: "provisionWorktree",
-          detail: `${worktreePath} has no git directory to mark as the board's.`,
-        });
-      }
-      yield* fileSystem
-        .writeFileString(pathService.join(dir, CENTRAL_OWNER_MARKER), "central\n")
-        .pipe(
-          Effect.mapError(
-            (error) =>
-              new BoardWorkerGitError({ operation: "provisionWorktree", detail: error.message }),
-          ),
-        );
-    });
+  const markCentralOwned = Effect.fn("LocalBoardWorkspace.markCentralOwned")(function* (
+    worktreePath: string,
+  ) {
+    const dir = yield* privateGitDir(worktreePath);
+    if (dir === null) {
+      return yield* new BoardWorkerGitError({
+        operation: "provisionWorktree",
+        detail: `${worktreePath} has no git directory to mark as the board's.`,
+      });
+    }
+    yield* fileSystem
+      .writeFileString(pathService.join(dir, CENTRAL_OWNER_MARKER), "central\n")
+      .pipe(
+        Effect.mapError(
+          (error) =>
+            new BoardWorkerGitError({ operation: "provisionWorktree", detail: error.message }),
+        ),
+      );
+  });
 
   /**
    * Refuse to reuse a checkout of `branch` that belongs to the other board on
@@ -323,30 +323,32 @@ export function makeLocalBoardWorkspace(
    * work, so it is dropped instead: provisioning then attaches a fresh
    * checkout to the branch, rather than refusing every retry.
    */
-  const refuseForeignCheckout = (cwd: string, branch: string) =>
-    Effect.gen(function* () {
-      const listed = yield* gitRef("boardCardWorktree.owner.list", cwd, [
-        "worktree",
-        "list",
-        "--porcelain",
-      ]);
-      const existing = parseRegisteredWorktrees(listed).find((entry) => entry.branch === branch);
-      if (existing === undefined) return;
-      if (existing.prunable) {
-        return yield* git
-          .removeWorktree({ cwd, path: existing.path, force: true })
-          .pipe(Effect.mapError(gitFailed("provisionWorktree")));
-      }
-      const existingOwner = yield* ownerOf(existing.path);
-      if (existingOwner === owner) return;
-      return yield* new BoardWorkerGitError({
-        operation: "provisionWorktree",
-        detail:
-          existingOwner === null
-            ? `'${branch}' is already checked out at ${existing.path}, and git cannot say which board owns it.`
-            : `'${branch}' is already checked out at ${existing.path} by another board on this server.`,
-      });
+  const refuseForeignCheckout = Effect.fn("LocalBoardWorkspace.refuseForeignCheckout")(function* (
+    cwd: string,
+    branch: string,
+  ) {
+    const listed = yield* gitRef("boardCardWorktree.owner.list", cwd, [
+      "worktree",
+      "list",
+      "--porcelain",
+    ]);
+    const existing = parseRegisteredWorktrees(listed).find((entry) => entry.branch === branch);
+    if (existing === undefined) return;
+    if (existing.prunable) {
+      return yield* git
+        .removeWorktree({ cwd, path: existing.path, force: true })
+        .pipe(Effect.mapError(gitFailed("provisionWorktree")));
+    }
+    const existingOwner = yield* ownerOf(existing.path);
+    if (existingOwner === owner) return;
+    return yield* new BoardWorkerGitError({
+      operation: "provisionWorktree",
+      detail:
+        existingOwner === null
+          ? `'${branch}' is already checked out at ${existing.path}, and git cannot say which board owns it.`
+          : `'${branch}' is already checked out at ${existing.path} by another board on this server.`,
     });
+  });
 
   const provisionWorktree: BoardWorkspace["provisionWorktree"] = ({
     projectId,
@@ -372,12 +374,12 @@ export function makeLocalBoardWorkspace(
    * to, the remote one, so the worktree carries exactly what was pushed.
    * Nothing is copied worker to worker (D21).
    */
-  const provisionWorktreeFromRemoteBranch: BoardWorkspace["provisionWorktreeFromRemoteBranch"] = ({
-    projectId,
-    branch,
-    baseRefName,
-  }) =>
-    Effect.gen(function* () {
+  const provisionWorktreeFromRemoteBranch: BoardWorkspace["provisionWorktreeFromRemoteBranch"] =
+    Effect.fn("LocalBoardWorkspace.provisionWorktreeFromRemoteBranch")(function* ({
+      projectId,
+      branch,
+      baseRefName,
+    }) {
       const operation = "provisionWorktreeFromRemoteBranch";
       const cwd = yield* rootOf(operation, projectId);
       const remoteName = yield* primaryRemote(cwd);
@@ -514,35 +516,36 @@ export function makeLocalBoardWorkspace(
    * fetch is bounded by `BASE_TIP_FETCH_TIMEOUT_MS` rather than deduplicated;
    * a fetch that times out reads the last-fetched remote ref.
    */
-  const measureBaseTip: BoardWorkspace["measureBaseTip"] = ({ projectId, baseRefName }) =>
-    Effect.gen(function* () {
-      const cwd = yield* deps.projectRoot(projectId);
-      if (cwd === null) return { tip: null };
-      const remoteName = (yield* baseTipFromRemote) ? yield* primaryRemote(cwd) : null;
-      if (remoteName !== null) {
-        yield* fetchRemoteBranch(
-          "boardBaseTip.fetch",
-          cwd,
-          remoteName,
-          baseRefName,
-          BASE_TIP_FETCH_TIMEOUT_MS,
-        );
-        const remoteTip = yield* gitRef("boardBaseTip.resolve", cwd, [
-          "rev-parse",
-          "--verify",
-          "--quiet",
-          `refs/remotes/${remoteName}/${baseRefName}`,
-        ]);
-        if (remoteTip.length > 0) return { tip: remoteTip };
-      }
-      const tip = yield* gitRef("boardBaseTip.resolve", cwd, [
+  const measureBaseTip: BoardWorkspace["measureBaseTip"] = Effect.fn(
+    "LocalBoardWorkspace.measureBaseTip",
+  )(function* ({ projectId, baseRefName }) {
+    const cwd = yield* deps.projectRoot(projectId);
+    if (cwd === null) return { tip: null };
+    const remoteName = (yield* baseTipFromRemote) ? yield* primaryRemote(cwd) : null;
+    if (remoteName !== null) {
+      yield* fetchRemoteBranch(
+        "boardBaseTip.fetch",
+        cwd,
+        remoteName,
+        baseRefName,
+        BASE_TIP_FETCH_TIMEOUT_MS,
+      );
+      const remoteTip = yield* gitRef("boardBaseTip.resolve", cwd, [
         "rev-parse",
         "--verify",
         "--quiet",
-        `refs/heads/${baseRefName}`,
+        `refs/remotes/${remoteName}/${baseRefName}`,
       ]);
-      return { tip: tip.length > 0 ? tip : null };
-    });
+      if (remoteTip.length > 0) return { tip: remoteTip };
+    }
+    const tip = yield* gitRef("boardBaseTip.resolve", cwd, [
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `refs/heads/${baseRefName}`,
+    ]);
+    return { tip: tip.length > 0 ? tip : null };
+  });
 
   /**
    * Cut a split parent's integration branch from `base` and push it (D12), so
@@ -550,83 +553,80 @@ export function makeLocalBoardWorkspace(
    * Idempotent on retry: an existing branch is the desired state, and a raced
    * sibling's creation is re-checked rather than treated as fatal.
    */
-  const createIntegrationBranch: BoardWorkspace["createIntegrationBranch"] = ({
-    projectId,
-    branch,
-    base,
-  }) =>
-    Effect.gen(function* () {
-      const cwd = yield* rootOf("createIntegrationBranch", projectId);
-      const exists = () =>
-        gitRef("boardIntegrationBranch.ref", cwd, [
-          "rev-parse",
-          "--verify",
-          "--quiet",
-          `refs/heads/${branch}`,
-        ]).pipe(Effect.map((sha) => sha !== ""));
-      if (!(yield* exists())) {
-        // Cut from the REMOTE tip of the level above (T3O-28): on a nested
-        // group that is the outer integration branch, which another worker's
-        // merges may have moved without this checkout seeing it.
-        const remoteName = yield* primaryRemote(cwd);
-        const remoteBase =
-          remoteName === null
-            ? null
-            : yield* fetchRemoteBranch(
-                "boardIntegrationBranch.fetchBase",
-                cwd,
-                remoteName,
-                base,
-              ).pipe(
-                // A failed fetch leaves a possibly stale remote-tracking ref; cut from the local base.
-                Effect.flatMap((fetched) =>
-                  fetched
-                    ? gitRef("boardIntegrationBranch.remoteBase", cwd, [
-                        "rev-parse",
-                        "--verify",
-                        "--quiet",
-                        `refs/remotes/${remoteName}/${base}`,
-                      ])
-                    : Effect.succeed(""),
-                ),
-                Effect.map((sha) => (sha === "" ? null : `${remoteName}/${base}`)),
-              );
-        const created = yield* git
-          .execute({
-            operation: "boardIntegrationBranch.create",
-            cwd,
-            // --no-track: a remote start point would otherwise make the base this branch's upstream.
-            args: ["branch", "--no-track", branch, remoteBase ?? base],
-            timeoutMs: 10_000,
-            allowNonZeroExit: true,
-          })
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("board workspace: integration branch creation failed", {
-                branch,
-                cause: String(cause),
-              }).pipe(Effect.as(null)),
-            ),
-          );
-        if ((created === null || created.exitCode !== 0) && !(yield* exists())) {
-          return { outcome: "create-failed" as const };
-        }
+  const createIntegrationBranch: BoardWorkspace["createIntegrationBranch"] = Effect.fn(
+    "LocalBoardWorkspace.createIntegrationBranch",
+  )(function* ({ projectId, branch, base }) {
+    const cwd = yield* rootOf("createIntegrationBranch", projectId);
+    const exists = () =>
+      gitRef("boardIntegrationBranch.ref", cwd, [
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        `refs/heads/${branch}`,
+      ]).pipe(Effect.map((sha) => sha !== ""));
+    if (!(yield* exists())) {
+      // Cut from the REMOTE tip of the level above (T3O-28): on a nested
+      // group that is the outer integration branch, which another worker's
+      // merges may have moved without this checkout seeing it.
+      const remoteName = yield* primaryRemote(cwd);
+      const remoteBase =
+        remoteName === null
+          ? null
+          : yield* fetchRemoteBranch(
+              "boardIntegrationBranch.fetchBase",
+              cwd,
+              remoteName,
+              base,
+            ).pipe(
+              // A failed fetch leaves a possibly stale remote-tracking ref; cut from the local base.
+              Effect.flatMap((fetched) =>
+                fetched
+                  ? gitRef("boardIntegrationBranch.remoteBase", cwd, [
+                      "rev-parse",
+                      "--verify",
+                      "--quiet",
+                      `refs/remotes/${remoteName}/${base}`,
+                    ])
+                  : Effect.succeed(""),
+              ),
+              Effect.map((sha) => (sha === "" ? null : `${remoteName}/${base}`)),
+            );
+      const created = yield* git
+        .execute({
+          operation: "boardIntegrationBranch.create",
+          cwd,
+          // --no-track: a remote start point would otherwise make the base this branch's upstream.
+          args: ["branch", "--no-track", branch, remoteBase ?? base],
+          timeoutMs: 10_000,
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("board workspace: integration branch creation failed", {
+              branch,
+              cause: String(cause),
+            }).pipe(Effect.as(null)),
+          ),
+        );
+      if ((created === null || created.exitCode !== 0) && !(yield* exists())) {
+        return { outcome: "create-failed" as const };
       }
-      const pushed = yield* git.resolvePrimaryRemoteName(cwd).pipe(
-        Effect.flatMap((remoteName) =>
-          git.execute({
-            operation: "boardIntegrationBranch.push",
-            cwd,
-            args: ["push", remoteName, branch],
-            timeoutMs: 60_000,
-            allowNonZeroExit: true,
-          }),
-        ),
-        Effect.map((result) => result.exitCode === 0),
-        Effect.catch(() => Effect.succeed(false)),
-      );
-      return { outcome: "ready" as const, pushed };
-    });
+    }
+    const pushed = yield* git.resolvePrimaryRemoteName(cwd).pipe(
+      Effect.flatMap((remoteName) =>
+        git.execute({
+          operation: "boardIntegrationBranch.push",
+          cwd,
+          args: ["push", remoteName, branch],
+          timeoutMs: 60_000,
+          allowNonZeroExit: true,
+        }),
+      ),
+      Effect.map((result) => result.exitCode === 0),
+      Effect.orElseSucceed(() => false),
+    );
+    return { outcome: "ready" as const, pushed };
+  });
 
   const probeMergeConflict: BoardWorkspace["probeLocalMergeConflict"] = ({
     projectId,
@@ -644,90 +644,85 @@ export function makeLocalBoardWorkspace(
     );
 
   /** Upstream and unpushed commits — the detail a move refusal shows. */
-  const pushState = (worktreePath: string) =>
-    Effect.gen(function* () {
-      const upstream = yield* gitRef("boardCardWorktree.durable.upstream", worktreePath, [
-        "rev-parse",
-        "--abbrev-ref",
-        "--symbolic-full-name",
-        "@{upstream}",
-      ]);
-      const hasUpstream = upstream.length > 0;
-      const count = yield* gitRef(
-        "boardCardWorktree.durable.unpushed",
-        worktreePath,
-        hasUpstream
-          ? ["rev-list", "--count", "@{upstream}..HEAD"]
-          : ["rev-list", "--count", "HEAD", "--not", "--remotes"],
-      );
-      const unpushedCount = Number(count) || 0;
-      const listed =
-        unpushedCount === 0
-          ? ""
-          : yield* gitRef(
-              "boardCardWorktree.durable.unpushedLog",
-              worktreePath,
-              hasUpstream
-                ? [
-                    "log",
-                    `-n${BOARD_UNPUSHED_COMMITS_MAX}`,
-                    "--format=%h%x09%s",
-                    "@{upstream}..HEAD",
-                  ]
-                : [
-                    "log",
-                    `-n${BOARD_UNPUSHED_COMMITS_MAX}`,
-                    "--format=%h%x09%s",
-                    "HEAD",
-                    "--not",
-                    "--remotes",
-                  ],
-            );
-      const unpushedCommits = listed
-        .split("\n")
-        .filter((line) => line.length > 0)
-        .map((line) => {
-          const tab = line.indexOf("\t");
-          return tab < 0
-            ? { sha: line, subject: "" }
-            : { sha: line.slice(0, tab), subject: line.slice(tab + 1) };
-        });
-      return { hasUpstream, unpushedCount, unpushedCommits };
-    });
+  const pushState = Effect.fn("LocalBoardWorkspace.pushState")(function* (worktreePath: string) {
+    const upstream = yield* gitRef("boardCardWorktree.durable.upstream", worktreePath, [
+      "rev-parse",
+      "--abbrev-ref",
+      "--symbolic-full-name",
+      "@{upstream}",
+    ]);
+    const hasUpstream = upstream.length > 0;
+    const count = yield* gitRef(
+      "boardCardWorktree.durable.unpushed",
+      worktreePath,
+      hasUpstream
+        ? ["rev-list", "--count", "@{upstream}..HEAD"]
+        : ["rev-list", "--count", "HEAD", "--not", "--remotes"],
+    );
+    const unpushedCount = Number(count) || 0;
+    const listed =
+      unpushedCount === 0
+        ? ""
+        : yield* gitRef(
+            "boardCardWorktree.durable.unpushedLog",
+            worktreePath,
+            hasUpstream
+              ? ["log", `-n${BOARD_UNPUSHED_COMMITS_MAX}`, "--format=%h%x09%s", "@{upstream}..HEAD"]
+              : [
+                  "log",
+                  `-n${BOARD_UNPUSHED_COMMITS_MAX}`,
+                  "--format=%h%x09%s",
+                  "HEAD",
+                  "--not",
+                  "--remotes",
+                ],
+          );
+    const unpushedCommits = listed
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const tab = line.indexOf("\t");
+        return tab < 0
+          ? { sha: line, subject: "" }
+          : { sha: line.slice(0, tab), subject: line.slice(tab + 1) };
+      });
+    return { hasUpstream, unpushedCount, unpushedCommits };
+  });
 
-  const probeWorktreeDurability: BoardWorkspace["probeWorktreeDurability"] = (input) =>
-    Effect.gen(function* () {
-      const projectCwd = yield* rootOf("probeWorktreeDurability", input.projectId);
-      // The probe's own per-pass cache, keyed as it keys it.
-      const remoteName = yield* primaryRemote(projectCwd);
-      const base =
-        remoteName !== null && input.baseRefName.startsWith(`${remoteName}/`)
-          ? input.baseRefName.slice(remoteName.length + 1)
-          : input.baseRefName;
-      const fetchKey = `${projectCwd}\0${base}`;
-      const fetchedBases = new Set<string>(input.baseAlreadyFetched ? [fetchKey] : []);
-      const facts = yield* withGit(
-        probeBoardWorktreeDurability({
-          projectCwd,
-          worktreePath: input.worktreePath,
-          baseRefName: input.baseRefName,
-          branch: input.branch,
-          mergedPullRequestNumbers: input.mergedPullRequestNumbers,
-          openPullRequestNumber: input.openPullRequestNumber,
-          fetchedBases,
-        }),
-      ).pipe(Effect.mapError(gitFailed("probeWorktreeDurability")));
-      const push = yield* pushState(input.worktreePath);
-      return {
-        hasWorkingTreeChanges: facts.hasWorkingTreeChanges,
-        changedPaths: facts.changedPaths,
-        openPullRequestNumber: facts.openPullRequestNumber,
-        durable: facts.durable,
-        unmergedCount: facts.unmergedCount,
-        ...push,
-        baseFetched: !input.baseAlreadyFetched && fetchedBases.has(fetchKey),
-      } satisfies BoardWorkspaceDurability;
-    });
+  const probeWorktreeDurability: BoardWorkspace["probeWorktreeDurability"] = Effect.fn(
+    "LocalBoardWorkspace.probeWorktreeDurability",
+  )(function* (input) {
+    const projectCwd = yield* rootOf("probeWorktreeDurability", input.projectId);
+    // The probe's own per-pass cache, keyed as it keys it.
+    const remoteName = yield* primaryRemote(projectCwd);
+    const base =
+      remoteName !== null && input.baseRefName.startsWith(`${remoteName}/`)
+        ? input.baseRefName.slice(remoteName.length + 1)
+        : input.baseRefName;
+    const fetchKey = `${projectCwd}\0${base}`;
+    const fetchedBases = new Set<string>(input.baseAlreadyFetched ? [fetchKey] : []);
+    const facts = yield* withGit(
+      probeBoardWorktreeDurability({
+        projectCwd,
+        worktreePath: input.worktreePath,
+        baseRefName: input.baseRefName,
+        branch: input.branch,
+        mergedPullRequestNumbers: input.mergedPullRequestNumbers,
+        openPullRequestNumber: input.openPullRequestNumber,
+        fetchedBases,
+      }),
+    ).pipe(Effect.mapError(gitFailed("probeWorktreeDurability")));
+    const push = yield* pushState(input.worktreePath);
+    return {
+      hasWorkingTreeChanges: facts.hasWorkingTreeChanges,
+      changedPaths: facts.changedPaths,
+      openPullRequestNumber: facts.openPullRequestNumber,
+      durable: facts.durable,
+      unmergedCount: facts.unmergedCount,
+      ...push,
+      baseFetched: !input.baseAlreadyFetched && fetchedBases.has(fetchKey),
+    } satisfies BoardWorkspaceDurability;
+  });
 
   const goneWorktreePath: BoardWorkspace["goneWorktreePath"] = ({
     projectId,
@@ -787,31 +782,32 @@ export function makeLocalBoardWorkspace(
    * other board sharing this directory (`BoardWorktreeOwner`). The first block
    * is the repository's own checkout, and a prunable one is already gone.
    */
-  const listBoardWorktrees: BoardWorkspace["listBoardWorktrees"] = ({ projectId }) =>
-    Effect.gen(function* () {
-      const roots = yield* deps.worktreeRoots;
-      if (roots.length === 0) return { worktrees: [] };
-      const cwd = yield* rootOf("listBoardWorktrees", projectId);
-      const listed = yield* git
-        .execute({
-          operation: "board.sweep.worktrees",
-          cwd,
-          args: ["worktree", "list", "--porcelain"],
-          allowNonZeroExit: true,
-        })
-        .pipe(Effect.catch(() => Effect.succeed(null)));
-      if (listed === null || listed.exitCode !== 0) return { worktrees: [] };
-      const worktrees: Array<{ path: string; branch: string }> = [];
-      for (const registered of parseRegisteredWorktrees(listed.stdout).slice(1)) {
-        if (registered.branch === null || !registered.branch.startsWith("board/")) continue;
-        if (registered.prunable) continue;
-        const resolved = pathService.resolve(registered.path);
-        if (!roots.some((root) => isWithinRoot(resolved, root))) continue;
-        if ((yield* ownerOf(registered.path)) !== owner) continue;
-        worktrees.push({ path: registered.path, branch: registered.branch });
-      }
-      return { worktrees };
-    });
+  const listBoardWorktrees: BoardWorkspace["listBoardWorktrees"] = Effect.fn(
+    "LocalBoardWorkspace.listBoardWorktrees",
+  )(function* ({ projectId }) {
+    const roots = yield* deps.worktreeRoots;
+    if (roots.length === 0) return { worktrees: [] };
+    const cwd = yield* rootOf("listBoardWorktrees", projectId);
+    const listed = yield* git
+      .execute({
+        operation: "board.sweep.worktrees",
+        cwd,
+        args: ["worktree", "list", "--porcelain"],
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    if (listed === null || listed.exitCode !== 0) return { worktrees: [] };
+    const worktrees: Array<{ path: string; branch: string }> = [];
+    for (const registered of parseRegisteredWorktrees(listed.stdout).slice(1)) {
+      if (registered.branch === null || !registered.branch.startsWith("board/")) continue;
+      if (registered.prunable) continue;
+      const resolved = pathService.resolve(registered.path);
+      if (!roots.some((root) => isWithinRoot(resolved, root))) continue;
+      if ((yield* ownerOf(registered.path)) !== owner) continue;
+      worktrees.push({ path: registered.path, branch: registered.branch });
+    }
+    return { worktrees };
+  });
 
   const deleteBranch: BoardWorkspace["deleteCardBranch"] = ({ projectId, branch }) =>
     rootOf("deleteCardBranch", projectId).pipe(
@@ -819,8 +815,8 @@ export function makeLocalBoardWorkspace(
     );
 
   /** `user.name` of the checkout, or "" when it has none. */
-  const gitUserName: BoardWorkspace["gitUserName"] = ({ projectId }) =>
-    Effect.gen(function* () {
+  const gitUserName: BoardWorkspace["gitUserName"] = Effect.fn("LocalBoardWorkspace.gitUserName")(
+    function* ({ projectId }) {
       const cwd = yield* deps.projectRoot(projectId);
       if (cwd === null || cwd.length === 0) return { name: "" };
       const name = yield* git
@@ -835,50 +831,52 @@ export function makeLocalBoardWorkspace(
           Effect.catchCause(() => Effect.succeed("")),
         );
       return { name };
-    });
+    },
+  );
 
   /** The branch's tip on the remote, freshly fetched; null when the remote
       does not have it, or there is no remote. A remote that can't be asked
       fails instead (T3O-66): "not there" offers a restart from base, which
       forgets pushed work, so it must not be guessed from a network error. */
-  const remoteBranchTip: BoardWorkspace["remoteBranchTip"] = ({ projectId, branch }) =>
-    Effect.gen(function* () {
-      const cwd = yield* rootOf("remoteBranchTip", projectId);
-      const remoteName = yield* primaryRemote(cwd);
-      if (remoteName === null) return null;
-      const unreachable = new BoardWorkerGitError({
-        operation: "remoteBranchTip",
-        detail: `The remote ${remoteName} couldn't be reached.`,
-      });
-      const listed = yield* git
-        .execute({
-          operation: "boardRemoteBranchTip.lsRemote",
-          cwd,
-          args: ["ls-remote", "--heads", remoteName, `refs/heads/${branch}`],
-          timeoutMs: 60_000,
-          allowNonZeroExit: true,
-        })
-        .pipe(Effect.catchCause(() => Effect.succeed(null)));
-      if (listed === null || listed.exitCode !== 0) return yield* unreachable;
-      if (listed.stdout.trim().length === 0) return null;
-      if (!(yield* fetchRemoteBranch("boardRemoteBranchTip.fetch", cwd, remoteName, branch))) {
-        return yield* unreachable;
-      }
-      const line = yield* gitRef("boardRemoteBranchTip.log", cwd, [
-        "log",
-        "-1",
-        "--format=%H%x00%s%x00%cI%x00%an",
-        `refs/remotes/${remoteName}/${branch}`,
-      ]);
-      const [sha, subject, committedAt, author] = line.split("\0");
-      if (sha === undefined || sha.length === 0) return null;
-      return {
-        sha,
-        subject: subject ?? "",
-        committedAt: committedAt ?? "",
-        author: author ?? "",
-      };
+  const remoteBranchTip: BoardWorkspace["remoteBranchTip"] = Effect.fn(
+    "LocalBoardWorkspace.remoteBranchTip",
+  )(function* ({ projectId, branch }) {
+    const cwd = yield* rootOf("remoteBranchTip", projectId);
+    const remoteName = yield* primaryRemote(cwd);
+    if (remoteName === null) return null;
+    const unreachable = new BoardWorkerGitError({
+      operation: "remoteBranchTip",
+      detail: `The remote ${remoteName} couldn't be reached.`,
     });
+    const listed = yield* git
+      .execute({
+        operation: "boardRemoteBranchTip.lsRemote",
+        cwd,
+        args: ["ls-remote", "--heads", remoteName, `refs/heads/${branch}`],
+        timeoutMs: 60_000,
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    if (listed === null || listed.exitCode !== 0) return yield* unreachable;
+    if (listed.stdout.trim().length === 0) return null;
+    if (!(yield* fetchRemoteBranch("boardRemoteBranchTip.fetch", cwd, remoteName, branch))) {
+      return yield* unreachable;
+    }
+    const line = yield* gitRef("boardRemoteBranchTip.log", cwd, [
+      "log",
+      "-1",
+      "--format=%H%x00%s%x00%cI%x00%an",
+      `refs/remotes/${remoteName}/${branch}`,
+    ]);
+    const [sha, subject, committedAt, author] = line.split("\0");
+    if (sha === undefined || sha.length === 0) return null;
+    return {
+      sha,
+      subject: subject ?? "",
+      committedAt: committedAt ?? "",
+      author: author ?? "",
+    };
+  });
 
   const pullRequestByBranch: BoardWorkspace["pullRequestByBranch"] = ({
     projectId,

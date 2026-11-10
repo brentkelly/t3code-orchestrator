@@ -135,8 +135,8 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
 
   /** Write what changed, ask for what is missing, and drop what the card no
       longer has (prototype K3: the agent reads them by path). */
-  const stageAttachments = (input: BoardStageAttachmentsInput) =>
-    Effect.gen(function* () {
+  const stageAttachments = Effect.fn("WorkerGatewayHost.stageAttachments")(
+    function* (input: BoardStageAttachmentsInput) {
       const cardId = input.cardId as BoardCardId;
       const dir = boardCardAttachmentsDir({ path, stateDir: config.stateDir, cardId });
       if (dir === null) return yield* stagingError(`'${input.cardId}' is not a card id.`);
@@ -170,41 +170,43 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
         if (!keep.has(name)) yield* fs.remove(path.join(dir, name)).pipe(Effect.ignore);
       }
       return { needed, written, stateDir: config.stateDir } satisfies BoardStageAttachmentsResult;
-    }).pipe(
-      Effect.catchTags({ PlatformError: (error) => Effect.fail(stagingError(error.message)) }),
-    );
+    },
+    Effect.catchTags({ PlatformError: (error) => Effect.fail(stagingError(error.message)) }),
+  );
 
   return {
-    spawn: ({ centralEnvironmentId, ...input }, caller) =>
-      Effect.gen(function* () {
-        yield* relay
-          .claim(centralEnvironmentId, caller)
-          .pipe(Effect.mapError(refused("spawn", input.threadId)));
-        // Recorded first: the agent's first tool call can arrive before the
-        // spawn returns. A thread another board placed stays that board's.
-        const recordFailed = (cause: { readonly cause?: unknown }) =>
-          new BoardWorkerGatewayError({
-            kind: "failed",
-            operation: "spawn",
-            threadId: input.threadId,
-            detail: `Couldn't record the thread for the board: ${String(cause.cause)}`,
-          });
-        const current = yield* store
-          .relayedThreadCentral(input.threadId)
-          .pipe(Effect.mapError(recordFailed));
-        if (current !== null && current !== centralEnvironmentId) {
-          return yield* new BoardWorkerGatewayError({
-            kind: "refused",
-            operation: "spawn",
-            threadId: input.threadId,
-            detail: "That thread belongs to another board.",
-          });
-        }
-        yield* store
-          .recordRelayedThread(input.threadId, centralEnvironmentId)
-          .pipe(Effect.mapError(recordFailed));
-        yield* wireCommand(local.spawn(input));
-      }),
+    spawn: Effect.fn("WorkerGatewayHost.spawn")(function* (
+      { centralEnvironmentId, ...input },
+      caller,
+    ) {
+      yield* relay
+        .claim(centralEnvironmentId, caller)
+        .pipe(Effect.mapError(refused("spawn", input.threadId)));
+      // Recorded first: the agent's first tool call can arrive before the
+      // spawn returns. A thread another board placed stays that board's.
+      const recordFailed = (cause: { readonly cause?: unknown }) =>
+        new BoardWorkerGatewayError({
+          kind: "failed",
+          operation: "spawn",
+          threadId: input.threadId,
+          detail: `Couldn't record the thread for the board: ${String(cause.cause)}`,
+        });
+      const current = yield* store
+        .relayedThreadCentral(input.threadId)
+        .pipe(Effect.mapError(recordFailed));
+      if (current !== null && current !== centralEnvironmentId) {
+        return yield* new BoardWorkerGatewayError({
+          kind: "refused",
+          operation: "spawn",
+          threadId: input.threadId,
+          detail: "That thread belongs to another board.",
+        });
+      }
+      yield* store
+        .recordRelayedThread(input.threadId, centralEnvironmentId)
+        .pipe(Effect.mapError(recordFailed));
+      yield* wireCommand(local.spawn(input));
+    }),
     send: (input) => wireCommand(local.send(input)),
     interrupt: (input) => wireCommand(local.interrupt(input)),
     stopSession: (input) => wireCommand(local.stopSession(input)),

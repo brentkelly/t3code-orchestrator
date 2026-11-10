@@ -75,7 +75,7 @@ const statSize = (path: string) =>
     catch: (error) => (error instanceof Error ? error.message : String(error)),
   }).pipe(
     Effect.map((stats) => stats.size),
-    Effect.catch(() => Effect.succeed(null)),
+    Effect.orElseSucceed(() => null),
   );
 
 const readBytes = (path: string, position: number, length: number) =>
@@ -95,14 +95,13 @@ const readBytes = (path: string, position: number, length: number) =>
 
 /** Where a read without an offset starts: the last 256 KiB, moved on to the
     start of its first whole line. */
-const tailStart = (path: string, size: number) =>
-  Effect.gen(function* () {
-    if (size <= BOARD_CI_LOG_TAIL_BYTES) return 0;
-    const start = size - BOARD_CI_LOG_TAIL_BYTES;
-    const window = yield* readBytes(path, start, Math.min(64 * 1024, size - start));
-    const newline = window.indexOf(NEWLINE);
-    return newline === -1 ? start : start + newline + 1;
-  });
+const tailStart = Effect.fn("BoardCiLog.tailStart")(function* (path: string, size: number) {
+  if (size <= BOARD_CI_LOG_TAIL_BYTES) return 0;
+  const start = size - BOARD_CI_LOG_TAIL_BYTES;
+  const window = yield* readBytes(path, start, Math.min(64 * 1024, size - start));
+  const newline = window.indexOf(NEWLINE);
+  return newline === -1 ? start : start + newline + 1;
+});
 
 const decoder = new TextDecoder();
 
@@ -122,39 +121,38 @@ export const readBoardCiLogFile = (
     let held: Uint8Array = new Uint8Array(0);
 
     /** Start reading a file of `size` bytes; false when the offset is past it. */
-    const begin = (size: number) =>
-      Effect.gen(function* () {
-        if (options.fromOffset !== undefined && options.fromOffset > size) return false;
-        position = options.fromOffset ?? (yield* tailStart(path, size));
-        return true;
-      });
+    const begin = Effect.fn("BoardCiLog.begin")(function* (size: number) {
+      if (options.fromOffset !== undefined && options.fromOffset > size) return false;
+      position = options.fromOffset ?? (yield* tailStart(path, size));
+      return true;
+    });
 
-    const readTo = (size: number) =>
-      Effect.gen(function* () {
-        while (position !== null && position < size) {
-          const bytes = yield* readBytes(
-            path,
-            position,
-            Math.min(BOARD_CI_LOG_CHUNK_BYTES, size - position),
-          );
-          if (bytes.length === 0) return;
-          const offset = position - held.length;
-          position += bytes.length;
-          const combined = new Uint8Array(held.length + bytes.length);
-          combined.set(held);
-          combined.set(bytes, held.length);
-          const complete = utf8CompleteLength(combined);
-          held = combined.slice(complete);
-          if (complete > 0) {
-            yield* Queue.offer(queue, {
-              _tag: "chunk",
-              offset,
-              end: offset + complete,
-              text: decoder.decode(combined.subarray(0, complete)),
-            });
-          }
+    // Untraced: runs on every poll tick of a followed log.
+    const readTo = Effect.fnUntraced(function* (size: number) {
+      while (position !== null && position < size) {
+        const bytes = yield* readBytes(
+          path,
+          position,
+          Math.min(BOARD_CI_LOG_CHUNK_BYTES, size - position),
+        );
+        if (bytes.length === 0) return;
+        const offset = position - held.length;
+        position += bytes.length;
+        const combined = new Uint8Array(held.length + bytes.length);
+        combined.set(held);
+        combined.set(bytes, held.length);
+        const complete = utf8CompleteLength(combined);
+        held = combined.slice(complete);
+        if (complete > 0) {
+          yield* Queue.offer(queue, {
+            _tag: "chunk",
+            offset,
+            end: offset + complete,
+            text: decoder.decode(combined.subarray(0, complete)),
+          });
         }
-      });
+      }
+    });
 
     const finish = (item: BoardCiLogItem) =>
       Queue.offer(queue, item).pipe(Effect.andThen(Queue.end(queue)));
@@ -336,7 +334,7 @@ export const readBoardCiLog = <E>(
         Stream.mapEffect(() =>
           deps.readDetail(input.cardId).pipe(
             Effect.map((latest) => isBoardCiLogSettled(latest, input.runId, input.index)),
-            Effect.catch(() => Effect.succeed(false)),
+            Effect.orElseSucceed(() => false),
           ),
         ),
         Stream.filter((settledNow) => settledNow),

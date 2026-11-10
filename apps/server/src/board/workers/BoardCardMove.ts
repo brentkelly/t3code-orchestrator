@@ -244,8 +244,8 @@ const makeBoardCardMover = Effect.gen(function* () {
     return { outcome: "ready", fromWorkerId: from, branch: worktree.branch, tip } as const;
   });
 
-  const check: BoardCardMoverShape["check"] = (cardId, toWorkerId, options = {}) =>
-    Effect.gen(function* () {
+  const check: BoardCardMoverShape["check"] = Effect.fn("BoardCardMover.check")(
+    function* (cardId, toWorkerId, options = {}) {
       const board = yield* readBoard;
       const card = board.cards.find((candidate) => candidate.id === cardId);
       if (card === undefined || card.archivedAt !== null) {
@@ -348,40 +348,40 @@ const makeBoardCardMover = Effect.gen(function* () {
         );
       }
       return { outcome: "ready", fromWorkerId: from, branch: worktree.branch, tip } as const;
-    }).pipe(
-      Effect.catchCause((cause) =>
+    },
+    (effect, cardId) =>
+      Effect.catchCause(effect, (cause) =>
         Effect.logWarning("board move: check failed", { cardId, cause: Cause.pretty(cause) }).pipe(
           Effect.as(refused("The move could not be checked. See the server log for details.")),
         ),
       ),
-    );
+  );
 
   /** Dispatch one move step; whether it landed. */
-  const record = (
+  const record = Effect.fn("BoardCardMover.record")(function* (
     cardId: BoardCardId,
     step: Extract<BoardCommand, { type: "board.card.move-worker" }>["step"],
     stamp: BoardMoveStamp,
-  ) =>
-    Effect.gen(function* () {
-      const command: BoardCommand = {
-        type: "board.card.move-worker",
-        commandId: yield* commandId(`move-${step.phase}`),
-        cardId,
-        step,
-        createdAt: yield* nowIso,
-      };
-      yield* stamp(command);
-      return yield* engine.dispatch(command).pipe(
-        Effect.as(true),
-        Effect.catchCause((cause) =>
-          Effect.logWarning("board move: step not recorded", {
-            cardId,
-            phase: step.phase,
-            cause: Cause.pretty(cause),
-          }).pipe(Effect.as(false)),
-        ),
-      );
-    });
+  ) {
+    const command: BoardCommand = {
+      type: "board.card.move-worker",
+      commandId: yield* commandId(`move-${step.phase}`),
+      cardId,
+      step,
+      createdAt: yield* nowIso,
+    };
+    yield* stamp(command);
+    return yield* engine.dispatch(command).pipe(
+      Effect.as(true),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board move: step not recorded", {
+          cardId,
+          phase: step.phase,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(false)),
+      ),
+    );
+  });
 
   /**
    * Retire the old worktree, before the move's answer. A failure here leaves
@@ -560,146 +560,146 @@ const makeBoardCardMover = Effect.gen(function* () {
     return yield* record(cardId, { phase: "restarted" }, stamp);
   });
 
-  const move: BoardCardMoverShape["move"] = (
+  const move: BoardCardMoverShape["move"] = Effect.fn("BoardCardMover.move")(function* (
     cardId,
     choice,
     stamp = () => Effect.void,
     options = {},
-  ) =>
-    Effect.gen(function* () {
-      const followDefault = choice === null;
-      const toWorkerId = choice ?? (yield* readBoard).defaultWorkerId ?? BOARD_LOCAL_WORKER_ID;
-      const force = options.force === true;
-      const checked = yield* check(cardId, toWorkerId, options);
-      // A force-moved card with no worktree just re-pins; the supervisor
-      // stalls a step stranded on the old worker off the pin.
-      if (force && checked.outcome === "pin") {
-        const pinned = yield* dispatchStamped(
+  ) {
+    const followDefault = choice === null;
+    const toWorkerId = choice ?? (yield* readBoard).defaultWorkerId ?? BOARD_LOCAL_WORKER_ID;
+    const force = options.force === true;
+    const checked = yield* check(cardId, toWorkerId, options);
+    // A force-moved card with no worktree just re-pins; the supervisor
+    // stalls a step stranded on the old worker off the pin.
+    if (force && checked.outcome === "pin") {
+      const pinned = yield* dispatchStamped(
+        {
+          type: "board.card.pin-worker",
+          commandId: yield* commandId("move-force-pin"),
+          cardId,
+          workerId: followDefault ? null : toWorkerId,
+          createdAt: yield* nowIso,
+        },
+        stamp,
+      );
+      return pinned
+        ? ({ outcome: "started" } as const)
+        : refused("The card could not be re-pinned. See the server log.");
+    }
+    // A force-move off an unreachable worker, or a failed move's retry,
+    // with nothing on the remote: start over from the base, once confirmed.
+    const restart = checked.outcome === "no-remote-branch";
+    if (restart && options.restartFromBase !== true) return checked;
+    if (checked.outcome !== "ready" && !restart) return checked;
+    const started = yield* record(
+      cardId,
+      {
+        phase: "start",
+        toWorkerId,
+        sha: checked.outcome === "ready" ? (checked.tip?.sha ?? null) : null,
+        ...(force ? { force: true } : {}),
+      },
+      stamp,
+    );
+    if (!started) return refused("The move could not be started. See the server log.");
+    if (restart) {
+      const restarted = yield* restartFromBase(cardId, stamp);
+      if (!restarted) return refused("The card could not be restarted. See the server log.");
+      if (followDefault) {
+        yield* dispatchStamped(
           {
             type: "board.card.pin-worker",
-            commandId: yield* commandId("move-force-pin"),
+            commandId: yield* commandId("move-unpin"),
             cardId,
-            workerId: followDefault ? null : toWorkerId,
+            workerId: null,
             createdAt: yield* nowIso,
           },
           stamp,
         );
-        return pinned
-          ? ({ outcome: "started" } as const)
-          : refused("The card could not be re-pinned. See the server log.");
       }
-      // A force-move off an unreachable worker, or a failed move's retry,
-      // with nothing on the remote: start over from the base, once confirmed.
-      const restart = checked.outcome === "no-remote-branch";
-      if (restart && options.restartFromBase !== true) return checked;
-      if (checked.outcome !== "ready" && !restart) return checked;
-      const started = yield* record(
-        cardId,
-        {
-          phase: "start",
-          toWorkerId,
-          sha: checked.outcome === "ready" ? (checked.tip?.sha ?? null) : null,
-          ...(force ? { force: true } : {}),
-        },
-        stamp,
-      );
-      if (!started) return refused("The move could not be started. See the server log.");
-      if (restart) {
-        const restarted = yield* restartFromBase(cardId, stamp);
-        if (!restarted) return refused("The card could not be restarted. See the server log.");
-        if (followDefault) {
-          yield* dispatchStamped(
-            {
-              type: "board.card.pin-worker",
-              commandId: yield* commandId("move-unpin"),
-              cardId,
-              workerId: null,
-              createdAt: yield* nowIso,
-            },
-            stamp,
-          );
-        }
-        return { outcome: "started" } as const;
+      return { outcome: "started" } as const;
+    }
+    const card = (yield* readBoard).cards.find((candidate) => candidate.id === cardId)!;
+    if (force) {
+      // Nothing on the old worker is touched: its worktree stays there, and
+      // the card stops using it.
+      if (card.worktree !== null && boardCardHoldsWorktree(card)) {
+        const abandoned = yield* record(
+          cardId,
+          { phase: "abandoned", worktreePath: card.worktree.path },
+          stamp,
+        );
+        if (!abandoned) return refused("The move could not be recorded. See the server log.");
       }
-      const card = (yield* readBoard).cards.find((candidate) => candidate.id === cardId)!;
-      if (force) {
-        // Nothing on the old worker is touched: its worktree stays there, and
-        // the card stops using it.
-        if (card.worktree !== null && boardCardHoldsWorktree(card)) {
-          const abandoned = yield* record(
-            cardId,
-            { phase: "abandoned", worktreePath: card.worktree.path },
-            stamp,
-          );
-          if (!abandoned) return refused("The move could not be recorded. See the server log.");
-        }
-        yield* provision({ card, toWorkerId, followDefault, stamp }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("board move: failed", { cardId, cause: Cause.pretty(cause) }).pipe(
-              Effect.andThen(
-                record(
-                  cardId,
-                  { phase: "failed", error: "The move stopped unexpectedly. See the server log." },
-                  stamp,
-                ),
+      yield* provision({ card, toWorkerId, followDefault, stamp }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board move: failed", { cardId, cause: Cause.pretty(cause) }).pipe(
+            Effect.andThen(
+              record(
+                cardId,
+                { phase: "failed", error: "The move stopped unexpectedly. See the server log." },
+                stamp,
               ),
             ),
           ),
-          FiberSet.run(running),
-        );
-        return { outcome: "started" } as const;
-      }
-      if (checked.outcome !== "ready") return checked;
-      const stopped = (cause: Cause.Cause<unknown>) =>
-        Effect.logWarning("board move: failed", { cardId, cause: Cause.pretty(cause) }).pipe(
-          Effect.andThen(
-            record(
-              cardId,
-              { phase: "failed", error: "The move stopped unexpectedly. See the server log." },
-              stamp,
-            ),
-          ),
-        );
-      if (checked.fromWorkerId !== null && card.worktree !== null && card.worktree.path !== null) {
-        const refusal = yield* retire(card, checked.fromWorkerId, stamp).pipe(
-          Effect.catchCause((cause) =>
-            stopped(cause).pipe(
-              Effect.as(refused("The move stopped unexpectedly. See the server log.")),
-            ),
-          ),
-        );
-        if (refusal !== null) return refusal;
-      }
-      yield* provision({ card, toWorkerId, followDefault, stamp }).pipe(
-        Effect.catchCause(stopped),
+        ),
         FiberSet.run(running),
       );
       return { outcome: "started" } as const;
-    });
-
-  const askAgentToPush: BoardCardMoverShape["askAgentToPush"] = (cardId) =>
-    Effect.gen(function* () {
-      const board = yield* readBoard;
-      const card = board.cards.find((candidate) => candidate.id === cardId);
-      const threadId = card === undefined ? null : activeBoardCardThreadId(card.threadLinks);
-      if (card === undefined || threadId === null) return { outcome: "no-thread" } as const;
-      const step = boardCardStepState(board, card.id);
-      return yield* threads
-        .send({
-          commandId: yield* commandId("ask-push"),
-          threadId,
-          text: boardPushRequestText(card.worktree?.branch ?? "the card's branch"),
-          attachments: [],
-          runtimeMode: step?.runtimeMode ?? "approval-required",
-          interactionMode: "default",
-        })
-        .pipe(
-          Effect.as({ outcome: "sent", threadId } as const),
-          Effect.catch((error) =>
-            Effect.succeed({ outcome: "failed", detail: error.detail } as const),
+    }
+    if (checked.outcome !== "ready") return checked;
+    const stopped = (cause: Cause.Cause<unknown>) =>
+      Effect.logWarning("board move: failed", { cardId, cause: Cause.pretty(cause) }).pipe(
+        Effect.andThen(
+          record(
+            cardId,
+            { phase: "failed", error: "The move stopped unexpectedly. See the server log." },
+            stamp,
           ),
-        );
-    });
+        ),
+      );
+    if (checked.fromWorkerId !== null && card.worktree !== null && card.worktree.path !== null) {
+      const refusal = yield* retire(card, checked.fromWorkerId, stamp).pipe(
+        Effect.catchCause((cause) =>
+          stopped(cause).pipe(
+            Effect.as(refused("The move stopped unexpectedly. See the server log.")),
+          ),
+        ),
+      );
+      if (refusal !== null) return refusal;
+    }
+    yield* provision({ card, toWorkerId, followDefault, stamp }).pipe(
+      Effect.catchCause(stopped),
+      FiberSet.run(running),
+    );
+    return { outcome: "started" } as const;
+  });
+
+  const askAgentToPush: BoardCardMoverShape["askAgentToPush"] = Effect.fn(
+    "BoardCardMover.askAgentToPush",
+  )(function* (cardId) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    const threadId = card === undefined ? null : activeBoardCardThreadId(card.threadLinks);
+    if (card === undefined || threadId === null) return { outcome: "no-thread" } as const;
+    const step = boardCardStepState(board, card.id);
+    return yield* threads
+      .send({
+        commandId: yield* commandId("ask-push"),
+        threadId,
+        text: boardPushRequestText(card.worktree?.branch ?? "the card's branch"),
+        attachments: [],
+        runtimeMode: step?.runtimeMode ?? "approval-required",
+        interactionMode: "default",
+      })
+      .pipe(
+        Effect.as({ outcome: "sent", threadId } as const),
+        Effect.catch((error) =>
+          Effect.succeed({ outcome: "failed", detail: error.detail } as const),
+        ),
+      );
+  });
 
   // A move runs in this process's memory, so one still `moving` when the
   // mover is built was cut off by a restart and nothing will ever finish it.
