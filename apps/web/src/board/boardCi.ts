@@ -104,12 +104,13 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
         detail: "Every step passed",
         tooltip: "CI passed; the card moves on",
       };
+    // T3O-59: held says why, and a machine problem says so.
     case "held":
       return {
-        chip: { label: "Can't run", tone: "warning" },
+        chip: { label: ci.machine === true ? "Machine problem" : "Can't run", tone: "warning" },
         segments,
         count,
-        detail: "CI couldn't finish this pass",
+        detail: ci.stopReason ?? "CI couldn't finish this pass",
         tooltip: "Retry CI to run it again, or Skip CI",
       };
     // T3O-49: the round-trip limit, or a conflict CI couldn't resolve.
@@ -261,7 +262,9 @@ export function boardCiPaneStatus(input: {
     }
     if (ci.phase === "queued") return { label: "Queued", tone: "neutral" };
     if (ci.phase === "passed") return { label: "Passed", tone: "success" };
-    if (ci.phase === "held") return { label: "Can't run", tone: "warning" };
+    if (ci.phase === "held") {
+      return { label: ci.machine === true ? "Machine problem" : "Can't run", tone: "warning" };
+    }
     if (ci.phase === "stopped") return { label: "Needs you", tone: "attention" };
     const index = ci.steps.findIndex((step) => step.status === "running");
     return {
