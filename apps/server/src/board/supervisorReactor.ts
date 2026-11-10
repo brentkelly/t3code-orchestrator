@@ -3613,6 +3613,12 @@ const make = Effect.gen(function* () {
         ),
         ...(runner === undefined ? {} : { runner }),
       });
+      // A hold that landed since the re-read cancelled nothing of this
+      // segment, so it is this segment's to drop.
+      const after = yield* readCard(cardId);
+      if (after === null || !isCiPassLive(after, runId)) {
+        if ((yield* cancelCiRun(cardId, runId)) !== null) yield* schedule();
+      }
     },
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: CI segment failed", { cause: Cause.pretty(cause) }),
@@ -3840,6 +3846,9 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
     if (!held) return false;
+    // A segment started after a Stop's cancel but before its hold landed
+    // would otherwise run on the held pass with nothing to stop it.
+    if ((yield* cancelCiRun(card.id, runId)) !== null) yield* schedule();
     ciLostResults.delete(runId);
     ciSuspectPasses.delete(String(card.id));
     // A pass replaced or settled meanwhile is left alone by the record, so
@@ -3849,6 +3858,12 @@ const make = Effect.gen(function* () {
     yield* holdInCi(card, reason);
     return true;
   });
+
+  /** Cancel the card's pass fiber only if it is still `runId`'s. */
+  const cancelCiRun = (cardId: BoardCardId, runId: string) =>
+    Effect.suspend(() =>
+      ciPasses.current(cardId) === runId ? ciPasses.cancel(cardId) : Effect.succeed(null),
+    );
 
   /** Whether `runId` is the card's pass and still under way: in CI, live,
       and not yet passed, held or stopped (T3O-59). */

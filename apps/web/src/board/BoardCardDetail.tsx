@@ -1048,6 +1048,8 @@ export function BoardCardDetail({
       }
       const outcome = result.value.outcome;
       if (outcome === "retried" || outcome === "sent-back" || outcome === "stopped") return;
+      // A second Stop (a double-click) finds CI already stopped, which is what was asked.
+      if (action === "stop" && outcome === "not-running") return;
       boardToast({
         title: refused,
         description:

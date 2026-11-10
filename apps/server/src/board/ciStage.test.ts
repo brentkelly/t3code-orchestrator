@@ -26,7 +26,9 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
@@ -1265,6 +1267,67 @@ it.effect("Stop CI landing as a fix begins wins: no fix agent starts on the held
         assert.strictEqual(stepStatus(yield* h.board, subject.id), null);
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("Stop CI landing as a segment starts holds the pass and cancels the segment", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const holdReached = yield* Deferred.make<void>();
+    const runner: BoardCiRunnerShape = {
+      run: () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+    };
+    const subject = card("stop-segment-race", review);
+    const stateDir = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-ci-stop-race-")),
+    );
+    // The stop's cancel runs during the segment's disk check, before its
+    // liveness re-read; its hold lands only once the segment has started.
+    const race: { stop: Effect.Effect<unknown> | null; fiber: Fiber.Fiber<unknown> | null } = {
+      stop: null,
+      fiber: null,
+    };
+    const onDispatch = (command: HarnessCommand) =>
+      command.type === "board.card.record-ci" &&
+      command.action.kind === "finish-pass" &&
+      command.action.result === "interrupted"
+        ? Deferred.succeed(holdReached, undefined).pipe(Effect.andThen(Deferred.await(started)))
+        : Effect.void;
+    const freeBytes = () =>
+      Effect.gen(function* () {
+        const stop = race.stop;
+        if (stop !== null) {
+          race.stop = null;
+          race.fiber = yield* Effect.forkDetach(stop);
+          yield* Deferred.await(holdReached);
+        }
+        return 100 * 1024 ** 3;
+      });
+    yield* withGovernor(
+      {
+        board: boardWith([subject]),
+        settings,
+        onDispatch,
+        serverConfig: layerTest(process.cwd(), stateDir).pipe(
+          Layer.provide(NodeServices.layer),
+          Layer.orDie,
+        ),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          race.stop = h.reactor.retryCi(subject.id, "stop");
+          yield* enterCi(h, subject, 1);
+          yield* h.reactor.drain;
+          assert.deepStrictEqual(yield* Fiber.join(race.fiber!), { outcome: "stopped" });
+          assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "held");
+          // Nothing still runs on the held pass, so its slot is free.
+          assert.strictEqual(yield* h.slots.heldTotal, 0);
+          yield* h.reactor.drainCi;
+        }),
+    ).pipe(
+      Effect.provideService(BoardCiRunner, runner),
+      Effect.provideService(BoardDiskSpace, { freeBytes }),
+    );
   }),
 );
 
