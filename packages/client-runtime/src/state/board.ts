@@ -82,6 +82,7 @@ import {
   importBoardProjectFile,
   resetBoardProject,
   setBoardProjectCiEnabled,
+  setBoardProjectCiStopOnFailure,
   setBoardProjectCiSteps,
   setBoardProjectStageOverride,
   setBoardProjectStageSwitch,
@@ -131,6 +132,7 @@ import {
   type DismissBoardProjectImportInput,
   type ResetBoardProjectInput,
   type SetBoardProjectCiEnabledInput,
+  type SetBoardProjectCiStopOnFailureInput,
   type SetBoardProjectCiStepsInput,
   type SetBoardProjectStageOverrideInput,
   type SetBoardProjectStageSwitchInput,
@@ -171,6 +173,7 @@ export type {
   DismissBoardProjectImportInput,
   ResetBoardProjectInput,
   SetBoardProjectCiEnabledInput,
+  SetBoardProjectCiStopOnFailureInput,
   SetBoardProjectCiStepsInput,
   SetBoardProjectStageOverrideInput,
   SetBoardProjectStageSwitchInput,
@@ -996,6 +999,11 @@ export function createBoardEnvironmentAtoms<R, ER>(
     setProjectCiEnabled: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:set-project-ci-enabled",
       execute: (input: SetBoardProjectCiEnabledInput) => setBoardProjectCiEnabled(input),
+    }),
+    setProjectCiStopOnFailure: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-project-ci-stop-on-failure",
+      execute: (input: SetBoardProjectCiStopOnFailureInput) =>
+        setBoardProjectCiStopOnFailure(input),
     }),
     resetProject: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:reset-project",

@@ -857,6 +857,23 @@ function lastLinesWithin(tail: string, budget: number): string {
 }
 
 /**
+ * The board-owned lines that close every CI fix prompt (T3O-57): guard rails
+ * and the completion contract. Not editable; Settings shows them after the
+ * project's fix prompt.
+ */
+export function boardCiFixPromptRules(failureCount: number): ReadonlyArray<string> {
+  return [
+    ...(failureCount > 1
+      ? ["Later failures may be caused by earlier ones. Work through them in order."]
+      : []),
+    "Updating a test that this card's change made out of date is fine. Never delete, skip or loosen a check to hide a real failure.",
+    "If a failure also happens on the base branch, still fix it, but keep that fix minimal and in its own commit.",
+    "",
+    `Do not run the CI steps yourself to finish: the board re-runs every step from the top after you report. Complete with outcome "succeeded" and a payload shaped ${BOARD_CI_FIX_PAYLOAD_SHAPE}, giving every issue by its id. Use "fixed" once your fixes are committed and pushed (give \`fixedSha\`), or with nothing to commit when a failure looks transient and a re-run should clear it. Use "cannot-fix", with a \`finding\` saying why, when any issue can't be fixed from this worktree, or only by hiding it: still fix and push the others, and mark each issue "resolved" or "cannot-fix".`,
+  ];
+}
+
+/**
  * The CI fix agent's step body (T3O-44/57): the stage's fix prompt, every
  * issue the failed pass reported as a numbered list, each failed step's
  * output, the board's guard rails and the completion contract. The board
@@ -919,12 +936,6 @@ export function composeBoardCiFixPrompt(input: {
     ),
     ...blocks,
     "",
-    ...(failures.length > 1
-      ? ["Later failures may be caused by earlier ones. Work through them in order."]
-      : []),
-    "Updating a test that this card's change made out of date is fine. Never delete, skip or loosen a check to hide a real failure.",
-    "If a failure also happens on the base branch, still fix it, but keep that fix minimal and in its own commit.",
-    "",
-    `Do not run the CI steps yourself to finish: the board re-runs every step from the top after you report. Complete with outcome "succeeded" and a payload shaped ${BOARD_CI_FIX_PAYLOAD_SHAPE}, giving every issue by its id. Use "fixed" once your fixes are committed and pushed (give \`fixedSha\`), or with nothing to commit when a failure looks transient and a re-run should clear it. Use "cannot-fix", with a \`finding\` saying why, when any issue can't be fixed from this worktree, or only by hiding it: still fix and push the others, and mark each issue "resolved" or "cannot-fix".`,
+    ...boardCiFixPromptRules(failures.length),
   ].join("\n");
 }

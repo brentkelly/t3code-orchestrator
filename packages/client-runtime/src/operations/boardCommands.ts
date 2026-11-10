@@ -89,6 +89,8 @@ export type SetBoardProjectStageOverrideInput =
   SettingsCommandInput<"board.project.set-stage-override">;
 export type SetBoardProjectCiStepsInput = SettingsCommandInput<"board.project.set-ci-steps">;
 export type SetBoardProjectCiEnabledInput = SettingsCommandInput<"board.project.set-ci-enabled">;
+export type SetBoardProjectCiStopOnFailureInput =
+  SettingsCommandInput<"board.project.set-ci-stop-on-failure">;
 export type ResetBoardProjectInput = SettingsCommandInput<"board.project.reset">;
 export type DismissBoardProjectImportInput = SettingsCommandInput<"board.project.dismiss-import">;
 export type StartBoardStageThreadInput = CommandInput<"board.card.start-stage-thread">;
@@ -525,6 +527,10 @@ export const setBoardProjectCiSteps = dispatchSettings(
 export const setBoardProjectCiEnabled = dispatchSettings(
   "board.project.set-ci-enabled",
   "setBoardProjectCiEnabled",
+);
+export const setBoardProjectCiStopOnFailure = dispatchSettings(
+  "board.project.set-ci-stop-on-failure",
+  "setBoardProjectCiStopOnFailure",
 );
 export const resetBoardProject = dispatchSettings("board.project.reset", "resetBoardProject");
 export const dismissBoardProjectImport = dispatchSettings(

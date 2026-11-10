@@ -50,6 +50,7 @@ import {
   AuthSettingsWriteScope,
   type BoardStageProjectCoverage,
   type ProjectId,
+  boardCiFixPromptRules,
   boardStepPostamble,
   boardStepPreamble,
   effectiveBoardRuntimeMode,
@@ -1353,9 +1354,10 @@ function CiStageBody(props: {
   return (
     <>
       <p className="pb-1 text-xs leading-[1.5] text-muted-foreground">
-        Runs each project&apos;s CI steps in the card&apos;s worktree after code review. When a step
-        fails, a fix agent fixes small mechanical failures and every step re-runs from the top;
-        anything bigger goes back to Code review as a must-fix finding.
+        Runs each project&apos;s CI steps in the card&apos;s worktree after code review. When a pass
+        fails, a fix agent fixes every reported failure and CI runs again from the top. If the fix
+        attempts run out, or the agent can&apos;t fix something, the card stops in CI and waits for
+        you.
       </p>
       <div className="flex flex-col gap-1.5 py-2">
         <div className="flex items-center gap-2">
@@ -1391,7 +1393,7 @@ function CiStageBody(props: {
       </div>
       <NumberRow
         label="Fix attempts"
-        hint="Fix agents one CI visit may start before the card goes back to Code review. 0 sends every failure straight back."
+        hint="Per CI visit. When they run out the card stops in CI for you."
         stepper={
           <NumberStepper
             value={exec.maxFixAttempts}
@@ -1399,19 +1401,6 @@ function CiStageBody(props: {
             max={10}
             ariaLabel="CI fix attempts"
             onChange={(maxFixAttempts) => set({ maxFixAttempts })}
-          />
-        }
-      />
-      <NumberRow
-        label="Max round trips"
-        hint="Times CI may send a card back (to review, or from Ready for merge for conflicts or failing checks) before it stops for a human."
-        stepper={
-          <NumberStepper
-            value={exec.maxRoundTrips}
-            min={0}
-            max={10}
-            ariaLabel="CI max round trips"
-            onChange={(maxRoundTrips) => set({ maxRoundTrips })}
           />
         }
       />
@@ -1425,11 +1414,16 @@ function CiStageBody(props: {
           stageLabel: stage.label,
           step: { stepLabel: null },
         })}
-        postamble={boardStepPostamble({
-          humanInLoop: false,
-          role: null,
-          step: { stepId: stage.stageId, stepLabel: null },
-        })}
+        postamble={[
+          "Then the board adds the failed steps, a numbered list of the issues to fix, and each step's output, followed by:",
+          ...boardCiFixPromptRules(2),
+          "",
+          boardStepPostamble({
+            humanInLoop: false,
+            role: null,
+            step: { stepId: stage.stageId, stepLabel: null },
+          }),
+        ].join("\n")}
         missingMessage={exec.prompt.trim().length === 0 ? "A fix prompt is required." : null}
         onChange={(prompt) => set({ prompt })}
       />

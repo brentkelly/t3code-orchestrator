@@ -55,7 +55,7 @@ const report = (title: string) => (result: { readonly _tag: string }) => {
 type OverrideField =
   | { readonly key: "autoExecute" | "autoMerge"; readonly kind: "boolean"; readonly label: string }
   | {
-      readonly key: "rounds" | "maxFixAttempts" | "maxRoundTrips";
+      readonly key: "rounds" | "maxFixAttempts";
       readonly kind: "number";
       readonly label: string;
       readonly min: number;
@@ -75,7 +75,6 @@ const FIELDS: Readonly<
   merge: [{ key: "autoMerge", kind: "boolean", label: "Auto-merge" }],
   ci: [
     { key: "maxFixAttempts", kind: "number", label: "Fix attempts", min: 0, max: 10 },
-    { key: "maxRoundTrips", kind: "number", label: "Max round trips", min: 0, max: 10 },
     { ...PROMPT, label: "Fix prompt" },
   ],
 };
