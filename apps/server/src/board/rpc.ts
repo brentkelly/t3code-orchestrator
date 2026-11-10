@@ -108,6 +108,7 @@ export interface BoardRpcHandlerDeps {
 }
 
 const decodeClientOrigin = Schema.decodeUnknownOption(OrchestrationClientOrigin);
+const isBoardAttachmentClaimError = Schema.is(BoardAttachmentClaimError);
 
 /**
  * The origin a client's board commands carry: its surface and app version, each kept only
@@ -521,7 +522,7 @@ function makeBoardRpcHandlers(
             addedAt: createdAt,
           }).pipe(
             Effect.mapError((error) =>
-              Schema.is(BoardAttachmentClaimError)(error)
+              isBoardAttachmentClaimError(error)
                 ? new BoardCardAttachmentError({
                     code: error.failure.reason,
                     message: error.failure.message,
