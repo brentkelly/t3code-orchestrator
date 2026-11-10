@@ -1,19 +1,7 @@
 /**
- * T3o card thread pane (t3o-06). From Planning onward the card modal is a
- * working surface, not a form: the card's thread runs inside it, with a tab
- * per linked thread — the prototype's `T3 Code Kanban v4.dc.html` thread pane.
- *
- * The conversation itself is the app's own `ChatView`, mounted with
- * `chrome="embedded"` (its one T3o seam) so the pane's tab strip is the only
- * header. Nothing about the chat is reimplemented here: same timeline, same
- * composer, same model row, so a card thread and a Threads-view thread can
- * never drift apart.
- *
- * Threads arrive here three ways (t3o-14, superseding adoption-only): the board
- * starts one by itself when a card enters an auto-executing stage (t3o-15), the
- * `+` menu starts one on demand, or you adopt an existing thread. All three end
- * at the same `board.card.link-thread` (D9) — the link is still the only way a
- * thread joins a card.
+ * The card modal's thread pane: a tab per linked thread, each mounting the app's
+ * own `ChatView` with `chrome="embedded"` so a card thread never drifts from a
+ * Threads-view thread.
  */
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -256,11 +244,8 @@ export function BoardCardThreadPane({
           {orderedLinks.map((link) => {
             const active = link.threadId === selectedThreadId;
             return (
-              // The pill is a GROUP, not one button: nesting the unlink control
-              // inside the select button would be invalid HTML and made it
-              // keyboard-unreachable (it was a presentation-role span). The
-              // wrapper draws the pill; select and unlink are real sibling
-              // buttons, each focusable in its own right.
+              // A group, not one button: select and unlink are sibling buttons so
+              // the unlink control is valid HTML and keyboard-reachable.
               <span
                 className={cn(
                   // The tab strip scrolls, so its overflow clips anything drawn
@@ -315,11 +300,8 @@ export function BoardCardThreadPane({
                         />
                       </BoardHint>
                     ) : link.threadState === "failed" ? (
-                      // A dead provider session (t3o-10) reads as idle if it
-                      // falls through to the generic glyph, which is the lie
-                      // this card set out to remove. Red, the colour the thread
-                      // list and the activity rail already give a failure — not
-                      // a work-state colour, because no work is happening.
+                      // A dead provider session must not read as idle: red, the failure
+                      // colour, not a work-state colour.
                       <BoardHint label="Failed">
                         <span
                           aria-label="Failed"
@@ -403,11 +385,8 @@ export function BoardCardThreadPane({
         ) : null}
       </div>
 
-      {/* Queued for a build slot (t3o-33). PANE-LEVEL, above whichever thread is
-          selected, because a queued card has no build thread to put it in — the
-          governor spawns nothing until it admits the step, so the pane is
-          showing the planning conversation the card arrived with. Without this
-          the transcript reads as though the build already ran and stopped. */}
+      {/* Pane-level: a queued card has no build thread yet, so without this the
+          planning transcript reads as though the build already ran. */}
       {queueInfo == null ? null : (
         <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-3 py-2">
           <ClockIcon className="size-3.5 shrink-0 text-muted-foreground" />

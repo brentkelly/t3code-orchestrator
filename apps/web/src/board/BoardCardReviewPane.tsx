@@ -1,13 +1,4 @@
 /**
- * The card modal's Review pane (t3o-16, D9): the adversarial review loop,
- * rendered from the prototype's design (`.plans/prototype/t3o.dc.html`,
- * `reviewVm`) over the card's real step completions — the same opaque
- * payloads the agents write, folded by `deriveBoardReviewLoop`.
- *
- * The shipped loop has three phases (review / triage / adjudicate); the
- * prototype's separate "reviewer re-assessment" step was folded into
- * adjudication before the contracts landed, so the pane shows three.
- *
  * Lazy, like the plan pane — a card that never reaches review pays nothing.
  */
 import {
@@ -281,11 +272,7 @@ function roundBadge(
 ): { label: string; className: string } {
   switch (round.outcome) {
     case "in-progress":
-      // Off the review stage the round is open but nobody is in it, so the
-      // badge stays neutral for the same reason the pill does
-      // (docs/t3o/status-colours.md: no colour without a claim). A round with
-      // no phase behind it has not started at all — which is what a card
-      // opening the pane ahead of review sees (T3O-3).
+      // Off the review stage nobody is in the round, so the badge stays neutral.
       if (offStage)
         return {
           label: round.completedAt === null ? "Not started" : "Not running",
@@ -487,11 +474,7 @@ function statusPill(
 ): { label: string; spinning: boolean; className: string } {
   switch (loop.status) {
     case "running": {
-      // Off the review stage a non-terminal loop derives as "running" — but
-      // nothing is running and nobody is waited on, so the pill stays
-      // neutral (docs/t3o/status-colours.md: no colour without a claim):
-      // "not started" ahead of the loop, "not running" for a card dragged
-      // off mid-loop.
+      // Off stage a non-terminal loop derives as "running", but nothing is: neutral.
       if (offStage) {
         return {
           label: started ? "Not running: card is off the review stage" : "Not started yet",
@@ -611,14 +594,8 @@ function footerNote(
 }
 
 /**
- * The block a loop that ended WITHOUT converging puts above its rounds
- * (t3o-22, D8).
- *
- * It exists because the round counts alone cannot tell the two endings apart:
- * "5 of 5, 12 raised, 7 fixed" describes a loop that passed and a loop that ran
- * out of road identically. This says which, in words, and offers the only two
- * things a human can usefully do next — buy another round, or take
- * responsibility for moving the card on.
+ * Round counts alone cannot tell a converged loop from one that ran out of road;
+ * this says which.
  */
 function NoConvergenceBlock({
   loop,
@@ -864,24 +841,9 @@ function StuckBlock({
 }
 
 /**
- * The way out of a round whose phase recorded a payload nothing can read
- * (T3O-14).
- *
- * The loop is right to halt here — an unreadable payload must never be read as
- * a phase that said nothing, so the record cannot be trusted and the card must
- * not advance. What was missing is the other half: the completion was pinned,
- * so the phase could be neither re-run nor repaired, and the pane said what had
- * happened without offering anything to do about it. Reopening supersedes the
- * broken record and the executor plans that phase again.
- *
- * Any of the four phases can be the broken one, so the block names it: a broken
- * review sends the whole round back (nothing after it ran), while a broken
- * triage, adjudication or base sync sends only that phase back.
- *
- * Separate from `NoConvergenceBlock` because none of that block's numbers mean
- * anything here: an unreadable payload has no findings to count, so "3
- * unsettled this round" would be a fabrication, and "run the NEXT round" would
- * paper over an unreviewed one rather than fix it.
+ * Reopening supersedes an unreadable phase payload, which must never be read as
+ * a phase that said nothing. Separate from `NoConvergenceBlock`: an unreadable
+ * payload has no findings to count.
  */
 function UnreadableRoundBlock({
   round,
@@ -930,15 +892,8 @@ function UnreadableRoundBlock({
 }
 
 /**
- * The settings drawer a FUTURE round opens (t3o-22, D4).
- *
- * The same combined controls menu as the chat composer: model, reasoning,
- * whatever else the model supports, and the access level. The override
- * re-points the REVIEW phase alone, because escalating the reviewer and
- * re-modelling the author who fixes the code are different calls. Access
- * shows the review phase's configured level until the round sets its own,
- * and is offered only once a model is picked: an override entry is a model
- * plus what it changes, and has nowhere to keep an access level alone.
+ * The override re-points the REVIEW phase alone. Access is offered only once a
+ * model is picked: an override entry has nowhere to keep an access level alone.
  */
 function PlannedRoundSettings({
   round,
@@ -1111,28 +1066,16 @@ export function BoardCardReviewPane({
   // The one broken record the recovery block names and reopens (T3O-14).
   const unreadableStepId = loop.unreadableStepId;
   const unreadablePhase = unreadablePhaseOf(loop);
-  // The floor the − button obeys (t3o-22, D3): a round that has STARTED can
-  // never be removed. Strictly a CONTROL gate — never fed back into the budget,
-  // which is the caller's and is floored on the ledger alone. While a step is
-  // live the round the walk sits on has started, so it counts; the decider
-  // counts a live step of any status, so this matches it wherever the shell can
-  // see one.
+  // A started round can never be removed. A control gate only, never fed back
+  // into the budget; a live step counts, matching the decider.
   const startedFloor = Math.max(
     ledgerFloor,
     stepActive === true && loop.status === "running" ? loop.currentRound : 0,
   );
   const budgetFloor = Math.max(1, startedFloor);
   /**
-   * Whether round `n`'s settings can still be chosen.
-   *
-   * "Has no completion yet" is not the same as "is in the future": the round
-   * the executor has already dispatched has recorded nothing either, and its
-   * model was frozen onto the run row at `select-step`. Offering a picker there
-   * writes an override nothing will ever read. A round is plannable only when
-   * it is genuinely ahead of the started rounds — NOT the `−` button's floor,
-   * which never drops below 1 because a budget can't: before the loop starts,
-   * round 1 itself is still free to plan — and only when there is somewhere to
-   * write it, so a read-only pane never takes an edit and drops it.
+   * Plannable only when genuinely ahead of the started rounds: the dispatched
+   * round has recorded nothing, but its model is already frozen on the run row.
    */
   const plannable = (n: number) => onSetRoundModel !== undefined && n > startedFloor;
   const counts = [

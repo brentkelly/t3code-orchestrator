@@ -1,13 +1,6 @@
 /**
- * T3o archived cards (t3o-13, D7) — the way back out of the archive.
- *
- * Archiving was a one-way door: `board.card.unarchive` and the detail modal's
- * Restore action both existed, but nothing listed an archived card, so neither
- * was reachable. This sheet is that list.
- *
- * It reads `board.getArchivedCards` when it opens — the archive is a page you
- * open, never state every client carries, so archived cards stay off the live
- * board and its delta stream (D15).
+ * Lists archived cards so restore and delete are reachable. Read on open, never
+ * carried by every client, so archived cards stay off the live board stream.
  */
 import {
   boardCardWorktreeKeptReason,
@@ -49,15 +42,9 @@ export function refreshBoardArchivedCards(environmentId: EnvironmentId): void {
 }
 
 /**
- * The list itself, mounted ONLY while the sheet is open — that is what makes
- * the archive a page you open rather than a query every board mount pays for.
- *
- * The read is refreshed on open rather than left to the atom's own staleness
- * rule. `Atom.swr` skips revalidation entirely while the cached value is
- * younger than its 30s `staleTime`, and "archive a card, then go looking for
- * it" happens well inside that window — so without this the sheet would open
- * on a snapshot taken before the archive and show nothing. It also picks up
- * archives made from another device, which no local invalidation could.
+ * Mounted only while the sheet is open, and refreshed on open: `Atom.swr` skips
+ * revalidation inside its 30s `staleTime`, so a just-archived card (or one archived
+ * from another device) would otherwise be missing.
  */
 function ArchivedCardList({
   environmentId,

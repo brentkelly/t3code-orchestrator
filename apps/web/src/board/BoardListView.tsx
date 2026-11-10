@@ -1,9 +1,6 @@
 /**
- * The List view (T3O-30): the card tree as an indented outline, with a
- * selection, a toolbar, Tab / Shift+Tab to indent and outdent, Move to…, and
- * drag and drop. Every move — toolbar, keyboard, drag — goes through
- * `runMove`, which applies `planBoardListMove`'s guard rails and sends one
- * `board.card.move-cards`; the decider checks each one again.
+ * The card tree as an indented outline. Every move (toolbar, keyboard, drag) goes
+ * through `runMove`, which applies `planBoardListMove` and sends one `board.card.move-cards`.
  */
 import {
   BoardCardId,

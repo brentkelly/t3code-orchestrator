@@ -1,29 +1,7 @@
 /**
- * T3o card detail — pure view (t3o-06). Everything the modal renders is a
- * prop; the connected `BoardCardDetail` wires the atoms and command dispatch.
- *
- * The card opens as a CENTRED MODAL, not a side pane, and it has the
- * prototype's two forms (`.plans/prototype/T3 Code Kanban v4.dc.html`):
- *
- * - **Backlog and Sprint** — a 760px sheet. The work has not started, so the
- *   card is what you read: brief and threads on the left, the stage action,
- *   labels, dependencies, activity, automation, the stage ladder and
- *   provenance in a 244px rail.
- * - **Planning onward** — a 1220px working surface. The card's thread runs in
- *   the modal (`BoardCardThreadPane`), with everything else stacked into a
- *   336px rail beside it and the brief one tab away. This is the prototype's
- *   `hasThreadPane` split, at its exact stage boundary.
- *
- * `BoardCardDetailPanel` is the sheet's contents, split out so the markup
- * stays testable with `renderToStaticMarkup` (the dialog itself portals, and
- * portals render nothing on the server). The D7 line is unchanged: the modal
- * renders from `board.subscribeCard` detail, the column view never does.
- *
- * The modal renders fully for an archived card whose worktree is long gone —
- * nothing here reads the repo (`projectName === null` is a first-class state,
- * not a crash). Sections with no data source yet (Plan body, Review ledger,
- * Activity) are deliberately ABSENT, not empty skeletons (no-speculative-
- * inventory); their owning specs are named in comments.
+ * Pure view: everything the modal renders is a prop. It renders from
+ * `board.subscribeCard` detail (the column view never does) and never reads
+ * the repo, so an archived card with no worktree (`projectName === null`) works.
  */
 import {
   DEFAULT_BOARD_REVIEW_ROUNDS,
@@ -263,11 +241,9 @@ const BoardCardSummaryPane = lazy(() =>
 );
 
 /**
- * The per-card model overrides (t3o-29). Lazy for the same reason as its
- * siblings and then some: it pulls the model list, the traits menu and the
- * access picker, and this is a deliberate, occasional gesture — most cards
- * never open it. The kebab's summary comes from `boardCardModelRows`, which is
- * picker-free and eager, so the menu item renders without paying for any of it.
+ * Lazy: it pulls the model list, traits menu and access picker, and most cards
+ * never open it. The kebab's summary comes from the eager, picker-free
+ * `boardCardModelRows`.
  */
 const BoardCardModelsPopover = lazy(() =>
   import("./BoardCardModelsPopover").then((module) => ({
@@ -455,12 +431,8 @@ export interface BoardCardDetailViewProps {
   /** The read-model stage list (D13): column labels, the stage ladder, and the
       per-card human-in-the-loop toggle's Build-role detection all read it. */
   readonly stages: ReadonlyArray<BoardStageDefinition>;
-  /** The computed human-in-the-loop stance for this card on the Build stage
-      (D6) — `null` when the card is not on the build role (no toggle shown).
-      `value` is the effective boolean; `explicit` is whether the card has an
-      explicit override (vs the computed default), and `basis` names why the
-      default applies — the card has a plan, has none, or is a sub-board child
-      (planned by its parent's approved split). */
+  /** `null` off the build role (no toggle shown). `explicit` is whether the
+      card overrides the computed default; `basis` names why the default applies. */
   readonly humanInLoop: {
     readonly value: boolean;
     readonly explicit: boolean;
@@ -599,11 +571,8 @@ export interface BoardCardDetailViewProps {
   readonly onCreateFollowUp?:
     | ((draft: { readonly title: string; readonly brief: string }) => void)
     | undefined;
-  /** Whether ANY step is live on the card — running, queued, or parked
-      (stalled / awaiting input / paused). One step at a time is a decider
-      invariant, so "Another review round" is disabled rather than hidden while
-      one is, and a merge-conflict fix is never superseded mid-rebase
-      (T3O-39, D9). */
+  /** Any step running, queued or parked. One step at a time is a decider
+      invariant, so "Another review round" is disabled (not hidden) meanwhile. */
   readonly stepLive?: boolean | undefined;
   /** Open the pull request externally, and refresh its state while we are at
       it — clicking through is a moment the user is about to learn whether the
@@ -793,16 +762,9 @@ const THREAD_STATE_LABEL: Record<BoardCardThreadState, string> = {
 };
 
 /**
- * The card's title, click-to-edit in place — the prototype's affordance, the
- * same one `BriefBody` has. The heading keeps `CARD_TITLE_ID` in both states so
- * the dialog stays labelled while the title is being typed.
- *
- * A blank title is a cancel, not a clear: `board.card.update` takes a non-empty
- * title, and a card with no title is nothing anyone can find again.
- *
- * A done card gets a check glyph after the title, in the title's own size and
- * colour: completion reads off the heading without tinting the sheet. It is a
- * sibling of the text, not a badge, so a wrapping title carries it along.
+ * The heading keeps `CARD_TITLE_ID` in both states so the dialog stays labelled
+ * while editing. A blank title is a cancel, not a clear: `board.card.update`
+ * requires a non-empty title.
  */
 function TitleBody({
   title,
@@ -1011,15 +973,9 @@ function BriefBody({
 }
 
 /**
- * The merge-conflict banner (T3O-9) — the answer to "why is the Merge button
- * dead", stated where it is read before anything else: directly under the
- * card's title, above the layout split, so both the wide and the narrow form
- * carry it.
- *
- * Amber, matching the column card's pill and the same held reading: the merge
- * is held until the thread finishes. It keeps the mockup's spinner, which the
- * board face drops — one animating element in an open modal is a different
- * proposition from thirty on a board.
+ * Sits above the layout split so both the wide and narrow forms carry it. It
+ * keeps a spinner the board face drops: one animating element in an open modal
+ * is fine, thirty on a board are not.
  */
 function ConflictBanner({
   info,
@@ -1058,15 +1014,8 @@ function ConflictBanner({
 }
 
 /**
- * The Merge button's `m:ss` countdown to the next auto-merge attempt
- * (T3O-38, D13).
- *
- * Its OWN component, and the only per-second element in the product. Isolating
- * it is the whole design: a one-second interval on the enclosing view would
- * repaint the entire modal every second, and this repaints a span. The
- * countdown exists only for the card open in the modal — the same carve-out
- * the conflict banner already has, where the modal keeps its spinner and the
- * board pill does not.
+ * Its own component so the one-second interval repaints a span, not the whole
+ * modal. The only per-second element in the product; the board pill has none.
  */
 function AutoMergeCountdown({ retryAt }: { readonly retryAt: string }) {
   const label = boardAutoMergeCountdown(retryAt, useNowSecond());
@@ -1080,16 +1029,8 @@ function AutoMergeCountdown({ retryAt }: { readonly retryAt: string }) {
 }
 
 /**
- * The auto-merge hold banner (T3O-38, D12/D13).
- *
- * Tone splits amber → red exactly as `BoardCardStepFailure` has since t3o-30,
- * and for the same reason: a wait the board will end by itself is amber and
- * says so, and only a wait that has stopped until a human acts goes red. Red
- * on a card counting down to its own next attempt would be the loudest thing
- * on screen saying the opposite of the card's own pill.
- *
- * Static — no spinner. Nothing is running during a hold; that is the whole
- * point of one.
+ * Amber while the board will end the wait by itself, red only once it needs a
+ * human, as `BoardCardStepFailure` does. No spinner: nothing runs during a hold.
  */
 function AutoMergeBanner({ info }: { readonly info: BoardAutoMergeBanner }) {
   const tone =
@@ -1160,18 +1101,8 @@ function BoardCiSentBackBanner({
 }
 
 /**
- * The queued-for-build banner (t3o-33) — the fix for a queued card opening on
- * the planning conversation it left behind and explaining nothing.
- *
- * Sits directly above the failure and dependency blocks, so a card that is both
- * queued AND dependency-blocked shows both: blocked keeps its amber and its
- * precedence in meaning, and this explains the other half of why nothing is
- * moving.
- *
- * Deliberately NEUTRAL, not `--attention`. Violet means "waiting on a human"
- * (docs/t3o/status-colours.md) and this card is waiting on a machine — it needs
- * nothing from anyone and starts by itself. The two buttons are an override,
- * not a request.
+ * Neutral, not `--attention`: the card waits on a machine, not a human, and the
+ * buttons are an override. A queued and dependency-blocked card shows both.
  */
 function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   const info = props.queueInfo;
@@ -1508,13 +1439,8 @@ function LabelSection({
 }
 
 /**
- * The caret half of the split forward button (t3o-07, D8).
- *
- * No confirmation dialog in front of it, deliberately: the item opens a pull
- * request and moves a card between two columns. It merges nothing, it pushes
- * nothing to a protected branch, and it is reversible — drag the card back,
- * close the pull request. The irreversible act lives on the Merge button one
- * stage later, which has its own confirmation path.
+ * No confirmation: opening a pull request and moving the card is reversible.
+ * The irreversible act is the Merge button, which has its own confirmation.
  */
 function BoardStageSecondaryMenu({
   actions,
@@ -1577,7 +1503,7 @@ function BoardStepRecoveryButton({
   /** Absent when the card cannot be resumed from here; Restart still can. */
   readonly onContinue: (() => void) | undefined;
   readonly onRestart: () => void;
-  /** Why Restart is refused (a blocked card, #142), or null when it may run. */
+  /** Why Restart is refused (a blocked card), or null when it may run. */
   readonly restartDisabledReason: string | null;
   readonly onMoveStage: (toStage: BoardStageId) => void;
 }) {
@@ -1768,15 +1694,9 @@ function ActionsSection({
 }) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
-  // Two different pull requests, deliberately.
-  //
-  // `pullRequest` is the CURRENT round's — the only one the Merge button may
-  // ever act on, because acting on a round the card has already finished is
-  // precisely what `pullRequestFloor` exists to prevent.
-  //
-  // `displayed` falls back to the newest retired round, so a card that has been
-  // dragged back out of Done and is being worked on again still LINKS the pull
-  // request that merged last time, right up until its new round opens one.
+  // Merge may act only on the current round's `pullRequest` (see
+  // `pullRequestFloor`). `displayed` falls back to the newest retired round, so
+  // a card reopened from Done still links last round's PR until a new one opens.
   const pullRequest = card.pullRequest;
   const displayed = boardCardDisplayPullRequest(card);
   const actionContext = {
@@ -1794,12 +1714,9 @@ function ActionsSection({
     primaryAction !== null && !archived && (group === null || primaryAction.kind === "merge")
       ? primaryAction
       : null;
-  // The pre-build dependency gate (T3O-24, D7). `card.blocked` is derived from
-  // the build role ONWARD, so a card waiting at Ready carries `false` and the
-  // forward button below would be live at the exact gate the decider refuses.
-  // Read from the dependencies this view already resolved, and folded into one
-  // `blocked` for everything in this section — the button, its hint and the
-  // callout — so the three cannot disagree about the same card.
+  // `card.blocked` only covers the build role onward, so a card at Ready would
+  // show a live forward button the decider refuses. One `blocked` feeds the
+  // button, hint and callout so they cannot disagree.
   const moveBlocked = boardCardMoveBlocked({
     stages: props.stages,
     stage: card.stage,
@@ -1845,18 +1762,9 @@ function ActionsSection({
           pending: props.reviewOverrides?.stopAfterRound === reviewLoop.currentRound,
           onToggle: onStopAfterRound,
         };
-  // "Another review round" / "Request review" (T3O-39, D7/D8/D9).
-  //
-  // Offered wherever it can act and nowhere else: the board needs a review-role
-  // stage to run a loop in, and the card has to be sitting at review or merge.
-  // Done is excluded deliberately (D12) — leaving it retires the card's pull
-  // request and raises the floor, which is a bigger operation than "review this
-  // branch once more" and must not hide behind the same button.
-  //
-  // Nothing else is consulted. NOT `pullRequestState`, NOT `conflictFix`, and
-  // NOT the Merge button's `disabled`: on a card whose base has drifted another
-  // review round is the REMEDY, since a round starting on a stale base plans
-  // its rebase first.
+  // Only at review or merge on a board with a review-role stage. Not Done:
+  // leaving it retires the PR and raises the floor. Deliberately ignores PR,
+  // conflict and Merge state: on a drifted base another round is the remedy.
   const stageRole = (() => {
     const state = stageStateOf(props.stages);
     const stage = boardStageById(state, card.stage);
@@ -1869,11 +1777,8 @@ function ActionsSection({
     (stageRole !== "review" && stageRole !== "merge")
       ? null
       : {
-          // Read off the card's own history: there is no workflow entity here,
-          // so "does this card's path include review" is what it has actually
-          // run. A card that reached Ready for merge through "Submit for merge
-          // — no review" gets round 1, which is the same verb with an empty
-          // ledger, not a second feature.
+          // No workflow entity here, so the card's own history decides; a card
+          // that skipped review gets round 1.
           label: hasBoardReviewSteps(props.detail.stepCompletions)
             ? "Another review round"
             : "Request review",
@@ -1905,21 +1810,9 @@ function ActionsSection({
   // A merge from this card is mid-flight: the button holds its spot but shows a
   // spinner and refuses further clicks until the round trip settles.
   const merging = forward?.kind === "merge" && props.merging;
-  // T3o (T3O-48): the card is at Ready for merge with nothing to merge. This is
-  // the bug the card was filed about — the pane offered "Move to Done" and said
-  // nothing at all about the missing pull request, so there was no way to tell a
-  // card whose PR had been merged elsewhere from one the board could not find.
-  //
-  // The CURRENT round's pull request, not `displayed`: a card being worked on
-  // again after coming back out of Done still links its retired round's PR
-  // below, and that link is not something this round can merge.
-  //
-  // A card with no WORKTREE gets the notice too, with the branchless wording
-  // and no button — it is the same dead end one step further along, and the
-  // card face's `No PR` chip fires on the stage and `hasPr` alone (the shell
-  // carries no worktree, by payload discipline). Gating the notice on a branch
-  // and the chip on neither left exactly one card shape wearing a chip that
-  // points at a pane with nothing to say.
+  // The current round's PR, not `displayed`: a retired round's PR is not
+  // mergeable. Fires without a worktree too, because the card face's `No PR`
+  // chip keys on stage and `hasPr` alone and must always point at this notice.
   const missingPullRequest =
     !archived && stageRole === "merge" && pullRequest === null
       ? {
@@ -1930,12 +1823,8 @@ function ActionsSection({
           onCheck: card.worktree === null ? undefined : props.onCheckForPullRequest,
         }
       : null;
-  // T3o (T3O-18): a card from Code review onward with no pull request to show
-  // can be given one by hand — the PR an agent opened elsewhere, or a review
-  // card made for a PR. Keyed on the stage ROLE so a renamed or added column
-  // behaves the same. Gated on the LIVE slot, not `displayed`: a card on its
-  // next round still shows last round's retired pull request, and can still
-  // be given this round's.
+  // Keyed on stage role so renamed columns behave the same, and on the live
+  // slot, not `displayed`: a card showing last round's PR can still be given one.
   const linkPullRequest =
     !archived &&
     pullRequest === null &&
@@ -1968,16 +1857,8 @@ function ActionsSection({
   }
   return (
     <div className="flex flex-col gap-2 p-3.5">
-      {/* T3o (T3O-48): the card is parked at Ready for merge with nothing to
-          merge, and until now the pane said nothing about it — it offered
-          "Move to Done" and left the human to guess whether the pull request
-          had been merged elsewhere or never found at all.
-
-          Deliberately NOT a status colour. `docs/t3o/status-colours.md` gives
-          amber to "blocked or held", which is the claim the CARD FACE's chip
-          makes at a glance; here the card is already open and the notice is
-          telling you what is true and what to press, not raising an alarm a
-          second time. */}
+      {/* Not a status colour: the card face's chip already raises the amber
+          alarm; here the notice only says what is true and what to press. */}
       {missingPullRequest === null ? null : (
         <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-2.5">
           <div className="flex gap-[7px] text-[11.5px]/[1.45] text-muted-foreground">
@@ -2048,12 +1929,8 @@ function ActionsSection({
         </BoardHint>
       ) : null}
       {props.canApproveSplit ? (
-        // A pending split (t3o-27): the forward stage button is REPLACED,
-        // because the card cannot advance until the split is resolved — the
-        // decider refuses every forward move while it stands. It opens the
-        // split gate at the end of the planning thread (T3O-31), where the
-        // human approves with the group settings. Violet, matching the card
-        // face's "Input needed": a plan is waiting on the human.
+        // Replaces the forward button: the decider refuses every forward move
+        // while a split is pending. Violet: a plan is waiting on the human.
         <BoardHint
           label={
             card.splitRationale ??
@@ -2168,11 +2045,8 @@ function ActionsSection({
           </button>
         </BoardHint>
       )}
-      {/* The card's pull request, at EVERY stage rather than only where the
-          Merge button lives: a card in Done is exactly when you want to find
-          the change that closed it. Only the number rides the card shell, so
-          this link — which needs the URL — lives here on the detail, which
-          already subscribes to the whole card. */}
+      {/* At every stage, Done included. Only the number rides the card
+          shell, so the URL-bearing link lives here on the detail. */}
       {displayed !== null ? (
         <ViewPullRequestButton onOpen={props.onOpenPullRequest} pullRequest={displayed} />
       ) : null}
@@ -2264,11 +2138,8 @@ function InfoSection({
           Branch · <span className="text-foreground">{props.branch}</span>
         </div>
       )}
-      {/* Base branch (T3O-5, D13). Sits beside `Branch ·`, which shows the
-          ACTIVE THREAD's branch, so the two read coherently: what the card
-          works on, and what it works off. A sub-board child is read-only and
-          names its parent — not hidden, because someone on a child deserves to
-          know what it branches off without hunting for the parent. */}
+      {/* Beside `Branch ·` (the active thread's branch). A sub-board child
+          shows it read-only, naming its parent, rather than hiding it. */}
       <BoardBaseBranchRow props={props} />
       {/* Worker (T3O-65): where the card runs, and Move. Absent with one worker. */}
       <BoardCardWorkerRow
@@ -2280,13 +2151,9 @@ function InfoSection({
       />
       <div>Created · {formatRelativeTimeLabel(props.detail.card.createdAt)}</div>
       {base.retargeted && base.effective !== null ? (
-        // Derived, never stored (D14): between retargeting and the rebase that
-        // honours it, the card's stated base and its actual cut point disagree,
-        // and anyone opening the card — including someone who did not click —
-        // deserves to see that. Reverting the base clears this with no further
-        // action, and the rebase that fixes it cannot leave it behind.
-        // Amber, per docs/t3o/status-colours.md: a stale merge base is blocked
-        // work, not a card waiting on a human decision.
+        // Derived, never stored: the stated base and actual cut point disagree
+        // until the rebase lands, and reverting the base clears it. Amber: a
+        // stale base is blocked work, not a wait on a human.
         <div className="mt-1.5 rounded-md bg-warning/10 px-2 py-1.5 text-warning-foreground">
           Cut from{" "}
           <span className="font-mono">{props.detail.card.worktree?.baseRefName ?? "?"}</span>, now
@@ -2363,11 +2230,8 @@ function BoardBaseBranchRow({ props }: { readonly props: BoardCardDetailViewProp
     readonly next: string | null;
     readonly localName: string;
   } | null>(null);
-  // The confirmation gate (D14). The trigger is a LIVE branch — the same ladder
-  // the base resolver treats as live — because that is exactly when a retarget
-  // costs a rebase and a force-push rather than nothing at all. A `failed`
-  // slice may never have created the ref and a `reclaimed` one has had it
-  // deleted, so neither asks.
+  // Confirm only on a live branch, where a retarget costs a rebase and a
+  // force-push; a `failed` or `reclaimed` slice has no ref to rewrite.
   const cutFrom = boardCardHasLiveBranch(card) ? (card.worktree?.baseRefName ?? null) : null;
 
   if (base.inheritedFrom !== null || onSet === undefined) {
@@ -2440,21 +2304,9 @@ function isStageAtOrAfterReview(
 }
 
 /**
- * The pane a card opens on: the latest surface its stage has produced.
- * Backlog and Sprint open on the brief (nothing has run yet, though every
- * pane is one pill away), Planning and Ready on the conversation, Build on
- * its build thread, Code review on the review loop, and Ready for merge /
- * Done on the Summary recap.
- *
- * A split parent short of review opens on its plans instead (t3o-28, D4):
- * its build IS the sub-board, so the plan list with its child chips is where
- * the work is. Its planning thread stays one pill away — the server freezes
- * the plans once children exist, so talking to it cannot rewrite the split.
- * At the review stage the parent's own thread wakes up and the ordinary rules
- * resume on Review. Merge and Done open on Summary.
- *
- * A role-less column at or after Code review still opens on Review — that is
- * what `isStageAtOrAfterReview` means for the thread-id helper in this file.
+ * The latest surface the card's stage has produced. A split parent short of
+ * review opens on its plans, since its build is the sub-board. A role-less
+ * column at or after Code review still opens on Review.
  */
 export function initialBoardCardPane(
   stages: ReadonlyArray<BoardStageDefinition>,
@@ -2472,22 +2324,9 @@ export function initialBoardCardPane(
 }
 
 /**
- * The thread a card opens on before it reaches the review stages: the newest
- * live one the card's stage has any business showing — so Planning and Ready
- * land on the planning conversation and Build on the build one, and a card
- * dragged back from Build to Planning shows planning again rather than the
- * build run it left behind.
- *
- * A stage step links its thread under the step id, and a stage step's id IS
- * the stage id, so a link's role names the stage that spawned it: a role from
- * a LATER stage is stale here and drops out, as does a review-loop role
- * (`review@1`, …), which belongs to a pass the card has moved on from. A role
- * that is neither — an adopted or blank thread's `linked` — belongs to no
- * stage, so it stays and, being newest, opens.
- *
- * From the review stage onward the loop owns the card and the Review pane is
- * what opens, so the thread pane keeps its old answer there: the card's active
- * thread, the most recently linked live one.
+ * A link's role is the stage id that spawned it, so roles from later stages and
+ * review-loop roles (`review@1`) are stale and drop out; stageless roles stay.
+ * From review onward it is simply the most recently linked live thread.
  */
 export function initialBoardCardThreadId(
   stages: ReadonlyArray<BoardStageDefinition>,
@@ -2512,14 +2351,8 @@ export function initialBoardCardThreadId(
   return current.at(-1)?.threadId ?? active;
 }
 
-/** The header's Thread/Review/Plan/Brief switch, present at every stage — a
-    pre-Planning card defaults to the narrow brief sheet, and picking another
-    pill grows the sheet wide, so a thread can be attached or a review round's
-    model set before the pipeline gets there. The Review pill exists whenever
-    the board has a review-role stage (or the card carries review-loop
-    completions — past reviews stay readable); the Plan pill once the card has
-    a plan or children. A group with a planning thread also gets a Planning
-    pill (T3O-34): the Thread pane pinned to that thread. */
+/** Present at every stage, so a thread can be attached or a review round's
+    model set before the pipeline gets there. */
 function PaneTabs({
   pane,
   hasReview,
@@ -2644,11 +2477,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           nowMs: Date.now(),
         });
   const wide = boardCardDetailIsWide(props.stages, card.stage, props.paneChoice);
-  // The contracts' definition of unmet, mirrored: an unknown id counts as
-  // unmet (nothing can prove it finished), an archived dependency does not
-  // count at all (t3o-13, D1), and everything else must be done.
-  // A waiting group holds back every card inside it (T3O-27), as the decider's
-  // move gate does.
+  // Mirrors the contracts' unmet: unknown ids are unmet, archived ones do not
+  // count, and a waiting group holds back every card inside it.
   const groupDependencies: ReadonlyArray<BoardDetailDependency> =
     props.detail.groupDependencies.map((dependency) => ({
       cardId: dependency.cardId,
@@ -2700,12 +2530,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   });
   const modelSummary = boardCardModelOverrideSummary(modelRows, card.modelOverrides);
   const modelOverridden = hasBoardCardModelOverride(modelRows, card.modelOverrides);
-  // The kebab item names the STATE ("Build" / "Planning · Build", AC9); the pill
-  // names the MODEL ("Build opus-5", or "Custom models" when several are set, D7)
-  // — the pill exists so an override that changes spend/authority is legible
-  // from the card without a hover. Resolving the slug to its display name needs
-  // the provider list, which the eager view deliberately does not hold; the
-  // container passes a resolver down, and the raw slug is the fallback.
+  // The eager view does not hold the provider list, so the container passes a
+  // display-name resolver and the raw slug is the fallback.
   const resolveOverrideName = (row: BoardCardModelRowSpec): string => {
     const override = card.modelOverrides?.[row.stageId];
     if (override === undefined) return "";
@@ -2723,22 +2549,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     .map((row) => `${row.label}: ${resolveOverrideName(row)}`)
     .join("\n");
 
-  // Null means "whatever the card's stage says is latest" (Planning/Ready and
-  // Build open on the thread, the review stages on the Review pane): the modal
-  // opens there and keeps tracking the card until the user picks a pane, which
-  // pins it. The choice itself lives on the dialog (`props.paneChoice`), which
-  // sizes the frame by it.
+  // Null tracks the stage's default pane until the user picks one. It lives on
+  // the dialog, which sizes the frame by it.
   const paneChoice = props.paneChoice;
   const setPane = props.onSelectPane;
   // A split parent opens on its plans while its children build (t3o-28, D4).
   // Live children only — an archived child is gone (t3o-13, D1), and a
   // fully-wrapped split leaves the parent an ordinary card again.
   const liveChildCount = props.detail.children.filter((child) => child.archivedAt === null).length;
-  // The Plans panel replaces the markdown pane once, and only once, children
-  // exist (t3o-29, D2) — the same predicate that makes Plans the default
-  // pane. Before approval the markdown IS the surface: it is what the human
-  // reads to decide whether the split is right, and the Approve split gate
-  // lives on it. After, the markdown is each child's brief, one drill-in away.
+  // Plans replaces the markdown only once children exist: before approval the
+  // markdown carries the Approve split gate.
   const isSplitParent = liveChildCount > 0;
   const planRows = isSplitParent
     ? deriveBoardPlanRows({
@@ -2778,13 +2598,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     (group !== null && !groupUsesCardActions
       ? groupDefaultPane
       : initialBoardCardPane(props.stages, card.stage, liveChildCount));
-  // The plan is a first-class entity, so its pill only exists once one is
-  // written; if the card loses its plans while the pane is open, fall back to
-  // the thread rather than render an empty surface. The review pane exists at
-  // every stage once the board has a review-role stage (or the card carries
-  // review-loop completions — past reviews stay readable after the card moves
-  // on): a round's model is only writable BEFORE the executor freezes it, so
-  // the pane must open before the card gets there.
+  // A card that loses its plans falls back to the thread. Review opens at any
+  // stage: a round's model is only writable before the executor freezes it.
   const hasPlan = props.detail.plans.length > 0 || isSplitParent;
   const reviewStageId = boardStageWithRole(stageStateOf(props.stages), "review")?.stageId ?? null;
   const reviewStarted = hasBoardReviewSteps(props.detail.stepCompletions);
@@ -3269,22 +3084,15 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
               <BoardCardReviewPane
                 completions={props.detail.stepCompletions}
-                // "Running now" means the loop's own step is live: the ACTIVE
-                // linked thread is the one a running phase owns, so only its
-                // state drives the spinner — a side conversation on another
-                // linked thread must not, and neither may another stage's
-                // working thread (`onReviewStage`).
+                // Only the active thread on the review stage drives the
+                // spinner; side conversations and other stages' threads do not.
                 live={reviewLive}
                 offStage={!onReviewStage}
                 stalled={reviewStalled}
                 maxRounds={props.reviewMaxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS}
                 onAdvance={(() => {
-                  // "Advance anyway" is an ordinary stage move, gated exactly
-                  // like every other transition (t3o-22, D8) — the button
-                  // exists because a held loop will never make the move on its
-                  // own, not because the move is special.
-                  // This list is the card's pipeline: a CI in it (T3O-44) is
-                  // the next stop, never one to step over.
+                  // An ordinary, gated stage move; a CI stage in the pipeline
+                  // is the next stop, never one to step over.
                   const next = boardCiAwareNextStageId(props.stages, card.stage, false);
                   return next === null || card.blocked ? undefined : () => props.onMoveStage(next);
                 })()}
@@ -3529,13 +3337,9 @@ function worktreeKeptProps(
 }
 
 export function BoardCardDetailView(props: BoardCardDetailViewProps) {
-  // Fullscreen is the one piece of sheet state that must OUTLIVE a step to the
-  // next card (T3O-37, D5): the sheet remounts per card id, which is what gives
-  // every other per-card view state its reset for free, but being thrown out of
-  // fullscreen mid-read is not a reset anybody asked for. The store names the
-  // card it belongs to — the step hands it over, and a card that opens any
-  // other way opens windowed because it does not match. The board clears it on
-  // close.
+  // Fullscreen must outlive the per-card remount when stepping to the next
+  // card, so it lives in a store keyed by card id; a card opened any other way
+  // does not match and opens windowed.
   const cardId = props.detail.card.id;
   const maximised = useBoardUiStore((state) => state.detailMaximisedCardId === cardId);
   const setMaximisedCardId = useBoardUiStore((state) => state.setDetailMaximisedCardId);
@@ -3598,11 +3402,9 @@ export function BoardCardDetailPopup({
         maximised
           ? "fixed inset-0 h-screen max-h-none w-screen max-w-none rounded-none border-0"
           : wide
-            ? // Under 1000px tall the 7vh gaps above and below cost the
-              // thread pane too much, so the sheet takes all but a 0.5rem
-              // sliver (T3O-51): the negative margin reaches halfway into the
-              // dialog viewport's 1rem padding. `sm:` leaves the phone bottom
-              // sheet alone.
+            ? // Under 1000px tall, take all but a 0.5rem sliver: the negative
+              // margin reaches into the viewport's 1rem padding. `sm:` spares
+              // the phone bottom sheet.
               "h-[86vh] max-h-[86vh] w-[min(1220px,100%)] max-w-[1220px] sm:[@media(max-height:999.98px)]:-my-2 sm:[@media(max-height:999.98px)]:h-[calc(100dvh-1rem)] sm:[@media(max-height:999.98px)]:max-h-[calc(100dvh-1rem)]"
             : "max-h-[86vh] w-[min(760px,100%)] max-w-[760px]",
       )}

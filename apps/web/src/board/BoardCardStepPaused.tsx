@@ -1,18 +1,6 @@
 /**
- * T3o: the card's paused-step banner (T3O-23).
- *
- * A human pressed Stop on this card's step. Nothing is running, nothing is
- * waiting on an answer, and the board will not touch it again until somebody
- * says so — which is exactly the state the card face's neutral `Paused` chip
- * asserts, and this is where the human acts on it.
- *
- * Deliberately NOT the destructive `BoardCardStepFailure` treatment: a paused
- * step has not failed, has not stalled, and has spent no recovery budget.
- * Neutral surface, per `docs/t3o/status-colours.md` — no colour without a claim.
- *
- * The copy names the consequence of pressing Resume: the step re-enters the
- * queue and waits for an agent slot, so the `Queued` pill that follows
- * reads as expected rather than as the button having failed.
+ * The paused-step banner: a human stopped the step. Neutral, not the failure
+ * treatment (`docs/t3o/status-colours.md`). The copy says Resume re-queues the step.
  */
 import { PauseIcon, PlayIcon } from "lucide-react";
 

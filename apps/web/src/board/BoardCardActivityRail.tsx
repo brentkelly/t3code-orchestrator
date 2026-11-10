@@ -1,21 +1,7 @@
 /**
- * T3o card Activity rail (t3o-18, D10/D11/D12).
- *
- * The rail is a DETERMINISTIC PROJECTION of the board's own event log, not
- * anything an agent narrated: the board already emits the exact moments worth
- * showing — created, moved, plans proposed, plan written, step completed, input
- * requested, archived, unarchived, worktree failed — so the projector writes a
- * structured row for that curated subset and this component renders the
- * sentence.
- *
- * **The server never writes English.** Every row is a kind + a small typed
- * payload + an actor, so the log stays queryable and relabelable and "who
- * approved it" is a column rather than a phrase buried in prose. That split is
- * what makes this file the only place the wording lives.
- *
- * Nine kinds and no more (D12). The full step lifecycle would put ~20 rows on a
- * card that ran three steps — the same unreadability that motivated deleting the
- * agent-written progress notes in the first place.
+ * The card Activity rail. Rows are a projection of board events as kind + typed
+ * payload + actor; the server never writes English, so this file is the only place
+ * the wording lives. Keep the kinds curated: the full step lifecycle is unreadable.
  */
 import type {
   BoardCardActivityEntry,
@@ -663,18 +649,8 @@ function ActivityRow({
 }
 
 /**
- * The rail. Newest LAST, matching the chronological order the projector writes
- * and the way a card's story reads top to bottom.
- *
- * A run of identical consecutive rows renders as its newest member plus a
- * "+N more" toggle (T3O-35) — a planning session that asked thirty questions
- * used to spend thirty rows saying so. The toggle sits at the same row whether
- * open or shut, so expanding a run never moves the control the user just
- * pressed.
- *
- * Renders nothing when the card has no activity — absent, not an empty skeleton
- * (no-speculative-inventory), exactly as the two placeholders this replaces
- * promised.
+ * Newest last. A run of identical consecutive rows renders as its newest member
+ * plus a "+N more" toggle that stays put when expanded. Renders nothing when empty.
  */
 export function BoardCardActivityRail({
   entries,

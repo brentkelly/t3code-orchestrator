@@ -1,11 +1,6 @@
 /**
- * The card view's CI tab (T3O-44/57): the current pass's steps with their
- * commands, durations and a failed step's output tail; a failed pass's fix as
- * its last step, one row per issue; earlier passes, collapsed; how the card
- * last left CI; and Skip CI.
- *
- * Lazy, like the review pane — a card that never reaches CI pays nothing. The
- * only per-second element is the running step's timer, its own component.
+ * The card's CI tab. Lazy, so a card that never reaches CI pays nothing; the only
+ * per-second element is the running step's timer, its own component.
  */
 import { Link } from "@tanstack/react-router";
 import {

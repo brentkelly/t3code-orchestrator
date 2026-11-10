@@ -1,11 +1,6 @@
 /**
- * The card form's shared parts (t3o-06) — the pieces the card modal
- * (`BoardCardDetailView`) and the create dialog (`BoardCardCreateDialog`) both
- * render. Both sheets describe the same card, so they read as one design: the
- * prototype's uppercase section label, and one dependency section with the
- * same rows, the same empty state and the same search-and-add picker.
- *
- * Pure presentation — entries in, a pick or a removal out.
+ * Form parts shared by the card modal and the create dialog, so both sheets read
+ * as one design. Pure presentation.
  */
 import type { BoardCardId, BoardStageDefinition, BoardStageId } from "@t3tools/contracts";
 import { ChevronDownIcon, XIcon } from "lucide-react";

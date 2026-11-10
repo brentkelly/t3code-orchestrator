@@ -1,12 +1,6 @@
 /**
- * T3o card detail modal — connected (t3o-06). Opens `board.subscribeCard` for
- * the one selected card (D7: the heavy detail streams here, never on the shell
- * that every column card renders from), reads the label catalogue, the board
- * and the shell snapshot for dependency/thread resolution, and wires the board
- * commands to the pure `BoardCardDetailView`.
- *
- * Mounting this component IS the detail subscription — it exists only while a
- * card is selected, so the board at rest opens none.
+ * Mounting this component IS the card's detail subscription: the heavy detail
+ * streams here, never on the shell every column card renders from.
  */
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import { boardThreadStateSource } from "@t3tools/shared/boardThreadState";
@@ -350,17 +344,9 @@ export function BoardCardDetail({
   };
 
   const card = detail?.card ?? null;
-  /** Whether a merge conflict fix is live on this card (T3O-9) — the branch is
-      being rewritten under the pull request, so merging now is meaningless.
-   *
-      Read off the server's `stepConflictFix`, which is derived from the step
-      row's persisted label, rather than from `stepRunning` at a merge-role
-      stage. That inference rested on "the merge stage runs nothing else", which
-      is untrue — a human can restart the stage's thread by hand and get a clean
-      conversation, and that greyed out Merge with "Resolving conflicts…" for a
-      conflict fix that did not exist. Now that click reaches the server, which
-      refuses it with a true sentence ("A thread is already open on this stage")
-      instead of a false button state. */
+  /** Whether a conflict fix is live, so merging now is meaningless. Read off the
+      server's `stepConflictFix`, not inferred from `stepRunning` at the merge
+      stage: a human can restart that stage's thread for something else. */
   const cardShell = (board?.cards ?? []).find((candidate) => candidate.cardId === cardId);
   const conflictFix =
     cardShell === undefined
@@ -373,19 +359,9 @@ export function BoardCardDetail({
           // should not grow one for a tooltip.
           baseRef: detail?.card.pullRequest?.baseRef ?? null,
         });
-  /** Whether the card's step has SETTLED and left the card standing — the same
-      `held` the card face reads for its "Needs a human" chip, ranked by
-      `boardCardAttention` so the chip and the detail's forward button can never
-      disagree (t3o-06 held-build-forward-button, D2). The ranking brings the
-      guards with it: a running or queued step is not held, a card dragged back
-      before the build role is not held, a parent building through its children
-      is not held, and a `stalled` step outranks `held` so Restart keeps owning
-      that case (D3). Since T3O-29 a card whose THREAD is mid-turn is not held
-      either — moving it on under a working agent is a race, and the button is
-      back the moment the turn ends. No `now` is passed, so the chip's five-second
-      settle grace does not apply here: the grace exists to stop a chip flashing
-      for attention, and an affordance that made you wait for it would only be
-      the same lie told slowly. */
+  /** Whether the step settled and left the card standing — the same `held` the
+      card face ranks via `boardCardAttention`, so chip and forward button never
+      disagree. No `now` is passed: the chip's settle grace must not delay this. */
   const stepHeld =
     cardShell !== undefined && boardCardAttention({ card: cardShell, stages })?.reason === "held";
   /** Whether the card's live step has given up (t3o-17, D3) — the failure
@@ -419,12 +395,8 @@ export function BoardCardDetail({
           };
         });
 
-  // A dependency may name a card in ANOTHER project (T3O-33, D3). `dependsOn`
-  // stores card ids, and the decider has never enforced a same-project rule —
-  // only this picker did — so a card that CHANGES project inherits cross-project
-  // edges the UI could not otherwise create. Rather than leave a state that can
-  // be inherited but not made, the picker offers them and marks them with the
-  // owning project's dot.
+  // A dependency may name a card in another project: a card that changes project
+  // inherits cross-project edges, so the picker must be able to make them too.
 
   const shells = board?.cards ?? [];
   const projectById = new Map(
@@ -474,13 +446,9 @@ export function BoardCardDetail({
   const parentCard =
     parentShell === undefined ? null : { cardId: String(parentShell.cardId), key: parentShell.key };
 
-  // THIS card's children, as shells (t3o-29, D1). The snapshot is unscoped —
-  // a child is filtered out of the root board's COLUMNS by
-  // `filterBoardColumnsByScope`, never out of the shell list — so the parent's
-  // own modal can read every child's live stage, PR and step state without a
-  // second subscription or a byte on the wire. Archived children are not here
-  // (they leave the snapshot, D15); the Plans panel renders those from
-  // `detail.children` instead.
+  // The snapshot is unscoped — children are filtered out of the root board's
+  // columns, not the shell list — so this needs no second subscription. Archived
+  // children leave the snapshot; the Plans panel reads `detail.children` for those.
   const childShells = card === null ? [] : shells.filter((shell) => shell.parentCardId === card.id);
 
   // T3o (T3O-63): the worker each thread lives on, for where it opens.
@@ -604,24 +572,11 @@ export function BoardCardDetail({
     pending: adoptSearchRead.pending,
   };
 
-  // ── Everything below this line runs before the loading early return ──
-  // The card's own shell, and the queue state derived from it. These sit ABOVE
-  // the `LoadingModal` branch because they include hooks: `detail` is null on
-  // the first render of every card modal, so a hook declared after that branch
-  // would be skipped on render one and present on render two. (The repo's
-  // oxlint config carries no `rules-of-hooks`, so nothing catches that but a
-  // crash in the app.)
-  //
-  // The in-flight proxy for the `+` menu's restart affordance (t3o-14, D1)
-  // reads this same shell, since the step-state read model is server-only.
+  // Hooks from here down must stay above the `LoadingModal` early return:
+  // `detail` is null on every modal's first render, and no lint catches it.
 
-  // The card's place in the board-wide build queue (t3o-33). Derived from the
-  // shells the modal already holds — every project, since the queue is global —
-  // so a queued card can say why it is waiting instead of opening on the
-  // planning conversation it left behind and explaining nothing.
-  //
-  // Everything below is skipped for the overwhelmingly common case: the map is
-  // empty unless something is actually queued.
+  // The queue is global, so this reads every project's shells. The map is empty
+  // unless something is actually queued.
   const allShellCards = board?.cards ?? EMPTY_SHELL_CARDS;
   // Same fallback the board uses: before the first snapshot the stage list is
   // empty, and ranking every queued card equally would print a position that is
@@ -658,11 +613,9 @@ export function BoardCardDetail({
           // oxlint-disable-next-line react/purity -- the queue order samples the clock when the shells change; the compiler recomputes it only then.
           nowMs: Date.now(),
         });
-  // Strictly "the command is in flight" — cleared when it settles, either way.
-  // It deliberately does NOT wait for the card to leave the queue: the governor
-  // can decline to start it (a worktree that will not provision), and a button
-  // that waits for a signal which may never arrive is stuck forever. The
-  // request is durable on the step row, so asking again is harmless.
+  // Strictly "the command is in flight": the governor may decline to start the
+  // card, so waiting for it to leave the queue could stick forever. The request
+  // is durable on the step row, so asking again is harmless.
   const [forceStartPending, setForceStartPending] = useState(false);
   // T3O-23: the Resume button's in-flight guard, so a second press cannot queue
   // the same step twice.
@@ -671,17 +624,9 @@ export function BoardCardDetail({
   // human confirms it.
   const [unplannedMove, setUnplannedMove] = useState<BoardStageId | null>(null);
 
-  // ── Base branch (T3O-5, D3/D13) ────────────────────────────────────────
-  // The container resolves the card's base because it is the only layer that
-  // can see the project's default branch — the effective base is one shared
-  // function (`resolveBoardCardEffectiveBase`), so the detail row, the picker's
-  // value, the divergence line and the reactor cannot disagree about it.
-  //
-  // The default is read from the project's ref list rather than guessed:
-  // `VcsRef.isDefault` is the same fact `resolveDefaultBranch` reads
-  // server-side. A card carrying a PIN never needs it, so the query is skipped
-  // there — and when it is not skipped it shares the picker's atom exactly,
-  // so opening a card costs one ref listing, not two.
+  // The effective base is one shared function, so the row, picker, divergence
+  // line and reactor cannot disagree. A pinned card skips the ref query; when it
+  // runs it shares the picker's atom.
   const baseBranchProject =
     snapshot?.projects.find((entry) => entry.id === card?.projectId) ?? null;
   const baseBranchWorkspaceRoot = baseBranchProject?.workspaceRoot ?? null;
@@ -732,11 +677,8 @@ export function BoardCardDetail({
           cardKeys: board?.cards ?? [],
         })
       : [];
-  // An ARCHIVED card gets the plain text row: it is off the board, the decider
-  // refuses the command anyway, and a padlock explaining a pin it does not have
-  // would be a lie. A live card always gets the rich row — the pinned variant
-  // renders the padlock and its reason, which is the whole point of resolving
-  // the lock rather than just hiding the control.
+  // An archived card gets the plain text row: the decider refuses the command and
+  // a padlock for a pin it does not have would be a lie.
   const canSetProject = card.archivedAt === null;
   const projectNames = new Map(
     (snapshot?.projects ?? []).map((entry) => [String(entry.id), entry.title]),
@@ -749,13 +691,8 @@ export function BoardCardDetail({
       ? null
       : (snapshot?.threads.find((thread) => thread.id === activeThreadId)?.branch ?? null);
 
-  // A sub-board child reads its inherited base off its OWN recorded slice
-  // rather than re-deriving the parent's: the bounded shell carries no worktree,
-  // so the parent's live integration branch is simply not on the client — and
-  // `worktree.baseRefName` IS that branch, written by the very resolver the row
-  // would otherwise duplicate. Before provisioning there is nothing to show, and
-  // a child's row is read-only anyway, so no human can retarget it into
-  // disagreement.
+  // A child reads its inherited base off its own `worktree.baseRefName`: the
+  // parent's integration branch is not on the client.
   const baseBranchInfo =
     card.parentCardId !== null
       ? {
@@ -779,11 +716,8 @@ export function BoardCardDetail({
           workspaceRoot: baseBranchWorkspaceRoot,
         };
 
-  // Per-card human-in-the-loop stance on the Build role (D6): shown only when
-  // the card is on the build stage. The default flips on whether the card has a
-  // plan — a split child owns a copy of its plan (T3O-27) — and an explicit
-  // override wins over it. The same rule the
-  // reactor runs the step under, so the hint here never contradicts the run.
+  // Shown only on the build stage. The same rule the reactor runs the step under,
+  // so the hint never contradicts the run.
   const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
   const humanInLoop =
     buildStageId !== null && card.stage === buildStageId
@@ -845,18 +779,9 @@ export function BoardCardDetail({
       ? mergeExecution.strategy
       : "squash";
   /**
-   * The rounds this card's loop has RECORDED — the budget's floor.
-   *
-   * Strictly the ledger, and it must stay that way: `effectiveBoardReviewRounds`
-   * clamps the budget UP to this number, so anything speculative here does not
-   * merely disable a button, it invents a round. Folding in the walk's
-   * `currentRound` did exactly that — the walk sits on the first round with no
-   * `review@N`, which for a held loop is `lastRound + 1`, so the budget grew by
-   * one and the pane could never reach the cap at all.
-   *
-   * The `−` button needs a slightly stricter floor than this (the decider also
-   * counts a live step, which the detail payload cannot see); the pane derives
-   * that for itself, where it gates a control rather than a budget.
+   * Strictly the ledger: `effectiveBoardReviewRounds` clamps the budget UP to
+   * this, so anything speculative here invents a round. The `−` button's
+   * stricter floor (counting a live step) is derived in the pane.
    */
   const reviewRoundsRecorded = boardReviewRoundsStarted({
     completions: detail?.stepCompletions ?? [],
@@ -894,12 +819,8 @@ export function BoardCardDetail({
     stalled: stepStalled,
     blockedReason: restartBlocked ? boardStageRestartBlockedReason(unmetDependencyKeys) : null,
   });
-  /** What the failure banner renders (t3o-30, D3). Gated on `stalled` rather
-      than on `stepError` alone: the error text sits on the run row until the
-      next step replaces it, so a card that has since recovered would otherwise
-      keep showing the stop it recovered from. A stall with no recorded reason —
-      recovery exhausting its budget — still gets a banner, with the sentence
-      that describes it. */
+  /** Gated on `stalled`, not `stepError`: the error text lingers on the run row
+      after the card recovers. A stall with no recorded reason still gets a banner. */
   const stepFailure = stepStalled
     ? {
         stageLabel: boardStageLabel(stages, card.stage),
@@ -933,17 +854,8 @@ export function BoardCardDetail({
         }
       : null;
 
-  /** What the schedule control is offering (T3O-19, D13). Derived from the
-      shell's step flags rather than a step row, because those flags are what
-      every other status affordance on this card already reads — the pill, the
-      banners, the queue chip — so the popover's wording cannot disagree with
-      the card it sits on.
-
-      A card with a PARKED step gets "Resume … at": there is nothing to stop,
-      and the time schedules its exit. A card at or after the build stage with
-      nothing running gets "Start {Stage} at". Everything earlier gets "Start
-      the build at", which is the only honest reading before anything has been
-      admitted. */
+  /** Derived from the shell's step flags, which every other status affordance
+      on this card reads, so the popover's wording cannot disagree with them. */
   const scheduleKind = boardScheduleKind({
     atOrAfterBuild: isBoardStageAtOrAfterBuild(stageState, card.stage),
     stepStatus:
@@ -1128,13 +1040,9 @@ export function BoardCardDetail({
     return ok ? threadId : null;
   };
 
-  // The approve gate (t3o-23, D1): two or more plans, nothing materialised
-  // yet, a card at or before the build stage (at any depth — splits nest,
-  // T3O-27), and a floor stage for the children to land in. These are the cheap STRUCTURAL checks only — the
-  // decider additionally gates on unmet dependencies, plan-graph cycles and a
-  // live step, and a refusal from any of those surfaces through the shared
-  // command feedback, so the button may offer an approval the decider still
-  // declines with a reason.
+  // Cheap structural checks only; the decider also gates on dependencies,
+  // plan-graph cycles and a live step, so the button may offer an approval
+  // the decider still declines with a reason.
   const buildStage = boardStageWithRole(stageState, "build");
   const floorStage = boardSubBoardFloorStage(stageState);
   const canApproveSplit =
@@ -1369,11 +1277,8 @@ export function BoardCardDetail({
         )
       }
       onDelete={() => {
-        // Closed only once the delete LANDS. The modal is the card's last
-        // remaining surface — its detail subscription resolves nothing after
-        // the purge — so closing on dispatch would hide a refusal behind an
-        // empty board. Staying open on failure leaves the inline feedback where
-        // the user is already looking.
+        // Close only once the delete lands: the detail subscription resolves
+        // nothing after the purge, so closing on dispatch would hide a refusal.
         void deleteCard({ environmentId, input: { cardId: card.id } }).then((result) => {
           if (result._tag === "Failure") {
             if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
@@ -1616,11 +1521,8 @@ export function BoardCardDetail({
         runCommand(updateCard({ environmentId, input: { cardId: card.id, mergeStrategy } }))
       }
       resolveModelDisplayName={resolveModelDisplayName}
-      // Queued counts as running for this note's purpose: a queued step has
-      // already been selected onto the run row, so its model and authority are
-      // frozen (t3o-21, D4) and an edit now lands on the run AFTER it — exactly
-      // what the note exists to say. The review pane's step-active flag reads
-      // the pair the same way.
+      // Queued counts as running: its model and authority are already frozen
+      // onto the run row, so an edit lands on the run after it.
       stepRunning={cardShell?.stepRunning === true || cardShell?.queued === true}
       reviewPhaseRuntimeMode={reviewPhaseRuntimeMode}
       reviewRoundsStarted={reviewRoundsRecorded}

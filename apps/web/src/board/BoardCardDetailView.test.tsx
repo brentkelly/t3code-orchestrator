@@ -1,11 +1,7 @@
 /**
- * T3o card detail view (t3o-06). Renders the modal's contents to static markup
- * — no atoms, no live subscription — proving the panel is a pure function of
- * the `board.subscribeCard` detail plus resolved lookups. (The dialog frame
- * around it portals, and a portal renders nothing on the server, so the panel
- * is what these assertions mount.) Covers the archived, no-project-on-disk
- * case (nothing here reads the repo) and the tombstoned thread link (struck
- * through, role preserved, no dead deep-link).
+ * Renders the panel to static markup: it must be a pure function of the
+ * `board.subscribeCard` detail plus resolved lookups. The dialog frame portals,
+ * and portals render nothing on the server, so the panel is what is mounted.
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -82,12 +78,8 @@ describe("BoardCardDetailPanel", () => {
     expect(html).toContain("More actions");
   });
 
-  // The review loop lives in its own pane (t3o-16, D9): the header gains a
-  // Review pill, and the pane itself (lazy, tested in BoardCardReviewPane
-  // tests) renders the rounds. The pill exists at EVERY stage once the board
-  // has a review-role stage — a round's model is only settable before the
-  // executor freezes it, so the pane must open ahead of the loop — and on any
-  // card carrying review completions, so past reviews stay readable.
+  // A round's model is only settable before the executor freezes it, so the
+  // Review pane must open ahead of the loop; past reviews stay readable.
   it("shows the Review pill at every stage once the board has a review role", () => {
     const onReviewStage = renderToStaticMarkup(
       <BoardCardDetailPanel

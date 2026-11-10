@@ -1,19 +1,6 @@
 /**
- * T3o create-card dialog (t3o-06). Title, brief, labels, project, target stage
- * and initial dependencies — everything a card needs to land in one atomic
- * `board.card.create` (the command carries brief and dependsOn, t3o-06). The
- * key is allocated server-side; the UI never invents one.
- *
- * The sheet is the card modal's, one column wide: the same identity row, the
- * same uppercase section headings, the same label field and the same
- * dependency rows (`BoardCardFields`) — a card being created should look like
- * the card it is about to become, not like a form.
- *
- * A card may be created into ANY stage (t3o-15, D10): Mode governs the
- * worktree/slot on entry, so creation and dragging follow an identical path.
- * The picker offers every stage in read-model order, and a warning appears when
- * the chosen stage auto-executes ("creating here starts an agent"). The decider
- * enforces existence + the dependency gate; this is a convenience, not the guard.
+ * The card key is allocated server-side; the UI never invents one. The stage
+ * picker's auto-execute warning is a convenience — the decider is the guard.
  */
 import {
   BOARD_CARD_ATTACHMENTS_MAX,
@@ -265,11 +252,8 @@ export function BoardCardCreateDialog({
   // Every stage, top-level or sub-board (D10, T3O-53).
   const stageOptions = boardStagesInOrder(stageStateOf(stages));
 
-  // ── Draft persistence (T3O-26) ──────────────────────────────────────
-  // One draft per board scope, autosaved while the dialog is open and offered
-  // back the next time it opens. The dialog writes through the store's plain
-  // functions rather than a hook: it saves on every keystroke and must not
-  // re-render itself for its own writes.
+  // Writes through the store's plain functions rather than a hook: it saves on
+  // every keystroke and must not re-render itself for its own writes.
   const draftKey = boardCardDraftKey(environmentId, subBoardParentId);
   const [restored, setRestored] = useState<{ readonly droppedAttachments: boolean } | null>(null);
   // Set once the stored draft is gone for good — a card was created from
@@ -324,11 +308,8 @@ export function BoardCardCreateDialog({
   };
   const draftHasContent = boardCardDraftHasContent(draftFields);
 
-  // Restore or reset ONLY on the closed→open transition, honouring the
-  // caller's prefilled stage/project (the column button opens onto its own
-  // stage). A plain `open`-guarded effect would re-run — and wipe in-progress
-  // input — every time a background shell delta gives `projects` a new
-  // identity while the dialog is open; the ref pins this to the open edge.
+  // Restore or reset ONLY on the closed→open edge: a plain `open`-guarded effect
+  // would re-run, wiping in-progress input, whenever `projects` gets a new identity.
   const wasOpen = useRef(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the localStorage draft and the staged uploads' blob URLs on the dialog's open edge
   useEffect(() => {
@@ -449,11 +430,8 @@ export function BoardCardCreateDialog({
     if (trimmedTitle.length === 0) return;
     const trimmedBrief = brief.trim();
     setSubmitting(true);
-    // Card keys carry the project's prefix. A project that has never been given
-    // one is assigned an acronym from its name here, on its first card, and the
-    // choice is persisted immediately — every later card reads the stored
-    // prefix, so a rename (or a differently-derived acronym) can never split a
-    // project's keys across two namespaces.
+    // A project's key prefix is persisted on its first card, so a later rename can
+    // never split its keys across two namespaces.
     const { prefix, assigned } = assignBoardKeyPrefix({
       board: boardSettings,
       projectId,
@@ -542,11 +520,8 @@ export function BoardCardCreateDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      {/* Mod+Enter creates the card from anywhere inside the dialog (T3O-43):
-          it used to be the title field's alone, which is the one field a user
-          has usually already left by the time they want to submit. Nested
-          popups (stage, project, schedule) portal out of this subtree, so
-          their own Enter handling is untouched. */}
+      {/* Nested popups (stage, project, schedule) portal out of this subtree, so
+          their own Enter handling is untouched by Mod+Enter here. */}
       <DialogPopup
         className="max-h-[86vh] w-[min(600px,100%)] max-w-[600px] overflow-hidden p-0"
         onKeyDown={(event) => {
@@ -643,11 +618,8 @@ export function BoardCardCreateDialog({
             </p>
           ) : null}
 
-          {/* Project and Base branch share a row (T3O-5, D13): the base is a
-              property of the project's checkout, so the two read as one
-              decision. A sub-board child shows both read-only: it lives in
-              its parent's project and inherits the parent's integration
-              branch (D4), which depends on the group's merge target. */}
+          {/* A sub-board child shows both read-only: it inherits the parent's
+              project and integration branch. */}
           <div className="flex min-w-0 items-start gap-3">
             <div className="min-w-0 flex-1">
               <BoardSectionHeading className="mb-[7px]">Project</BoardSectionHeading>
@@ -673,13 +645,8 @@ export function BoardCardCreateDialog({
                   onValueChange={(value: string | null) => {
                     if (value === null || value === projectId) return;
                     setProjectId(value as ProjectId);
-                    // Chosen dependencies are KEPT (T3O-33, D3): a cross-project
-                    // edge is legal, so switching project no longer silently
-                    // discards work the user has already done in this dialog.
-                    //
-                    // The base branch still resets (T3O-5, D13): a branch named in
-                    // the old project's checkout says nothing about the new one,
-                    // so it goes back to that project's default.
+                    // Dependencies are kept (cross-project edges are legal), but a
+                    // base branch from the old project's checkout means nothing here.
                     setBaseBranch(null);
                     // So does the worker pin (T3O-65): a worker chosen for the
                     // old project may have no checkout of the new one.
@@ -885,14 +852,9 @@ export function BoardCardCreateDialog({
             scheduledStartAt={scheduledStartAt}
             stageLabel="the build"
           />
-          {/* The footer holds the ONLY destructive path (T3O-26): X, Esc and
-              the backdrop all keep the draft, so say what closing does and
-              make discarding read as the deliberate act it is. Once the draft
-              is gone — the card was created and only its files failed to
-              attach, so the dialog stays open on the words it was made from —
-              there is nothing left to keep or discard, and this goes back to a
-              plain Cancel rather than promising to keep a draft that no longer
-              exists. */}
+          {/* X, Esc and the backdrop all keep the draft; this footer is the only
+              discard path. With no draft left (card created, only attachments
+              failed) it reverts to a plain Cancel. */}
           {draftHasContent && !draftSuppressed ? (
             <>
               <span className="text-[12px] text-muted-foreground max-sm:sr-only">

@@ -1,20 +1,7 @@
 /**
- * T3o brief attachments — the shared UI (t3o-32, K9).
- *
- * One hook and two pieces, so the create dialog and the card modal compose
- * the same thing around their own text editor:
- *
- *   <div …drop handlers…>
- *     <BoardBriefThumbnailStrip …/>   images, 56×56, ✕ badge while editable
- *     <Textarea onPaste={handlers.onPaste} …/>
- *   </div>
- *   <BoardBriefAttachRow …/>          paperclip "Attach files" + file chips
- *
- * Pasting an image never inserts it inline — it becomes an attachment. Files
- * arrive by drop or the picker. Staged rows show upload progress and a retry;
- * persisted rows come from the card. `onUploaded` decides what happens when
- * bytes land: the modal attaches immediately and answers "consumed", the
- * dialog keeps the row until Create and answers "keep".
+ * Brief attachments shared by the create dialog and the card modal. A pasted image
+ * becomes an attachment, never inline. `onUploaded` decides what landed bytes do:
+ * the modal attaches at once ("consumed"), the dialog keeps the row until Create ("keep").
  */
 import type {
   AssetResource,

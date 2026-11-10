@@ -1,18 +1,7 @@
 /**
- * The card's scheduled start (T3O-19): a clock trigger that stays a bare icon
- * until a time is set, and a small popover behind it.
- *
- * One component for all three surfaces — the create dialog's footer, the card
- * modal's header and the board column card — because the whole control is the
- * trigger plus its copy, and three copies of that would be three places for the
- * wording to drift. The caller supplies the situation (`kind`) and the stage
- * name; every string comes from `boardScheduleCopy`.
- *
- * There is no date picker anywhere else in this app, and this is a control the
- * brief calls rarely used, so it is a native `<input type="datetime-local">`
- * styled like the rest (D12) rather than a component of its own. It works on
- * mobile browsers, and a time typed into it round-trips through the CLIENT's
- * timezone into a UTC instant — the server only ever compares instants.
+ * The card's scheduled start, one component for the create dialog, card modal and
+ * column card, with every string from `boardScheduleCopy`. A native datetime-local
+ * input converts through the client's timezone; the server only compares instants.
  */
 import { useState } from "react";
 

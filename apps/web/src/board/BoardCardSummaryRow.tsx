@@ -1,20 +1,7 @@
 /**
- * T3o card summary rows (t3o-06). Two of them:
- *
- * `BoardCardSummaryRow` renders the inline `BoardCardSummaryItem`s
- * `boardCardSummary` derives from a `BoardCardShell` — attachment counts today
- * — and changes with the card's stage. The two full-width blocks live here too
- * but render on their own rows, because their bars stretch the card:
- * `BoardCardPlansRow` for a split parent's children and `BoardCardReviewBlock`
- * for the review ledger. `boardCardProgressBlock` picks which one a card gets.
- *
- * `BoardCardMetaRow` is the stage-independent footer: dependencies, agent
- * threads, plans and the pull request as icon+count pairs, with the brief's
- * image flag pushed to the far end.
- *
- * Static presentation only: no animations (upstream AGENTS.md — repainting
- * loops peg the GPU on high-refresh displays). Either row renders nothing when
- * it has nothing to say, so a card with no data adds no height.
+ * Card face summary rows: inline summary items, the full-width progress blocks
+ * (plans bar, review ledger), and the stage-independent meta footer. Static only:
+ * no animations. A row with nothing to say renders nothing.
  */
 import {
   boardReviewHeldLabel,
@@ -46,22 +33,9 @@ import type { BoardCardMeta, BoardCardSummaryItem } from "./boardCardSummary";
 import { BoardHint } from "./BoardHint";
 
 /**
- * The review-round bar: one segment per round in the budget, at `flex:1`, the
- * same full-width treatment the plan bar and the todo strip wear. It is the
- * card's progress element while a card sits in code review, which is why it is
- * a bar and not the six dots this used to be — a card whose only visible
- * progress was a 1.5px dot read as a card with no progress at all.
- *
- * Rounds already run get a dim fill, the round in flight a stronger one, the
- * budget still to come an empty track. Neutral on purpose: green would claim a
- * round that closed with findings still open was finished, and blue would claim
- * a settled loop was still working (`docs/t3o/status-colours.md`).
- *
- * "Round 5 of 5, 12 raised, 7 fixed" describes a loop that PASSED and a loop
- * that ran out of road in exactly the same numbers, so the counts cannot be
- * left to speak for themselves. A held loop tints EVERY segment amber — the
- * finding is about the loop, not about round 5 — and the flag beside the round
- * label says so in words.
+ * One segment per round in the budget. Neutral on purpose (`docs/t3o/status-colours.md`):
+ * a passed loop and an exhausted one can show the same counts, so a held loop
+ * tints every segment amber and the label says so in words.
  */
 function RoundBar({
   current,
@@ -110,18 +84,9 @@ function pickItem<K extends BoardCardSummaryItem["kind"]>(
 }
 
 /**
- * The review ledger as the card's ONE progress block (D8), in the prototype's
- * three-line shape: the round and what the loop is doing, the round bar, then
- * what the rounds actually found.
- *
- * This is what a card in code review shows INSTEAD of its plan bar or its todo
- * strip — including a split parent, whose children are finished by the time the
- * merged branch is under review, so their bar would report progress on work
- * nobody is waiting for (`boardCardProgressBlock`).
- *
- * Renders whatever parts of the ledger it was given: a card with rounds but no
- * findings yet draws the label and the bar and stops there, rather than a row of
- * zeroes.
+ * The review ledger as the card's one progress block, replacing the plan bar or
+ * todo strip while the card is in code review. Renders only the ledger parts it
+ * was given, never a row of zeroes.
  */
 export function BoardCardReviewBlock({
   items,
@@ -228,16 +193,9 @@ export const BOARD_CHIP_CLASS =
   "inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 text-[10.5px] font-medium whitespace-nowrap text-muted-foreground";
 
 /**
- * The split parent's plan bar (t3o-25, prototype `hasPlans`): one segment per
- * child plan card at `flex:1`, coloured by where that plan stands — done,
- * started (at or after the build role), not started — with the drill-in chip
- * on the right. This row IS the sub-board affordance: the chip replaces the
- * old full-width "N cards" footer button the prototype never had.
- *
- * `statuses` is the derived `d`/`i`/`p` string; a shell that was never
- * decorated with it (the archive sheet) falls back to done-then-pending from
- * the counts. Without `onOpen` (the drag ghost, the archive sheet) the chip
- * renders as a static twin so the card face does not reflow between surfaces.
+ * The split parent's plan bar: one segment per child plan plus the drill-in chip.
+ * Without `statuses` it falls back to done-then-pending from the counts; without
+ * `onOpen` the chip renders static so the face does not reflow between surfaces.
  */
 export function BoardCardPlansRow({
   done,
@@ -529,21 +487,9 @@ export function BoardCardMetaRow({
 // ── Thread todo strip (t3o-18, D4/D5) ──────────────────────────────────
 
 /**
- * One pip per STORED todo item, coloured by that item's real status.
- *
- * Deriving pips from `(done, total, hasDoing)` renders a tidy
- * `[done…][doing][pending…]` fiction that is wrong whenever an agent completes an
- * item out of order — which they do — so the server sends a status STRING and
- * every character renders where it actually is.
- *
- * All stored pips render, at `flex:1`. At 24 items each pip is ~7px on a ~230px
- * card: thin, but it reads as the progress bar it is, and the `2/24` beside it
- * carries the precision. `MAX_SUMMARY_PIPS` is deliberately NOT reused — six pips
- * standing for twenty-four items is actively misleading rather than merely
- * coarse.
- *
- * Static presentation only: no animation (upstream AGENTS.md — repainting loops
- * peg the GPU on high-refresh displays).
+ * One pip per stored todo item, coloured by that item's real status, since agents
+ * complete items out of order. All stored pips render; `MAX_SUMMARY_PIPS` is
+ * deliberately not reused because a few pips standing for many items misleads.
  */
 export function BoardTodoPips({
   statuses,
@@ -589,13 +535,8 @@ function todoElapsedLabel(startedAt: string | undefined): string | null {
 }
 
 /**
- * The card's todo strip: the pip row, the honest `done/total` (TRUE counts, even
- * when only 30 pips were stored), the in-progress item, and how long it has been
- * on it.
- *
- * A card with more than one live thread gets a chip carrying the count. The chip
- * adds no height — it sits on the existing meta row — and clicking it expands the
- * other threads WITHOUT opening the card.
+ * The todo strip: pips, the true `done/total`, and the in-progress item with how
+ * long it has run. More than one live thread adds a count chip on the meta row.
  */
 export function BoardCardTodoStrip({
   todo,

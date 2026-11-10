@@ -1,16 +1,6 @@
 /**
- * t3o-14 — the card thread pane's `+` menu.
- *
- * The load-bearing invariant is the restart gate: "New thread — restart <stage>"
- * appears ONLY when the card's current stage auto-executes (t3o-15 generalised
- * auto-kickoff to any stage), and is DISABLED while a supervised run is in
- * flight — restarting then would leave two threads owning the same step (D1).
- *
- * The gate is computed in `BoardCardDetail` (auto-execute + in-flight proxy) and
- * threaded through `BoardCardDetailView` → `BoardCardThreadPane` → the menu, so
- * the rows it produces are pinned here. The popover itself portals, and a portal
- * renders nothing on the server, so the body is exported separately rather than
- * reached through the trigger.
+ * The restart item appears only when the stage auto-executes and is disabled while
+ * a supervised run is in flight. The popover portals, so the body is tested directly.
  */
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";

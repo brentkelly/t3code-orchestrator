@@ -1,15 +1,6 @@
 /**
- * Move-to-another-project confirmation (T3O-33, D6).
- *
- * Unconditional, unlike the base-branch dialog next door, because the one thing
- * that ALWAYS happens is effectively irreversible: the key is reissued and the
- * old number is retired behind the project's card-number floor, so moving the
- * card back yields a THIRD key rather than the original.
- *
- * The two conditional lines are the ones a user cannot see coming — an agent
- * being stopped, and the stage starting again in a different repository.
- * Cancel is the focused default, following `BoardArchiveConfirmDialog`: nothing
- * dispatches until the destructive action is clicked.
+ * Move-to-another-project confirmation. Unconditional: the key is always reissued
+ * and the old number retired, so moving back yields a third key. Cancel is focused.
  */
 import { Button } from "../components/ui/button";
 import {
@@ -65,22 +56,15 @@ export function BoardCardProjectConfirmDialog({
             Move {cardKey} to {projectName}?
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {/* `nextKey` is the client's preview of the next free number, not
-                the allocation — the decider issues that from the project's own
-                counter, which also knows about archived cards and the
-                card-number floor. Hedged here so a rare off-by-one reads as the
-                estimate it always was rather than a broken promise. */}
+            {/* `nextKey` is a client preview; the decider allocates the real key. */}
             <span className="block">
               Reissued as <code className="font-mono text-foreground">{nextKey}</code>, the next
               free number in {projectName}. The{" "}
               <code className="font-mono text-foreground">{cardKey}</code> key is retired: moving
               the card back gives it a third key, not this one.
             </span>
-            {/* Named by description rather than by branch: only the CURRENT
-                project's default branch is resolvable client-side, and guessing
-                a name the new repository may not have is worse than saying
-                what actually happens — the pin is cleared, and the base is
-                resolved live from wherever the card lands. */}
+            {/* Described, not named: only the current project's default branch is
+                resolvable client-side. */}
             <span className="mt-1.5 block">
               Its base branch resets to {projectName}&apos;s default.
             </span>

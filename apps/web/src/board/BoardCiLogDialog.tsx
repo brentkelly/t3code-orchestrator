@@ -1,11 +1,7 @@
 /**
- * The CI log viewer (T3O-60, prototype notes 11–12): one script step's log in
- * a modal over the card, following new output while the step runs. Scrolling
- * up pauses following; "jump to latest" or the header toggle resumes it.
- *
- * It holds about the last 2 MiB of a log, rendered in blocks of lines so only
- * the newest block re-renders as output arrives; Download fetches the whole
- * file. `openAt` opens it paused at a byte offset with that line marked.
+ * One CI step's log, following new output while it runs; scrolling up pauses.
+ * Holds about the last 2 MiB in blocks so only the newest re-renders; Download
+ * fetches the whole file. `openAt` opens paused at a byte offset with that line marked.
  */
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {

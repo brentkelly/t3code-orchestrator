@@ -1,13 +1,6 @@
 /**
- * The card modal's Plan pane (t3o-08): the planning stage's output, rendered
- * as markdown in the working surface where the thread and brief also live.
- *
- * A pending split is approved at the split gate in the planning thread
- * (T3O-31); the pane's **Review split** button takes the human there.
- *
- * Lazy, like the thread pane — it pulls in `ChatMarkdown` (highlighting,
- * tables, the lot), so the board chunk never pays for it until a card with a
- * plan is opened onto this pane.
+ * The card modal's Plan pane. Lazy, because it pulls in `ChatMarkdown`. A pending
+ * split is approved at the split gate in the planning thread, not here.
  */
 import type {
   BoardCardChildRef,
@@ -86,11 +79,8 @@ export function BoardCardPlanPane({
                 <h3 className="mb-2 flex items-center gap-2 text-[13.5px] font-semibold text-foreground">
                   {plan.title}
                   {child === undefined ? null : (
-                    // The materialised child (t3o-23): its key and where it
-                    // stands. Struck through when archived, so the pairing
-                    // survives without pretending the card is live. A button
-                    // when navigation is wired (t3o-25): it opens the child
-                    // inside this card's sub-board.
+                    // Struck through when archived so the pairing survives without
+                    // pretending the card is live.
                     <BoardHint
                       label={`${child.key}: ${child.title}${onOpenChild === undefined ? "" : " (open in the sub-board)"}`}
                     >

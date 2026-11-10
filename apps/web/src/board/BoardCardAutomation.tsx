@@ -1,12 +1,7 @@
 /**
- * The Automation section (T3O-38): Auto-plan, Auto-build and Auto-merge as
- * switches, in the card detail's sidebar and — for a group — the sub-board
- * header's popover.
- *
- * A leaf's switches dispatch `board.card.set-automation` on the card; a
- * group's dispatch `board.card.set-group-settings`, which every inheriting
- * child follows live, so a flip that changes work already in flight asks
- * first. The decider re-checks every lock; the rows here only mirror them.
+ * Auto-plan, Auto-build and Auto-merge switches. A group's switches set group
+ * settings that inheriting children follow live, so a flip touching in-flight work
+ * asks first. The decider re-checks every lock; the rows only mirror them.
  */
 import {
   BoardCardId,

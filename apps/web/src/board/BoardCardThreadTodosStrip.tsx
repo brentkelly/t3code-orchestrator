@@ -1,21 +1,7 @@
 /**
- * T3o modal todos strip (t3o-18, D5/D9) — the selected thread's full todo list,
- * sticky above its conversation.
- *
- * Unlike the CARD strip, this always shows what is stored: retention is a storage
- * rule and visibility is a render rule (D5), and inside the modal you are looking
- * AT the thread, so a finished `5/5` list is the answer to "did it get there",
- * not stale noise.
- *
- * Collapse state is React state keyed by thread id, lost on reload (D9). A
- * collapse preference has near-zero value across reloads, and persisted board UI
- * state has already caused a navigation bug in this codebase — where stale
- * `localStorage` routed Board clicks to a thread. Not worth re-entering that
- * surface for a chevron.
- *
- * Auto-expand: expanded while the thread is awaiting input, collapsed otherwise.
- * A MANUAL collapse sticks for that thread until the awaiting-input state clears
- * and returns.
+ * The selected thread's full todo list, sticky above its conversation. Collapse is
+ * React state, not persisted. Expanded while awaiting input; a manual collapse
+ * sticks until the awaiting-input state changes.
  */
 import type { BoardCardThreadShell, ThreadId } from "@t3tools/contracts";
 import {
@@ -111,11 +97,7 @@ export function BoardCardThreadTodosStrip({
                       : "bg-muted-foreground/30",
                 )}
               />
-              {/* Only the current item's TEXT rides the wire (D3: the strip is a
-                  summary, not a copy of the list), so every other item — pending,
-                  done, or a rare second in-progress — renders by position. The
-                  pip row above is the shape; this list is where the one current
-                  item is named. */}
+              {/* Only the current item's text is on the wire; the rest render by position. */}
               <span className="min-w-0 flex-1 truncate">
                 {index === currentIndex
                   ? (todo.todoCurrent ?? `Item ${index + 1}`)

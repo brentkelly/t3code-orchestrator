@@ -1,10 +1,6 @@
 /**
- * T3o column card (t3o-06, D7). The column/board view renders from
- * `BoardCardShell` ALONE and must never open a detail subscription.
- * `BoardCardContent` takes only a shell (plus the label catalogue index) —
- * no environment id, no card id, no atom — so it is structurally incapable of
- * subscribing, and `renderToStaticMarkup` needs no runtime to render it. That
- * is the payload-discipline line D7 draws, asserted here.
+ * `BoardCardContent` takes only a shell and label index — no atom — so it is
+ * structurally incapable of opening a detail subscription.
  */
 import {
   BOARD_SEED_STAGES,
@@ -278,11 +274,7 @@ describe("BoardCardContent (D7)", () => {
         attention={attentionOf(shell("building", { stalled: true }))}
       />,
     );
-    // The human-needed signal — amber, and distinct from the blue "Input
-    // needed". Amber rather than red because red is not in the status
-    // vocabulary at all (T3O-22, `docs/t3o/status-colours.md`): every reading of
-    // `stalled` says "nobody is working on this", including a card calmly
-    // counting down to its own automatic resume.
+    // Amber, not red: red is not in the status vocabulary.
     expect(stalled).toContain("Stalled");
     expect(stalled).toContain("text-amber-700");
     expect(stalled).not.toContain("Input needed");
@@ -420,11 +412,7 @@ describe("BoardCardContent (D7)", () => {
 
   it("wears ONE notice when the merge gave up on a card whose step also parked (T3O-45)", () => {
     using _now = vi.spyOn(Date, "now").mockReturnValue(NOW_MS);
-    // The bug, exactly as photographed: a merge-stage card whose step settled
-    // without moving it on AND whose auto-merge ladder ran out wore
-    // `Needs a human` beside `Merge needs you` — the same claim twice, in the
-    // same amber, and together wider than the 268px column, so the second chip
-    // hung off the card's right edge.
+    // Both claims at once say the same thing twice and overflow the column.
     const both = shell("merge", {
       held: true,
       autoMergeSetting: true,
@@ -584,11 +572,8 @@ describe("BoardCardContent (D7)", () => {
   });
 
   it("keeps the working dot lit while the executor step is running, even when no thread is mid-turn", () => {
-    // A Code-review card mid-loop: the executor's step is admitted and running,
-    // but between one phase's thread completing and the next spinning up, no
-    // linked thread is itself mid-turn (threadState is "stopped"/"none"). The
-    // card is still being actively worked, so the durable `stepRunning` signal
-    // must keep the green dot lit across the per-phase gap.
+    // Between review-loop phases no thread is mid-turn, but the durable
+    // `stepRunning` must keep the dot lit across the gap.
     const html = renderToStaticMarkup(
       <BoardCardContent
         card={shell("review", { stepRunning: true, threadState: "stopped" })}
@@ -752,11 +737,7 @@ describe("cards that need a human (attention)", () => {
   });
 
   it("never wears the working dot and a Needs a human chip at once (T3O-18)", () => {
-    // The board shipped exactly this card: a planning step parked as `stopped`
-    // while its thread carried on working for another four minutes, so the face
-    // pulsed blue and said "Needs a human" in the same row. The two claims are
-    // opposites — the chip's whole meaning is that nobody is working on this
-    // card (`docs/t3o/status-colours.md`).
+    // A working thread and "Needs a human" are opposite claims.
     const working = shell("planning", { stepAwaiting: "stopped", threadState: "working" });
     expect(attentionOf(working)).toBeNull();
     const html = renderToStaticMarkup(

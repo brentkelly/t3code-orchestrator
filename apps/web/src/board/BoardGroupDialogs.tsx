@@ -1,14 +1,7 @@
 /**
- * The group confirmations on the board (T3O-29), each a fill of
- * `BoardDialogShell`:
- *
- * - **Start** — dropping a group on Building. With auto-build on it arms the
- *   group (the cascade starts its ready children, now and as they unblock),
- *   even when none is ready yet; with it off it is a one-off start of the
- *   ready, unblocked children.
- * - **New phase** — the group's deferred cards move to a fresh sibling heading
- *   and land in its Backlog. The rules are `boardNewPhasePlan`'s, shared with
- *   `board_new_phase`; the decider re-checks every step.
+ * Group confirmations on `BoardDialogShell`: Start (arms the group with auto-build
+ * on, else a one-off start of ready children) and New phase (`boardNewPhasePlan`
+ * rules, shared with `board_new_phase`; the decider re-checks).
  */
 import {
   BoardCardId,
@@ -307,11 +300,9 @@ export function BoardArchiveGroupDialog({
 }
 
 /**
- * A started leaf asked to take children (T3O-28, decision 12). The default
- * keeps its work: a new group holds it and the moving cards side by side. The
- * destructive branch cancels its work so it can become the group — its thread
- * stops and its pull request closes; its branch is kept until the worktree is
- * reclaimed, not deleted here — and needs the card's typed key.
+ * A started leaf asked to take children. The default keeps its work beside the
+ * moving cards in a new group; the destructive branch cancels its work so it can
+ * become the group, and needs the card's typed key.
  */
 export function BoardStartedParentDialog({
   environmentId,

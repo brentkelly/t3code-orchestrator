@@ -1,9 +1,6 @@
 /**
- * The card face's CI rows (T3O-44/57): one segment per step and, once a step
- * failed, one for the fix; the phase chip, the passed count and the step in
- * flight — or, once the card has left CI other than by passing, the line
- * saying so. Nothing here animates; the elapsed
- * minutes repaint on the shared minute tick.
+ * The card face's CI rows. Nothing animates; elapsed minutes repaint on the shared
+ * minute tick.
  */
 import type { BoardCardCi, BoardCardCiLastOutcome } from "@t3tools/contracts";
 import { ChevronsRightIcon, Undo2Icon } from "lucide-react";

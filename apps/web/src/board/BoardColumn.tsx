@@ -1,13 +1,7 @@
 /**
- * T3o board column (t3o-05): header with count and inline add, a plain card
- * list, and a collapsed rail that stays a drop target.
- *
- * Ordering is native HTML5 drag-and-drop (the prototype's model): the column
- * is a drop zone (`onDragOver`/`onDrop`), and while a card hovers it a dashed
- * placeholder opens a gap at the computed drop index. The previous
- * `@legendapp/list` virtualiser is gone here — its absolute item positioning
- * was incompatible with a live reorder gap; a kanban column's card count is
- * bounded enough to render in full.
+ * A board column: header with count and inline add, a plain card list, and a
+ * collapsed rail that stays a drop target. Native HTML5 drag-and-drop with a
+ * placeholder gap; not virtualised, since absolute positioning breaks the gap.
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -39,13 +33,8 @@ import type { BoardStageCoverage } from "./boardProjectPipelines";
 export const BOARD_CARD_GAP = 8;
 
 /**
- * The dark-mode column fill, opaque rather than a foreground tint.
- *
- * The board stacks three surfaces — page, column, card — and dark mode needs
- * them strictly increasing in lightness. A translucent tint composites over
- * whatever sits behind it, so the column tint landed ABOVE `--card` and the
- * cards came out darker than the board they sit on. Opaque values fix the
- * order by construction. Light mode keeps the tint, where it reads correctly.
+ * Opaque in dark mode: page, column and card must increase in lightness, and a
+ * translucent tint composited above `--card`, making cards darker than the column.
  */
 const BOARD_COLUMN_DARK_SURFACE = "dark:bg-[#131316]";
 
@@ -115,11 +104,8 @@ export interface BoardColumnProps extends BoardColumnDragProps {
       (`deriveBoardCardChildRunning`) — what lights the working dot on a split
       parent, which runs no step of its own while its children build. */
   readonly childRunningFor: (card: BoardCardShell) => number | undefined;
-  /** T3o (T3O-48): whether the card is parked at the merge role with no pull
-      request (`boardCardNoPullRequest`). Resolved by the page for the same
-      reason `attentionFor` is: the settle grace it applies is keyed on when the
-      card's thread went quiet, which is a join across the thread shells only
-      the page holds. */
+  /** Whether the card is parked at the merge role with no pull request. Resolved
+      by the page, which holds the thread shells its settle grace joins across. */
   readonly noPullRequestFor: (card: BoardCardShell) => boolean;
   /** T3O-52: why a finished card kept its worktree, or null
       (`boardCardWorktreeKept`). Resolved by the page, which holds the settings. */
@@ -278,12 +264,8 @@ function ExpandedColumn(props: BoardColumnProps) {
 
   return (
     <div
-      // The column panel is a tint of the FOREGROUND, not `--muted`: `--muted`
-      // is zinc-50, so a muted wash over a near-white page was invisible and
-      // the columns read as one undivided sheet.
-      // Height follows the cards (with a floor so an empty column is still a
-      // visible target), rather than stretching to the viewport. The board row
-      // scrolls when a column outgrows it.
+      // A foreground tint, not `--muted` (invisible over a near-white page). Height
+      // follows the cards with a floor; the board row scrolls when a column outgrows it.
       className={cn(
         "flex min-h-[104px] w-[268px] shrink-0 flex-col rounded-xl border border-transparent bg-foreground/5 p-2.5 transition-colors",
         BOARD_COLUMN_DARK_SURFACE,

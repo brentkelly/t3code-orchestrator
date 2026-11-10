@@ -1,10 +1,6 @@
 /**
- * The card modal's Summary pane (T3O-5, redesigned T3O-21): a read-only recap
- * of how the work went — the build agent's lead sentence over one meta line
- * (verdict, review, PR), then Heads-up notes, open findings, check tiles and
- * what was built. Merge / Another review round / View PR stay on the rail;
- * this pane only links into View PR, the Review pane (open findings), and a
- * split-parent child (same as the Plans panel).
+ * The card modal's read-only Summary pane. Actions stay on the rail; this pane
+ * only links into View PR, the Review pane and split-parent children.
  */
 import type { BoardBuildSummaryCheckStatus, BoardBuildSummaryNoteKind } from "@t3tools/contracts";
 import { ChevronLeftIcon } from "lucide-react";

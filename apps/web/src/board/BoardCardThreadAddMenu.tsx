@@ -1,27 +1,7 @@
 /**
- * T3o card thread add menu (t3o-14) — the `+` in the card's thread tab strip.
- *
- * Three actions, one popover:
- *
- *   Auto-executing stage:  New thread — restart <stage label>   (board.card.start-stage-thread)
- *                          (the stage name reads mid-sentence, so de-capitalised)
- *                          New blank thread
- *                          Adopt an existing thread…
- *
- *   Otherwise:             New thread                            (blank)
- *                          Adopt an existing thread…
- *
- * The restart item appears ONLY when the card's current stage has `Auto execute`
- * on (t3o-15 generalised auto-kickoff to any stage), and is DISABLED while a
- * supervised run is in flight for the card — restarting under the supervisor
- * would leave two threads believing they own the same step (D1). Restart is a
- * server command, not a client-composed prompt: the reactor runs the stage's
- * configured prompt through the same envelope the automatic trigger uses (D2),
- * so the two entry points cannot drift.
- *
- * Adoption shares `BoardPickerSearchBody` with the standalone picker rather than
- * nesting a second popover inside a menu item — `mode` swaps this popover's
- * contents in place.
+ * The `+` in the card's thread tab strip: restart the stage (auto-executing stages
+ * only, disabled while a supervised run is in flight), new blank thread, or adopt.
+ * Restart is a server command so it runs the same prompt as the automatic trigger.
  */
 import { MessageSquarePlusIcon, PlusIcon, RotateCwIcon, SearchIcon } from "lucide-react";
 import { useState } from "react";
@@ -40,12 +20,8 @@ export interface BoardAdoptSearch {
 }
 
 /**
- * The restart affordance's state, or `null` when the current stage does not
- * auto-execute (the item is absent, not disabled — D4). `label` names the stage
- * mid-sentence, so it renders de-capitalised ("restart planning") — see
- * `boardStageLabelMidSentence`; a non-null
- * `disabledReason` disables the item and gives the tooltip / hint the reason a
- * supervised run in flight blocks a restart.
+ * Null when the stage does not auto-execute (the item is absent, not disabled).
+ * A non-null `disabledReason` disables the item and explains why.
  */
 export interface BoardThreadStageRestart {
   readonly label: string;
@@ -168,11 +144,8 @@ export function BoardCardThreadAddMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"menu" | "adopt">("menu");
-  // Reset on OPEN, never on close. The popup's contents unmount when it closes
-  // but this component does not, so `mode` has to be cleared somewhere — doing
-  // it on close swaps the adopt list back to the menu rows while the popover is
-  // still fading out, which is the flicker `openCount` removes next door in
-  // BoardSearchAddPicker.
+  // Reset on open, never on close: clearing on close swaps the contents while
+  // the popover is still fading out.
   const [openCount, setOpenCount] = useState(0);
   const close = () => {
     setOpen(false);

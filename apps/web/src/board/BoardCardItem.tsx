@@ -1,17 +1,6 @@
 /**
- * T3o board column card (t3o-05): the minimal shell — key pill, label chips,
- * state badges, title. The rich summary content (plans, review rounds,
- * attachments) is t3o-06's.
- *
- * State indicators are static state changes with one deliberate exception: the
- * "working" dot slowly pulses (an opacity fade, not a spinner — no per-frame
- * layout, so it stays cheap on high-refresh displays; upstream AGENTS.md warns
- * against transform/loop animations that peg the GPU) so an actively-worked card
- * reads at a glance. Blue is that dot's alone: awaiting input is the violet
- * attention chip in the slot beside it, never this dot
- * (`docs/t3o/status-colours.md`). The dot does also light for a split parent
- * whose CHILD is working — the parent runs no step of its own while its
- * sub-board builds.
+ * The "working" dot is the one animated indicator: a slow opacity fade, no
+ * per-frame layout. It also lights for a split parent whose child is working.
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -184,23 +173,9 @@ export interface BoardCardTodoContext {
 const EMPTY_TODO_THREADS: ReadonlyArray<BoardCardThreadShell> = [];
 
 /**
- * The attention tones as card-level treatments: border, fill tint, and the 1px
- * ring. One entry per tone rather than a branch per reason — the reason picks
- * the tone (`boardCardAttention`), and the card only ever renders a tone.
- *
- * `neutral` (T3O-23) is the tone that takes NO treatment: a paused card is held
- * by the user's own instruction and asserts nothing about work, so it reads
- * exactly like an untinted card and says why in the chip's words —
- * `docs/t3o/status-colours.md`, "no colour without a claim". Its entries are the
- * untinted card's own classes rather than an early return, so the "exactly one
- * border / fill / shadow class per card" rule below still holds by
- * construction.
- *
- * The tint is a colour-MIX into the card fill, not a translucent overlay, so it
- * reads the same over the light `--card` and the dark lift — a flat `bg-attention/7`
- * would wash out on one of them. Each table is a COMPLETE class per tone
- * because Tailwind resolves competing utilities by stylesheet order, not class
- * order, so a card must carry exactly one border / fill / shadow class.
+ * Tailwind resolves competing utilities by stylesheet order, not class order,
+ * so each table holds one COMPLETE class per tone. `neutral` maps to the
+ * untinted card's own classes: a paused card asserts nothing about work.
  */
 const TONE_BORDER: Record<BoardCardAttentionTone, string> = {
   warning: "border-amber-500/60",
@@ -256,17 +231,8 @@ const TONE_CHIP: Record<BoardCardAttentionTone, string> = {
 };
 
 /**
- * The card header's ONE status notice (T3O-45), whichever source won the slot.
- *
- * Each kind keeps the glyph and the colour it has always had — the ranking
- * decides WHICH notice shows, never how it reads — and the merge pills and the
- * dependency gate stay amber (`docs/t3o/status-colours.md`: blocked or held).
- *
- * It truncates rather than pushing: the notice shares a 268px column with the
- * key pill, a sub-board parent chip and the working dot, and `Merge held · 2d 3h`
- * beside all three still does not fit. A clipped notice keeps its tooltip and
- * its aria-label, so nothing is actually lost — the card hanging off the edge of
- * its column was.
+ * Truncates rather than pushing: the notice shares a narrow column with the key
+ * pill, parent chip and working dot. Tooltip and aria-label keep the full text.
  */
 function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
   const view =
@@ -422,11 +388,8 @@ export function BoardCardContent({
       handler is supplied (the live root board — not the ghost, not the
       archive sheet, where the chip is a static twin). */
   readonly onOpenSubBoard?: (() => void) | undefined;
-  /** Why this card is waiting on a human, or null when it is not
-      (`boardCardAttention`). Derived client-side by the board page, which is
-      the surface that holds the stage list; absent on the surfaces that do not
-      resolve it (the drag ghost, the archive sheet), where the card renders as
-      it always did. */
+  /** Why this card is waiting on a human, or null (`boardCardAttention`).
+      Absent on surfaces that do not resolve it (drag ghost, archive sheet). */
   readonly attention?: BoardCardAttention | null | undefined;
   /** The same question asked of this card's CHILDREN (`deriveBoardCardChildAttention`).
       A split parent builds through its children, so one stuck child blocks the
@@ -486,32 +449,15 @@ export function BoardCardContent({
       : childRunning !== undefined && childRunning > 0
         ? boardCardChildRunningLabel(childRunning)
         : null;
-  // "This card is waiting on you" — the whole card, not just a badge, so a
-  // board of forty cards answers "where am I needed" at a glance (the
-  // prototype's treatment: tinted fill, coloured border, a 1px ring). The
-  // reason picks the colour: red for a stalled step, amber for a decision, blue
-  // for a thread's question — one vocabulary, ranked by `boardCardAttention`.
-  //
-  // A parent with no problem of its own inherits its worst child's, tone and
-  // all: a split parent builds THROUGH its children (t3o-23, D4), so while one
-  // is stuck the parent cannot advance either and the board has to say so on
-  // both — otherwise the parent reads healthy and the stuck child is buried in
-  // a column nobody is looking at.
-  //
-  // Muting a Done card wins over all of it: a finished card is not asking for
-  // anything, whatever its last thread state said.
-  // A group says who needs you in its own stats, so it takes no tone.
+  // A parent with no problem of its own inherits its worst child's tone: it
+  // cannot advance while a child is stuck. A muted Done card or a group takes
+  // no tone.
   const own = summary.muted || isGroup ? null : (attention ?? null);
   const inherited = summary.muted || isGroup || own !== null ? null : (childAttention ?? null);
   const flag = own ?? inherited;
   const tone = flag?.tone ?? null;
-  // A held review loop already spells itself out in the summary's round row
-  // ("No convergence" / "Stopped"), so it tints the card and skips the chip
-  // rather than saying the same thing twice. Keyed on the row ACTUALLY being
-  // rendered, not on the reason alone: the round row is stage-conditional, so
-  // on a board whose review-role stage is not the seed `review` stage the row
-  // is absent — and suppressing on the reason would leave the card tinted amber
-  // with nothing on it saying why.
+  // A held review loop's round row already says why, so skip the chip — keyed
+  // on the row actually rendering, since it is stage-conditional.
   const roundRowExplainsIt = summary.items.some(
     (item) =>
       item.kind === "round" && item.outcome !== undefined && isBoardReviewLoopHeld(item.outcome),
@@ -552,11 +498,8 @@ export function BoardCardContent({
     // oxlint-disable-next-line react/purity -- the pill samples the clock whenever the card re-renders on a board push.
     nowMs: Date.now(),
   });
-  // ONE notice for the whole header (T3O-45). Every one of these used to render
-  // on its own, so a card could wear `Needs a human` and `Merge needs you` at
-  // once — the same claim twice, and wider than the column.
-  // A group keeps only its own dependency gate here; its children's states
-  // are in its stats, and its own thread is paused.
+  // ONE notice for the whole header. A group keeps only its own dependency
+  // gate; its children's states are in its stats.
   const notice = boardCardNotice({
     attention: isGroup ? null : chip,
     conflictFix: isGroup ? null : conflictFix,
@@ -597,32 +540,16 @@ export function BoardCardContent({
         // not a colour property, so the hover shadow snapped in. Transition
         // both; the hover lift itself rides the per-state shadow branch below.
         "flex cursor-pointer flex-col gap-1.5 rounded-[10px] border px-[11px] py-2.5 transition-[color,background-color,border-color,box-shadow] duration-[120ms] ease-[ease]",
-        // One border class, chosen here rather than layered: Tailwind resolves
-        // competing `border-*` utilities by stylesheet order, not by the order
-        // they appear in the class list, so stacking them decides nothing.
-        // Selection darkens the card's own border rather than adding a ring:
-        // `ring-2 ring-ring` painted the accent blue outside the card and read
-        // as a focus ring on click.
+        // One border class: competing `border-*` utilities resolve by
+        // stylesheet order, so stacking them decides nothing.
         selected ? "border-foreground/40" : tone === null ? "border-border" : TONE_BORDER[tone],
-        // The tint is a colour-MIX into the card fill, not a translucent
-        // overlay, so it reads the same over the light `--card` and the dark
-        // lift below — a flat `bg-attention/7` would wash out on one of them.
-        // `dark:bg-[#1c1c20]` lifts the card above the column beneath it. The
-        // stock `--card` in dark is ~3% off the page background, which landed
-        // BELOW the column's fill and left cards darker than the board.
+        // `dark:bg-[#1c1c20]` lifts the card above the column; the stock dark
+        // `--card` lands below the column's fill.
         tone === null ? "bg-card hover:border-foreground/18 dark:bg-[#1c1c20]" : TONE_TINT[tone],
         // Done recedes: finished work is muted and lower-contrast (D15 stage).
         summary.muted && "bg-card/60 opacity-70",
-        // EXACTLY one box-shadow branch per card — shadow utilities conflict by
-        // stylesheet order, not class order, so each state carries its own
-        // resting AND hover shadow. Precedence is the prototype's: the stack
-        // beats the approval/awaiting ring beats the resting shadow.
-        //
-        // The stacked-sheet edges (t3o-25, AC1) are the prototype's: two full
-        // card-coloured sheets each closed by a 1px border line — not grey
-        // underlines, which read as bars rather than cards. `--sheet` tracks
-        // the card fill (`dark:bg-[#1c1c20]` above, where `--card` is wrong in
-        // dark), and the pile gets the prototype's 8px of breathing room below.
+        // EXACTLY one box-shadow branch per card (stylesheet order wins), each
+        // with its own resting and hover shadow. `--sheet` tracks the card fill.
         wearsStack
           ? "mb-2 [--sheet:var(--card)] dark:[--sheet:#1c1c20] shadow-[0_5px_0_-1px_var(--sheet),0_5px_0_0_var(--border),0_10px_0_-2px_var(--sheet),0_10px_0_-1px_var(--border)] hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35),0_5px_0_-1px_var(--sheet),0_5px_0_0_var(--border),0_10px_0_-2px_var(--sheet),0_10px_0_-1px_var(--border)]"
           : tone === null
@@ -653,26 +580,9 @@ export function BoardCardContent({
           </BoardHint>
         ) : null}
         {workingLabel === null ? null : (
-          // Blue while the agent is working — green is reserved for done, and
-          // nothing else on the board may wear it. `isBoardCardWorking` covers
-          // both halves: `threadState === "working"` lights only while a single
-          // linked thread is mid-turn, and `stepRunning` is the durable one —
-          // true for a card's whole admitted-and-running step — so a loop stage
-          // (Code review's review/triage/adjudicate phases run as separate
-          // short-lived threads) stays lit across the per-phase spin-up gaps and
-          // goes dark only when genuinely queued, stalled, awaiting input or
-          // done — or when every thread the step could be running on has FAILED,
-          // which vetoes the claim (a restart that orphans a step leaves
-          // `stepRunning` standing over threads that are provably dead).
-          // It pulses so "working" reads at a glance; a slow opacity fade
-          // (`animate-pulse`), not a spinner — no per-frame layout, so it stays
-          // cheap on high-refresh displays.
-          //
-          // A split parent lights the SAME dot for a working child: it builds
-          // THROUGH its children and runs no step of its own while they go, so
-          // without the roll-up it reads identically whether the split is
-          // moving or the whole thing is queued behind a slot — which is the
-          // one distinction this dot exists to make. Only the tooltip differs.
+          // `stepRunning` keeps the dot lit across a loop stage's per-phase
+          // thread gaps; every candidate thread having FAILED vetoes it. A split
+          // parent lights it for a working child — only the tooltip differs.
           <BoardHint label={workingLabel}>
             <span
               aria-label={workingLabel}
@@ -696,33 +606,15 @@ export function BoardCardContent({
           </BoardHint>
         ) : null}
         {notice === null ? null : (
-          // ONE notice, whatever the source: the card face has room for a single
-          // status word, and rendering two was what let "Stalled" and "Input
-          // needed" fight for the same slot — and later let "Needs a human" and
-          // "Merge needs you" hang off the column's right edge together (T3O-45).
-          // `boardCardAttention` ranks the card's own reasons and
-          // `boardCardNotice` ranks across the sources, so the chip just says
-          // what won — and on a parent with no problem of its own, it names the
-          // child that has one.
+          // The face has room for one status word; `boardCardNotice` ranks the
+          // sources and, on a healthy parent, names the child with a problem.
           <BoardCardNoticeChip notice={notice} />
         )}
         <span className="flex-1" />
         {scheduleLabel === null ? null : (
-          // The schedule pill (T3O-19, D9), taking the right-hand cluster slot
-          // in preference to the queue pill below: a scheduled card is never
-          // meaningfully both, and `boardBuildQueue` excludes it for exactly
-          // that reason.
-          //
-          // Neutral, never coloured (D10). Not blue — it is not running; not
-          // green — it is not done; not violet — nothing is waiting on the
-          // human. The close call is amber, which docs/t3o/status-colours.md
-          // gives to "blocked or held", and a scheduled card IS held — but
-          // amber's job is to say "this will never move until someone acts",
-          // and a scheduled card moves on its own. Same argument t3o-33 used
-          // for `queued`.
-          //
-          // The LABEL is absolute and the TOOLTIP is relative (D11), so
-          // thirty of these repaint only when their card does.
+          // Wins over the queue pill (`boardBuildQueue` excludes scheduled
+          // cards). Neutral: a scheduled card moves on its own. The label is
+          // absolute and only the tooltip relative, so it repaints with its card.
           <BoardHint label={scheduleLabel.tooltip}>
             <span
               aria-label={scheduleLabel.tooltip}
@@ -769,16 +661,8 @@ export function BoardCardContent({
         autoMergeHold === null &&
         !summary.muted &&
         atMergeStage ? (
-          // Armed and quiet, in the merge stage only (D13): a small grey glyph
-          // and no pill. An armed card in Building looks normal because it IS
-          // normal — nothing is happening to it yet.
-          //
-          // The board-wide arm counts here, exactly as `BoardCardDetailView`
-          // ORs it into the modal's `Auto-merge · board` chip. Both read the
-          // setting rather than the card's arrival history — neither surface
-          // can see whether a card was already parked here when the setting
-          // went on (D2) — and the two answering "does this merge itself?"
-          // differently is worse than the shared imprecision.
+          // Armed and quiet, merge stage only. Counts the board-wide arm exactly as
+          // `BoardCardDetailView` does, so the two never answer differently.
           <BoardHint label="Merges itself as soon as the forge accepts it">
             <span
               aria-label="Auto-merge armed"
@@ -870,12 +754,9 @@ export function BoardCardContent({
 }
 
 /**
- * A board card wired for native HTML5 drag-and-drop (the prototype's model).
- * dnd-kit's sortable transforms fought `@legendapp/list`'s absolute
- * positioning — cards vanished mid-drag and no gap opened — so ordering uses
- * the platform drag with a rotated ghost clone (built by the page) and a
- * measured placeholder gap. `dragging` dims the source in place while its
- * clone is what the cursor carries.
+ * Native HTML5 drag-and-drop: dnd-kit's sortable transforms fought
+ * `@legendapp/list`'s absolute positioning. `dragging` dims the source while
+ * the page-built clone follows the cursor.
  */
 export function DraggableBoardCard({
   card,
@@ -948,11 +829,8 @@ export function DraggableBoardCard({
           onSelect(card);
           return;
         }
-        // Ctrl/Cmd+Arrow reorders within the column — plain arrows stay free
-        // for scrolling and focus movement. Stage moves ride the detail
-        // dialog's stage actions (Enter opens it).
-        // Alt+Down drills into a group's board (T3O-29); Alt+Up on the board
-        // goes back up a level.
+        // Ctrl/Cmd+Arrow reorders; plain arrows stay free for scrolling and focus.
+        // Alt+Down drills into a group's board.
         if (event.altKey && event.key === "ArrowDown" && group !== null && onOpenSubBoard) {
           event.preventDefault();
           onOpenSubBoard();

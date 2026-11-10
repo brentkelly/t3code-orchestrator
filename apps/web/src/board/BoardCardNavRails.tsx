@@ -1,11 +1,6 @@
 /**
- * Card-to-card navigation in the detail sheet (T3O-37): the two chevron rails
- * and the keyboard binding. The neighbour and keystroke resolution they run on
- * is pure and lives in `boardCardNav.ts`.
- *
- * A rail renders only when a card exists in that direction, so "nothing there"
- * reads as an absent control rather than a dead one — which, since stepping
- * spans stages (T3O-44), is only at the two ends of the board.
+ * Card-to-card navigation in the detail sheet: chevron rails and the keyboard
+ * binding. A rail renders only when a card exists in that direction.
  */
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect } from "react";
@@ -19,17 +14,9 @@ import { boardCardNavStep, type BoardCardNav, type BoardCardNavTarget } from "./
 export type { BoardCardNav, BoardCardNavTarget };
 
 /**
- * Binds ←/→/J/K on the sheet element itself (D3) — never on `document`.
- *
- * Base UI portals every nested menu, popover and confirm dialog to the body, so
- * once one of those is open the focus is outside this subtree and its key
- * events never reach here. That is the whole "am I still the top layer?" guard,
- * structural instead of a hand-maintained list of layers that rots as the sheet
- * grows. It has to be a native listener: a React `onKeyDown` would see portaled
- * children bubble through the *component* tree and defeat it.
- *
- * Takes the node rather than a ref so the binding lands whenever the portal
- * actually commits its element, not only on the first effect pass.
+ * Binds ←/→/J/K on the sheet element, never `document`: Base UI portals nested
+ * layers to the body, so their keys never reach here. Native, because a React
+ * `onKeyDown` would see portaled children bubble. Takes the node, not a ref.
  */
 export function useBoardCardNavKeys(sheet: HTMLElement | null, nav: BoardCardNav | null): void {
   // The handler is installed once per sheet element; reading the current nav
@@ -73,12 +60,8 @@ function BoardCardNavRail(props: {
   const stage = props.target.stageLabel === null ? "" : ` in ${props.target.stageLabel}`;
   const label = `${props.target.key} · ${props.target.title}${stage}  ( ${props.side === "left" ? "← or K" : "→ or J"} )`;
   return (
-    // The 46px band is decoration only (D6): were it hit-testable it would be a
-    // dead strip down each edge of the sheet, over message text on the left and
-    // over the detail sidebar's scrollbar on the right. Only the chevron takes
-    // the pointer. It reveals on hover of the whole sheet — a hover target you
-    // cannot see is not a hover target — on keyboard focus, and permanently
-    // where hovering is impossible at all.
+    // The band is decoration only and never takes the pointer, or it would be a
+    // dead strip over message text and the sidebar's scrollbar. Only the chevron does.
     <div
       className={cn(
         "pointer-events-none absolute top-1/3 z-[1] flex h-1/3 w-[46px] items-center justify-center opacity-0 transition-opacity duration-[120ms]",

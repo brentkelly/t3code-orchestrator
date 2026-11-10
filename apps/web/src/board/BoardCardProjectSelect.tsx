@@ -1,16 +1,7 @@
 /**
- * The card detail's `Project ·` control (T3O-33).
- *
- * Editable while the card has never been built; pinned from Building onward and
- * on both halves of a sub-board. The lock is NOT a stage index — a card dragged
- * back out of Building still owns a worktree on the old project's checkout, and
- * a Done card whose branch was cleaned up still has its key on a merged pull
- * request — so it comes from `boardCardProjectLock`, the same predicate the
- * decider refuses on. The control and the rejection cannot disagree.
- *
- * Layout follows the prototype (`.plans/prototype/t3o.dc.html:7530-7700`): a
- * borderless trigger of dot + name + chevron, and a 200px menu opening upward
- * and left-aligned, each row carrying the key the card would be REISSUED as.
+ * The card detail's `Project ·` control. The lock comes from `boardCardProjectLock`,
+ * the predicate the decider refuses on, not a stage index: a card dragged back out
+ * of Building still owns a worktree on the old project.
  */
 import type { ProjectIconColor, ProjectIconOverride, ProjectId } from "@t3tools/contracts";
 import {
@@ -61,20 +52,9 @@ export function boardCardProjectLockHint(lock: BoardCardProjectLock): string {
 }
 
 /**
- * The projects a card may be moved to, in the order the board lists them, each
- * with the key the move would reissue.
- *
- * Hidden projects and projects with no workspace root here are excluded (D8):
- * the first would make the card vanish from the board, and the second fails at
- * Building, hours away from the choice that caused it. The card's CURRENT
- * project is always present and checked, even when it is one of those — a row
- * that cannot show you where you are is worse than one showing a bad option.
- *
- * The next key is a PREVIEW, derived from the keys the client can see. The
- * decider allocates authoritatively from the project's counter, and a card
- * archived or deleted out of the shell (or a concurrent create) can move the
- * real number — so this is what the move would most likely produce, never a
- * promise.
+ * Move targets with the key each move would reissue (a preview; the decider
+ * allocates). Hidden and rootless projects are excluded, but the current project
+ * is always present and checked.
  */
 export function boardCardProjectOptions(input: {
   readonly projects: ReadonlyArray<BoardProjectChoice>;
