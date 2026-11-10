@@ -1,4 +1,4 @@
-import { gitenvToken } from "@t3tools/shared/gitenv";
+import { gitenvMainRoot, gitenvToken } from "@t3tools/shared/gitenv";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -30,21 +30,41 @@ export const t3oGitenvCredential = Effect.fnUntraced(function* (host: string) {
   return { token: Redacted.make(match.token), fingerprint: `${host}:${match.digest}` };
 });
 
+/** `(entry key, token digest)` pairs already reported as rejected; one warning each. */
+const warnedRejected = new Set<string>();
+
 /**
  * Runs `invalidate` (the ambient credential cache's reset) unless the refused request carried
  * the project's gitenv token: that token never came from the cache, so dropping the cache would
- * only force a needless re-read.
+ * only force a needless re-read. A refused gitenv token is logged once per entry and token,
+ * naming the entry and never the value (T3O-58).
  */
-export const t3oInvalidateAmbientUnlessGitenv = <E, R>(
-  host: string,
-  refusedFingerprint: string,
-  invalidate: Effect.Effect<void, E, R>,
-) =>
-  t3oGitenvCredential(host).pipe(
-    Effect.flatMap((gitenv) =>
-      gitenv?.fingerprint === refusedFingerprint ? Effect.void : invalidate,
-    ),
+export const t3oInvalidateAmbientUnlessGitenv = Effect.fn("T3oGitenv.invalidateAmbient")(function* <
+  E,
+  R,
+>(host: string, refusedFingerprint: string, invalidate: Effect.Effect<void, E, R>) {
+  const project = yield* T3oGitenvProject;
+  const match = project === null || host !== GITENV_HOST ? undefined : gitenvToken(project);
+  if (match === undefined || `${host}:${match.digest}` !== refusedFingerprint) {
+    return yield* invalidate;
+  }
+  const warned = `${match.entry.key}\u0000${match.digest}`;
+  if (warnedRejected.has(warned)) return;
+  warnedRejected.add(warned);
+  yield* Effect.logWarning(
+    `GitHub rejected the token from gitenv entry ${match.entry.key} (401); edit that line to rotate it.`,
   );
+});
+
+/**
+ * The folder `gh auth token` runs from (T3O-58): the main checkout of the project the call acts
+ * on, so a per-repo gh setup answers for it, else the server's own working directory. The main
+ * checkout rather than the worktree keeps one cached answer per project.
+ */
+export const t3oGhWorkingDirectory = Effect.fnUntraced(function* (workingDirectory: string) {
+  const project = yield* T3oGitenvProject;
+  return (project === null ? null : gitenvMainRoot(project)) ?? workingDirectory;
+});
 
 /**
  * The gitenv project a batched read was asked under: the matched main checkout, or "" when no
