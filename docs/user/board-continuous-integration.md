@@ -64,14 +64,15 @@ output is read.
 
 **Machine problems** are held for you instead of being handed to a fix agent: a missing system
 library, no space left on the disk, a read-only filesystem, a command that isn't installed (exit
-127), and a step the system killed, saying "Killed" or "Out of memory" (exit 137, likely out of memory). The card shows **Machine
-problem** in amber, naming the machine and what to fix there. No fix attempt or round trip is used:
+127), and a step the system killed: "Killed" or "Out of memory" in its output, exit 137 or SIGKILL,
+and no time limit reached. The card shows **Machine problem** in amber, naming the machine and what
+to fix there. No fix attempt or round trip is used:
 fix the machine, then press **Retry CI**. A script's own `machine` flag always wins: `false` keeps a
 failure with the code even when its output looks like a machine problem.
 
-Any other failure goes to a fix agent, which is told what failed and why first. If it is small and mechanical, it fixes it on the card's branch and
-every step runs again from the top. Otherwise the card goes back to Code review with the failure as a
-must-fix finding for a fresh round.
+Any other failure goes to a fix agent, which is told what failed and why first. If it is small and
+mechanical, it fixes it on the card's branch and every step runs again from the top. Otherwise the
+card goes back to Code review with the failure as a must-fix finding for a fresh round.
 
 **Fix attempts** caps the fix agents one visit to CI may start (2 by default). **Max round trips**
 caps how many times CI may send a card back to review (3 by default). Past it, CI stops and the card
