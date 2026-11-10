@@ -35,8 +35,12 @@ Only the exit code is required. A script can also:
   `echo '::t3o-progress::{"message":"Running unit tests","done":128,"total":212}'`. The step shows
   the latest message, count and bar, and the card shows the count instead of a timer. Any field can
   be left out.
+- print a failure line saying what failed and why, which becomes the step's headline:
+  `echo '::t3o-failure::{"step":"lint","reason":"No files matched src/**"}'`. `step` (the sub-step)
+  and `machine` are optional; the first failure line a step prints is the one used.
 - write a result file at `$T3O_CI_RESULT` before it exits, with a summary and failures the CI tab
-  and the fix agent show:
+  and the fix agent show. Mark a failure `"machine": true` when the machine, not the code, is to
+  blame (a missing browser library, say):
 
 ```sh
 cat > "$T3O_CI_RESULT" <<'JSON'
@@ -50,7 +54,22 @@ The result file adds detail only; it never turns a failing exit code into a pass
 
 ## When a step fails
 
-A fix agent looks at the failure. If it is small and mechanical, it fixes it on the card's branch and
+A failed step gets a headline at the top of the CI tab and on the card: what failed (the step, or
+"step → sub-step") and why, with **Show in log** opening the log at that line. The reason is, in
+order: the script's `::t3o-failure::` line or a result-file failure marked `machine`, a machine
+problem in the output, the result file's first failure, a tool that stopped outright (such as "No
+files matching the pattern" or "Cannot find module"), the first error line near the end of the
+output, the last line of output, and finally the exit code or time limit. Only the failed step's own
+output is read.
+
+**Machine problems** are held for you instead of being handed to a fix agent: a missing system
+library, no space left on the disk, a read-only filesystem, a command that isn't installed (exit
+127), and a step killed by the system (exit 137, likely out of memory). The card shows **Machine
+problem** in amber, naming the machine and what to fix there. No fix attempt or round trip is used:
+fix the machine, then press **Retry CI**. A script's own `machine` flag always wins: `false` keeps a
+failure with the code even when its output looks like a machine problem.
+
+Any other failure goes to a fix agent, which is told what failed and why first. If it is small and mechanical, it fixes it on the card's branch and
 every step runs again from the top. Otherwise the card goes back to Code review with the failure as a
 must-fix finding for a fresh round.
 
