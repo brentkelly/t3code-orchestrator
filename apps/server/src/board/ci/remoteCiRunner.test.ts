@@ -122,6 +122,16 @@ it.effect("a machine problem on the worker keeps its machine flag across the wir
   }),
 );
 
+it.effect("a failed step's exit code crosses the wire", () =>
+  Effect.gen(function* () {
+    const done = yield* Schema.decodeUnknownEffect(BoardWorkerCiProgress)(
+      toWireCiDone({ result: "failed", failedIndex: 1, exitCode: 2 }),
+    );
+    const result = yield* remoteCiRunner(connected([done]), worker).run(request, () => Effect.void);
+    assert.deepStrictEqual(result, { result: "failed", failedIndex: 1, exitCode: 2 });
+  }),
+);
+
 it.effect("a worker that stays connected but never finishes is stopped at its budget", () =>
   Effect.gen(function* () {
     const steps = [

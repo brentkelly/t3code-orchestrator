@@ -417,6 +417,8 @@ export const BoardWorkerCiProgress = Schema.Union([
     detail: Schema.optional(Schema.String),
     /** The pass could not run because of the worker's machine (T3O-59). */
     machine: Schema.optionalKey(Schema.Boolean),
+    /** The failed step's exit code, when `result` is "failed" (T3O-59). */
+    exitCode: Schema.optionalKey(Schema.NullOr(Schema.Int)),
   }),
 ]);
 export type BoardWorkerCiProgress = typeof BoardWorkerCiProgress.Type;

@@ -30,7 +30,12 @@ export function toWireCiDone(outcome: BoardCiRunResult): WireCiDone {
         detail: outcome.detail,
         ...(outcome.machine === true ? { machine: true } : {}),
       }
-    : { _tag: "done", result: outcome.result, failedIndex: outcome.failedIndex };
+    : {
+        _tag: "done",
+        result: outcome.result,
+        failedIndex: outcome.failedIndex,
+        ...(outcome.exitCode === undefined ? {} : { exitCode: outcome.exitCode }),
+      };
 }
 
 function fromWireCiDone(done: WireCiDone): BoardCiRunResult {
@@ -41,7 +46,11 @@ function fromWireCiDone(done: WireCiDone): BoardCiRunResult {
         detail: done.detail ?? "CI couldn't run on the card's worker.",
         ...(done.machine === true ? { machine: true } : {}),
       }
-    : { result: done.result, failedIndex: done.failedIndex };
+    : {
+        result: done.result,
+        failedIndex: done.failedIndex,
+        ...(done.exitCode === undefined ? {} : { exitCode: done.exitCode }),
+      };
 }
 
 /** How long a worker's run may take before the board stops waiting
