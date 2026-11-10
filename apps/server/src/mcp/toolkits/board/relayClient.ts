@@ -1,11 +1,6 @@
 /**
- * T3o board MCP toolkit — the central server's end of the relay (T3O-63, D3).
- *
- * For every worker with a live connection, holds that worker's relay stream
- * open and answers each board tool call that arrives on it. A call can arrive
- * twice — a stream dropped between the answer and its delivery — so each is
- * answered once per worker and call id: an answer on record is sent again, and a call
- * still running is waited on rather than run a second time. A transient
+ * The central server's end of the board MCP relay. A call can arrive twice (a stream dropped
+ * between answer and delivery), so each is answered once per worker and call id. A transient
  * `board-unreachable` is not recorded, so the same call id can still succeed.
  */
 import type { BoardMcpRelayOutcome, BoardMcpRelayRequest, EnvironmentId } from "@t3tools/contracts";

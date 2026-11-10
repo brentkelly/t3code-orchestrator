@@ -1,20 +1,7 @@
 /**
- * T3o board MCP toolkit — tool definitions (t3o-08, D3).
- *
- * The agent write path. An agent linked to a card resolves its own card from
- * the calling `threadId` (McpInvocationScope), so card-scoped tools take no
- * card id; board-scoped tools take an explicit target. Tools dispatch board
- * COMMANDS (D8) — they never touch projected tables directly.
- *
- * Tool descriptions are prompts, read by every model the board drives across
- * vendors with no shared conventions. Each states what the tool does, when to
- * call it, and what happens if it is not called — especially
- * `board_complete_step`, whose omission is indistinguishable from the agent
- * dying.
- *
- * They speak of STEPS only where steps exist (t3o-19, D1): every stage but the
- * review loop runs exactly one, so an agent there is told about its work, not
- * about a step it was never given an id for.
+ * Board MCP tool definitions. Card-scoped tools resolve the caller's card from its thread and take
+ * no card id. Descriptions are prompts for every vendor's model: each says what the tool does,
+ * when to call it, and what happens if it is not called.
  */
 import {
   BoardCard,
@@ -76,7 +63,7 @@ export class BoardToolError extends Schema.TaggedError<BoardToolError>()("BoardT
     "invalid-input",
     "rejected",
     "internal",
-    // T3O-63: the calling thread runs on a worker whose board server is not
+    // The calling thread runs on a worker whose board server is not
     // connected right now. Temporary: the same call succeeds once it is.
     "board-unreachable",
   ]),
@@ -88,30 +75,26 @@ export const BOARD_TOOL_ERROR_CODES = BoardToolError.fields.code.literals;
 
 /**
  * What a board tool can fail with: its own error, or upstream's refusal of the
- * caller (T3O-59) — a board tool needs a T3 thread caller (`McpToolAccess`).
+ * caller — a board tool needs a T3 thread caller (`McpToolAccess`).
  */
 export const BoardToolFailure = Schema.Union([BoardToolError, OrchestratorMcpFailure]);
 
-// The board tools all resolve the same services: the calling scope, the board
-// engine (to dispatch and read the board), the board queries (bodies, activity,
-// todos), the thread gateway (projects and threads), crypto (to mint
-// command/entity ids) and board settings (the per-project key prefix, D14 —
-// an agent-created card must land in the same key namespace as a human's).
-// Declared uniformly, mirroring the preview toolkit.
+// Board settings are needed for the per-project key prefix: an agent-created card must land in
+// the same key namespace as a human's.
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
-  // `McpToolAccess` checks a writing caller's thread through it (T3O-59).
+  // `McpToolAccess` checks a writing caller's thread through it.
   ThreadManagement.ThreadManagementService,
   BoardEngine,
   BoardQueries,
   ThreadGateway,
   SecureRandom.SecureRandom,
   ServerSettings.ServerSettingsService,
-  // The brief-attachment manifest (t3o-32) resolves absolute paths off the
+  // The brief-attachment manifest resolves absolute paths off the
   // state directory.
   ServerConfig.ServerConfig,
   Path.Path,
-  // Linking a pull request to a card (T3O-18) asks the forge through the
+  // Linking a pull request to a card asks the forge through the
   // supervisor, which owns the card's pull-request refresh and settle.
   SupervisorReactor,
 ];
@@ -129,8 +112,8 @@ const BoardCardContextDependency = Schema.Struct({
 
 /** Everything an agent needs to orient on its card without further calls — the
     pull half of D5. */
-/** One brief attachment with the absolute path the agent reads it at
-    (t3o-32, K3): `cat` it, or open an image with your file tools. */
+/** One brief attachment with the absolute path the agent reads it at: `cat` it, or open an
+    image with your file tools. */
 const BoardCardContextAttachment = Schema.Struct({
   id: BoardCardAttachmentId,
   name: TrimmedNonEmptyString,
@@ -140,7 +123,7 @@ const BoardCardContextAttachment = Schema.Struct({
   path: TrimmedNonEmptyString,
 });
 
-/** One ancestor of the card (T3O-32, decision 9): the group it sits in, then
+/** One ancestor of the card: the group it sits in, then
     that group's group, nearest first. Plans are metadata only — read a body
     with board_get_plan, which accepts an ancestor's plan ids. The brief is cut
     at a few thousand characters (read the whole card with board_get_card). */
@@ -156,8 +139,7 @@ const BoardCardContextAncestor = Schema.Struct({
   decisions: Schema.Array(BoardCardDecision),
 });
 
-/** A plan review's instructions, as the planning agent receives them (plan
-    review, T3O-39). */
+/** A plan review's instructions, as the planning agent receives them. */
 const BoardPlanReviewToolResult = Schema.Struct({
   rounds: PositiveInt,
   instructions: Schema.String,
@@ -166,24 +148,20 @@ const BoardPlanReviewToolResult = Schema.Struct({
 const BoardCardContext = Schema.Struct({
   card: BoardCard,
   brief: Schema.NullOr(Schema.String),
-  /** The brief's version (T3O-53): pass it back as board_update_card's
+  /** The brief's version: pass it back as board_update_card's
       expectedBriefVersion to have a brief edit rejected if anyone changed the
       brief since this read. */
   briefVersion: TrimmedNonEmptyString,
-  /** Files attached to the brief (t3o-32), each with an absolute path on this
+  /** Files attached to the brief, each with an absolute path on this
       machine. Read them on demand; nothing here is pushed into your turn
       except the images a build or planning spawn already showed you. */
   attachments: Schema.Array(BoardCardContextAttachment),
   dependencies: Schema.Array(BoardCardContextDependency),
   /** Prior step completions on this card, in order. HISTORY ONLY — the work
-      the caller is assigned right now is `currentStep` (t3o-19). */
+      the caller is assigned right now is `currentStep`. */
   steps: Schema.Array(BoardStepCompletion),
-  /** The work running on this card right now, or null when nothing is running
-      (t3o-19). This is the half of the orientation contract that was missing:
-      `steps` is history, so an agent had no way to learn what it was assigned
-      and inferred its own step id from the stage line. `stepId` is what
-      `board_complete_step` expects, and is only worth passing on a stage that
-      HAS steps — `stepLabel` is null on every other stage. */
+  /** The work running on this card now, or null. `stepId` is what `board_complete_step`
+      expects; `stepLabel` is null on stages without steps. */
   currentStep: Schema.NullOr(
     Schema.Struct({
       stepId: TrimmedNonEmptyString,
@@ -198,21 +176,17 @@ const BoardCardContext = Schema.Struct({
   /** Proposed plans on this card, in order (metadata only; fetch a body with
       board_get_plan). */
   plans: Schema.Array(BoardPlan),
-  /** The card's Activity rail (t3o-18, D10), chronological: a deterministic,
+  /** The card's Activity rail (D10), chronological: a deterministic,
       actor-attributed projection of the board's own event log — created, moved,
       plans proposed, plan written, step completed, input requested, archived,
       unarchived, worktree failed. Structured, not prose. */
   activity: Schema.Array(BoardCardActivityEntry),
-  /** Every live-linked thread on this card and its current todo list (t3o-18,
-      D13) — what a restarted agent, or a SECOND thread on the same card,
-      actually wanted from the deleted progress notes: not "what did you say you
-      were doing", but "what is each thread on this card working through right
-      now". */
+  /** Every live-linked thread on this card and its current todo list. */
   threads: Schema.Array(BoardCardThreadShell),
-  /** The groups this card sits in, nearest first (T3O-32). Read their
+  /** The groups this card sits in, nearest first. Read their
       decisions before planning, so a child does not re-decide what its parent
       settled. Empty for a top-level card. */
-  // Defaults decode the answer of a central built before T3O-32 (relay).
+  // Defaults decode the answer of a central built before  (relay).
   ancestors: Schema.Array(BoardCardContextAncestor).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -222,15 +196,15 @@ const BoardCardContext = Schema.Struct({
   sourcePlan: Schema.NullOr(
     Schema.Struct({ plan: BoardPlan, body: Schema.NullOr(Schema.String) }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  /** This card's own decision log so far (T3O-32), unclear and important
+  /** This card's own decision log so far, unclear and important
       first, capped at 40 entries like each ancestor's. */
   decisions: Schema.Array(BoardCardDecision).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-  /** The plan review running on this card's planning step (plan review,
-      T3O-39), with its instructions; absent when none is running. */
+  /** The plan review running on this card's planning step, with its instructions; absent
+      when none is running. */
   planReview: Schema.optionalKey(BoardPlanReviewToolResult),
 });
 
-/** A card's pull request as an agent checks it (T3O-18). `linked` is true
+/** A card's pull request as an agent checks it. `linked` is true
     when it was linked explicitly (board_create_card / board_update_card or
     the card's "Link one") rather than found on the card's branch. */
 const BoardCardReadPullRequest = Schema.Struct({
@@ -242,7 +216,7 @@ const BoardCardReadPullRequest = Schema.Struct({
   linked: Schema.Boolean,
 });
 
-/** Another card, read-only (T3O-53): what an agent planning or building one
+/** Another card, read-only: what an agent planning or building one
     card needs to know about a neighbour before editing it. Deliberately
     without the orientation that only makes sense for the caller's own card —
     the work assigned now, thread to-do lists, step history, activity. */
@@ -276,7 +250,7 @@ const BoardCardReadResult = Schema.Struct({
   dependencies: Schema.Array(BoardCardContextDependency),
   /** The card's proposed plans, each with its full markdown body. */
   plans: Schema.Array(BoardPlanWithBody),
-  /** The pull request the card tracks now, or null (T3O-18). */
+  /** The pull request the card tracks now, or null. */
   pullRequest: Schema.NullOr(BoardCardReadPullRequest),
   /** Pull requests of rounds the card has finished, oldest first. */
   pullRequestHistory: Schema.Array(
@@ -292,10 +266,10 @@ const BoardCardListItem = Schema.Struct({
   stage: BoardStageId,
   blocked: Schema.Boolean,
   /** True for a card sitting in the archive rather than a column. Only ever
-      true when the call passed `includeArchived` (T3O-2): archived cards are
+      true when the call passed `includeArchived`: archived cards are
       how you find the id to unarchive or delete. */
   archived: Schema.Boolean,
-  /** The cards this one depends on (T3O-53), in order. */
+  /** The cards this one depends on, in order. */
   dependsOn: Schema.Array(Schema.Struct({ cardId: BoardCardId, key: TrimmedNonEmptyString })),
 });
 
@@ -311,17 +285,9 @@ const BoardProjectListItem = Schema.Struct({
 // ── Card-scoped tools ──────────────────────────────────────────────────
 
 /**
- * The parameter schema for a tool that takes no input.
- *
- * MCP requires every advertised tool's `inputSchema` to be a JSON Schema with
- * `"type": "object"`, and clients enforce it: Claude Code validates the whole
- * `tools/list` response and drops **every** tool on the server — preview
- * included — when one entry fails. `Schema.Struct({})` cannot be used here
- * because Effect serializes an empty struct as
- * `{"anyOf":[{"type":"object"},{"type":"array"}]}` (an empty struct admits
- * arrays too), which has no top-level `type`. A record with no admissible
- * values encodes the same "object with no properties" contract and serializes
- * to `{"type":"object","additionalProperties":false}`.
+ * MCP needs `"type": "object"` on every `inputSchema`, and `Schema.Struct({})` serializes to an
+ * `anyOf` with no top-level `type`. A record of `Never` serializes to
+ * `{"type":"object","additionalProperties":false}`.
  */
 const NoParameters = Schema.Record(Schema.String, Schema.Never);
 
@@ -341,7 +307,7 @@ const BoardCompleteStepTool = Tool.make("board_complete_step", {
   description:
     "Report that your work on this stage is finished. Planning with plan review on: the first succeeded call after your plan is posted is not recorded; it replies completed: false with the review's instructions instead, so run the review and call again. THIS IS THE COMPLETION CONTRACT: the board considers the work done ONLY when you call this. If you finish your work but never call it, the board cannot tell you apart from an agent that crashed, and your work will be treated as failed and retried. Call it exactly once, at the very end, with outcome 'succeeded' when the work is done, 'blocked' when you need something you cannot get yourself, or 'failed' when you could not complete it; include a summary (max 2 KiB) and optional structured payload (max 16 KiB serialised). Triage and adjudicate steps (triage@N, retriage@N, adjudicate@N, readjudicate@N) cannot complete 'blocked': triage fixes or rejects each finding with its reasoning, and the adjudicator hands a finding to a human with the `escalated` verdict. OMIT stepId: the board resolves the work you were assigned from your own thread. Pass one only if your prompt explicitly gave you a stepId (stages that run several steps, such as the code review loop, always do), and then pass exactly that string; any other value is rejected. A review-loop step (review@N, triage@N, adjudicate@N, retriage@N, readjudicate@N, sync@N) or the Build stage's step may only succeed with the exact payload its prompt asked for: a succeeded call with a missing or malformed one is REFUSED rather than recorded, so complete with outcome 'failed' instead when you cannot produce it. Never put the payload inside the summary: it is a separate argument, and a summary carrying serialised call markup is rejected. Retry-safe: a repeat call with the same stepId re-returns a recorded 'succeeded' outcome unchanged, UNLESS that record's payload is unreadable, in which case your call repairs it; after a 'failed' or 'blocked' report, a later call on the live step records your new outcome (that is how a recovered retry reports success). Your card is resolved from your thread.",
   parameters: Schema.Struct({
-    /** Omitted means "the live step of my thread" (t3o-19, D3). Only a stage
+    /** Omitted means "the live step of my thread" (D3). Only a stage
         that runs several steps states one, and only then is it passed back. */
     stepId: Schema.optional(TrimmedNonEmptyString),
     outcome: BoardStepOutcome,
@@ -355,7 +321,7 @@ const BoardCompleteStepTool = Tool.make("board_complete_step", {
     /** True when this stepId was already completed and the first outcome was
         returned unchanged (an idempotent retry). */
     alreadyCompleted: Schema.Boolean,
-    /** False when plan review held the completion back (plan review, T3O-39):
+    /** False when plan review held the completion back (plan review):
         nothing was recorded, run the review in `planReview` and call again. */
     completed: Schema.optionalKey(Schema.Boolean),
     planReview: Schema.optionalKey(BoardPlanReviewToolResult),
@@ -364,21 +330,6 @@ const BoardCompleteStepTool = Tool.make("board_complete_step", {
   failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Complete board work");
-
-// `board_report_progress` and `board_request_input` were DELETED by t3o-18
-// (D13).
-//
-// The progress tool's own description told models to "call it often" — buying
-// tokens for a log with no reader. The agent's narration is already durable in
-// its transcript, and its INTENT is now on the card as the todo strip, observed
-// from the `turn.plan.updated` every provider already emits. Nothing rendered
-// progress notes, so nothing regresses.
-//
-// The input tool's description admitted its own gap: "you should still ask the
-// same question through your normal question mechanism so your thread waits for
-// the reply." An agent that asked normally and skipped the tool left the board
-// blind — the actual failure mode. The supervisor now observes the runtime
-// `user-input.requested` event instead, which fires for every input request.
 
 // ── Board-scoped tools (explicit target) ───────────────────────────────
 
@@ -494,7 +445,7 @@ const BoardUpdateCardTool = Tool.make("board_update_card", {
     externalRef: Schema.optional(Schema.NullOr(BoardCardExternalRef)),
     pullRequest: Schema.optional(Schema.NullOr(BoardCardPullRequestTarget)),
     mergeStrategy: Schema.optional(Schema.NullOr(BoardMergeStrategy)),
-    /** Plan review (T3O-39): { enabled, rounds 1-20 }, or null for the Settings default. */
+    /** Plan review: { enabled, rounds 1-20 }, or null for the Settings default. */
     planReview: Schema.optional(Schema.NullOr(BoardCardPlanReview)),
   }),
   success: Schema.Struct({ cardId: BoardCardId }),
@@ -504,7 +455,7 @@ const BoardUpdateCardTool = Tool.make("board_update_card", {
 
 /**
  * What the three lifecycle writes return: the card's KEY alongside its id.
- * These tools take a target the agent looked up (T3O-2), and a destructive
+ * These tools take a target the agent looked up, and a destructive
  * confirmation that reads "deleted card-4f3a…" tells a human nothing — the key
  * is what the board, the branch names and the agent's own prose call the card.
  */
@@ -545,7 +496,7 @@ const BoardDeleteCardTool = Tool.make("board_delete_card", {
   dependencies,
 }).annotate(Tool.Title, "Delete board card");
 
-// ── Grouping tools (T3O-27) ────────────────────────────────────────────
+// ── Grouping tools ────────────────────────────────────────────
 
 const BoardRegroupResult = Schema.Struct({
   cardIds: Schema.Array(BoardCardId),
@@ -676,7 +627,7 @@ const BoardSetGroupSettingsTool = Tool.make("board_set_group_settings", {
   dependencies,
 }).annotate(Tool.Title, "Set board group settings");
 
-// ── Label tools (T3O-68) ───────────────────────────────────────────────
+// ── Label tools ───────────────────────────────────────────────
 
 /** One catalogue entry as an agent sees it: addressed by name, never by id. */
 const BoardManagedLabel = Schema.Struct({
@@ -712,11 +663,7 @@ const BoardManageLabelsTool = Tool.make("board_manage_labels", {
 // ── Plan tools ─────────────────────────────────────────────────────────
 
 const BoardProposePlansTool = Tool.make("board_propose_plans", {
-  // T3o card 11: the array framing is inverted deliberately. Advertising "an
-  // ordered set of plans" with a dependency graph read as "the expected output
-  // is a decomposition", and a single plan read as under-using the tool — so
-  // the description now leads with the split's consequence, and the split
-  // itself has to argue for the human click it triggers.
+  // The description leads with the split's consequence so a single plan reads as the norm.
   description:
     "Record your card's plan (the planning output). Pass ONE plan in almost every case: the array is how a card is SPLIT, and two or more plans each become a child card with its own branch, build and review, behind a human approval gate that blocks the card until a human approves it. Split only for a large feature worth building and reviewing in separate pieces, or where building parts concurrently buys a real speed-up, and then splitRationale is required and is shown to the human at the gate. Each plan has a key (a short unique slug), a title, a summary, a dependsOn list referencing other plans' keys (only meaningful in a split), and a markdown body. In a split, mark each plan planned: true when its body is a full implementation plan, so its child lands in Ready to be built, or planned: false when its body is a brief that still needs its own planning, so its child lands in Backlog. A split also recommends the group's settings, which the human sees pre-set at the gate and can change: recommendedAutoBuild (children start themselves once the group is started) and recommendedMergeTarget ('own' cuts the group its own integration branch with one final review; 'inherit' merges each child wherever this card itself merges). Every child fully planned: recommend autoBuild true and 'own'. An epic breakdown whose children still need planning: recommend autoBuild false and 'inherit', with those children planned: false. If your card already sits inside a group that has its own branch (its base branch is an integration branch such as board/<KEY>), prefer 'inherit'. Omitted recommendations fall back to these rules. Approval creates the children; it starts nothing unless the card's Auto-build is on, which also approves the split without the gate. Validated on ingest (unique keys, known dependency references, and no cycles) and rejected naming the offending edge. Proposing again replaces the card's whole plan set. When plan review is on for the card, the first proposal returns planReview with the review's instructions: follow them before completing. Your card is resolved from your thread.",
   parameters: Schema.Struct({
@@ -724,13 +671,13 @@ const BoardProposePlansTool = Tool.make("board_propose_plans", {
     /** Required once `plans` holds two or more (enforced by the decider, which
         also nulls it below two). Omitted is the single-plan case. */
     splitRationale: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-    /** A split's recommended group settings (T3O-31); ignored below two plans. */
+    /** A split's recommended group settings; ignored below two plans. */
     recommendedAutoBuild: Schema.optional(Schema.Boolean),
     recommendedMergeTarget: Schema.optional(BoardCardGroupTarget),
   }),
   success: Schema.Struct({
     planIds: Schema.Array(BoardPlan.fields.planId),
-    /** Plan review started by this proposal (plan review, T3O-39). */
+    /** Plan review started by this proposal (plan review). */
     planReview: Schema.optionalKey(BoardPlanReviewToolResult),
   }),
   failure: BoardToolFailure,

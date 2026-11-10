@@ -1,13 +1,7 @@
 /**
- * T3o board MCP toolkit — handlers (t3o-08, D3/D8).
- *
- * Authorization lives here, not in capability gating (D3): the capability is
- * granted broadly, and each card-scoped tool resolves the calling `threadId`
- * to its card and rejects an unlinked caller with an actionable message.
- * Board-scoped tools take an explicit target and are the conversational
- * board-population path. Every write dispatches a board COMMAND through the
- * orchestration engine (D8) — MCP tool → command → decider → event →
- * projector → table, in one transaction — and never writes a table directly.
+ * Board MCP handlers. Authorization lives here, not in capability gating: each card-scoped tool
+ * resolves the calling thread to its card and rejects an unlinked caller with an actionable
+ * message. Every write dispatches a board command; nothing writes a table directly.
  */
 import {
   assignBoardKeyPrefix,
@@ -115,7 +109,7 @@ import {
 import { BoardRelayInvocation, relayable } from "./relay.ts";
 import { BoardToolError, BoardToolkit } from "./tools.ts";
 
-/** How much of an ancestor's brief the context carries (T3O-32): enough to
+/** How much of an ancestor's brief the context carries: enough to
     plan against, while a deep tree of long briefs stays bounded. */
 const ANCESTOR_BRIEF_MAX_CHARS = 6_000;
 /** How many decisions per card ride the context, flagged first. */
@@ -132,20 +126,9 @@ const BOARD_STEP_SUMMARY_MAX_BYTES = 2_048;
 const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).length;
 
 /**
- * Fragments of a serialised tool CALL, which no hand-written summary contains
- * (T3O-14).
- *
- * A caller whose arguments were not parsed into distinct fields hands the tool
- * one giant `summary` with the rest of the call still marked up inside it, and
- * no `payload` at all — the CAA-5 `review@10` failure, where the summary ran
- * `…PR review.</summary>\n<parameter name="payload">{"reviewedSha":…`. The
- * board cannot fix the caller, but it can name what actually went wrong
- * instead of complaining about a summary length the agent never chose.
- *
- * Both markers are XML the harness emits around arguments; `</summary>` is
- * deliberately NOT one of them, because a summary quoting a `<details>` block
- * legitimately contains it, and a false positive here would block a completion
- * that is fine.
+ * Markup from a serialised tool call, found in a summary when the caller's arguments were not
+ * parsed into fields. `</summary>` is deliberately not a marker: a summary quoting a `<details>`
+ * block legitimately contains it, and a false positive would block a valid completion.
  */
 const LEAKED_ARGUMENT_MARKERS = ["<parameter name=", "</parameter>"] as const;
 
@@ -169,12 +152,12 @@ interface BoardToolDeps {
   readonly boardEngine: BoardEngineShape;
   readonly threads: ThreadGatewayShape;
   readonly board: BoardQueriesShape;
-  /** For the brief-attachment manifest's absolute paths (t3o-32). */
+  /** For the brief-attachment manifest's absolute paths. */
   readonly stateDir: string;
   readonly path: Path.Path;
 }
 
-/** The strategy the card's pull request would merge with now (T3O-80), so an
+/** The strategy the card's pull request would merge with now, so an
     agent reading an inherited or board-default card sees the real answer. */
 const effectiveMergeStrategy = Effect.fn("board_get_card.effectiveMergeStrategy")(function* (
   board: BoardState,
@@ -210,7 +193,7 @@ const boardToolDeps = Effect.gen(function* () {
   const board = yield* BoardQueries;
   const config = yield* ServerConfig.ServerConfig;
   const path = yield* Path.Path;
-  // T3o (T3O-63): a call relayed from a worker hands out paths on the worker.
+  // A call relayed from a worker hands out paths on the worker.
   const relayed = yield* Effect.serviceOption(BoardRelayInvocation);
   return {
     scope,
@@ -226,15 +209,9 @@ const readBoardState = (deps: BoardToolDeps): Effect.Effect<BoardState> =>
   deps.boardEngine.getReadModel.pipe(Effect.map((model) => model.board ?? EMPTY_BOARD_STATE));
 
 /**
- * The key prefix a new card should carry (D14). Board settings are the single
- * source: a project with a stored prefix keeps it, and a project with none is
- * assigned an acronym from its name and that choice is PERSISTED here — so an
- * agent-created card and a human-created card land in one key namespace, and
- * neither path can re-derive a different prefix after a rename.
- *
- * Takes the project title the caller already resolved from the read model; an
- * unknown project (never registered, or removed) passes an empty name, which
- * the contracts helper answers with the compiled-in default.
+ * The key prefix a new card should carry. A project with no stored prefix is assigned one and it
+ * is PERSISTED, so agent- and human-created cards share one key namespace across renames. An
+ * unknown project passes an empty name, which yields the compiled-in default.
  */
 const resolveCardKeyPrefix = Effect.fn("BoardToolkit.resolveCardKeyPrefix")(function* (
   projectId: ProjectId,
@@ -267,21 +244,21 @@ const resolveCardKeyPrefix = Effect.fn("BoardToolkit.resolveCardKeyPrefix")(func
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-/** The board's settings, for resolving a card's plan review (T3O-39). */
+/** The board's settings, for resolving a card's plan review. */
 const readBoardSettings = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   return (yield* settings.getSettings.pipe(Effect.mapError(internalError))).board;
 });
 
 /** The card's plan review for a command: present only when it is on, since
-    the decider reads an absent one as off (T3O-39). */
+    the decider reads an absent one as off. */
 const planReviewForCommand = (board: BoardState, card: BoardCard, settings: BoardSettings) => {
   const planReview = resolveCardPlanReview({ board, card, settings });
   return planReview.enabled ? { planReview } : {};
 };
 
 /** The instructions of a plan review this command started, or null: the
-    review was not started before the call and is after it (T3O-39). Board
+    review was not started before the call and is after it. Board
     commands are serialised, so nothing else starts one in between. */
 const planReviewStartedBy = Effect.fn("BoardToolkit.planReviewStartedBy")(function* (
   deps: BoardToolDeps,
@@ -316,7 +293,7 @@ const mintUuid: Effect.Effect<string, never, SecureRandom.SecureRandom> =
     Effect.orDie,
   );
 
-/** Check a pull request can be linked to a card in `projectId` (T3O-18) —
+/** Check a pull request can be linked to a card in `projectId` —
     on the project's repository and known to the forge — or reject the call
     with the reason. Records nothing, so a create can check before it writes. */
 const resolveLinkablePullRequest = Effect.fn("BoardToolkit.resolveLinkablePullRequest")(function* (
@@ -372,11 +349,8 @@ const requireCallerCard = (
 };
 
 /**
- * A card named by a caller that is NOT resolving its own (the board-scoped
- * lifecycle writes, T3O-2). Resolved here rather than left to the decider for
- * two reasons: the caller gets `card-not-found` instead of a generic rejection,
- * and the handler needs the card's key to answer with — which, after a delete,
- * nothing can look up any more.
+ * A card named by a caller acting on a card other than its own. Resolved here so the caller
+ * gets `card-not-found`, and the handler still has the key to answer with after a delete.
  */
 const requireTargetCard = (
   board: BoardState,
@@ -394,15 +368,9 @@ const requireTargetCard = (
 };
 
 /**
- * Refuse a lifecycle write aimed at the CALLER'S OWN card (T3O-2).
- *
- * Both archive and delete reclaim the card's worktree: delete forcibly, archive
- * whenever the checkout is clean and pushed, and unconditionally as far as the
- * caller is concerned (`handleArchived` -> `reclaimCardWorktree`, which reads no
- * setting, and unarchive does not bring the checkout back). Either verb can
- * therefore remove the worktree the calling turn is running in, and delete also
- * deletes this very thread, so the call could never report its own result.
- * Refused with the one thing the agent can actually do about it.
+ * Refuse a lifecycle write aimed at the caller's own card. Archive and delete can both reclaim
+ * the worktree the calling turn runs in (unarchive does not bring it back), and delete also
+ * deletes this thread, so the call could never report its own result.
  */
 const refuseOwnCard = (
   board: BoardState,
@@ -421,11 +389,9 @@ const refuseOwnCard = (
 };
 
 /**
- * Refuse a write a worker relayed for a card that runs on another worker
- * (T3O-63, D3). The relay has already bound the calling thread to a card on
- * the worker the call came from; this binds the TARGET too, so an agent on one
- * worker may change its own card and the cards that run there, never another
- * worker's. Calls from this server's own threads are not relayed and pass.
+ * Refuse a relayed write for a card that runs on another worker: an agent on one worker may
+ * change its own card and the cards that run there, never another worker's. Calls from this
+ * server's own threads are not relayed and pass.
  */
 const refuseOtherWorkersCard = Effect.fn("BoardToolkit.refuseOtherWorkersCard")(function* (
   board: BoardState,
@@ -443,23 +409,9 @@ const refuseOtherWorkersCard = Effect.fn("BoardToolkit.refuseOtherWorkersCard")(
 });
 
 /**
- * Refuse an IRREVERSIBLE write aimed at a card another agent is still working
- * on (T3O-2).
- *
- * `refuseOwnCard` covers the caller; this covers the peers. `board.card-deleted`
- * force-reclaims the target's worktree — `force: true`, so a DIRTY, UNPUSHED
- * checkout goes too — and deletes the card's threads, which `thread.delete`
- * does for a BUSY thread as readily as an idle one. The reactor's own reason for
- * forcing is that "the user has just said, at a dialog that spells it out" that
- * the work is not wanted; reached from a tool there is no dialog and no human,
- * and `board_list_cards` reports no liveness, so an agent tidying the board
- * cannot even see that the card it is about to purge has an agent inside it.
- *
- * A non-terminal step is exactly the board's own "still supervised" predicate,
- * so a parked or stalled step counts: the thread and its unpushed commits are
- * still there, waiting on a human. Archive is the way through — it settles the
- * step as `abandoned` and reclaims only a clean, pushed checkout — and it is
- * what the message points at rather than leaving the agent stuck.
+ * Refuse a delete aimed at a card another agent is still working on: it force-reclaims the
+ * worktree (dirty and unpushed included) and deletes busy threads. Any non-terminal step counts,
+ * parked or stalled included. Archive is the way through, and the message points at it.
  */
 const refuseLiveWork = (
   board: BoardState,
@@ -478,34 +430,10 @@ const refuseLiveWork = (
 };
 
 /**
- * Which step a completion applies to (t3o-19, D3).
- *
- * The board resolves the caller's own work so an agent never has to name a
- * step it was never told the id of — which is what every stage but the review
- * loop was silently relying on the stage line to leak.
- *
- * Three cases, in order:
- *
- * 1. The caller owns the card's LIVE step → that step. The thread match is the
- *    point: `resolveBoardCardForThread` resolves a card from any live
- *    (non-tombstoned, non-retired) link, so a sibling thread on the same card
- *    must not be able to settle a run it did not perform.
- *    The planning thread a card kept when it left Planning unfinished (T3O-19)
- *    counts as owning its abandoned step: the interview runs on after the move,
- *    and its completion has to land.
- * 2. The caller has a SETTLED completion of its own on this card → that step,
- *    which lands on the decider's idempotent path and re-returns the recorded
- *    outcome. The supervisor settles the run row the instant it sees the first
- *    completion (`handleStepCompleted`), so a retry almost always arrives after
- *    the step is terminal; without this case the omitted-`stepId` shape the tool
- *    now recommends would be LESS retry-safe than passing an id explicitly.
- * 3. Neither → reject. Nothing of the caller's is outstanding, and guessing
- *    would mean completing work it never did.
- *
- * An explicit `stepId` is passed through, but is still refused when it names the
- * live step of a DIFFERENT thread (same reasoning as case 1). Everything else
- * about it — an id for a step that never ran, an id belonging to another card —
- * the decider validates, exactly as before.
+ * Which step a completion applies to: the caller's own LIVE step (the thread match stops a
+ * sibling thread settling a run it did not perform; a planning thread kept after leaving Planning
+ * owns its abandoned step), else the caller's own SETTLED completion so a retry stays idempotent,
+ * else reject. An explicit `stepId` is refused when it names another thread's live step.
  */
 const resolveCompletionStepId = (
   board: BoardState,
@@ -536,13 +464,8 @@ const resolveCompletionStepId = (
     );
   }
 
-  // The guard runs on the RESOLVED id, whichever way it was resolved. Applying
-  // it only to the explicit branch left the fallback open: step ids repeat
-  // across stage entries, so a stale thread whose own recorded completion is
-  // `building`/failed would resolve to `building` again — and if the card has
-  // since re-entered Building under a NEW thread, the decider's supersede rule
-  // (`existing.outcome !== "succeeded" && liveMatch`) would overwrite that
-  // thread's live run with the stale thread's outcome.
+  // Guard the RESOLVED id, not just an explicit one: step ids repeat across stage entries, so a
+  // stale thread could resolve to a step a NEW thread is now running and overwrite its live run.
   if (
     live !== null &&
     live.stepId === candidate &&
@@ -561,7 +484,7 @@ const resolveCompletionStepId = (
 };
 
 /** Resolve label NAMES against the live catalogue to ids; an unknown name is
-    rejected with the live list (t3o-06a: tagging never creates labels). */
+    rejected with the live list: tagging never creates labels. */
 const resolveLabelIds = (
   board: BoardState,
   names: ReadonlyArray<string>,
@@ -584,7 +507,7 @@ const resolveLabelIds = (
   return Effect.succeed(ids);
 };
 
-/** The non-archived cards carrying a label (T3O-68). */
+/** The non-archived cards carrying a label. */
 const labelCarriers = (board: BoardState, labelId: BoardLabelId): ReadonlyArray<BoardCard> =>
   board.cards.filter((card) => card.archivedAt === null && card.labels.includes(labelId));
 
@@ -603,11 +526,9 @@ const formatLabelNames = (labels: ReadonlyArray<BoardLabel>): string =>
   labels.map((label) => label.name).join(", ") || "(none)";
 
 /**
- * Resolve a `board_manage_labels` target by case-insensitive name (T3O-68).
- * Every action but restore acts on a LIVE label; restore acts on a deleted
- * one, and when several tombstones share the name it takes the most recently
- * deleted. A live-only miss that matches a deleted label says so, since the
- * fix there is restore rather than a typo.
+ * Resolve a `board_manage_labels` target by case-insensitive name. Restore acts on the most
+ * recently deleted label of that name; every other action on a live one. A live-only miss that
+ * matches a deleted label says so, since the fix is restore rather than a typo.
  */
 const resolveManagedLabel = (
   board: BoardState,
@@ -684,19 +605,9 @@ const formatProjectList = (projects: ReadonlyArray<BoardProject>): string =>
   projects.map((project) => `${project.id} (${project.title})`).join("; ") || "(none)";
 
 /**
- * Resolve the project a card should be created in (t3o: agents guess titles,
- * not ids). With no `projectId` the card lands in the calling thread's own
- * project — the common "cards for the project I'm in" case, resolved from the
- * scope's thread (a thread's project never changes, so no
- * value has to be baked into the credential). With a `projectId` it is matched
- * as an id first, then leniently against a project's title (case-insensitive)
- * or workspace-root folder name, so a value copied from the app's dropdown
- * still resolves. Anything unresolvable is rejected with the live project list
- * rather than dispatched to fail deep in the decider with a bare "does not
- * exist".
- *
- * Over an already-fetched project list — board_create_card reads it once and
- * reuses it for the key-prefix title.
+ * The project a card is created in. With no `projectId`, the calling thread's own project. A
+ * given one matches as an id, then leniently by title or workspace-root folder name, since agents
+ * guess names. Anything unresolvable is rejected with the live project list.
  */
 const resolveProjectId = Effect.fn("BoardToolkit.resolveProjectId")(function* (
   deps: BoardToolDeps,
@@ -760,7 +671,7 @@ const resolveProjectId = Effect.fn("BoardToolkit.resolveProjectId")(function* (
 });
 
 /**
- * A card named by key or id (T3O-53). An id match wins; otherwise the key is
+ * A card named by key or id. An id match wins; otherwise the key is
  * matched case-insensitively, because agents copy keys out of prose. Keys are
  * unique per project prefix, so two projects sharing a prefix could collide —
  * that is reported with both ids rather than guessed between.
@@ -789,11 +700,8 @@ const findCardByKeyOrId = (
   );
 };
 
-/** A card's dependencies with keys, titles and whether each is met. `met`
-    uses the ONE shared gating rule (`unmetBoardCardDependencies`, t3o-13 D1):
-    done-role satisfies, and an ARCHIVED dependency stops gating entirely —
-    otherwise this would tell an agent to wait on a dependency the board's own
-    `blocked` flag says is not gating. */
+/** A card's dependencies with keys, titles and whether each is met, by the board's one shared
+    gating rule (`unmetBoardCardDependencies`): an archived dependency no longer gates. */
 const describeDependencies = (board: BoardState, card: BoardCard) => {
   const unmet = new Set(
     unmetBoardCardDependencies({ board, dependsOn: card.dependsOn, cards: board.cards }),
@@ -811,12 +719,9 @@ const describeDependencies = (board: BoardState, card: BoardCard) => {
 };
 
 /**
- * Dispatch a board command from the MCP toolkit, stamping the AGENT actor first
- * (t3o-18, D11). This is one of the three dispatch boundaries that know who
- * called; the projector reads the stamp back off the event's `commandId` when it
- * writes an Activity row. The command schema is unchanged, and an agent cannot
- * misreport itself — the provider instance and thread come from the invocation
- * scope, not from tool input.
+ * Dispatch a board command stamped with the AGENT actor, which the projector reads back for
+ * Activity. The provider instance and thread come from the invocation scope, never tool input,
+ * so an agent cannot misreport itself.
  */
 const dispatch = (
   deps: BoardToolDeps,
@@ -859,7 +764,7 @@ const refuseUnattendedApproval = Effect.fn("BoardToolkit.refuseUnattendedApprova
 });
 
 /**
- * Regrouping is direct but needs a human's say-so (T3O-27): the agent must
+ * Regrouping is direct but needs a human's say-so: the agent must
  * describe the change, get explicit confirmation, and pass `approved: true`.
  */
 const requireRegroupApproval = Effect.fn("BoardToolkit.requireRegroupApproval")(function* (
@@ -879,7 +784,7 @@ const requireRegroupApproval = Effect.fn("BoardToolkit.requireRegroupApproval")(
   );
 });
 
-/** A destructive group flow needs a human's explicit say-so (T3O-28). */
+/** A destructive group flow needs a human's explicit say-so. */
 const requireDestructiveApproval = (
   deps: BoardToolDeps,
   approved: boolean | undefined,
@@ -932,7 +837,7 @@ const dispatchMoveCards = Effect.fn("BoardToolkit.dispatchMoveCards")(function* 
   return { cardIds: input.cardIds, parentKey };
 });
 
-/** The groups a card sits in, nearest first (T3O-32, decision 9). */
+/** The groups a card sits in, nearest first. */
 const describeAncestors = (deps: BoardToolDeps, board: BoardState, card: BoardCard) =>
   Effect.forEach(boardCardAncestors(board, card), (ancestor) =>
     Effect.gen(function* () {
@@ -975,14 +880,14 @@ export const boardHandlers = {
     const activity = yield* deps.board
       .boardCardActivity(card.id)
       .pipe(Effect.mapError(internalError));
-    // Per-thread todo summaries (t3o-18, D13): what a restarted agent — or a
+    // Per-thread todo summaries (D13): what a restarted agent — or a
     // second thread on the same card — actually wanted from the progress notes
     // this replaces.
     const threads = yield* deps.board
       .boardCardThreads(card.id)
       .pipe(Effect.mapError(internalError));
     const dependencies = describeDependencies(board, card);
-    // A reviewer reads with fresh eyes (T3O-51): when the caller is the
+    // A reviewer reads with fresh eyes: when the caller is the
     // card's live `review@N` step, earlier review-loop steps and their
     // threads are left out. A caller the board cannot place gets it all.
     const liveStep = boardCardStepState(board, card.id);
@@ -1006,7 +911,7 @@ export const boardHandlers = {
           threadId !== null && threadId !== deps.scope.thread.threadId,
       ),
     );
-    // A running plan review's instructions (T3O-39), so a re-orienting agent
+    // A running plan review's instructions, so a re-orienting agent
     // picks the review up where it was.
     const settings = yield* readBoardSettings;
     const reviewStep = runningPlanReviewStep({ board, card, settings });
@@ -1014,7 +919,7 @@ export const boardHandlers = {
       reviewStep === null
         ? null
         : planReviewInstructions({ board, card, settings, state: reviewStep });
-    // T3o (T3O-63): a relayed call hands out paths on the worker, so the
+    // A relayed call hands out paths on the worker, so the
     // card's files go there first — staging at spawn misses later ones.
     const relayed = yield* Effect.serviceOption(BoardRelayInvocation);
     if (Option.isSome(relayed) && card.attachments.length > 0) {
@@ -1059,7 +964,7 @@ export const boardHandlers = {
         : boardCardStepCompletions(board, card.id),
       currentStep: (() => {
         // The live step, the half of the orientation contract `steps` never
-        // carried (t3o-19). A settled row is not "current": once the work is
+        // carried. A settled row is not "current": once the work is
         // terminal there is nothing assigned, and reporting it would invite
         // an agent to complete an id the decider will reject.
         const state = boardCardStepState(board, card.id);
@@ -1088,17 +993,8 @@ export const boardHandlers = {
     const deps = yield* boardToolDeps;
     const board = yield* readBoardState(deps);
     const card = yield* requireCallerCard(board, deps.scope);
-    // Resolve an omitted stepId to the caller's own live step (t3o-19, D3).
-    // Only a stage that runs several steps ever tells an agent an id, so on
-    // every other stage the agent has none to pass — and used to have to
-    // infer one from the stage line in its preamble.
-    //
-    // Scoped to the CALLING THREAD, not just the card: if this card has
-    // already advanced and started new work, the caller's thread is no
-    // longer the live step's thread, so a late retry is rejected here
-    // instead of silently completing the next stage's step. Resolving
-    // server-side also makes the "pre-complete a future step" case the
-    // decider guards against unreachable rather than merely rejected.
+    // Scoped to the CALLING THREAD, not just the card: once the card has moved on, a late retry
+    // is rejected instead of completing the next stage's step.
     const stepId = yield* resolveCompletionStepId(board, card, deps.scope, input.stepId);
     const settings = yield* readBoardSettings;
     // Idempotency is decided in the decider (re-emit the first outcome); the
@@ -1106,65 +1002,38 @@ export const boardHandlers = {
     const existing = boardCardStepCompletions(board, card.id).find(
       (completion) => completion.stepId === stepId,
     );
-    // ...except on the recovery-retry path, where it is NOT a no-op. The
-    // decider supersedes a non-succeeded completion while the same step is
-    // live again (that is how a nudged agent reports success after a failed
-    // attempt), so mirroring its rule here keeps the reply from telling the
-    // agent "already completed: failed" about a call the board just recorded
-    // as succeeded.
+    // ...except on the recovery-retry path: the decider supersedes a non-succeeded completion
+    // while the same step is live again, so mirror it to avoid replying "already completed".
     const liveState = boardCardStepState(board, card.id);
     const liveMatch =
       liveState !== null &&
       liveState.stepId === stepId &&
       !isBoardTerminalStepStatus(liveState.status);
-    // The decider's matching rule for a planning thread kept past its stage
-    // (T3O-19): it may still record its own abandoned step.
+    // The decider's matching rule for a planning thread kept past its stage: it may still
+    // record its own abandoned step.
     const keptMatch = isKeptStepThread(board, card, stepId, deps.scope.thread.threadId);
     const supersedes =
       (existing !== undefined && existing.outcome !== "succeeded" && (liveMatch || keptMatch)) ||
       (input.outcome === "succeeded" &&
         liveMatch &&
         boardCompletionReopenedByPlanReview(existing, liveState));
-    // The OTHER path where a retry is not a no-op: a `succeeded` record whose
-    // payload nothing can read is repaired rather than re-emitted (T3O-14).
-    // The decider decides it — this mirrors the rule so the reply does not
-    // tell the agent "already completed" about a record it just replaced.
-    // Conditional on validity in both directions: only a defective record is
-    // repairable, and only a valid completion may repair it, which the
-    // payload check further down enforces before anything is dispatched.
+    // A `succeeded` record with an unreadable payload is repaired, not re-emitted. Mirrors the
+    // decider so the reply is right; only a valid completion may repair (checked below).
     const repairs =
       existing !== undefined &&
       existing.outcome === "succeeded" &&
       boardStepPayloadDefect({ stepId, payload: existing.payload }) !== null;
-    // The decider's own rule for "this call may record something": the step
-    // is live, or its recorded completion is a defective one this call may
-    // repair. Every other call is a pure idempotent no-op — the decider
-    // re-emits the stored completion and discards these arguments — so the
-    // checks below are scoped to it. Mirroring the rule also ORDERS the
-    // errors: a call naming a step that is neither live nor recorded is
-    // rejected for that, not lectured about a payload it was never entitled
-    // to record, and a confirming retry of a step that already completed
-    // validly still gets its documented `alreadyCompleted` reply rather than
-    // an error about arguments nothing was going to read.
+    // The decider's rule for "this call may record something". Every other call is an
+    // idempotent no-op, so the checks below are scoped to it, which also orders the errors.
     const recordable = liveMatch || keptMatch || repairs;
-    // The agent's structured payload is stored verbatim as an opaque JSON
-    // string (D8: carried through unread), so a schema codec would add
-    // nothing over a plain stringify — except for the one thing a stringify
-    // cannot see: an agent that already stringified the payload itself
-    // (T3O-2). Storing THAT would wrap it twice and leave every reader
-    // holding a JSON string where the schema wants an object, so one level
-    // comes off first and storage stays canonical.
+    // Stored verbatim as opaque JSON. An agent that stringified the payload itself would be
+    // wrapped twice, so one level comes off first and storage stays canonical.
     const structured =
       input.payload === undefined ? undefined : unwrapStringifiedBoardStepPayload(input.payload);
     // @effect-diagnostics-next-line globalJsonInEffect:off
     const payload = structured === undefined ? null : JSON.stringify(structured);
-    // The payload never arrived as its own argument (T3O-14). Checked BEFORE
-    // the caps, because this is exactly what the cap check used to misreport:
-    // the summary carrying a whole payload IS over the summary cap, so the
-    // agent was told to shorten its prose — advice that cannot fix a call
-    // whose bytes are all in the wrong field — and once it trimmed enough to
-    // fit, the board recorded the success with a null payload. Name the real
-    // fault while it is still recoverable.
+    // Checked BEFORE the caps: a summary carrying the whole payload is over the summary cap,
+    // and "shorten your prose" cannot fix bytes that are in the wrong field.
     if (recordable && payload === null && leaksSerialisedArguments(input.summary)) {
       return yield* new BoardToolError({
         code: "invalid-input",
@@ -1172,11 +1041,8 @@ export const boardHandlers = {
           "The summary contains serialised tool-call markup and no payload argument arrived, so the payload was folded into the summary rather than passed as its own field. Send the prose as `summary` and the structured result as the separate `payload` argument, then complete the step again.",
       });
     }
-    // The completion enters the event log, the in-memory read model and every
-    // subscribeCard detail frame for the card's lifetime (D8 discipline:
-    // bodies never enter the read model) — one oversized call must not bloat
-    // them permanently, so both sizes are capped with an actionable reject.
-    // Each cap names the field that actually overflowed.
+    // The completion lives in the event log and every card detail frame for the card's
+    // lifetime, so both sizes are capped with an actionable reject naming the field.
     if (payload !== null && utf8ByteLength(payload) > BOARD_STEP_PAYLOAD_MAX_BYTES) {
       return yield* new BoardToolError({
         code: "invalid-input",
@@ -1192,7 +1058,7 @@ export const boardHandlers = {
         message: `The summary is ${utf8ByteLength(input.summary)} bytes, over the ${BOARD_STEP_SUMMARY_MAX_BYTES}-byte cap. Summarise in a few sentences; details belong in the payload.${payload === null ? " No payload argument arrived with it: if this summary contains one, resend it as the separate `payload` argument rather than shortening it away." : ""}`,
       });
     }
-    // Triage and adjudication never park for a human (T3O-55): triage fixes
+    // Triage and adjudication never park for a human: triage fixes
     // or rejects, and only the adjudicator escalates, per finding.
     if (recordable && input.outcome === "blocked") {
       const refusal = boardReviewBlockedOutcomeRefusal(stepId);
@@ -1200,17 +1066,14 @@ export const boardHandlers = {
         return yield* new BoardToolError({ code: "invalid-input", message: refusal });
       }
     }
-    // A step that must produce structured output may not record a success
-    // that nothing can read (T3O-14). Refused HERE, before the command is
-    // dispatched, because the decider would pin the record forever and the
-    // review loop would halt `unreadable` with no way back. The agent gets
-    // the shape it was asked for and the step stays live for its retry.
+    // Refused HERE, not in the decider: a recorded unreadable success would halt the review
+    // loop `unreadable` for good. The step stays live for the agent's retry.
     if (recordable && input.outcome === "succeeded") {
       const defect = boardStepPayloadDefect({ stepId, payload });
       if (defect !== null) {
         return yield* new BoardToolError({ code: "invalid-input", message: defect });
       }
-      // The round's own rules on a new review-loop write (T3O-51): every
+      // The round's own rules on a new review-loop write: every
       // listed finding answered, a human's must-fix never rejected, and the
       // adjudicator's `anotherRound` stated. Never in the decider, which
       // also judges records written before these rules.
@@ -1224,7 +1087,7 @@ export const boardHandlers = {
         return yield* new BoardToolError({ code: "invalid-input", message: roundDefect });
       }
       // The build-role stage's step (its id is the stage id) owes the
-      // structured summary the Summary pane renders (T3O-21). Checked here
+      // structured summary the Summary pane renders. Checked here
       // only — never in the decider — so builds recorded before the
       // contract keep their null payloads without reading as repairable.
       if (boardStageWithRole(board, "build")?.stageId === stepId) {
@@ -1247,7 +1110,7 @@ export const boardHandlers = {
       createdAt: yield* nowIso,
     };
     yield* dispatch(deps, command);
-    // Plan review held the completion back (T3O-39): nothing was recorded.
+    // Plan review held the completion back: nothing was recorded.
     // A plain reply, not an error, so the agent runs the review rather than
     // reaching for a blocked or failed outcome.
     const planReview = yield* planReviewStartedBy(deps, {
@@ -1343,7 +1206,7 @@ export const boardHandlers = {
     const cards = board.cards
       // Archived cards are off the board, so they stay out by default — but
       // an agent that may unarchive or delete one needs a way to see it
-      // (T3O-2), and `board_get_card_context` only ever resolves its own.
+      //, and `board_get_card_context` only ever resolves its own.
       .filter((card) => input.includeArchived === true || card.archivedAt === null)
       .filter((card) => input.projectId === undefined || card.projectId === input.projectId)
       .filter((card) => input.stage === undefined || card.stage === input.stage)
@@ -1389,7 +1252,7 @@ export const boardHandlers = {
         });
       }
     }
-    // Checked before the card exists (T3O-18), so a pull request that is
+    // Checked before the card exists, so a pull request that is
     // missing or on another repository rejects the call with no card left
     // behind to clean up.
     const pullRequest =
@@ -1407,7 +1270,7 @@ export const boardHandlers = {
     }
     const cardId = BoardCardId.make(yield* mintUuid);
     // ONE atomic command: the create command carries `brief` and `dependsOn`
-    // natively (t3o-06), so the card lands whole — no follow-up update whose
+    // natively, so the card lands whole — no follow-up update whose
     // rejection or a mid-write crash could strand a half-built card while
     // the tool reports an error (inviting a retry that mints a duplicate).
     const create: BoardCardCreateCommand = {
@@ -1420,17 +1283,17 @@ export const boardHandlers = {
       ...(dependsOn.length > 0 ? { dependsOn } : {}),
       labels,
       // No default here: the decider picks it, and it alone sees whether
-      // the parent group has started (T3O-53).
+      // the parent group has started.
       ...(input.stage === undefined ? {} : { stage: input.stage }),
       ...(parent === undefined ? {} : { parentCardId: parent.id }),
       // No `orderKey`: the decider places the card at the bottom of the
-      // stage's column (T3O-27), which is the only place that can see the
+      // stage's column, which is the only place that can see the
       // whole board — this tool's read model is filtered to one project.
       keyPrefix: yield* resolveCardKeyPrefix(projectId, projectTitle),
       ...(input.mergeStrategy === undefined ? {} : { mergeStrategy: input.mergeStrategy }),
       createdAt: yield* nowIso,
     };
-    // Stamps the agent actor (t3o-18, D11) via the deps-aware dispatch.
+    // Stamps the agent actor (D11) via the deps-aware dispatch.
     yield* dispatch(deps, create);
     // Read back the allocated key.
     const after = yield* readBoardState(deps);
@@ -1463,7 +1326,7 @@ export const boardHandlers = {
         message: "Pass toStage, parentCardId, or both.",
       });
     }
-    // Regrouping first (T3O-27), so a stage move lands in the new group.
+    // Regrouping first, so a stage move lands in the new group.
     if (input.parentCardId !== undefined) {
       yield* requireRegroupApproval(deps, input.approved);
       const target = yield* requireTargetCard(board, input.cardId);
@@ -1492,23 +1355,15 @@ export const boardHandlers = {
       card = board.cards.find((candidate) => candidate.id === target.id);
     }
     const toStage = input.toStage!;
-    // A bottom key in the target column, so a cross-stage move lands last.
-    // When the card does not exist the move carries no order key and the
-    // decider rejects it with an actionable "does not exist" message —
-    // never a key computed against a phantom project. A move into the
-    // done-role stage carries none either: arriving there means the top of
-    // the column, which the decider places (T3O-15).
+    // A bottom key in the target column, so a cross-stage move lands last. No key for a missing
+    // card (the decider rejects it) or for the done-role stage (the decider places it on top).
     const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
     const orderKey =
       card === undefined || toStage === doneStageId
         ? undefined
         : boardAppendOrderKey(
-            // The column the card is moving into, in the same scope every
-            // other placement uses (T3O-27): one key space per stage within
-            // the card's board (root, or its parent's sub-board), archived
-            // cards excluded. A per-project filter here computed a bottom
-            // for a slice of the merged column, which is not where the card
-            // lands on the board a human is looking at.
+            // One key space per stage within the card's board (root or parent's sub-board),
+            // archived cards excluded, as every other placement uses.
             boardColumnOrderKeys({
               cards: board.cards,
               stage: toStage,
@@ -1531,17 +1386,14 @@ export const boardHandlers = {
   board_update_card: Effect.fn("BoardToolkit.board_update_card")(function* (input) {
     const deps = yield* boardToolDeps;
     const board = yield* readBoardState(deps);
-    // The target takes a key as readily as its dependency fields do (T3O-53).
+    // The target takes a key as readily as its dependency fields do.
     const target = yield* findCardByKeyOrId(board, input.cardId);
     yield* refuseOtherWorkersCard(board, deps.scope, target);
     const cardId = target.id;
     const labels =
       input.labels === undefined ? undefined : yield* resolveLabelIds(board, input.labels);
-    // Single-label edits by name (T3O-68). An added label must be live. A
-    // removed one must name a catalogue label, deleted ones included, so a
-    // typo is reported rather than passed as a no-op. It resolves against the
-    // target's own labels, so a retired label can still be taken off; a
-    // catalogue label the card does not carry is dropped, the no-op it is.
+    // An added label must be live. A removed one must name a catalogue label (deleted ones
+    // included) so a typo is reported, and resolves against the target's own labels.
     const overlap = input.addLabels?.find((name) =>
       input.removeLabels?.some((other) => other.toLowerCase() === name.toLowerCase()),
     );
@@ -1569,11 +1421,8 @@ export const boardHandlers = {
         return label !== undefined && sameLabelName(label, name);
       }),
     );
-    // Single-dependency edits take keys as readily as ids (T3O-53). An added
-    // card must exist. A removed one resolves against the target's own
-    // dependencies, so a key shared across projects finds the right edge; one
-    // that is not a dependency is passed through as-is, where the decider
-    // treats it as the no-op it is.
+    // An added card must exist. A removed one resolves against the target's own dependencies,
+    // so a key shared across projects finds the right edge.
     const addDependsOn =
       input.addDependsOn === undefined
         ? undefined
@@ -1588,7 +1437,7 @@ export const boardHandlers = {
             board.cards.find((card) => card.id === id)?.key.toLowerCase() === value.toLowerCase(),
         ) ?? BoardCardId.make(value),
     );
-    // Checked before anything is written (T3O-18), so a bad pull request
+    // Checked before anything is written, so a bad pull request
     // rejects the whole update rather than half of it.
     const pullRequest =
       input.pullRequest === undefined || input.pullRequest === null
@@ -2034,7 +1883,7 @@ export const boardHandlers = {
       commandId: yield* mintCommandId,
       cardId: card.id,
       plans: input.plans,
-      // Optional on the tool, explicit on the command (t3o card 11): the
+      // Optional on the tool, explicit on the command: the
       // decider is the one place that decides whether a split needs one.
       splitRationale: input.splitRationale ?? null,
       ...(input.recommendedAutoBuild === undefined
@@ -2062,7 +1911,7 @@ export const boardHandlers = {
     const deps = yield* boardToolDeps;
     const board = yield* readBoardState(deps);
     const card = yield* requireCallerCard(board, deps.scope);
-    // The caller's card or a group it sits in (T3O-32): child planning reads
+    // The caller's card or a group it sits in: child planning reads
     // its ancestors' plans.
     const readable = new Set([card.id, ...boardCardAncestors(board, card).map((a) => a.id)]);
     const plan = (board.plans ?? []).find(
@@ -2197,13 +2046,9 @@ export const boardHandlers = {
 } satisfies Parameters<typeof BoardToolkit.toLayer>[0];
 
 /**
- * Who may call each board tool (`McpToolAccess`, T3O-59). Every board tool acts
- * for the calling thread's card (D3), so all of them need a T3 thread caller;
- * the reads stop there, and the writes also need that thread's run to be live.
- * Whether the thread is linked to a card is still the handler's question.
- *
- * T3o (T3O-63): a thread a central board placed on this server relays its
- * call to that board instead (`relayable`), after the access check here.
+ * Every board tool needs a T3 thread caller; writes also need that thread's run to be live.
+ * Whether the thread is linked to a card is the handler's question. A thread a central board
+ * placed here relays its call to that board (`relayable`) after the access check.
  */
 export const BoardToolkitHandlersLive = McpToolAccess.toLayer(BoardToolkit, {
   board_get_card_context: McpToolAccess.readsAsCaller(

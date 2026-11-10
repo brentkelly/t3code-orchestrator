@@ -1,11 +1,6 @@
 /**
- * T3o board MCP toolkit — the relay (T3O-63, D3).
- *
- * The central server runs the real board engine, queries and handlers on a
- * real board database, behind the thread router; the worker is in process
- * (`distributed.testkit.ts`). An agent's call on the worker goes through
- * `relayable` → the worker's relay host → the central server's relay client →
- * the handlers, and back, exactly as it would across the wire.
+ * The relay end to end: a worker-side call goes through `relayable`, the worker's relay host,
+ * the central relay client and the handlers on a real central board database, and back.
  */
 import {
   BoardCardAttachmentId,

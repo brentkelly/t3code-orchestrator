@@ -1,18 +1,7 @@
 /**
- * T3o: `t3 import-threads` (T3O-71) seeds a T3o home (the desktop app's `~/.t3o`) with the
- * stopped threads of an upstream T3 Code home (`~/.t3`).
- *
- * The two never share a data directory: upstream rewrites `settings.json` from its own schema
- * (dropping the `board` block), auto-updates ahead of T3o so its schema can be newer, and owns
- * `<home>/bin/t3`. So the fork copies once instead, through the same copy-and-prune that
- * `vp run migrate-dev-db` uses (`apps/server/scripts/migrate-dev-db.ts`) — never a second copy of
- * those rules. That keeps stopped threads with their forks and subagents, settled ones included, and drops
- * live work, archived and deleted threads,
- * scheduled tasks, queued effects, auth sessions, pairing links and provider runtime rows, so the
- * T3o server never adopts upstream's running agents. The source is only ever read.
- *
- * Board data and `settings.json` are not imported: the board is T3o's own, and an upstream
- * settings file is the thing that drops it.
+ * `t3 import-threads`: seeds a T3o home with an upstream T3 Code home's stopped threads, through
+ * the same copy-and-prune as `migrate-dev-db`. The source is only ever read. Board data and
+ * `settings.json` are not imported: an upstream settings file drops the `board` block.
  */
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
