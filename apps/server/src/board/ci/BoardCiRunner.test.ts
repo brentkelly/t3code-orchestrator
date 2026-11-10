@@ -618,7 +618,7 @@ it.live("a missing tool is a machine problem, and an empty result file is said",
       headline?.why,
       "A tool the script needs isn't installed: t3o-no-such-tool-xyz (its result file was empty)",
     );
-    assert.match(headline?.hint ?? "", /^Install t3o-no-such-tool-xyz on /);
+    assert.match(headline?.hint ?? "", /^Install t3o-no-such-tool-xyz\.$/);
   }),
 );
 

@@ -240,7 +240,7 @@ const libraryHeadline = {
   logLine: 3,
   logOffset: 90,
   source: "machine" as const,
-  hint: "Install the package that provides libnspr4.so on box.",
+  hint: "Install the package that provides libnspr4.so.",
 };
 
 it.effect("T3O-61 (Z5-307): a machine failure holds the card and starts no fix agent", () =>
@@ -262,7 +262,7 @@ it.effect("T3O-61 (Z5-307): a machine failure holds the card and starts no fix a
         assert.deepStrictEqual(held.ci?.headline, libraryHeadline);
         assert.match(
           held.ci?.stopReason ?? "",
-          /^Machine problem on .+: Missing system library: libnspr4\.so\. Install the package that provides libnspr4\.so on box\. Then Retry CI\.$/,
+          /^Machine problem on .+: Missing system library: libnspr4\.so\. Install the package that provides libnspr4\.so\. Then Retry CI\.$/,
         );
         const commands = yield* h.commands;
         assert.isFalse(commands.some((command) => command.type === "board.card.select-step"));

@@ -22,7 +22,7 @@ export type BoardCiRecordResult =
   | { readonly ok: false; readonly refusal: string };
 
 /** A held pass's reason rides every card shell, so it stays short. */
-const BOARD_CI_HOLD_REASON_CHARS = 400;
+export const BOARD_CI_HOLD_REASON_CHARS = 400;
 
 const refuse = (refusal: string): BoardCiRecordResult => ({ ok: false, refusal });
 

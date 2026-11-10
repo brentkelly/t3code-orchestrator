@@ -25,6 +25,7 @@ import {
 } from "@t3tools/contracts";
 
 import type { BoardCiLine } from "./BoardCiRunner.ts";
+import { BOARD_CI_HOLD_REASON_CHARS } from "./ciRecord.ts";
 
 /** The end window: generic patterns only count in the last lines of a log,
     so a passing test's early noise is never the reason. */
@@ -91,6 +92,7 @@ export class BoardCiFailureFacts {
   lastMeaningful: Fact | null = null;
   private window: Fact[] = [];
   private windowChars = 0;
+  private trimmed = false;
 
   push(line: BoardCiLine): void {
     const text = visibleText(line.line);
@@ -124,7 +126,13 @@ export class BoardCiFailureFacts {
       (this.windowChars > END_WINDOW_CHARS && this.window.length > 1)
     ) {
       this.windowChars -= this.window.shift()!.text.length;
+      this.trimmed = true;
     }
+  }
+
+  /** Whether earlier lines have left the end window. */
+  windowTrimmed(): boolean {
+    return this.trimmed;
   }
 
   /** The first line of the end window, so a fact can say whether it is in it. */
@@ -196,7 +204,7 @@ function machineVerdict(facts: BoardCiFailureFacts, input: BoardCiHeadlineInput)
       fact: facts.noSpace,
       source: "machine",
       machine: true,
-      hint: `Free disk space on ${input.host}.`,
+      hint: "Free disk space.",
     };
   }
   if (facts.readOnly !== null) {
@@ -205,14 +213,15 @@ function machineVerdict(facts: BoardCiFailureFacts, input: BoardCiHeadlineInput)
       fact: facts.readOnly,
       source: "machine",
       machine: true,
-      hint: `Make the filesystem writable on ${input.host}.`,
+      hint: "Make the filesystem writable.",
     };
   }
   // Optional native modules print a missing library and recover, so it only
   // counts in the end window, or when nothing later or reported explains it.
   const library = facts.firstInWindow([SHARED_LIBRARY]) ?? facts.library;
   if (library !== null) {
-    const inWindow = library.lineNo >= facts.windowStart();
+    // A log that fits the window entirely says nothing by position.
+    const inWindow = facts.windowTrimmed() && library.lineNo >= facts.windowStart();
     const laterGeneric = facts.firstInWindow(GENERIC, library.lineNo);
     const codeFailureReported =
       input.result?.failures.some((failure) => failure.machine !== true) ?? false;
@@ -225,8 +234,8 @@ function machineVerdict(facts: BoardCiFailureFacts, input: BoardCiHeadlineInput)
         machine: true,
         hint:
           lib === null
-            ? `Install the missing system library on ${input.host}.`
-            : `Install the package that provides ${lib} on ${input.host}.`,
+            ? "Install the missing system library."
+            : `Install the package that provides ${lib}.`,
       };
     }
   }
@@ -240,10 +249,7 @@ function machineVerdict(facts: BoardCiFailureFacts, input: BoardCiHeadlineInput)
       fact: facts.notFound,
       source: "machine",
       machine: true,
-      hint:
-        command === null
-          ? `Install the missing tool on ${input.host}.`
-          : `Install ${command} on ${input.host}.`,
+      hint: command === null ? "Install the missing tool." : `Install ${command}.`,
     };
   }
   if (!timedOut && (input.exitCode === 137 || input.signal === "SIGKILL")) {
@@ -252,7 +258,7 @@ function machineVerdict(facts: BoardCiFailureFacts, input: BoardCiHeadlineInput)
       fact: facts.killed,
       source: "machine",
       machine: true,
-      hint: `Free memory on ${input.host}, or run fewer steps at once.`,
+      hint: "Free memory, or run fewer steps at once.",
     };
   }
   if (facts.enospc !== null && input.freeBytes !== null && input.freeBytes < LOW_DISK_BYTES) {
@@ -261,7 +267,7 @@ function machineVerdict(facts: BoardCiFailureFacts, input: BoardCiHeadlineInput)
       fact: facts.enospc,
       source: "machine",
       machine: true,
-      hint: `Free disk space on ${input.host}.`,
+      hint: "Free disk space.",
     };
   }
   return null;
@@ -287,7 +293,7 @@ function pickVerdict(facts: BoardCiFailureFacts, input: BoardCiHeadlineInput): V
       source: "failure-line",
       machine: isMachine,
       subStep: line.step ?? firstFailure?.title ?? null,
-      ...(isMachine ? { hint: machine?.hint ?? `Fix it on ${input.host}.` } : {}),
+      ...(isMachine ? { hint: machine?.hint ?? "Fix it on the machine." } : {}),
     };
   }
   if (flagged !== null) {
@@ -298,7 +304,7 @@ function pickVerdict(facts: BoardCiFailureFacts, input: BoardCiHeadlineInput): V
       source: "result-file",
       machine: true,
       subStep: flagged.title,
-      hint: machine?.hint ?? `Fix it on ${input.host}.`,
+      hint: machine?.hint ?? "Fix it on the machine.",
     };
   }
   if (machine !== null) return machine;
@@ -386,6 +392,9 @@ export function boardCiDirtyHeadline(stepName: string, dirty: string): BoardCiHe
 
 /** The hold reason a machine headline gives the card. */
 export function boardCiMachineHoldReason(headline: BoardCiHeadline, where: string): string {
-  const why = headline.why.replace(/[.\s]+$/, "");
-  return `Machine problem on ${where}: ${why}. ${headline.hint ?? "Fix it on the machine."} Then Retry CI.`;
+  const tail = `. ${headline.hint ?? "Fix it on the machine."} Then Retry CI.`;
+  const head = `Machine problem on ${where}: ${headline.why.replace(/[.\s]+$/, "")}`;
+  // The card keeps 400 chars; the why gives way so the fix and Retry survive.
+  const room = BOARD_CI_HOLD_REASON_CHARS - tail.length;
+  return `${head.length > room ? `${head.slice(0, Math.max(0, room - 1)).trimEnd()}…` : head}${tail}`;
 }

@@ -122,21 +122,24 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
         tooltip: "CI passed; the card moves on",
       };
     // T3O-59: held says why, and a machine problem says so.
-    case "held":
+    // A machine hold leads with the problem; any other hold with why it was held.
+    case "held": {
+      const headline = ci.machine === true ? ci.headline : undefined;
       return {
         chip: { label: boardCiHeldLabel(ci), tone: "warning" },
         segments,
         count,
         detail:
-          ci.headline === undefined
+          headline === undefined
             ? (ci.stopReason ?? "CI couldn't finish this pass")
-            : boardCiHeadlineText(ci.headline),
+            : boardCiHeadlineText(headline),
         detailTone: "warning",
         tooltip:
-          ci.headline !== undefined && ci.stopReason !== undefined
+          headline !== undefined && ci.stopReason !== undefined
             ? ci.stopReason
             : "Retry CI to run it again, or Skip CI",
       };
+    }
     // T3O-49: the round-trip limit, or a conflict CI couldn't resolve.
     case "stopped":
       return {

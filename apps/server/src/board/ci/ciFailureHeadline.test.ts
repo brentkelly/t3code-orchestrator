@@ -187,6 +187,22 @@ describe("boardCiFailureHeadline", () => {
       source: "pattern",
     },
     {
+      name: "a short log: a recovered library warning, then a real assertion",
+      log: `${LIBNSPR}${passing(20)}  FAIL src/a.test.ts > adds\nAssertionError: expected 2 to be 3\n`,
+      input: { result: result([{ title: "a.test.ts", detail: "expected 2 to be 3" }]) },
+      what: "panel → a.test.ts",
+      why: "a.test.ts: expected 2 to be 3",
+      machine: false,
+      source: "result-file",
+    },
+    {
+      name: "a missing library at the end of a long log counts",
+      log: `${passing(600)}${LIBNSPR}  FAIL src/browser.test.ts\n`,
+      why: "Missing system library: libnspr4.so",
+      machine: true,
+      source: "machine",
+    },
+    {
       name: "an early Error: outside the end window is ignored",
       log: `Error: transient warning at boot\n${passing(600)}tests failed\n`,
       why: "tests failed",
@@ -262,7 +278,14 @@ describe("boardCiMachineHoldReason", () => {
   it("names the machine, the problem and what to do", () => {
     const headline = headlineOf(LIBNSPR);
     expect(boardCiMachineHoldReason(headline, "linux-box")).toBe(
-      "Machine problem on linux-box: Missing system library: libnspr4.so. Install the package that provides libnspr4.so on box. Then Retry CI.",
+      "Machine problem on linux-box: Missing system library: libnspr4.so. Install the package that provides libnspr4.so. Then Retry CI.",
     );
+  });
+
+  it("keeps the fix and Retry CI within the card's 400 chars", () => {
+    const headline = { ...headlineOf(LIBNSPR), why: "w".repeat(160), hint: "h".repeat(160) };
+    const reason = boardCiMachineHoldReason(headline, "worker ".repeat(20));
+    expect(reason.length).toBeLessThanOrEqual(400);
+    expect(reason.endsWith(`${"h".repeat(160)} Then Retry CI.`)).toBe(true);
   });
 });

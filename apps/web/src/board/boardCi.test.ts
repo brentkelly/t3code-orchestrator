@@ -182,6 +182,11 @@ describe("boardCiFace", () => {
     expect(held.detail).toBe("panel: Missing system library: libnspr4.so");
     expect(held.detailTone).toBe("warning");
     expect(held.tooltip).toContain("Then Retry CI.");
+    const heldForAnotherReason = boardCiFace(
+      ci({ phase: "held", stopReason: "The CI result was lost.", headline, steps }),
+      NOW_MS,
+    );
+    expect(heldForAnotherReason.detail).toBe("The CI result was lost.");
   });
 
   it("is a neutral Queued chip while waiting for a slot", () => {
