@@ -911,11 +911,13 @@ function ScriptContractHelp() {
       {open ? (
         <div className="flex flex-col gap-3 pt-0.5 pr-4 pb-4 pl-10">
           <p className="max-w-[66ch] text-[12.5px] leading-[1.55] text-pretty text-muted-foreground">
-            Print progress lines and the card shows a live fraction instead of a timer. Write a
-            result file and failures show up as a list with file and line, and go to the fix agent
-            as structured input instead of a log tail. Both are optional; the exit code alone
-            decides pass or fail. Scripts run in the card&apos;s worktree, so install what they need
-            in the command itself.
+            Print progress lines and the step shows the message, a count and a bar, and the card
+            shows the count instead of a timer. The card catches up about every 10 seconds; the
+            step&apos;s live log shows each line as it&apos;s printed, and a failed step keeps its
+            last progress. Write a result file and failures show up as a list with file and line,
+            and go to the fix agent as structured input instead of a log tail. Both are optional;
+            the exit code alone decides pass or fail. Scripts run in the card&apos;s worktree, so
+            install what they need in the command itself.
           </p>
           {SNIPPETS.map((snippet) => (
             <Snippet code={snippet.code} key={snippet.title} title={snippet.title} />
