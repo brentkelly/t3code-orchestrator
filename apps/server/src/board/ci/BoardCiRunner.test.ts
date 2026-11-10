@@ -504,3 +504,36 @@ it.live("a disk that can't be read never blocks the pass", () =>
     assert.strictEqual(result.result, "passed");
   }),
 );
+
+it.live("reports a script's progress while it runs, and its settled row keeps the last", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { events, emit } = collect();
+    const line = (done: number) =>
+      `echo '::t3o-progress::{"message":"Testing","done":${done},"total":4}'`;
+    const result = yield* runBoardCiPass(
+      request(cwd, [
+        {
+          name: "Tests",
+          command: `${line(1)}; ${line(3)}; exit 1`,
+          timeoutMinutes: 1,
+        },
+      ]),
+      emit,
+    );
+    assert.strictEqual(result.result, "failed");
+    const running = events.filter((event) => event.step.status === "running");
+    // The first line reports at once; the second is inside the 10 s window.
+    assert.deepStrictEqual(
+      running.map((event) => event.step.progress?.done ?? null),
+      [null, 1],
+    );
+    assert.isTrue(running.every((event) => event.step.tail === ""));
+    const settled = events.at(-1)!.step;
+    assert.strictEqual(settled.status, "failed");
+    assert.deepInclude(settled.progress, { message: "Testing", done: 3, total: 4 });
+    assert.isUndefined(settled.silentSince);
+    // Progress lines stay in the raw log.
+    assert.include(settled.tail, "::t3o-progress::");
+  }),
+);

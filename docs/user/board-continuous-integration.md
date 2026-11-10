@@ -32,7 +32,9 @@ Scripts run in the card's worktree as they are, so install what they need in the
 Only the exit code is required. A script can also:
 
 - print progress lines, which stay in the step's log:
-  `echo '::t3o-progress::{"message":"Running unit tests","done":128,"total":212}'`
+  `echo '::t3o-progress::{"message":"Running unit tests","done":128,"total":212}'`. The step shows
+  the latest message, count and bar, and the card shows the count instead of a timer. Any field can
+  be left out.
 - write a result file at `$T3O_CI_RESULT` before it exits, with a summary and failures the CI tab
   and the fix agent show:
 
@@ -63,7 +65,20 @@ each project can override them on its **CI** tab, under **Fix agent**.
 
 The card's **CI** tab shows each step, how long it took, a failed step's output and reported
 failures, an agent step's thread, a forge step's checks, the fix agent at work, and earlier passes.
-Full logs stay in the worktree's `.t3/ci/<runId>/` folder, which the board keeps out of git.
+
+- A running script shows its time against its limit, such as "Running 12 / 60 min", and its progress
+  if it prints any. The card catches up about every 10 seconds, and a failed step keeps the last
+  progress it reported, so you can see where it stopped.
+- A running script that has printed nothing for 10 minutes shows "No output for N min". It's only a
+  warning: the step keeps running until it finishes or reaches its limit.
+- **View live log** on a running script, or **View log** on a finished one in any pass, opens its
+  output. A running step's log follows new output; scroll up to pause, and **jump to latest** to
+  follow again. Colours are kept. **Copy** copies what's shown, and **Download** saves the whole
+  log. The viewer holds the last 2 MB or so of a long log; Download always has all of it. This
+  works the same for a card on a worker.
+- Each pass's log folder, `.t3/ci/<runId>/` in the card's worktree, is shown under the pass with a
+  copy button, for opening in a terminal. The board keeps it out of git. When the worktree is
+  removed, its logs go with it, and the viewer says the log is no longer available.
 
 ## Can't run, Stop CI, Skip CI and turning CI off
 

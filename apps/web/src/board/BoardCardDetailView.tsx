@@ -3271,7 +3271,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
               <BoardCardCiPane
                 activeThreadId={activeThreadId}
+                cardId={card.id}
                 cardKey={card.key}
+                environmentId={props.environmentId}
                 projectId={card.projectId}
                 ci={card.ci}
                 inCi={inCi}

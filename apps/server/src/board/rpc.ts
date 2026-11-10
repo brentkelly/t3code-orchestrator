@@ -34,6 +34,7 @@ import {
   type BoardCardId,
   type BoardCardPullRequestActionInput,
   type BoardCiActionInput,
+  type BoardReadCiLogInput,
   type BoardRequestReviewRoundInput,
   type BoardCardWorkerMoveAnswer,
   type BoardCardWorkerMoveRequest,
@@ -55,6 +56,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -85,6 +87,8 @@ import { ThreadGateway, type ThreadGatewayShape } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
 import type { SupervisorReactorShape } from "./supervisorReactor.ts";
 import { BoardCardMover, type BoardCardMoverShape } from "./workers/BoardCardMove.ts";
+import { readBoardCiLog, type BoardCiLogDeps } from "./ci/ciLog.ts";
+import { WorkerConnections } from "./workers/WorkerConnections.ts";
 import { BoardWorkers } from "./workers/BoardWorkers.ts";
 import { workerGatewayRpcHandlers } from "./workers/workerGatewayRpc.ts";
 import { boardWorkerRpcHandlers } from "./workers/workerRpc.ts";
@@ -133,8 +137,16 @@ export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
     const subscriptionContext = yield* Effect.context<
       BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
     >();
+    const workerConnections = yield* Effect.serviceOption(WorkerConnections);
     return {
       ...makeBoardRpcHandlers(deps, {
+        ciLogWorker: (workerId) =>
+          Option.isNone(workerConnections)
+            ? Effect.succeed(null)
+            : workerConnections.value.get(workerId).pipe(
+                Effect.map((rpc) => rpc.gateway.readCiLog),
+                Effect.catch(() => Effect.succeed(null)),
+              ),
         boardEngine,
         boardQueries,
         stampActor,
@@ -162,6 +174,7 @@ function makeBoardRpcHandlers(
     readonly projectActorName: (projectId: ProjectId) => Effect.Effect<string>;
     readonly projectConfig: BoardProjectConfigServiceShape;
     readonly mover: BoardCardMoverShape;
+    readonly ciLogWorker: BoardCiLogDeps<unknown>["worker"];
     readonly subscriptionContext: Context.Context<
       BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
     >;
@@ -596,6 +609,24 @@ function makeBoardRpcHandlers(
             name: attachment.name,
           });
         }).pipe(Effect.mapError(toAttachmentError)),
+      ),
+
+    /** One CI step's log, followed while it runs (T3O-60): `ci/ciLog.ts`. */
+    [BOARD_WS_METHODS.readCiLog]: (input: BoardReadCiLogInput) =>
+      Stream.unwrap(
+        authorized(
+          BOARD_WS_METHODS.readCiLog,
+          Effect.succeed(
+            readBoardCiLog(
+              {
+                readDetail,
+                subscribeChanges: boardEngine.subscribeBoardEvents,
+                worker: services.ciLogWorker,
+              },
+              input,
+            ),
+          ),
+        ),
       ),
 
     /**

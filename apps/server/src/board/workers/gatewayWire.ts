@@ -29,6 +29,8 @@ import {
   type BoardStageAttachmentsResult,
   type BoardWorkerCiProgress,
   type BoardWorkerRunCiInput,
+  type BoardWorkerReadCiLogInput,
+  type BoardCiLogItem,
   type EnvironmentId,
   type ProjectId,
   type ThreadId,
@@ -97,6 +99,8 @@ export interface WorkerGatewayRpcOf<E> {
   ) => Effect.Effect<BoardStageAttachmentsResult, E>;
   /** Run a card's CI steps in its worktree on the worker (T3O-44, D21). */
   readonly runCi: (input: BoardWorkerRunCiInput) => Stream.Stream<BoardWorkerCiProgress, E>;
+  /** Read, and optionally follow, one CI step's log on the worker (T3O-60). */
+  readonly readCiLog: (input: BoardWorkerReadCiLogInput) => Stream.Stream<BoardCiLogItem, E>;
 }
 
 export type WorkerGatewayRpc = WorkerGatewayRpcOf<WorkerGatewayCallError>;
