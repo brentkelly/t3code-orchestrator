@@ -367,10 +367,16 @@ const scenario = (ws: BoardWorkspace, env: Env, forgeAsked: Array<string>) =>
     return out;
   });
 
-/** A transcript with its temp root and per-run repository name taken out. */
+/** A transcript with its temp root, per-run repository name and the worktree folder suffix
+    upstream hashes from the repository's own git dir (#32934) taken out. */
 const normalise = (env: Env, label: string, transcript: unknown) =>
   JSON.parse(
-    JSON.stringify(transcript).split(env.root).join("<root>").split(`repo-${label}`).join("repo"),
+    JSON.stringify(transcript)
+      .split(env.root)
+      .join("<root>")
+      .split(`repo-${label}`)
+      .join("repo")
+      .replace(/-[0-9a-f]{16}(?=["/])/g, "-<hash>"),
   );
 
 vitest.layer(RepoTemplateLive)((it) => {

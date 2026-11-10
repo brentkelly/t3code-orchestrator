@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Redacted from "effect/Redacted";
 import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/http";
+import { SettingsSecretUnresolvedError } from "@t3tools/contracts";
 
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
@@ -43,7 +44,10 @@ function makeFixture() {
   return { project, other };
 }
 
-function harness(status = 200) {
+function harness(
+  status = 200,
+  saved: GitHubCredentials.GitHubCredentials["Service"]["saved"] = () => Effect.succeedNone,
+) {
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
   const invalidated: Array<string> = [];
   const appInvalidated: Array<string> = [];
@@ -57,7 +61,7 @@ function harness(status = 200) {
           source: "gh" as const,
           fingerprint: `${host}:ambient`,
         }),
-      saved: () => Effect.succeedNone,
+      saved,
       fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
       invalidate: (host) => Effect.sync(() => void invalidated.push(host)),
     }),
@@ -153,6 +157,40 @@ describe("GitHubRequestPolicy.credential under gitenv", () => {
       expect(Redacted.value(held.token)).toBe("pinned");
     }).pipe(Effect.provide(layer));
   });
+
+  // Since v0.1.7 a saved Settings token may be a secret-provider reference (upstream #27756).
+  it.effect(
+    "outranks a saved token read from a secret provider, even one that will not unlock",
+    () => {
+      const { project } = makeFixture();
+      const fromSecretProvider = harness(200, (host) =>
+        Effect.succeedSome({
+          host,
+          token: Redacted.make("from-1password"),
+          source: "settings" as const,
+          fingerprint: `${host}:from-1password`,
+        }),
+      );
+      const locked = harness(200, () =>
+        Effect.fail(new SettingsSecretUnresolvedError({ provider: "onepassword" })),
+      );
+      const credential = (withProject: boolean) =>
+        GitHubRest.GitHubRest.pipe(
+          Effect.flatMap((api) => api.credential("github.com")),
+          withProject ? Effect.provideService(T3oGitenvProject, project) : (effect) => effect,
+          Effect.map((held) => Redacted.value(held.token)),
+        );
+      return Effect.gen(function* () {
+        expect(yield* credential(false).pipe(Effect.provide(fromSecretProvider.layer))).toBe(
+          "from-1password",
+        );
+        expect(yield* credential(true).pipe(Effect.provide(fromSecretProvider.layer))).toBe(
+          PROJECT_TOKEN,
+        );
+        expect(yield* credential(true).pipe(Effect.provide(locked.layer))).toBe(PROJECT_TOKEN);
+      });
+    },
+  );
 });
 
 describe("a refused token", () => {
