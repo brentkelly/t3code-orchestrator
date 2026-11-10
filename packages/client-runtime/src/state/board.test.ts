@@ -613,11 +613,8 @@ describe("board shell reducer", () => {
       },
     );
     expect(parked.cards?.[0]?.stalledReason).toBe("usage-limit");
-    // A parked card sits for HOURS, so a drag or a rename inside that window is
-    // likely. The `stalled` flag is preserved above; without the stall keys
-    // riding with it the face's words revert to the gave-up phrasing and the
-    // detail modal paints its red "stopped" banner over a card that is calmly
-    // counting down to its own resume.
+    // A parked card sits for hours, so a drag or rename in that window is likely; without the
+    // stall keys the face falls back to gave-up wording and the modal shows "stopped".
     const reordered = applyBoardShellStreamEvent(parked, {
       kind: "card-upserted",
       sequence: 3,
@@ -782,13 +779,8 @@ describe("board shell reducer", () => {
   });
 
   it("a card upsert preserves the review slice it could not know", () => {
-    // The failure this prevents: a card mid-review that the user drags,
-    // retitles, or clicks "Run round N+1" on loses its pips and its
-    // NO CONVERGENCE flag until the next reconnect — and that click is itself
-    // one of the triggers, so the feature would blank itself exactly when it
-    // is being used. `boardCardShellFromCard` (every card-carrying delta's
-    // producer) cannot see the step-completion ledger, so it omits all ten
-    // keys and the reducer must carry them.
+    // `boardCardShellFromCard` cannot see the step-completion ledger, so it omits the review
+    // keys and the reducer must carry them; otherwise "Run round N+1" blanks the pips.
     const reviewed = applyBoardShellStreamEvent(snapshot({ cards: [cardShell("card-1")] }), {
       kind: "card-review",
       sequence: 2,
@@ -906,7 +898,7 @@ describe("withBoardThreadFields", () => {
     kind: "user_input" as const,
     createdAt: v2Now,
   };
-  // Upstream holds a monitor only when the agent waits on it (#24610).
+  // Upstream holds a monitor only when the agent waits on it.
   const monitorTask = { taskId: "monitor-1", kind: "monitor" as const, awaited: true as const };
 
   const linked = cardShell("card-1", {
@@ -1215,11 +1207,8 @@ describe("boardBuildQueue", () => {
     expect(queue.get("card-unknown")?.position).toBe(2);
   });
 
-  // T3O-19 (D9). A card already `queued` when a schedule is set keeps that step
-  // status — nothing transitions it back to `pending` — while the server has
-  // stopped offering it a slot. Left in the derivation it would go on counting
-  // against cards genuinely waiting for an agent, and every position after it
-  // would be off by one.
+  // A card queued when a schedule is set stays `queued` while the server stops offering it a
+  // slot; counted, it would push every later position off by one.
   it("excludes a card held by a future scheduled start, and renumbers the rest", () => {
     const cards = [
       {

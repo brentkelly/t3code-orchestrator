@@ -1,20 +1,7 @@
 /**
- * The review-loop helpers in contracts (t3o-22).
- *
- * These exist because three surfaces must agree on where a loop is up to — the
- * server's projection cache (what a column card shows), the Review pane (what
- * the detail shows) and `reviewLoopDecision` (what actually runs next). Two of
- * them call `boardReviewLoopWalk`; the executor keeps its own copy because it
- * must mint prompts and models as it goes.
- *
- * That duplication is only safe if something holds the copies together. The
- * differential that does it lives in `apps/server` (`reviewLoopExecutor.test.ts`),
- * which is the only package that can import BOTH this walk and
- * `reviewLoopDecision`; contracts cannot depend on the server. What this file
- * pins is the walk's own behaviour — a loop that ran out of budget is never
- * reported as one that passed, a malformed payload is never read as "no
- * findings", and a round that has STARTED can never be removed from the
- * budget.
+ * The executor keeps its own copy of `boardReviewLoopWalk`; the differential holding them
+ * together lives in `apps/server` (`reviewLoopExecutor.test.ts`), since contracts cannot
+ * import the server. This file pins the walk itself.
  */
 import { assert, describe, it } from "@effect/vitest";
 
@@ -135,12 +122,8 @@ describe("boardReviewLoopWalk", () => {
     assert.strictEqual(walk([review(1, [])], 5).status, "converged");
   });
 
-  // T3O-14 round 2: the walk used to read every phase but `review` on
-  // PRESENCE alone, so a `succeeded` triage/adjudicate/sync record whose
-  // payload nothing can read advanced the loop silently — while the completion
-  // handler refused to write one and the decider offered to repair one. Three
-  // parts of the board disagreed about what "usable" meant, and the one state
-  // the board cannot repair by itself was the invisible one.
+  // Every phase, not only `review`, must have a readable payload: the completion handler
+  // and the decider already treat an unreadable one as unusable.
   it("halts on an unreadable payload from ANY phase, naming the step to reopen", () => {
     const brokenTriage = walk(
       [review(1, [finding("nitpick")]), completion("triage@1", "{oops")],
@@ -204,13 +187,8 @@ describe("boardReviewLoopWalk", () => {
     );
   });
 
-  // T3O-2: the round that made this test necessary. The reviewer ran to a
-  // clean conclusion and recorded valid findings, but handed
-  // `board_complete_step` an already-`JSON.stringify`d payload, which the
-  // completion handler stringified a second time. Every reader then saw a JSON
-  // *string* where the schema wanted an object and called the round
-  // unreadable, holding a converged card in Code review. The content was never
-  // in question, only its wrapping — so one level of it is unwrapped on read.
+  // An agent may hand `board_complete_step` an already-stringified payload, which gets
+  // stringified again; one level of wrapping is unwrapped on read.
   it("t3o-2: reads a payload the agent handed the tool already stringified", () => {
     const doubled = (round: number, findings: ReadonlyArray<BoardReviewFinding>) =>
       completion(
@@ -711,14 +689,8 @@ describe("replay equals rehydration for a pre-t3o-22 log", () => {
 });
 
 /**
- * The payload contract a review-loop step must satisfy to have succeeded
- * (T3O-14).
- *
- * The board used to check nothing at the door, so a `succeeded` completion
- * carrying `null` was pinned by the idempotency rule into a record that could
- * neither be read nor re-run — the loop halted `unreadable` with no way back.
- * This is the single definition both the completion handler and the decider
- * ask, so "usable" cannot mean two things.
+ * The single definition of a usable review-loop payload, asked by both the completion
+ * handler and the decider.
  */
 describe("boardStepPayloadDefect", () => {
   it("rejects a review step that recorded no payload", () => {

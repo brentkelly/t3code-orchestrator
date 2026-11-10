@@ -1,30 +1,7 @@
 /**
- * T3o prompt envelope (D5) — the system-owned wrapper around every board run
- * prompt, in contracts so the server (which composes the real run prompt) and
- * the settings UI (which shows the user exactly what wraps their editable
- * prompt) can never drift.
- *
- * The envelope carries the protocol a run MUST follow — orientation, the
- * completion contract, progress reporting, the question mechanism and the
- * role-keyed deliverable segments (a `plan` stage records its plan with
- * `board_propose_plans`; no stage ever moves its own card). The editable
- * per-stage prompt carries only intent, so a user rewrite can slow a stage
- * down but never break the board.
- *
- * STEP VOCABULARY IS CONDITIONAL (t3o-19, D1/D4). Steps are the general unit —
- * the executor seam, the `(cardId, stepId)` completion ledger and
- * `completedStepIds` are all multi-step by construction — but every stage
- * except the review loop runs exactly one, whose id IS the stage id and whose
- * label IS the stage label. Rendering that produced a tautology
- * (`Stage: planning. Step: Planning.`), so a null `stepLabel` means "this stage
- * has no steps" and the envelope says nothing about them: no `Step:` line, and
- * a completion instruction that names no id. A stepped stage keeps the full
- * vocabulary and is told its `stepId` outright, which is what non-review stages
- * never were — they only ever completed because the tautological stage line
- * happened to print a string equal to their step id.
- *
- * Everything here is pure string composition: no SQL, no git, no thread
- * handles — unit-testable without a server, and safe to import from the web.
+ * The system-owned wrapper around every board run prompt, shared by the server and settings
+ * UI so they cannot drift. The editable prompt carries only intent. A null `stepLabel` means
+ * the stage has no steps, so the envelope names no step; a stepped stage gets its `stepId`.
  */
 import type {
   BoardCardPullRequest,
@@ -45,22 +22,13 @@ import {
   DEFAULT_BOARD_SYNC_PHASE_PROMPT,
 } from "./board.ts";
 
-/**
- * The wording for "ask through your question tool, never in prose" (D5).
- * Deliberately provider-NEUTRAL: the envelope is composed once and read by
- * whichever runtime the stage happens to run on, and naming one vendor's
- * mechanism ("Codex's ask-for-input request") is wrong for every other
- * provider — and reads as wrong even to the one it names, when the user has
- * pointed that stage at a different runtime.
- */
+/** Provider-neutral on purpose: the envelope is composed once and read by whichever runtime
+    the stage runs on. */
 export const BOARD_ENVELOPE_QUESTION_MECHANISM =
   "raise it through your runtime's user-input request so it surfaces as a real prompt";
 
-/** The stance-independent guard appended to every postamble: `board_move_card`
-    is agent-reachable, so the envelope — not the editable prompt — forbids it.
-    Worded to hold on every stance: an auto-advancing stage moves the card
-    itself, a paused or manual one waits for a human. Step-neutral (t3o-19, D1),
-    so it reads correctly on a stage with no steps. */
+/** `board_move_card` is agent-reachable, so the envelope, not the editable prompt, forbids
+    it. Holds on every stance and on a stage with no steps. */
 export const BOARD_ENVELOPE_MOVE_GUARD =
   "Never move the card between stages yourself; finish your work and the board or a human moves the card on.";
 
@@ -88,17 +56,9 @@ export function boardAutoPlanInstruction(autoBuild: boolean): string {
 export const BOARD_AUTO_PLAN_OFF_INSTRUCTION =
   "The user is back: Auto-plan is off. You may ask questions again, and it is fine to end a turn waiting on an answer. Your plan will be presented to the user for approval.";
 
-/** The `plan` role's deliverable contract (role-keyed so a user rewrite of the
-    editable Planning prompt cannot break the plan pipeline).
-
-    T3o card 11: it also states what a SECOND plan means. The planning agent was
-    never told that `board_propose_plans` is the card-splitting mechanism — the
-    tool advertises an array with a dependency graph, so decomposition read as
-    the expected output, and the cost (child cards behind a human approval gate
-    that hard-blocks every forward move) was invisible at the point of call.
-    Stating it here rather than in `DEFAULT_BOARD_PLANNING_PROMPT` is deliberate:
-    a user who has already customised their Planning prompt still gets the rule,
-    and no rewrite can delete it. */
+/** The `plan` role's deliverable, role-keyed so a rewritten Planning prompt cannot break it.
+    It says what a second plan means here, not in the default prompt, so a customised prompt
+    still gets the rule. */
 export const BOARD_ENVELOPE_PLAN_DELIVERABLE = [
   BOARD_ENVELOPE_DECISION_LOG,
   "When the plan is agreed, record it with board_propose_plans, as ONE plan.",
@@ -148,11 +108,8 @@ export interface ComposeStepPromptInput {
     readonly key: string;
     readonly title: string;
     readonly stage: string;
-    /** The card's effective base branch (T3O-5, D9) — what its work branches
-        off and merges back into, resolved through
-        `resolveBoardCardEffectiveBase`. Null when it could not be resolved (no
-        workspace, an unresolvable default), in which case the envelope says
-        nothing rather than interpolating placeholder English as a branch name. */
+    /** Null when it could not be resolved, so the envelope says nothing rather than
+        interpolating placeholder English as a branch name. */
     readonly baseBranch?: string | null;
     /** The card's pull request. Only an explicitly LINKED one (T3O-18) is
         stated: its head may be another branch than the card's own worktree,
@@ -182,16 +139,9 @@ function completionCall(step: Pick<ComposeStepPromptStep, "stepId" | "stepLabel"
     : `board_complete_step with stepId "${step.stepId}"`;
 }
 
-/** The system preamble (D5) — short by design: a pointer to
-    `board_get_card_context` exists so context is pulled, not pushed.
-    It carries NO attempt counter: the retry ladder is supervisor bookkeeping,
-    and "attempt 3 of 5" tells an agent nothing it can act on (the reason the
-    prior attempts ended is in `board_get_card_context`, not in the number) —
-    on a human-in-the-loop stage it is not even a number the run will reach.
-
-    The stage is named by its LABEL, not its id (t3o-19, D5): a custom stage's
-    id is a UUID (`BoardPipelineSection` mints `randomUUID()`), so printing the
-    id put `Stage: 3f2a1b9c-…` into that stage's system prompt. */
+/** Short by design: context is pulled via `board_get_card_context`. No attempt counter, since
+    an agent cannot act on it. The stage is named by label, since a custom stage's id is a
+    UUID. */
 export function boardStepPreamble(
   input: Pick<ComposeStepPromptInput, "card" | "stageLabel"> & {
     readonly step: Pick<ComposeStepPromptStep, "stepLabel"> & {
@@ -219,18 +169,8 @@ export function boardStepPreamble(
 }
 
 /**
- * The base-branch orientation line (T3O-5, D9), stated on EVERY stage — one
- * sentence that answers all three of the brief's pipeline requirements at once.
- *
- * Code review needs it most: the shipped review prompt already says "opening one
- * against its base ref if none exists", and without this the agent has to dig
- * that out of the context JSON and hope. Building is already checked out on a
- * branch cut from it, so the line is harmless reinforcement there.
- *
- * A `plan`-role step gets a second clause. Plan-mode steps run in the PROJECT
- * WORKSPACE ROOT with no branch of their own (`admitPlanStep`), so the agent
- * reads whatever the root happens to have checked out — which may not be the
- * code the card will change.
+ * Stated on every stage. A `plan`-role step adds a clause: plan steps run in the workspace
+ * root with no branch of their own, so the checkout may not be the code the card changes.
  */
 function boardBaseBranchLines(input: {
   readonly baseBranch: string | null;
@@ -247,11 +187,8 @@ function boardBaseBranchLines(input: {
 }
 
 /**
- * The linked pull request line (T3O-18). A card linked to a pull request it
- * did not open (a review card per stack layer) is still given its own
- * `board/<key>` worktree, which may not be that pull request's branch, and the
- * shipped review prompt says to open a pull request if the card's branch has
- * none. This names the pull request the work is actually about.
+ * A card linked to a pull request it did not open still gets its own `board/<key>`
+ * worktree, which may not be that PR's branch; this names the PR the work is about.
  */
 function boardLinkedPullRequestLines(
   pullRequest: Pick<BoardCardPullRequest, "number" | "headBranch" | "linked"> | null,
@@ -267,12 +204,8 @@ function boardLinkedPullRequestLines(
 export const BOARD_ENVELOPE_REGROUP_GUARD =
   "Do not regroup cards (move them between groups, indent, outdent, group them, or change a group's settings) without a human's explicit confirmation.";
 
-/** The system postamble (D5): branches on human-in-the-loop (an unattended run
-    carries the `/unattended` stance; a human-in-the-loop run is
-    question-friendly), then appends the role-keyed deliverable segment and the
-    move guard. The completion sentence names a `stepId` only on a stepped stage
-    (t3o-19, D3/D6) — and it is the ONE place that names it, so a review agent
-    is not told the same id twice. */
+/** An unattended run carries the `/unattended` stance. The completion sentence is the only
+    place a `stepId` is named, and only on a stepped stage. */
 /** What a step does when it is truly blocked (T3O-55), as one sentence.
     Triage and adjudication never reach a human that way: triage fixes or
     rejects each finding, and only the adjudicator escalates one. */
@@ -505,14 +438,9 @@ function boardReviewCarriedBlock(input: {
   return [rule, ...lines].join("\n");
 }
 
-/** A review phase's forced MACHINE CONTRACT (t3o-20, rebalanced) — the one
-    t3o-specific thing the executor owns and the user must not edit away: the
-    `board_complete_step` payload shape it parses to gate convergence (D4). The
-    review CRAFT, the safety stance and the PR workflow are NOT here — they live
-    in the user-editable phase prompt, so a user can reword any of it (including
-    the untrusted-input wording) without breaking the loop. Pure text; it names
-    no step id or completion tool (t3o-19, D6): the envelope's postamble states
-    both for every stepped stage. */
+/** Only the `board_complete_step` payload shape the executor parses to gate convergence;
+    review craft, safety stance and PR workflow live in the editable phase prompt. Names no
+    step id or completion tool: the postamble states both. */
 export function boardReviewPhaseProtocol(input: {
   readonly phase: BoardReviewPhaseId;
   readonly round: number;
@@ -655,11 +583,8 @@ export function boardDraftPullRequestLine(input: {
 }
 
 /**
- * Compose a review phase's agent prompt (D6/D7): the phase preamble, the
- * user's per-phase intent prompt, then the protocol. The executor owns the
- * loop protocol and wraps the user's per-phase prompt with it. The draft line
- * (T3O-12) sits after the user's prompt so it overrides whatever PR workflow
- * that prompt names.
+ * The draft line sits after the user's prompt so it overrides whatever PR workflow that
+ * prompt names.
  */
 export function composeBoardReviewPhasePrompt(input: {
   readonly phase: BoardReviewPhaseId;
@@ -699,25 +624,17 @@ export function composeBoardReviewPhasePrompt(input: {
 }
 
 /**
- * Compose the sync-base step's agent prompt (t3o-24, D2): a round header, the
- * compiled-in rebase instructions with the card's concrete base ref, then the
- * completion protocol. Entirely machinery — no user-editable part — which is
- * why it does not ride `composeBoardReviewPhasePrompt`'s preamble/prompt/
- * protocol split over a settings-owned prompt.
+ * The sync-base step's prompt: round header, the compiled-in rebase instructions
+ * with the card's base ref, then the completion protocol. All machinery, with no
+ * user-editable part, so it does not use the review phases' preamble/prompt split.
  */
 export function composeBoardSyncPhasePrompt(input: {
   readonly round: number;
-  /** The card's recorded base branch (`worktree.baseRefName`) — the parent's
-      integration branch for a sub-board child. Null when the card carries no
-      worktree slice: the sentence is omitted (the agent resolves the base from
-      its own checkout) rather than interpolating placeholder English into the
-      prompt as if it were a branch name. */
+  /** Null when the card has no worktree slice: the base sentence is omitted rather than
+      interpolating placeholder text into the prompt as if it were a branch name. */
   readonly baseRefName: string | null;
-  /** The base the card is now TARGETED at, when a human retargeted it (T3O-5,
-      D10) and it differs from `baseRefName`. Absent/null is the t3o-24 case:
-      the same base, whose tip merely moved. The rebase machinery is identical
-      either way; only the opening sentence differs, because "a sibling card
-      merged into it" is simply false for a retarget. */
+  /** Set when a human retargeted the card and it differs from `baseRefName`; null means
+      the same base whose tip moved. Only the opening sentence differs between the two. */
   readonly retargetedTo?: string | null;
   /** Drafts are on (T3O-12): the rebase's force-push must leave the draft be. */
   readonly draftPullRequests?: boolean;
@@ -751,28 +668,16 @@ export function composeBoardSyncPhasePrompt(input: {
 }
 
 /**
- * The retarget's SECOND half (T3O-5): move the pull request too.
- *
- * Only ever appended on a retarget. A pull request opened before the retarget
- * still names the branch it was created against, and nothing in the board moves
- * it — the board opens no pull requests itself (the review phase's agent does,
- * "opening one against its base ref if none exists"), and the retarget round
- * does not cross the Done boundary, so no fresh one is opened either. Left
- * alone, the review reads a diff against the old base while the branch sits on
- * the new one, and the merge lands these commits on a branch the card is no
- * longer based on. The merge gate refuses exactly that, which is what makes
- * skipping this visible rather than silent.
+ * Appended only on a retarget. Nothing else moves an open pull request's base, and the
+ * merge gate refuses a pull request whose base disagrees with the card's rebased base.
  */
 function boardSyncPhasePullRequestRetarget(retargetedTo: string): string {
   return `If this card's branch already has an OPEN pull request, retarget it at \`${retargetedTo}\` as well, once the rebase has landed: \`gh pr edit --base ${retargetedTo}\` on GitHub, or the equivalent for this repository's forge. Its base still names the branch it was opened against, and nothing else moves it. The board refuses to merge a pull request whose base disagrees with the branch the card was rebased onto, so a pull request left pointing at the old base strands the card at Ready for merge.`;
 }
 
-/** The rebase MECHANICS half of `DEFAULT_BOARD_SYNC_PHASE_PROMPT` — fetch,
-    rebase, resolve preserving both sides, verify what it resolved, force-with-lease,
-    abort clean and complete `failed` if unsafe. Correct verbatim for both
-    triggers, so a retarget swaps only the opening sentence rather than forking
-    the prompt (T3O-5, D10). Split by locating the first sentence boundary: the
-    default prompt opens with exactly one sentence of WHY. */
+/** The rebase mechanics half of `DEFAULT_BOARD_SYNC_PHASE_PROMPT`, shared by both
+    triggers so a retarget swaps only the opening sentence. Relies on the default
+    prompt opening with exactly one sentence of why. */
 function boardSyncPhaseMechanics(): string {
   const marker = "Fetch the base branch";
   const at = DEFAULT_BOARD_SYNC_PHASE_PROMPT.indexOf(marker);
@@ -889,11 +794,8 @@ export function boardCiFixPromptRules(failureCount: number): ReadonlyArray<strin
 }
 
 /**
- * The CI fix agent's step body (T3O-44/57): the stage's fix prompt, every
- * issue the failed pass reported as a numbered list, each failed step's
- * output, the board's guard rails and the completion contract. The board
- * runs the steps; the agent only fixes, so it is told what failed rather
- * than asked to find out.
+ * The CI fix agent's step body. The board runs the steps and the agent only fixes,
+ * so it is told what failed rather than asked to find out.
  */
 export function composeBoardCiFixPrompt(input: {
   readonly prompt: string;

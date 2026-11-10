@@ -3,49 +3,10 @@
 // @effect-diagnostics globalConsole:off - the permissions warning fires from
 // sync spawn paths that have no Effect logger in scope.
 /**
- * T3o gitenv — per-project GitHub token overrides (t3o-34).
- *
- * A hand-edited file at `<stateDir>/gitenv` maps keys to PATs, one `<key>=<pat>`
- * per line (`#` comments and blank lines allowed). A key is a project's
- * absolute folder path, `github.com/<owner>/<repo>` or `github.com/<owner>`
- * (T3O-58); a lookup tries them in that order, the repo coming from the main
- * checkout's `origin` remote. When
- * a subprocess that talks to GitHub is spawned for a directory inside a
- * matched project, `{ GH_TOKEN, GITHUB_TOKEN }` is merged over its inherited
- * environment so `gh` — and https git auth through gh's credential helper —
- * act as that project's identity instead of the machine's ambient login.
- *
- * The token only ever rides in a spawn `env` option: never in argv, never in
- * a shell string, never in T3o's own persisted or logged output.
- * `scrubGitenvTokens` exists so persisted process output can also drop the
- * exact configured values, whatever their shape. Note the containment stops at
- * the agent's process boundary: an agent session gets the token in its
- * environment so its own `gh` authenticates, and — exactly as with any ambient
- * credential the process inherits — an agent that deliberately reads its
- * environment can observe it. The guarantee is that T3o never places the token
- * in a prompt, a tool argument, argv, or a log, not that the value is invisible
- * to the agent.
- *
- * Matching is worktree-aware: the calling cwd is resolved to its main
- * repository root by walking up to the nearest `.git` entry and, for linked
- * worktrees (a `.git` *file* pointing at `<main>/.git/worktrees/<name>`),
- * following it back to the main checkout. Board worktrees live under
- * `<T3 home>/worktrees/`, outside the project directory, so a plain prefix
- * match on cwd would miss every board build.
- *
- * The module is intentionally synchronous and dependency-free so each seam in
- * an upstream file stays a one-line expression. `initGitenv` is called from
- * `resolveServerConfig` (the resolver every `t3` server boot goes through:
- * `start`, `serve`, the desktop bootstrap, `vp run dev` — and, through
- * `resolveCliAuthConfig`, `auth`, `connect` and `project`) and from
- * `ServerConfig.make`, which only `pair` still reaches with a hand-built
- * config; it is idempotent on the same path. Before either runs, or when the
- * file is absent, every lookup returns undefined and behavior is exactly
- * stock.
- *
- * GitHub-only for now: no cross-forge token variable exists. A forge-aware
- * variant can later pick the variable per detected remote without changing
- * the file format.
+ * Per-project GitHub tokens from `<stateDir>/gitenv`. The token only rides a spawn `env`,
+ * never argv, a shell string or logs. Matching resolves worktrees to their main checkout,
+ * since board worktrees live outside the project. Synchronous and dependency-free so each
+ * upstream seam stays one expression; until `initGitenv` runs every lookup is undefined.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -215,15 +176,8 @@ function readEntries(): ReadonlyMap<string, GitenvEntry> | undefined {
 }
 
 /**
- * Resolve a directory to the root of the main checkout of the repository it
- * sits in. Walks up to the nearest `.git`; a directory means we are in the
- * main checkout, a file is a linked worktree/submodule pointer whose gitdir
- * is followed back to the main root. Returns null outside any repository.
- *
- * Deliberately uncached: a cwd can be a board worktree that does not exist
- * yet, or was just reclaimed, and a remembered answer would pin its
- * replacement at the same path to the wrong identity. The walk is a few
- * `stat`s — nothing next to the process spawn it precedes.
+ * Returns null outside any repository. Deliberately uncached: a board worktree path can
+ * be reclaimed and reused, and a remembered answer would pin the replacement wrongly.
  */
 function resolveMainRepositoryRoot(cwd: string): string | null {
   const start = realpathOrSelf(cwd);
@@ -374,13 +328,9 @@ function matchRepo(
 }
 
 /**
- * The matched project's token, or undefined when the file, an entry, or a
- * repository is absent. Tries the folder entry for the main checkout, then
- * `github.com/<owner>/<repo>`, then `github.com/<owner>` for its `origin`.
- * `root` is the main checkout the lookup resolved to, whichever entry matched,
- * so batch keys still never mix projects. Used by the server's own GitHub API
- * transport (T3O-67), which sends the token as a bearer header rather than
- * through a spawn env.
+ * Tries the main checkout's folder entry, then `github.com/<owner>/<repo>`, then
+ * `github.com/<owner>`. `root` is the resolved main checkout whichever entry matched,
+ * so batch keys never mix projects.
  */
 export function gitenvToken(
   cwd: string | undefined,

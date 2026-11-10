@@ -1,10 +1,6 @@
 /**
- * T3o board reducer (T3O-57): folds `board.subscribeBoard` items into the
- * board's bounded snapshot.
- *
- * Cards arrive with thread-derived fields at their "none" resting state (the
- * server maps each board event purely from its payload); the board views
- * overlay them from the thread shells (`withBoardThreadFields`, board.ts).
+ * Cards arrive with thread-derived fields at rest (the server maps each event purely from
+ * its payload); views overlay them via `withBoardThreadFields`.
  */
 import {
   compareBoardStages,
@@ -45,33 +41,9 @@ const STALL_SHELL_FIELDS = ["stalledReason", "retryAt"] as const satisfies Reado
 >;
 
 /**
- * Carry forward the key-optional shell fields a card-carrying delta cannot
- * know: `briefHasImage` (the brief BODY lives in `board_card_bodies`, D8),
- * `planCount` (the plan set is its own slice), the review slice (a fold
- * over the step-completion ledger, which no card-carrying event can see) and
- * the stall slice (step state, which the card aggregate does not carry).
- * Their resting value is the ABSENT key, not `false`/`0`, so "the producer
- * could not see it" and "the producer saw nothing there" stay
- * distinguishable — a brief whose image was deleted sends
- * `briefHasImage: false` and clears the icon, while a drag
- * (`card-reordered` → `card-upserted`) omits the key and changes nothing.
- *
- * Without the review keys here, a card mid-review that the user drags,
- * retitles, or extends the round budget on loses its pips and its
- * `NO CONVERGENCE` flag until the next reconnect — and the "Run round N+1"
- * click is itself one of the triggers, so the feature would blank itself at
- * the exact moment it is used.
- *
- * The stall keys are here for the same reason and cost more when missing: a
- * card parked on a usage limit sits for HOURS, so a drag, a rename or a
- * PR-link refresh in that window is likely. The preserved `stalled` flag
- * would survive it while the three keys did not, and the card face's words
- * would fall back from "waiting to resume 2:50am" to the gave-up phrasing
- * while the detail modal recomputed `boardStallIsWaiting` to false and
- * painted its red "stopped" banner over a card calmly counting down.
- *
- * Returns the same reference when there is nothing to carry, so memoized
- * consumers keep their identity.
+ * Carries key-optional fields a card-carrying delta cannot see (brief image, plan count,
+ * review and stall slices). Their resting value is the absent key, so "could not see it"
+ * stays distinct from "saw nothing": an explicit `false`/`0` clears, an absent key keeps.
  */
 function preserveAbsentShellFields(
   next: BoardCardShell,
@@ -83,11 +55,8 @@ function preserveAbsentShellFields(
   // The review slice rides or rests as a whole: `reviewOutcome` present means
   // the producer saw the ledger, so every key it holds is authoritative.
   const carryReview = next.reviewOutcome === undefined && existing.reviewOutcome !== undefined;
-  // The stall slice rides or rests as a whole too, and only under a card that
-  // is still stalled: `next.stalled` is the flag the caller already preserved,
-  // and `card-stalled` is what deletes the three keys when the stop ends. So
-  // "still stalled, but this delta asserts no reason" is the one shape that
-  // means "the producer could not see step state" — carry.
+  // Carry only while `next.stalled` holds: `card-stalled` deletes the keys when the stop
+  // ends, so "still stalled with no reason" means the producer could not see step state.
   const carryStall =
     next.stalled && next.stalledReason === undefined && existing.stalledReason !== undefined;
   // Which limit holds a queued card (T3O-65) rides only `card-queued` and the
@@ -126,14 +95,9 @@ function preserveAbsentShellFields(
 }
 
 /**
- * Fold one board item from `board.subscribeBoard` into the board snapshot
- * (T3O-57). A snapshot replaces whatever was held; a delta needs one.
- *
- * Deltas at or below `snapshotSequence` are dropped and every applied delta
- * advances it, exactly like the orchestration shell's guard — that cursor is
- * what a reconnect resumes from. `card-threads` is the exception: it is a fresh
- * read of the card's link set rather than an event, stamped with whatever the
- * board head was, so it is always applied and never moves the cursor.
+ * Deltas at or below `snapshotSequence` are dropped and every applied delta advances it; a
+ * reconnect resumes from that cursor. `card-threads` is a fresh read, not an event, so it is
+ * always applied and never moves the cursor.
  */
 export function applyBoardShellStreamItem(
   snapshot: BoardShellSnapshot | null,
@@ -162,13 +126,8 @@ export function applyBoardShellStreamEvent(
   const cards = snapshot.cards;
   switch (event.kind) {
     case "card-upserted": {
-      // `queued` is derived from step state the card aggregate does not carry
-      // (t3o-11, D11), so a card-carrying delta rests it at false. Preserve the
-      // last known value from the card we already hold — exactly as
-      // `withDerivedThreadFields` re-derives `threadState` — so reprioritising
-      // the queue (a drag = `card-reordered` → `card-upserted`) never blanks a
-      // card's queued badge. The authoritative changes arrive via `card-queued`
-      // and the snapshot.
+      // `queued` comes from step state a card-carrying delta cannot see, so keep the held value;
+      // `card-queued` and the snapshot are authoritative.
       const existing = cards.find((entry) => entry.cardId === event.card.cardId);
       const withQueued =
         existing === undefined || existing.queued === event.card.queued
@@ -181,21 +140,14 @@ export function applyBoardShellStreamEvent(
         existing === undefined || existing.stalled === withQueued.stalled
           ? withQueued
           : { ...withQueued, stalled: existing.stalled };
-      // `stepRunning` (the durable "being worked" dot) is derived from the
-      // step-state slice the card aggregate does not carry, so a card-carrying
-      // delta rests it at false — preserve the last known value the same way as
-      // `queued`/`stalled`, so a drag never blanks a working card's dot. The
-      // authoritative flips arrive via `card-queued`/`card-stalled` and the
-      // snapshot.
+      // `stepRunning` also comes from step state; keep the held value so a drag never blanks a
+      // working card's dot. `card-queued`/`card-stalled` and the snapshot are authoritative.
       const withStepRunning =
         existing === undefined || existing.stepRunning === withStalled.stepRunning
           ? withStalled
           : { ...withStalled, stepRunning: existing.stepRunning };
-      // `held` is derived from the same step-state slice, so a card-carrying
-      // delta rests it at false too — preserve the last known value, or a plain
-      // title edit on a parked card would clear the one flag saying it needs a
-      // human. The authoritative flips arrive on `card-stalled` (settle raises
-      // it, select/recover clear it) and the snapshot.
+      // `held` likewise: keep it, or a title edit on a parked card clears the flag saying it
+      // needs a human. `card-stalled` and the snapshot are authoritative.
       const withHeld =
         existing === undefined || existing.held === withStepRunning.held
           ? withStepRunning
@@ -207,15 +159,9 @@ export function applyBoardShellStreamEvent(
         existing === undefined || existing.stepAwaiting === withHeld.stepAwaiting
           ? withHeld
           : { ...withHeld, stepAwaiting: existing.stepAwaiting };
-      // `briefHasImage` and `planCount` are derived from slices the card
-      // aggregate does not carry (the brief BODY, the plan set), so a
-      // card-carrying delta that cannot see them OMITS the key rather than
-      // asserting a false/zero — absent means "unchanged, keep what you have".
-      // A present key is authoritative, including `false`/`0`: clearing an
-      // image out of a brief has to clear the icon.
-      // `stepConflictFix` (T3O-9) comes off the same slice and rests at false on
-      // a card-carrying delta, so preserve it too — otherwise a label edit on a
-      // card whose merge is held by conflicts clears the pill that says so.
+      // An absent `briefHasImage`/`planCount` means "unchanged"; a present key, even
+      // `false`/`0`, is authoritative. `stepConflictFix` rests at false on a card-carrying
+      // delta, so keep it, or a label edit clears the Conflicts pill.
       const withConflictFixOnly =
         existing === undefined || existing.stepConflictFix === withStepAwaiting.stepConflictFix
           ? withStepAwaiting
@@ -235,13 +181,8 @@ export function applyBoardShellStreamEvent(
       return { ...snapshot, cards: nextCards };
     }
     case "card-queued": {
-      // The one authoritative live flip of `queued` (t3o-11): the governor
-      // admitted the card's step (→ false) or held it for a slot (→ true). A
-      // no-op for a card we do not hold (archived / not yet arrived).
-      // Admission also settles the durable `stepRunning` dot: admitted-to-running
-      // (`queued=false, stepRunning=true`) vs held-for-a-slot (`queued=true,
-      // stepRunning=false`). Both flip on this one delta.
-      // …and which limit holds it (T3O-65), authoritative here: absent clears.
+      // The authoritative live flip of `queued`, `stepRunning` and the holding limit (absent
+      // clears). A no-op for a card we do not hold.
       const nextCards = Arr.map(cards, (card) => {
         if (
           card.cardId !== event.cardId ||
@@ -262,41 +203,14 @@ export function applyBoardShellStreamEvent(
       return { ...snapshot, cards: nextCards };
     }
     case "card-stalled": {
-      // The authoritative live flip of `stalled` (t3o-17, D3): recovery gave up
-      // on the card's step (→ true) or a retry / fresh run put it back to work
-      // (→ false). A no-op for a card we do not hold.
-      //
-      // It also carries `queued`, which every emitter sets false: recovered,
-      // freshly selected, settled and awaiting-input are all statuses that are
-      // not `queued`, so this delta is the general clear. It used to be inferred
-      // here — lowered only when `stalled` rose — on the belief that a step
-      // always leaves the queue through `card-step-admitted`. It does not: a
-      // step held for a slot can settle straight out of the queue, and the card
-      // then kept a queue badge no later delta cleared, going on to occupy a
-      // displayed queue position for every card behind it until a reconnect
-      // re-derived the shell from the snapshot.
-      // Recovery/select/settle also settle the durable `stepRunning` dot on this
-      // same delta: recovered-to-running lights it, while stalled / freshly
-      // selected (pending) / settled (terminal) put it out.
-      //
-      // And it carries `stepAwaiting` (t3o-34, D4; T3O-23), which is why a step
-      // PARKING publishes through this delta at all: awaiting-input emitted
-      // nothing to the column card before. Two emitters SET it — the step
-      // parking on a question and a human pausing it — and every other one
-      // clears it, so answering the question or pressing Resume clears the badge
-      // on the same event that re-lights the dot or raises the queue pill.
-      //
-      // And `stepConflictFix` (T3O-9): the fix's own select-step raises it, its
-      // settle lowers it, and the awaiting/recovered emitters carry it through —
-      // so the amber "Conflicts" pill tracks the step rather than an in-memory
-      // server arm that a restart would drop.
+      // The authoritative flip of `stalled`, and the general clear of `queued`: a step held for a
+      // slot can settle straight out of the queue, so `queued` cannot be inferred. It also
+      // settles `stepRunning`, `stepAwaiting` (set only by parking on a question or a pause)
+      // and `stepConflictFix`. A no-op for a card we do not hold.
       const nextCards = Arr.map(cards, (card) => {
         if (card.cardId !== event.cardId) return card;
-        // …and WHY it stalled, plus when it next tries (T3O-22, D10). Both are
-        // key-optional and cleared by their absence HERE: this delta describes
-        // the whole step-derived slice, so an absent key on it is a real "no
-        // longer stalled", where an absent key on a card-carrying delta means
-        // "preserve", as it does for every other step-derived field.
+        // This delta describes the whole step-derived slice, so an absent reason or retry time
+        // here clears it, unlike on a card-carrying delta, where absent means "preserve".
         const nextStalledReason = event.stalledReason;
         const nextRetryAt = event.retryAt;
         if (

@@ -1,14 +1,7 @@
 /**
- * T3o distributed board: the named git and forge operations a central server
- * runs on a card's worker (T3O-64, overview D21).
- *
- * Remote callers never get raw `git`: each operation here has typed inputs, a
- * bounded effect and a test. Every payload names the WORKER's project id, and
- * the worker resolves it to its own checkout — a path the central server sends
- * is only ever a worktree of that checkout, which the worker checks.
- *
- * The same shapes back `BoardWorkspace` on the server, so the local and the
- * remote implementation answer in one vocabulary.
+ * Remote callers never get raw `git`: each operation has typed inputs and a bounded
+ * effect. Payloads name the worker's project id; a path the central server sends is only
+ * ever a worktree of that checkout, which the worker checks.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -451,12 +444,9 @@ export const BOARD_WORKER_GIT_RPC_SCOPES = {
 // ── The RPC (`boardWorker.git.call`) ───────────────────────────────────
 
 /**
- * The one RPC every operation above travels as. The WebSocket RPC group is at
- * the edge of what the type checker will instantiate (see `BoardGatewayCall`),
- * so the operations are not registered one each: `payload` is the operation's
- * payload encoded with its own schema, the answer is its success encoded the
- * same way, and each end codes them with `BOARD_WORKER_GIT_RPCS`. The worker's
- * handler enforces the operation's own scope; the call sits at the lowest.
+ * One RPC for every operation, because the WebSocket RPC group is at the edge of what
+ * the type checker will instantiate. `payload` and the answer are encoded with each
+ * operation's own schema via `BOARD_WORKER_GIT_RPCS`; the worker enforces the scope.
  */
 export const BOARD_WORKER_GIT_CALL_WS_METHODS = {
   call: "boardWorker.git.call",

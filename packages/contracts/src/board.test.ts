@@ -1,9 +1,6 @@
 /**
- * T3o board payload discipline (t3o-04). The shell/detail split (D7) is won
- * or lost here: `BoardCardShell` rides every shell snapshot and every
- * reconnect, so its serialized size is a contract, not an implementation
- * detail. A regression is invisible on localhost and obvious on a phone on
- * cellular — these tests are the tripwire.
+ * `BoardCardShell` rides every snapshot and reconnect, so its serialized size is a contract.
+ * A regression is invisible on localhost and obvious on a phone on cellular.
  */
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
@@ -117,34 +114,9 @@ const utf8Bytes = (value: unknown): number =>
   new TextEncoder().encode(JSON.stringify(value)).length;
 
 /**
- * Measured at 860 bytes on implementation (2026-08-10) for a worst-case
- * shell — review stage with every optional field populated, UUID-length
- * ids, and the title cap fully saturated. t3o-06a added `labelIds` (a bounded
- * array of at most `BOARD_CARD_LABELS_MAX` UUID-length ids), which is ~200
- * bytes at the cap, so the budget rose to 1280 — still a hard ceiling, still
- * scalar-plus-one-small-array, and still linear in card count. If a change
- * pushes past this, it added real bytes to every card on every reconnect,
- * and the right fix is almost never raising the number.
- *
- * T3O-19 raised it to 1344 for the ONE case that argument does not cover: a
- * key-optional field that no ordinary card carries. `scheduledStartAt` costs a
- * scheduled card ~45 bytes and every other card exactly zero (asserted below,
- * and by the linear-growth test, which measures unscheduled cards — the real
- * per-card cost on reconnect, and unchanged). The ceiling moved only for a
- * worst case that cannot actually occur: a card cannot be scheduled and running
- * and queued and mid-review-round at the same instant.
- *
- * T3O-38 raised it to 1408 on the same terms, for the same kind of field. The
- * auto-merge hold's three keys cost a held card ~64 bytes and every other card
- * exactly zero (asserted below, and by the linear-growth test, which measures
- * unheld cards — the real per-card cost on reconnect, and unchanged). The
- * ceiling moved only for a worst case that cannot occur: a card whose merge is
- * held has no live step, so it is not queued, not running and not conflicting.
- *
- * The Automation section (T3O-38, the later card of that number) raised it to
- * 1472 on the same terms: three own toggles and the unattended-run flag cost a
- * card that sets all of them ~85 bytes and an inheriting card exactly zero,
- * replacing the ~37 the auto-start and auto-merge-armed flags used to cost.
+ * A hard ceiling, measured with every optional field populated. Past it, a change added bytes
+ * to every card on every reconnect; raise it only for key-optional fields that cost an
+ * ordinary card zero (the linear-growth test measures those).
  */
 const BOARD_CARD_SHELL_BYTE_BUDGET = 1472;
 
@@ -1153,11 +1125,8 @@ describe("deriveBoardCardThreadState flags a background wait (T3O-20)", () => {
 });
 
 describe("BoardCardStepState decoding (t3o-19 D7)", () => {
-  // The event log is replayed through `Schema.decodeUnknownEffect`, so a
-  // `board.card-step-selected` payload written before t3o-19 — which has no
-  // `stageLabel` KEY at all — must still decode. A required-but-nullable field
-  // would reject it, and D7's "replay equals rehydration" would hold for the
-  // projection tables while silently breaking for the log.
+  // The log replays through `Schema.decodeUnknownEffect`, so old payloads without the
+  // `stageLabel` key must still decode; replay must equal rehydration.
   const legacyPayload = {
     cardId: "card-1",
     stepId: "building",
@@ -1625,12 +1594,8 @@ describe("cards that need a human (boardCardAttention)", () => {
   });
 
   it("paints every reading of stalled amber, never red", () => {
-    // `docs/t3o/status-colours.md` (T3O-22, D10): the vocabulary is green,
-    // blue, violet and amber, and every reading of `stalled` are the same
-    // amber fact — nobody is working on this card. A usage-limit card counting
-    // down to its own automatic resume rendered as an error is the case that
-    // forced this: the loudest colour on the board, contradicting the chip's
-    // own words.
+    // Every reading of `stalled` is amber (docs/t3o/status-colours.md): nobody is working on
+    // this card, even a usage-limit card counting down to its own resume.
     for (const stalledReason of [
       "usage-limit",
       "waiting-retry",
@@ -1663,11 +1628,8 @@ describe("cards that need a human (boardCardAttention)", () => {
   });
 
   it("keeps saying Paused while the card's thread is still winding down", () => {
-    // Unlike the two parked-on-a-human chips, this one is NOT vetoed by the
-    // working dot. Those assert "nobody is working on this card", which a blue
-    // dot flatly contradicts; this asserts only that the human pressed Stop,
-    // which stays true across the beat between the pause landing and the
-    // interrupted turn actually ending.
+    // Not vetoed by the working dot: it asserts only that the human pressed Stop, which holds
+    // between the pause landing and the interrupted turn ending.
     expect(attention({ stepAwaiting: "paused", threadState: "working" })?.reason).toBe("paused");
     expect(attention({ stepAwaiting: "paused", stepRunning: true })?.reason).toBe("paused");
     // …while the two it sits beside stay vetoed.
@@ -1794,11 +1756,8 @@ describe("cards that need a human (boardCardAttention)", () => {
   // T3O-18: the card face showed the blue working dot and an amber "Needs a
   // human" at once, on a planning card whose agent was demonstrably mid-turn.
   it("never says a card needs a human while a thread on it is working", () => {
-    // The step row parked ("the agent stopped without asking anything") and the
-    // thread went back to work without the board hearing a resume signal —
-    // `turn.started` is deliberately not one (t3o-34, D5), and a
-    // `turn.completed` for the PREVIOUS turn can park a step a human has
-    // already resumed. The row keeps saying `stopped` for the rest of the run.
+    // `turn.started` is not a resume signal, and a stale `turn.completed` can park a resumed
+    // step, so a working thread outranks the parked row.
     expect(attention({ stepAwaiting: "stopped", threadState: "working" })).toBeNull();
     // Same lie in the other reason: a prose question the agent has since moved
     // past is not something to answer.
@@ -2397,13 +2356,8 @@ describe("isBoardCardBaseRetargeted (T3O-5, D14)", () => {
   });
 
   it("an unpinned card in flight follows the project default when the project MOVES it", () => {
-    // The unpinned rung is resolved live, the cut point is a snapshot, so
-    // moving a project's default retargets every unpinned card that already
-    // has a branch — deliberate (D2), and the reason the picker stores null for
-    // the default rather than its name. Locked here because both readings look
-    // reasonable in isolation: without this, "follow the default" could be
-    // quietly narrowed to "the default as of provisioning" and nothing would
-    // fail.
+    // The unpinned rung resolves live, so moving a project's default retargets unpinned cards
+    // that already have a branch. Deliberate: the picker stores null for "the default".
     expect(
       isBoardCardBaseRetargeted({
         card: { parentCardId: null, baseBranch: null, worktree: worktree("main") },
@@ -2465,11 +2419,8 @@ describe("a live merge conflict fix (isBoardConflictFixLive, T3O-9)", () => {
 
   it("is not live once the step settles — or stalls, or a human pauses it", () => {
     for (const status of NOT_LIVE_STATUSES) {
-      // `stalled` is excluded deliberately: it already draws the louder
-      // "Stalled" chip, and two chips claiming the same card is exactly what
-      // `boardCardAttention`'s ranking exists to prevent. `paused` (T3O-23) is
-      // excluded for the same reason, and its chip is ranked ahead of every
-      // other one.
+      // `stalled` and `paused` draw their own louder chips, and two chips on one card is what
+      // `boardCardAttention`'s ranking prevents.
       expect(isBoardConflictFixLive(row({ status })), status).toBe(false);
     }
   });
@@ -2496,11 +2447,8 @@ describe("stamping a selected step's label (boardSelectedStepLabel, T3O-9)", () 
   });
 
   it("takes the reserved label off a plan the reactor did not arm", () => {
-    // The label is the fix's whole identity downstream — the `card-stalled`
-    // delta is projected from one event and cannot reach board state to ask
-    // what role the step's stage plays — so an executor naming its step
-    // `Conflicts` would otherwise light the pill and disable Merge on a card
-    // whose merge is not held.
+    // The label is the fix's whole identity downstream (`card-stalled` cannot ask the stage's
+    // role), so a step merely named `Conflicts` must not light the pill.
     const stamped = boardSelectedStepLabel(null, BOARD_CONFLICT_STEP_LABEL);
     expect(stamped).toBe(null);
     expect(isBoardConflictFixLive({ stepLabel: stamped, status: "running" })).toBe(false);

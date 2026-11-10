@@ -1,15 +1,7 @@
 /**
- * T3o board commands — client operations (t3o-03 commands, t3o-04 helpers).
- *
- * Board commands ride the board's own `board.dispatchCommand` RPC (T3O-57),
- * decided by the board's engine. Each helper mirrors the upstream
- * `operations/commands.ts` shape — caller supplies the domain fields,
- * `commandId` / `createdAt` are generated when absent.
- *
- * `orderKey` values are computed client-side with the `threadSort.ts`
- * fractional helpers (see `planBoardCardReorder` in `state/board.ts`) — the
- * server stores what the client computed, following the `pinOrderKey`
- * precedent committed to on `BoardCard.orderKey`.
+ * Board commands ride `board.dispatchCommand`; `commandId` and `createdAt` are generated
+ * when absent. `orderKey` values are computed client-side (`planBoardCardReorder`) and the
+ * server stores what the client computed.
  */
 import {
   BOARD_WS_METHODS,
@@ -121,13 +113,8 @@ function dispatch(command: BoardClientCommand) {
   return request(BOARD_WS_METHODS.dispatchCommand, command);
 }
 
-/**
- * The two card→pull-request ACTIONS (t3o card↔PR spec). Unlike everything else
- * in this module these are not board commands: they are their own board RPCs,
- * because each returns a result the caller renders — and because a
- * refresh fires whenever a card is opened, which has no business writing to
- * the durable event log every time.
- */
+/** Not board commands: their own RPCs, because each returns a result the caller renders
+    and a refresh on every card open must not write to the event log. */
 export const refreshBoardCardPullRequest = (input: {
   readonly cardId: BoardCardId;
   /** T3o (T3O-48): a human's "Check again". Omitted by the automatic triggers,

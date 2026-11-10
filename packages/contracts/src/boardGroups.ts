@@ -1,9 +1,6 @@
 /**
- * General grouping (T3O-27, D12): a card with children is a GROUP, a card
- * without is a LEAF, and only leaves run the pipeline. Groups nest to any
- * depth. A group's stage is derived from its children, never set by hand.
- *
- * Every rule the decider, the reactor and the clients share lives here, so a
+ * A card with children is a group, one without is a leaf, and only leaves run the
+ * pipeline. Every rule the decider, the reactor and the clients share lives here, so a
  * refusal and the control that would trigger it can never disagree.
  */
 import {
@@ -70,7 +67,6 @@ export function boardCardGroupOf(board: BoardState, card: BoardCard): BoardCardG
   });
 }
 
-/** Whether a card is a group. */
 function isBoardCardGroup(board: BoardState, card: BoardCard): boolean {
   return boardCardGroupOf(board, card) !== null;
 }
@@ -220,13 +216,9 @@ export function defaultBoardCardGroup(
 }
 
 /**
- * The stage an emptied group reverts to as an ordinary card: the stage it had
- * before it became a group, capped at Sprint (the stage before the plan
- * role) so a card that lost its children never claims a plan or a build it
- * no longer has. A deferred group stays deferred. It walks the card's own
- * project pipeline (T3O-43), so it never lands in a stage that project
- * removed; a stage the project no longer uses falls back to the nearest one
- * before it.
+ * The stage an emptied group reverts to: its pre-group stage, capped at Sprint so it never
+ * claims a plan or build it no longer has. Walks the card's own project pipeline, falling
+ * back to the nearest earlier stage the project still uses. A deferred group stays deferred.
  */
 export function boardGroupRevertStage(
   board: BoardState,
@@ -252,18 +244,9 @@ export function boardGroupRevertStage(
 }
 
 /**
- * A group's derived stage (D12):
- *
- * - **Done** when every active child (not Deferred) is done. An `own` group
- *   first sits in its integration review — the stage after build — until
- *   `integrated` is set; once a human has walked it further along that lane
- *   it stays where they put it.
- * - **Building** while any active child is at the build stage or later, and
- *   while a started group still sits there.
- * - Otherwise `placed`.
- *
- * A child group contributes its own derived stage, so a whole subtree
- * resolves in one call regardless of what its stored stages say.
+ * Done when every active (not Deferred) child is done, after an `own` group's integration
+ * review; Building while any active child is at build or later; otherwise `placed`. A child
+ * group contributes its own derived stage, so stored stages of a subtree are never read.
  */
 export function deriveBoardGroupStage(board: BoardState, card: BoardCard): BoardStageId {
   return deriveWithMemo(board, card, new Map());
@@ -375,11 +358,9 @@ export function isBoardCardPlanned(board: BoardState, cardId: BoardCardId): bool
 }
 
 /**
- * The split recommendation's fallback rules (T3O-31), for a field the agent
- * omitted: every child planned → auto-build on with its own branch (today's
- * sub-board); otherwise an epic breakdown → auto-build off, inherit. A card
- * that already merges into an ancestor's integration branch prefers inherit,
- * so a nested split does not stack a second integration review.
+ * Fallback for an omitted field: every child planned means auto-build on with its own
+ * branch, otherwise auto-build off and inherit. A card already merging into an ancestor's
+ * integration branch prefers inherit, so nested splits do not stack integration reviews.
  */
 export function boardSplitRecommendationFallback(input: {
   readonly plans: ReadonlyArray<Pick<BoardPlan, "planned">>;

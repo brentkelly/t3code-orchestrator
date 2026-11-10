@@ -1,21 +1,7 @@
 /**
- * T3o distributed board: the remote thread gateway and the MCP relay (T3O-63,
- * overview D3/D9/D19).
- *
- * A worker runs T3o, so the central server does not drive its threads through
- * upstream's client RPCs. Instead the worker exposes its own local thread
- * gateway 1:1 as `boardWorker.gateway.*`, and the central server's
- * `RemoteThreadGateway` is a thin proxy over them. Threads are still created
- * through upstream commands on the worker, so they stay ordinary threads.
- *
- * The MCP relay runs the other way over the same connection: a board tool an
- * agent calls on the worker, for a thread the central server placed there, is
- * handed to the central server on the stream it holds open
- * (`subscribeMcpRelay`) and answered with `mcpRelayRespond`. The worker never
- * dials out.
- *
- * The wire shapes mirror `apps/server/src/board/ThreadGateway.ts`; that file
- * stays the source of the board's own vocabulary.
+ * A worker exposes its local thread gateway as `boardWorker.gateway.*`, and the central
+ * server's `RemoteThreadGateway` proxies it. The MCP relay runs the other way on the same
+ * connection, so the worker never dials out. Shapes mirror `board/ThreadGateway.ts`.
  */
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
@@ -277,11 +263,8 @@ export type BoardMcpRelayResponse = typeof BoardMcpRelayResponse.Type;
 // ── Attachment staging ─────────────────────────────────────────────────
 
 /**
- * Stage a card's brief attachments on a worker, under
- * `<stateDir>/board/attachments/<cardId>`. Two-phase so unchanged files never
- * cross the wire: a call with hashes only answers which files the worker
- * lacks, and a second carries just those. Files on the worker that the list
- * does not name are removed.
+ * Two-phase so unchanged files never cross the wire: a hashes-only call answers which
+ * files the worker lacks, the second carries just those. Unlisted files are removed.
  */
 export const BoardStageAttachmentsInput = Schema.Struct({
   cardId: TrimmedNonEmptyString,
@@ -458,11 +441,9 @@ export type BoardWorkerCiProgress = typeof BoardWorkerCiProgress.Type;
 export const BOARD_CI_LOG_CHUNK_BYTES = 1024 * 1024;
 
 /**
- * One item of a CI step log read (T3O-60): text from a byte offset, the end
- * of the read with the file's size, or why there is no log to read. `offset`
- * and `size` are bytes of `<n>.log`; `text` is UTF-8 decoded, so a character
- * split across reads arrives whole in the later chunk. `end` is the byte just
- * past the chunk: an invalid byte decodes to U+FFFD, so `text` can't tell it.
+ * `offset`, `size` and `end` are bytes of `<n>.log`; `text` is UTF-8 decoded, so a
+ * character split across reads arrives whole in the later chunk. `end` is needed because an
+ * invalid byte decodes to U+FFFD and `text` cannot tell its length.
  */
 export const BoardCiLogItem = Schema.Union([
   Schema.TaggedStruct("chunk", {

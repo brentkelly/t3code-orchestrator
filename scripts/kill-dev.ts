@@ -1,16 +1,8 @@
 #!/usr/bin/env node
 /**
- * `npm run kill` — free this checkout's dev ports.
- *
- * Resolves the same ports `npm run dev` would prefer (see `dev-runner.ts`:
- * `T3CODE_PORT` for the backend, otherwise `13773`/`5733` plus this
- * worktree's offset), finds whatever is listening on them, and terminates it
- * together with the rest of its dev process tree — the `vp run` supervisor
- * above it and the Vite/backend children below — so a half-killed run cannot
- * respawn onto the port a second later.
- *
- * Ports may be given explicitly (`npm run kill -- 3773 5733`), which skips
- * port resolution entirely.
+ * `npm run kill`: free this checkout's dev ports (the ports `dev-runner.ts` would pick),
+ * killing the whole dev process tree so a supervisor cannot respawn onto the port.
+ * Explicit ports (`npm run kill -- 3773 5733`) skip port resolution.
  */
 // @effect-diagnostics nodeBuiltinImport:off - signalling a pid has no Effect platform service.
 import * as NodeProcess from "node:process";
@@ -36,11 +28,8 @@ const TERMINATE_GRACE = Duration.seconds(5);
 const TERMINATE_POLL_INTERVAL = Duration.millis(250);
 
 /**
- * A process group whose leader is one of these is a shell session, not a dev
- * run: `npm run dev` normally gets a process group of its own (job control),
- * but a shell started without it leaves its children sharing the shell's group.
- * Killing that group would kill the terminal. `sh -c <cmd>` is exempt — it is a
- * wrapper npm itself inserts, not a session.
+ * A group led by a shell is a session, not a dev run; killing it would kill the terminal.
+ * `sh -c` is exempt because npm inserts it as a wrapper.
  */
 const SESSION_LEADER_PATTERN =
   /^-?(?:[\w./\\-]*[\\/])?(bash|zsh|sh|dash|ksh|fish|login|sshd|systemd|tmux|screen|init)\b/;
@@ -180,16 +169,9 @@ export function ownAncestry(table: ReadonlyArray<ProcessEntry>, selfPid: number)
 }
 
 /**
- * The listeners plus the rest of their dev run.
- *
- * `npm run dev` and everything under it — the `sh -c` wrapper, `dev-runner`,
- * `vp run`, the `node --watch` supervisor, the server itself — share one
- * process group, so the group is the unit to kill. Killing only the listener
- * leaves `node --watch` alive, and it restarts the server onto the same port
- * within a second. Where the group cannot be trusted (it is this script's own,
- * or it is led by a shell session) we fall back to the listener and its
- * descendants, and the caller reports the port as still held if that was not
- * enough.
+ * The whole dev run shares one process group, and killing only the listener lets
+ * `node --watch` restart the server onto the port. Where the group cannot be trusted (our
+ * own, or a shell's) fall back to the listener and its descendants.
  */
 export function selectKillTargets({
   table,

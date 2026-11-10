@@ -1,12 +1,7 @@
 /**
- * T3o board events (T3O-56).
- *
- * Board events are not orchestration events: they live in the board's own log
- * (`boards.board_events`) with their own sequence, and upstream's
- * `OrchestrationEvent` union knows nothing of them. Their envelope mirrors
- * upstream's event base fields, with the board's own aggregates.
- *
- * Its own file so `board.ts` (the members) stays free of the envelope.
+ * Board events live in the board's own log (`boards.board_events`) with their own
+ * sequence; upstream's `OrchestrationEvent` union knows nothing of them. The envelope
+ * mirrors upstream's event base fields.
  */
 import * as Schema from "effect/Schema";
 

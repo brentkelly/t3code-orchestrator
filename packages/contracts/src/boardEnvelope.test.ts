@@ -1,10 +1,3 @@
-/**
- * T3o prompt envelope (D5) — the system-owned wrapper the settings redesign
- * split out of the editable prompts. These lock the split's contract: the
- * completion / question / deliverable / move-guard protocol survives ANY edit
- * to the editable prompt, the `plan` role carries the `board_propose_plans`
- * deliverable, and the editable defaults carry intent only.
- */
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -747,11 +740,7 @@ describe("effective stage role (plan)", () => {
   });
 });
 
-// ── The base-branch orientation line (T3O-5, D9) ────────────────────────────
-// The card's base is stated on EVERY stage, in one line, which is what answers
-// the brief's plan/build/review requirements at once — Code review most of all,
-// whose shipped prompt already says "opening one against its base ref" and
-// until now gave the agent nothing resolvable to read that against.
+// The card's base is stated on every stage, in one line.
 
 describe("boardStepPreamble base branch (T3O-5, D9)", () => {
   const preambleFor = (input: {

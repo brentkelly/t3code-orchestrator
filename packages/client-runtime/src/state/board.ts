@@ -1,24 +1,7 @@
 /**
- * T3o board client state (D17: lives in client-runtime so a future mobile
- * board is a UI project, not a rewrite).
- *
- * Three concerns share this module:
- *
- * - The board reducer (`boardReducer.ts`) and subscription
- *   (`boardSubscription.ts`) over `board.subscribeBoard` (T3O-57),
- *   re-exported here. Cards arrive with
- *   thread-derived fields at their "none" resting state; the views overlay
- *   them from the thread shells (`withBoardThreadFields`).
- * - Atom factories: card lists grouped by project and stage (sorted by
- *   `orderKey`, with thread-derived fields overlaid live so a thread
- *   starting or stopping updates its card without any card event), a
- *   card-detail subscription keyed by card, and dispatch helpers for every
- *   board command.
- * - Fractional-order planning for drag/reorder, reusing the `threadSort.ts`
- *   pin-order helpers — `BoardCard.orderKey` commits to that split (client
- *   computes, server stores); this module does not reimplement them.
- *
- * Exported to apps through `state/shell.ts`.
+ * Board client state, in client-runtime so a mobile board can reuse it. Cards arrive with
+ * thread-derived fields at rest; views overlay them from thread shells
+ * (`withBoardThreadFields`). Order keys reuse the `threadSort.ts` pin-order helpers.
  */
 import {
   BOARD_WS_METHODS,
@@ -217,11 +200,8 @@ export type {
 
 type ThreadShellLookup = (threadId: ThreadId) => OrchestrationV2ThreadShell | undefined;
 
-/** Every live-linked thread id of a card (t3o-18, D7). `boardCardThreads` rides
-    the shell snapshot with one entry per live link; a client that has not
-    received it yet (or a card with no links) falls back to `activeThreadId`, so
-    the aggregate degrades to exactly the pre-t3o-18 behaviour rather than to
-    nothing. */
+/** Every live-linked thread id of a card. Falls back to `activeThreadId` when
+    `boardCardThreads` has not arrived, so the aggregate degrades rather than empties. */
 function liveCardThreadIds(
   card: BoardCardShell,
   cardThreads: ReadonlyArray<BoardCardThreadShell> | undefined,
@@ -233,13 +213,9 @@ function liveCardThreadIds(
   return card.activeThreadId === null ? [] : [card.activeThreadId];
 }
 
-/** Thread-derived fields recomputed from the current thread shells; returns
-    the same card reference when nothing changed so memoized consumers keep
-    their identity.
-
-    Aggregated across EVERY live-linked thread (t3o-18, D7), matching the
-    server's snapshot enrichment exactly — the two must agree, or the badge would
-    flicker between a snapshot and the next delta. */
+/** Aggregated across every live-linked thread, matching the server's snapshot enrichment
+    exactly, or the badge flickers between a snapshot and the next delta. Returns the same
+    card reference when nothing changed. */
 function withDerivedThreadFields(
   card: BoardCardShell,
   threadById: ThreadShellLookup,
@@ -276,11 +252,9 @@ export function compareBoardCardShells(left: BoardCardShell, right: BoardCardShe
   return compare(left.orderKey, right.orderKey) || compare(left.cardId, right.cardId);
 }
 
-/** Order key for a card appended at the bottom of a column. Scans for the
-    maximum existing key rather than trusting input order, so callers may
-    pass the column in any order (snapshot order is createdAt, not
-    orderKey). Falls back to the open-bounds midpoint when the column is
-    empty or its bottom key is corrupt. */
+/** Scans for the maximum key rather than trusting input order (snapshot order is
+    createdAt). Falls back to the open-bounds midpoint when the column is empty or its
+    bottom key is corrupt. */
 export function boardColumnAppendOrderKey(
   column: ReadonlyArray<Pick<BoardCardShell, "orderKey">>,
 ): string {
@@ -292,12 +266,9 @@ export function boardColumnAppendOrderKey(
 }
 
 /**
- * Assignments realizing a drop within (or into) a stage column — a thin
- * card-shaped veneer over `planPinnedReorder` (single write to the moved
- * card in the common case; whole-column key rewrite only when existing keys
- * are corrupt). Callers dispatch `board.card.reorder` per assignment, or
- * `board.card.move` with the moved card's key when the drop crossed
- * stages.
+ * Assignments realizing a drop within or into a stage column, over `planPinnedReorder`.
+ * Callers dispatch `board.card.reorder` per assignment, or `board.card.move` with the moved
+ * card's key when the drop crossed stages.
  */
 export function planBoardCardReorder(input: {
   /** Card ids in the desired visual order (after the move). */
@@ -333,11 +304,9 @@ function pushColumn(
 }
 
 /**
- * The board snapshot with each card's thread-derived fields overlaid from the
- * thread shells the client already holds (t3o-18, D7): the server leaves them
- * at rest, so a thread starting or stopping updates its card with no board
- * delta. Returns the same snapshot when no card changed, so memoized consumers
- * keep their identity.
+ * The server leaves thread-derived fields at rest, so overlaying them here lets a thread
+ * starting or stopping update its card with no board delta. Returns the same snapshot when
+ * no card changed.
  */
 export function withBoardThreadFields(
   board: BoardShellSnapshot,
@@ -410,12 +379,9 @@ export interface BoardCardPlacement {
 }
 
 /**
- * Columns with optimistic placements laid over the live shells. Pure and
- * idempotent — re-applying a placement the server has since confirmed
- * changes nothing, and a placement for a card that left the board is
- * ignored — so callers only prune placements to bound the list (see
- * `isBoardCardPlacementSettled`). Returns the input columns object when no
- * placement changes anything, so memoized consumers keep their identity.
+ * Pure and idempotent: a confirmed placement changes nothing and one for a departed card is
+ * ignored, so callers prune only to bound the list (`isBoardCardPlacementSettled`). Returns
+ * the input columns object when no placement changes anything.
  */
 export function applyBoardCardPlacements(
   columns: BoardStageColumns,
@@ -480,31 +446,10 @@ export interface BoardQueueSlot {
 }
 
 /**
- * Queue view of every card holding for a concurrency slot (D11), across the
- * WHOLE environment — every project, and every stage that runs build-mode
- * steps, not just Building.
- *
- * Mirrors the governor's own ordering (`orderBoardQueue`, apps/server): later
- * stage first, then the cards' drag order. That is what makes the number
- * honest — an earlier per-project reading of one Building column numbered a
- * card `#1` while another project's review step was ahead of it in the only
- * queue that exists.
- *
- * ONE DIVERGENCE, deliberately: the server breaks a stage tie by admitting an
- * already-started step before an unstarted one. That needs step completions,
- * which are card detail, and it only separates two queued steps on the same
- * stage where one is a re-run. Buying it would cost a field on every shell, so
- * the client orders by drag order alone there.
- *
- * Derived strictly from the `queued` flag on the shells, so a board with
- * nothing queued yields an empty map and costs a single pass.
- *
- * A card holding a FUTURE scheduled start is excluded (T3O-19, D9), and that is
- * load-bearing rather than cosmetic. A card already `queued` when its schedule
- * is set keeps that step status — nothing transitions it back to `pending` —
- * while the server's gate has stopped offering it a slot. Left in, it would go
- * on counting against cards genuinely waiting for an agent, and every other
- * card's position number would be wrong.
+ * Mirrors the server's `orderBoardQueue` across the whole environment: later stage first,
+ * then drag order. It skips the server's started-before-unstarted tiebreak, which needs card
+ * detail. A future scheduled start is excluded: such a card stays `queued` while the server
+ * no longer offers it a slot, and counting it would misnumber every card behind it.
  */
 export function boardBuildQueue(
   cards: ReadonlyArray<BoardCardShell>,
@@ -557,15 +502,9 @@ export function boardRunningStepCount(cards: ReadonlyArray<BoardCardShell>): num
 }
 
 /**
- * The reorder that moves a queued card to the front of the build queue
- * (t3o-33), or null when there is no such move.
- *
- * Null in two cases, and the second is the point: the card is already first,
- * or reordering CANNOT improve its position. Drag order is the governor's last
- * tiebreak, so a card queued behind one on a later stage does not overtake it
- * however low its key goes — and a button that visibly does nothing is worse
- * than an absent one. The check is the derivation itself, run once against the
- * projected key, so it can never drift from what the queue will actually show.
+ * Null when the card is already first or reordering cannot improve its position (drag order
+ * is only the last tiebreak). Checked by running the derivation against the projected key,
+ * so it cannot drift from what the queue will show.
  */
 export function planBoardQueueMoveToFront(input: {
   readonly cards: ReadonlyArray<BoardCardShell>;
@@ -634,14 +573,9 @@ export function createBoardEnvironmentAtoms<R, ER>(
   );
 
   /**
-   * Live card→thread links and their cached todo summaries (t3o-18, D3), keyed
-   * by card id. Rides the board snapshot once and is kept current by the
-   * `card-threads` delta, so this is a cheap projection over held state, not a
-   * subscription — and `BoardCardShell` still carries no todo field.
-   *
-   * Empty until the first snapshot. A card with no entry has no live-linked
-   * thread; a thread with no todo fields is linked but has never emitted a
-   * `turn.plan.updated` (D14: the cache fills forward only).
+   * Live card-thread links and cached todo summaries, keyed by card id; a projection over the
+   * snapshot kept current by `card-threads`, not a subscription. A thread with no todo fields
+   * is linked but has never emitted `turn.plan.updated` (the cache fills forward only).
    */
   const EMPTY_CARD_THREADS: ReadonlyMap<
     BoardCardId,
