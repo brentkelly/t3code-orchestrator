@@ -26,7 +26,7 @@ describe("boardQueueInfo", () => {
   it("drops the tasks-ahead clause at the front of the queue", () => {
     const info = boardQueueInfo({ slot: slot(1, 2), running: 3, cap: 3 })!;
     expect(info.label).toBe("Next");
-    expect(info.headline).toBe("Queued — starts next");
+    expect(info.headline).toBe("Queued: starts next");
     expect(info.detail).toBe("3 of 3 agents busy. It starts on its own when an agent frees up.");
   });
 

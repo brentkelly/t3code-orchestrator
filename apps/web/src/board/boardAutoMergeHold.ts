@@ -80,7 +80,7 @@ export function boardAutoMergePill(input: {
   const elapsed = boardAutoMergeElapsedLabel(input.heldSince, input.nowMs);
   return {
     label: elapsed === "" ? "Merge held" : `Merge held · ${elapsed}`,
-    tooltip: "The forge refused the merge. The board is retrying — nothing is needed from you.",
+    tooltip: "The forge refused the merge. The board is retrying, so nothing is needed from you.",
     icon: "clock",
   };
 }

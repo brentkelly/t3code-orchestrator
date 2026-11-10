@@ -958,7 +958,7 @@ function EnvironmentBoard({
         if (slot !== undefined) {
           toastManager.add({
             type: "success",
-            title: slot.startsNext ? "Queued — starts next" : `Queued at position ${slot.position}`,
+            title: slot.startsNext ? "Queued: starts next" : `Queued at position ${slot.position}`,
             description: `${source.card.key} ${
               slot.startsNext ? "is first in the build queue." : "joins the build queue."
             }`,
@@ -1551,7 +1551,7 @@ function EnvironmentBoard({
               }
               size="xs"
               variant={showStalledOnly ? "secondary" : "ghost"}
-              title="Show only stalled cards — recovery gave up and a human is needed"
+              title="Show only stalled cards: recovery gave up and a human is needed"
             >
               <TriangleAlertIcon />
               {showStalledOnly ? "Stalled only" : `Stalled ${stalledCount}`}

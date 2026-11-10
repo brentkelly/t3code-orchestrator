@@ -115,7 +115,7 @@ export function BoardPickerSearchBody({
             ))}
             {hidden > 0 ? (
               <span className="px-1.5 py-1 text-[12.5px] text-muted-foreground">
-                {hidden} more — keep typing to narrow.
+                {hidden} more. Keep typing to narrow.
               </span>
             ) : null}
           </>

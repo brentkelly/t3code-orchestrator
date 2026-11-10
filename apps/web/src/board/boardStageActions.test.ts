@@ -313,7 +313,7 @@ describe("boardStageSecondaryActions (t3o-07, D8)", () => {
     expect(boardStageSecondaryActions(stages, BOARD_SEED_STAGE_IDS.building, held)).toEqual([
       {
         kind: "submit-no-review",
-        label: "Submit for merge — no review",
+        label: "Submit for merge (no review)",
         detail: "Opens the PR as normal, straight to Ready for merge.",
       },
     ]);
@@ -374,7 +374,7 @@ describe("boardStageSecondaryActions (t3o-07, D8)", () => {
     expect(boardStageSecondaryActions(legacyStages, BOARD_SEED_STAGE_IDS.building, held)).toEqual([
       {
         kind: "submit-no-review",
-        label: "Submit for merge — no review",
+        label: "Submit for merge (no review)",
         detail: "Opens the PR as normal, straight to Ready for merge.",
       },
     ]);

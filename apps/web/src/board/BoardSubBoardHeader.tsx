@@ -103,7 +103,7 @@ export function BoardSubBoardHeader({
       <BoardHint
         label={
           group?.target === "own"
-            ? `Integration branch — every card here builds on ${target}`
+            ? `Integration branch: every card here builds on ${target}`
             : `Cards here merge into ${target}`
         }
       >
@@ -117,7 +117,7 @@ export function BoardSubBoardHeader({
       )}
       {pullRequest !== null && pullRequest.state === "open" ? (
         <BoardHint
-          label={`${parentShell.key}'s integration pull request is open — ${pullRequest.url}`}
+          label={`${parentShell.key}'s integration pull request is open: ${pullRequest.url}`}
         >
           <span className="inline-flex shrink-0 items-center gap-1 rounded bg-info/12 px-1.5 py-0.5 text-[11px] font-medium text-info-foreground">
             <PullRequestGlyph.pullRequest className="size-3" />

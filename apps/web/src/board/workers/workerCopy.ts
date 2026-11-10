@@ -280,7 +280,7 @@ export function setupFailureCopy(input: {
       };
     case "worker-offline":
       return {
-        cell: "Interrupted — worker offline",
+        cell: "Interrupted: worker offline",
         detail: `${input.worker} went offline during the clone. Retry once it's back.`,
       };
     case "unknown":

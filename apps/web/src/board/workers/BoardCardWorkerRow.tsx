@@ -121,7 +121,7 @@ export function BoardCardWorkerRow(props: {
           <BoardWorkerPicker
             choices={field.choices}
             className="h-6 flex-1 text-[11.5px]"
-            followLabel={`Follow default — ${boardWorkerLabel(workers.defaultWorkerId, workers)}`}
+            followLabel={`Follow default (${boardWorkerLabel(workers.defaultWorkerId, workers)})`}
             onSelect={select}
             onSetUp={field.setUp}
             pinnedWorkerId={card.pinnedWorkerId}

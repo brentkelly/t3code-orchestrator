@@ -205,15 +205,15 @@ export function boardScheduleCopy(kind: BoardScheduleKind, stageLabel: string): 
         // The promise the gate actually keeps: plan-mode steps are never
         // withheld, so a card still in Backlog or Planning needs a human to
         // walk it to Ready before a scheduled time can do anything.
-        note: "No effect unless the card has reached Ready or Building by then — planning and approval still need you.",
-        clearLabel: "Clear — build when free",
+        note: "No effect unless the card has reached Ready or Building by then; planning and approval still need you.",
+        clearLabel: "Clear (build when free)",
         emptyTip: "Schedule the build to start",
       };
     case "waiting":
       return {
         title: `Start ${stageLabel} at`,
         note: `Holds ${stageLabel.toLowerCase()} until then. It starts on its own once the time passes and an agent is free.`,
-        clearLabel: "Clear — start when free",
+        clearLabel: "Clear (start when free)",
         emptyTip: `Schedule ${stageLabel.toLowerCase()} to start`,
       };
     case "live":
@@ -223,14 +223,14 @@ export function boardScheduleCopy(kind: BoardScheduleKind, stageLabel: string): 
         // immediately, and that reversibility is what makes a confirm
         // unnecessary — but only if the copy says what the click does.
         note: "Stops the agent now and picks it up again at that time.",
-        clearLabel: "Clear — keep working",
+        clearLabel: "Clear (keep working)",
         emptyTip: "Pause this card and resume it later",
       };
     case "parked":
       return {
         title: `Resume ${stageLabel} at`,
         note: `Picks ${stageLabel.toLowerCase()} up where it stopped.`,
-        clearLabel: "Clear — resume now",
+        clearLabel: "Clear (resume now)",
         emptyTip: `Schedule ${stageLabel.toLowerCase()} to resume`,
       };
   }
@@ -256,5 +256,5 @@ export function boardScheduleSetTip(input: {
       : input.kind === "waiting"
         ? `Starts ${input.stageLabel.toLowerCase()}`
         : `Resumes ${input.stageLabel.toLowerCase()}`;
-  return `${what} ${when} — click to change`;
+  return `${what} ${when}. Click to change`;
 }

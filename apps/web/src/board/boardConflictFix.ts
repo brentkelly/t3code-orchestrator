@@ -54,7 +54,7 @@ export function boardConflictFix(input: {
     return {
       label: "Conflicts",
       tooltip:
-        "The merge hit conflicts. An agent picks it up when one frees up — nothing is needed from you.",
+        "The merge hit conflicts. An agent picks it up when one frees up, so nothing is needed from you.",
       headline: `Waiting for an agent to resolve conflicts against ${base}`,
       // Names the wait and stops there. The queued case also draws the
       // build-queue banner (t3o-33) a few lines below in the wide layout, and
@@ -67,7 +67,7 @@ export function boardConflictFix(input: {
   }
   return {
     label: "Conflicts",
-    tooltip: "The merge hit conflicts. A thread is resolving them — nothing is needed from you.",
+    tooltip: "The merge hit conflicts. A thread is resolving them, so nothing is needed from you.",
     headline: `Resolving conflicts against ${base}`,
     detail: "The merge holds until the thread finishes.",
     mergeDisabledReason: "Resolving conflicts…",
@@ -81,7 +81,7 @@ function boardChecksFix(queued: boolean): BoardConflictFixInfo {
     ? {
         label: "Fixing CI",
         tooltip:
-          "The pull request's checks failed. An agent picks it up when one frees up — nothing is needed from you.",
+          "The pull request's checks failed. An agent picks it up when one frees up, so nothing is needed from you.",
         headline: "Waiting for an agent to fix the failing checks",
         detail: "The merge holds until an agent is free, the fix is pushed and CI passes.",
         mergeDisabledReason: "Fixing CI…",
@@ -89,7 +89,7 @@ function boardChecksFix(queued: boolean): BoardConflictFixInfo {
     : {
         label: "Fixing CI",
         tooltip:
-          "The pull request's checks failed. A thread is fixing them — nothing is needed from you.",
+          "The pull request's checks failed. A thread is fixing them, so nothing is needed from you.",
         headline: "Fixing the failing checks",
         detail: "The merge holds until the fix is pushed and CI passes.",
         mergeDisabledReason: "Fixing CI…",

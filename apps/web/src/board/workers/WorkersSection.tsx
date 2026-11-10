@@ -298,7 +298,7 @@ function WorkerRow(props: {
         )}
       </div>
       <span className="font-mono text-[11.5px] text-muted-foreground max-md:hidden">
-        {props.version ?? "—"}
+        {props.version ?? "Unknown"}
       </span>
       <span className="text-[12px] text-muted-foreground max-md:hidden">{props.lastSeen}</span>
       <div className="flex justify-end">{props.actions}</div>
@@ -435,7 +435,7 @@ function RemoveWorkerDialog(props: {
                 cards={current.result.byHand}
               />
               <span className="text-muted-foreground">
-                These cards hold and show “Worker removed — move this card” until you move them.
+                These cards hold and show “Worker removed: move this card” until you move them.
                 {stopsAStep ? " The running step is stopped." : ""}
               </span>
             </>

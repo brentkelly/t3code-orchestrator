@@ -161,7 +161,7 @@ describe("boardScheduleCopy", () => {
     expect(copy.note).toBe("Stops the agent now and picks it up again at that time.");
     // And clearing is the full undo, which is what makes a confirm dialog
     // unnecessary.
-    expect(copy.clearLabel).toBe("Clear — keep working");
+    expect(copy.clearLabel).toBe("Clear (keep working)");
   });
 
   it("names the stage once the card is past the build gate", () => {
@@ -172,7 +172,7 @@ describe("boardScheduleCopy", () => {
 
   it("gives every situation a way out", () => {
     for (const kind of ["before-build", "waiting", "live", "parked"] as const) {
-      expect(boardScheduleCopy(kind, "Building").clearLabel).toMatch(/^Clear — /);
+      expect(boardScheduleCopy(kind, "Building").clearLabel).toMatch(/^Clear \(/);
     }
   });
 });
@@ -186,7 +186,7 @@ describe("boardScheduleSetTip", () => {
         iso: at({ hour: 21 }),
         nowMs: NOW_MS,
       }),
-    ).toBe("Starts the build 9:00 PM · in 6h 30m — click to change");
+    ).toBe("Starts the build 9:00 PM · in 6h 30m. Click to change");
   });
 
   it("says 'now' for a passed instant, so the tooltip and its label agree", () => {
@@ -197,7 +197,7 @@ describe("boardScheduleSetTip", () => {
         iso: at({ hour: 14, minute: 0 }),
         nowMs: NOW_MS,
       }),
-    ).toBe("Starts building now — click to change");
+    ).toBe("Starts building now. Click to change");
   });
 
   it("says resume for a parked card, not start", () => {

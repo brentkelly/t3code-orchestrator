@@ -336,7 +336,7 @@ function deriveBuild(input: {
                   {
                     cardId: row.live?.cardId ?? null,
                     key: row.key,
-                    stageLabel: row.stageLabel ?? "—",
+                    stageLabel: row.stageLabel ?? "Unknown",
                     done: row.done,
                   },
                 ]

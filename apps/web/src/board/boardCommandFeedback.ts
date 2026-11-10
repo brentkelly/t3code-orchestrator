@@ -174,7 +174,7 @@ export function describeBoardReviewRoundOutcome(
     case "unknown-card":
       return "This card no longer exists.";
     case "stuck":
-      return "The review is stuck. Rule on the stuck findings in Code review — Fix it or Reviewer is wrong — or advance the card. If the card has left Code review, move it back there first.";
+      return "The review is stuck. Rule on the stuck findings in Code review (Fix it or Reviewer is wrong), or advance the card. If the card has left Code review, move it back there first.";
     case "not-stuck":
       return "The review is no longer stuck, so there is nothing to rule on.";
     case "failed":

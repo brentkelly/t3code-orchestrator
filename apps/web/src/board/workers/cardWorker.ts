@@ -69,7 +69,7 @@ export function boardCardWorkerChip(
   return {
     label: workerId === BOARD_LOCAL_WORKER_ID ? "local" : name,
     bound,
-    tooltip: bound ? `Runs on ${name}` : `Follows the default worker — ${name}`,
+    tooltip: bound ? `Runs on ${name}` : `Follows the default worker (${name})`,
   };
 }
 
@@ -219,7 +219,7 @@ export function boardWorkerFieldLabel(
 ): { readonly label: string; readonly pinned: boolean } {
   return pinnedWorkerId === null
     ? {
-        label: `Follow default — ${boardWorkerLabel(state.defaultWorkerId, state)}`,
+        label: `Follow default (${boardWorkerLabel(state.defaultWorkerId, state)})`,
         pinned: false,
       }
     : { label: boardWorkerLabel(pinnedWorkerId, state), pinned: true };
@@ -356,7 +356,7 @@ export function boardCardWorkerTrouble(
       workerLabel: worker,
       label: "Move this card",
       tooltip: `${worker} was removed from the board. Move this card to keep going.`,
-      panelTitle: "Worker removed — move this card",
+      panelTitle: "Worker removed: move this card",
       panelBody: `${worker} was removed from the board while this card had work there. Pick a new worker and the card continues from its pushed branch.`,
     };
   }

@@ -285,7 +285,7 @@ export function boardGroupCardVm(
     pips: stats.active
       .map((child, index) => ({
         state: stats.states[index]!,
-        tooltip: `${child.key} · ${child.title} — ${CHILD_STATE_NAME[stats.states[index]!]}`,
+        tooltip: `${child.key} · ${child.title} (${CHILD_STATE_NAME[stats.states[index]!]})`,
       }))
       .toSorted((a, b) => PIP_ORDER[a.state] - PIP_ORDER[b.state]),
     doneLabel: stats.active.length > 0 ? `${stats.done}/${stats.active.length}` : "0",

@@ -85,7 +85,7 @@ export function boardQueueInfo(input: {
     cap: input.cap,
     startsNext: slot.startsNext,
     label: slot.startsNext ? "Next" : `Queued #${slot.position}`,
-    headline: slot.startsNext ? "Queued — starts next" : `Queued #${slot.position}`,
+    headline: slot.startsNext ? "Queued: starts next" : `Queued #${slot.position}`,
     detail: `${describeAgents(input.running, input.cap)}${ahead}. It starts on its own when an agent frees up.`,
   };
 }

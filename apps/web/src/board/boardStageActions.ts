@@ -139,7 +139,7 @@ export interface BoardStageSecondaryActionContext extends BoardStagePrimaryActio
 /**
  * The caret beside the forward button (t3o-07, D8).
  *
- * "Submit for merge — no review" appears under a full conjunction, and each
+ * "Submit for merge (no review)" appears under a full conjunction, and each
  * clause is a separate reason the offer would be meaningless:
  *
  *  - the primary forward button is showing at all (so, a HELD build step —
@@ -170,7 +170,7 @@ export function boardStageSecondaryActions(
   return [
     {
       kind: "submit-no-review",
-      label: "Submit for merge — no review",
+      label: "Submit for merge (no review)",
       detail: "Opens the PR as normal, straight to Ready for merge.",
     },
   ];

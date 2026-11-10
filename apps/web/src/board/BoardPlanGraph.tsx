@@ -89,7 +89,7 @@ function PlanGraphNode({
 }) {
   const openable = node.cardId !== null && onOpenChild !== undefined;
   return (
-    <BoardHint label={node.stageLabel === null ? node.title : `${node.title} — ${node.stageLabel}`}>
+    <BoardHint label={node.stageLabel === null ? node.title : `${node.title} (${node.stageLabel})`}>
       <button
         className={cn(
           "absolute flex flex-col justify-center gap-[3px] rounded-[9px] border px-2.5 text-left shadow-xs",

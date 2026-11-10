@@ -15,7 +15,7 @@ import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 /** The reason the restart item is disabled while a run is in flight — surfaced
     in the menu and pinned by the tests. */
 export const BOARD_STAGE_RESTART_IN_FLIGHT_REASON =
-  "A run is already in flight for this card — drag it out and back to restart.";
+  "A run is already in flight for this card. Drag it out and back to restart.";
 
 /** Disable restart when D11 would refuse `start-stage-thread` (#142). */
 export function boardStageRestartBlockedReason(unmetKeys: ReadonlyArray<string>): string {

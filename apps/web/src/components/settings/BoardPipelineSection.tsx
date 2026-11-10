@@ -502,9 +502,7 @@ function PromptRow(props: {
               {props.value.trim().length > 0 ? (
                 props.value
               ) : (
-                <span className="text-muted-foreground/70">
-                  No prompt yet — click to write one.
-                </span>
+                <span className="text-muted-foreground/70">No prompt yet. Click to write one.</span>
               )}
             </button>
           </BoardHint>
@@ -1488,7 +1486,7 @@ function MergeStageBody(props: {
       </div>
       <ToggleRow
         label="Auto-merge when ready"
-        hint="Merges every card that arrives here as soon as the forge accepts it, retrying a check that is still running. Cards already waiting here keep their Merge button — this is the policy for what arrives next. Leaving it off is what means “ask me before merging”; individual cards can still be armed from their own menu."
+        hint="Merges every card that arrives here as soon as the forge accepts it, retrying a check that is still running. Cards already waiting here keep their Merge button; this is the policy for what arrives next. Leaving it off is what means “ask me before merging”; individual cards can still be armed from their own menu."
         checked={exec.autoMerge}
         ariaLabel="Auto-merge when ready"
         onChange={(checked) => set({ autoMerge: checked })}
@@ -1694,7 +1692,7 @@ function SimpleStageBody(props: {
               />
               <NumberRow
                 label="Stall timeout"
-                hint="Time with no sign of life — no todo-list progress, no new commit — before the supervisor nudges the step. Not a cap on total run time: a build that keeps working never trips it."
+                hint="Time with no sign of life (no todo-list progress, no new commit) before the supervisor nudges the step. Not a cap on total run time: a build that keeps working never trips it."
                 stepper={
                   <NumberStepper
                     value={msToMinutes(exec.timeoutMs)}
@@ -1802,7 +1800,7 @@ function PlanReviewSettingsBlock(props: {
 }
 
 /**
- * "Submit for merge — no review" (t3o-07) — the Build stage's second exit,
+ * "Submit for merge (no review)" (t3o-07) — the Build stage's second exit,
  * configured like a review phase because it is the same kind of thing: one
  * short agent run with its own prompt, model, access level and limits.
  *
@@ -1826,10 +1824,10 @@ function SubmitStepBlock(props: {
   const { stage, submit } = props;
   return (
     <>
-      <PhaseHeader label="Submit for merge — no review" />
+      <PhaseHeader label="Submit for merge (no review)" />
       <p className="mb-1 max-w-[62ch] text-[12.5px] leading-[1.55] text-muted-foreground">
         The caret beside a finished card&apos;s forward button. One unattended run pushes the branch
-        and opens its pull request, writing the title and body from the work — then the card goes
+        and opens its pull request, writing the title and body from the work, then the card goes
         straight to the merge stage, skipping code review.
       </p>
       <PromptRow
@@ -1966,7 +1964,7 @@ function ReviewStageBody(props: {
               the reactor reads `autoAdvance` for every stage, review included. */}
           <ToggleRow
             label="Auto advance to the next stage"
-            hint="On: the card moves itself on when the loop ends — a round with nothing blocking, or the round cap."
+            hint="On: the card moves itself on when the loop ends: a round with nothing blocking, or the round cap."
             checked={exec.autoAdvance}
             ariaLabel="Auto advance to the next stage"
             onChange={(checked) => set({ autoAdvance: checked })}

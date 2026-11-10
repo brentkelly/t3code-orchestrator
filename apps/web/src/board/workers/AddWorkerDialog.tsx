@@ -261,7 +261,7 @@ function AddWorkerFlow(props: {
         <DialogPanel>
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">
             <dt className="text-muted-foreground">T3o</dt>
-            <dd>{worker.status.t3oVersion ?? "—"}</dd>
+            <dd>{worker.status.t3oVersion ?? "Unknown"}</dd>
             <dt className="text-muted-foreground">Providers</dt>
             <dd>
               {providers.length === 0
