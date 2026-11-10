@@ -7,6 +7,7 @@
  * passed step green, a terminal failure or a stopped pass amber, cancelled grey.
  */
 import {
+  BOARD_CI_STOPPED_BY_YOU_REASON,
   BOARD_CI_TAIL_LINES,
   isBoardCiStepFailure,
   type BoardCardCi,
@@ -80,6 +81,13 @@ function fixAttemptNumber(ci: BoardCardCi): number {
  * The card face while the card is in CI. Whole minutes only: the face is
  * repainted at most once a minute (`useNowMinute`), and nothing on it animates.
  */
+/** A held pass's chip: a machine problem, a human's Stop, or a pass CI
+    couldn't run (T3O-59). */
+function boardCiHeldLabel(ci: Pick<BoardCardCi, "machine" | "stopReason">): string {
+  if (ci.machine === true) return "Machine problem";
+  return ci.stopReason === BOARD_CI_STOPPED_BY_YOU_REASON ? "Stopped" : "Can't run";
+}
+
 export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
   const segments = boardCiSegments(ci);
   const total = ci.steps.length;
@@ -107,7 +115,7 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
     // T3O-59: held says why, and a machine problem says so.
     case "held":
       return {
-        chip: { label: ci.machine === true ? "Machine problem" : "Can't run", tone: "warning" },
+        chip: { label: boardCiHeldLabel(ci), tone: "warning" },
         segments,
         count,
         detail: ci.stopReason ?? "CI couldn't finish this pass",
@@ -263,7 +271,7 @@ export function boardCiPaneStatus(input: {
     if (ci.phase === "queued") return { label: "Queued", tone: "neutral" };
     if (ci.phase === "passed") return { label: "Passed", tone: "success" };
     if (ci.phase === "held") {
-      return { label: ci.machine === true ? "Machine problem" : "Can't run", tone: "warning" };
+      return { label: boardCiHeldLabel(ci), tone: "warning" };
     }
     if (ci.phase === "stopped") return { label: "Needs you", tone: "attention" };
     const index = ci.steps.findIndex((step) => step.status === "running");

@@ -17,6 +17,7 @@
  * server will restart mid-step.
  */
 import {
+  BOARD_CI_STOPPED_BY_YOU_REASON,
   BOARD_LOCAL_WORKER_ID,
   BOARD_SEED_STAGE_IDS,
   DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS,
@@ -3555,7 +3556,7 @@ const make = Effect.gen(function* () {
           action: { kind: "finish-pass", runId, result: "passed" },
           createdAt: yield* nowIso,
         });
-        if (!recorded) ciLostResults.set(runId, { exitCode: 0, stepName: null });
+        if (!recorded) ciLostResults.set(runId, { exitCode: 0 });
         else if (yield* ciPassRecordedAs(card.id, runId, "passed")) yield* advanceFromCi(card);
         return;
       }
@@ -3878,10 +3879,7 @@ const make = Effect.gen(function* () {
    * word the hold the sweep makes. Nothing re-sends them — a resend that
    * keeps failing is its own wedge.
    */
-  const ciLostResults = new Map<
-    string,
-    { readonly exitCode: number | null; readonly stepName: string | null }
-  >();
+  const ciLostResults = new Map<string, { readonly exitCode: number | null }>();
 
   /** Cards the last sweep found with a pass nothing is running, by card, with
       the run it saw. A second sighting of the same run holds it (T3O-59). */
@@ -3936,6 +3934,16 @@ const make = Effect.gen(function* () {
     }
     for (const cardId of ciSuspectPasses.keys()) {
       if (!seen.has(cardId)) ciSuspectPasses.delete(cardId);
+    }
+    // A lost result whose pass was retried, skipped or moved on never gets
+    // its hold, so it's dropped here.
+    const unsettled = new Set(
+      board.cards.flatMap((card) =>
+        card.ci === null || isBoardCiPassSettledPhase(card.ci.phase) ? [] : [card.ci.runId],
+      ),
+    );
+    for (const runId of ciLostResults.keys()) {
+      if (!unsettled.has(runId)) ciLostResults.delete(runId);
     }
   }).pipe(
     Effect.catchCause((cause) =>
@@ -4455,10 +4463,7 @@ const make = Effect.gen(function* () {
     });
     if (!recorded) {
       // The sweep holds the pass; this is how it says what happened.
-      ciLostResults.set(finished.runId, {
-        exitCode: finished.outcome.exitCode ?? null,
-        stepName: card.ci.steps[finished.outcome.failedIndex ?? -1]?.name ?? null,
-      });
+      ciLostResults.set(finished.runId, { exitCode: finished.outcome.exitCode ?? null });
       return;
     }
     if (!(yield* ciPassRecordedAs(card.id, finished.runId, "failed"))) return;
@@ -4620,7 +4625,7 @@ const make = Effect.gen(function* () {
       }
     }
     forgeSteps.delete(String(card.id));
-    const held = yield* holdCiPass(card, runId, "Stopped by you. Retry CI to run it again.");
+    const held = yield* holdCiPass(card, runId, BOARD_CI_STOPPED_BY_YOU_REASON);
     if (cancelled !== null || state !== null) yield* schedule();
     if (held) return { outcome: "stopped" } as const;
     // The pass finished or was replaced before the stop's record landed.

@@ -8,6 +8,7 @@
  */
 import { Link } from "@tanstack/react-router";
 import {
+  BOARD_CI_STOPPED_BY_YOU_REASON,
   isBoardCiStepFailure,
   type BoardCardCi,
   type BoardCardCiLastOutcome,
@@ -431,7 +432,9 @@ export function BoardCardCiPane({
                 ? "Stopped for you"
                 : ci.machine === true
                   ? "Machine problem"
-                  : "CI can't run this pass"}
+                  : ci.stopReason === BOARD_CI_STOPPED_BY_YOU_REASON
+                    ? "CI stopped"
+                    : "CI can't run this pass"}
             </span>
             <span className="text-[11.5px]/[1.55] text-pretty text-muted-foreground">
               {ci.phase === "stopped"

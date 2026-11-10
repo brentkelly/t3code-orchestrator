@@ -1874,6 +1874,10 @@ export function isBoardCiPassSettledPhase(phase: BoardCardCiPhase): boolean {
   return phase === "passed" || phase === "held" || phase === "stopped";
 }
 
+/** The hold reason Stop CI records (T3O-59); clients head such a pass as
+    stopped rather than as one CI couldn't run. */
+export const BOARD_CI_STOPPED_BY_YOU_REASON = "Stopped by you. Retry CI to run it again.";
+
 /** A step status that ends its pass as a failure. */
 export function isBoardCiStepFailure(status: BoardCiStepStatus): boolean {
   return status === "failed" || status === "timed-out";

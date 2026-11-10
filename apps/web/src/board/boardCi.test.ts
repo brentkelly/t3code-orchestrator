@@ -1,4 +1,8 @@
-import type { BoardCardCi, BoardCardCiStep } from "@t3tools/contracts";
+import {
+  BOARD_CI_STOPPED_BY_YOU_REASON,
+  type BoardCardCi,
+  type BoardCardCiStep,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -114,6 +118,15 @@ describe("boardCiFace", () => {
     );
     expect(machine.chip).toEqual({ label: "Machine problem", tone: "warning" });
     expect(machine.detail).toBe("Disk nearly full on z5: 0.4 GiB free. Retry CI, or Skip CI.");
+    const stoppedByYou = boardCiFace(
+      ci({
+        phase: "held",
+        stopReason: BOARD_CI_STOPPED_BY_YOU_REASON,
+        steps: [step("Test", "cancelled")],
+      }),
+      NOW_MS,
+    );
+    expect(stoppedByYou.chip).toEqual({ label: "Stopped", tone: "warning" });
   });
 
   it("is a neutral Queued chip while waiting for a slot", () => {
