@@ -1,12 +1,6 @@
 /**
- * Branch cleanup's one piece of parsing: which branches a repository's
- * worktrees currently hold.
- *
- * This is the guard that keeps the local delete from stranding a live checkout
- * on a nameless HEAD. Settling a card at Done reclaims its worktree BEFORE
- * deleting the branch, so the guard normally sees an unheld branch and the
- * local delete goes through; with `reclaimWorktreeOnDone` off the worktree
- * survives and the guard is what refuses the delete.
+ * Which branches a repository's worktrees hold: the guard that keeps the local
+ * branch delete from stranding a live checkout on a nameless HEAD.
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";

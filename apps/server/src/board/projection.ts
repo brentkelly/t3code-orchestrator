@@ -1,18 +1,7 @@
 /**
- * T3o board persisted projection, board queries and snapshot enrichment.
- *
- * `makeBoardSqlProjector` folds board events into the `board_*` tables. The
- * board engine runs it inside the same transaction that appends the event to
- * `boards.board_events`, so a card and its side rows always commit together and
- * in one database file (T3O-56). Its `applyTodoSignal` half folds the two
- * thread signals the todo cache needs, driven by the tail in
- * `boardThreadTail.ts`.
- *
- * `makeBoardQueries` is the board's read side, served by the `BoardQueries`
- * service.
- *
- * `loadBoardShellSnapshot` assembles the board's bounded summary for
- * `board.subscribeBoard` (t3o-26 D4, T3O-57).
+ * The board's SQL projector, read queries and shell snapshot. The engine runs
+ * the projector in the transaction that appends the event, so a card and its
+ * side rows always commit together.
  */
 import {
   BoardCardStepAwaitingReason,
@@ -314,13 +303,9 @@ const NextCardNumberDbRow = Schema.Struct({
   maxCardNumber: Schema.Int,
 });
 
-// Agent write-path rows (t3o-08). Activity is table-only (D8); step and plan
-// rows rehydrate the read-model slices `BoardState.stepCompletions` / `plans`.
-// Activity rows are structured (t3o-18, D10): kind + typed payload + actor. The
-// payload rides as a JSON string, the same "carried verbatim" discipline
-// `BoardStepCompletion.payload` uses, so a round-trip cannot re-serialise into a
-// different string. `actor_kind` is NOT NULL — an unstamped command resolves to
-// the system actor at write time, never to a null column.
+// The payload rides as a JSON string so a round-trip cannot re-serialise it into
+// a different string. `actor_kind` is NOT NULL: an unstamped command resolves to
+// the system actor at write time.
 const BoardCardActivityDbRow = Schema.Struct({
   activityId: BoardCardActivityEntry.fields.activityId,
   cardId: BoardCardId,
@@ -437,21 +422,9 @@ const boardActivityStepLabel = (
   return label === null ? {} : { stepLabel: label };
 };
 
-// Live per-card step state (t3o-10). One row per card. `slotHeld` travels as
-// 0/1 (SQLite has no boolean), like `locked` below. Rehydrates the read-model
-// slice `BoardState.stepStates`.
-/** Decode a stored `model_options` JSON string back to the partial object the
-    step-state map spreads (t3o-21). Carried verbatim like the completion
-    payload: we wrote it with `JSON.stringify` of a valid selection, so a
-    successful parse of an array is trusted; anything else yields no options
-    rather than a decode failure that would break rehydration. */
-/** Resolve the authority posture for a rehydrated step-state row (t3o-21). A
-    non-null column is honoured verbatim. A NULL column is a row persisted before
-    migration 021: it resolves to the PRE-t3o-21 behaviour — `full-access` for a
-    build-mode run, `approval-required` otherwise — so a card mid-stage at deploy
-    keeps the authority it was actually running under. This is deliberately NOT
-    `effectiveBoardRuntimeMode` (whose unset build default is the safer `auto`):
-    that governs a NEW resolution, this preserves an IN-FLIGHT one. */
+/** A NULL column predates migration 021 and keeps the authority the step was
+    actually running under. Not `effectiveBoardRuntimeMode`: that governs a new
+    resolution, this preserves an in-flight one. */
 export function resolveStoredStepRuntimeMode(
   stored: RuntimeMode | null,
   mode: BoardStageMode,
@@ -459,6 +432,8 @@ export function resolveStoredStepRuntimeMode(
   return stored ?? (mode === "build" ? "full-access" : "approval-required");
 }
 
+/** We wrote the column from a valid selection, so a parsed array is trusted;
+    anything else yields no options rather than breaking rehydration. */
 function stepModelOptionsPatch(raw: string | null): { modelOptions?: ProviderOptionSelections } {
   if (raw === null) return {};
   try {
@@ -469,6 +444,7 @@ function stepModelOptionsPatch(raw: string | null): { modelOptions?: ProviderOpt
   }
 }
 
+// One row per card; `slotHeld` travels as 0/1 (SQLite has no boolean).
 const BoardCardStepStateDbRow = Schema.Struct({
   cardId: BoardCardStepState.fields.cardId,
   stepId: BoardCardStepState.fields.stepId,
@@ -581,12 +557,9 @@ function rowToBoardPlanWithBody(row: BoardPlanDbRow): BoardPlanWithBody {
 }
 
 /**
- * The narrow row behind `BoardCardShell` (t3o-04): exactly the columns the
- * shell needs, computed in SQL — never `SELECT *` mapped down. `dependsOn`,
- * `externalRef`, `recipeSnapshot` and the other heavy columns are not read
- * at all; the point of the shell split is to stop moving those bytes, not
- * to move them and discard them. `createdAt` is fetched for canonical
- * ordering only and never enters the shell.
+ * Exactly the columns the shell needs, computed in SQL, never `SELECT *` mapped
+ * down: the shell split exists to stop moving the heavy columns. `createdAt` is
+ * read for ordering only.
  */
 const BoardCardShellDbRow = Schema.Struct({
   cardId: BoardCard.fields.id,
@@ -1562,14 +1535,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
-  // MAX over ALL rows — archived cards keep their numbers reserved, so the
-  // archive can never cause a key to be re-issued.
-  //
-  // UNIONed with `board_card_number_floor` (migration 026) because DELETED
-  // cards have no row to reserve their number: the floor table is the only
-  // remaining record that a deleted card's number was ever issued, and without
-  // it deleting the newest card in a project would hand its key to the next
-  // card created there.
+  // MAX over all rows (archived cards keep their numbers) UNION the number floor,
+  // the only record of a deleted card's number. Without it, deleting a project's
+  // newest card would re-issue its key.
   const listNextCardNumberRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: NextCardNumberDbRow,
@@ -1586,11 +1554,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
-  // ── Purge (card delete) ──────────────────────────────────────────────
-  // One statement per table keyed on the card. There are no foreign keys
-  // between the `board_*` tables, so nothing cascades and every table a card
-  // writes to has to be named here — a table added later without a line here
-  // leaks a row per deleted card.
+  // No foreign keys between the `board_*` tables, so nothing cascades: a table
+  // added without a purge statement here leaks a row per deleted card.
 
   const deleteBoardCardRow = SqlSchema.void({
     Request: BoardCardId,
@@ -1919,13 +1884,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
-  // Bounded read (t3o-08 hygiene, kept through t3o-18's restructure): the log is
-  // append-only and can outgrow a useful context window, so a read returns a TAIL
-  // — the most recent entries — plus EVERY `card-input-requested` entry, since an
-  // outstanding human gate must never age out of view. The UNION dedupes rows
-  // that qualify both ways; the outer ORDER restores log order. The columns are
-  // t3o-18's structured shape (kind + typed payload + actor), not the old prose
-  // `body`, so `SELECT *` inside the subqueries stays column-aligned across both.
+  // Returns a tail plus every `card-input-requested` entry, since an outstanding
+  // human gate must never age out of view. UNION dedupes; the outer ORDER restores
+  // log order.
   const listBoardCardActivityRowsForCard = SqlSchema.findAll({
     Request: BoardCardId,
     Result: BoardCardActivityDbRow,
@@ -2146,11 +2107,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
-  /** Write a card's split justification (t3o card 11). Its own statement for
-      the same reason the review-summary cache is: `board.plans-proposed`
-      carries the card id and the plans, never the card, so there is no card to
-      upsert — and the in-memory projector does the same targeted field set, so
-      the two cannot diverge. */
+  /** Its own statement because `board.plans-proposed` carries the plans, not the
+      card, so there is no card to upsert; the in-memory projector does the same
+      targeted set. */
   const updateBoardCardSplitRationaleRow = SqlSchema.void({
     Request: Schema.Struct({
       cardId: BoardCardId,
@@ -2674,12 +2633,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
 }
 
 /**
- * The board's SQL projector (T3O-56).
- *
- * `applyBoardEvent` folds one board event into the `board_*` tables; the board
- * engine calls it inside the transaction that appends the event. `applyTodoSignal`
- * folds the two thread signals the todo cache depends on (t3o-18, t3o-26 D3);
- * the todo tail calls it.
+ * `applyBoardEvent` runs inside the transaction that appends the event;
+ * `applyTodoSignal` folds the thread signals the todo cache needs, driven by the
+ * todo tail.
  */
 export interface BoardSqlProjector {
   readonly applyBoardEvent: (event: BoardEvent) => Effect.Effect<void, ProjectionRepositoryError>;
@@ -2696,13 +2652,9 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
 
   // Untraced: the card writers below (through replacePlans) run per projected event.
   /**
-   * Erase a card from every board table (card delete).
-   *
-   * Sequenced so that a failure part-way through can only ever leave MORE
-   * data than intended, never a re-issuable key: the number floor goes in
-   * first, then the card row, then the satellites. A leftover satellite row is
-   * invisible (nothing joins to a card that is gone, and the boot sweep
-   * collects orphaned todo rows); a re-issued key is a permanent collision.
+   * Ordered so a partial failure leaves more data, never a re-issuable key: the
+   * number floor first, then the card row, then the satellites (invisible once
+   * the card is gone).
    */
   const purgeCard = Effect.fnUntraced(
     function* (card: BoardCard) {
@@ -2799,11 +2751,8 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
   // ── Agent write path (t3o-08) ────────────────────────────────────────
 
   /**
-   * Write one curated Activity row (t3o-18, D10/D12). The row id is the EVENT's
-   * own id, so re-applying the same event (replay) is a no-op via
-   * `ON CONFLICT DO NOTHING` — the rail can never double-count. The actor comes
-   * from the dispatch-boundary stamp keyed on the event's `commandId`, falling
-   * back to the system actor.
+   * The row id is the event's own id, so a replay is a no-op via
+   * `ON CONFLICT DO NOTHING` and the rail never double-counts.
    */
   const recordActivity = (input: {
     readonly event: BoardEvent;
@@ -2836,32 +2785,10 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
   // ── Thread todo cache (t3o-18, D1/D2/D6) ─────────────────────────────
 
   /**
-   * Capture a thread's `turn.plan.updated` into the board's cache.
-   *
-   * **Sourced from the DOMAIN event, not the runtime stream.** The spec's D2
-   * hangs this off the supervisor reactor's existing `providerService`
-   * subscription; it is captured here instead, from the `thread.activity-appended`
-   * event that same runtime event is already ingested into. Three reasons, all
-   * of which preserve every locked outcome (D1's projection-only table, D2's
-   * "unlinked thread writes nothing", D14's forward-only fill):
-   *
-   * 1. **Ordering.** The card strip has to update live, and shell deltas are
-   *    driven by the domain event stream with the causing event's `sequence`. A
-   *    reactor writing the row on a separate stream races that delta, so the
-   *    client would render the previous revision.
-   * 2. **Transactionality.** Written here, the row commits with the event, so a
-   *    reader that sees the event always sees the row.
-   * 3. **Rebuild.** D1 justifies a non-event-sourced board table by pointing at
-   *    the durable thread activity behind it; projecting from that activity makes
-   *    the rebuild path real rather than theoretical (D14's stated worry).
-   *
-   * An event from a thread with no LIVE card link is ignored, not stored.
-   *
-   * `current_started_at` is reset ONLY when the in-progress item's TEXT changes
-   * (D6): it survives reordering and insertion, needs nothing new from any
-   * provider, and costs one column. `advanced_at` moves when `done_count` rises
-   * or the in-progress item changes — the stall-reset signal (D16), recorded here
-   * so `recoveryDecision` stays pure.
+   * Captured from the domain event, not the runtime stream, so the row commits
+   * with the event that drives the card delta, and rebuilds from thread activity.
+   * Unlinked threads write nothing. `current_started_at` resets only when the
+   * in-progress item's text changes; `advanced_at` is the stall-reset signal.
    */
   const captureThreadTodos = Effect.fnUntraced(
     function* (input: {
@@ -2923,19 +2850,9 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodosSweep:query")));
 
   /**
-   * Recompute and store a card's review-summary cache (t3o-22, D7).
-   *
-   * Called on the two events that can change it: a review step completing (new
-   * findings, a new round) and a card update (a new round budget or a stop).
-   * Reads the whole ledger back rather than folding incrementally — the fold is
-   * cheap, the ledger is one card's worth of rows, and a from-scratch
-   * recomputation is what makes the cache rebuildable and impossible to drift.
-   *
-   * `maxRounds` is DISPLAY only — the walk itself runs to the ceiling, so a
-   * budget this layer cannot see (the projection has no access to the board's
-   * review settings) can never invert the verdict. The worst it can do is
-   * under-report a still-running loop's pip count until the pane, which does
-   * have the settings, renders the real budget.
+   * Recomputed from the whole ledger so the cache is rebuildable and cannot drift.
+   * `maxRounds` is display only: the walk runs to the ceiling, so a budget this
+   * layer cannot see never inverts the verdict.
    */
   const refreshReviewSummary = Effect.fnUntraced(
     function* (card: BoardCard) {
@@ -3106,13 +3023,9 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
             })
             .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.body:query")));
         }
-        // A sub-board child's brief is its plan's body, carried by pointer
-        // because the decider cannot read bodies (t3o-23, D2/D8). Resolved
-        // here, in the same transaction that projected the approval; the
-        // plans-proposed event precedes this one in any replay and approval
-        // froze the plans, so the copy is deterministic. A missing plan row
-        // (impossible short of hand-edited tables) leaves the child briefless
-        // rather than failing the projection.
+        // A sub-board child's brief is its plan's body, carried by pointer because the
+        // decider cannot read bodies. Approval froze the plans, so the copy is
+        // deterministic; a missing plan row leaves the child briefless, not failing.
         if (event.payload.briefFromPlanId !== undefined) {
           const planRow = yield* queries
             .findBoardPlanRow(event.payload.briefFromPlanId)
@@ -3172,17 +3085,8 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         });
         return;
 
-      // T3O-33: the card moved to another project. `upsertCard` already writes
-      // `project_id`, `key` and `card_number` from the post-state aggregate, so
-      // the row needs no special handling — but the OLD project's counter does.
-      //
-      // `nextCardNumberByProject` is rebuilt on rehydration as MAX(card_number)
-      // over `board_cards` UNION `board_card_number_floor`. The card takes its
-      // row to the new project, so if it held the old project's highest number
-      // that counter REGRESSES across a restart and the next card created there
-      // is handed a key that already exists elsewhere on the board. Raising the
-      // floor is the same monotonic record a delete leaves behind, for the same
-      // reason: the number was issued once and must never be issued again.
+      // Raise the old project's number floor: if the card held its highest number,
+      // the rehydrated counter would regress and re-issue an existing key.
       case "board.card-project-changed":
         yield* queries
           .raiseBoardCardNumberFloor({
@@ -3252,12 +3156,8 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
 
       case "board.card-pull-request-recorded": {
         yield* upsertCard(event.payload.card);
-        // Only TRANSITIONS earn a rail row. `linked` and `state-changed` did
-        // something the card can tell a human about. `updated` is the same PR
-        // in the same state (a title backfill, a rename) — the card is written
-        // above, the rail stays quiet. A link DISAPPEARING (null) is not
-        // railed — it means the branch's PR was deleted on the forge, which is
-        // not something the card did.
+        // Only transitions (`linked`, `state-changed`) earn a rail row. `updated` is
+        // the same PR in the same state, and a vanished link is not the card's doing.
         const pullRequest = event.payload.pullRequest;
         if (pullRequest === null) return;
         if (event.payload.transition === "updated") return;
@@ -3460,16 +3360,9 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
 
       case "board.card-step-completed":
         yield* upsertStep(event.payload.completion);
-        // Only a REVIEW step can move the review summary, and every other
-        // stage's step skips this entirely.
-        //
-        // The decider folds the summary onto the event (t3o-22, D7), so the
-        // common path is a plain write of what the event already carries — the
-        // same value the client's `card-review` delta is applying, so the cache
-        // and the live shell cannot disagree. The recompute is the fallback for
-        // events written BEFORE t3o-22, which carry no summary: that is what
-        // makes a from-empty replay of an older log rebuild the cache correctly
-        // rather than leaving it null.
+        // Only a review step moves the summary. The decider folds it onto the event, so
+        // the cache matches the client's `card-review` delta; the recompute covers older
+        // events that carry none.
         if (parseReviewStepId(event.payload.completion.stepId) !== null) {
           const carried = event.payload.reviewSummary;
           if (carried === undefined) {
@@ -3622,12 +3515,8 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
       // the supervisor's own nudge bookkeeping, and the human is looking at the
       // thread they just typed into.
       case "board.card-step-steered":
-        // Live step state (t3o-10): every payload carries the whole computed
-        // `BoardCardStepState`, so the persisted projection is one idempotent
-        // upsert on card_id — replay and rehydration cannot diverge. None of
-        // these reaches the Activity rail (D12): a card that ran three steps
-        // would otherwise carry ~20 rows, which is the same unreadability that
-        // motivated deleting the agent-written notes.
+        // Each payload carries the whole step state, so this is one idempotent upsert.
+        // Step state never reaches the Activity rail, which it would flood.
         yield* upsertStepState(event.payload.state);
         return;
 
@@ -3866,11 +3755,8 @@ function loadBoardState(
             ...boardStageRowDefault(row),
           }))
           .sort(compareBoardStages);
-        // A migrated-but-unused board (no cards, catalogue AND stage list still
-        // the compiled seeds) reports the board slice as ABSENT — the decider
-        // falls back to EMPTY_BOARD_STATE (same seeds), so this equals a
-        // from-empty replay where no board event ever fired. The moment a card,
-        // a label change or a stage change exists, the slice materialises.
+        // An unused board (no cards, seed catalogue and stages) reports the slice as
+        // absent, matching a from-empty replay.
         if (
           cardRows.length === 0 &&
           boardLabelsAreSeedOnly(labels) &&
@@ -3904,11 +3790,8 @@ function loadBoardState(
           attachmentsByCard.set(row.cardId, attachments);
         }
         const labelsByCard = groupCardLabels(cardLabelRows);
-        // Agent write-path slices (t3o-08): rehydrated with the same shared JS
-        // comparators the replay path uses. Omitted (not empty) when no event
-        // has produced them, so a table rehydration equals a from-empty replay
-        // where no step/plan event ever fired — the same absent-vs-empty rule
-        // the board slice itself follows.
+        // Omitted, not empty, when no event produced them, so rehydration equals a
+        // from-empty replay.
         const stepCompletions = stepRows
           .map((row) => ({
             cardId: row.cardId,
@@ -4002,15 +3885,9 @@ function loadBoardState(
   );
 }
 
-// Both enrichers omit the board data entirely when no card has ever been
-// created. A never-used board is represented as an *absent* field, never as
-// `{ cards: [] }`, for two reasons: (1) it makes a from-empty replay's read
-// model equal the table-rehydrated one for the no-cards case —
-// createEmptyReadModel and projectBoardEvent never synthesize an empty
-// `board`, so rehydration must not either; (2) it keeps an empty `cards: []`
-// off every shell payload (payload discipline). Every consumer already reads
-// through `board ?? EMPTY_BOARD_STATE` / `cards ?? []`, so absent and empty
-// are equivalent downstream.
+// Both enrichers omit the board data when no card was ever created, so
+// rehydration matches a from-empty replay and shell payloads stay small.
+// Consumers read through `board ?? EMPTY_BOARD_STATE` / `cards ?? []`.
 
 /** Canonical shell-row order, same comparator family as `compareBoardCards`
     ((createdAt, cardId) by code units) applied to the narrow rows. */
@@ -4083,22 +3960,11 @@ function boardShellCards(
         // running, so the card dot stays lit across a loop stage's per-phase
         // thread spin-up gaps rather than only while a single thread is mid-turn.
         if (row.status === "running") runningByCard.add(row.cardId);
-        // The quiet counterpart of `stalled`: the step SETTLED and the card is
-        // still sitting on it, so the pipeline is finished and only a human
-        // moves it on. Terminal covers `succeeded` (a human-in-the-loop build
-        // that ran to the end, a card parked at merge) as well as `failed` /
-        // `abandoned`; `stalled` is terminal-adjacent but has its own louder
-        // flag, and the shared `boardCardAttention` ranks it first regardless.
+        // Settled and still sitting on it: only a human moves it on. `stalled` has its
+        // own louder flag.
         if (isBoardTerminalStepStatus(row.status)) heldByCard.add(row.cardId);
-        // Why the step is parked on a human (t3o-34, D4). Before this the
-        // column card could only learn about a waiting agent from the THREAD's
-        // pending question, so a step parked for a prose question — or for a
-        // human-in-the-loop turn that ended with nothing to answer — left the
-        // card pulsing blue as if it were working.
-        // …and T3O-23 adds the third: a step a HUMAN stopped, which is `paused`
-        // on the status rather than a reason on the column. Derived through the
-        // one definition the projector's deltas also use, so the snapshot and
-        // the live stream can never disagree about the same row.
+        // Derived through the same definition as the projector's deltas, so the
+        // snapshot and the live stream never disagree.
         const parked = boardStepParkedReason({
           status: row.status,
           awaitingReason: row.awaitingReason ?? "question",
@@ -4113,11 +3979,8 @@ function boardShellCards(
             retryAt: row.retryAt,
           });
         }
-        // Whether the live step is a merge conflict fix (T3O-9). Read off the
-        // PERSISTED step label through the same predicate the delta uses, so a
-        // reconnect mid-fix renders identically to the live stream — and so a
-        // restart, which drops the reactor's in-memory merge arm, does not drop
-        // the card's explanation with it.
+        // Read off the persisted step label, so a reconnect or restart mid-fix renders
+        // the same as the live stream.
         if (isBoardConflictFixLive(row)) conflictFixByCard.add(row.cardId);
         if (isBoardChecksFixLive(row)) checksFixByCard.add(row.cardId);
       }
@@ -4141,11 +4004,8 @@ function boardShellCards(
           planCount: row.planCount,
           attachmentCount: row.attachmentCount,
           prNumber: row.prNumber,
-          // Sub-board membership (t3o-23, D1/D6): the client scopes the root
-          // board and the sub-board off this key, and derives a parent's plan
-          // pips from its children's. Omitted here, every child looked
-          // top-level after a reconnect — on the root board, and no longer
-          // counted against its parent.
+          // The client scopes the sub-board and derives a parent's plan pips off this
+          // key; without it every child looks top-level after a reconnect.
           parentCardId: row.parentCardId,
           scheduledStartAt: row.scheduledStartAt,
           autoPlanSetting: settingFromInt(row.autoPlanSetting),
@@ -4202,14 +4062,8 @@ function boardShellCardThreads(
 }
 
 /**
- * The archive page's card list (t3o-13, D7), served by `board.getArchivedCards`
- * — the archive is a page you open, not state every client carries, so it
- * stays off the live snapshot and the delta stream exactly as D15 requires.
- *
- * Newest archive first: the card you just archived by mistake is the one you
- * came to restore. Thread state is left at its resting value — an archived
- * card's threads are not what the archive list is for, and asking for them
- * would cost a query per page open.
+ * The archive is opened on demand, so it stays off the live snapshot and delta
+ * stream. Newest first; thread state stays at rest to avoid a query per open.
  */
 function boardArchivedShellCards(
   queries: BoardCardQueries,
@@ -4367,12 +4221,8 @@ function boardShellStages(
 }
 
 /**
- * The board's bounded summary for `board.subscribeBoard` (t3o-26 D4, T3O-57).
- *
- * The log head is read FIRST, so the tables read after it are at least as new
- * as `snapshotSequence`. Deltas after it that the tables already hold are
- * replayed over them harmlessly: every board delta is an idempotent upsert or
- * removal.
+ * The log head is read first, so the tables are at least as new as
+ * `snapshotSequence`; replayed deltas they already hold are idempotent.
  */
 const loadBoardShellSnapshot: (
   queries: BoardCardQueries,
@@ -4402,14 +4252,9 @@ const loadBoardShellSnapshot: (
 });
 
 /**
- * Full detail for one open card (`board.subscribeCard`, t3o-04): the whole
- * aggregate (thread links incl. tombstones from 902) plus the brief body
- * from `board_card_bodies` (901). Archived cards resolve too — an archive
- * landing while the card is open must not kill the viewer's subscription.
- * Null when the card has never existed.
- *
- * A maker (queries compiled once at assembly) rather than a per-call
- * loader: the reader runs on every board event for a subscribed card.
+ * Full detail for one open card, or null if it never existed. Archived cards
+ * resolve too, so an archive does not kill an open viewer. A maker because the
+ * reader runs on every board event for a subscribed card.
  */
 function makeBoardCardDetailLoader(
   queries: BoardCardQueries,
@@ -4528,11 +4373,8 @@ function makeBoardCardDetailLoader(
           };
         },
       ),
-      // The parent's model overrides (t3o-29, D4), for a child that inherits
-      // them. A second lookup rather than a join because it is conditional on
-      // the card being a child at all — a top-level card, which is most of
-      // them, pays nothing — and the id is only known once the card row has
-      // resolved, so it cannot ride in the `Effect.all` above.
+      // A child inheriting its parent's model overrides needs a second lookup: the
+      // parent id is only known once the card row has resolved.
       Effect.filterOrElse(
         (detail) => detail === null || detail.card.parentCardId === null,
         (detail) => {
@@ -4655,11 +4497,8 @@ export interface BoardQueriesShape {
   readonly boardThreadTodo: (
     threadId: ThreadId,
   ) => Effect.Effect<BoardThreadTodoState | null, ProjectionRepositoryError>;
-  /** Boot reconciliation sweep of orphaned todo rows (t3o-18, AC 20): drop
-      every row whose link or card is gone, or whose thread is not among
-      `liveThreadIds` (the thread gateway's answer). `listedAt` is taken before
-      that list was read: a row written since belongs to a thread the list may
-      have missed, so the live-set test spares it. */
+  /** Drops todo rows whose link or card is gone or whose thread is not live.
+      A row written after `listedAt` is spared: the live list may have missed it. */
   readonly boardSweepThreadTodos: (
     liveThreadIds: ReadonlyArray<ThreadId>,
     listedAt: string,

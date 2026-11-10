@@ -1,13 +1,7 @@
 /**
- * A build step whose branch cannot be prepared parks where a human can see it
- * (T3O-15), against the LIVE reactor.
- *
- * The reported card: a split child (PLA-10) moved into Building with its
- * parent, whose repository had no commits, so the parent's integration branch
- * could never be cut and the child had no base. The child's step sat `pending`
- * — no thread, not queued, not stalled — so the card looked idle in Building,
- * the only trace was an activity row saying "the parent card has no branch
- * yet", and every scheduling pass added another identical row.
+ * A build step whose branch cannot be prepared (e.g. a split child whose parent
+ * has no integration branch) parks where a human can see it rather than sitting
+ * `pending`, against the live reactor.
  */
 import {
   BOARD_SEED_STAGE_IDS,

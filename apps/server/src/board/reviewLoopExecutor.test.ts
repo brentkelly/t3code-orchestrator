@@ -1,26 +1,7 @@
 /**
- * Unit tests for the review-loop executor (t3o-16, acceptance criterion 9):
- * `ReviewLoopExecutor.planNext` is a PURE decision over a completions array —
- * no reactor, no database, no git, no thread. Every criterion the loop owns is
- * expressible as "these completions in, this decision out":
- *
- *  - AC3  a clean review pass completes the stage after ONE phase.
- *  - AC4  a nitpick-only review pass runs ONE triage pass, then converges —
- *         the nitpick gets its chance to be fixed, but never spawns a round.
- *  - AC5  a card needing two rounds runs distinct `<phase>@<round>` steps.
- *  - AC7  exhausting the round cap ends the loop `blocked` (t3o-22, D1) — the
- *         loop check is the executor's, and only the CONVERGENCE arm of it
- *         reports success. A loop that merely ran out of budget carries a
- *         converged loop's round counts and the opposite meaning, so it must
- *         never reach `advanceStage`, which is gated on `succeeded`.
- *  - AC8  a malformed/absent review payload never reads as "no findings".
- *
- * t3o-22 adds the per-card controls that hang off the same decision:
- *
- *  - the round budget is the card's own when it has one, floored at the highest
- *    round already STARTED so a shrinking budget can never strand a live run;
- *  - "stop after round N" holds the loop even with budget remaining;
- *  - a per-round model override re-points the REVIEW phase alone.
+ * `ReviewLoopExecutor.planNext` is a pure decision over completions. Only the
+ * convergence arm reports success: an exhausted budget ends `blocked`, and a
+ * malformed or absent payload never reads as "no findings".
  */
 import { describe, expect, it } from "@effect/vitest";
 
@@ -505,11 +486,8 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
 
   it("t3o-22 D3: the executor's own floor counts a round in flight, not just recorded", () => {
     const fiveRounds = reviewExec({ rounds: 5 });
-    // Round 2's review is dispatched and running — no completion for it yet.
-    // Flooring on completions alone would drop the budget to 1 and orphan it.
-    // No reactor caller passes a live step today (each plans only when nothing
-    // is running); this pins the executor's invariant so the walk stays correct
-    // for whichever caller does.
+    // Round 2's review is running with no completion yet. Flooring on
+    // completions alone would drop the budget to 1 and orphan it.
     const inFlight = plan(cappedRound(1), fiveRounds, overrides({ rounds: 1 }), "review@2");
     expect(inFlight.kind).toBe("run");
     if (inFlight.kind !== "run") return;
@@ -607,12 +585,8 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     expect(triage2.runtimeMode).toBe("auto");
   });
 
-  // ── The card-level override (t3o-29, D3) ─────────────────────────────
-  //
-  // One rung below the per-round override and one above the phase config. The
-  // tests below pin every rung of that ladder, because the whole value of the
-  // card-level row is that it takes effect without silently outranking a round
-  // the user escalated by hand.
+  // The card-level override sits below the per-round override and above the
+  // phase config; it must never outrank a round escalated by hand.
   it("t3o-29 AC2: the card's review override re-points EVERY round's review phase", () => {
     const opus: BoardCardStageModelOverride = {
       instanceId: ProviderInstanceId.make("anthropic"),
@@ -633,11 +607,9 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
   });
 
   it("t3o-29 AC2: the card's review override leaves triage and adjudicate alone", () => {
-    // The rule t3o-22 D4 set and this spec inherits: "Review model" escalates
-    // the reviewer. Triage rewrites the code, so re-modelling it is a different
-    // decision and must not ride along on this one. Triage here has NO
-    // configured model, so it falls to the stage fallback — the case that would
-    // break if the override were folded into `config.model`.
+    // The review override re-models the reviewer only, never triage. Triage
+    // has no configured model here, so folding the override into
+    // `config.model` would break this.
     const opus: BoardCardStageModelOverride = {
       instanceId: ProviderInstanceId.make("anthropic"),
       model: "claude-opus-5",
@@ -730,14 +702,8 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     expect(first.model).toEqual(globalModel);
   });
 
-  // ── The differential the duplicated walk is justified on (t3o-22) ────
-  //
-  // `boardReviewLoopWalk` in contracts is a second copy of the phase walk
-  // below, and the comment on it promises a test keeps the two honest. This is
-  // that test — and it is only possible here, the one package that can import
-  // both. It drives the SAME completions through each and asserts they reach
-  // the same verdict, which is exactly the check that would have caught the
-  // projection cache reporting `round-cap` where the executor plans round N+1.
+  // `boardReviewLoopWalk` in contracts duplicates the phase walk; this drives
+  // the same completions through both and asserts the same verdict.
   it("t3o-22: the contracts walk and the executor agree on every terminal verdict", () => {
     const scenarios: ReadonlyArray<{
       readonly name: string;
@@ -966,12 +932,8 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     expect(malformed).toEqual({ kind: "complete", outcome: "blocked" });
   });
 
-  // T3O-14 round 2: the executor advanced past triage/adjudicate/sync on
-  // PRESENCE alone, so a `succeeded` record whose payload nothing can read
-  // converged the loop (or gated it on a rebase it could not read the tip of)
-  // while the completion handler refused to write such a record and the
-  // decider offered to repair one. Halting `blocked` keeps the card in Code
-  // review, where the pane's Reopen can send that phase back.
+  // A `succeeded` record whose payload nothing can read must halt `blocked`,
+  // not converge, so the card stays in Code review where Reopen can resend it.
   it("T3O-14: a malformed payload on any phase terminates blocked, not converged", () => {
     expect(
       plan([
@@ -1015,12 +977,8 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     });
   });
 
-  // T3O-2: a reviewer that did everything right, whose round was thrown away
-  // over its wrapping. It handed `board_complete_step` an already-stringified
-  // payload; the handler stringified it again, and the executor — reading a
-  // JSON string where the schema wanted an object — terminated the loop
-  // `blocked` on a converged card. One level of that wrapping now comes off,
-  // and the round decides exactly as it would have encoded once.
+  // A double-encoded payload (stringified by the agent, then the handler)
+  // decides like the payload it wraps.
   it("t3o-2: a double-encoded review payload decides like the payload it wraps", () => {
     const doubled = (findings: ReadonlyArray<BoardReviewFinding>) =>
       completion("review@1", JSON.stringify(JSON.stringify(reviewPayload(findings))));

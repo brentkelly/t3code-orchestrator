@@ -1,9 +1,6 @@
 /**
- * T3o board decider invariants (t3o-03): stage adjacency and override,
- * dependency cycle rejection, blocked derivation at the Ready boundary, key
- * allocation, one-thread-one-card, tombstoning, archive/unarchive — and the
- * D18 assertion that no decider path emits a move into `building` except an
- * explicit user-originated `board.card.move`.
+ * Board decider invariants, including that no decider path emits a move into
+ * `building` except an explicit `board.card.move` or the pipeline's own move.
  */
 import {
   BOARD_SEED_LABEL_IDS,
@@ -1879,11 +1876,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
 
   it.effect("strips the deleted card from every dependent's dependsOn and re-derives blocked", () =>
     Effect.gen(function* () {
-      // `card-dep` is in building — at or after the build role, so its unmet
-      // dependency really is blocking it. Deleting `card-a` is the ONE case
-      // where the edge cannot survive: an unresolvable id counts as unmet
-      // forever, so leaving it would block the dependent with no card left to
-      // unblock it.
+      // Deleting `card-a` must drop the edge: an unresolvable id counts as unmet
+      // forever, blocking `card-dep` with no card left to unblock it.
       const target = makeCard({ id: "card-a" });
       const dependent = makeCard({
         id: "card-dep",
@@ -2150,11 +2144,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
 
   it.effect("no command except an explicit board.card.move emits a move into building", () =>
     Effect.gen(function* () {
-      // Every fixture is set up so its command SUCCEEDS — a rejected command
-      // trivially emits nothing, which would prove nothing. The Record over
-      // BoardCommand["type"] makes this catalog compile-time exhaustive: a
-      // future board command cannot ship without declaring what it emits
-      // here.
+      // Every fixture's command succeeds (a rejection trivially emits nothing).
+      // The Record over BoardCommand["type"] keeps this catalog exhaustive.
       const readyCard = makeCard({ id: "card-ready", stage: "ready" });
       const archivedCard = makeCard({ id: "card-archived", stage: "ready", archivedAt: NOW });
       const linkedCard = makeCard({
@@ -2236,11 +2227,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           reclaimBlockedReason: null,
         },
       });
-      // Step-lifecycle fixtures (t3o-10): each of the reactor's internal
-      // step commands aggregates on the card and records step state — none
-      // emits a move. Every card is in Building; each carries the step state
-      // its command's precondition needs, with the frozen execution config the
-      // run row holds since D12 (D1 retired the card-level recipe snapshot).
+      // Step-lifecycle fixtures: every card is in Building with the step state
+      // (and frozen execution config) its command's precondition needs.
       const frozenConfig = {
         prompt: "do it",
         providerInstanceId: ProviderInstanceId.make("codex"),
@@ -3012,12 +3000,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         },
       };
 
-      // The full decision is checked, not just the first event. Since t3o-28
-      // (D1) took the parent-crossing out of split approval, EXACTLY ONE
-      // command may emit a board.card-moved: the move itself. A card changes
-      // stage because a human dragged it or pressed the button, and for no
-      // other reason (D18).
-      // The board's own move (T3O-44) is the pipeline's, never a client's.
+      // The full decision is checked: only a human's move and the pipeline's own
+      // move may emit a board.card-moved into building.
       const mayMoveIntoBuilding = new Set(["board.card.move", "board.card.pipeline-move"]);
       for (const [commandType, command] of Object.entries(catalog)) {
         const events = yield* decideEvents(command, readModel);
@@ -3052,11 +3036,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
     "refuses moving the build-role stage itself when it would strand a card's blocked flag (D9)",
     () =>
       Effect.gen(function* () {
-        // Seed stages resolve from BOARD_SEED_STAGES: sprint (d) sits before
-        // building (j). Moving building to "c" puts it before sprint, flipping
-        // sprint from before-build to after-build. A card in sprint would then
-        // carry a stale `blocked` flag, so the reorder is refused — the guard
-        // must cover the build stage moving, not just ordinary stages crossing.
+        // Moving building (j) to "c" puts it before sprint (d), which would leave
+        // a sprint card with a stale `blocked` flag, so the reorder is refused.
         const held = makeReadModel({
           board: {
             cards: [makeCard({ id: "card-1", stage: "sprint" })],
@@ -3730,11 +3711,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
 
   it.effect("board_reopen_step refuses a record that did not succeed", () =>
     Effect.gen(function* () {
-      // A failure is not a broken success: the recovery ladder already re-runs
-      // it in place, and its summary is the record of what went wrong. Reopening
-      // one would overwrite that with the generic repair note for nothing. The
-      // same guard keeps the command inside the review loop — a step whose phase
-      // declares no payload shape can never report a defect to repair.
+      // A failure is not a broken success: the recovery ladder re-runs it, and
+      // reopening would overwrite its summary. A phase with no payload shape
+      // can never report a defect to repair.
       const failure = yield* decideFail(
         reopenStep("review@2"),
         cardReadModel({
@@ -4283,11 +4262,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
 
   it.effect("measures the top of Done against the column the card is really in", () =>
     Effect.gen(function* () {
-      // The root board's default scope merges every project into ONE Done
-      // column, so the top of Done is the top across projects (T3O-27) — a
-      // per-project key put a finished card under cards it finished after. A
-      // sub-board is still its own column: its children render nowhere else,
-      // so their keys neither move nor constrain this card's.
+      // The root board merges every project into one Done column, so the top of
+      // Done is the top across projects. A sub-board is its own column.
       const event = yield* decide(
         moveCommand({ cardId: "card-1", toStage: "done" }),
         makeReadModel({
@@ -4384,13 +4360,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
     }),
   );
 
-  // ── Where a NEW card lands (T3O-27) ──────────────────────────────────
-  // Creation used to take whatever key the caller chose, and every caller
-  // computed one against the slice of the board its own view was scoped to.
-  // A card created into a project whose column happened to be empty took the
-  // column minimum and landed on top of older work. The decider sees the
-  // whole board, so it places the card.
-
+  // The decider places a new card against the whole board, not the caller's
+  // scoped view, so it never lands on top of older work.
   const createdOrderKey = (event: { readonly type: string; readonly payload: unknown }) => {
     assert.strictEqual(event.type, "board.card-created");
     return (event.payload as { readonly orderKey: string }).orderKey;

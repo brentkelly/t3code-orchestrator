@@ -1,14 +1,7 @@
 /**
- * The thread gateway over orchestration-v2 (T3O-59).
- *
- * Every call the board makes into upstream's thread engine, in board
- * vocabulary. This is the ONLY board module that may import upstream
- * orchestration, persistence or provider code (`threadGatewayBoundary.test.ts`);
- * everything v2-shaped the board touches lives here.
- *
- * Commands go through `ThreadManagementService.dispatch`, upstream's own
- * enablement chokepoint. Signals and the todo log read the engine's stored
- * event log (`EventSinkV2`), unbounded: the supervisor must never have its
+ * The board's thread gateway over orchestration-v2, and the ONLY board module that may import
+ * upstream orchestration, persistence or provider code (`threadGatewayBoundary.test.ts`).
+ * Signals and the todo log read `EventSinkV2` unbounded: the supervisor must never have its
  * subscription dropped under load the way a bounded RPC subscriber may.
  */
 import {
@@ -87,11 +80,10 @@ const isoOrNull = (value: DateTime.Utc | null | undefined): string | null =>
   value == null ? null : DateTime.formatIso(value);
 
 /**
- * Whether v2's recovery worker will ever act on this thread's usage limit with
- * auto-resume on — arm it, or resume an arm — read through the worker's own
- * policy. Asked as of the end of time, so a window that has not reopened yet
- * still counts. An archived or settled thread, one holding a question, or a
- * reset no later than the failure is never resumed by v2, so the board keeps it.
+ * Whether v2's recovery worker will ever auto-resume this thread's usage limit, read through
+ * the worker's own policy as of the end of time (an unreopened window still counts). A thread
+ * v2 will never resume (archived, settled, holding a question, reset no later than the failure)
+ * stays the board's to resume.
  */
 const v2RecoversLimit = (shell: OrchestrationV2ThreadShell): boolean =>
   limitRecoveryCommand(shell, true, Number.POSITIVE_INFINITY) !== null;
@@ -203,12 +195,9 @@ const isHumanCommandId = (commandId: CommandId | null): boolean =>
   commandId !== null && !SERVER_COMMAND_PREFIXES.some((prefix) => commandId.startsWith(prefix));
 
 /**
- * Who asked for a run, read from the command that created it, the run's own
- * wake fields and the author of the message it carries. `board` is a
- * board-minted command; `limit-resume` is v2's usage-limit recovery worker;
- * `human` is a message a person sent from a client; anything else is `engine`:
- * v2 carrying on work it already had (a wake, a restart continuation, a
- * delegated task's result or question, the follow-up a steer becomes).
+ * Who asked for a run. `board` is a board-minted command, `limit-resume` is v2's usage-limit
+ * recovery, `human` is a message a person sent from a client, and anything else is `engine`:
+ * v2 carrying on work it already had (a wake, a restart continuation, a delegated task, a steer).
  */
 const runOrigin = (
   commandId: CommandId | null,
@@ -217,12 +206,9 @@ const runOrigin = (
 ): "board" | "limit-resume" | "engine" | "human" => {
   if (isBoardMintedCommandId(commandId)) return "board";
   if (commandId?.startsWith("limit-resume:")) return "limit-resume";
-  // `user` from `server` is never a person typing: it is the board's own
-  // message (BOARD_AUTHOR), so a board turn re-dispatched as a steer follow-up
-  // is not mistaken for a human's, or v2's async-answer run (Orchestrator's
-  // `async-answer:` message), which carries a human's answer under their own
-  // command id but is the engine carrying on: `input-resolved` already
-  // un-parked the step, so it must not also read as a human turn.
+  // `user` from `server` is never a person typing: it is the board's own message (BOARD_AUTHOR)
+  // or v2's async-answer run, whose step `input-resolved` already un-parked, so neither may read
+  // as a human turn.
   if (
     message.createdBy !== "user" ||
     message.creationSource === "server" ||
@@ -237,11 +223,9 @@ const runOrigin = (
 };
 
 /**
- * Turns one stored event into the supervisor's signals. Stateful only to
- * report each run end, interrupt request and question ONCE: v2 rewrites a run,
- * a turn item or a runtime request in place, so the same fact arrives as
- * several `*.updated` events. The memory is bounded; anything older than it has
- * long since been acted on.
+ * Turns one stored event into the supervisor's signals. Stateful only to report each run end,
+ * interrupt request and question ONCE: v2 rewrites those in place, so the same fact arrives as
+ * several `*.updated` events. The memory is bounded.
  */
 export const makeSignalReader = () => {
   const seen = new Set<string>();
@@ -263,14 +247,9 @@ export const makeSignalReader = () => {
     string,
     { readonly run: OrchestrationV2Run; readonly commandId: CommandId | null }
   >();
-  // Runs whose latest status was `queued` (T3O-76). v2 cancels a queued run
-  // straight out of the queue when a human promotes its message to a steer,
-  // deletes it from the queue, or archives the thread, under that human's
-  // command id and with `startedAt` null — the same shape as a Stop during
-  // start-up. Nothing in the cancelled payload tells them apart (`queuePosition`
-  // is null either way, and a queued run already owns its root node and
-  // attempt), so the reader remembers the one fact that does: the status it
-  // last saw. A run with no remembered status keeps the Stop reading.
+  // Runs last seen `queued`. v2 cancels a queued run (steered, deleted or archived) under the
+  // human's command id with `startedAt` null, the same shape as a Stop during start-up, and only
+  // the remembered status tells them apart. A run with none keeps the Stop reading.
   const queuedRuns = new Set<string>();
   const noteRunStatus = (run: OrchestrationV2Run): boolean => {
     const key = String(run.id);
@@ -289,12 +268,9 @@ export const makeSignalReader = () => {
     const event = stored.event;
     switch (event.type) {
       case "run.created": {
-        // Every requested turn is a run. Only a turn someone ASKED for is a
-        // request: v2 carrying on its own work is neither a human steering nor
-        // a reason to wake a parked step, and its limit resume is told apart so
-        // the board wakes only the usage-limit park it was holding. Who wrote
-        // the run's message decides the rest; v2 commits that message right
-        // after the run, in the same command, so the run waits for it.
+        // Only a turn someone ASKED for is a request; v2 carrying on its own work is not, and its limit
+        // resume is told apart so only the usage-limit park wakes. The run's message (committed right
+        // after it in the same command) decides who asked, so the run waits for it.
         const run = event.payload;
         noteRunStatus(run);
         if (isBoardMintedCommandId(stored.commandId)) {
@@ -338,11 +314,8 @@ export const makeSignalReader = () => {
         const wasQueued = noteRunStatus(run);
         const outcome = turnOutcomeOf(run.status);
         if (outcome === null || !firstTime(`run:${run.id}`)) return [];
-        // A run cancelled without ever leaving the queue was never a turn: its
-        // message was steered into the live turn, deleted, or dropped with the
-        // thread. It is neither a Stop nor an ending the board should read. A
-        // queued run that FAILED to start (v2's failQueuedRunStart) still is a
-        // turn that never began, and reads as one below.
+        // A run cancelled without leaving the queue was never a turn (steered, deleted, or dropped
+        // with the thread). A queued run that FAILED to start is a turn that never began, read below.
         if (wasQueued && run.status === "cancelled") return [];
         // A run that failed without ever starting is a turn that never began
         // (t3o-30, D2) — workspace preparation, or the provider refusing it.
@@ -360,11 +333,9 @@ export const makeSignalReader = () => {
           threadId: event.threadId,
           turnRef: String(run.id),
         };
-        // v2 records no interrupt request for a run its provider never
-        // started, so a human's Stop during start-up arrives only as this end,
-        // under the Stop's own command id.
-        // Say it was a Stop first, as it would be for a running turn, or the
-        // board reads it as an unexplained ending and nudges the card on.
+        // v2 records no interrupt request for a run its provider never started, so a Stop during
+        // start-up arrives only as this end. Report the Stop first, or the board reads an unexplained
+        // ending and nudges the card on.
         if (
           (run.status === "interrupted" || run.status === "cancelled") &&
           run.startedAt === null &&
@@ -460,21 +431,17 @@ export const followStoredEvents = (
     );
   });
 
-/** How far before a resume cursor `readSignalLog` starts reading, so the reader
-    holds most of the memory it would have had at the cursor. A bounded best
-    effort: a live reader remembers a run until its message says who wrote it,
-    and which runs are still queued (`queuedRuns`), so a resume whose run
-    started further back than this loses that memory. A queued run forgotten
-    that way and later cancelled out of the queue falls back to the Stop
-    reading, and pauses its card. */
+/**
+ * How far before a resume cursor `readSignalLog` starts reading, to rebuild the reader's
+ * memory. Best effort: a queued run that started further back is forgotten, and if it is later
+ * cancelled out of the queue it reads as a Stop and pauses its card.
+ */
 const SIGNAL_READER_WARMUP_EVENTS = 4096;
 
 /**
- * The signals after `afterSequence` (from now on when null), batched by the log
- * position that produced them. The reader is stateful (a run awaiting its
- * message, the dedupe set), so a resume replays the events before the cursor
- * through it with their signals discarded: a stream that drops between a run's
- * start and its end still reports it once, and correctly attributed.
+ * The signals after `afterSequence` (from now when null), batched by log position. A resume
+ * replays the events before the cursor through the stateful reader with their signals
+ * discarded, so a run interrupted by a dropped stream is still reported once, correctly attributed.
  */
 export const readSignalLog = (
   sink: Pick<EventSink.EventSinkV2["Service"], "stream" | "latestSequence">,
@@ -607,12 +574,9 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
   });
 
   const gateway: LocalThreadGatewayShape = {
-    // Upstream's `ThreadLaunchService.launch` is NOT used: its preparation runs
-    // the project's setup script on every launch, including into an existing
-    // worktree or the project root, so every review phase would re-run it and
-    // planning would run it in the main checkout. The board provisions its own
-    // worktrees and runs setup once (t3o-09); a spawn is `launch` minus
-    // preparation — create, then start the first turn.
+    // Not upstream's `ThreadLaunchService.launch`: it runs the project's setup script on every
+    // launch, including review phases and planning in the main checkout. The board provisions its
+    // own worktrees and runs setup once; a spawn is create, then start the first turn.
     spawn: Effect.fn("ThreadGatewayV2.spawn")(function* (input) {
       // v2 does not hold a thread to an existing project; the board does.
       const project = yield* projectRows.get(input.projectId).pipe(

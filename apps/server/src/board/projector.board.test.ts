@@ -498,13 +498,8 @@ describe("board projector", () => {
     }),
   );
 
-  // The absent-vs-empty rule `loadBoardState` enforces on rehydration must
-  // hold on the replay edge too, or D7's replay-equals-rehydration (compared
-  // with deepStrictEqual) breaks. Two ways it could:
-  //  - an absent slice becoming a present `undefined`, and
-  //  - a slice the delete EMPTIES becoming a present `[]` instead of omitted
-  //    (rehydration drops an empty table — deleting the last plan-holder would
-  //    otherwise leave replay with `plans: []` and rehydration with no key).
+  // Replay must match rehydration's absent-vs-empty rule (compared with deepStrictEqual): no
+  // absent slice becomes a present `undefined`, and a slice the delete empties is omitted, not `[]`.
   it.effect("omits a slice the delete empties, and leaves an absent slice absent", () =>
     Effect.gen(function* () {
       // The deleted card is the SOLE holder of every per-card slice; plans is
@@ -707,11 +702,8 @@ describe("board projector", () => {
         queued: false,
         stepRunning: true,
       });
-      // Settling clears the stalled badge (t3o-17, D3): the one path a stalled
-      // step leaves without a fresh select-step is a human taking over its live
-      // thread and completing it, so settle emits card-stalled=false. It clears
-      // the QUEUE badge too — a step held for a slot can settle straight out of
-      // the queue, and admission is not the only way out of it.
+      // Settling clears the stalled badge (a human completing a stalled step's thread emits no fresh
+      // select-step) and the QUEUE badge (a step held for a slot can settle straight out of the queue).
       assert.deepStrictEqual(Option.getOrThrow(boardShellStreamEvent(settledEvent)), {
         kind: "card-stalled",
         sequence: settledEvent.sequence,

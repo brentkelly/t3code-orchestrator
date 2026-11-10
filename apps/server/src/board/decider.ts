@@ -1,24 +1,8 @@
 /**
- * T3o board decider — `decideBoardCommand`.
- *
- * Pure decision logic for board commands, delegated to from the upstream
- * decider behind the `isBoardCommand` predicate. Mirrors the upstream decider
- * contract exactly: read model in, planned event(s) out, `Crypto` as the only
- * requirement (D8 — the decider has no SQL client).
- *
- * Key allocation assumption: the per-project key prefix is a *setting* in the
- * spec, but the settings surface does not land until t3o-07. Until then the
- * create command carries an optional `keyPrefix` and falls back to
- * `DEFAULT_BOARD_KEY_PREFIX`; t3o-07 wires the real settings source into the
- * dispatch site with no schema change here. The number half of the key comes
- * from `nextCardNumberByProject` in the read model, so allocation is exact
- * and race-free under the engine's total command ordering.
- *
- * Stage advancement (t3o-15, D8): a card advances either by a client move
- * command (the human gate) or by the reactor's auto-advance — a successful
- * unattended run dispatches an ordinary `board.card.move` to the next stage in
- * order. The decider validates every move the same way regardless of who sent
- * it; it never advances a card on its own.
+ * Pure decision logic for board commands: read model in, planned events out,
+ * `Crypto` as the only requirement (no SQL client). Card numbers come from
+ * `nextCardNumberByProject`, so allocation is exact under the engine's total
+ * command ordering. The decider validates moves but never advances a card itself.
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -205,11 +189,8 @@ type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : n
 export type PlannedBoardEvent = DistributiveOmit<BoardEvent, "sequence">;
 
 /**
- * What one board command decides. Almost every command decides a single
- * event; archive and unarchive decide a list, because releasing or re-arming
- * a dependency gate re-flags the cards on the other end of the edge (t3o-13,
- * D5), and delete decides a list for the same reason plus the edge rewrites
- * a permanent removal forces. The engine accepts either.
+ * Most commands decide one event. Archive, unarchive and delete decide a list,
+ * because changing a dependency gate re-flags the cards on the other end of the edge.
  */
 export type BoardDecision = PlannedBoardEvent | ReadonlyArray<PlannedBoardEvent>;
 
@@ -354,11 +335,9 @@ function findDependencyCycle(input: {
 }
 
 /**
- * Why `dependency` cannot be a new dependency of `dependent`, or null when the
- * edge is fine (T3O-27). Dependencies may cross groups freely; the one shape
- * refused is an edge along the card's own ancestry. A card inside a group
- * finishes before its group does, so it can never also wait for that group,
- * and a group already waits for everything inside it.
+ * Why `dependency` cannot be a new dependency of `dependent`, or null. The one
+ * refused shape is an edge along the card's own ancestry: a card inside a group
+ * finishes before its group, and a group already waits for everything inside it.
  */
 function dependencyTreeRefusal(input: {
   readonly board: BoardState;
@@ -472,11 +451,8 @@ const SPLIT_RATIONALE_MAX_LENGTH = 2000;
 
 /**
  * First dependency edge within a plan proposal (keyed by plan `key`) whose
- * addition closes a cycle, with the closing path for the rejection message.
- * The proposal is self-contained — every edge references a key in the same
- * array — so the graph is exactly the proposed `dependsOn` sets. Mirrors
- * `findDependencyCycle` for cards; kept separate because plans are keyed by
- * their proposal-local slug, not a `BoardCardId`.
+ * addition closes a cycle. Separate from `findDependencyCycle` because plans are
+ * keyed by their proposal-local slug, not a `BoardCardId`.
  */
 function findProposedPlanCycle(
   plans: ReadonlyArray<{ readonly key: string; readonly dependsOn: ReadonlyArray<string> }>,
@@ -529,18 +505,10 @@ const makeBoardEventBase = Effect.fn("makeBoardEventBase")(function* (input: {
 });
 
 /**
- * The `board.card-updated` events that keep dependents' stored `blocked`
- * honest when `changed` is archived or restored (t3o-13, D5).
- *
- * `blocked` is a column, re-derived at each move / dependency edit; archiving
- * now changes what a dependency means (D1), so the flag on every dependent
- * would otherwise go stale — a card wearing a blocked badge the decider will
- * happily move. Deriving against the card set with `changed` substituted in
- * gives the post-event answer, and only a card whose flag actually flips
- * emits, so a no-op archive stays a one-event command.
- *
- * A group's dependencies hold back every card inside it (T3O-27), so a
- * dependent is any card whose INHERITED dependencies name `changed`.
+ * The `board.card-updated` events that keep dependents' stored `blocked` honest
+ * when `changed` is archived or restored. Only a card whose flag flips emits, so a
+ * no-op archive stays one event. A dependent is any card whose INHERITED
+ * dependencies name `changed`, since a group's dependencies hold back its cards.
  */
 const boardDependentBlockedEvents = Effect.fn("boardDependentBlockedEvents")(function* (input: {
   readonly board: BoardState;
@@ -622,20 +590,9 @@ const hasBoardAncestor = (
   card.id !== ancestorId && isBoardCardSelfOrAncestor({ ...board, cards }, card, ancestorId);
 
 /**
- * Per-card model overrides (t3o-29, D1). One rule: every key must name a stage
- * the board actually has.
- *
- * The client is not the guard. The popover only ever writes the build- and
- * review-role stage ids, but a stale one — held open while the pipeline was
- * edited in another tab — would write an id for a stage that no longer exists,
- * and the entry would then sit in the column where no resolver could ever read
- * it. The user would have set a model and be watching the card run on a
- * different one, with nothing anywhere saying why. Rejecting is the only
- * outcome that cannot lie.
- *
- * An emptied map normalises to `null` so a cleared override and one that was
- * never set stay indistinguishable in the read model — the same rule the
- * projection's NULL column encodes, and what keeps replay equal to rehydration.
+ * Every key must name a stage the board has: a stale popover could otherwise
+ * write an override no resolver ever reads. An emptied map normalises to `null` so
+ * cleared and never-set stay indistinguishable (replay equals rehydration).
  */
 const validateModelOverrides = Effect.fn("validateModelOverrides")(function* (input: {
   readonly board: BoardState;
@@ -655,15 +612,9 @@ const validateModelOverrides = Effect.fn("validateModelOverrides")(function* (in
 });
 
 /**
- * Validate a card's incoming base branch (T3O-5, D5).
- *
- * SHAPE ONLY — the decider is pure and cannot ask git whether the branch
- * exists; the reactor checks that at provisioning time, where it can fail the
- * worktree with a card-visible reason. What is rejected here are the shapes
- * that would break SILENTLY downstream (`isBoardCardBaseBranchShape`): an
- * `origin/`-prefixed or `refs/`-qualified name would leave `measureBaseTip`
- * quietly measuring nothing and `pullMergedBaseBranch` creating a local branch
- * literally called `origin/develop`.
+ * Shape only: the decider is pure and cannot ask git whether the branch exists.
+ * Rejects the shapes that break silently downstream (`isBoardCardBaseBranchShape`),
+ * such as an `origin/`-prefixed or `refs/`-qualified name.
  */
 const validateBaseBranch = Effect.fn("validateBaseBranch")(function* (input: {
   readonly command: BoardCardCommand;
@@ -762,30 +713,10 @@ function clearedPlanReviewState(state: BoardCardStepState, at: string): BoardCar
 }
 
 /**
- * Validate and normalise a card's incoming review-loop overrides (t3o-22).
- *
- * Three rules, all here rather than in the pane, because the client is not the
- * guard and a stale pane must never be able to strand a live run:
- *
- *  - **A round that has STARTED can never be removed** (D3). The floor is the
- *    highest round the loop has entered — counting the round whose review is in
- *    flight with no completion yet, which is precisely the dangerous case:
- *    dropping the budget below it would leave a running agent whose completion
- *    lands beyond the cap, a walk that never reaches it again, and a wedged
- *    loop holding a concurrency slot.
- *  - **A stop cannot outlive a decision to buy more rounds** (D5). Raising the
- *    budget — or asking outright for the next round (T3O-39) — is the later
- *    expression of intent, so it clears a pending stop; otherwise the executor
- *    would keep terminating at the stopped round and the extra rounds could
- *    never run.
- *  - **Only the NEXT round can be requested** (T3O-39, D5). `runThroughRound`
- *    is clamped to `roundsStarted + 1`, which is what makes deleting the round
- *    ceiling safe: a budget is a number a human typed and can see, while a
- *    request booked fifty rounds ahead is fifty runs nobody asked for.
- *
- * Setting a stop for a round the loop is already past is rejected rather than
- * silently dropped — nothing in the UI does it, so it is a caller bug worth
- * surfacing.
+ * The client is not the guard. A round that has started (including one in flight)
+ * can never be removed; raising the budget or requesting the next round clears a
+ * pending stop; only the next round can be requested. A stop for a round already
+ * past is rejected as a caller bug.
  */
 const validateReviewOverrides = Effect.fn("validateReviewOverrides")(function* (input: {
   readonly board: BoardState;
@@ -808,11 +739,8 @@ const validateReviewOverrides = Effect.fn("validateReviewOverrides")(function* (
     );
   }
 
-  // The clamp that makes having NO round ceiling safe (T3O-39, D5). A `rounds`
-  // of 50 is a number a human typed into a stepper and can see; a
-  // `runThroughRound` of 50 would be fifty rounds nobody asked for, booked by
-  // one click. Clamped to one past the highest round started, every extra
-  // round is one deliberate click.
+  // Clamped to one past the highest round started, so every extra round is one
+  // deliberate click rather than a batch booked ahead.
   if (proposed.runThroughRound !== null && proposed.runThroughRound > roundsStarted + 1) {
     return yield* invariant(
       command,
@@ -820,29 +748,17 @@ const validateReviewOverrides = Effect.fn("validateReviewOverrides")(function* (
     );
   }
 
-  // Does this write ask the loop to run PAST a pending stop?
-  //
-  // Not "is the budget bigger than last time" — the pane's resume names an
-  // absolute round, so a card whose budget was raised to 8 and then stopped at
-  // 2 sends `rounds: 3` to resume, which is smaller than 8 and would read as
-  // "not a raise". The stop would survive, the executor would terminate on it
-  // again, and the button would be inert forever.
-  //
-  // What actually matters is whether the requested budget reaches past the
-  // stop, and whether the budget MOVED at all — a stop set while the budget
-  // stays put is the stop button doing its job, not a contradiction. D5's rule
-  // stated exactly: raising the budget past a stop clears it.
+  // A stop is cleared when the requested budget reaches past it AND the budget
+  // moved. The pane's resume names an absolute round, so "bigger than last time" would
+  // leave the stop in place; a stop set while the budget stays put is not a raise.
   const roundsChanged =
     proposed.rounds !== null && proposed.rounds !== (card.reviewOverrides?.rounds ?? null);
   const raisedRounds =
     roundsChanged &&
     proposed.rounds !== null &&
     (proposed.stopAfterRound === null || proposed.rounds > proposed.stopAfterRound);
-  // Asking for another round is the same contradiction one rung along
-  // (T3O-39, D5): a request to RUN round N outranks a hold at round N-1 or
-  // later, because it is the more recent decision by the same person. Without
-  // this the executor would terminate on the stop again and the button would
-  // be inert.
+  // A request to RUN round N outranks a stop at round N-1 or later: it is the more
+  // recent decision by the same person.
   const requestedRound =
     proposed.runThroughRound !== null &&
     proposed.runThroughRound !== (card.reviewOverrides?.runThroughRound ?? null) &&
@@ -954,12 +870,9 @@ function liveBoardLabels(board: BoardState): ReadonlyArray<BoardLabel> {
 }
 
 /**
- * Validate and normalise a card's label set (t3o-06a). Dedupes (a card holds
- * each label once), enforces `BOARD_CARD_LABELS_MAX`, and requires every id to
- * be either already on the card (grandfathering a reference to a
- * since-tombstoned label the user did not touch) or a live label — so a card
- * keeps a retired label it already carried but cannot ADD an unknown or
- * tombstoned one. `existing` is the card's current labels for a create.
+ * Dedupes, enforces `BOARD_CARD_LABELS_MAX`, and requires every id to be already
+ * on the card or a live label: a card keeps a retired label it carried but cannot
+ * ADD an unknown or tombstoned one. `existing` is the card's labels for a create.
  */
 function validateCardLabels(input: {
   readonly board: BoardState;
@@ -994,13 +907,9 @@ function validateCardLabels(input: {
 }
 
 /**
- * A card update's resulting label set (t3o-06a, T3O-68). `labels` replaces the
- * whole set; `addLabels`/`removeLabels` are applied to the card as it is when
- * the update lands, so a label another writer added in between is kept. Either
- * way the result goes through `validateCardLabels`, so the cap holds, an unknown
- * or tombstoned label cannot be added, and a retired label the card already
- * carries survives. Adding a label the card has, or removing one it lacks, is a
- * no-op, as with `addDependsOn`/`removeDependsOn`.
+ * `labels` replaces the whole set; `addLabels`/`removeLabels` apply to the card as
+ * it is when the update lands, so a label added in between is kept. The result goes
+ * through `validateCardLabels` either way.
  */
 function resolveCardUpdateLabels(input: {
   readonly board: BoardState;
@@ -1038,19 +947,9 @@ function resolveCardUpdateLabels(input: {
 }
 
 /**
- * The card face's review summary AFTER a completion lands (t3o-22, D7).
- *
- * It has to ride the event. The summary is a fold over the whole
- * step-completion ledger, and `boardShellStreamEvent` is a PURE function of one
- * event — it can see this completion but not the ones before it, so the column
- * card could not be updated live from the projector alone. The decider is the
- * one place that holds both the ledger and the card's own round overrides.
- *
- * `undefined` for every non-review step, and for every event written before
- * t3o-22 — the projection recomputes from the ledger in that case, which is
- * what keeps a from-empty replay of an older log correct. Never null in
- * practice (the ledger provably holds this very review step) but the fold is
- * total over any ledger, so the null is coalesced rather than asserted away.
+ * The card's review summary AFTER a completion lands. It rides the event because
+ * `boardShellStreamEvent` sees one event, not the whole ledger. `undefined` for
+ * non-review steps and for older events, which the projection recomputes.
  */
 function reviewSummaryAfter(input: {
   readonly board: BoardState;
@@ -1120,11 +1019,9 @@ function keepReviewCarry(
 }
 
 /**
- * State the engine loads for the one command that needs it before deciding
- * (T3O-53). The brief body never rides the read model (D8), so an incremental
- * brief edit is handed the body as it stands inside the engine's serial
- * command loop — the only place a read-change-write cannot interleave with
- * another write. Absent for every other command.
+ * State the engine loads before deciding. The brief body never rides the read
+ * model, so an incremental brief edit gets it inside the engine's serial command
+ * loop, where a read-change-write cannot interleave with another write.
  */
 export interface BoardDecisionContext {
   /** The card's stored brief, or null when it has none. Loaded only when
@@ -1174,11 +1071,8 @@ export function boardCommandNeedsThread(
 }
 
 /**
- * The project a command names, or the refusal. The refusal lists the live
- * projects (id — title): the caller reached here with a value that is not a
- * live project id — often a title or folder name from an agent — and the live
- * list is what it needs to correct the call. Bounded to the first 10 so the
- * message cannot grow with the project count.
+ * The project a command names, or a refusal listing up to 10 live projects so a
+ * caller that passed a title or folder name can correct the call.
  */
 function requireBoardProject(input: {
   readonly command: BoardCommand;
@@ -1232,15 +1126,9 @@ export function boardCommandNeedsBrief(command: BoardCommand): command is BoardC
 }
 
 /**
- * The brief and dependency set a `board.card.update` leaves behind, and the
- * incremental edits it made for the Activity rail (T3O-53).
- *
- * `brief` and `dependsOn` are undefined when the command does not touch them —
- * the absent-means-unchanged contract the event payload carries on. Whole-value
- * edits (`brief`, `dependsOn`) pass through exactly as before and record no
- * edit summary; the incremental forms are resolved here against the card and
- * the loaded brief, so nothing written between an agent's read and this
- * decision is lost.
+ * The brief and dependency set a `board.card.update` leaves behind, plus its
+ * incremental edits for the Activity rail. Undefined means unchanged. Incremental
+ * forms resolve against the card and loaded brief, so concurrent writes survive.
  */
 const resolveCardUpdateEdits = Effect.fn("resolveCardUpdateEdits")(function* (input: {
   readonly board: BoardState;
@@ -1626,12 +1514,9 @@ const GROUP_DERIVING_COMMANDS: ReadonlySet<BoardCommand["type"]> = new Set([
 ]);
 
 /**
- * Re-derive the groups a decision touched (T3O-27): the ancestors of every
- * card it changed, and the card's old ancestry when it left a group. Deepest
- * first, so a parent sees its child group's new stage. A group whose last
- * live child left reverts to an ordinary card, unless it is a heading.
- *
- * The card a human just moved by hand is left as they put it.
+ * Re-derive the groups a decision touched, deepest first so a parent sees its
+ * child group's new stage. A group with no live child left reverts to a card unless
+ * it is a heading. The card a human just moved by hand is left as they put it.
  */
 const deriveGroupEvents = Effect.fn("deriveGroupEvents")(function* (input: {
   readonly before: BoardState;
@@ -1792,11 +1677,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         return yield* invariant(command, `Card '${command.cardId}' already exists.`);
       }
 
-      // A card may be created into any stage (D10) — `BOARD_CREATABLE_STAGES`
-      // is gone; Mode governs worktree/slot on entry, so creation and dragging
-      // follow an identical path. The target stage must exist.
-      // A heading with no stage lands in the project's first stage; a card
-      // with no stage joins a started parent group in Planning (T3O-53).
+      // A card may be created into any existing stage. A heading with no stage lands in
+      // the project's first stage; a card with no stage joins a started parent group in
+      // Planning.
       const createParent =
         command.parentCardId === undefined
           ? undefined
@@ -1934,12 +1817,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 
       const cardNumber = board.nextCardNumberByProject[command.projectId] ?? 1;
       const keyPrefix = command.keyPrefix ?? DEFAULT_BOARD_KEY_PREFIX;
-      // Where the card lands (T3O-27). Placed HERE rather than by the caller:
-      // the create dialog sees only the project (or sub-board) its view is
-      // scoped to, so its "bottom" was the bottom of a slice, and a card
-      // created into a slice that happened to be empty took the column
-      // minimum and jumped the queue. The decider sees the whole board. A
-      // caller that names a key still means it.
+      // Placed here rather than by the caller: a create dialog sees only its scoped slice,
+      // not the whole column. A caller that names a key still means it.
       const orderKey =
         command.orderKey ??
         boardArrivalOrderKey({
@@ -2165,21 +2044,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         pipeline: pipelineMove,
       });
       if (adjacencyRefusal !== null) return yield* invariant(command, adjacencyRefusal);
-      // A split parent's review describes an integration branch (t3o-28, D2),
-      // so it cannot pass the build-role stage while a child is still working
-      // — that description would be a lie. Everything BELOW that ceiling is
-      // free: the parent walks Planning → Ready → Building on the ordinary
-      // forward button (its arrival in build is what starts the sub-board,
-      // t3o-28 D3), retreats as freely as any other card, and reorders where
-      // it stands.
-      //
-      // This replaces t3o-23 D4's pin, which froze the parent at one stage
-      // outright. The pin only ever made sense while approval PARKED the
-      // parent in Building; now that approval leaves it alone (D1), the pin
-      // would forbid the very move that begins the build. The t3o-24 D4
-      // regression back to build — how the reactor corrects a parent left
-      // ahead of reality by a child dragged out of Done — needs no carve-out
-      // here either: it lands on the ceiling, not past it.
+      // A split parent cannot pass the build-role stage while a child is unfinished: its
+      // review describes the integration branch. Everything below that ceiling is free,
+      // and a reactor regression back to build lands on the ceiling, not past it.
       {
         const unfinished = boardCardUnfinishedChildren(board, card.id);
         const buildStage = unfinished.length > 0 ? boardStageWithRole(board, "build") : null;
@@ -2198,31 +2065,15 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           }
         }
       }
-      // An unapproved split blocks advancement PAST planning (t3o-27): a card
-      // whose planning produced ≥2 plans cannot reach any stage beyond the
-      // plan-role stage until the split is approved (materialising the child
-      // cards) or the human re-proposes down to a single plan. Realistically
-      // the work cannot proceed until the split is resolved, so — unlike
-      // dependency blocking, which only guards the build boundary — this
-      // holds the card at planning. Backward moves are always free (they are
-      // how you get back to fix the plans), and forward moves stay open up to
-      // the plan stage — a card retreated to Sprint can come home to Planning
-      // to finish planning. Drag sends `override`, which does NOT bypass
-      // this: the gate is a truth about the card, and the modal replaces its
-      // forward button with "Approve split" to match. A board with no
-      // plan-role stage falls back to pinning the card where it sits (no
-      // planning home exists to return to).
+      // An unapproved split holds the card at or before the plan-role stage. Backward
+      // moves are free, and `override` does NOT bypass this. A board with no plan-role
+      // stage pins the card where it sits.
       if (boardCardPendingSplit(board, command.cardId)) {
         const currentIndex = boardStageIndex(board, card.stage);
         const targetIndex = boardStageIndex(board, command.toStage);
-        // FORWARD moves only — backward moves stay free in every case (AC2:
-        // retreating is how you get back to fix the plans, wherever the card
-        // sits). The ceiling is the plan-role stage, CLAMPED below the build
-        // role: stage reordering can legally place the plan stage after
-        // Building (only build<review and done-last are spine invariants), and
-        // an unclamped ceiling would then open the build stage to a pending
-        // split — the one crossing this gate exists to refuse. The floor is
-        // non-null whenever a card is pending (the predicate requires it).
+        // Forward moves only. The ceiling is the plan-role stage CLAMPED below build,
+        // because stage reordering may put the plan stage after build. The floor is
+        // non-null whenever a card is pending.
         if (targetIndex > currentIndex) {
           const planStage = boardStageWithRole(board, "plan");
           const floor = boardSubBoardFloorStage(board);
@@ -2239,11 +2090,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           }
         }
       }
-      // Dependency blocking is unconditional from the `build` role onward (D11):
-      // a card with unmet dependencies cannot enter the build-role stage or
-      // anything after it, whatever the stages are called. A move that stays
-      // before build, or that stays within the build-or-after zone, is not a
-      // crossing and stays open. The message names the unmet dependencies.
+      // Dependency blocking applies on crossing into the build-role stage or anything
+      // after it. Moves that stay on one side of that boundary stay open.
       if (
         !isBoardStageAtOrAfterBuild(board, card.stage) &&
         isBoardStageAtOrAfterBuild(board, command.toStage)
@@ -2297,57 +2145,18 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             } satisfies BoardCardReviewOverrides);
 
       const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
-      // ── The round boundary ────────────────────────────────────────────
-      //
-      // LEAVING Done with a merged pull request is what starts a card's next
-      // round of work, so it is here — not at worktree re-provision — that the
-      // finished round retires into the history and `pullRequestFloor` rises.
-      //
-      // Tying it to the worktree was wrong: a worktree is reclaimed at Done
-      // only when `reclaimWorktreeOnDone` is on AND the tree is clean and
-      // pushed. Both of the other paths keep a `ready` worktree, which
-      // `ensureWorktree` then REUSES — no re-provision, so no boundary, so the
-      // card carried its merged pull request into round two. `merged` is
-      // terminal, so every refresh short-circuited and the new round's pull
-      // request was never adopted; the card's next arrival at Done then handed
-      // branch cleanup a stale `merged` link for a live branch and deleted
-      // round two's branch out from under its open pull request. That is
-      // verbatim the outcome `BoardCard.pullRequestFloor` exists to foreclose,
-      // and only a boundary that fires on EVERY path forecloses it.
-      //
-      // Deliberately NOT gated on the pull request being `merged`.
-      //
-      // `card.pullRequest` is a CACHE of forge state, refreshed only at this
-      // design's event triggers — and this decider is pure, so it reads
-      // whatever was last cached, not what the forge says now. A card sitting
-      // in Done with a link cached `open` that has since merged would take the
-      // no-boundary path: no floor, the stale link surviving into round two,
-      // and the card's next arrival at Done handing the settle a `merged` link
-      // for a branch now carrying round two's unmerged commits. Reclaim runs
-      // first, so the checkout goes, then the local and remote branches — and
-      // round two's work exists nowhere. Deciding an irreversible deletion off
-      // a value that is allowed to be stale is the mistake; not the staleness.
-      //
-      // So leaving Done ENDS THE ROUND, whatever the link says. The trade, in
-      // the one case that is really still open: that pull request is retired
-      // rather than kept current, so the card no longer offers to merge it and
-      // the floor blocks re-adopting it by number. It is not lost —
-      // `boardCardDisplayPullRequest` keeps the badge and the View PR link
-      // pointing at it — and the failure is toward doing nothing rather than
-      // toward deleting a branch, which is the direction this whole module
-      // errs in by construction.
+      // LEAVING Done with a pull request starts the card's next round, on every path
+      // (a reused worktree never re-provisions). Not gated on `merged`: the link is a
+      // cache, and an irreversible branch deletion must not hang on a stale value. A
+      // retired open pull request still shows via `boardCardDisplayPullRequest`.
       const startsNewRound =
         doneStageId !== null &&
         card.stage === doneStageId &&
         command.toStage !== doneStageId &&
         card.pullRequest !== null;
-      // A card ARRIVING in the done-role stage lands at the TOP of that
-      // column (T3O-15): Done is read newest-first, so what just finished is
-      // what you see. Only when the mover named no position — a drag names one
-      // and means it, and every other column still keeps the card's own key
-      // (inside Building that key is queue priority, D11). `boardArrivalOrderKey`
-      // is the same placement a card created straight into Done gets (T3O-27),
-      // so the two routes into a column cannot disagree.
+      // A card arriving in the done-role stage lands at the top (Done reads
+      // newest-first) unless the mover named a position; elsewhere the card keeps its own
+      // key. Same placement as a card created straight into Done.
       const nextOrderKey =
         command.orderKey ??
         (doneStageId !== null && command.toStage === doneStageId
@@ -2884,12 +2693,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               card.reviewOverrides,
             );
 
-      // Per-stage model overrides, validated before the card is built for the
-      // same reason (t3o-29, D1): an entry keyed by a stage the board does not
-      // have would sit in the column where nothing ever reads it, so a stale
-      // popover writing one is rejected outright rather than half-applied. An
-      // emptied map normalises to null so "cleared" and "never set" stay
-      // indistinguishable in the read model.
+      // Validated before the card is built: an entry keyed by a stage the board does
+      // not have is rejected outright. An emptied map normalises to null.
       const modelOverrides =
         command.modelOverrides === undefined
           ? card.modelOverrides
@@ -3025,11 +2830,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             ? { autoMergeHoldReleased: true as const }
             : {}),
           ...(mergeStrategyChanged ? { mergeStrategyEdited: true as const } : {}),
-          // Fold the review summary onto the event when the edit could change
-          // it (t3o-22, D7), so a pure override edit updates the card face live
-          // — the same reason the step-completion path folds it. Only when the
-          // overrides actually moved AND the card has review history; a title
-          // or label edit carries nothing and the SQL cache is untouched.
+          // Fold the review summary onto the event so an override edit updates the card
+          // face live, only when the overrides moved and the card has review history.
           ...(command.reviewOverrides === undefined
             ? {}
             : (() => {
@@ -3677,13 +3479,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           stepState: boardCardStepState(board, command.cardId),
         },
       };
-      // Dependency edges pointing at the deleted card are REWRITTEN, not left
-      // to dangle — the one place delete and archive genuinely differ on
-      // dependencies (D1). An archived dependency stops gating because the
-      // archive is reversible and the edge must survive to be re-armed; a
-      // deleted one can never come back, and `unmetBoardCardDependencies`
-      // counts an unresolvable id as unmet forever, so leaving the edge would
-      // block every dependent permanently with no card left to unblock them.
+      // Edges to the deleted card are REWRITTEN, not left dangling:
+      // `unmetBoardCardDependencies` counts an unresolvable id as unmet forever, which
+      // would block every dependent permanently.
       const rewritten = remaining.map((candidate) =>
         candidate.dependsOn.includes(command.cardId)
           ? { ...candidate, dependsOn: candidate.dependsOn.filter((id) => id !== command.cardId) }
@@ -3729,11 +3527,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             edgeHolders.some((holder) => hasBoardAncestor(board, rewritten, candidate, holder.id)),
         })),
       );
-      // The edits ride FIRST. Each carries a `card` the projector upserts
-      // wholesale, and an upsert of a dependent computed without the deleted
-      // card is only correct once — or before — the deleted card is gone;
-      // ordering them ahead of the removal makes that true on the live path
-      // and on replay alike.
+      // The edits ride FIRST: each upserts a dependent computed without the deleted
+      // card, which is only correct before or after the removal, on live and replay alike.
       return [...edited, deleted];
     }
 
@@ -3776,11 +3571,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (label === undefined) {
         return yield* invariant(command, `Label '${command.labelId}' does not exist.`);
       }
-      // A tombstoned label is inert: it is out of the picker and cards render
-      // it muted, so renaming or recolouring it is meaningless. Restore it
-      // first (board.label.undelete), then edit — one clear path, and it keeps
-      // undelete's name-collision gate the single guard on a name re-entering
-      // the live set.
+      // A tombstoned label is inert; restore it first (board.label.undelete) so
+      // undelete's name-collision gate stays the single guard on a name re-entering.
       if (label.deletedAt !== null) {
         return yield* invariant(
           command,
@@ -3982,13 +3774,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (violation !== null) {
         return yield* invariant(command, `Cannot reorder stage: ${violation}.`);
       }
-      // Crossing the `build` boundary re-answers "is this card subject to
-      // dependency blocking?", and `blocked` is a stored column re-derived only
-      // at a card move — refuse the reorder rather than leave stale flags (D9).
-      // Moving an ordinary stage flips its own membership; moving the `build`
-      // stage itself flips every stage that ends up on the other side of it, so
-      // the guard checks EVERY stage whose at-or-after-build status changes, not
-      // just the one being moved.
+      // `blocked` is re-derived only at a card move, so refuse a reorder that changes
+      // any stage's at-or-after-build status, including every stage moving the build
+      // stage itself flips.
       const buildStage = boardStageWithRole(board, "build");
       if (buildStage !== null) {
         const nextBoard: BoardState = { ...board, stages: nextStages };
@@ -4101,32 +3889,18 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           } and has no recorded completion; complete the step you were assigned.`,
         );
       }
-      // Idempotency (D4), outcome-aware: a `succeeded` completion is pinned
-      // forever — a retried call re-emits it, so the projection is a no-op
-      // upsert and no second transition can fire. A `failed`/`blocked`
-      // completion is NOT pinned while the same step is live again: the
-      // recovery ladder's retry nudge explicitly asks the agent to call
-      // board_complete_step when done, so the successful retry must supersede
-      // the earlier failure (the projector upserts on (cardId, stepId)).
+      // A `succeeded` completion is pinned: a retry re-emits it. A `failed`/`blocked`
+      // completion is superseded while the same step is live again, so a successful retry
+      // replaces the failure. A late plan review reopening a settled step also supersedes.
       // With no live step, the recorded outcome re-emits verbatim.
-      // A late plan review reopening a settled step (T3O-50) is the one way
-      // past the pin: the review's completion is the step's real result.
       const supersede =
         (existing !== undefined && existing.outcome !== "succeeded" && recordable) ||
         (command.outcome === "succeeded" &&
           liveMatch &&
           boardCompletionReopenedByPlanReview(existing, current));
-      // Idempotency is conditional on VALIDITY, not just on outcome (T3O-14).
-      // A `succeeded` record whose payload nothing can read is not a completed
-      // step wearing a green tick — it is a step that claimed a result it never
-      // delivered, and pinning it is what turned one malformed call into a
-      // permanent deadlock: the review loop refuses to converge on it, the
-      // executor cannot re-run a pinned step, and every retry bounced off
-      // `alreadyCompleted`. So a defective record may be replaced, by a valid
-      // completion, whether or not the step is live again — there IS no live
-      // step once the loop has halted on it, which is precisely when the repair
-      // is needed. A `failed` replacement is how the Review pane's reopen
-      // action clears the round; the ledger then says what actually happened.
+      // A `succeeded` record with an unreadable payload is not pinned: pinning it
+      // deadlocks the review loop. A valid completion may replace it whether or not the
+      // step is live again; a `failed` replacement is how the pane's reopen clears it.
       const repairsDefect =
         existing !== undefined &&
         existing.outcome === "succeeded" &&
@@ -4198,16 +3972,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     }
 
     case "board.card.reopen-step": {
-      // The human's way out of a broken completion (T3O-14).
-      //
-      // A `succeeded` step whose payload nothing can read is a step that
-      // claimed a result it never delivered: the review loop refuses to
-      // converge on it (correctly — an unreadable payload must never read as
-      // "no findings"), the executor cannot re-run a step already recorded, and
-      // every retry bounces off the idempotency rule. The card sits in Code
-      // review forever. This supersedes the record with the `failed` one the
-      // ledger should have held, and because the executor counts only
-      // `succeeded` completions, the round is planned again from scratch.
+      // The human's way out of a `succeeded` step with an unreadable payload: supersede
+      // it with a `failed` record, and the executor (which counts only `succeeded`)
+      // plans the round again.
       const card = yield* requireActiveBoardCard({ board, command });
       const existing = boardCardStepCompletions(board, command.cardId).find(
         (recorded) => recorded.stepId === command.stepId,
@@ -4218,14 +3985,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Step '${command.stepId}' has no recorded completion on card '${command.cardId}' to reopen.`,
         );
       }
-      // Reopening repairs ONE shape of record: a `succeeded` completion whose
-      // payload cannot be read. Everything else is refused, because reopening
-      // is never a way to re-run work that landed — that would let one click
-      // erase a round of review the loop is entitled to count — and never a way
-      // to rewrite a failure, which the recovery ladder already retries in
-      // place and whose summary says what actually went wrong. A defect is only
-      // ever reported for a step whose phase declares a payload shape, so this
-      // also confines the command to the review loop.
+      // Reopening repairs only a `succeeded` completion with an unreadable payload. It
+      // never re-runs landed work or rewrites a failure. Defects exist only for phases
+      // that declare a payload shape, which confines this to the review loop.
       const defect = boardStepPayloadDefect({
         stepId: existing.stepId,
         payload: existing.payload,
@@ -4276,11 +4038,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 
     case "board.plans.propose": {
       const proposalCard = yield* requireActiveBoardCard({ board, command });
-      // An approved split freezes the plans (t3o-23, D7): they are the record
-      // of what was materialised, and the work now lives on the child cards.
-      // Only LIVE children freeze — a fully-archived round is gone and a
-      // second round may re-plan (consistent with the re-approval guard).
-      // Distinct from `locked` (t3o-12's file handover, below).
+      // An approved split freezes the plans while any child is LIVE; a fully archived
+      // round may re-plan. Distinct from `locked` (the file handover, below).
       if (boardCardChildren(board, command.cardId).some((child) => child.archivedAt === null)) {
         return yield* invariant(
           command,
@@ -4323,16 +4082,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Plan dependency edge '${cycle.from} -> ${cycle.to}' would create a cycle: ${cycle.path.join(" -> ")}.`,
         );
       }
-      // A multi-plan proposal IS a card split (t3o card 11), so it has to argue
-      // for itself. The rejection is the third teaching surface after the
-      // envelope and the tool description — it lands at the exact moment the
-      // mistake is made, so it names the consequence and BOTH ways forward
-      // rather than just a missing field.
-      //
-      // Non-null below two plans is impossible by construction: a single-plan
-      // proposal stores null even when one was passed, which is what makes
-      // "non-null" mean "the last proposal split this card" and what clears the
-      // rationale when a card is re-planned back down to one plan.
+      // A multi-plan proposal is a card split, so the rejection names the consequence
+      // and both ways forward. A single-plan proposal stores a null rationale, so
+      // non-null means "the last proposal split this card".
       const splitRationale = command.plans.length >= 2 ? command.splitRationale : null;
       if (command.plans.length >= 2) {
         if (splitRationale === null) {
@@ -4470,31 +4222,14 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     }
 
     case "board.plans.approve": {
-      // The human gate D12 promised (t3o-23): materialise the split. Two
-      // kinds of event — the children's ordinary creations, and the approval
-      // record the reactor keys the integration branch off.
-      //
-      // NOT a stage move (t3o-28, D1). Approving answers "is this the right
-      // split", not "start building it"; the parent stays where the human
-      // left it and walks forward on the ordinary button, and its arrival in
-      // the build-role stage is what starts the sub-board (D3).
+      // Materialise the split: the children's creations plus the approval record the
+      // reactor keys the integration branch off. NOT a stage move: the parent stays put,
+      // and its arrival in the build-role stage starts the sub-board.
       const card = yield* requireActiveBoardCard({ board, command });
-      // Splits nest (T3O-27): a card inside a group may split into a group of
-      // its own.
-      // A parent with a BUILD run in flight cannot be split under it: the
-      // live agent would keep writing the very branch the children are about
-      // to fork from, and its completion would race the materialisation.
-      // Finish or stop the run first — the split then cuts from a quiet card.
-      //
-      // The plan-role stage is carved out, because that is where a split
-      // comes FROM. The planning interview is human-paced: its step stays
-      // `running` until the human walks the card onward, and that move is the
-      // only thing that settles it (`handleCardMoved` abandons it) — but
-      // t3o-27 D2 refuses the move until the split is approved. Refusing here
-      // too wedged every proposed split shut, with no client command to
-      // settle a step by hand. Nothing races: a plan step writes plans, not
-      // the branch, and approval no longer starts anything (t3o-28, D1) — the
-      // children sit on the floor until the parent reaches build.
+      // A parent with a BUILD run in flight cannot be split: the agent would keep writing
+      // the branch the children fork from. The plan-role stage is exempt, because its
+      // step stays running until the human moves the card onward, and that move is refused
+      // until the split is approved.
       {
         const state = boardCardStepState(board, command.cardId);
         const planStage = boardStageWithRole(board, "plan");
@@ -4512,12 +4247,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         }
       }
       {
-        // Only LIVE (non-archived) children block re-approval. An archived
-        // child is finished-and-gone (the archived-is-gone principle, t3o-13
-        // D1) — so a fully-wrapped first round does not wedge a SECOND-ROUND
-        // split, the case the reclaimed-slice path in `resolveBoardCardBaseRef`
-        // and `ensureIntegrationBranch` exists to serve. A Done-but-unarchived
-        // child still counts: it is on the board and part of the live split.
+        // Only LIVE children block re-approval, so a fully archived first round does not
+        // wedge a second-round split. A Done-but-unarchived child still counts.
         const live = boardCardChildren(board, card.id).filter((child) => child.archivedAt === null);
         if (live.length > 0) {
           return yield* invariant(
@@ -4658,15 +4389,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           },
         });
       }
-      // The parent is untouched but for its timestamp (t3o-28, D1): no stage
-      // move, and `blocked` is left exactly as it stands — approval crosses no
-      // build boundary, so it has no dependency verdict to record.
-      // Approval makes the card a group (T3O-27) with the settings the human
-      // confirmed at the split gate (T3O-31). It starts nothing: the group
-      // stays where it is until the human starts it.
-      // The card's own Auto-plan / Auto-build now live in its group settings,
-      // which its children inherit; its own Auto-merge stays, as the group's
-      // own merge (T3O-38).
+      // The parent becomes a group with the settings confirmed at the split gate, and
+      // only its timestamp otherwise changes: no stage move, `blocked` untouched. Its
+      // Auto-plan/Auto-build move into group settings; its own Auto-merge stays.
       const parentAfterApproval: BoardCard = {
         ...card,
         ...endBoardCardAutoPlan(card, command.createdAt),
@@ -4695,28 +4420,15 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       return events;
     }
 
-    // ── Worktree lifecycle (t3o-09, D6) ──────────────────────────────
-    // These are server-internal commands (BOARD_INTERNAL_COMMANDS): the
-    // worktree lifecycle service dispatches them after the effectful git
-    // work. The decider stays pure (D8) — it records the branch/worktree
-    // state the service reports, and gates provisioning on the card already
-    // being in Building (D6/D18: the worktree is created ON entry to
-    // Building, which is the human "Begin build"; nothing here advances a
-    // stage).
+    // Worktree lifecycle: server-internal commands the worktree service dispatches
+    // after the git work. The decider records the state the service reports and
+    // never advances a stage.
 
     case "board.card.provision-worktree": {
       const card = yield* requireActiveBoardCard({ board, command });
-      // Which stages need a worktree is a settings question (any stage may
-      // resolve to `mode: "build"` — the review stage always does), and the
-      // pure decider cannot read settings (D8). The command is server-internal
-      // (BOARD_INTERNAL_COMMANDS): the reactor is its only dispatcher and
-      // gates on the stage's RESOLVED execution mode, so no stage-literal
-      // invariant is re-imposed here — it would orphan real git worktrees for
-      // build-mode stages that are not literally named 'building'.
-      // Provisioning starts fresh, retries a failed attempt, or begins a NEW
-      // ROUND on a card whose worktree was reclaimed at Done and which has been
-      // dragged back out to be worked on again. A worktree that is already
-      // provisioning or ready is never re-provisioned behind its own back.
+      // Which stages need a worktree is a settings question the pure decider cannot
+      // read, so the reactor (the only dispatcher) gates on the resolved execution mode.
+      // A worktree already provisioning or ready is never re-provisioned behind its back.
       if (
         card.worktree !== null &&
         card.worktree.status !== "failed" &&
@@ -4728,23 +4440,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${command.cardId}' worktree is '${card.worktree.status}'; only a failed, reclaimed or branch-only worktree can be re-provisioned.`,
         );
       }
-      // Those two admitted states mean different things:
-      //
-      //  - `failed` is a RETRY of the provision already in flight, so `attempts`
-      //    climbs and the repeated failure stays visible.
-      //  - `reclaimed` is a fresh provision for a card that has been dragged
-      //    back out of Done, so `attempts` restarts and keeps meaning "retries
-      //    of THIS provision" rather than a lifetime tally across every round.
-      //  - `branch-only` (t3o-23, D5) is a split parent reaching its own
-      //    review: the integration branch exists, the worktree attaches to it
-      //    now. A fresh provision, so `attempts` restarts here too.
-      //
-      // Neither touches the card's pull request. The ROUND boundary — retiring
-      // a merged pull request and raising `pullRequestFloor` — belongs to the
-      // move out of the done-role stage (see `board.card.move`), because that
-      // is the one event every second round passes through. A card whose
-      // worktree survived Done is never re-provisioned at all, so a boundary
-      // hung here would simply not fire for it.
+      // `failed` is a retry, so `attempts` climbs; `reclaimed` and `branch-only` are
+      // fresh provisions, so it restarts. The round boundary belongs to the move out of
+      // Done, not here: a worktree that survived Done is never re-provisioned.
       const attempts =
         card.worktree === null ||
         card.worktree.status === "reclaimed" ||
@@ -4833,15 +4531,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     }
 
     case "board.card.record-base-ref": {
-      // A retarget rebase actually landed (T3O-5, D6): move the RECORDED base
-      // and nothing else, so the derived divergence line clears and
-      // `measureBaseTip` starts measuring against the branch the card is now
-      // really on.
-      //
-      // Accepts exactly the LIVE statuses. `failed` may never have created the
-      // ref and `reclaimed` has had it deleted, so on neither is there a branch
-      // a rebase could have moved — recording one would assert a reconciliation
-      // that did not happen.
+      // A retarget rebase landed: move the RECORDED base only. Accepts only live
+      // statuses; on `failed` or `reclaimed` there is no branch a rebase could have moved.
       const card = yield* requireActiveBoardCard({ board, command });
       if (card.worktree === null || !boardCardHasLiveBranch(card)) {
         return yield* invariant(
@@ -4912,41 +4603,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const card = yield* requireActiveBoardCard({ board, command });
       const previous = card.pullRequest;
       const next = command.pullRequest;
-      // The floor (see `BoardCard.pullRequestFloor`) refuses a pull request
-      // belonging to a round the card has already finished. The card keeps the
-      // same deterministic `board/<key>` branch across rounds, and the forge
-      // lookup falls back to the newest pull request overall when none is open
-      // — so the FINISHED round is exactly what a refresh hands back until the
-      // new round opens one of its own. Adopting it would let branch cleanup
-      // delete the branch of unmerged work, so the refusal lives here, in the
-      // pure decider, where no caller can forget it.
-      //
-      // `open` is exempt, and the exemption is what keeps the floor from
-      // stranding a card. Leaving Done retires whatever link the card held,
-      // without consulting its cached state — a cache may not authorise an
-      // irreversible deletion — so a pull request that was genuinely still open
-      // gets retired too. It is nonetheless the branch's LIVE pull request:
-      // round two's pushes go straight into it, and no new one can be opened
-      // for a head that already has one. Refusing it would leave that card
-      // unable to link, merge, or ever open a pull request again.
-      //
-      // Safe, because `state` here is a value the forge answered on THIS
-      // lookup, not a cached one, and because only a non-open pull request can
-      // authorise a deletion: `settleCardAtDone` gates on `merged`. A retired
-      // pull request that is open now is adopted; the same one, found merged
-      // later, is refused — and if it merged because round two's work went into
-      // it, then round two IS merged and the branch really is spent.
-      // The card's CURRENT link is exempt too, and this is what stops the
-      // `open` exemption above from being a one-way door. The floor never
-      // falls, so without this the pull request just re-adopted while open
-      // could never record its own merge: the refresh would be refused, the
-      // link would read `open` for ever, and the settle, the branch cleanup and
-      // the boot sweep would all keep no-opping — the card would never get its
-      // worktree or its branches back. The floor's job is to stop a FINISHED
-      // round's pull request being ADOPTED, not to freeze the state of one the
-      // card already holds. And a link the card holds can only have been
-      // adopted while open, so a merge recorded through here is a merge that
-      // carried the current round's work.
+      // The floor (`BoardCard.pullRequestFloor`) refuses a finished round's pull request,
+      // which the forge lookup returns until the new round opens one. Exempt: a pull
+      // request the forge reports `open` now (it is the branch's live one), and the card's
+      // current link, so a re-adopted pull request can still record its own merge.
       const isCurrentLink =
         next !== null && card.pullRequest !== null && card.pullRequest.number === next.number;
       if (
@@ -4961,13 +4621,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${command.cardId}' pull request #${next.number} is ${next.state} and at or below its floor of #${card.pullRequestFloor}; it belongs to a completed round of work.`,
         );
       }
-      // T3O-24: a pull request that closed before the card existed belongs to
-      // an earlier card that used the same branch name (keys can be reused),
-      // and adopting it would let branch cleanup delete this card's unmerged
-      // work. Refused here for the same reason as the floor. The card's
-      // current link is exempt so a link recorded before `closedAt` existed
-      // can be backfilled — that backfill is what lets the guard below
-      // release it. An explicit link is the card's by decision.
+      // A pull request that closed before the card existed belongs to an earlier card
+      // on the same branch name, so it is refused like the floor. The current link is
+      // exempt so a link recorded before `closedAt` existed can be backfilled.
       if (
         next !== null &&
         !isCurrentLink &&
@@ -4979,24 +4635,16 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${command.cardId}' pull request #${next.number} ${next.state} before the card was created; it belongs to an earlier card on the same branch.`,
         );
       }
-      // No-op guard at the decider, not just at the caller. The refresh
-      // triggers fire on every step boundary, stage move and card open, and
-      // the overwhelming majority of those lookups return exactly what the
-      // card already holds — landing an event for each would bloat the log and
-      // republish a shell delta per card open for no change at all. `checkedAt`
-      // is deliberately EXCLUDED from the comparison: it moves on every single
-      // lookup, so including it would defeat the guard entirely.
+      // No-op guard here, not just at the caller: most refreshes return what the card
+      // already holds. `checkedAt` is excluded; it moves on every lookup.
       if (boardCardPullRequestsEqual(previous, next)) {
         return yield* invariant(
           command,
           `Card '${command.cardId}' already records this pull request state; nothing to record.`,
         );
       }
-      // An explicitly linked pull request (T3O-18) is the card's by decision,
-      // so a branch lookup may neither replace nor clear it. Only a refresh of
-      // the same pull request — by number, carrying the marker — records over
-      // it. This closes the race between a branch refresh already in flight
-      // and a link landing while it was out.
+      // An explicitly linked pull request is the card's by decision: a branch lookup
+      // may neither replace nor clear it, only a same-number refresh carrying the marker.
       if (
         previous !== null &&
         previous.linked === true &&
@@ -5007,15 +4655,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${command.cardId}' has pull request #${previous.number} linked explicitly; only a refresh of that pull request can record over it.`,
         );
       }
-      // A merged link is never unlinked or demoted by a later lookup. The
-      // reactor re-reads the card after the forge round trip, then dispatches;
-      // another refresh can commit `merged` in that gap while this command
-      // still holds the open or closed snapshot it looked up. Writing that
-      // would let the next branch lookup — which finds none once Done has
-      // deleted `board/<key>` — unlink the badge. Same-number still-merged
-      // is the title backfill. T3O-24: except a link the card never owned —
-      // one the board adopted that merged before the card existed — which
-      // the next lookup replaces with the card's own, or with nothing.
+      // A merged link is never unlinked or demoted by a later lookup: a refresh may
+      // commit `merged` between the reactor's read and this dispatch. Same-number
+      // still-merged is the title backfill. Except a link the card never owned (merged
+      // before the card existed), which the next lookup replaces.
       if (
         previous !== null &&
         isBoardCardPullRequestTerminal(previous) &&
@@ -5063,11 +4706,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // however it arrived.
       const next =
         command.pullRequest === null ? null : { ...command.pullRequest, linked: true as const };
-      // The floor applies to a link as it does to a branch lookup, with the
-      // same exemptions: an open pull request or the card's current one. A
-      // finished round's merged pull request, linked again, would otherwise
-      // make the reactor settle the card and delete the branch that now holds
-      // the next round's unmerged work.
+      // The floor applies to a link as to a branch lookup, with the same exemptions: an
+      // open pull request or the card's current one.
       if (
         next !== null &&
         next.state !== "open" &&
@@ -5221,11 +4861,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 
     case "board.card.record-auto-merge-hold": {
       const card = yield* requireActiveBoardCard({ board, command });
-      // No-op guard at the decider, not just at the caller (T3O-38, D4), for
-      // the same reason `record-pull-request` has one: the sweep re-probes a
-      // held card every rung and the overwhelming majority of those answers
-      // are the hold the card already carries. Landing an event for each would
-      // bloat the log and republish a shell delta per tick for no change.
+      // No-op guard here, not just at the caller: the sweep re-probes a held card every
+      // rung, and most answers are the hold the card already carries.
       if (boardCardAutoMergeHoldsEqual(card.autoMergeHold, command.hold)) {
         return yield* invariant(
           command,
@@ -5373,11 +5010,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 
     case "board.card.fail-worktree": {
       const card = yield* requireActiveBoardCard({ board, command });
-      // A `ready` or `reclaimed` worktree is not an attempt in flight: failing
-      // one would rewrite a live (or already-released) checkout's state behind
-      // its back. Everything else is failable — including a worktree that is
-      // ALREADY failed, so a retry that fails the same way again records the
-      // fresh reason rather than being rejected.
+      // A `ready` or `reclaimed` worktree is not an attempt in flight, so it cannot be
+      // failed. An already `failed` one can, so a repeat failure records the fresh reason.
       if (
         card.worktree !== null &&
         card.worktree.status !== "provisioning" &&
@@ -5388,15 +5022,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${command.cardId}' worktree is '${card.worktree.status}'; only a provisioning or failed worktree can be failed.`,
         );
       }
-      // Pre-provision failure: the reactor can fail BEFORE it ever dispatches
-      // `provision-worktree` — the project has no workspace folder, or the repo
-      // offers no base branch to cut from — so there is no worktree record to
-      // mark, and none should be invented (`baseRefName` would be a lie). The
-      // event is decided anyway, purely to report: it carries the reason onto
-      // the card's activity rail ("could not prepare the worktree: …") and
-      // leaves `worktree` null, which is exactly the state a retry starts from.
-      // Rejecting it instead swallowed the card's only failure signal into a
-      // server-side warning and left the card silently wedged in its stage.
+      // Pre-provision failure: no worktree record exists to mark, and none is invented.
+      // The event is decided anyway so the reason reaches the card's activity rail, and
+      // `worktree` stays null, the state a retry starts from.
       const nextCard: BoardCard =
         card.worktree === null
           ? card
@@ -5499,13 +5127,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       };
     }
 
-    // ── Step lifecycle (t3o-10, D4/D8) ───────────────────────────────
-    // Server-internal commands the supervisor reactor dispatches as it drives
-    // a card's step. The decider stays pure (D8): it records the step state
-    // the reactor's observations imply. Human-gating (D18) is untouched — none
-    // of these moves a stage; the board-driven Building → Review advance rides
-    // the ordinary `board.card.move` gate the reactor triggers on a successful
-    // completion, exactly like the human "Begin build" gate before it.
+    // Step lifecycle: server-internal commands the supervisor reactor dispatches. None
+    // of them moves a stage; a board-driven advance rides the ordinary `board.card.move`.
 
     case "board.card.select-step": {
       const selecting = yield* requireActiveBoardCard({ board, command });
@@ -5604,12 +5227,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // request event the supervisor reactor reacts to. The reactor decides
       // first-entry-vs-re-entry and whether the stage auto-executes.
       const card = yield* requireActiveBoardCard({ board, command });
-      // The dependency gate (D11) the move and create paths apply, here too: a
-      // restart is otherwise the one way to spawn a thread for a card whose
-      // dependencies are unmet. Derived live rather than read off `blocked`, as
-      // the move and create gates are. The merge role is exempt — its only run
-      // is the conflict fix the supervisor dispatches through this command, for
-      // a merge a human already initiated.
+      // The dependency gate the move and create paths apply, derived live. The merge
+      // role is exempt: its only run is the conflict fix for a merge a human initiated.
       const stage = boardStageById(board, card.stage);
       const mergeRole = stage !== null && effectiveBoardStageRole(stage) === "merge";
       if (!mergeRole && isBoardStageAtOrAfterBuild(board, card.stage)) {
@@ -5666,18 +5285,11 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             // admission, and leaving it set would silently force the card's next
             // step past the cap too.
             forceStart: false,
-            // The timeout sweep measures from `lastNudgeAt` in preference to
-            // `startedAt`, so admission has to move it (T3O-23). Today's admits
-            // only ever run on a fresh `pending` step whose `lastNudgeAt` is
-            // null, which is why this was never wrong — but a step that sat
-            // `queued` for three hours after a requeue would be instantly
-            // overdue the moment it was admitted.
+            // The timeout sweep measures from `lastNudgeAt`, so admission moves it; a step
+            // queued for hours would otherwise be overdue on admission.
             lastNudgeAt: command.createdAt,
-            // The step is working again, so the stall it was wearing is over
-            // (T3O-22). `requeue-step` carries the reason this far ON PURPOSE —
-            // it is what the resume nudge is chosen from — and this is where it
-            // stops, so a later pause or stall cannot inherit a reason from the
-            // resume before it.
+            // Clear the stall reason here, where the step works again, so a later pause or
+            // stall cannot inherit it. `requeue-step` carries it this far for the resume nudge.
             stalledReason: "gave-up",
             retryAt: null,
             queuedBy: null,
@@ -5719,17 +5331,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not running; cannot await input.`,
         );
       }
-      // Why it is parked (t3o-34, D3) — `question` when there is something to
-      // answer (a structured pending question, an agent-reported `blocked`, or
-      // prose the stop-signal reader read as a question), `stopped` when a
-      // human-in-the-loop turn simply ended. One status, two card treatments.
-      //
-      // And it RELEASES the slot (T3O-23), for the reason the escalation path
-      // has always carried: no thread is running, so a parked card must not hold
-      // capacity for a weekend. That applies identically to an unanswered
-      // question — a card can sit on one all weekend. The consequence is
-      // accepted: after the human answers, the step re-takes a slot
-      // (`resume-step`) rather than resuming into one it never let go of.
+      // `question` when there is something to answer, `stopped` when a human-in-the-loop
+      // turn ended. Either way the slot is RELEASED: no thread runs, so a parked card must
+      // not hold capacity; on resume the step re-takes one.
       const state: BoardCardStepState = {
         ...current,
         status: "awaiting-input",
@@ -5748,12 +5352,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       };
     }
 
-    // Start a queued step over the concurrency cap (t3o-33). The command names
-    // no step — one live step row per card (D4) — so the card's own row is the
-    // target and a client that rendered the card a moment ago cannot aim at a
-    // stale one. Only a `queued` step is forceable: `pending` is not yet
-    // withheld by anything (the governor has not reached it), and every other
-    // status is already running or over.
+    // Start a queued step over the concurrency cap. Names no step (one live step row
+    // per card). Only `queued` is forceable: `pending` is not withheld yet, and every
+    // other status is running or over.
     case "board.card.force-start-step": {
       yield* requireActiveBoardCard({ board, command });
       const current = boardCardStepState(board, command.cardId);
@@ -5791,47 +5392,21 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${command.cardId}' step '${command.stepId}' is settled ('${current.status}'); nothing to recover.`,
         );
       }
-      // A step a human PAUSED is immune to recovery (T3O-23). The reactor's own
-      // call sites already gate on `running`, so this is the backstop that makes
-      // the brief's requirement a property of the state machine rather than of
-      // five separate guards staying correct: recovery would nudge the agent
-      // back to work, or escalate the card to `stalled`, and either way the stop
-      // the human asked for would be undone by the board.
+      // A step a human PAUSED is immune to recovery. This is the state-machine backstop
+      // behind the reactor's own `running` gates.
       if (current.status === "paused") {
         return yield* invariant(
           command,
           `Card '${command.cardId}' step '${command.stepId}' is paused; a human stopped it, so it is not recovered.`,
         );
       }
-      // Recovery reuses the held slot — a retry never releases and re-acquires,
-      // which could starve the step behind a queue it was already at the front
-      // of. Escalation (t3o-17, D3/D4) lands the step in the distinct `stalled`
-      // status AND releases its slot (`slotHeld: false`; the reactor rides the
-      // existing release machinery once); an ordinary retry returns it to
-      // running and keeps its slot. `attempt` counts this step's invocations
-      // (D1, for display); `stageEntryRecoveries` counts what the stage entry
-      // has spent on recovery, which is what the runaway ceiling reads (T3O-12,
-      // D4); `stallCount` counts CONSECUTIVE stalls and resets to zero when the
-      // reactor observed progress since the last nudge.
-      // `lastError` (t3o-30, D2) is REPLACED, never merged: a command that
-      // carries a reason records it, and one that does not clears whatever was
-      // there. A nudge that puts the step back to `running` must not leave the
-      // card showing the error from the stop before it.
-      // A quota park spends NOTHING (T3O-22, D12): the card is not failing, the
-      // provider is, and a card that hit a limit at midnight would otherwise
-      // poll its way to death by 2:30am — twenty minutes before the window
-      // reopened. `lastNudgeAt` is left alone with the rest, so the progress
-      // boundary the next recovery measures against still describes the last
-      // time the board actually put this step to work.
+      // Recovery reuses the held slot; escalation lands `stalled` and releases it.
+      // `stageEntryRecoveries` feeds the runaway ceiling; `stallCount` resets on progress.
+      // `lastError` is replaced, never merged. A quota park spends nothing and leaves
+      // `lastNudgeAt` alone.
       const charge = command.chargeBudget ?? true;
-      // …and the budget RESETS when the woken turn did real work (T3O-22, D12),
-      // which is exactly what `progressed` already means. It used to reset
-      // `stallCount` alone; extending it to `attempt` is what makes a card that
-      // resumes, works, and stalls again days later start its ladder over
-      // instead of inheriting a count from the stall before the resume.
-      // `stageEntryRecoveries` is deliberately NOT reset: it is the only thing
-      // that catches a card looping productively-looking for ever, and an
-      // automatic resume clearing it would leave the card unbounded.
+      // The budget resets when the woken turn did real work. `stageEntryRecoveries` is
+      // NOT reset: it alone bounds a card looping productively-looking for ever.
       const state: BoardCardStepState = {
         ...current,
         attempt: charge ? (command.progressed ? 1 : current.attempt + 1) : current.attempt,
@@ -5865,19 +5440,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       };
     }
 
-    // A human stopped the step (T3O-23). Parks it: slot released, thread and
-    // worktree kept, driven by nothing until somebody resumes it. Accepted from
-    // a step that HAD a turn to stop — `running`, or `awaiting-input` where the
-    // human stopped a turn the agent had already ended — and from `stalled`,
-    // which is where the reverse interleaving lands: the interrupted turn's
-    // `turn.completed` overtook the interrupt, and with no recovery budget left
-    // it escalated. The human's Stop is authoritative over an escalation that
-    // landed a beat earlier, so it downgrades the loud "Needs a human" to the
-    // neutral `Paused` they actually asked for; both are parked, both release
-    // the slot, and both leave through the same resume. `queued` and `pending`
-    // hold no slot and have nothing to interrupt, `paused` is already there
-    // (which is what terminates the reactor's re-interrupt), and a terminal step
-    // is over.
+    // A human stopped the step: park it, slot released, thread and worktree kept.
+    // Accepted from `running`, `awaiting-input`, and `stalled` (the interrupted turn's
+    // completion can escalate first; Stop downgrades it to `paused`). `paused` is
+    // already there, which ends the reactor's re-interrupt.
     case "board.card.pause-step": {
       yield* requireActiveBoardCard({ board, command });
       const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
@@ -5913,14 +5479,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       };
     }
 
-    // The board-driven way out of a parked step (T3O-23) — the card's Resume
-    // button, and later T3O-19's scheduled resume. Nothing is running, so the
-    // step goes back to `queued` holding no slot and re-enters the governor's
-    // queue the ordinary way; it KEEPS its thread, so admission nudges the
-    // conversation the agent already has rather than spawning a fresh one.
-    //
-    // Names no step, exactly like `force-start-step`: one live step row per card
-    // (D4), so the server resolves it.
+    // The board-driven way out of a parked step: back to `queued` with no slot and
+    // through the governor, KEEPING its thread so admission nudges the existing
+    // conversation. Names no step (one live step row per card).
     case "board.card.requeue-step": {
       yield* requireActiveBoardCard({ board, command });
       const current = boardCardStepState(board, command.cardId);
@@ -5933,31 +5494,17 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${command.cardId}' step '${current.stepId}' is '${current.status}', not parked; nothing to resume.`,
         );
       }
-      // The same "a human intervening is progress" reset `resume-step` applies,
-      // and for the same reason: the ladder starts its count over rather than
-      // re-escalating on the first quiet turn after the resume.
-      //
-      // …unless the BOARD resumed it on a timer (T3O-22, D12). A backoff rung
-      // reaching its moment, or a quota cooldown lifting, proves nothing — the
-      // clock advanced, that is all — and resetting there would let a genuinely
-      // dead card be nudged for ever and never reach a human.
+      // A human resume resets the ladder, like `resume-step`. A timer-driven board
+      // resume does not: the clock advancing proves nothing, and resetting would let a
+      // dead card be nudged for ever.
       const preserve = command.preserveBudget ?? false;
       const state: BoardCardStepState = {
         ...current,
         status: "queued",
         stallCount: preserve ? current.stallCount : 0,
         lastError: null,
-        // The retry TIME is over — the rung has arrived, or a human resumed
-        // ahead of it — but the REASON survives the requeue, because it is the
-        // only thing that tells admission what to say when it nudges the thread
-        // (T3O-22, D7/D9). A quota park resumes as "the window reopened" and a
-        // backoff rung as the recovery reminder it would have carried had it
-        // gone out immediately; clearing the reason here made both branches
-        // unreachable and sent every board-driven resume the generic paused
-        // text. It is carried only off a `stalled` park — the resting value on
-        // a `paused` or `awaiting-input` row means nothing — and `admit-step`
-        // clears it when the step actually goes back to running, so it cannot
-        // outlive the resume it was for.
+        // The stall reason survives the requeue so admission knows what to say when it
+        // nudges. Carried only off a `stalled` park; `admit-step` clears it.
         stalledReason: current.status === "stalled" ? current.stalledReason : "gave-up",
         retryAt: null,
         slotHeld: false,
@@ -5978,56 +5525,26 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     case "board.card.resume-step": {
       yield* requireActiveBoardCard({ board, command });
       const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
-      // T3o-34 (D5): `awaiting-input` resumes on the same signal `stalled`
-      // does. Without it a step parked for a question stays parked in the read
-      // model after the human answers, and the card keeps asking for an answer
-      // it already has — the same lie, in the other direction, that this whole
-      // change removes. T3O-23 adds `paused`, which resumes on the same signal
-      // again: a human typing in the thread of a step they stopped has restarted
-      // it themselves.
+      // Every parked status (`stalled`, `awaiting-input`, `paused`) resumes when a human
+      // sends a turn into the step's thread.
       if (!isBoardParkedStepStatus(current.status)) {
         return yield* invariant(
           command,
           `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not parked; nothing to resume.`,
         );
       }
-      // A human sent a turn into the parked step's thread — a stalled one
-      // (t3o-17, D3) or one awaiting input (t3o-34, D5) — so the step is running
-      // again and supervised again, the same status an ordinary recovery nudge
-      // returns it to, which is why it rides the same event.
-      //
-      // What it deliberately does NOT do:
-      //  - `attempt` and `stageEntryRecoveries` are both untouched (T3O-12,
-      //    D7). They count BOARD invocations and BOARD recoveries; a human's own
-      //    turn is neither, and charging the ceiling for it would escalate the
-      //    card again the moment their turn ended.
-      //  - `stallCount` resets to zero rather than incrementing: the human
-      //    intervening is progress, exactly as `progressed` is on a nudge, so
-      //    the ladder starts its count over instead of re-escalating on the
-      //    first quiet turn.
-      //  - `slotHeld` is TAKEN, not requested (T3O-23). Every parked status now
-      //    releases its slot, so a step resuming out of one holds none — and a
-      //    build step that ran on `slotHeld: false` would occupy a worker
-      //    invisibly and skip its release at settle, which is the pre-existing
-      //    undercount this fixes. The take is unconditional rather than capped
-      //    (the reactor's matching `slots.restore`, the `forceStart` and
-      //    boot-reconcile precedent): the human ALREADY sent the turn, the agent
-      //    is already working, and a cap that refused would leave the card
-      //    unable to resume at all. The count stays honest — it may sit over the
-      //    ceiling until this step settles and releases exactly once.
-      // `lastNudgeAt` moves to now so the timeout sweep measures from the
-      // takeover, not from the stop the human just cleared.
+      // A human sent a turn into a parked step's thread, so it is running again. `attempt`
+      // and `stageEntryRecoveries` count BOARD work and are untouched; `stallCount` resets.
+      // The slot is TAKEN unconditionally (the agent is already working) and released once
+      // at settle. `lastNudgeAt` moves to now.
       const state: BoardCardStepState = {
         ...current,
         status: "running",
         stallCount: 0,
         lastError: null,
         slotHeld: current.mode === "build",
-        // The step is working again, so the park it was wearing is over
-        // (T3O-22) — the same clear `admit-step` does, for the same reason. A
-        // human resuming a card that stalled on a usage limit before its window
-        // reopened would otherwise leave a RUNNING row still claiming
-        // `usage-limit` and still carrying a future `retryAt`.
+        // The step is working again, so its park is over: a resumed card must not leave
+        // a running row claiming `usage-limit` with a future `retryAt`.
         stalledReason: "gave-up",
         retryAt: null,
         lastNudgeAt: command.createdAt,
@@ -6114,11 +5631,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           : {
               ...current,
               humanTurnAt: command.at,
-              // The human steered, so the recovery ladder starts over (D1):
-              // consecutive-stall count back to zero, and the "since the last
-              // nudge" boundary every progress and timeout test measures from
-              // moved to the human's turn. Without the second, a step steered
-              // long after its last nudge would be swept as overdue on arrival.
+              // The human steered, so the recovery ladder starts over and the "since the last
+              // nudge" boundary moves to the human's turn.
               stallCount: 0,
               lastNudgeAt: command.at,
               updatedAt: command.createdAt,
@@ -6134,13 +5648,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       };
     }
 
-    // A background-wait check-in (T3O-20). Only a RUNNING step is checked in
-    // on: anything else has already been parked, paused or settled, and a
-    // check-in landing there would move a clock nobody is watching. Status,
-    // slot and thread are untouched — the agent is waiting, not stalled. A
-    // charged check-in spends the budget exactly as an unprogressed recovery
-    // does, which is what lets the existing ceilings escalate a background job
-    // that never ends.
+    // Only a RUNNING step is checked in on. Status, slot and thread are untouched. A
+    // charged check-in spends budget like an unprogressed recovery, so the ceilings
+    // still escalate a background job that never ends.
     case "board.card.check-in-step": {
       yield* requireActiveBoardCard({ board, command });
       const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
@@ -6260,11 +5770,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         type: "board.worker-removed",
         payload: { workerId: command.workerId },
       };
-      // What happens to the cards placed there (T3O-66, D22), decided with the
-      // removal so no card is ever left pointing at a worker that is gone: a
-      // card with nothing there follows the default worker, and one with a
-      // worktree or a running step holds for a human to move it. Archived
-      // cards too, so an unarchived one is never bound to a missing worker.
+      // Decided with the removal so no card points at a worker that is gone: a card
+      // with nothing there follows the default worker; one with a worktree or a running
+      // step holds for a human. Archived cards too.
       const cardEvents: PlannedBoardEvent[] = [];
       const afterRemoval = new Map<BoardCardId, BoardCard>();
       for (const card of board.cards) {

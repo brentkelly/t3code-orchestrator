@@ -1,11 +1,7 @@
 /**
- * T3o thread todo cache + Activity rail (t3o-18).
- *
- * Drives the real engine and projection: a `turn.plan.updated` thread activity
- * lands in `board_thread_todos` when — and only when — the emitting thread has a
- * live card link, the caps hold, elapsed time survives reordering, the sweeps
- * fire, and the Activity rail records the nine curated kinds with the actor the
- * dispatch boundary stamped.
+ * On the real engine: plan updates land in `board_thread_todos` only for a
+ * thread with a live card link, caps hold, elapsed time survives reordering,
+ * and the Activity rail records the curated kinds with the stamped actor.
  */
 import {
   BOARD_SEED_STAGE_IDS,

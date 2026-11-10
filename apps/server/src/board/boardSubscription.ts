@@ -1,25 +1,7 @@
 /**
- * `board.subscribeBoard` — the board's own client subscription (t3o-26 D4,
- * T3O-57).
- *
- * The board has its own log and its own sequence (T3O-56), so it cannot share
- * the orchestration shell's stream: the shell's client drops anything at or
- * below ONE snapshot sequence, and two counters in one stream would drop one
- * side's deltas wholesale. The board therefore has a stream of its own, with
- * v1 shell resume semantics:
- *
- * - no cursor, a cursor ahead of the log, or a gap over `BOARD_RESUME_MAX_GAP`:
- *   a full `BoardShellSnapshot`, then the live tail;
- * - a cursor inside the gap: every card's live `card-threads` (todo changes are
- *   not in the log), the board events after the cursor replayed from the log,
- *   then the live tail.
- *
- * Either way the tail is `BoardEngine.streamBoardEvents` from the cursor, which
- * hands over from the durable log to the live PubSub with no gap and no
- * duplicate. The todo-change subscription is attached BEFORE any read, so a
- * plan update landing while the snapshot loads still reaches the client.
- *
- * Deltas are coalesced per window (`boardStreamWindowDeltas`).
+ * The board has its own log and sequence, so it streams separately from the
+ * orchestration shell (one stream with two counters would drop deltas). Resume
+ * follows v1 shell semantics; the todo subscription attaches before any read.
  */
 import {
   BoardSnapshotError,
@@ -64,22 +46,9 @@ export type BoardStreamInput =
   | { readonly kind: "todo"; readonly threadId: ThreadId };
 
 /**
- * The deltas one coalescing window yields.
- *
- * Board deltas are built from their event's payload and pass through in
- * sequence order, uncollapsed: a card-carrying delta OMITS the keys it cannot
- * see (`briefHasImage`, the review slice…) and the client keeps its last value,
- * so dropping an earlier delta for the same card would lose a change the later
- * one does not repeat. Board events are human- and supervisor-paced, so there
- * is little to collapse anyway.
- *
- * `card-threads` is the refetch-shaped delta — the card's whole live link set,
- * read at emission — and its sources are the high-frequency ones: every
- * `turn.plan.updated` on a linked thread. A window therefore refetches each
- * touched card ONCE, after its board deltas, however many link changes and
- * plan updates landed in it. The refetch is stamped with the board head; the
- * client applies `card-threads` without the sequence guard, because it is
- * always a fresh read.
+ * Board deltas pass through uncollapsed: they omit keys they cannot see, so
+ * dropping one would lose a change. `card-threads` is refetched once per touched
+ * card per window, stamped with the head and applied without the sequence guard.
  */
 // Untraced: runs for every coalesced stream window of every board client.
 export const boardStreamWindowDeltas = Effect.fnUntraced(function* (

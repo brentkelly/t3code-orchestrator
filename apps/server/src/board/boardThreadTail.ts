@@ -1,22 +1,8 @@
 /**
- * The board's todo cache feed (t3o-26 D3, T3O-56, T3O-58).
- *
- * The board's todo cache (`board_thread_todos`, t3o-18) is a projection of two
- * thread signals: `todos-changed` and `thread-deleted`. They come off the
- * thread gateway's durable todo log, which the tail follows itself — reading,
- * never writing — with its cursor in `boards.projection_state`.
- *
- * The cursor only moves inside the transaction that applies a relevant event,
- * and at the end of a catch-up. A crash therefore re-scans irrelevant events at
- * worst, never re-applies an older plan over a newer one.
- *
- * An event that fails to apply (or a catch-up that fails part-way) pins the
- * persisted cursor just before it for the rest of the run. The tail keeps going
- * so `drain` does not hang, and the next boot replays from the failure, in
- * order, so the newest plan still lands last.
- *
- * A database that has never had a cursor starts at upstream's head: a board
- * that has no cards cannot have linked any thread whose history it would miss.
+ * Feeds `board_thread_todos` from the gateway's durable todo log. The cursor
+ * moves only inside the applying transaction, so a crash never re-applies an
+ * older plan; a failed apply pins the persisted cursor before it so the next
+ * boot replays from there in order. A first boot starts at the log head.
  */
 import type { ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";

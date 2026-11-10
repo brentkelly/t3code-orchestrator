@@ -1,17 +1,7 @@
 /**
- * Blocked-agent detection (t3o-34): a human-in-the-loop step that ends a turn
- * without completing stops pretending to work.
- *
- * The defect this covers: `handleTurnCompleted`'s human-in-the-loop arm used to
- * return without doing anything, leaving the step `running` — so the shell's
- * `stepRunning` stayed true and the card pulsed its blue "being worked" dot
- * while the agent sat there waiting. Planning is where it bit hardest, because
- * a question with a paragraph of consequence per option is a poor fit for the
- * structured picker and agents write it in prose instead.
- *
- * Driven through the live reactor against the stateful engine double
- * (`withGovernor`), because the behaviour spans the turn-end handler, the
- * decider and the read model.
+ * A human-in-the-loop step that ends a turn without completing is parked, not
+ * left `running`. Driven through the live reactor (`withGovernor`), because the
+ * behaviour spans the turn-end handler, the decider and the read model.
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -118,12 +108,9 @@ it.effect("a turn that ends with a prose question parks the step as awaiting inp
   );
 });
 
-// The projection race this handler used to lose (see the identity test in
-// `handleTurnCompleted`). The thread shell it reads is written by a DIFFERENT
-// subscriber of the same runtime stream, so when the turn-end handler runs the
-// session commonly still names the turn that just ended as the live one. Read
-// as presence, that says "another turn is working" and the step is never
-// parked — the exact production shape of the blue dot that would not go out.
+// The thread shell is written by a different subscriber of the same stream, so
+// at turn end the session often still names the ended turn as live. Read as
+// presence, that would never park the step.
 it.effect("parks even when the projection still shows the ENDED turn as live", () => {
   const messages = new Map<string, string>();
   return withGovernor(
@@ -176,13 +163,9 @@ it.effect("leaves the step running while a DIFFERENT turn is live", () => {
   );
 });
 
-// T3O-18: the production shape the identity guard above cannot see. A human
-// answered, then typed the next message while the previous turn was still
-// finishing — so `turn.completed` for the OLD turn arrived after the step had
-// already been resumed, and parked it. Nothing un-parks it: the resume signal
-// (the `turn-requested` signal) had already fired and found a running step,
-// and a turn starting is deliberately not a second one. The card then pulsed its
-// blue working dot beside "Needs a human" for the rest of the run.
+// A human typed the next message while the previous turn was finishing, so the
+// OLD turn's `turn.completed` arrives after the resume. Parking on it would
+// stick: the `turn-requested` signal has already fired.
 it.effect("leaves the step running when the human's next turn is already queued", () => {
   const messages = new Map<string, string>();
   const pending = new Map<string, string>();
@@ -363,12 +346,8 @@ it.effect("answering a STRUCTURED question resumes the step — no turn ever sta
         "awaiting-input",
       );
 
-      // The subtle case. A structured question is raised from INSIDE a running
-      // turn, and answering it only resolves the deferred that turn is blocked
-      // on — the same turn carries on. So no turn starts, neither turn-start
-      // signal fires, and `user-input.resolved` is the only thing the board
-      // sees. Without it the card keeps a violet "Input needed" chip while the
-      // agent visibly works.
+      // A question raised inside a running turn is answered without a new turn
+      // starting, so `user-input.resolved` is the only signal the board sees.
       yield* pumpRuntime(userInputResolved(threadId));
 
       const resumed = boardCardStepState(yield* board, BoardCardId.make("picker"));
@@ -400,16 +379,9 @@ it.effect("a second resume signal on an already-running step is a no-op", () => 
   );
 });
 
-// The signal the resume deliberately does NOT take (t3o-34, D5). Adapters
-// synthesise `turn.started` for assistant activity arriving with no active turn,
-// so acting on it would clear a card's badge with nobody having acted — and on a
-// stalled step it would zero `stallCount` and re-arm the sweep, quietly undoing
-// a t3o-17 escalation that is meant to stop until a human appears.
-//
-// Since T3O-58 that exclusion is structural: the thread gateway has no
-// turn-started signal at all, and `ThreadGatewayV1.contract.test.ts` proves the
-// v1 gateway drops provider `turn.started`. There is nothing left to pump, so
-// this holds the other half — a parked step stays parked with no human signal.
+// Adapters synthesise `turn.started` with nobody having acted, so the gateway
+// has no turn-started signal at all. This holds the other half: a parked step
+// stays parked with no human signal.
 it.effect("a synthetic turn.started does NOT un-park a step", () => {
   const messages = new Map<string, string>();
   return withGovernor(
@@ -433,11 +405,8 @@ it.effect("a synthetic turn.started does NOT un-park a step", () => {
   );
 });
 
-// The mirror of the `turn.started` exclusion, and the reason the resume reads
-// the payload rather than trusting the event type. Every adapter resolves its
-// pending-input deferred on teardown and emits `user-input.resolved` with an
-// empty answer set, so "resolved" alone is satisfied by stopping a thread. A
-// cancelled question is still unanswered, so the card must keep saying so.
+// Every adapter emits `user-input.resolved` with no answers on teardown, so the
+// resume reads the payload: a cancelled question is still unanswered.
 it.effect("a CANCELLED structured question does not un-park the step", () => {
   const messages = new Map<string, string>();
   return withGovernor(planningBoard("cancelled", messages), ({ pumpDomain, pumpRuntime, board }) =>
@@ -521,15 +490,8 @@ it.effect("re-entering the turn-end handler while already parked changes nothing
   );
 });
 
-// ── Across a restart ───────────────────────────────────────────────────────
-//
-// Everything above is the LIVE edge: a turn ends and the reactor parks the step
-// on the spot. Boot reconciliation is the other edge, and it used to disagree.
-// It read a running step with no live turn as a death — nudging the waiting
-// agent with the unattended "nobody will answer you" text, burning an attempt,
-// and leaving the step `running`, so the card went on pulsing its blue "being
-// worked" dot. On a machine that restarts a few times a day that is where a
-// waiting card spends most of its life, so the live fix barely held.
+// Boot reconciliation must agree with the live edge: a running human-in-the-loop
+// step with no live turn is waiting, not dead.
 
 const RESTART_THREAD = ThreadId.make("thread-restart");
 

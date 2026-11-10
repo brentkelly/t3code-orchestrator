@@ -1,10 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * T3O-44/57 — the Continuous integration stage, driven through the supervisor
- * reactor with a scripted CI runner: a pass moves the card on, a failure gets
- * a fix agent or stops for a human, a restart re-runs from the top, Stop on
- * failure = No runs every step, and Skip CI stops everything and moves the
- * card. Projects without CI are unchanged.
+ * The CI stage through the reactor with a scripted runner: pass moves on,
+ * failure gets a fix agent or a human, restart re-runs, Stop on failure = No
+ * runs every step, Skip CI moves the card. Projects without CI are unchanged.
  */
 import {
   BOARD_SEED_STAGES,

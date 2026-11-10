@@ -1,13 +1,7 @@
 /**
- * The per-card base branch at the REACTOR level (T3O-5, AC6–AC9, AC13).
- *
- * The resolver and its shape gate are unit-tested in contracts, but neither
- * proves what the card's brief actually asks for: that a card pinned to
- * `release/2.4` BRANCHES from `release/2.4`. Between the pure layer and that
- * outcome sits the wiring covered here — the reactor resolving the effective
- * base out of the board aggregate, materialising it locally when it exists only
- * on a remote, refusing to fall back to the default when it exists nowhere, and
- * moving the recorded base once a retarget rebase has actually landed.
+ * The per-card base branch through the reactor: branching from it, materialising
+ * a remote-only base, refusing a base that exists nowhere, and moving the
+ * recorded base once a retarget rebase lands.
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -373,11 +367,8 @@ describe("retargeting a card whose branch already exists (T3O-5, D10)", () => {
   });
 
   it.effect("AC11: a RETARGETED top-level card plans a sync step on its next round", () =>
-    // The load-bearing behaviour change: a top-level card could never receive a
-    // sync step before. Without it, retargeting opens a pull request against a
-    // base the branch was never rebased onto, so the diff carries every commit
-    // the old base has that the new one does not — a review of a diff nobody
-    // wrote.
+    // Without a sync step, retargeting opens a PR against a base the branch was
+    // never rebased onto, so the diff carries the old base's extra commits.
     withGovernor({ board: boardWith(merge, "develop"), settings }, (h) =>
       Effect.gen(function* () {
         yield* h.pumpDomain(cardMoved(card(merge, "develop"), review, merge, 1));
@@ -499,13 +490,8 @@ describe("retargeting a card whose branch already exists (T3O-5, D10)", () => {
   );
 
   it.effect("refuses to merge a pull request still aimed at the base the card left", () =>
-    // The retarget's other half. The rebase moved the branch and the recorded
-    // base onto `develop`, but the pull request opened before the retarget
-    // still merges into `main` — and nothing in the board moves it: the
-    // Ready-for-merge → review return does not cross the Done boundary, so the
-    // round is not a new one and no fresh pull request is opened. Merging it
-    // would land these commits on `main`, which is neither the branch they were
-    // rebased onto nor the one the card says it targets.
+    // The PR opened before the retarget still merges into `main`, and returning
+    // from Ready-for-merge opens no fresh one, so merging it would land on `main`.
     withGovernor(
       {
         board: {

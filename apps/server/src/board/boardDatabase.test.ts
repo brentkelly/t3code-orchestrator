@@ -320,11 +320,8 @@ describe("board database", () => {
       );
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
-  // A data-destroying gate must fail closed: two EMPTY ledgers differ by zero
-  // rows via EXCEPT, which would otherwise read as a "proven copy" and let the
-  // relocation overwrite boards from main. Divergent data with empty ledgers on
-  // both sides is not reachable today, but the gate must refuse it regardless of
-  // that invariant holding.
+  // A data-destroying gate must fail closed: two EMPTY ledgers EXCEPT to zero, which would
+  // otherwise read as a proven copy and let the relocation overwrite boards from main.
   it.effect("refuses when both ledgers are empty rather than treating it as a copy", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

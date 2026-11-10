@@ -1,25 +1,8 @@
 /**
- * The board's own command engine (T3O-56).
- *
- * Board commands used to ride upstream's orchestration engine. Upstream's
- * orchestration-v2 has no extension point, so the board decides, persists and
- * publishes its own commands here, against its own log in `boards.sqlite`.
- *
- * One command at a time, through a queue:
- *
- * 1. a receipt for the command id short-circuits a replay;
- * 2. the state the decider needs beyond the board — the brief, the project and
- *    thread lookups — is loaded (`loadDecisionContext`);
- * 3. `decideBoardCommand` turns the command into events;
- * 4. ONE transaction appends them to `boards.board_events`, folds them into the
- *    `board_*` tables, writes the receipt and the projector watermark — every
- *    table in one database file, so the commit is atomic;
- * 5. the in-memory read model moves, and only then are the events published.
- *
- * Publishing happens on the single worker fiber after commit, which is the
- * serialised publish lane: a subscriber sees sequences in order, never an event
- * whose transaction has not committed. `streamBoardEvents` relies on that to
- * hand over from the durable log to the live tail without a gap or a duplicate.
+ * The board's own command engine, against its own log in `boards.sqlite`. One command at a time:
+ * receipt check, decide, then ONE transaction appends, projects and writes the receipt. Events
+ * publish on the single worker fiber after commit, in order, which `streamBoardEvents` relies on
+ * to hand over from the durable log to the live tail without a gap or duplicate.
  */
 import { type CommandId, type OrchestrationClientOrigin } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";

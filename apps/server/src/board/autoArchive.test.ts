@@ -1,11 +1,7 @@
 /**
- * Auto-archive of idle Done cards (T3O-77): an opt-in pass on the supervisor's
- * 30s tick that archives cards left untouched in Done for N days.
- *
- * Driven through the live reactor against the stateful engine double, so the
- * archive goes through the real decider. `it.effect` runs on the TestClock,
- * whose "now" is the epoch, so card ages are fixed relative to it; the tick is
- * the reactor's own `fireAutoArchives` hook.
+ * Auto-archive of idle Done cards, driven through the live reactor against the
+ * stateful engine double. The TestClock's "now" is the epoch, so card ages are
+ * fixed relative to it; the tick is the reactor's `fireAutoArchives` hook.
  */
 import { BOARD_SEED_STAGE_IDS, BoardCardId, type BoardCard } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";

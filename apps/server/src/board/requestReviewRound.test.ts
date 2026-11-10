@@ -1,16 +1,7 @@
 /**
- * "Another review round" / "Request review" at the assembled reactor (T3O-39).
- *
- * The pure half — a converged loop planning `review@N+1` once the card carries
- * `runThroughRound` — lives in `reviewLoopExecutor.test.ts`. What is proved
- * here is the thing the RPC exists for: the ORDERING. The override is written
- * before the card moves, because a move that landed first would have the
- * executor re-plan a converged loop, complete `succeeded`, and bounce the card
- * straight back to Ready for merge.
- *
- * The refusals are asserted the same way the merge and submit ones are: each is
- * a sentence the card shows, and a button that silently does nothing is what
- * this whole feature replaces.
+ * "Another review round" / "Request review" at the assembled reactor. The ORDERING is the point:
+ * the override is written before the card moves, or the executor re-plans a converged loop and
+ * bounces the card straight back to Ready for merge. Each refusal is a sentence the card shows.
  */
 import {
   BOARD_SEED_STAGES,
@@ -179,11 +170,8 @@ it.effect("D6: the card arriving back in review runs round 2, and does not bounc
         yield* reactor.requestReviewRound(cardId);
         yield* reactor.drain;
 
-        // The move's own arrival (in production it streams back through the
-        // engine) re-enters the review stage. With the override already on the
-        // card the executor plans round 2; without it the loop would read
-        // converged, complete `succeeded`, and `advanceStage` would send the
-        // card straight back to Ready for merge.
+        // The move's arrival re-enters the review stage. With the override already on the card the
+        // executor plans round 2; without it the loop reads converged and the card goes back to Ready.
         yield* pumpDomain(cardMovedBack(cardOf(yield* board), 20));
 
         assert.strictEqual(boardCardStepState(yield* board, cardId)?.stepId, "review@2");

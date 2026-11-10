@@ -1,13 +1,6 @@
 /**
- * The workspace default model (t3o-30, D1).
- *
- * A stage that names no model used to fall straight through to the app's
- * `textGenerationModelSelection`, whose compiled-in value is a codex pair. On a
- * machine with no codex CLI that spawned steps onto a provider that could not
- * start — and the settings card never said which model an unset stage would
- * take, so there was nothing to look at and nothing to change. These pin the
- * ladder: the stage's own model, then the board's default, then the app's
- * selection.
+ * The model ladder for a step: the stage's own model, then the board's default, then the app's
+ * text generation selection.
  */
 import {
   BoardCardId,

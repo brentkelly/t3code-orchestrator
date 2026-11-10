@@ -1,18 +1,7 @@
 /**
- * Auto-merge (T3O-38): an armed card merges its own pull request as soon as
- * the forge accepts it, and a refused merge climbs a classified retry ladder
- * instead of parking the card until someone notices.
- *
- * Driven through the live reactor against the stateful engine double
- * (`withGovernor`), because the behaviour spans the arrival gate, the real
- * decider's arm and hold commands, the forge seam and the 30s tick. The engine
- * double decides every dispatched command with the production decider, so a
- * hold this suite says the card carries is one the decider really recorded.
- *
- * Nothing here sleeps or polls: the sweep is driven by calling the reactor's
- * own `fireAutoMerges` hook, exactly as the auto-start suite drives
- * `startArmed`, and the clock is advanced with `TestClock` where a rung has to
- * come due.
+ * Auto-merge through the live reactor and the stateful engine double, which
+ * decides every command with the production decider. The sweep runs through
+ * the reactor's `fireAutoMerges` hook and rungs come due via `TestClock`.
  */
 import {
   BOARD_CHECKS_FIX_STEP_LABEL,
@@ -524,11 +513,8 @@ it.effect("keeps climbing on a refusal with every check green, showing the forge
   ),
 );
 
-// A merge refused BEFORE the host was asked (T3O-47). The pull request is
-// green, up to date and unconflicted, because it was never the problem, so a
-// probe would describe the pull request instead of the merge-strategy
-// setting. The attempt's own sentence is the answer, and no retry can change
-// it.
+// A merge refused before the host was asked: the pull request was never the
+// problem, so the attempt's own sentence is the answer and no retry helps.
 it.effect("reports a refusal upstream made itself, without probing the pull request", () =>
   withGovernor(
     setup({
@@ -932,12 +918,9 @@ it.effect("merges a card deferred as BLOCKED once its dependency lands (D8)", ()
         yield* h.pumpDomain(cardMoved(card, REVIEW, MERGE, 1));
         assert.deepStrictEqual(yield* h.mergeAttempts, []);
 
-        // The dependency reaching Done re-flags the dependent, which is a
-        // plain `card-updated` carrying no auto-merge marker of any kind. The
-        // arrival recorded no hold, so nothing about the card says it was ever
-        // eligible — without the deferral the sweep has nothing to revisit and
-        // the card sits here until someone clicks Merge, which is the whole
-        // complaint.
+        // The dependency reaching Done re-flags the dependent with a plain
+        // `card-updated` and the arrival recorded no hold, so only the
+        // deferral lets the sweep revisit the card.
         const dep = (yield* h.board).cards.find((entry) => entry.id === BoardCardId.make("dep"));
         assert.isDefined(dep);
         yield* h.pumpDomain(
@@ -1109,13 +1092,9 @@ it.effect("an armed dependency merges itself and starts its armed dependent", ()
         yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
         assert.strictEqual(stageOf(yield* h.board), DONE);
 
-        // D15, pinned through the REAL merge path rather than by mocking the
-        // ordering. Read BEFORE the Done arrival is delivered: the local base
-        // branch has already been fast-forwarded by the time the card reaches
-        // Done, so anything the Done arrival starts — the armed dependent —
-        // cuts from history that already contains the dependency's commits.
-        // Break that ordering and you silently produce agents that cannot see
-        // the code they depend on.
+        // Read before the Done arrival is delivered: the base branch must
+        // already be fast-forwarded, so whatever Done starts (the armed
+        // dependent) cuts from history containing the dependency's commits.
         const gitBeforeDone = yield* h.gitInvocations;
         assert.isTrue(
           gitBeforeDone.some(
@@ -1126,11 +1105,8 @@ it.effect("an armed dependency merges itself and starts its armed dependent", ()
             .join(" | ")}`,
         );
 
-        // The engine double decides and projects a dispatched command but does
-        // not feed its event back into the domain queue, so the Done arrival
-        // is handed over here — exactly as the auto-start suite does. In
-        // production the reactor's own dispatch loops back through the
-        // projection pipeline.
+        // The engine double does not feed its events back into the domain
+        // queue, so the Done arrival is handed over here.
         const merged = (yield* h.board).cards.find(
           (card) => card.id === BoardCardId.make("card-one"),
         );

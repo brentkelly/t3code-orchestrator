@@ -1,23 +1,7 @@
 /**
- * "New thread — restart <stage>" — the `+` menu's on-demand kickoff (T3O-21).
- *
- * The reported bug: the menu row is enabled (the card's thread is idle, so the
- * client's in-flight gate lets the click through) and clicking it does nothing
- * at all. `board.card.start-stage-thread` is decided, the event lands, and the
- * reactor drops it on the floor — because `beginStageRun` only ever superseded
- * a `stalled` step. Every other resting state was blocked by one of two guards
- * written for the AUTOMATIC kickoff:
- *
- *  - a live thread link whose role is the stage (which is what a step thread's
- *    link IS — a human's adopted thread links as `linked`, never as the stage),
- *    so a stage that has ever run could never be restarted; and
- *  - a non-terminal step, which is what a planning interview parked on a
- *    question (`awaiting-input`) rests in — the exact state of the card in the
- *    bug report.
- *
- * An on-demand request is a human's explicit restart, so it supersedes the
- * card's current run whatever state it rests in, exactly as the stalled path
- * always did: settle the old step abandoned, interrupt and unlink its thread,
+ * The `+` menu's on-demand stage restart is a human's explicit restart, so it
+ * supersedes the card's current run whatever state it rests in (not just
+ * `stalled`): settle the old step abandoned, interrupt and unlink its thread,
  * then spawn a fresh one.
  */
 import {
@@ -282,11 +266,8 @@ it.effect("restarts a stalled step, as it always did", () =>
 it.effect("restarts a stalled step whose thread never existed", () =>
   Effect.gen(function* () {
     const outcome = yield* restartOutcome({
-      // The spawn-failure stall (t3o-30): the provider could not start, so the
-      // row names no thread — while the stage's earlier thread is still linked.
-      // The old supersede read that lingering link as a conversation a human had
-      // adopted and bailed, so the one state most in need of a restart was the
-      // one that ignored the click.
+      // A spawn-failure stall names no thread while the stage's earlier thread
+      // is still linked; that link must not read as a human-adopted conversation.
       card: planningCard(),
       stepStates: [planningStep({ status: "stalled", threadId: null })],
     });

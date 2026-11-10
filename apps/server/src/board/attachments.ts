@@ -1,19 +1,8 @@
 /**
- * T3o brief attachments — board-owned storage (t3o-32, K1/K2/K4).
- *
- * Files live at `<stateDir>/board/attachments/<cardId>/<name>`, beside
- * `boards.sqlite`. One copy, board-owned: never a worktree (reclaimed at
- * Done) and never upstream's flat `attachmentsDir` (opaque uuid names, mixed
- * with chat-turn files). Upstream's UPLOAD half is reused unchanged — the
- * client mints a `pending-<uuid>` upload and POSTs the bytes — and this module
- * owns the CLAIM: copy the pending file under the original (sanitised,
- * de-duplicated) filename and hand back the record the decider stores.
- *
- * The one push (K4) is also here: `stageBoardCardImagesAsPending` copies a
- * card's images back out as fresh pending uploads so the supervisor can pass
- * them as ordinary `ChatAttachment`s on a spawn turn — upstream's
- * `Normalizer` then claims them into thread scope untouched, and the board
- * copy stays the truth.
+ * Brief attachments live board-owned under `<stateDir>/board/attachments/<cardId>/`,
+ * never in a worktree (reclaimed at Done) or upstream's flat `attachmentsDir`.
+ * Upstream's upload is reused; this module owns the claim into the card folder
+ * and the copy back out as pending uploads for a spawn turn.
  */
 import {
   BOARD_CARD_ATTACHMENTS_MAX,
@@ -90,14 +79,9 @@ function isUnsafeNameChar(char: string): boolean {
 }
 
 /**
- * A filename safe to store and pleasant to `cat`: the original name with
- * path separators and control characters stripped, collapsed whitespace,
- * `..` runs removed from the front (one leading dot is fine — a dotfile is a
- * dotfile), and a bounded length that keeps the extension. A generic file
- * keeps its name exactly, extension or not (`Makefile` stays `Makefile`):
- * the whole point of the card folder is that an agent sees the file as it
- * was. Only an image gets an inferred extension, so a pasted screenshot
- * named "" becomes `image.png` rather than nothing.
+ * A filename safe to store: separators, control characters and leading `..`
+ * runs stripped, length bounded keeping the extension. Agents should see the
+ * file as it was, so only an image gets an inferred extension (`image.png`).
  */
 export function sanitizeBoardAttachmentName(input: {
   readonly name: string;
@@ -265,13 +249,9 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
   if (dir === null) {
     return yield* fail({ reason: "rejected", message: "Attachment name is not allowed." });
   }
-  // De-duplicate against the card's records, then claim the name on disk
-  // with an EXCLUSIVE create: two attaches of the same name racing each other
-  // read the same record list, and a check-then-copy would let the loser
-  // overwrite the winner's file and, when the decider refused its duplicate
-  // record, delete it on rollback. `wx` makes the collision the filesystem's
-  // to detect — the loser lands as `name-2`, the decider accepts both, and
-  // each rollback removes only its own file.
+  // Racing attaches read the same record list, so the name is claimed with an
+  // exclusive create: the loser lands as `name-2` instead of overwriting the
+  // winner's file (and deleting it on rollback).
   const taken = new Set(input.card.attachments.map((attachment) => attachment.name));
   const preferred = sanitizeBoardAttachmentName({
     name: input.name,
@@ -298,11 +278,9 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
     if (target === null) {
       return yield* fail({ reason: "rejected", message: "Attachment name is not allowed." });
     }
-    // Two phases, so a failure is never misread. RESERVE the name with an
-    // exclusive open: the only way that fails against an existing file is a
-    // collision, which is retried under the next suffix. Then COPY the bytes
-    // over the reservation: a failure here is a storage error — the reserved
-    // (possibly partial) file is removed and nothing is retried.
+    // Reserve with an exclusive open (a failure on an existing file is a
+    // collision, retried under the next suffix), then copy over it (a failure
+    // is a storage error: the reservation is removed, nothing retried).
     const reserved = yield* Effect.scoped(fileSystem.open(target, { flag: "wx" })).pipe(
       Effect.as(true),
       Effect.catch((cause) =>

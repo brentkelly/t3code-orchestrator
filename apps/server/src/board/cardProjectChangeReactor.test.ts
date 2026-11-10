@@ -1,17 +1,7 @@
 /**
- * T3O-33 — what the supervisor does when a card changes project.
- *
- * The card's stage does not move, but the repository it works in does, so any
- * live agent is now editing the wrong checkout. The reactor abandons that run,
- * stops its turn, clears the stage's threads off the card, and lets the stage
- * start again on a fresh thread — but only if the stage auto-executes, so a
- * card sitting in Backlog stays put.
- *
- * Two things here are easy to get wrong and are asserted directly: the
- * abandoned thread must be NAMED to the release sweep (unlinking a live thread
- * removes the link outright, so nothing can derive it from a card afterwards),
- * and a thread a human ADOPTED links with role `linked`, never the stage, so it
- * must survive.
+ * A card changing project abandons its live run and restarts the stage on a
+ * fresh thread when the stage auto-executes. The abandoned thread must be
+ * named to the release sweep, and a human-adopted (`linked`) thread survives.
  */
 import {
   BOARD_SEED_STAGE_IDS,

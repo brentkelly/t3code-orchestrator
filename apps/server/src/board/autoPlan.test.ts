@@ -1,12 +1,7 @@
 /**
- * Auto-planning through the live reactor (T3O-32, T3O-38).
- *
- * Auto-plan has the agent decide what is left. Alone, its plan waits at the
- * human gate; with Auto-build too it is approved — decisions flagged unclear
- * included, since the decision log lives outside the read model and never
- * gates a move — and built. A group's toggles reach its children unless they
- * set their own. The card's current planning thread is steered, never
- * replaced.
+ * Auto-planning through the live reactor. Alone, the plan waits at the human gate; with Auto-build
+ * it is approved (unclear decisions included) and built. A group's toggles reach children that set
+ * none, and the card's current planning thread is steered, never replaced.
  */
 import {
   BOARD_AUTO_PLAN_INSTRUCTION,

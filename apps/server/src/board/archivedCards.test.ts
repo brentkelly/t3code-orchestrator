@@ -1,13 +1,7 @@
 /**
- * T3o archived cards, end to end (t3o-13). Archiving a card that another card
- * depends on used to be a one-way trap: the dependent was blocked forever
- * because an archived dependency counted as unmet, and the archived card was
- * unreachable because nothing listed it.
- *
- * These assertions run the real seams — decider, event store, projection,
- * snapshot queries — because the fix is spread across all of them: the
- * derivation lives in contracts, the re-flag events in the decider, the
- * resolved dependency refs and the archive-page card list in the projection.
+ * Archived cards end to end: an archived dependency no longer blocks its
+ * dependent forever, and the archived card stays listable. Runs the real
+ * decider, event store, projection and snapshot queries.
  */
 import {
   BoardCardId,
@@ -52,12 +46,9 @@ const createProject = {
   createdAt,
 } as const;
 
-/** A dependency card and, behind it, a card in Building that waits on it — the
-    exact shape the archive used to strand. Dependency blocking is derived from
-    the build role onward now (D11), so the dependent must sit in Building (not
-    Ready) to be blocked. Entry into Building with an unmet dependency is refused
-    (D11), so the dependent is moved there dependency-free and then edited to add
-    the dependency — which re-derives its blocked flag in place. */
+/** A dependency card and a Building card waiting on it. Entry into Building
+    with an unmet dependency is refused, so the dependent moves there
+    dependency-free and is then edited to add the dependency. */
 const seedBoard = Effect.gen(function* () {
   const engine = yield* boardStackEngine;
   yield* engine.dispatch(createProject);

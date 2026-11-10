@@ -1,18 +1,8 @@
 /**
- * T3o board projector — `projectBoardEvent`.
- *
- * Applies board events to the in-memory orchestration read model, delegated
- * to from the upstream projector behind a `board.` type-prefix check. Also
- * maps board events to card shell deltas for the shell stream (delegated to
- * from ws.ts behind the same predicate), which needs no projection re-read:
- * every board event payload carries the whole post-change card (and the
- * created payload carries every field of it).
- *
- * Archived cards stay in the read model with `archivedAt` set — the shell
- * drops them (`card-removed`), but the model keeps them so unarchive can
- * restore the card on a from-empty replay. DELETED cards leave the model as
- * well, along with every slice keyed on them; the counter they allocated their
- * key from is the one thing that stays, so a deleted key is never re-issued.
+ * Board events onto the in-memory read model, and onto card shell deltas. Every
+ * payload carries the whole post-change card, so no re-read is needed. Archived
+ * cards stay in the model for unarchive; deleted cards leave it, but the key
+ * counter never rolls back.
  */
 import {
   BOARD_CARD_BRIEF_BODY_KIND,
@@ -217,12 +207,9 @@ const decodeBoardWorkerRegisteredPayload = Schema.decodeUnknownEffect(BoardWorke
 const decodeBoardWorkerRemovedPayload = Schema.decodeUnknownEffect(BoardWorkerRemovedPayload);
 const decodeBoardDefaultWorkerSetPayload = Schema.decodeUnknownEffect(BoardDefaultWorkerSetPayload);
 
-// Canonical card order: (createdAt, id), needed because createdAt is
-// client-supplied, so dispatch order ≠ createdAt order in general. Compared
-// by code units (not localeCompare, which is locale-sensitive, and not SQL
-// ORDER BY, whose collation can disagree with JS on non-ASCII ids) — the
-// rehydration path in projection.ts applies this same comparator after
-// reading rows, so replay and rehydration cannot diverge on ordering.
+// Card order is (createdAt, id), compared by code units: createdAt is client
+// supplied, and localeCompare or SQL collation could disagree with JS. The
+// rehydration in projection.ts sorts with this comparator too.
 function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -247,13 +234,9 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     stage: payload.stage,
     orderKey: payload.orderKey,
     title: payload.title,
-    // A brief captured at creation (t3o-06) sets the sentinel ref; the body
-    // itself lives only in `board_card_bodies` (D8), written by the SQL
-    // projector. `dependsOn` rides the payload. `blocked` is false at birth
-    // for every creation path: the decider refuses creating a card into a
-    // build-or-later stage with unmet dependencies, and approve-materialised
-    // children (t3o-23) land in the pre-build floor stage, where the
-    // build-onward blocking rule (D11) does not yet apply.
+    // The brief body lives only in `board_card_bodies`. `blocked` is false at
+    // birth: the decider refuses creating into a build-or-later stage with
+    // unmet dependencies, and materialised children land before build.
     briefRef:
       payload.brief === undefined && payload.briefFromPlanId === undefined
         ? null
@@ -268,20 +251,13 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     threadLinks: [],
     attachments: [],
     externalRef: null,
-    // Per-card human-in-the-loop override is untouched at birth (D6), and so
-    // are the review-loop overrides (t3o-22, D2) and the per-stage model
-    // overrides (t3o-29, D1) — a new card runs the board's configured loop on
-    // the workspace's configured models until someone says otherwise. A split
-    // child is created through this same path and so starts with no override of
-    // its own, which is exactly what makes it resolve its parent's (t3o-29, D4).
+    // No overrides at birth, split children included: that is what makes a
+    // child resolve its parent's model overrides.
     humanInLoop: null,
     reviewOverrides: null,
     modelOverrides: null,
-    // The card's base branch (T3O-5, D1) rides the flat created payload: the
-    // create dialog's picker sends one only when the user pinned a branch, so
-    // absent — every legacy event, every card that follows the project default,
-    // and every materialised sub-board child (which inherits its parent's
-    // integration branch, D4) — is null.
+    // Present only when the user pinned a branch; null follows the project
+    // default (legacy events and materialised children included).
     baseBranch: payload.baseBranch ?? null,
     // The card's scheduled start (T3O-19, D1) rides the flat created payload
     // the same way: absent — every legacy event and every card created without
@@ -334,27 +310,16 @@ function upsertCard<M extends BoardReadModel>(model: M, card: BoardCard): M {
 }
 
 /**
- * Drop a card and every read-model slice keyed on it (t3o card delete).
- *
- * `nextCardNumberByProject` is pointedly NOT touched. It is a high-water mark,
- * not a count: rolling it back would re-issue the deleted card's key to the
- * next card created in that project, and two cards sharing a key breaks every
- * human reference to either. Deleting the newest card in a project therefore
- * leaves a gap in the key sequence, which is the correct trade.
+ * Drop a card and every read-model slice keyed on it. `nextCardNumberByProject`
+ * is a high-water mark and is not rolled back, so a deleted key is never
+ * re-issued.
  */
 function removeCard<M extends BoardReadModel>(model: M, cardId: BoardCardId): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
-  // The three per-card slices are stripped from the base and RE-ADDED only when
-  // non-empty, so the result matches `loadBoardState`'s absent-vs-empty rule
-  // EXACTLY on both edges:
-  //  - an absent slice stays absent (rehydration omits the key), and
-  //  - a slice this delete empties is OMITTED, not left present as `[]`
-  //    (rehydration omits an empty table too — `plans.length > 0 ? … : {}`).
-  // Either mismatch is a replay-equals-rehydration divergence deepStrictEqual
-  // catches: deleting the last card holding a plan/step would otherwise leave
-  // replay with `plans: []` and rehydration with no key. Destructuring the keys
-  // out of `rest` is load-bearing — spreading an empty `readd()` over a base
-  // that still carried the key would NOT remove it.
+  // Slices are stripped and re-added only when non-empty, matching
+  // `loadBoardState`, which omits absent and empty slices alike. Destructuring
+  // the keys out of `rest` is load-bearing: spreading an empty `readd()` over a
+  // base still carrying a key would not remove it.
   const { stepCompletions, stepStates, plans, ...rest } = board;
   const readd = <T extends { readonly cardId: BoardCardId }>(
     key: "stepCompletions" | "stepStates" | "plans",
@@ -376,11 +341,9 @@ function removeCard<M extends BoardReadModel>(model: M, cardId: BoardCardId): M 
   };
 }
 
-/** Upsert a label into the read model's catalogue, kept in canonical
-    `compareBoardLabels` order — the same comparator `loadBoardState` applies to
-    rows, so replay and rehydration cannot diverge on catalogue order. Every
-    label event (create/update/delete/undelete) carries the full post-change
-    label, so this one path serves them all. */
+/** Upsert a label, kept in `compareBoardLabels` order (the comparator
+    `loadBoardState` uses). Every label event carries the full label, so this
+    one path serves them all. */
 function upsertLabel<M extends BoardReadModel>(model: M, label: BoardLabel): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const catalogue = boardLabelCatalogue(board);
@@ -434,14 +397,9 @@ function setProjectStageConfig<M extends BoardReadModel>(
   return next;
 }
 
-/** Counter bump: monotonic max, so replaying a legacy event (cardNumber 0)
-    still lands the counter at 1, matching the `MAX(card_number) + 1`
-    rehydration.
-
-    Two events reach here. `board.card-created` allocates a number, and so does
-    `board.card-project-changed` (T3O-33) — a card moving into a project draws
-    from that project's counter exactly as a create does, so the two must not
-    be able to hand out the same key. */
+/** Monotonic max, so a legacy event (cardNumber 0) still lands the counter at
+    1, matching `MAX(card_number) + 1` rehydration. A card moving project draws
+    from the counter like a create, so the two never share a key. */
 function bumpNextCardNumber<M extends BoardReadModel>(
   model: M,
   allocation: { readonly projectId: ProjectId; readonly cardNumber: number },
@@ -1047,11 +1005,9 @@ export function projectBoardEvent<M extends BoardReadModel>(
 }
 
 /**
- * Deltas carry the bounded `BoardCardShell` (t3o-04), built purely from the
- * event's own card. This mapping has no thread shells at hand, so the
- * shell's thread-derived fields leave here at their "none" resting state
- * and the client's board views derive them against the thread shells it
- * already holds (`withBoardThreadFields`) — see `boardCardShellFromCard`.
+ * Deltas carry the bounded `BoardCardShell`, built from the event's card alone.
+ * Thread-derived fields leave at their "none" state; clients derive them
+ * against their thread shells (`withBoardThreadFields`).
  */
 export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShellStreamEvent> {
   switch (event.type) {
@@ -1196,13 +1152,9 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
       });
 
     case "board.card-step-admitted":
-      // The one step transition that IS a column-card shell field (t3o-11,
-      // D11): admission flips the card's `queued` badge — held for a slot
-      // (`state.status === "queued"`) or admitted to running. Only this one
-      // boolean rides the shell; the rest of the step state stays DETAIL on
-      // board.subscribeCard. A dedicated `card-queued` delta rather than a
-      // `card-upserted` because this event carries `state`, not the card, so
-      // the full bounded shell cannot be rebuilt here (D7 keeps it one bit).
+      // Admission flips the card's `queued` badge. A dedicated delta because
+      // this event carries `state`, not the card, so the shell cannot be
+      // rebuilt here.
       return Option.some({
         kind: "card-queued",
         sequence: event.sequence,
@@ -1218,12 +1170,8 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
       });
 
     case "board.card-step-recovered":
-      // The second step transition that IS a column-card shell field (t3o-17,
-      // D3): recovery either gave up (→ `stalled`, the loud badge) or put the
-      // step back to work on a retry (→ running, badge cleared). A dedicated
-      // `card-stalled` delta, the exact analogue of `card-queued` above, because
-      // this event carries `state`, not the card, so the full bounded shell
-      // cannot be rebuilt here (D7 keeps it one bit).
+      // Recovery gave up (`stalled`) or put the step back to work (badge
+      // cleared). Like `card-queued`, the event carries `state`, not the card.
       return Option.some({
         kind: "card-stalled",
         sequence: event.sequence,
@@ -1236,19 +1184,14 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
         // clears `held`: a step that gave up is `stalled`, which is its own
         // louder flag, and one that retried is running again.
         held: false,
-        // And it is never awaiting input (t3o-34, D4): recovery either escalated
-        // or resumed. This is the delta that clears the card's "Input needed" /
-        // "Needs a human" / "Paused" badge when a human answers or presses
-        // Resume, because `resume-step` and `requeue-step` both publish through
-        // here. Derived rather than hardcoded so the one definition
-        // (`boardStepParkedReason`) answers for every producer.
+        // Never awaiting input after recovery: this clears the parked badge
+        // when a human answers or presses Resume (`resume-step` and
+        // `requeue-step` both publish here).
         stepAwaiting: boardStepParkedReason(event.payload.state),
         ...stallShellFields(event.payload.state),
-        // A recovered conflict fix keeps its identity — `recoverStep`
-        // re-dispatches the row's own `stepLabel`, so the nudged step is still
-        // the same fix. An ESCALATION lands it on `stalled`, which
-        // `isBoardConflictFixLive` excludes so the pill hands over to the
-        // louder "Stalled" chip rather than fighting it (T3O-9).
+        // A recovered conflict fix keeps its identity. An escalation lands on
+        // `stalled`, which `isBoardConflictFixLive` excludes, so the pill
+        // hands over to the "Stalled" chip.
         stepConflictFix: isBoardConflictFixLive(event.payload.state),
         ...checksFixShellField(event.payload.state),
         // Recovery lands on `running` or `stalled` — but a board-driven resume
@@ -1275,11 +1218,8 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
         held: false,
         // A fresh run is not parked on anybody (t3o-34, D4).
         stepAwaiting: null,
-        // This is where the conflict pill is RAISED (T3O-9): the reactor stamps
-        // the armed fix's row with `BOARD_CONFLICT_STEP_LABEL`, so the flag is
-        // read off the same select-step that starts it. Every other selection
-        // — including the merge stage's unarmed re-entry conversation, which
-        // carries `stepLabel: null` — clears it.
+        // The conflict pill is raised here: the reactor stamps the armed fix
+        // with `BOARD_CONFLICT_STEP_LABEL`. Every other selection clears it.
         stepConflictFix: isBoardConflictFixLive(event.payload.state),
         ...checksFixShellField(event.payload.state),
         // A freshly-selected step is `pending`, not `queued` — it has not been
@@ -1288,12 +1228,8 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
       });
 
     case "board.card-step-settled":
-      // A settled step is terminal — never stalled — so clear the badge. This
-      // covers the one path a stalled step leaves without a fresh select-step:
-      // a human takes over the stalled step's still-live thread and calls
-      // board_complete_step, settling it to `succeeded`. The clear is idempotent
-      // (already-false is a client no-op), so emitting it on the common
-      // non-stalled completion is harmless.
+      // A settled step is never stalled. This covers a human completing a
+      // stalled step's thread directly; the clear is idempotent.
       return Option.some({
         kind: "card-stalled",
         sequence: event.sequence,
@@ -1313,21 +1249,14 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
         // A settled step is terminal, so no fix is live any more (T3O-9) —
         // whichever way it went, the pill and the modal banner clear here.
         stepConflictFix: false,
-        // And a settled step is not queued. This is the clear that was missing:
-        // a step held for a slot can settle straight out of the queue (abandoned
-        // when its card leaves the pipeline, failed before it ever ran) without
-        // passing through the admission that used to be the only way to lower
-        // the flag — which is how a card in Done kept reading
-        // `Queued — starts next` until a reconnect.
+        // A step held for a slot can settle straight out of the queue without
+        // passing admission, so settling must lower the flag too.
         queued: false,
       });
 
     case "board.plans-proposed":
-      // The card's plan set was replaced wholesale, which moves the column
-      // card's plan indicator (t3o-08). Only the COUNT rides the shell; the
-      // plans themselves stay on board.subscribeCard. A dedicated delta rather
-      // than a `card-upserted` because this event carries the plans and the
-      // card id, never the card, so the bounded shell cannot be rebuilt here.
+      // Only the plan count rides the shell. A dedicated delta because this
+      // event carries the plans, never the card.
       return Option.some({
         kind: "card-plans",
         sequence: event.sequence,
@@ -1336,12 +1265,9 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
       });
 
     case "board.card-step-completed":
-      // A REVIEW phase completing changes the column card (t3o-22, D7): round
-      // pips, the severity chip, the issue tally and the convergence flag. A
-      // dedicated delta rather than a `card-upserted` because this event
-      // carries the completion and the card id, never the card. Every other
-      // step completion still changes nothing a column card renders, and the
-      // decider omits the summary for those, so they fall through below.
+      // A review phase completing changes the column card (pips, severity,
+      // tally, convergence). Other completions carry no summary and fall
+      // through below.
       if (event.payload.reviewSummary !== undefined) {
         return Option.some({
           kind: "card-review",
@@ -1371,11 +1297,8 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
       });
 
     case "board.card-step-paused":
-      // A human stopped the step (T3O-23) — the fourth step transition that is
-      // a column-card field, and the mirror of the awaiting-input arm below. It
-      // rides `card-stalled` for the same reason: that delta already carries
-      // every step-derived shell flag, and a fifth delta for one field would be
-      // payload for nothing.
+      // A human stopped the step. It rides `card-stalled`, which already
+      // carries every step-derived shell flag.
       return Option.some({
         kind: "card-stalled",
         sequence: event.sequence,
@@ -1400,15 +1323,9 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
       });
 
     case "board.card-step-awaiting-input":
-      // The third step transition that IS a column-card field (t3o-34, D4).
-      // This case used to fall through to "step transitions are card DETAIL",
-      // which was true only while the card learned about a waiting agent from
-      // the THREAD's pending question instead. It does not, once a step can
-      // park for a question asked in prose or for a human-in-the-loop turn that
-      // ended with nothing to answer — neither leaves a pending question on the
-      // thread, and both used to leave the card pulsing blue as if it were
-      // working. It rides `card-stalled` rather than a delta of its own because
-      // that delta already carries every other step-derived shell flag.
+      // A step can park for a question asked in prose or a human-in-the-loop
+      // turn, leaving no pending question on the thread, so the card learns it
+      // here. Rides `card-stalled` like the other step-derived flags.
       return Option.some({
         kind: "card-stalled",
         sequence: event.sequence,
@@ -1432,15 +1349,9 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
 
     case "board.plan-written":
     case "board.card-stage-thread-requested":
-    // The REMAINING step-lifecycle events (t3o-10) are card DETAIL — the live
-    // step status rides board.subscribeCard, not a column-card shell field (D7
-    // payload discipline). The column card's thread-derived indicators already
-    // reflect the step's thread through the existing `threadState` /
-    // `awaitingInput` fields, so those transitions need no shell delta.
-    // A force-start request (t3o-33) changes no column-card field either: the
-    // step is STILL queued until the governor admits it, and that admission
-    // emits `card-step-admitted`, which clears the badge. Emitting a delta here
-    // would clear the queued pill before anything actually started.
+    // The remaining step-lifecycle events are card detail. A force-start
+    // changes nothing yet: the step stays queued until admission, whose own
+    // delta clears the badge.
     case "board.card-step-force-start-requested":
     case "board.card-step-retuned":
     // A human steering a running step (T3O-17) changes no column-card field
@@ -1458,16 +1369,9 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     // rides `board.subscribeCard`, and changes nothing a column card renders.
     case "board.card-note-recorded":
     case "board.card-decisions-recorded":
-      // Agent write-path events are card DETAIL, not column-card shell fields
-      // (D7): an agent's progress note, a non-review step completion or a plan
-      // BODY rewrite changes nothing a column card renders, so they emit no
-      // shell delta.
-      // They reach a client through board.subscribeCard / the MCP context tool.
-      // (None of them moves a step in or out of `queued`: the flag is raised by
-      // `card-step-admitted` and lowered by that same event or by any of the
-      // four step transitions above, every one of which carries it explicitly;
-      // and a plan SET change rides `card-plans` above, which
-      // `board.plan-written` never causes.)
+      // Agent write-path events change nothing a column card renders. None
+      // moves a step in or out of `queued`, and a plan set change rides
+      // `card-plans` above.
       return Option.none();
 
     default: {

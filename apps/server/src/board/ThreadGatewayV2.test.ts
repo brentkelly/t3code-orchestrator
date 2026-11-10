@@ -1,9 +1,7 @@
 /**
- * The v2 gateway's pure halves (T3O-59): how stored engine events become the
- * supervisor's signals, and how a thread shell reads as the board's thread
- * state. The contract suite drives the same code through the real engine; these
- * pin the cases that engine never produces without a provider — a run's
- * repeated terminal updates, a question answered or cancelled, a usage limit.
+ * The v2 gateway's pure halves, for the cases the contract suite's engine never
+ * produces without a provider: repeated terminal updates, a question answered or
+ * cancelled, a usage limit.
  */
 import {
   CommandId,

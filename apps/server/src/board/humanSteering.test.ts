@@ -1,21 +1,7 @@
 /**
- * A human's message beats the supervisor's nudge (T3O-17).
- *
- * Typing into a running unattended step used to draw a resume nudge in right
- * behind the message — the two-bubble order in this card's attachment. The
- * board could not tell "the agent stopped" from "a human interrupted it", so it
- * talked over the human every time.
- *
- * The fix is one durable field. A human's own turn-start records `humanTurnAt`
- * on the step row, which buys that turn exactly ONE free ending and restarts the
- * recovery ladder; the next `turn.completed` spends the free ending instead of
- * recovering. Bounded on purpose (D3): the supervisor is back on duty
- * immediately afterwards, and the timeout sweep never consumes the free ending
- * at all, so a genuinely hung agent is still caught.
- *
- * Driven through the live reactor against the stateful engine double, because
- * the behaviour spans the turn-start handler, the turn-end handler, the decider
- * and the timeout sweep.
+ * A human's message beats the supervisor's nudge. A human turn-start records
+ * `humanTurnAt`, buying exactly one free ending; the timeout sweep never
+ * spends it, so a hung agent is still caught.
  */
 import {
   BoardCardId,

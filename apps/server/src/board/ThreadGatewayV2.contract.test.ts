@@ -1,16 +1,7 @@
 /**
- * The thread gateway's contract, run against `ThreadGatewayV2` on the real
- * orchestration-v2 stack (T3O-58, T3O-59).
- *
- * Everything the board relies on the thread engine for, stated in the gateway's
- * own vocabulary: what a spawn leaves behind, which commands are refused, what
- * signals the engine's own events become, and what the reads answer.
- *
- * Signals are checked against the events the real engine LOGGED for each
- * command, not hand-built ones, so a drift in upstream's event shapes fails
- * here rather than silently in the supervisor. The stack runs no provider, so
- * what a provider would write (a plan, an assistant message) is written to the
- * engine's own event sink, which projects it exactly as a provider's would.
+ * The thread gateway's contract, run against `ThreadGatewayV2` on the real orchestration-v2
+ * stack. Signals are checked against the events the engine LOGGED, so upstream event drift fails
+ * here. No provider runs; provider output is written to the engine's own event sink.
  */
 import {
   CommandId,

@@ -1,45 +1,8 @@
 /**
- * Branch cleanup for a card that is finished with its branch.
- *
- * Deleting a branch is irreversible, so nothing here decides on its own that a
- * branch is spent — the CALLER carries that burden, and each caller below has
- * its own justification:
- *
- * - **Arrival at Done with a merged pull request.** The commits already live in
- *   the base branch, so the branch holds nothing that exists nowhere else. This
- *   caller runs for no other card state: not an unmerged or closed PR, not a
- *   card with no PR at all.
- * - **Card delete.** No merge is involved and unmerged commits really can be
- *   lost. What makes it legitimate is that a human confirmed the destruction of
- *   the card at a dialog that says so; the card is being erased, and a branch
- *   named after a card that no longer exists has no owner left.
- * - **Confirmed group archive** (T3O-28, decision 14). The human typed the
- *   group's key to say no further work happens on the subtree, ever.
- * - **Archive of a `branch-only` integration branch whose PR merged** (T3O-28).
- *   It has no checkout for a reclaim to remove, and its merge made it durable.
- * - **Cancelled work, after its worktree goes** (T3O-28, decision 12). A human
- *   confirmed the cancellation by typing the card's key and its PR was closed,
- *   so the work is not wanted. The reclaim's safety rule only proves the work
- *   is pushed, not merged, so this deletes the remote copy on that confirmation
- *   alone; the branch goes with the checkout.
- *
- * Each caller runs two deletions, with different risk:
- *
- * - **Remote** — what GitHub's own "delete branch on merge" does, and safe for
- *   the same reason.
- * - **Local** — refused while a worktree still has the branch checked out.
- *   Deleting it out from under a live checkout would leave a worktree on a
- *   detached, nameless HEAD. The caller settles a card at Done by reclaiming
- *   the worktree FIRST, so by the time this runs the branch is normally
- *   unheld and the local delete succeeds; with `reclaimWorktreeOnDone` off the
- *   worktree survives and the local branch OUTLIVES the card — archive reclaims
- *   the worktree but never runs this, so nothing deletes it afterwards. That is
- *   the cost of opting out, and it is the local branch only: the remote one is
- *   deleted at Done either way.
- *
- * Every step is independently best-effort and reports what it did. A cleanup
- * that half-succeeds (remote gone, local held) is a normal, reportable
- * outcome — never an error that strands the card's move to Done.
+ * Branch cleanup for a card finished with its branch. Deletion is irreversible, so the CALLER
+ * proves the branch is spent (merged at Done, a confirmed delete, archive or cancel). Each
+ * deletion is best-effort and reported: the local one is refused while a worktree holds the
+ * branch, and a half-done cleanup never blocks the card's move.
  */
 import * as Effect from "effect/Effect";
 
@@ -58,13 +21,8 @@ export interface BoardBranchCleanupResult {
 }
 
 /**
- * Branch names, one per line, that a worktree in this repository currently has
- * checked out. Parsed from `git worktree list --porcelain`, whose `branch`
- * lines carry a full ref (`refs/heads/feature/x`).
- *
- * A DETACHED worktree emits no `branch` line at all, so it correctly
- * contributes nothing: a detached checkout holds no branch name and cannot be
- * orphaned by deleting one.
+ * Branch names a worktree in this repository has checked out, from `git worktree list
+ * --porcelain`. A detached worktree has no `branch` line, and holds no branch to orphan.
  */
 export function parseWorktreeBranches(porcelain: string): ReadonlyArray<string> {
   const branches: Array<string> = [];
@@ -79,12 +37,8 @@ export function parseWorktreeBranches(porcelain: string): ReadonlyArray<string> 
 }
 
 /**
- * Delete a card's branch, local and remote.
- *
- * `cwd` is the repository the deletion runs in — the PROJECT root, not the
- * card's worktree: a worktree checked out on the very branch being deleted is
- * the one place the local delete is guaranteed to be refused, and it may
- * already have been reclaimed.
+ * Delete a card's branch, local and remote. `cwd` is the PROJECT root, not the card's worktree:
+ * a worktree on the branch being deleted always refuses the local delete, and may be gone.
  */
 export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: {
   /** Taken as a parameter rather than pulled from context so this stays a
@@ -97,7 +51,6 @@ export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: 
   const git = input.git;
   const skipped: Array<string> = [];
 
-  // ── Remote ──────────────────────────────────────────────────────────
   const remoteName = yield* git
     .resolvePrimaryRemoteName(input.cwd)
     .pipe(Effect.orElseSucceed(() => null));
@@ -121,11 +74,8 @@ export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: 
         : "remote branch not deleted: no remote resolved",
     );
   } else {
-    // `allowNonZeroExit`: the branch already being gone is the single most
-    // likely outcome here — GitHub deletes it itself when the repository has
-    // "automatically delete head branches" on, which is a common setting. That
-    // is success from the card's point of view, not a failure worth reporting,
-    // and the two cases are indistinguishable afterwards anyway.
+    // `allowNonZeroExit`: the branch is most likely already gone (forges can delete head branches
+    // on merge), which is success for the card and indistinguishable afterwards.
     const result = yield* git
       .execute({
         operation: "board.deleteCardBranch.remote",
@@ -151,7 +101,6 @@ export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: 
     }
   }
 
-  // ── Local ───────────────────────────────────────────────────────────
   const porcelain = yield* git
     .execute({
       operation: "board.deleteCardBranch.worktrees",
@@ -173,11 +122,8 @@ export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: 
   if (held) {
     skipped.push("local branch kept: a worktree still has it checked out");
   } else {
-    // `-D`, not `-d`: a SQUASH merge (the default strategy) rewrites the work
-    // into a single new commit, so git cannot see the branch's own commits as
-    // merged and `-d` would refuse every time. The force is the caller's
-    // decision to own — the Done caller has proved the PR is merged, and the
-    // delete caller has a human's explicit confirmation.
+    // `-D`, not `-d`: a squash merge leaves the branch's own commits unmerged in git's eyes, so `-d`
+    // would always refuse. The caller owns the force (a proven merge, or a human's confirmation).
     const result = yield* git
       .execute({
         operation: "board.deleteCardBranch.local",

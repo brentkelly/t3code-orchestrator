@@ -1,23 +1,8 @@
 /**
- * T3o board concurrency slots + admission policy (t3o-10 counting, t3o-11
- * governance, D11).
- *
- * The supervisor reactor acquires a slot before spawning a step's thread and
- * releases it at every terminal outcome — success, failure, crash and
- * abandonment. A leaked slot silently halves throughput and is very hard to
- * notice, so release is centralised here and the held count is observable
- * (`heldFor`) for leak assertions.
- *
- * The governor's POLICY lives in `acquire` (t3o-11, T3O-65): admission needs
- * room under all three ceilings — the board's, the worker's, and the provider
- * instance's cap on that worker. Holdings are keyed by (worker, instance),
- * because an instance id on one machine is a different account and CPU from
- * the same id on another. The check-and-increment is a single atomic `modify`,
- * so two step-boundary schedules racing for the last slot can never both win.
- * `acquire` is the sole source of truth for the limit — the reactor orders
- * candidates by priority and offers each to `acquire`, which enforces the caps
- * — so saturation on one worker or vendor never blocks a candidate whose step
- * has headroom elsewhere.
+ * Every terminal step outcome must release its slot; a leak silently halves
+ * throughput. `acquire` is the only place caps are enforced, atomically, and
+ * holdings key on (worker, instance): the same instance id on another machine
+ * is a different account and CPU.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -56,24 +41,17 @@ export type BoardSlotAdmission =
 
 export interface BoardStepSlotsShape {
   /**
-   * Try to take a slot for an instance on a worker under the given caps (D11).
-   * Admits iff the board total, the worker's total and this instance's count
-   * on that worker are each below their ceiling; increments and admits, or
-   * leaves the counts untouched and names the binding ceiling. A refusal
-   * leaves the step `queued` — visible on the card, never lying about its
-   * state.
+   * Admits iff the board, worker and instance-on-worker counts are each below
+   * their ceiling; a refusal leaves counts untouched and names the binding one.
    */
   readonly acquire: (
     key: BoardSlotKey,
     limits: BoardConcurrencyLimit,
   ) => Effect.Effect<BoardSlotAdmission>;
   /** Unconditionally re-take a slot a step already held before a restart. The
-      in-memory Ref is empty after a crash, so boot reconciliation must restore
-      every still-running step's slot BEFORE the governor admits anything — and
-      it restores unconditionally (never rejected by a cap), because the step
-      genuinely holds that slot and dropping it would under-count and let the
-      governor over-admit past the ceiling. Separate from `acquire` so the
-      admission policy is never accidentally bypassed on the live path. */
+      Ref is empty after a crash, so boot restores running steps' slots before
+      any admission, ignoring caps: dropping one would let the governor
+      over-admit. Kept apart from `acquire` so the live path cannot bypass it. */
   readonly restore: (key: BoardSlotKey) => Effect.Effect<void>;
   /** Release a held slot. Floors the count at zero, so a double-release (a
       crash and a settle racing to release the same step) never drives the

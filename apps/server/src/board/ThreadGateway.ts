@@ -1,17 +1,8 @@
 /**
- * The board's one seam onto threads (T3O-58).
- *
- * Everything the board does to or learns about a thread or a project goes
- * through this service: spawning and steering threads, reading the few facts
- * the supervisor decides on, and the signals it reacts to. It is shaped around
- * what the BOARD needs, in board vocabulary, not around the thread engine
- * behind it.
- *
- * `ThreadGatewayV2` (orchestration-v2, T3O-59) is the only implementation, and
- * the only board module allowed to import upstream's orchestration, persistence
- * or provider code (`threadGatewayBoundary.test.ts` holds that line). Swapping
- * the thread engine means writing another implementation and re-running
- * `ThreadGatewayV2.contract.test.ts` against it — not touching the supervisor.
+ * The board's one seam onto threads and projects, in board vocabulary. Its
+ * implementation is the only board module allowed to import upstream's
+ * orchestration, persistence or provider code (`threadGatewayBoundary.test.ts`);
+ * a new engine re-runs `ThreadGatewayV2.contract.test.ts`.
  */
 import type {
   ChatAttachment,
@@ -204,24 +195,9 @@ export interface BoardTodoItem {
 }
 
 /**
- * What the board hears from threads. Every signal names its thread.
- *
- * - `turn-ended` — a turn finished, however it finished. `turnRef` is the
- *   ended turn's own id when the provider stamps one; `outcome` is absent when
- *   the provider did not say.
- * - `turn-start-failed` — a requested turn never started (t3o-30, D2).
- * - `turn-requested` — someone asked for a turn. `byBoard` is the board's own
- *   origin rule (`server:board-…` command ids): false is a human.
- * - `limit-resumed` — the engine's usage-limit recovery resumed the thread
- *   once its window reopened. Not a human, and not the board.
- * - `interrupt-requested` — someone pressed Stop.
- * - `approval-responded` — a human answered a permission prompt.
- * - `input-requested` / `input-resolved` — a structured question raised, and
- *   closed; `answered` separates an answer from a cancellation, and `byBoard`
- *   marks the board's own answer (`answerPendingInput`).
- * - `session-started` — a provider session came up.
- * - `todos-changed` — the agent's todo list was replaced.
- * - `thread-deleted` — the thread is gone for good.
+ * What the board hears from threads. `byBoard` follows the board's origin rule
+ * (`server:board-…` command ids): false is a human. `limit-resumed` is the
+ * engine's usage-limit recovery, neither a human nor the board.
  */
 export type ThreadSignal =
   | {

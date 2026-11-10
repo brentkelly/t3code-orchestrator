@@ -1,20 +1,7 @@
 /**
- * T3o (T3O-24): the repository the board's pull requests live on.
- *
- * Upstream's `RepositoryIdentityResolver` deliberately prefers a remote named
- * `upstream` over `origin`, which suits a contributor-style fork whose pull
- * requests are opened against upstream. The board is the other case. It
- * pushes `board/<key>` to `origin` and opens its pull requests there, so in a
- * fork such as T3o the project's identity names the wrong repository: Merge
- * would act on `pingdotgg/t3code#N`, and linking the fork's own pull request
- * was refused as "not in this card's repository".
- *
- * So the board addresses `origin`, the same default as a plain `git push`,
- * and leaves the project identity alone for everything else. A project with
- * no `origin` falls back to its identity, so a checkout with only some other
- * remote behaves exactly as before.
- *
- * Pure. The caller reads `remote.origin.url`.
+ * The board pushes to and opens PRs on `origin`, whereas upstream's identity
+ * prefers `upstream`, which in a fork names the wrong repository. A project
+ * with no `origin` falls back to its identity. Pure; the caller reads the URL.
  */
 import { type RepositoryIdentity, SourceControlProviderKind } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";

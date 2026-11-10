@@ -1,16 +1,7 @@
 /**
- * A human stop sticks, and every parked step frees its slot (T3O-23).
- *
- * Two supervisor defects with one shape. Interrupting an unattended step's turn
- * used to be undone within a beat — `handleTurnCompleted` saw a turn that ended
- * with no pending question, fell through to `recoverStep`, and nudged the agent
- * straight back to work, so there was no way to stop a card mid-build. And a
- * step parked on a question kept its concurrency slot, so a card could sit on an
- * unanswered question all weekend holding a worker.
- *
- * Driven through the live reactor against the stateful engine double
- * (`withGovernor`), because the behaviour spans the interrupt handler, the
- * decider, the governor's slot accounting and boot reconciliation.
+ * A human stop sticks, and every parked step frees its concurrency slot. Driven through the live
+ * reactor against the stateful engine double (`withGovernor`): the behaviour spans the interrupt
+ * handler, the decider, the governor's slot accounting and boot reconciliation.
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -151,11 +142,10 @@ it.effect("pausing re-interrupts a turn the projection still shows as live", () 
   ),
 );
 
-/** A running, unattended build step one stall short of `maxAttempts` — the end
-    of the recovery ladder, where the next unproductive stop escalates instead of
-    nudging. Seeded rather than driven, because reaching the ceiling through the
-    reactor takes `maxAttempts` full recovery cycles that have nothing to do with
-    what this asserts. */
+/**
+ * A running, unattended build step one stall short of `maxAttempts`, where the next unproductive
+ * stop escalates. Seeded, because driving it takes `maxAttempts` unrelated recovery cycles.
+ */
 const atTheCeiling = (
   id: string,
   status: BoardCardStepState["status"] = "running",
@@ -215,11 +205,8 @@ it.effect("a human stop still parks the card when an escalation won the ordering
       Effect.gen(function* () {
         const threadId = ThreadId.make("thread-lost-stop");
 
-        // The reverse interleaving. Both streams merge into ONE serialised
-        // worker with no ordering guarantee, so the interrupted turn's
-        // `turn.completed` can be processed BEFORE the interrupt — and with no
-        // ladder budget left that routes through `recoverStep` to ESCALATE
-        // rather than to a nudge.
+        // The reverse interleaving: both streams merge into one worker with no ordering guarantee, so
+        // `turn.completed` can arrive BEFORE the interrupt, and with no ladder budget left would escalate.
         yield* pumpRuntime(turnCompleted(threadId));
         assert.strictEqual(stepStatus(yield* board, BoardCardId.make("lost-stop")), "stalled");
 
@@ -647,11 +634,8 @@ it.effect("ticking human-in-the-loop on a stopped card does not put the agent ba
       yield* pumpDomain(turnInterruptRequested(threadId, 2));
       const turnsBefore = turnsOf(yield* commands).length;
 
-      // The human ticks the card's toggle after pressing Stop. Before
-      // `handleCardUpdated` guarded its stance turn on `paused`, this sent
-      // "switching to human-in-the-loop" into the thread just stopped; that
-      // raised a `turn-requested` signal, which resumed the step and put the
-      // agent straight back to work against the human's Stop.
+      // The human ticks the card's toggle after pressing Stop. The stance turn must not be sent into
+      // the stopped thread: its `turn-requested` signal would resume the step against the Stop.
       const card = (yield* board).cards.find(
         (candidate) => candidate.id === BoardCardId.make("no-restart"),
       );
@@ -698,11 +682,8 @@ it.effect("switching the stance of a step parked on a question still puts it bac
         const turnsBefore = turnsOf(yield* commands).length;
         yield* pumpDomain(cardHumanInLoopUpdated(card!, false, 2));
 
-        // The stance turn is what carries that answer into the thread, and in
-        // production `resumeParkedStep` reads its `turn-requested` signal
-        // and puts the step back to running. Guarding the turn on `running`
-        // rather than on `paused` would leave this step parked on its question
-        // for good — the sweep does not recover an `awaiting-input` step.
+        // The stance turn carries the answer into the thread, and its `turn-requested` signal resumes
+        // the step. The sweep does not recover an `awaiting-input` step, so without it this stays parked.
         const turns = turnsOf(yield* commands);
         assert.strictEqual(turns.length, turnsBefore + 1);
         const stance = turns.at(-1)!;
@@ -816,11 +797,8 @@ it.effect("the stance override reaches a step outside the build stage (T3O-17)",
         assert.strictEqual(running?.humanInLoop, true);
         const turnsBefore = turnsOf(yield* commands).length;
 
-        // The human takes their hands off the planning interview from the card
-        // detail's toggle. `handleCardUpdated` used to read the override only
-        // on a BUILD card, so at planning, review or merge `desired` collapsed
-        // to the stance the step froze at entry and this did nothing at all —
-        // the same half-applied state a Stop on a review step would leave.
+        // The human takes their hands off the planning interview from the card detail's toggle; the
+        // override must apply at every stage, not only on a build card.
         const card = (yield* board).cards.find(
           (candidate) => candidate.id === BoardCardId.make("interview"),
         );

@@ -1,17 +1,7 @@
 /**
- * The board's thread gateway on a central server (T3O-63, D9/D19): one
- * `ThreadGateway` over this server's own threads and every worker's.
- *
- * The supervisor keeps calling one gateway. Each call goes where its thread
- * lives: a spawn to the worker it names (absent means here), every other
- * thread call to the worker its card's thread link names, and anything
- * without a thread — projects, the todo log — to this server. The supervisor
- * names the card's worker (T3O-65); on a local-only board that is always this
- * server, so everything routes here exactly as before.
- *
- * `observe` merges this server's signals with every worker's
- * (`WorkerSignalFeed`). Each worker's todo signals are applied by the feed,
- * so the todo log here is this server's alone.
+ * The board's thread gateway on a central server: each call goes where its thread lives (a spawn
+ * to the worker it names, other thread calls to the worker the card's link names), and calls
+ * without a thread to this server. `observe` merges every worker's signals; the todo log is local.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
@@ -181,14 +171,9 @@ export const makeThreadGatewayRouter = (deps: ThreadGatewayRouterDeps): ThreadGa
     lastSignalAt: routedRead((gateway) => gateway.lastSignalAt),
     pendingTurnStartAt: routedRead((gateway) => gateway.pendingTurnStartAt),
 
-    // Best-effort per worker, because the release sweep asks about every
-    // link on the board at once: a removed worker's threads are left out (no
-    // one can answer for them again), and so are those of a worker that
-    // cannot answer right now, so one offline worker never stalls releases
-    // everywhere else. The read fails only when no worker named answered, so
-    // a single thread's lookup (the engine's link and unlink checks) still
-    // fails rather than reading an unreachable thread as one that never
-    // existed.
+    // Best-effort per worker: removed and unreachable workers' threads are left out, so one offline
+    // worker never stalls the release sweep. Fails only when no worker named answered, so a single
+    // thread's lookup never reads an unreachable thread as one that never existed.
     threadRecords: Effect.fn("ThreadGatewayRouter.threadRecords")(function* (threadIds) {
       const byWorker = new Map<BoardWorkerId, Array<ThreadId>>();
       for (const [threadId, { workerId, removed }] of yield* workersOf(threadIds)) {

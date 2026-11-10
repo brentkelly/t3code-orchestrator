@@ -1,9 +1,6 @@
-// T3o: which threads are board card threads, for the Settled shelf's filter (T3O-78).
-//
-// A card thread is any thread a card links (any role, tombstoned or not, archived cards too), or,
-// on a worker, any thread a central board spawned here. A worker thread linked to a card by hand is
-// in neither table on that worker, so it still lists: a known, accepted gap. Clients learn the set
-// only from these reads, so the shelf and the server never disagree on it.
+// Which threads are board card threads, for the Settled shelf's filter: any thread a card links,
+// or on a worker any thread a central board spawned here. A worker thread linked by hand still
+// lists (an accepted gap). Clients learn the set only from these reads.
 import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/sql/SqlClient";

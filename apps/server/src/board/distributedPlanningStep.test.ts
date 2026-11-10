@@ -1,12 +1,7 @@
 /**
- * T3o (T3O-63) acceptance: the board runs a planning step on a worker.
- *
- * The live supervisor, over the real router, remote gateway and signal feed,
- * with an in-process worker behind the fake transport and the card pinned to
- * it (T3O-65). The step's
- * thread is spawned in the worker's checkout, a turn ending there reaches the
- * supervisor, which decides on the thread as the worker reports it, and the
- * step completes.
+ * The board runs a planning step on a worker: live supervisor, real router,
+ * remote gateway and signal feed, an in-process worker behind the fake
+ * transport, and the card pinned to it.
  */
 import { BOARD_SEED_STAGE_IDS, BoardCardId, boardCardStepState } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";

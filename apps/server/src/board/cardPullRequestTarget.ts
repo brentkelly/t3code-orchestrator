@@ -1,12 +1,7 @@
 /**
- * Naming a pull request to link to a card (T3O-18).
- *
- * Pure: turns what an agent passed (a URL, or repository and number) or what
- * a person typed into the card's "Link one" input (`#312`, `312`,
- * `owner/repo#312`, a URL) into the one thing the board can act on — a number
- * on the card's own project repository. The board's forge gateway addresses
- * only that repository, so a pull request anywhere else is refused here with
- * a message that says so, before any forge call.
+ * Pure: turns an agent's or a person's PR reference into a number on the card's
+ * own repository. The forge gateway addresses only that repository, so anything
+ * else is refused here, before any forge call.
  */
 import type { BoardCardPullRequestTarget } from "@t3tools/contracts";
 
@@ -51,15 +46,9 @@ function repositoryPath(repository: string): string {
 }
 
 /**
- * The pull request number to link, or why it cannot be linked.
- *
- * `repository` is the board's — the project's `origin` (T3O-24), which in a
- * fork is not the project identity's upstream.
- *
- * The repository is compared by its path below the host, not by host: a
- * Forgejo URL carries a port the project's portless identity does not, and
- * two hosts serving the same `owner/repo` to one project is not a case worth
- * a false refusal.
+ * The pull request number to link, or why it cannot be linked. `repository` is
+ * the board's (`origin`). Compared by path, not host: a Forgejo URL carries a
+ * port the project's identity does not.
  */
 export function resolveCardPullRequestTarget(
   target: BoardCardPullRequestTarget,

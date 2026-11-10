@@ -1,12 +1,7 @@
 /**
- * T3o board domain integration (t3o-03): a full card lifecycle — create,
- * move, update with dependencies and a brief, link/unlink against real
- * threads, thread-deletion tombstoning, archive/unarchive — dispatched
- * through the real engine, with the projection tables, shell snapshot, and
- * a from-empty replay all agreeing at the end.
- *
- * Plus the destructive counterpart: a card DELETE, which is the only board
- * write whose correctness rests on things being gone rather than present.
+ * A full card lifecycle through the real engine, with the projection tables,
+ * shell snapshot and a from-empty replay agreeing at the end; plus card delete,
+ * whose correctness rests on things being gone.
  */
 import {
   BoardCardId,
@@ -439,12 +434,9 @@ it.layer(makeBoardDomainTestLayer("t3o-board-base-branch-test-"))(
   "per-card base branch (T3O-5)",
   (it) => {
     it.effect("survives the SQL round trip, and replay agrees with rehydration", () =>
-      // The base branch crosses seven projection touch points (row schema,
-      // encode, decode, insert, upsert, both select lists), and a column missed
-      // in any one of them is invisible until a server restart quietly hands
-      // every card its project default back. So this drives the real tables:
-      // pin, clear, re-pin, then compare a from-empty replay against what the
-      // rows rehydrate to.
+      // The base branch crosses seven projection touch points, and a miss in
+      // any shows only after a restart, so this drives the real tables and
+      // compares a from-empty replay against the rehydrated rows.
       Effect.gen(function* () {
         const engine = yield* boardStackEngine;
         const snapshotQuery = yield* boardStackSnapshotQuery;

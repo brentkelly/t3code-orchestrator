@@ -1,11 +1,7 @@
 /**
- * Linking a pull request to a card explicitly (T3O-18).
- *
- * Against the LIVE supervisor reactor and the real decider and projector
- * (`withGovernor`), with the forge stubbed at `BoardPullRequestGateway`. A
- * card made for a pull request — a review card per stack layer, a card with
- * no worktree — must track it exactly as it would a pull request its own
- * branch opened: live status, merge, settling at Done.
+ * On the live reactor with the forge stubbed: a card linked to a PR it did not
+ * open (no worktree) tracks it exactly like its own: live status, merge,
+ * settling at Done.
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";

@@ -480,12 +480,8 @@ it.effect(
         board,
       );
       if (event.type === "board.card-step-recovered") {
-        // Progress resets the whole retry budget, not just the streak (T3O-22,
-        // D12): the step demonstrably did real work since the last nudge, so it
-        // starts its ladder over rather than inheriting a count from the stall
-        // before it. `attempt` used to climb here regardless, which meant a card
-        // that resumed, worked for a day and stalled again arrived at the
-        // ceiling on its first quiet turn.
+        // Progress resets the whole retry budget, not just the streak: a step that did real work since
+        // the last nudge starts its ladder over instead of arriving at the ceiling on its next stall.
         assert.strictEqual(event.payload.state.attempt, 1);
         // Progress forgets the streak; this stall is #1 of a new one.
         assert.strictEqual(event.payload.state.stallCount, 1);
@@ -560,11 +556,8 @@ it.effect(
 it.effect("resume-step drops the park's reason and its scheduled retry (T3O-22)", () =>
   Effect.gen(function* () {
     const card = makeCard({ id: "card-1" });
-    // A card parked behind a provider cooldown, resumed by a human who is not
-    // waiting for the window: the row is about to be RUNNING, so a `usage-limit`
-    // reason and a future `retryAt` on it are simply untrue. Every reader of
-    // both happens to gate on `status === "stalled"` today, which is what keeps
-    // this quiet rather than correct.
+    // A human resumes a card parked behind a provider cooldown: the row becomes RUNNING, so a
+    // `usage-limit` reason and future `retryAt` on it would be untrue.
     const board = makeReadModel({
       cards: [card],
       stepStates: [

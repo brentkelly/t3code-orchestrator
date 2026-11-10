@@ -1,11 +1,6 @@
 /**
- * T3o (T3O-65, D11/D20) — the live supervisor placing steps on workers.
- *
- * Driven against the stateful engine double with a placement whose worker
- * summary each test sets: which workers are online, what they have checked
- * out, which provider instances they run. The thread gateway is the fake, so
- * "ran on worker W" is the `workerId` the spawn named and the worker the card's
- * thread link records.
+ * The live supervisor placing steps on workers. "Ran on worker W" is the
+ * `workerId` the fake gateway's spawn named and the card's thread link records.
  */
 import {
   BOARD_LOCAL_WORKER_ID,

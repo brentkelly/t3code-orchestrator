@@ -1,12 +1,7 @@
 /**
- * The board's own engine (T3O-56), on real SQLite.
- *
- * What the engine promises, and what these pin: a command's events, their
- * projection, its receipt and the watermark commit together or not at all, and
- * only then is anything published; a command id is decided once; a subscriber
- * that catches up from the log and then follows the live tail sees every event
- * exactly once, in order; and nothing a board command does lands in upstream's
- * log.
+ * Pins: events, projection, receipt and watermark commit together before any
+ * publish; a command id is decided once; catch-up then live tail sees every
+ * event exactly once, in order; nothing lands in upstream's log.
  */
 import {
   BoardCardId,

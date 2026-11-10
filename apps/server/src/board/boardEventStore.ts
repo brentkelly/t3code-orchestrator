@@ -1,12 +1,7 @@
 /**
- * The board's own event log and command receipts, in `boards.sqlite` (T3O-56).
- *
- * Same row shape as upstream's `orchestration_events`, its own `AUTOINCREMENT`
- * sequence. Every statement names a `boards.` table, so a transaction built from
- * these writes exactly one database file.
- *
- * Not a service: `BoardEngine` is the only writer, and it composes these inside
- * its own transaction.
+ * The board's event log and command receipts in `boards.sqlite`. Every
+ * statement names a `boards.` table, so a transaction built from these writes
+ * one database file. Not a service: `BoardEngine` is the only writer.
  */
 import {
   BoardEvent,
