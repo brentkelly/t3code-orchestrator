@@ -10,7 +10,7 @@ import * as NodeOS from "node:os";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export const BOARD_CI_MIN_FREE_BYTES = 2 * 1024 ** 3;
+const BOARD_CI_MIN_FREE_BYTES = 2 * 1024 ** 3;
 
 export interface BoardDiskSpaceShape {
   /** Bytes free to an unprivileged writer at `path`, or null when unknown. */
