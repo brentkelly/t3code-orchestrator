@@ -121,6 +121,9 @@ const scriptedRunner = (scripts: ReadonlyArray<Script>) =>
                 finishedAt: NOW,
                 exitCode: failed ? 1 : 0,
                 tail: failed ? "error: it broke" : "",
+                ...(failed && script.result === "failed" && script.headline !== undefined
+                  ? { headline: script.headline }
+                  : {}),
               },
             });
           }
@@ -216,6 +219,94 @@ it.effect("a pass runs no agent and moves the card to Ready for merge", () =>
         assert.strictEqual(records.at(-1)!.payload.activity?.ciOutcome, "passed");
         const spawned = (yield* h.commands).filter((command) => command.type === "thread.spawn");
         assert.lengthOf(spawned, 0);
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+const lintHeadline = {
+  what: "Test → lint",
+  why: "No files matching the pattern",
+  machine: false,
+  logLine: 7,
+  logOffset: 210,
+  source: "pattern" as const,
+};
+
+const libraryHeadline = {
+  what: "Test",
+  why: "Missing system library: libnspr4.so",
+  machine: true,
+  logLine: 3,
+  logOffset: 90,
+  source: "machine" as const,
+  hint: "Install the package that provides libnspr4.so on box.",
+};
+
+it.effect("T3O-61 (Z5-307): a machine failure holds the card and starts no fix agent", () =>
+  Effect.gen(function* () {
+    const { runner, calls } = yield* scriptedRunner([
+      { result: "failed", failedIndex: 1, exitCode: 127, headline: libraryHeadline },
+    ]);
+    const subject = card("machine", review);
+    yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, subject, 1);
+        assert.strictEqual(yield* calls, 1);
+        const held = yield* live(h, subject.id);
+        assert.strictEqual(held.stage, ci);
+        assert.strictEqual(held.ci?.phase, "held");
+        assert.strictEqual(held.ci?.machine, true);
+        assert.strictEqual(held.ci?.fixAttempts, 0);
+        assert.strictEqual(held.ciRoundTrips, 0);
+        assert.deepStrictEqual(held.ci?.headline, libraryHeadline);
+        assert.match(
+          held.ci?.stopReason ?? "",
+          /^Machine problem on .+: Missing system library: libnspr4\.so\. Install the package that provides libnspr4\.so on box\. Then Retry CI\.$/,
+        );
+        const commands = yield* h.commands;
+        assert.isFalse(commands.some((command) => command.type === "board.card.select-step"));
+        const actions = ciRecords(yield* h.decided).map((record) => record.payload.action);
+        assert.isFalse(actions.some((action) => action.kind === "begin-fix"));
+        assert.isFalse(
+          actions.some((action) => action.kind === "finish-pass" && action.result === "failed"),
+        );
+        assert.isTrue(
+          commands.some(
+            (command) =>
+              command.type === "board.card.record-note" &&
+              JSON.stringify(command).includes("Machine problem on"),
+          ),
+        );
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("T3O-61: a code failure's fix agent is told what failed and why first", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([
+      { result: "failed", failedIndex: 1, exitCode: 1, headline: lintHeadline },
+    ]);
+    const subject = card("code", review);
+    yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, subject, 1);
+        const fixing = yield* live(h, subject.id);
+        assert.strictEqual(fixing.ci?.phase, "fixing");
+        assert.deepStrictEqual(fixing.ci?.headline, lintHeadline);
+        const select = (yield* h.commands).find(
+          (command) => command.type === "board.card.select-step",
+        );
+        if (select?.type !== "board.card.select-step") return assert.fail("no fix step");
+        assert.include(
+          select.prompt,
+          "What failed: Test → lint: No files matching the pattern (log line 7)",
+        );
+        assert.isBelow(
+          select.prompt.indexOf("What failed:"),
+          select.prompt.indexOf("The last lines of its output:"),
+        );
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),

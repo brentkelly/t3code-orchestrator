@@ -17,6 +17,7 @@ import {
   boardProjectStageConfigShell,
   boardStageOrderViolation,
   normalizeBoardProjectDelta,
+  parseBoardCiFailureLine,
   parseBoardCiProgressLine,
   parseBoardCiResultFile,
   type BoardCiStep,
@@ -226,6 +227,33 @@ describe("script reporting", () => {
     ).toEqual({ message: "Running", done: 3, total: 9 });
     expect(parseBoardCiProgressLine("::t3o-progress::{nope")).toBeNull();
     expect(parseBoardCiProgressLine("plain output")).toBeNull();
+  });
+
+  it("parses a failure line, capped, and treats one without a reason as log output", () => {
+    expect(
+      parseBoardCiFailureLine(
+        '  ::t3o-failure::{"step":" lint ","reason":"No files to lint","machine":false}',
+      ),
+    ).toEqual({ step: "lint", reason: "No files to lint", machine: false });
+    expect(parseBoardCiFailureLine('::t3o-failure::{"reason":"x"}')).toEqual({
+      step: null,
+      reason: "x",
+      machine: null,
+    });
+    const long = parseBoardCiFailureLine(
+      `::t3o-failure::${JSON.stringify({ step: "s".repeat(200), reason: "r".repeat(900) })}`,
+    );
+    expect(long?.step).toHaveLength(80);
+    expect(long?.reason).toHaveLength(300);
+    expect(parseBoardCiFailureLine('::t3o-failure::{"step":"lint"}')).toBeNull();
+    expect(parseBoardCiFailureLine("::t3o-failure::{nope")).toBeNull();
+  });
+
+  it("keeps a result-file failure's machine flag", () => {
+    const parsed = parseBoardCiResultFile(
+      JSON.stringify({ failures: [{ title: "browser", machine: true }] }),
+    );
+    expect(parsed.result?.failures).toEqual([{ title: "browser", machine: true }]);
   });
 
   it("keeps valid failures of a result file, capped, and warns about the rest", () => {
