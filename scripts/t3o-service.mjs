@@ -35,6 +35,7 @@ import * as NodeUtil from "node:util";
 
 import { selectCliRuntimeExternalDependencies } from "./lib/cli-external-packages.ts";
 import { applyPnpmPatches, readPatchedDependencies } from "./lib/pnpm-patches.ts";
+import { gitconfigAdvice, installGitShims, uninstallGitShims } from "./lib/t3o-git-shims.ts";
 
 const repoRoot = NodeURL.fileURLToPath(new URL("..", import.meta.url));
 const user = NodeOS.userInfo().username;
@@ -66,6 +67,7 @@ const t3Home = NodePath.resolve(values.home);
 const appDir = NodePath.resolve(values["app-dir"] ?? NodePath.join(t3Home, "app"));
 const unitName = `${values.unit}.service`;
 const unitPath = `/etc/systemd/system/${unitName}`;
+const localBin = NodePath.join(NodeOS.homedir(), ".local/bin");
 
 if (values.help || !["install", "sync", "uninstall", "status", "unit"].includes(command)) {
   console.log(
@@ -337,6 +339,7 @@ if (command === "uninstall") {
   run("sudo", ["systemctl", "disable", "--now", unitName], { allowFailure: true });
   run("sudo", ["rm", "-f", unitPath]);
   run("sudo", ["systemctl", "daemon-reload"]);
+  for (const note of uninstallGitShims(localBin)) console.log(`[t3o-service] ${note}`);
 
   const restored = [];
   if (displaced && !values["no-restore"]) {
@@ -393,7 +396,7 @@ function buildBundle() {
     });
   }
 
-  for (const asset of ["bin.mjs", "client/index.html"]) {
+  for (const asset of ["bin.mjs", "t3oGitCredential.mjs", "client/index.html"]) {
     if (!NodeFS.existsSync(NodePath.join(distDir, asset))) {
       fail(`missing build asset apps/server/dist/${asset}. Drop --no-build and try again.`);
     }
@@ -406,6 +409,28 @@ function publishBuild() {
   NodeFS.mkdirSync(appDir, { recursive: true });
   run("rsync", ["-a", "--delete", `${distDir}/`, `${NodePath.join(appDir, "dist")}/`]);
   syncRuntimeDependencies();
+}
+
+/**
+ * The git credential helper and gh shims over <home>/userdata/gitenv (T3O-58). The gitconfig
+ * is never edited: the lines to add are printed when they are missing.
+ */
+function installShims() {
+  const notes = installGitShims({
+    binDir: localBin,
+    nodePath: process.execPath,
+    entryPath: NodePath.join(appDir, "dist/t3oGitCredential.mjs"),
+    gitenvFile: NodePath.join(t3Home, "userdata/gitenv"),
+  });
+  for (const note of notes) console.log(`[t3o-service] ${note}`);
+  const helpers = capture("git", [
+    "config",
+    "--global",
+    "--get-all",
+    "credential.https://github.com.helper",
+  ]);
+  const advice = gitconfigAdvice(helpers.split("\n"));
+  if (advice !== null) console.log(`\n${advice}\n`);
 }
 
 if (command === "sync") {
@@ -431,6 +456,7 @@ if (wasActive) {
 }
 
 publishBuild();
+installShims();
 
 console.log(`[t3o-service] Writing ${unitPath}...`);
 sudoWrite(unitPath, buildUnit());
