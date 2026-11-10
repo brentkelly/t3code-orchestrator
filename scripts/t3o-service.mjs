@@ -415,7 +415,18 @@ function publishBuild() {
  * The git credential helper and gh shims over <home>/userdata/gitenv (T3O-58). The gitconfig
  * is never edited: the lines to add are printed when they are missing.
  */
+// Runs while the service is stopped, so a failure here warns rather than leaving it down.
 function installShims() {
+  try {
+    installShimsOrThrow();
+  } catch (error) {
+    console.warn(
+      `[t3o-service] Skipped the git and gh shims: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function installShimsOrThrow() {
   const notes = installGitShims({
     binDir: localBin,
     nodePath: process.execPath,
