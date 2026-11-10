@@ -1,16 +1,7 @@
 /**
- * Everything the board adds to the server, as one layer (T3O-59): the
- * supervisor and its slots, the board's engine, queries and thread tail, its
- * workers (T3O-62), where each card's git runs (T3O-64), its window onto the
- * forge, worktree retirement, and the v2 thread gateway below them all — on a
- * central server, the router over this server's threads and every worker's
- * (T3O-63). `server.ts` merges it into the runtime with one seam and provides
- * the upstream services it needs from the same graph.
- *
- * `EventSinkV2` must be upstream's own instance (the gateway subscribes to its
- * live stream), which is why the seam provides `RuntimeLayer.layerEventSink` —
- * the same layer value the orchestrator is built from, so the runtime builds it
- * once.
+ * Everything the board adds to the server, as one layer. `EventSinkV2` must be upstream's
+ * own instance (the gateway subscribes to its live stream), so the seam provides
+ * `RuntimeLayer.layerEventSink`, the same layer value the orchestrator is built from.
  */
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

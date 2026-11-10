@@ -1,16 +1,7 @@
 /**
- * Scheduled starts (T3O-19): one nullable instant on the card that holds it
- * still until its moment, then makes the move the supervisor would otherwise
- * have made now — and clears itself doing it.
- *
- * Driven through the live reactor against the stateful engine double
- * (`withGovernor`), because the behaviour spans the governor's gate, the slot
- * accounting, worktree provisioning, the decider and the 30s tick.
- *
- * `it.effect` runs on the TestClock, whose "now" is the epoch, so FUTURE and
- * PAST fixtures sit an hour either side of it. Nothing here sleeps, polls or
- * advances the clock: the tick is driven by calling the reactor's own
- * `fireSchedules` hook, exactly as the timeout-sweep suite drives `sweep`.
+ * Scheduled starts, driven through the live reactor against the stateful engine double.
+ * The TestClock's now is the epoch, so FUTURE and PAST sit an hour either side; the tick
+ * is driven through the reactor's `fireSchedules` hook, never by advancing the clock.
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -214,16 +205,9 @@ it.effect("a force-started step is admitted despite a schedule (the gate's one b
         yield* reactor.reconcile;
         yield* reactor.drain;
 
-        // "Start it anyway" beats a time the same human set earlier, exactly as
-        // it beats the concurrency cap. Nothing else in the board can reach a
-        // scheduled step's `forceStart`, so this is a defensive guard rather
-        // than a button — but a gate that ignored the override would be a card
-        // whose "start anyway" silently did nothing.
-        // Asserted on the ADMISSION rather than on the step's later status: the
-        // gate's job is to let this candidate reach the governor, and what
-        // happens to the step afterwards (this fixture seeds no thread shell, so
-        // a second reconcile pass reads its spawned thread as gone and parks it
-        // for a retry) is a different mechanism's business.
+        // "Start it anyway" (`forceStart`) beats a scheduled time as it beats the concurrency cap.
+        // Asserted on the admission, not the step's later status: this fixture seeds no thread
+        // shell, so a later reconcile parks the spawned step, which is another mechanism's job.
         assert.include(commandTypes(yield* commands), "board.card.admit-step");
       }),
   ),

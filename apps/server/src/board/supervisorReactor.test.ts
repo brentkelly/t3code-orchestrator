@@ -1,10 +1,7 @@
 /**
- * Boot-reconciliation coverage for the supervisor reactor's effectful shell
- * (t3o-10). The pure decision logic is covered in supervisor.test.ts; here we
- * drive the exposed `reconcile` against stub services and a fake thread
- * gateway, and assert the shell wires each reconciliation decision to the right
- * board command or thread call — the "restart the server mid-step"
- * verification bullet.
+ * Boot reconciliation for the reactor's effectful shell: drives `reconcile` against stub
+ * services and a fake thread gateway, and asserts each decision reaches the right board
+ * command or thread call. The pure decisions are covered in supervisor.test.ts.
  */
 import {
   BoardCardId,
@@ -184,31 +181,25 @@ type ReconcileCall = BoardCommand | ThreadGatewayCall;
 function reconcileCommandObjects(input: {
   readonly board: BoardState;
   readonly threadShells?: ReadonlyMap<string, BoardThreadState>;
-  /** Provide a `ServerActivation` (t3o-10, D3) whose effect is this function,
-      called with "everything dispatched so far". It runs exactly at the
-      boundary the reconcile waits on, which is what makes "it read nothing
-      before activation" an observation rather than a race. Absent (the
-      default) leaves the reference at its `undefined` default, so reconcile
-      waits for nothing — the shape every other test runs under. */
+  /**
+   * Provide a `ServerActivation` whose effect is this function, called with everything
+   * dispatched so far, so "it read nothing before activation" is an observation, not a race.
+   * Absent leaves reconcile waiting for nothing.
+   */
   readonly gateOnActivation?: (
     dispatchedSoFar: Effect.Effect<ReadonlyArray<ReconcileCall>>,
   ) => Effect.Effect<void>;
-  /** Follow the reconcile with the backoff rung it just set (T3O-22, D7).
-      Recovery no longer nudges on the spot — it parks the step with a
-      `retryAt` and the retry sweep puts it back through the governor when the
-      rung arrives — so a test about what a RECOVERY does has to wait the rung
-      out. Absent leaves reconcile's own commands alone, which is what every
-      test about what reconcile does NOT do wants. */
+  /**
+   * Follow the reconcile with the backoff rung it just set. A recovery parks the step with a
+   * `retryAt` rather than nudging, so a test about what a recovery does waits the rung out.
+   */
   readonly throughRetry?: boolean;
 }): Effect.Effect<ReadonlyArray<ReconcileCall>> {
   return Effect.gen(function* () {
     const recorded = yield* Ref.make<ReadonlyArray<ReconcileCall>>([]);
-    // Ref-held rather than a frozen snapshot, and BOARD commands are folded back
-    // into it through the real decider and projector (T3O-22). Reconcile's own
-    // decisions used to be write-only here, which was fine while every recovery
-    // acted immediately; now a recovery PARKS the step and a later sweep acts on
-    // the parked row, so a model that never changed would leave the sweep
-    // reading a step that boot had already moved on from.
+    // Board commands fold back into the model through the real decider and projector: a
+    // recovery parks the step and a later sweep acts on the parked row, so a frozen model would
+    // leave the sweep reading a step boot had already moved on from.
     const model = yield* Ref.make(readModel(input.board));
     const foldBoardCommand = (command: BoardCommand) =>
       Effect.gen(function* () {
@@ -337,14 +328,9 @@ function reconcileCommands(input: {
   );
 }
 
-// ── The round cap holds the card (t3o-22, D1) ─────────────────────────
-//
-// The regression this spec exists to fix: PR #40 made the cap complete
-// `succeeded`, and `advanceStage` moves any successful stage whose
-// `autoAdvance` is on — which the review stage's is BY DEFAULT. So a card whose
-// reviewer raised criticals it never resolved graduated to the next stage,
-// indistinguishable from one that passed. Asserted at the reactor, not just the
-// executor, because `board.card.move` is the thing that must not happen.
+// The round cap holds the card. Completing the capped review `succeeded` would let
+// `advanceStage` move it (review auto-advances by default), so a card with unresolved
+// criticals would graduate. Asserted at the reactor: `board.card.move` must not happen.
 
 const reviewCard: BoardCard = { ...card, stage: BoardStageId.make("review") };
 
@@ -607,14 +593,9 @@ it.effect("boot: a human-in-the-loop step that completed while down advances too
   }),
 );
 
-// ── The restart orphan (t3o-10) ────────────────────────────────────────
-//
-// A server restart kills every provider session mid-turn. Upstream's
-// `reconcileProviderSessions` marks each orphaned session `error` — the
-// `Failed` the thread list shows — but the killed turn's id lingers on the
-// thread (`activeTurnRef`), so a liveness rule that reads `activeTurnId` alone sees a corpse
-// mid-turn and resume-watches it forever: slot held, card pulsing, nothing
-// running.
+// After a restart upstream marks each orphaned session `error`, but the killed turn's
+// `activeTurnRef` lingers. Liveness that read only the turn would resume-watch a corpse
+// forever, holding its slot.
 
 it.effect("boot: a session upstream marked `error` is dead even with a stale activeTurnRef", () =>
   Effect.gen(function* () {

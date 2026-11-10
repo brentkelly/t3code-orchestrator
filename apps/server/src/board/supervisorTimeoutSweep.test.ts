@@ -1,16 +1,8 @@
 /**
- * Timeout-sweep liveness clock (t3o-17, T3O-12): the sweep recovers a running
- * unattended step only when EVERY life sign is older than its `timeoutMs` —
- * the last nudge/start, the thread's todo list advancing (`board_thread_todos`),
- * the thread's last OUTPUT (an assistant message or an activity row, T3O-12 D1),
- * and (for a build-mode step, checked once already overdue) the latest commit on
- * the card's worktree. The output signal shields for a bounded number of
- * windows (T3O-12, D9); the other two life signs have no ceiling. Driven
- * through the reactor's `sweep` test hook against the shared harness.
- * `it.effect` runs on the TestClock, whose "now" is the epoch — so OVERDUE
- * fixtures sit one day BEFORE the epoch and FRESH life signs sit exactly at it,
- * keeping every case deterministic without advancing the clock (which would
- * fire the reactor's own 30s sweep timer millions of times).
+ * Timeout-sweep liveness: a running unattended step is recovered only when every life sign
+ * (last nudge or start, todo advance, last output, and a build step's latest commit) is older
+ * than `timeoutMs`; output shields only for a bounded number of windows. The TestClock's
+ * now is the epoch, so OVERDUE fixtures sit a day before it and fresh signs sit at it.
  */
 import {
   BoardCardId,
@@ -313,11 +305,8 @@ it.effect("T3O-16: a permission prompt approved late in the window does not nudg
   ),
 );
 
-// Approval itself is the life sign (T3O-16). A prompt raised and answered
-// while the todo list still read fresh is never seen by the sweep, so only the
-// answer can stamp it. Past the output-signal ceiling, todo advanced at the
-// epoch, approved at +40s, swept at +70s against a 60s timeout: without the
-// answer's stamp the step reads overdue and the resumed agent is nudged.
+// Approval itself is a life sign: a prompt raised and answered while todos read fresh is
+// never seen by the sweep. Without the answer's stamp this step reads overdue at +70s.
 it.effect("T3O-16: a prompt answered before the step looked overdue does not nudge", () =>
   withGovernor(
     {
@@ -427,13 +416,8 @@ it.effect("T3O-16: a stopped session's orphaned permission prompt does not exemp
   ),
 );
 
-// ── The heartbeat is measured on the card's OWN branch (t3o-10, D4) ────
-//
-// A base sync fast-forwards commits reachable from the base into the card's
-// branch — a sibling card's squash merge, most often. Read as the worktree
-// tip, one of those looks exactly like this agent committing: three dead build
-// steps re-armed their watchdog for another `timeoutMs` every time a sibling
-// merged, and held their concurrency slots for twelve hours.
+// The heartbeat is the card's OWN branch: a base sync fast-forwards a sibling's merge into
+// the branch, and read as the worktree tip it would re-arm a dead step's watchdog.
 
 it.effect("a base-sync commit is NOT this agent's heartbeat: the step is still recovered", () =>
   withGovernor(
@@ -548,18 +532,8 @@ it.effect("a base-sync commit since the last nudge does NOT reset the stall coun
   ),
 );
 
-// ── The agent is emitting output right now (T3O-12, D1) ───────────────
-//
-// The card this suite's newest cases exist for: a Code review loop hit its
-// round cap, the user raised the budget, the loop resumed and ran correctly —
-// and the card went red with STALLED saying "Nothing is running" while the
-// round-6 review thread was visibly mid-turn.
-//
-// A `review` phase makes NO commits (it reads the diff and records findings)
-// and is not obliged to churn a todo list while it reads. Every life sign the
-// sweep had was therefore stale after 30 quiet-but-productive minutes, so it
-// judged a healthy 56-minute phase dead. "The agent is emitting output right
-// now" was not a life sign anywhere in the function — nothing ever asked.
+// A review phase makes no commits and need not advance todos while it reads, so without
+// the output signal a healthy long review reads as dead.
 
 it.effect(
   "T3O-12: a thread that signalled inside the window is alive, with no todo advance and no commit",
@@ -661,12 +635,8 @@ it.effect("T3O-12: an overdue step DOES still reach the git commit check", () =>
   ),
 );
 
-// ── Liveness is NOT progress (T3O-12, D2) ─────────────────────────────
-//
-// The signal goes into the sweep and nowhere else. "Is it alive" and "is it
-// getting anywhere" are different questions, and the stall ladder gates on the
-// second on purpose: an agent thrashing in a tool loop is noisy and going
-// nowhere, and if chatter reset `stallCount` it would never escalate.
+// Liveness is not progress: the output signal feeds the sweep only. The stall ladder gates
+// on progress, so a noisy agent looping in tools still escalates.
 
 it.effect("T3O-12: a chatty thread that is going nowhere still climbs the stall ladder", () =>
   withGovernor(
@@ -691,22 +661,9 @@ it.effect("T3O-12: a chatty thread that is going nowhere still climbs the stall 
   ),
 );
 
-// ── Output is not an unbounded licence to run (T3O-12, D9) ────────────
-//
-// The finding these cases exist for: "is the agent emitting anything" is
-// satisfied by noise as readily as by work. An agent thrashing in a tool loop
-// emits activity rows continuously, so an uncapped signal would renew its
-// shield every window forever — never overdue, so never nudged, so `stallCount`
-// never climbs, so the recovery ceiling (only ever charged by an actual
-// recovery) is never spent either. The step would hold its slot indefinitely
-// and no human would ever be told. That is the inverse of the bug T3O-12 fixed
-// and the worse direction: a supervisor that never cries wolf is not a
-// supervisor.
-//
-// So the output signal expires after eight `timeoutMs` windows and the sweep
-// reverts to exactly its pre-T3O-12 life signs. The other two keep no ceiling,
-// because a todo list that advances and a commit that lands are evidence of
-// work rather than of noise.
+// Output alone is not an unbounded licence to run: a tool loop emits activity forever, so
+// the output signal expires after eight `timeoutMs` windows. Todo advances and commits keep
+// no ceiling: they are evidence of work, not noise.
 
 it.effect("T3O-12: a maximally fresh output signal stops shielding past the ceiling", () =>
   withGovernor(

@@ -1,11 +1,6 @@
 /**
- * T3o worktree/branch lifecycle mechanics (t3o-09, D6).
- *
- * The effectful half: the pure helpers that decide a branch name, a base ref,
- * and whether a worktree is safe to reclaim; the serialisation guard that
- * makes "one writer per card worktree" executable; and real-git integration
- * proving that entering Building creates a branch + worktree and that reclaim
- * removes a clean-and-pushed tree but refuses a dirty one (and says why).
+ * Worktree and branch lifecycle: the pure branch, base and reclaim helpers, the one-writer
+ * guard, and real-git proof that reclaim removes a clean, pushed tree but refuses a dirty one.
  */
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -142,11 +137,8 @@ it.effect("resolves a plan card's base to its parent's integration branch", () =
 
 it.effect("falls back to the merged base only when the parent has no live branch", () =>
   Effect.sync(() => {
-    // A merged parent loses its branch on arrival at Done — worktree
-    // reclaimed, branch deleted, slice left `reclaimed` — so cutting from it
-    // would fail on a ref that no longer exists. The merged pull request's
-    // own baseRef is not a guess: the parent's commits ARE in it, by the same
-    // argument that made deleting the branch safe.
+    // A merged parent's branch is deleted at Done, so a child cuts from the merged pull
+    // request's baseRef, which contains the parent's commits.
     const parent = {
       id: "parent" as never,
       worktree: {
@@ -193,11 +185,8 @@ it.effect("falls back to the merged base only when the parent has no live branch
       "board/epic",
     );
 
-    // And a parent whose merged pull request the ROUND BOUNDARY has already
-    // retired — dragged back out of Done, so `pullRequest` is null until its
-    // new round opens one. Reading only the current link would miss exactly
-    // this parent and fall through to `worktree.branch`, the branch that was
-    // deleted at Done.
+    // A parent dragged back out of Done has `pullRequest` null until its new round opens one;
+    // reading only the current link would fall through to the deleted branch.
     const reopened = {
       ...parent,
       pullRequest: null,
@@ -228,11 +217,8 @@ it.effect("falls back to the merged base only when the parent has no live branch
       "feat/parent",
     );
 
-    // A SECOND-ROUND split (t3o-23): the parent was merged and dragged back,
-    // then re-approved — its fresh `branch-only` integration branch must beat
-    // the retired round's merged pull request, or every child would silently
-    // cut from (and PR into) the old round's base, bypassing the integration
-    // branch and the final integration review.
+    // A second-round split: the fresh `branch-only` integration branch must beat the retired
+    // round's merged pull request, or children would bypass the integration branch.
     const secondRound = {
       ...reopened,
       worktree: { ...parent.worktree, branch: "board/parent-2", status: "branch-only" as const },

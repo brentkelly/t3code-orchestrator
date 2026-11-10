@@ -1,10 +1,6 @@
 /**
- * Unit tests for the stage executor seam (t3o-15, D15 — acceptance criterion
- * 19): `SimpleStageExecutor.planNext` is exercised with **no reactor, no
- * database and no git**. Nothing here constructs an Effect, opens a connection
- * or shells out; the whole point of the seam is that "what runs next" is a pure
- * decision over its inputs, testable in isolation exactly like `recoveryDecision`
- * and `reconcileStepDecision`.
+ * `SimpleStageExecutor.planNext` with no reactor, database or git: what runs next is a
+ * pure decision over its inputs.
  */
 import { describe, expect, it } from "@effect/vitest";
 
@@ -341,11 +337,9 @@ describe("BuildStageExecutor.planNext (t3o-07, D4/D5)", () => {
     expect(BuildStageExecutor.planNext(input).kind).toBe("run");
   });
 
-  // The regression D5 names. Completions are keyed `(cardId, stepId)` and never
-  // cleared, so a card dragged back to Building for a SECOND build still
-  // carries the submit completion from its first pass. Routing on that
-  // completion would send the rebuild straight to the merge stage the moment it
-  // finished — skipping review on a card nobody asked to skip review for.
+  // Completions are keyed `(cardId, stepId)` and never cleared, so a rebuilt card still
+  // carries its first pass's submit completion. Routing on it would skip review on a card
+  // nobody asked to skip review for.
   it("does NOT route on a stale submit COMPLETION when a rebuild is what settled", () => {
     const plan = BuildStageExecutor.planNext({
       card,

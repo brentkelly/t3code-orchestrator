@@ -1,24 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // Remove scripts need a detached process group, and the /proc scan needs readlink.
 /**
- * T3o (T3O-23): retire a worktree before git removes it.
- *
- * Every removal T3o starts goes through `WorktreeRetirer.retire`, in this
- * order:
- *
- * 1. Stop T3o's own processes: close every terminal of each thread working in
- *    the worktree and stop its provider session.
- * 2. Check that nothing else is still running there. A `reclaim` with
- *    survivors is held back (`blocked`); a `forced` removal, which a person
- *    confirmed, kills them.
- * 3. Run the project's `runOnWorktreeRemove` scripts, in order, as plain child
- *    processes. A failure becomes `hookWarning` and never stops the removal.
- * 4. Remove the worktree.
- *
- * Steps 1 and 2 come before 3 so a script that moves a cache out of the
- * worktree can rely on nothing still writing into it. Containers started from
- * the worktree are invisible to the process check (they run as root in their
- * own namespace), so stopping them is the script's job.
+ * Every removal T3o starts is retired first: stop T3o's processes, then a reclaim with
+ * survivors is `blocked` (forced kills them), then `runOnWorktreeRemove` scripts run (a
+ * failure is only a `hookWarning`), then git removes it. Containers are invisible to the
+ * process check, so stopping them is the scripts' job.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -519,14 +505,9 @@ export const makeWorktreeRetirer = Effect.fn("worktreeRetire.makeWorktreeRetirer
     return { outcome: "removed", hookWarning } as const;
   });
 
-  // Paths being retired right now, each with a latch released when its
-  // retirement ends. A deleted card's retirement and an orphan sweep can both
-  // reach the same checkout, and the remove scripts must never run twice at
-  // once. A second reclaim is abandoned (null): leaving the worktree is
-  // always a reclaim's safe answer. A second forced removal, which a person
-  // confirmed, waits its turn instead, so it never reports a removal that did
-  // not happen. If the folder is gone once it is through, the first one
-  // removed it.
+  // Paths being retired, each with a latch. The remove scripts must never run twice at once:
+  // a second reclaim is abandoned (null), a second forced removal waits its turn, and finding
+  // the folder gone afterwards means the first one removed it.
   const retiring = new Map<string, Deferred.Deferred<void>>();
 
   const retire: (
@@ -578,21 +559,10 @@ export const makeWorktreeRetirer = Effect.fn("worktreeRetire.makeWorktreeRetirer
 });
 
 /**
- * The stock thread-delete removal (`vcsRemoveWorktree`), retired first. The
- * client has already stopped the thread's session and closed its terminals.
- * `force` picks the kind: forced kills what is left, otherwise a process still
- * running fails the call. A board cleanup already retiring the path fails it
- * too, forced or not: waiting for that cleanup's scripts would stall the
- * client's VCS queue before the early return below could fire. `remove` is
- * the stock call.
- *
- * Without remove scripts the call waits for the removal, as the stock one
- * does. With them it returns once they start: the client queues its VCS
- * commands per project, and minutes of teardown would stall every one behind
- * it. The rest finishes in the background and `afterRemoval` (the git status
- * refresh) runs when it is done. A failure after the scripts start reaches
- * only the server log: the client already has its success, and the refreshed
- * status is what shows the worktree still there.
+ * The stock thread-delete removal, retired first. `force` picks the kind; a busy path fails
+ * it either way, so the client's VCS queue never waits on a board cleanup. With remove
+ * scripts it returns once they start and finishes in the background; later failures reach
+ * only the server log, and `afterRemoval` refreshes git status.
  */
 export const retireRemovedThreadWorktree = Effect.fn("worktreeRetire.retireRemovedThreadWorktree")(
   function* (

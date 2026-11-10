@@ -158,13 +158,8 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     }
   });
 
-  // t3o-19 AC 11: the escalation a human reads names the STEP only when the
-  // stage has steps. On every other stage `stepLabel` is null and naming a
-  // step would invent one.
-  // t3o-34 D6: the unattended half of blocked-agent handling. A human-in-the-loop
-  // run never reaches recovery, so the only agent that gets nudged here is one
-  // whose question nobody will ever answer — and saying so is what stops it
-  // asking again on the next turn and marching up the stall ladder.
+  // The escalation names the STEP only when the stage has steps. An unattended agent that
+  // asked a question is told nobody will answer, so it stops asking and climbing the ladder.
   it("tells a nudged unattended agent to decide its own question, and stays quiet otherwise", () => {
     const asked = decide({ stallCount: 1, endedWithQuestion: true });
     assert.strictEqual(asked.kind, "resume");
@@ -354,15 +349,8 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
   });
 
   it("T3O-12: planned work never reaches the ceiling — a long review loop with no recoveries takes the ladder", () => {
-    // The regression this card exists for. Ten review rounds is 30 PLANNED
-    // steps; the old ceiling summed `attempt`, so past ~round 7 it was
-    // permanently blown and the first stall of any kind escalated instantly
-    // with no nudge and no ladder. Raising the round budget is what pushed a
-    // healthy loop over it — literally "extra rounds gives error".
-    //
-    // With the ceiling counting recoveries, a loop that has needed none is
-    // nowhere near it however long it has legitimately run, so an ordinary
-    // stall gets the ordinary nudge.
+    // The ceiling counts recoveries, not planned steps: a long loop that needed none is
+    // nowhere near it, so an ordinary stall gets the ordinary nudge.
     const nudged = decide({ stallCount: 0, stageEntryRecoveries: 0, attempt: 1 });
     assert.strictEqual(nudged.kind, "resume");
 
@@ -406,12 +394,8 @@ describe("reconcileStepDecision (boot reconciliation)", () => {
   });
 
   it("parks a human-in-the-loop step whose thread is present but idle", () => {
-    // The defect this covers (t3o-34): a planning agent that asked its question
-    // in prose and stopped was recovered at every boot — nudged with the
-    // unattended "nobody will answer you" text, an attempt burned, and the step
-    // left `running`, so the card pulsed its blue "being worked" dot for as long
-    // as it waited. It is waiting on the human, exactly as the live turn-ended
-    // path already decides.
+    // A human-in-the-loop agent that asked in prose and stopped is waiting on the human: boot
+    // must park it, not nudge it and leave it `running`.
     assert.deepStrictEqual(decide({ status: "running", humanInLoop: true, threadPresent: true }), {
       kind: "park",
     });
@@ -423,11 +407,8 @@ describe("reconcileStepDecision (boot reconciliation)", () => {
   });
 
   it("leaves a paused step exactly where the human put it (T3O-23)", () => {
-    // The same shape `stalled` has: non-terminal, so boot reconciliation keeps
-    // re-reading it, but supervision does not drive it. Recovering it would be
-    // the board undoing a human's stop across a restart — and unlike a stall,
-    // this one is the user's own instruction, so a live thread makes no
-    // difference either way.
+    // Like `stalled`: non-terminal, but not driven. Recovering it would undo a human's stop
+    // across a restart, so a live thread makes no difference.
     assert.deepStrictEqual(decide({ status: "paused" }), { kind: "resume-watch" });
     assert.deepStrictEqual(decide({ status: "paused", threadAlive: true }), {
       kind: "resume-watch",

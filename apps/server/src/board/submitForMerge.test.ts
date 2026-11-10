@@ -1,17 +1,8 @@
 /**
- * "Submit for merge — no review" at the assembled reactor (t3o-07).
- *
- * The pure routing decision lives in `stageExecutor.test.ts`; what is proved
- * here is the thing a user actually presses: a held build card selects one
- * unattended submit step, the card does NOT move until that step succeeds, and
- * when it does the card lands in the merge-role stage — over the top of the
- * review-role stage, and whatever the Build stage's `autoAdvance` says.
- *
- * Driven through the shared `withGovernor` harness, so every assertion is over
- * the board state the real decider + projector produce from the reactor's own
- * dispatches. The refusals are asserted the same way, because each of them is a
- * sentence the card shows — a button that silently does nothing is the failure
- * mode this whole feature replaces.
+ * "Submit for merge, no review" at the assembled reactor: a held build card runs one
+ * unattended submit step, does NOT move until it succeeds, then lands in the merge stage
+ * whatever `autoAdvance` says. Refusals are asserted on board state, since each is a
+ * sentence the card shows.
  */
 import {
   BOARD_SEED_STAGES,
@@ -233,11 +224,8 @@ it.effect("a REBUILD after a submit still advances one stage, to Code review", (
       board: {
         cards: [heldBuildCard()],
         stepStates: [{ ...settledBuildStep, status: "running" }],
-        // The card was submitted once, dragged back to Building, and is being
-        // built again — so it carries a `submit` completion that will never be
-        // cleared. Routing on that COMPLETION rather than on the settle would
-        // send this rebuild straight to the merge stage the moment it finished,
-        // skipping review on a card nobody asked to skip review for (D5).
+        // A rebuilt card carries a never-cleared `submit` completion; routing on it rather than
+        // the settle would skip review on a card nobody asked to skip review for.
         stepCompletions: [
           { ...buildCompletion, stepId: BOARD_SUBMIT_STEP_ID, summary: "opened PR" },
         ],
@@ -283,12 +271,8 @@ it.effect("D9: a submit step that fails leaves the card in Building", () =>
 it.effect("D5: a submit step that completed while the server was down still routes the card", () =>
   withGovernor(
     {
-      // The state a crash mid-submit leaves behind: the agent reported
-      // `succeeded`, the settle never landed, and the step row is still
-      // `running`. Boot reconciliation settles it and asks the executor what
-      // happens next — which is the routing this feature is made of. Nothing
-      // durable had to be added to the card to survive this: the step row and
-      // its completion already were.
+      // A crash mid-submit: the agent reported `succeeded` but the settle never landed. Boot
+      // reconciliation settles it and asks the executor what happens next.
       board: {
         cards: [heldBuildCard()],
         stepStates: [
@@ -403,15 +387,9 @@ it.effect("refuses a card that does not exist", () =>
   ),
 );
 
-// ── The gates that only bite at the directed advance ────────────────────────
-//
-// Two of the decider's forward gates past the build role — an unfinished
-// sub-board child and an unapproved split — refuse the DIRECTED MOVE, which
-// happens after the submit step has already pushed the branch and opened the
-// pull request. Left to bite there, the refusal is swallowed by the reactor's
-// dispatch and the card sits in Building with a fresh pull request and no
-// account of why. So they are pre-checked before the step runs, and the race
-// that pre-check cannot close is reported on the card.
+// Two forward gates (an unfinished sub-board child, an unapproved split) would refuse the
+// directed move only after the PR is opened, where the refusal is swallowed. So they are
+// pre-checked before the step runs, and the race the pre-check cannot close is reported.
 
 /** A live plan card of `card-1`'s: materialised, sitting on the floor, not
     done — the state that holds its parent at the build ceiling. */

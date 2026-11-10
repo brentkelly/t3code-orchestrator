@@ -1,31 +1,8 @@
 /**
- * T3o stage executor seam (t3o-15, D15) — the extension point t3o-16's review
- * loop plugs into without touching the reactor.
- *
- * The reactor (`supervisorReactor.ts`) stays generic: it owns stage-entry
- * detection, worktree provisioning, slot acquisition, thread spawn, `sendTurn`,
- * death detection, the recovery ladder and auto-advance. It delegates exactly
- * one question to a **stage executor** — *what runs next, or are we done?* — and
- * never learns what kind of stage it is driving. An `if (stage.role === "review")`
- * branch in the reactor would be the first leak of review logic through the
- * reactor, the decider, the projector and the board UI; the executor seam keeps
- * every one of them uniform.
- *
- * `planNext` is **pure** — no SQL, no git, no thread handles — in the same
- * spirit as `recoveryDecision` and `reconcileStepDecision` in `supervisor.ts`,
- * so it is unit-testable without a reactor, a database or a git repository
- * (acceptance criterion 19). It returns a prompt; the *agent* runs `git` in its
- * worktree, so git stays out of the decision path entirely (D15).
- *
- * This spec ships one implementation, `SimpleStageExecutor`, wrapping the
- * single-step "decide the next step to run" logic that used to sit inline in the
- * reactor: it yields the stage's one seeded step and reports `complete` as soon
- * as that step has succeeded (D1). t3o-16 adds a `ReviewLoopExecutor` that holds
- * the entire review loop — phases, rounds, convergence — inside itself and
- * registers under the `review` role; nothing else in the codebase learns about
- * it. Combined with the `kind`-discriminated `BoardStageExecution` union (D4),
- * the whole codebase branches on stage kind in exactly two places: the settings
- * card (which panel to render) and this registry (which executor to run).
+ * The stage executor seam. The reactor stays generic and asks one question of an
+ * executor, "what runs next, or are we done?", so it never learns what kind of stage it
+ * drives. `planNext` is pure (no SQL, git or thread handles); it returns a prompt and the
+ * agent runs git. Stage kind is branched on only in the settings card and this registry.
  */
 import type {
   BoardCiAgentStepPayload,
@@ -67,83 +44,52 @@ export interface BoardStageExecutorConfig {
       it (never derives it from `mode`) and freezes it onto the run row. */
   readonly runtimeMode: RuntimeMode;
   /**
-   * This card's own override of the model and access level for THIS stage
-   * (t3o-29), already resolved through the parent for a sub-board child; null
-   * when the workspace config governs.
-   *
-   * Carried BESIDE `model` rather than folded into it, because what an override
-   * means is the executor's business, not the reactor's. Folding it in would
-   * make the card's "Review model" also re-model triage and adjudication — both
-   * default to a null per-phase model and so fall through to `model` — which is
-   * exactly what t3o-22 D4 refused, and the reactor cannot special-case the
-   * review role without becoming the role branch the seam exists to prevent.
-   * So the reactor resolves it (only it can see the board and the parent) and
-   * each executor decides what it governs.
+   * This card's own model and access override for this stage, resolved through the parent
+   * for a sub-board child; null when the workspace config governs. Kept beside `model`
+   * because what it governs is each executor's call: folding it in would re-model triage
+   * and adjudication too.
    */
   readonly cardOverride: BoardCardStageModelOverride | null;
   readonly timeoutMs: number;
   readonly maxAttempts: number;
   /**
-   * The stage's fully resolved execution config (D4). A single-step executor
-   * plans over the flat `prompt`/`model`/… above; a multi-step executor
-   * (t3o-16's review loop) reads its per-phase config off this discriminated
-   * union member. Passing the whole resolved config keeps the reactor generic —
-   * it never unpacks a stage kind it does not understand.
+   * The stage's fully resolved execution config. Multi-step executors read per-phase config
+   * off it, so the reactor never unpacks a stage kind it does not understand.
    */
   readonly execution: BoardStageExecution;
 }
 
 /**
- * The executor's view of the run in progress. `round` is the executor's own
- * counter for a sequence that completed but did not converge (t3o-16), stamped
- * onto the step it hands back — kept distinct from the reactor's `maxAttempts`
- * recovery ladder, which counts a step whose thread died. `completedStepIds`
- * are the steps this run has already succeeded, so the executor decides "another
- * step or done?" from run progress rather than from a card's all-time history
- * (a re-entry drag-back is the reactor's D7 concern, not the executor's).
+ * The run in progress. `round` is the executor's own counter, distinct from the reactor's
+ * `maxAttempts` recovery ladder. `completedStepIds` are this run's successes, so the
+ * executor decides from run progress, not the card's all-time history.
  */
 export interface BoardStageRunState {
   readonly round: number;
   readonly completedStepIds: readonly string[];
-  /** The card's step currently in flight, or null when nothing is running.
-      Part of the seam's CONTRACT — a run state that cannot express "a step is
-      in flight" is a lossy description of a run — rather than an active guard:
-      every reactor caller today plans only when nothing is running and passes
-      null. It matters because a multi-step executor must be able to tell a
-      round that has STARTED from one that has merely been recorded, and
-      t3o-22's round-budget floor turns on exactly that distinction. The floor
-      that protects a live run in production is the decider's, which reads the
-      card's live step directly. */
+  /**
+   * The step in flight, or null. Every reactor caller today plans only when nothing runs and
+   * passes null; it is part of the contract so an executor can tell a STARTED round from a
+   * recorded one. The decider's floor is what protects a live run in production.
+   */
   readonly liveStepId: string | null;
-  /** Whether the card's base branch has MOVED since its recorded
-      `baseTipAtRoundStart` (t3o-24, D1) — resolved by the reactor (one
-      `rev-parse` in the project root against the run row's recorded tip)
-      because `planNext` is pure and cannot measure. Always false for a card
-      with no recorded tip (staleness is measured, not assumed), and the
-      reactor only ever measures it for a sub-board child — a top-level card's
-      base moving is the universal condition of trunk development, out of the
-      gate's scope. The review-loop executor reads it at its convergence arm to
-      decide whether a sync-base step stands between the loop and `succeeded`;
-      every other executor ignores it. */
+  /**
+   * Whether the base moved since `baseTipAtRoundStart`, measured by the reactor because
+   * `planNext` cannot. False with no recorded tip, and only measured for a sub-board child.
+   * The review loop reads it to decide whether a sync step stands before `succeeded`.
+   */
   readonly baseStale: boolean;
-  /** The base the card has been RETARGETED at (T3O-5, D10), when a human moved
-      the picker after the branch was cut and the recorded base has not caught
-      up; null on the ordinary tip-moved staleness and whenever nothing was
-      retargeted. Reactor-resolved for the same reason `baseStale` is —
-      `resolveBoardCardEffectiveBase` needs the project's default branch, which
-      only git can answer. The review-loop executor reads it to word the sync
-      step's prompt: "a sibling merged into it" is simply false for a retarget,
-      and the rebase mechanics are identical either way. */
+  /**
+   * The base the card was retargeted at, when the recorded base has not caught up; null
+   * otherwise. Reactor-resolved (it needs the project's default branch). The review loop
+   * uses it to word the sync prompt, since "a sibling merged into it" is false here.
+   */
   readonly baseRetargetedTo: string | null;
-  /** The step that just SETTLED, or null on stage entry (t3o-07, D5).
-   *
-   * Distinct from `liveStepId`, which means "in flight": a run state that can
-   * only say what is running cannot say what just finished, and the build
-   * executor needs exactly that to tell "the submit step just succeeded, route
-   * this card to merge" from "this card is being rebuilt and happens to carry
-   * an old submit completion". The reactor already holds it — `continueStage`
-   * is called with the settled state — so this only lets the seam express it.
-   * Every other executor ignores it. */
+  /**
+   * The step that just SETTLED, or null on stage entry. Distinct from `liveStepId`: the
+   * build executor needs it to tell "submit just succeeded, route to merge" from "a rebuild
+   * that carries an old submit completion".
+   */
   readonly settledStepId: string | null;
   /** Every CI step that failed in the pass (T3O-44/57), in step order, when
       the reactor is asking the CI executor what follows a failed pass; null
@@ -175,13 +121,10 @@ export type BoardStagePlan =
       readonly kind: "run";
       readonly round: number;
       readonly stepId: string;
-      /** The step's label, or NULL when this stage has no steps (t3o-19, D4).
-          `SimpleStageExecutor` always returns null — its stage runs one step
-          whose label would only ever repeat the stage's, which is what put
-          `Stage: planning. Step: Planning.` into every prompt. The review loop
-          returns a real label, and so would a future sequence executor: the
-          presence of the label IS the "stepped" signal, so neither the
-          envelope nor the reactor needs a flag to keep in sync. */
+      /**
+       * The step's label, or null when the stage has no steps (its label would only repeat the
+       * stage's). The label's presence IS the "stepped" signal, so no flag needs syncing.
+       */
       readonly stepLabel: string | null;
       readonly prompt: string;
       readonly model: BoardModelSelection;
@@ -191,25 +134,21 @@ export type BoardStagePlan =
       readonly runtimeMode: RuntimeMode;
       readonly timeoutMs: number;
       readonly maxAttempts: number;
-      /** Whether this step STARTS a review round (t3o-24, D1) — the executor's
-          signal to the reactor, which cannot be allowed to parse review step
-          ids itself (D15: the reactor learns nothing). `true` has the reactor
-          measure the base branch's current tip and record it onto the run row
-          as `baseTipAtRoundStart`; `false` carries the replaced row's recorded
-          tip forward, so a round's later steps keep the tip its review
-          started from. */
+      /**
+       * Whether this step STARTS a review round, so the reactor never parses review step ids.
+       * `true` measures and records the base tip as `baseTipAtRoundStart`; `false` carries the
+       * replaced row's tip forward, so a round's later steps keep the tip its review began from.
+       */
       readonly recordBaseTip: boolean;
     }
   | {
       readonly kind: "complete";
       readonly outcome: BoardStepOutcome;
-      /** Where this stage ends TOWARD (t3o-07, D5), when it does not simply end
-          at the next stage in order. The reactor resolves the role with
-          `boardStageWithRole`, which it does throughout, so it stays
-          role-generic and learns nothing about submission. A directed advance
-          is a human's explicit request: it bypasses the stage's `autoAdvance`
-          and moves with `override`, because the target is non-adjacent by
-          construction (D6). */
+      /**
+       * Where this stage ends toward, when not simply the next stage. A directed advance is a
+       * human's explicit request: it bypasses `autoAdvance` and moves with `override`, because
+       * the target is non-adjacent by construction.
+       */
       readonly advanceToRole?: BoardStageRole;
     }
   | { readonly kind: "escalate"; readonly question: string }
@@ -248,16 +187,9 @@ export interface BoardStageExecutor {
 }
 
 /**
- * The single-step executor every stage uses except the review loop (D1/D15). It
- * yields the stage's one seeded step, and reports `complete` as soon as that
- * step has succeeded in the current run. It never escalates — the reactor owns
- * the recovery ladder (D13). t3o-16's `ReviewLoopExecutor` is the multi-round
- * exception: it completes `succeeded` ONLY when its loop CONVERGES (a round
- * with nothing blocking), and `blocked` for every other ending — the round cap,
- * a stop the user asked for, or a broken reviewer payload (t3o-22, D1). That
- * split is what keeps `advanceStage`, which is gated on `succeeded`, from
- * graduating a card nothing ever passed. (The `escalate` arm stays part of the
- * seam contract for a future executor, but no shipped executor emits it.)
+ * Every stage's executor except review and build: yields the stage's one step and
+ * completes as soon as it has succeeded in this run. It never escalates; the reactor owns
+ * the recovery ladder.
  */
 export const SimpleStageExecutor: BoardStageExecutor = {
   planNext({ config, runState }: BoardStagePlanInput): BoardStagePlan {
@@ -291,22 +223,9 @@ export const SimpleStageExecutor: BoardStageExecutor = {
 };
 
 /**
- * The build-role executor (t3o-07, D4).
- *
- * A thin wrapper, and load-bearing rather than tidy. Building ships
- * `autoAdvance: true`: when the submit step settles, `continueStage` asks the
- * stage's executor what happens next, and `SimpleStageExecutor` would see the
- * ordinary build step already recorded, report `complete: succeeded`, and let
- * `advanceStage` move the card to the next stage in order — **Code review**,
- * the one stage the whole feature exists to skip. Registering an executor for
- * the role is the sanctioned single edit, and it keeps the reactor from
- * learning what a submit step is.
- *
- * It routes on the SETTLE, never on the recorded completion. Completions are
- * keyed `(cardId, stepId)` and never cleared, so a card dragged back to
- * Building for a second build still carries its old `submit` completion — and
- * keying on that would send the rebuild straight to merge the moment it
- * finished.
+ * The build-role executor routes a settled submit step to merge. Without it the stage's
+ * `autoAdvance` would move the card into Code review, the stage submit exists to skip. It
+ * routes on the SETTLE: a rebuilt card still carries its old, never-cleared completion.
  */
 export const BuildStageExecutor: BoardStageExecutor = {
   planNext(input: BoardStagePlanInput): BoardStagePlan {
@@ -318,13 +237,9 @@ export const BuildStageExecutor: BoardStageExecutor = {
 };
 
 /**
- * Executor implementations keyed by stage role (D15). The `review` role runs the
- * multi-phase `ReviewLoopExecutor` (t3o-16) and the `build` role the
- * settle-routing `BuildStageExecutor` (t3o-07); every other role, and a
- * null-role custom stage, falls through to `SimpleStageExecutor`. Registering
- * here is the single edit that teaches the pipeline about a stage kind without
- * touching the reactor — the reactor only ever asks
- * `stageExecutorForRole(...).planNext`.
+ * Executors by stage role; every other role, and a null-role custom stage, falls through
+ * to `SimpleStageExecutor`. Registering here teaches the pipeline a stage kind without
+ * touching the reactor.
  */
 const STAGE_EXECUTORS: Partial<Record<BoardStageRole, BoardStageExecutor>> = {
   review: ReviewLoopExecutor,

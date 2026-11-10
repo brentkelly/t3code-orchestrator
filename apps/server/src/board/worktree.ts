@@ -1,27 +1,7 @@
 /**
- * T3o board worktree & branch lifecycle mechanics (t3o-09, D6).
- *
- * The *mechanics* only: create a card's branch + worktree on entry to
- * Building, run the project's worktree setup script, and reclaim the worktree
- * at archive. The board is a supervisor, so WHEN these run — reacting to a
- * card entering Building, spawning the build thread, enforcing one-writer
- * serialisation across concurrent steps — belongs to the reactor (t3o-10) and
- * the governor (t3o-11). This module deliberately builds none of that: it is a
- * set of standalone effects whose git dependency is a requirement, exercised
- * directly by tests and wired into the reactor later. No layer is provided
- * here, so nothing runs behind the human "Begin build" gate on its own (D18).
- *
- * D8 stays intact: the pure decider (decider.ts) records the branch/worktree
- * state these effects report, through the server-internal worktree commands.
- * These effects do the I/O and hand the outcome back to a caller that
- * dispatches `board.card.record-worktree` / `.fail-worktree` /
- * `.reclaim-worktree`.
- *
- * Reuse over reinvention (per the spec): branch + worktree creation goes
- * through the same `GitVcsDriver.createWorktree` the thread bootstrap uses
- * (ws.ts), the setup script through the existing `ProjectSetupScriptRunner`,
- * and reclamation through `GitVcsDriver.removeWorktree` — gated by a
- * clean-and-pushed check so uncommitted work is never deleted to save disk.
+ * Board worktree and branch mechanics: provision, set up, probe and reclaim, as standalone
+ * effects. When they run is the reactor's job, and the decider records their outcome
+ * through the server-internal worktree commands. Reclaim never deletes undurable work.
  */
 import { resolveBoardCardEffectiveBase } from "@t3tools/contracts";
 import type { BoardCard, BoardCardWorktreeReclaimOutcome } from "@t3tools/contracts";
@@ -44,17 +24,9 @@ export function boardCardWorktreeBranchName(card: Pick<BoardCard, "key">): strin
 }
 
 /**
- * The base ref a card's branch is cut from (D6/D12, T3O-5 D2): the card's own
- * pinned `baseBranch` — or the project's default branch when it has none — for
- * a top-level card, and the parent card's integration branch for a sub-board
- * plan card. Returns null when a plan card's parent has no branch yet: the
- * caller turns that into a visible failure rather than cutting from the wrong
- * base.
- *
- * A one-line delegate to `resolveBoardCardEffectiveBase`, which holds the whole
- * precedence ladder and its rationale. Shared with the web (T3O-5, D3) so "what
- * is this card's base?" is answered once: the card detail, the picker's value,
- * the amber divergence line and this resolver all read the same function.
+ * The base ref a card's branch is cut from: its pinned `baseBranch` or the project default,
+ * or for a sub-board plan card its parent's integration branch. Null when that parent has no
+ * branch yet, which the caller surfaces rather than cutting from the wrong base.
  */
 export function resolveBoardCardBaseRef(input: {
   readonly card: Pick<BoardCard, "parentCardId" | "baseBranch">;
@@ -73,11 +45,8 @@ export interface BoardCardWorktreeProvisionResult {
 }
 
 /**
- * The worktree path already checked out for `branch`, parsed from
- * `git worktree list --porcelain`, or null if the branch has no worktree.
- * Pure so it is unit-tested without a repo. Porcelain output is blank-line
- * separated blocks; a block's `branch refs/heads/<name>` line names the ref,
- * and `worktree <path>` its checkout.
+ * The worktree path checked out for `branch` in `git worktree list --porcelain` output
+ * (blank-line separated `worktree <path>` / `branch refs/heads/<name>` blocks), or null.
  */
 export function parseWorktreePathForBranch(porcelain: string, branch: string): string | null {
   const wanted = `branch refs/heads/${branch}`;
@@ -95,20 +64,10 @@ export function parseWorktreePathForBranch(porcelain: string, branch: string): s
 }
 
 /**
- * Create the card's branch and worktree from `baseRefName` (D6). One
- * `git worktree add -b <branch> <path> <baseRefName>`, exactly as the thread
- * bootstrap does — the branch is created as part of the worktree add, and
- * `baseRefName` records the merge base. Slow and fallible by nature (it
- * triggers `runOnWorktreeCreate`), so the caller wraps it as the "provisioning"
- * step: dispatch `provision-worktree` first, run this, then `record-worktree`
- * on success or `fail-worktree` on error.
- *
- * Retry-safe (D6 — "a failed step with a retry, not a wedged card"): a prior
- * attempt may already have created the branch, or the whole worktree, before
- * failing (e.g. the setup script died). Recover by reusing that state rather
- * than failing on "already exists", and never delete work to do so — a
- * worktree already on the branch is returned as-is; a branch that exists
- * without a worktree gets one attached; only a clean slate cuts a new branch.
+ * Create the card's branch and worktree from `baseRefName` with one `git worktree add -b`,
+ * as the thread bootstrap does. Retry-safe without deleting work: a worktree already on the
+ * branch is returned as-is, an existing branch gets one attached, and only a clean slate
+ * cuts a new branch.
  */
 export const provisionBoardCardWorktree = Effect.fn("provisionBoardCardWorktree")(
   function* (input: {
@@ -155,29 +114,10 @@ export const provisionBoardCardWorktree = Effect.fn("provisionBoardCardWorktree"
 );
 
 /**
- * Whether a board worktree should get its own `gh` default (T3O-24), from what
- * git reports about the repository. Pure, so it is table-tested without a repo.
- *
- * `gh` picks the repository a bare `gh pr create` talks to from the remotes,
- * and it PREFERS one named `upstream` unless some remote carries
- * `remote.<name>.gh-resolved`. In a fork that means an agent's pull request is
- * opened against upstream. The board pushes to `origin` and resolves its pull
- * requests there, so its agents' `gh` should too.
- *
- * Only when it would change anything and cannot break anything: there is an
- * `origin`, there is more than one remote (with one, `gh` picks it anyway),
- * nobody has chosen a default already, and the shared config does not hold a
- * `core.bare = true` or `core.worktree`, which git requires to move into each
- * worktree's own config once `extensions.worktreeConfig` is on.
- *
- * Turning the extension on writes the shared config and is not undone when the
- * worktree goes, so it is only ever turned on in a repository at
- * `core.repositoryformatversion` 0 — what `git clone` and `git init` create.
- * There git honours `worktreeConfig` and libgit2 and JGit ignore `extensions.*`
- * altogether, so no tool can refuse the repository over it; git's own
- * `sparse-checkout init` makes the same upgrade. At version 1 a tool that does
- * not know the extension refuses the repository, so a v1 repo is pinned only
- * when the extension is already on.
+ * `gh` prefers a remote named `upstream`, so in a fork agents' pull requests would target
+ * upstream. Pin to `origin` only with several remotes, no chosen default, and no shared
+ * `core.bare`/`core.worktree`. `extensions.worktreeConfig` is only newly enabled at
+ * `core.repositoryformatversion` 0, since at 1 tools that don't know it refuse the repo.
  */
 export function boardWorktreeGhDefaultDecision(input: {
   readonly remotes: ReadonlyArray<string>;
@@ -199,13 +139,9 @@ export function boardWorktreeGhDefaultDecision(input: {
 }
 
 /**
- * Pin `gh`'s default repository to `origin` in ONE board worktree (T3O-24),
- * with `git config --worktree`, so the user's main checkout and every
- * non-board thread keep resolving exactly what they did. `git worktree remove`
- * deletes the worktree's config with it.
- *
- * Defence in depth, not a gate: any failure is logged and the worktree is
- * provisioned regardless.
+ * Pin `gh`'s default repository to `origin` in one board worktree via `git config
+ * --worktree`, so the main checkout and other threads are untouched. Never fails the
+ * provisioning: errors are logged.
  */
 export const pinBoardWorktreeGhDefault = Effect.fn("pinBoardWorktreeGhDefault")(
   function* (worktreePath: string) {
@@ -294,11 +230,8 @@ export const pinBoardWorktreeGhDefault = Effect.fn("pinBoardWorktreeGhDefault")(
 );
 
 /**
- * Run the project's worktree setup script (`runOnWorktreeCreate`) in the
- * card's worktree, reusing the thread-scoped runner: the setup command runs in
- * a terminal owned by the build thread, which is why this takes the build
- * thread's id. A thin pass-through so the board never reinvents terminal
- * ownership.
+ * Run `runOnWorktreeCreate` in the card's worktree through the thread-scoped runner, so the
+ * setup terminal is owned by the build thread.
  */
 export const runBoardCardWorktreeSetup = Effect.fn("runBoardCardWorktreeSetup")(function* (input: {
   readonly threadId: string;
@@ -314,16 +247,9 @@ export const runBoardCardWorktreeSetup = Effect.fn("runBoardCardWorktreeSetup")(
 });
 
 /**
- * Whether a worktree is safe to reclaim (T3O-52, D1): a clean working tree AND
- * work that is DURABLE — local `HEAD` already lives somewhere other than this
- * checkout (the remote base branch, a merged pull request's head, or any
- * remote-tracking ref). Never delete uncommitted work, and never delete a
- * checkout whose commits exist nowhere else — both would lose work to save
- * disk (D6).
- *
- * The `reason` is the card-facing "says why" when a reclaim is skipped, and
- * carries its evidence. Pure, so it is table-tested without a git repo; the
- * git probing that produces `durable` is `probeBoardWorktreeDurability`.
+ * Safe to reclaim only when the tree is clean AND `HEAD` is durable (on the remote base, a
+ * merged pull request's head, or any remote-tracking ref). `reason` is the card-facing
+ * explanation when a reclaim is skipped, with its evidence.
  */
 export function boardCardWorktreeReclaimDecision(input: {
   readonly hasWorkingTreeChanges: boolean;
@@ -441,12 +367,8 @@ export interface BoardWorktreeDurabilityInput {
 }
 
 /**
- * Gather the facts `boardCardWorktreeReclaimDecision` rules on (T3O-52, D1).
- *
- * Every proof is a git fetch, never a forge API call, so the sweep costs
- * nothing against a rate limit. A fetch that fails (no remote, no PR refs on
- * this forge, offline) is "not proven", never an error: the worktree is then
- * flagged rather than deleted, which is the safe direction to be wrong in.
+ * Every proof is a git fetch, never a forge API call, so the sweep costs no rate limit. A
+ * failed fetch is "not proven", never an error: the worktree is kept, the safe direction.
  */
 export const probeBoardWorktreeDurability = Effect.fn("probeBoardWorktreeDurability")(function* (
   input: BoardWorktreeDurabilityInput,
@@ -570,14 +492,9 @@ export interface BoardCardWorktreeReclaimResult {
 }
 
 /**
- * The registered path of a card's checkout whose folder is gone, or null when
- * the folder may still be there (including when git's list cannot be read).
- * Gone means `prunable` — git still lists it — or unlisted and absent from
- * disk, because `git worktree prune` (or a gc) has since dropped it. A
- * prunable entry is matched on the branch too, as git may spell the path
- * differently (symlinks). Anything else that is not an exact path match falls
- * to the folder check, which keeps a live checkout spelled through a symlink
- * and still catches a gone one whose branch is now checked out elsewhere.
+ * The registered path of a card's checkout whose folder is gone (`prunable`, or unlisted and
+ * absent from disk), else null, including when git's list cannot be read. Prunable entries
+ * also match on branch since git may spell the path differently; the rest go to disk.
  */
 export const goneBoardWorktreePath = Effect.fn("goneBoardWorktreePath")(function* (
   input: BoardWorktreeDurabilityInput,
@@ -611,25 +528,9 @@ export const goneBoardWorktreePath = Effect.fn("goneBoardWorktreePath")(function
 });
 
 /**
- * Reclaim a card's worktree (D6/D15, T3O-52): remove it only when it is clean
- * and its work is durable, otherwise leave it and report why so the card can
- * flag it. The caller records the outcome through `board.card.reclaim-worktree`.
- *
- * A safe tree is then RETIRED (T3O-23, `worktreeRetire.ts`): its processes
- * stopped, its remove scripts run, and only then removed. Something still
- * running in it holds the reclaim back like any other reason to keep it.
- *
- * `stillWanted` is asked AFTER the probe, and again by the retirement
- * immediately before the removal.
- * The probe fetches from the remote and can take minutes, and the caller's
- * reason to remove — the card is finished, the checkout has no owner — was
- * read before it started; a card restarted or provisioned in the meantime
- * owns a checkout that is clean and durable and must still not go. Answering
- * false abandons the reclaim: the result is null and nothing is removed.
- *
- * A checkout whose folder is already gone — deleted by hand to free disk —
- * has nothing left to lose and cannot be probed. Only git's registration is
- * dropped, if git still holds one. The branch, and any commits on it, stay.
+ * Remove a card's worktree only when clean and durable, else report why. `stillWanted` is
+ * asked after the slow probe and again before removal; false abandons (null, nothing
+ * removed). A checkout whose folder is already gone only loses git's registration.
  */
 export const reclaimBoardCardWorktree = Effect.fn("reclaimBoardCardWorktree")(function* (
   input: BoardWorktreeDurabilityInput,
@@ -668,11 +569,8 @@ export const reclaimBoardCardWorktree = Effect.fn("reclaimBoardCardWorktree")(fu
 });
 
 /**
- * Remove a worktree whatever it holds, bypassing BOTH the durability decision
- * and git's own refusal to remove a dirty checkout. For the two callers where
- * a human has confirmed at a dialog that the work goes: card delete, and the
- * card's "Remove worktree" action. Neither deletes the BRANCH here, so
- * committed work survives on it at no disk cost.
+ * Remove a worktree whatever it holds, bypassing the durability rule and git's dirty-tree
+ * refusal, for a human-confirmed card delete or "Remove worktree". The branch is kept.
  */
 export const forceRemoveBoardCardWorktree = Effect.fn("forceRemoveBoardCardWorktree")(
   function* (input: { readonly projectCwd: string; readonly worktreePath: string }) {
@@ -691,11 +589,8 @@ export const forceRemoveBoardCardWorktree = Effect.fn("forceRemoveBoardCardWorkt
 );
 
 /**
- * Raised when more than one writer would hold a card's single worktree at
- * once. All threads on a card share one worktree and steps within a card are
- * serialised — two agents in one worktree corrupt each other. The supervisor
- * (t3o-10) enforces the invariant; t3o-09 states it as this guard so the
- * reactor has one place to call and the invariant lives in code, not prose.
+ * More than one writer would hold a card's single worktree: two agents in one worktree
+ * corrupt each other, so steps within a card are serialised.
  */
 export class BoardWorktreeConcurrencyError extends Schema.TaggedError<BoardWorktreeConcurrencyError>()(
   "BoardWorktreeConcurrencyError",

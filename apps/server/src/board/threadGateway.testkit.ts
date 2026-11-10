@@ -1,21 +1,7 @@
 /**
- * An in-memory `ThreadGateway` (T3O-58), for suites that stub the board's
- * world rather than build the real stack.
- *
- * It models the thread engine only as far as the board depends on it:
- *
- * - **Records** are the threads that exist — what the decider and the release
- *   sweep read. A spawn adds one; a delete removes it.
- * - **States** are what `threadState` answers — the live view the supervisor
- *   decides on. A spawned thread has a record but NO state until a test sets
- *   one, so "is it alive" is always the fixture's explicit answer.
- * - Two invariants are enforced, because the board relies on them: a turn
- *   cannot be sent to a thread that does not exist, and a settle is refused
- *   while the thread is mid-turn (and an automatic one once a thread is
- *   already settled).
- *
- * Every call is recorded in order, refused or not, so a test can assert HOW a
- * thread was steered as well as what came of it.
+ * An in-memory `ThreadGateway`. A spawned thread has a record but no state until the test
+ * sets one. Enforced like the board relies on: no turn to a missing thread, no settle while
+ * mid-turn (nor an automatic one once settled). Every call is recorded in order.
  */
 import { ProjectId, ProviderInstanceId, ThreadId, type ModelSelection } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";

@@ -1,21 +1,7 @@
 /**
- * T3o board RPC handlers (t3o-04).
- *
- * `boardRpcHandlers` is the injected factory the upstream ws.ts handler
- * object spreads (`...(yield* boardRpcHandlers({ currentSession, boardSupervisor }))`).
- * Adding a board RPC grows the returned record here plus the contracts-side
- * registries (`BOARD_WS_METHODS` / `BOARD_RPCS` / `BOARD_RPC_SCOPES`) and
- * touches zero upstream files.
- *
- * Authorization: upstream's `RpcScopeAuthorization` middleware already checks
- * `RPC_REQUIRED_SCOPES`, which spreads `BOARD_RPC_SCOPES`; the handlers keep
- * their own check against the same session as a second line, with the same
- * failure shape (`EnvironmentAuthorizationError`). Spans and request metrics
- * come from upstream's `RpcInstrumentation` middleware.
- *
- * Writes go through the board's own engine and reads through `BoardQueries`
- * (T3O-56); nothing here touches upstream's orchestration engine. The board's
- * client state rides its own subscription and dispatch RPCs (T3O-57).
+ * Board RPC handlers, spread into upstream's ws.ts handler object. Upstream's
+ * `RpcScopeAuthorization` already checks `BOARD_RPC_SCOPES`; the handlers re-check the
+ * same session as a second line, with the same `EnvironmentAuthorizationError` shape.
  */
 import {
   BOARD_RPC_SCOPES,
@@ -338,21 +324,10 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * Re-resolve the card's pull request from the forge.
-     *
-     * The refreshed link reaches the open card through the `subscribeCard`
-     * stream that is already re-emitting on every board event, so the automatic
-     * callers (a card opening, View PR being clicked) ignore the answer
-     * entirely. A failed lookup is deliberately NOT an error — the reactor
-     * keeps the last known link and logs, because a rate limit must leave a
-     * card's PR badge alone rather than blanking it or popping a toast at
-     * someone who only opened a card.
-     *
-     * T3o (T3O-48): it does RETURN an answer now, and a human's "Check again"
-     * passes `force` to bypass the two-minute lookup cache and its failure
-     * backoff. A button whose result is silence cannot tell "this branch has no
-     * pull request" from "the forge could not be asked", and that confusion is
-     * what this card was filed about.
+     * Re-resolve the card's pull request from the forge. A failed lookup is not an error: the
+     * reactor keeps the last known link, so a rate limit never blanks a card's PR badge.
+     * `force` (a human's "Check again") bypasses the lookup cache and its failure backoff, and
+     * the answer tells "no pull request" apart from "the forge could not be asked".
      */
     [BOARD_WS_METHODS.refreshCardPullRequest]: (input: BoardRefreshCardPullRequestInput) =>
       authorized(
@@ -395,11 +370,9 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * Open the card's pull request from Building and route it past Code review
-     * ("Submit for merge — no review", t3o-07). Always human-initiated, and
-     * the result is a value rather than an error channel for the same reason
-     * merging's is: "this card has no branch to push" is the system working,
-     * and the caller renders each refusal differently.
+     * Open the card's pull request from Building and route it past Code review. The result is
+     * a value rather than an error channel: each refusal is the system working, and the
+     * caller renders each differently.
      */
     [BOARD_WS_METHODS.submitCardForMerge]: (input: BoardCardPullRequestActionInput) =>
       authorized(
@@ -408,11 +381,9 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * Run one more review round on a settled loop (T3O-39, D6) — "Another
-     * review round", and "Request review" on a card that never had one. An
-     * RPC rather than a card command because the ordering is load-bearing:
-     * the `runThroughRound` override must be written before the card moves,
-     * or the executor re-plans a converged loop and bounces it straight back.
+     * Run one more review round on a settled loop. An RPC rather than a card command because
+     * the `runThroughRound` override must be written before the card moves, or the executor
+     * re-plans a converged loop and bounces it straight back.
      */
     [BOARD_WS_METHODS.requestReviewRound]: (input: BoardRequestReviewRoundInput) =>
       authorized(
@@ -644,36 +615,22 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * One streaming subscription per open card, mirroring
-     * `subscribeThread`'s lifecycle: emits the full detail on subscribe,
-     * re-emits it on every board event for this card, and is disposed with
-     * the stream's scope when the client closes the card. Detail is one
-     * card's worth of data, so re-emitting whole is cheaper than an event
-     * grammar and needs no client-side merge.
+     * One subscription per open card: emits the full detail on subscribe and re-emits it on
+     * every board event, disposed with the stream's scope. One card's detail is small enough
+     * that re-emitting it whole beats an event grammar and a client-side merge.
      */
     [BOARD_WS_METHODS.subscribeCard]: (input: BoardSubscribeCardInput) =>
       Stream.unwrap(
         authorized(
           BOARD_WS_METHODS.subscribeCard,
           Effect.gen(function* () {
-            // Attach live delivery into a scope-bound buffer BEFORE the
-            // initial read, exactly like subscribeShell/subscribeThread: an
-            // event committed while the initial detail read is in flight
-            // must trigger a re-read, not vanish. The buffer carries no
-            // payload and slides at capacity 1: any burst that lands while
-            // a re-read is in flight collapses into one queued wake-up, so
-            // the follow-up read observes the latest projected state and
-            // the stream emits one frame for the whole burst.
+            // Attach live delivery BEFORE the initial read, so an event committed during
+            // it triggers a re-read. The payload-free buffer slides at capacity 1, so a burst
+            // during a re-read collapses into one wake-up and one frame of the latest state.
             const liveBuffer = yield* Queue.sliding<void>(1);
             yield* Effect.forkScoped(
-              // Wake on ANY board event, not only ones aggregated on the open
-              // card: the detail embeds resolved dependencies/dependents with
-              // live stage/archive state, and those change under events fired
-              // on OTHER aggregate ids (a dependency moving to Done, another
-              // card adopting this one into its dependsOn). One card's detail
-              // re-read per coalesced burst (the sliding buffer above) is the
-              // cost; a stale dependency chip until an unrelated local event
-              // was the alternative.
+              // Wake on ANY board event: the detail embeds dependencies and dependents
+              // whose stage and archive state change under events on other cards' ids.
               boardEngine.liveBoardEvents.pipe(
                 Stream.runForEach(() => Queue.offer(liveBuffer, undefined)),
               ),
@@ -691,12 +648,9 @@ function makeBoardRpcHandlers(
               Stream.make(detailItem(initial)),
               Stream.fromQueue(liveBuffer).pipe(
                 Stream.mapEffect(() => readDetail(input.cardId)),
-                // A null mid-stream means the card was DELETED under an open
-                // viewer — an archived card still resolves, so nothing else
-                // produces one. The frame is dropped rather than closing the
-                // stream: the client that issued the delete closes its own
-                // modal, and another device's viewer keeps rendering the last
-                // frame, which beats a dialog that vanishes mid-read.
+                // Null mid-stream: the card was deleted under an open viewer (an
+                // archived card still resolves). Drop the frame rather than close the
+                // stream, so other viewers keep the last frame.
                 Stream.flatMap((detail) =>
                   detail === null ? Stream.empty : Stream.make(detailItem(detail)),
                 ),
@@ -711,26 +665,10 @@ function makeBoardRpcHandlers(
 // ── The human dispatch boundary (t3o-18, D11) ──────────────────────────
 
 /**
- * Stamp the HUMAN actor on a board command arriving over `board.dispatchCommand`,
- * so the Activity rail can say "brent moved to Building" rather than
- * attributing every drag to the system.
- *
- * Called immediately before dispatch: that RPC is the transport that knows a
- * person is on the other end, and no other caller can claim to be one.
- * A non-board command, or one that names no card, is left alone.
- *
- * **The name** is the card's project git `user.name`, cached per project and
- * frozen onto the row at write time (so it stays correct after the git config
- * changes), falling back to `"You"`. There is no user identity anywhere in
- * t3code — it is a single-user local server — and for a dev tool the git identity
- * is the right one: it is already what lands on every commit the agent makes.
- *
- * Resolution is two point reads plus at most one `git config` per project for the
- * lifetime of the process, on a path a human drives by hand. Every failure
- * degrades to the fallback name; none can fail the dispatch.
- *
- * T3O-64: read from this server's own checkout of the project when it has
- * one, and otherwise from the card's worker, where the commits are made.
+ * Stamp the human actor on a command from `board.dispatchCommand`, the only transport that
+ * knows a person is on the other end. The name is the project's git `user.name` (read on
+ * this server's checkout, else the card's worker), cached and frozen onto the row, falling
+ * back to "You". Every failure degrades to the fallback; none can fail the dispatch.
  */
 export function boardActorStamp(deps: {
   readonly threads: Pick<ThreadGatewayShape, "project">;
@@ -761,12 +699,9 @@ export function boardActorStamp(deps: {
       const cardId = (command as { readonly cardId?: BoardCardId }).cardId;
       if (cardId === undefined) return;
       stampBoardActivityActor(command.commandId, boardHumanActor(yield* resolveName(cardId)));
-      // A card changing project (T3O-33) invalidates the card->project mapping
-      // above, which is otherwise held for the life of the process. Evicted
-      // AFTER the stamp on purpose: the command has not been decided yet, so
-      // re-reading now would only re-cache the project the card is leaving.
-      // This row keeps the old project's identity — the human acted there — and
-      // the next command on the card resolves against the new one.
+      // A project change invalidates the cached card->project mapping. Evicted AFTER the stamp:
+      // the command is not decided yet, so this row keeps the old project's identity and the
+      // next command resolves against the new one.
       if (command.type === "board.card.set-project") projectByCard.delete(String(cardId));
     }).pipe(Effect.ignoreCause);
 }

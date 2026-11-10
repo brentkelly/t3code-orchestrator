@@ -1,14 +1,7 @@
 /**
- * The three ways out of a review loop whose phase died before it started
- * (T3O-13), against the LIVE reactor.
- *
- * The reported card: `triage@1` (here) settled `succeeded`, the board selected
- * `adjudicate@1`, and its spawn failed — the disk was full — so the step
- * escalated to `stalled` with no thread at all. The card then offers
- * Continue, Restart and Move to the next stage. Each one must leave the loop
- * able to carry on as normal: the owed phase runs on a real thread, and its
- * completion plans the next phase, rather than the card sitting in Code review
- * with a step nobody is running.
+ * The three ways out of a review loop whose phase died before it started (Continue,
+ * Restart, Move to next stage). Each must run the owed phase on a real thread whose
+ * completion plans the next phase.
  */
 import {
   BOARD_SEED_STAGE_IDS,

@@ -1,11 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * T3o (T3O-23): the real `WorktreeRetirer` over stub collaborators, for tests.
- *
- * Terminals, the thread gateway and settings are doubles; the removal is
- * whatever `GitVcsDriver` the test provides, and the remove scripts are real
- * child processes. Every stop, check and removal is appended to `events`, so a
- * test can assert their order.
+ * The real `WorktreeRetirer` over stub collaborators. The removal is the test's
+ * `GitVcsDriver`, remove scripts are real child processes, and every stop, check and
+ * removal is appended to `events` so a test can assert their order.
  */
 import * as NodePath from "node:path";
 

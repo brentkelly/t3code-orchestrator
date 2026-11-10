@@ -1,12 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * T3O-52: finished cards give their worktree back, and a kept one says why.
- *
- * The supervisor half — which cards are swept, when, and what the card records
- * — through the governor harness. The git half (the durability rule itself) is
- * proven against real repositories in `worktree.test.ts`; here the git stub
- * answers "durable" or not, and the assertions are about what the board does
- * with that answer.
+ * Finished cards give their worktree back, and a kept one says why. The git stub answers
+ * "durable" or not; the durability rule itself is proven in `worktree.test.ts`.
  */
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";

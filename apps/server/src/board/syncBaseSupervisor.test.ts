@@ -1,18 +1,8 @@
 /**
- * The sync-base gate and the parent mirror check (t3o-24), against the LIVE
- * reactor.
- *
- * D2: a sub-board child whose base moved since its last review round started is
- * intercepted at the review→merge crossing (and again on the Merge click) — the
- * card stays in review and the sync-base step is what runs next. D4: a child
- * dragged back out of Done regresses a parent that had advanced past the
- * build-role stage, abandoning its in-flight step through the existing abandon
- * path.
- *
- * Staleness is driven through the harness's movable rev-parse fixture: the
- * seeded run row records `baseTipAtRoundStart`, and the stub answers "main"
- * for every unset ref, so a row recorded at "main" is fresh and a row recorded
- * elsewhere (or a tip moved with `setBaseTip`) is stale.
+ * The sync-base gate and parent mirror check against the live reactor. A child whose base
+ * moved since its round started is held at review→merge for a sync-base step; a child
+ * dragged out of Done regresses an advanced parent. Staleness comes from the rev-parse stub:
+ * a run row recorded at "main" is fresh, anything else (or `setBaseTip`) is stale.
  */
 import {
   BoardCardId,

@@ -1,19 +1,7 @@
 /**
- * Usage limits: the board's bridge to orchestration-v2's own recovery (T3O-72).
- *
- * v2 detects a usage limit (`usageLimit` on the thread state) and resumes a
- * thread at its reset once recovery is armed. The board's part is small: park
- * an unattended step `usage-limit` without spending its retry budget, arm v2's
- * recovery, un-park on `limit-resumed`, and wake the step itself from the retry
- * sweep if that signal never comes.
- *
- * Driven through the live reactor against the stateful engine double
- * (`withGovernor`). `it.effect` runs on the TestClock, whose "now" is the
- * epoch, so every reset time sits a fixed distance from it and the clock is
- * advanced explicitly.
- *
- * The generic retry ladder the park rides on is pinned here too: it is the
- * path a limit with no reset time takes, and the sweep that wakes a park.
+ * Usage limits: an unattended step parks `usage-limit` without spending its retry budget,
+ * arms v2's recovery, un-parks on `limit-resumed`, and the retry sweep wakes it if that never
+ * comes. The TestClock's now is the epoch, and the clock is advanced explicitly.
  */
 import {
   BOARD_SEED_STAGE_IDS,

@@ -1,21 +1,7 @@
 /**
- * T3o supervisor — the pure decision logic of the step machine (t3o-10).
- *
- * The reactor (`supervisorReactor.ts`) does the I/O: it watches board and
- * thread events, spawns threads, and dispatches commands. Every *decision* it
- * makes lives here as a pure function, so the plan's hard cases — which step
- * runs next, how a stall escalates, what a mid-step restart should do — are
- * unit-tested without a running server (D8 in spirit: logic is pure, the
- * effectful shell is thin).
- *
- * - Prompt envelope (D5): provider-neutral preamble + body + postamble.
- * - Step selection (D4): the next step of the card's recipe snapshot that has
- *   no successful completion yet.
- * - Recovery (D13): escalating nudges that never loop — resume, resume with an
- *   outstanding-work summary, then hand to the human.
- * - Boot reconciliation: given a persisted non-terminal step and the world's
- *   answer to "is its thread still alive / did it complete while we were
- *   down", decide resume / recover / advance.
+ * The pure decision logic of the step machine; the reactor (`supervisorReactor.ts`) does
+ * the I/O. Covers the prompt envelope, step selection, the recovery ladder and boot
+ * reconciliation, all unit-tested without a server.
  */
 import {
   BOARD_ENVELOPE_QUESTION_MECHANISM,
@@ -43,32 +29,12 @@ export {
   type ComposeStepPromptStep,
 } from "@t3tools/contracts";
 
-/** How many `timeoutMs` windows the thread-OUTPUT life sign may keep shielding
-    one step from the timeout sweep (T3O-12, D9) — 8, so four hours at the
-    default half-hour timeout.
-
-    The output signal answers "is the agent emitting anything", which is what
-    saves a healthy review phase that neither commits nor churns a todo list.
-    But it is satisfied by NOISE as readily as by work: an agent thrashing in a
-    tool loop emits activity rows continuously, and a signal with no ceiling
-    would keep it non-overdue every window forever. It would then never be
-    nudged, so `stallCount` would never climb and the recovery ceiling — only
-    ever spent by an actual recovery — would never be charged either. The step
-    would hold its slot for as long as it cared to thrash and no human would
-    ever be told. That is the opposite failure to the one T3O-12 fixed, and the
-    worse one: a supervisor that cries wolf is annoying, a supervisor that never
-    cries is not a supervisor.
-
-    So the shield expires. Past the ceiling the sweep reverts EXACTLY to its
-    pre-T3O-12 life signs — last nudge/start, todo advance, branch commit — and
-    the thrash climbs the ordinary ladder to a human. Genuine progress is
-    untouched: the two older signs have no ceiling, because a todo list that
-    advances and a commit that lands are evidence of work, not of noise, and a
-    long build that keeps committing must never be nudged for taking its time.
-
-    Deliberately a multiple of the step's own `timeoutMs` rather than a new
-    setting: a stage that has been given a longer timeout has said its work is
-    slower, and the ceiling should stretch with it. */
+/**
+ * How many `timeoutMs` windows thread output may shield one step from the timeout sweep.
+ * Output is satisfied by noise too (a tool loop thrashing), so the shield expires and the
+ * thrash climbs the ladder to a human. Todo advances and commits have no ceiling. A
+ * multiple of `timeoutMs` so a stage given a longer timeout stretches it.
+ */
 const BOARD_OUTPUT_SIGNAL_MAX_WINDOWS = 8;
 
 /** Whether the thread-output life sign still shields this step (T3O-12, D9).
@@ -99,11 +65,10 @@ export type BoardRecoveryDecision =
       readonly question: string;
     };
 
-/** How the escalation names the run that stalled (t3o-19, D4/D5): its step when
-    the stage HAS steps, otherwise the stage, and neither when the row froze no
-    name at all (pre-020) — nobody should be escalated to about `Stage "null"`.
-    Reads `stageLabel` directly rather than going through `boardRunLabel`, which
-    on this branch could only ever return it. */
+/**
+ * The run that stalled: its step when the stage has steps, else the stage, else neither
+ * when the row froze no name, so nobody is escalated about `Stage "null"`.
+ */
 function stalledSubject(stepState: Pick<BoardCardStepState, "stepLabel" | "stageLabel">): string {
   if (stepState.stepLabel !== null) return `Step "${stepState.stepLabel}"`;
   return stepState.stageLabel === null ? "This stage" : `Stage "${stepState.stageLabel}"`;
@@ -113,13 +78,9 @@ function stalledSubject(stepState: Pick<BoardCardStepState, "stepLabel" | "stage
 export type BoardRecoveryCeiling = "stage-entry" | "stall-streak";
 
 /**
- * Ask the two ceilings on their own (T3O-22), given the totals a stop WOULD
- * reach — one definition, so nothing enforces half of them.
- *
- * `recoveryDecision` below is the usual caller, but not every stop that spends
- * the retry budget goes through it. Ceilings are what turn "try again later"
- * into "and eventually tell a human", and every path that charges the budget
- * owes the card that.
+ * The two ceilings, given the totals a stop WOULD reach. Shared because not every stop
+ * that spends the retry budget goes through `recoveryDecision`, and every one owes the
+ * card an eventual escalation.
  */
 export function recoveryCeilingCrossed(input: {
   /** The consecutive-stall count this stop would reach, this stop included. */
@@ -139,41 +100,21 @@ export function recoveryCeilingCrossed(input: {
 }
 
 /**
- * How a stalled or dead step recovers (t3o-17, D1/D5) — escalating and bounded,
- * and PURE (crit 5): git and SQL stay in the reactor, which resolves the
- * progress signal and the stage-entry invocation total and passes them in as
- * scalars. Two ceilings decide it:
- *
- * - **consecutive stalls** (`stallCount`, D1): the count resets on progress, so
- *   a step that keeps inching forward never escalates however many times it is
- *   nudged; only `maxAttempts` unproductive stops in a row does. Within budget →
- *   resume with a nudge that grows an outstanding-work reminder on the third and
- *   later consecutive stall;
- * - **per-stage-entry recoveries** (`stageEntryRecoveries`, D5 as re-pointed by
- *   T3O-12 D4): the runaway detector above the per-step ladder — once a stage
- *   entry's total RECOVERIES cross `maxRecoveriesPerStageEntry`, the stage
- *   stalls whatever the per-step ladder says. It catches the stage the per-step
- *   ladder cannot see: one where every step inches forward (resetting
- *   `stallCount`) and the whole never finishes.
- *
- *   Recoveries, not invocations. Counting invocations counted the review loop's
- *   PLANNED steps, so a loop given extra rounds blew a ceiling that was never
- *   meant to bound successful work, and from then on its first stall of any
- *   kind escalated instantly with no ladder at all.
- *
- * Either ceiling crossed → escalate (the reactor lands the step in `stalled` and
- * releases its slot); it never loops. Prevention lives in the envelope (the
- * unattended postamble asks the agent to commit as it goes); cure lives here.
+ * How a stalled or dead step recovers: bounded, pure, never loops. Escalates when
+ * `stallCount` (reset on progress) reaches `maxAttempts`, or when the stage entry's
+ * total RECOVERIES (never planned steps) cross `maxRecoveriesPerStageEntry`, which catches
+ * a stage whose steps each inch forward but never finish.
  */
 export function recoveryDecision(input: {
   readonly stepState: Pick<
     BoardCardStepState,
     "attempt" | "stallCount" | "maxAttempts" | "stepLabel" | "stageLabel"
   > & { readonly stepId?: string };
-  /** Resolved by the reactor (t3o-17 D2, re-pointed by t3o-18 D16): the step
-      thread's TODO LIST advanced — a `turn.plan.updated` whose done count rose or
-      whose in-progress item changed — or a new commit landed on the card's
-      branch, since the last nudge. Resets `stallCount`. */
+  /**
+   * Reactor-resolved: the step thread's todo list advanced (done count rose or in-progress
+   * item changed) or a commit landed on the branch since the last nudge. Resets
+   * `stallCount`.
+   */
   readonly progressedSinceLastNudge: boolean;
   /** The stage entry's total RECOVERIES so far (D5, re-pointed by T3O-12 D4),
       summed across its steps by the reactor. This recovery is one more, so the
@@ -183,15 +124,10 @@ export function recoveryDecision(input: {
       bounds; the settings key it is resolved from keeps the older, now
       imprecise name `maxInvocationsPerStageEntry` (T3O-12, D6). */
   readonly maxRecoveriesPerStageEntry: number;
-  /** Whether the stopped turn ended with something the agent wanted a human to
-      answer (t3o-34, D6), resolved by the reactor from the step thread's last
-      assistant message — the same "reactor resolves, this function stays pure"
-      split as `progressedSinceLastNudge`.
-
-      This arm is UNATTENDED by construction: a human-in-the-loop run never
-      reaches recovery. So the answer to the question is "you decide", and
-      saying so is what stops the nudged agent asking it again on the next turn
-      and marching itself up the stall ladder. */
+  /**
+   * Whether the stopped turn ended with a question for a human. Recovery is unattended by
+   * construction, so the nudge answers "you decide", which stops the agent asking again.
+   */
   readonly endedWithQuestion: boolean;
 }): BoardRecoveryDecision {
   const nextAttempt = input.stepState.attempt + 1;
@@ -229,11 +165,8 @@ export function recoveryDecision(input: {
       attempt: nextAttempt,
       stallCount: nextStallCount,
       question: [
-        // Named as a step only when the stage HAS steps (t3o-19, D4): on every
-        // other stage `stepLabel` is null and the escalation names the stage,
-        // which is what a human reading the card recognises anyway. A row that
-        // froze neither name (pre-020) is described without one rather than
-        // quoting a literal "null" at the human being escalated to.
+        // Names the step only when the stage has steps, and neither name when the row froze none
+        // (rather than quoting "null").
         `${stalledSubject(input.stepState)} has now stalled ${nextStallCount} times in a row without making progress.`,
         escalateManually,
       ].join(" "),
@@ -252,17 +185,9 @@ export function recoveryDecision(input: {
 }
 
 /**
- * The words a recovery nudge sends into the step's thread.
- *
- * Split out of `recoveryDecision` because the two are no longer sent at the same
- * moment (T3O-22, D7): the decision is made when the turn ends and the ladder is
- * charged there, while the nudge itself goes minutes later, when the backoff
- * rung reaches its time and the governor re-admits the step. The delivery path
- * holds the step row, so it composes the text from the row rather than carrying
- * a string across a park, a restart and a queue.
- *
- * Pure, and every input is a scalar the reactor resolves — the same split
- * `recoveryDecision` itself keeps.
+ * The words a recovery nudge sends. Separate from `recoveryDecision` because the ladder is
+ * charged when the turn ends but the nudge goes later, when the governor re-admits the
+ * step, so it is composed from the step row.
  */
 export function boardRecoveryNudge(input: {
   /** The step's CONSECUTIVE stall count, already including this stall. The
@@ -287,19 +212,9 @@ export function boardRecoveryNudge(input: {
       `Summarise what is still outstanding before continuing, so nothing is dropped.`,
     );
   }
-  // Answer the question the agent asked, with the only answer an unattended run
-  // has (t3o-34, D6). Prepended AFTER the splice above, so it reads as a reply
-  // to the question and the outstanding-work reminder keeps the position it has
-  // always had relative to the "continue" instruction.
-  //
-  // Worded around the question rather than around the turn: recovery is reached
-  // from the TIMEOUT SWEEP as well as from a completed turn, and there the
-  // agent's last message is the newest thing it said while the turn is still
-  // open. "You asked a question" is true on both paths; "your turn ended with a
-  // question" is not.
-  // Triage and adjudication always get a conditional form: the nudge is
-  // recomposed at retry time from the last message, which a structured question
-  // may not end with, so it cannot claim a question was asked.
+  // Prepended after the splice, so it reads as a reply to the question. Worded around the
+  // question, not the turn: the timeout sweep reaches recovery mid-turn too. Triage and
+  // adjudication get a conditional form, since the last message may not end with a question.
   const decideYourself = `nobody will answer it: decide it yourself with your best judgement, record the decision, and continue.`;
   if (input.endedWithQuestion) {
     nudgeLines.unshift(`You asked a question, but this run is unattended and ${decideYourself}`);
@@ -310,18 +225,9 @@ export function boardRecoveryNudge(input: {
 }
 
 /**
- * When a background-wait check-in goes out (T3O-20), as offsets from the moment
- * the wait began: +5, +15 and +30 minutes, then every 30 minutes after that.
- *
- * An agent that ends its turn with a background command, a monitor or
- * subagents still running is waiting, not stalled — the provider wakes it when
- * the work reports back. But sometimes nothing ever wakes it, and sometimes it
- * claims the work is running when it died long ago, so the board still asks.
- * Early check-ins are close together because most background work is short;
- * past half an hour the job is long, and asking more often is just noise.
- *
- * Fixed constants rather than a multiple of the step's `timeoutMs`: how long a
- * background job runs says nothing about how long a turn should take.
+ * Background-wait check-in offsets from when the wait began: 5, 15, 30 minutes, then every
+ * 30. Fixed rather than a multiple of `timeoutMs`: a background job's length says nothing
+ * about how long a turn should take.
  */
 const BOARD_BACKGROUND_CHECK_IN_OFFSETS_MS = [5 * 60_000, 15 * 60_000, 30 * 60_000] as const;
 const BOARD_BACKGROUND_CHECK_IN_INTERVAL_MS = 30 * 60_000;
@@ -349,12 +255,8 @@ export function boardBackgroundCheckInCharged(checkInsSent: number): boolean {
 }
 
 /**
- * The words a background-wait check-in sends into the step's thread (T3O-20).
- *
- * Deliberately not `boardRecoveryNudge`: the agent did nothing wrong by ending
- * its turn to wait, and text that reads as a failure makes it apologise and end
- * another turn. What it must do is LOOK — agents routinely report work as
- * still running without checking, long after it died.
+ * Not `boardRecoveryNudge`: waiting is not a failure, and failure wording makes the agent
+ * apologise and end another turn. It must LOOK: agents report dead work as still running.
  */
 export function boardBackgroundCheckInNudge(): string {
   return [
@@ -366,13 +268,9 @@ export function boardBackgroundCheckInNudge(): string {
 }
 
 /**
- * What the board says to an agent when a provider's usage window reopens
- * (T3O-22) — sent into a `usage-limit` park's thread when the board's own retry
- * sweep wakes it, because the engine's resume never arrived (T3O-72).
- *
- * Deliberately not a recovery nudge: nothing stalled, nothing failed, and no
- * attempt was consumed (D12). The agent was refused by a provider that has since
- * come back, and the only thing it needs to know is that it may carry on.
+ * Sent into a `usage-limit` park's thread when the board's retry sweep wakes it because the
+ * engine's resume never arrived. Not a recovery nudge: nothing failed and no attempt was
+ * consumed.
  */
 export const BOARD_STEP_USAGE_LIMIT_RESUME_NUDGE = [
   `Your provider's usage limit has reset and this work has been resumed automatically.`,
@@ -380,14 +278,8 @@ export const BOARD_STEP_USAGE_LIMIT_RESUME_NUDGE = [
 ].join(" ");
 
 /**
- * What the board says to an agent when it resumes a step a human PAUSED
- * (T3O-23) — sent into the step's existing thread on admission, in place of the
- * full step prompt a fresh spawn would carry.
- *
- * Deliberately not a recovery nudge, and it must not read like one: nothing
- * stalled, nothing failed, and no attempt was consumed. The agent stopped
- * because a human told it to, and the only thing it needs to know is that it may
- * carry on.
+ * Sent into a human-paused step's existing thread on resume, in place of the full step
+ * prompt. Must not read like a recovery nudge: nothing failed and no attempt was consumed.
  */
 export const BOARD_STEP_RESUME_NUDGE = [
   `This work was paused and has now been resumed.`,
@@ -402,27 +294,10 @@ export type BoardReconcileDecision =
   | { readonly kind: "advance" };
 
 /**
- * What boot reconciliation does with a card found mid-step after a restart.
- * The server restarts mid-step routinely, and `ProviderSessionReaper` makes
- * "the thread I spawned is gone" a normal path, so this is control flow, not
- * error handling:
- *
- * - the step already succeeded while we were down → advance;
- * - a human paused it (T3O-23) → leave it parked;
- * - its thread is still alive → resume watching;
- * - a human-in-the-loop step whose thread is present but idle → park it on the
- *   human (t3o-34), the boot-time twin of `handleTurnCompleted`'s arm;
- * - awaiting a human answer with the thread still present → keep waiting;
- * - its thread is gone and it never completed → recover;
- * - queued/pending with no thread → reschedule (re-offer to the governor: it
- *   held no slot and never started, so it is placed, not recovered — D11);
- * - completing (agent reported done, settle never landed) → recover.
- *
- * `threadAlive` and `threadPresent` are deliberately two bits, not one. Alive
- * means a turn is running or a structured question is pending; present means
- * the thread still exists and a human could type in it. Everything a step
- * parked on a human needs sits in the gap between them — nothing is running,
- * yet the card is one reply away from moving.
+ * What boot reconciliation does with a card found mid-step; a vanished thread is normal
+ * control flow. `threadAlive` (a turn running or a question pending) and `threadPresent`
+ * (a human could type in it) are separate bits: a step parked on a human sits between
+ * them.
  */
 export function reconcileStepDecision(input: {
   readonly status: BoardCardStepState["status"];
@@ -443,31 +318,20 @@ export function reconcileStepDecision(input: {
     return { kind: "resume-watch" };
   }
   if (input.status === "paused") {
-    // A human stopped this step (T3O-23). Same shape as `stalled`: non-terminal,
-    // so boot reconciliation keeps re-reading it, but supervision does not drive
-    // it — it stays parked until somebody resumes it. And no slot restore: a
-    // paused step released its slot when it parked, which the caller's
-    // `state.slotHeld` gate already reflects.
+    // A human paused this step: non-terminal like `stalled`, but supervision never drives it.
+    // No slot restore: a paused step released its slot when it parked.
     return { kind: "resume-watch" };
   }
   if (input.status === "awaiting-input") {
-    // Keyed on PRESENT, not alive: since t3o-34 a step can be parked on a
-    // question the agent asked in PROSE, which leaves no pending question on
-    // the thread and so no liveness at all. Reading `threadAlive` here un-parked
-    // every one of those on the next restart and nudged it as if it had died —
-    // t3o-34's fix surviving right up until the server bounced. A gone thread is
-    // still a recover: the question can no longer be answered there.
+    // Keyed on PRESENT, not alive: a step parked on a question asked in prose has no pending
+    // question and so no liveness; reading `threadAlive` would un-park and nudge it on restart.
+    // A gone thread is still a recover: the question can no longer be answered there.
     return input.threadPresent ? { kind: "resume-watch" } : { kind: "recover" };
   }
   if (input.status === "running") {
     if (input.threadAlive) return { kind: "resume-watch" };
-    // A human-in-the-loop step whose thread is merely idle is WAITING on the
-    // human (t3o-34, D5), not dead — the same call `handleTurnCompleted` makes
-    // on the live edge. Boot reconciliation used to recover it instead: it
-    // nudged the waiting agent with the unattended "nobody will answer you"
-    // text, burned an attempt, and left the step `running`, so the card kept
-    // pulsing its blue "being worked" dot across every restart while the agent
-    // sat there waiting for an answer. Parking is what turns the dot off.
+    // A human-in-the-loop step whose thread is idle is waiting on the human, not dead (the same
+    // call `handleTurnCompleted` makes live). Parking it stops the nudge and the running dot.
     if (input.humanInLoop && input.threadPresent) return { kind: "park" };
     return { kind: "recover" };
   }
@@ -491,11 +355,9 @@ export interface BoardOfflineInterval {
 }
 
 /**
- * How much of `(sinceMs, nowMs]` a step's worker spent out of reach — the time
- * the timeout sweep does not count. A step paused by an offline worker resumes
- * with its reference time shifted by the offline interval, not reset: only the
- * part of each interval after the step's latest life sign is credited, so a
- * life sign that arrives after the worker came back is not extended again.
+ * How much of `(sinceMs, nowMs]` a step's worker spent out of reach, which the timeout sweep
+ * does not count. Only the part of each interval after the step's latest life sign is
+ * credited, so a life sign that arrives after the worker came back is not extended again.
  */
 export function boardOfflineCreditMs(
   intervals: ReadonlyArray<BoardOfflineInterval>,
@@ -528,24 +390,10 @@ export interface BoardQueueCandidate {
 }
 
 /**
- * The governor's ordering (D11), applied as one total order:
- *
- *   1. **stage descending** — finishing beats starting; a card one step from
- *      merge outranks one about to begin, so new work never strangles
- *      nearly-done work and the board does not stall at 90%.
- *   2. **started before unstarted** — a card mid-stage waiting for a slot on a
- *      *different* provider outranks one that has not begun. This is the
- *      mitigation for the starvation that per-step slot acquisition creates: a
- *      half-done card is never indefinitely overtaken by fresh work.
- *   3. **drag order** (`orderKey`) — what dragging within Building is actually
- *      for: it chooses what starts next.
- *
- * Pure and total, so the reactor offers candidates to `acquire` in this order
- * and greedy allocation (the highest-priority candidate that fits a free slot
- * wins; a saturated provider is simply skipped, not a blocker) falls straight
- * out of iterating the result. Preemption is this same order re-evaluated at a
- * step boundary: a card dragged above another takes the freed slot next, while
- * nothing in flight is discarded.
+ * The governor's total order: later stage first (finishing beats starting), then started
+ * before unstarted (so a half-done card is never starved by fresh work), then drag order.
+ * Callers offer candidates to `acquire` in this order; greedy allocation and preemption at a
+ * step boundary both fall out of iterating it.
  */
 export function orderBoardQueue(
   candidates: ReadonlyArray<BoardQueueCandidate>,
@@ -559,12 +407,9 @@ export function orderBoardQueue(
 }
 
 /**
- * Resolve the three ceilings for a step on a worker (D11, T3O-65): the board
- * limit, the worker's own limit, and the instance's cap on that worker. A
- * `null` worker limit or cap — or an absent entry, which is observationally
- * identical (see `BoardConcurrencySettings`) — means no limit of that kind. A
- * cap above its worker's limit reads as the worker limit, so `acquire` names
- * the worker, not the provider, as what is full.
+ * The three ceilings for a step on a worker: the board limit, the worker's limit, and the
+ * instance's cap on that worker. A null or absent limit or cap means no limit of that kind.
+ * A cap above its worker's limit reads as the worker limit, so `acquire` names the worker.
  */
 export function resolveBoardConcurrencyLimit(
   concurrency: BoardConcurrencySettings,

@@ -1,9 +1,7 @@
 /**
- * T3o walking-skeleton verification (t3o-02): a dispatched `board.card.create`
- * flows through every seam — decider, event store, in-memory projector,
- * persisted projection, snapshot queries — and replaying the persisted events
- * from an empty read model reproduces exactly the board state the engine
- * rehydrates from the projection tables.
+ * A dispatched `board.card.create` flows through decider, event store, projector, persisted
+ * projection and snapshot queries, and replaying the persisted events from empty reproduces
+ * exactly the state the engine rehydrates from the projection tables.
  */
 import {
   BOARD_SEED_LABEL_IDS,
@@ -193,12 +191,8 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
       }),
   );
 
-  // t3o-19 AC 12. `step_label` became nullable and `stage_label` was added, and
-  // migration 020 deliberately does NOT rewrite history (D7): a pre-020 row
-  // keeps its non-null label. That is only safe if BOTH shapes survive the
-  // round trip identically — a projector that coerced one of them would make a
-  // table rehydration diverge from a from-empty replay, which is the invariant
-  // the whole board read model rests on.
+  // `step_label` is nullable and pre-migration-020 rows keep a non-null one, so both shapes
+  // must round-trip identically or table rehydration diverges from a from-empty replay.
   it.effect("rehydration equals replay for both stepped and unstepped run rows", () =>
     Effect.gen(function* () {
       const engine = yield* boardStackEngine;
@@ -301,11 +295,8 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
     }),
   );
 
-  // t3o-33. The force-start override is a COLUMN, not memory: a server bounced
-  // between the click and the next scheduling pass must still admit the card.
-  // Written and read through the real projection, so a column the migration
-  // never added — or an upsert that always wrote 0 — fails here rather than in
-  // production.
+  // The force-start override is a column, not memory: a server bounced before the next
+  // scheduling pass must still admit the card.
   it.effect("a force-started step rehydrates carrying its override", () =>
     Effect.gen(function* () {
       const engine = yield* boardStackEngine;
@@ -374,12 +365,8 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
     }),
   );
 
-  // T3O-17. The steer signal is a COLUMN, not memory: a server killed between
-  // a human's message and the turn ending must still owe that turn its free
-  // ending, or the nudge the human interrupted comes back after the restart.
-  // Written and read through the real projection, so a column migration 040
-  // never added — or an upsert that dropped it — fails here rather than in
-  // production.
+  // The steer signal is a column, not memory: a server killed between a human's message and
+  // the turn ending must still owe that turn its free ending.
   it.effect("a steered step rehydrates carrying the instant the human typed", () =>
     Effect.gen(function* () {
       const engine = yield* boardStackEngine;

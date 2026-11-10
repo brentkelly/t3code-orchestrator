@@ -1,21 +1,7 @@
 /**
- * The card auto-settles the orchestration threads it is finished with, so they
- * drop out of the thread inbox (the card↔thread links stay — the card keeps its
- * tabs). The rule for WHICH threads is `boardReleasedThreadIds`, unit-tested in
- * `threadRelease.test.ts`; this file is about the part that was broken (t3o-13):
- * whether the settle ever actually LANDS.
- *
- * It used to be fired once, at the moment a thread became finished. That moment
- * is precisely when it cannot land: an agent reports its step complete from
- * INSIDE its own turn, so its session is still `running` and the decider refuses
- * — and nothing asked again. In the maintainer's own database not one review-
- * phase settle had ever succeeded and thirty-odd finished threads sat in the
- * inbox forever.
- *
- * So every assertion here reads `settledThreads` — what the decider ACCEPTED —
- * rather than `commands`, which only records what the reactor asked for. That
- * distinction is the bug: the old suite asserted the ask and passed throughout.
- * The harness models the decider's settle guard for the same reason.
+ * The card auto-settles finished threads, and the settle must actually LAND: an agent
+ * completes its step from inside its own turn, so the first settle is refused. Assertions
+ * read `settledThreads` (what the decider accepted), not `commands` (what was asked).
  */
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -112,13 +98,8 @@ const shellsFor = (
   entries: ReadonlyArray<readonly [string, BoardThreadState]>,
 ): ReadonlyMap<string, BoardThreadState> => new Map(entries);
 
-// ── The regression: a settle refused mid-turn is retried, not lost ───────────
-//
-// The review loop finishes review@1 and moves to triage@1, so review@1's thread
-// is finished work. But the agent reported that completion from inside its own
-// turn, so the thread is still `running` and the decider refuses. Under the old
-// fire-and-forget settle that was the end of it — the thread stayed in the inbox
-// for good. The turn then ends, and the release is asked again.
+// A settle refused mid-turn is retried: review@1's agent reported from inside its turn, so
+// the decider refuses until the turn ends and the release is asked again.
 it.effect("a phase's thread settles once its turn ends, not while its agent is mid-turn", () =>
   withGovernor(
     {
@@ -186,11 +167,7 @@ it.effect("a phase's thread settles once its turn ends, not while its agent is m
   ),
 );
 
-// ── The same retry, reached by the periodic sweep ────────────────────────────
-// A `turn.completed` can be missed — a dropped runtime event, a server that
-// restarted between the completion and the turn ending. The 30-second sweep is
-// what makes the release eventual rather than merely likely, so it has to land
-// the settle on its own.
+// A `turn.completed` can be missed, so the 30-second sweep must land the settle on its own.
 it.effect("the periodic release sweep lands a settle that was refused earlier", () =>
   withGovernor(
     {
@@ -217,13 +194,8 @@ it.effect("the periodic release sweep lands a settle that was refused earlier", 
   ),
 );
 
-// ── …but only for a thread the board owns ───────────────────────────────────
-// The reactor consumes one unscoped runtime stream, so `turn.completed` arrives
-// for EVERY thread on the machine. The release retry is a promptness
-// optimisation over the periodic sweep, and it can only ever be unblocked by the
-// finished thread's OWN turn ending — so a stranger's turn must not buy a board
-// scan plus a thread-shell read per released thread on an event a busy machine
-// fires constantly.
+// `turn.completed` arrives for every thread on the machine, and only a finished thread's
+// OWN turn ending can unblock its settle, so a stranger's turn must not trigger a sweep.
 it.effect("a turn ending on a thread the board does not own runs no release sweep", () =>
   withGovernor(
     {
@@ -271,11 +243,8 @@ it.effect("a turn ending on a thread the board does not own runs no release swee
   ),
 );
 
-// A thread with an unanswered approval is blocked-on-YOU work, and the decider
-// refuses to settle it. Unlike a busy thread that refusal can last for days, so
-// the sweep has to recognise it rather than re-ask every half minute forever —
-// it gates on the same `isAutoSettlementCandidate` policy upstream's inactivity
-// sweep uses.
+// The decider refuses to settle a thread with an unanswered approval, possibly for days, so
+// the sweep skips it via upstream's `isAutoSettlementCandidate` rather than re-asking.
 it.effect("a released thread with an unanswered approval is left alone", () =>
   withGovernor(
     {
@@ -396,11 +365,8 @@ it.effect("a forward stage move settles the thread the card is finished with", (
   ),
 );
 
-// ── A backward move is not special ──────────────────────────────────────────
-// The card is not in that stage any more, so its threads are finished work. It
-// is safe to be this blunt because a settle is not a one-way door: a re-entry
-// that adopts the thread — or a human simply typing into it — brings it back,
-// since the decider un-settles a thread whose session comes alive.
+// A backward move settles the stage's threads. Safe because a settle is not a one-way door:
+// the decider un-settles a thread whose session comes alive again.
 it.effect("a backward stage move settles the threads the card was dragged out of", () =>
   withGovernor(
     {
