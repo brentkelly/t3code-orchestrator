@@ -362,7 +362,7 @@ export function boardCiTailMeta(tail: string): string {
  * card is still fixing this pass. There is no live per-issue progress.
  */
 export interface BoardCiFixRow {
-  readonly state: "running" | "reported" | "not-run";
+  readonly state: "running" | "reported" | "after-pass" | "not-run";
   readonly badge: BoardStepBadgeState;
   readonly headline: string;
   readonly issues: ReadonlyArray<{
@@ -412,6 +412,19 @@ export function boardCiFixRow(input: {
       state: "running",
       badge: "fixing",
       headline: `Fix ${Math.max(1, input.ci.fixAttempts)} of ${input.ci.maxFixAttempts} · ${count}`,
+      issues: outcomes,
+      fixedSha: null,
+    };
+  }
+  const passLive =
+    input.ci !== null &&
+    input.ci.runId === input.pass.runId &&
+    (input.ci.phase === "running" || input.ci.phase === "queued");
+  if (completion === undefined && passLive) {
+    return {
+      state: "after-pass",
+      badge: "pending",
+      headline: `After the pass · ${count}`,
       issues: outcomes,
       fixedSha: null,
     };

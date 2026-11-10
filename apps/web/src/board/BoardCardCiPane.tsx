@@ -236,6 +236,13 @@ const ISSUE_STATUS_CLASS: Record<BoardCiFixRow["issues"][number]["status"], stri
 };
 
 /** A failed pass's fix, shown as the pass's last step (T3O-57). */
+const FIX_ROW_LABEL: Record<BoardCiFixRow["state"], string> = {
+  running: "Fixing",
+  "after-pass": "Waiting",
+  "not-run": "Not run",
+  reported: "Reported",
+};
+
 function FixFailuresRow({
   row,
   index,
@@ -282,7 +289,7 @@ function FixFailuresRow({
                 : "text-muted-foreground",
           )}
         >
-          {row.state === "running" ? "Fixing" : row.state === "not-run" ? "Not run" : "Reported"}
+          {FIX_ROW_LABEL[row.state]}
         </span>
       </div>
       <div className="flex flex-col gap-1 border-t border-border py-1.5 pr-3 pl-[42px] text-[11.5px]">

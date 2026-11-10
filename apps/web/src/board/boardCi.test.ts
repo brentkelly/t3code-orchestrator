@@ -278,6 +278,13 @@ describe("a failed pass's fix row (T3O-57)", () => {
     const running = boardCiFixRow({ pass, completions: [], ci: fixing });
     expect(running).toMatchObject({ state: "running", headline: "Fix 2 of 3 · 2 issues" });
     expect(running?.issues.map((issue) => issue.status)).toEqual(["open", "open"]);
+    // Without stop on failure, the pass keeps running with its failures queued.
+    expect(
+      boardCiFixRow({ pass, completions: [], ci: { ...fixing, phase: "running" } }),
+    ).toMatchObject({
+      state: "after-pass",
+      headline: "After the pass · 2 issues",
+    });
 
     // Fix 1 reported for an earlier pass, and fix 3 shares this pass's ordinal.
     const other = (attempt: number) => ({
