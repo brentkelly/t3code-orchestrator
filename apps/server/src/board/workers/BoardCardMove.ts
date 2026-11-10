@@ -101,7 +101,7 @@ export const boardPushRequestText = (branch: string) =>
 
 const refused = (detail: string) => ({ outcome: "refused", detail }) as const;
 
-export const makeBoardCardMover = Effect.gen(function* () {
+const makeBoardCardMover = Effect.gen(function* () {
   const engine = yield* BoardEngine;
   const workspaces = yield* BoardWorkspaces;
   const threads = yield* ThreadGateway;

@@ -100,7 +100,7 @@ import { isUnfinishedKeptInterview } from "./planningThreadKeep.ts";
  * into a column with nothing to auto-execute keeps its old row untouched, and
  * without this test that finished run's thread would be protected forever.
  */
-export function boardStepBelongsToStage(
+function boardStepBelongsToStage(
   board: BoardState,
   card: Pick<BoardCard, "stage">,
   state: Pick<BoardCardStepState, "stepId">,

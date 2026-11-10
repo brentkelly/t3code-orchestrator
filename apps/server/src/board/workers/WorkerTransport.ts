@@ -124,7 +124,7 @@ const decodeTicket = Schema.decodeUnknownEffect(TicketResponse);
     same joining the HTTP calls in `workerCredential.ts` use. */
 const workerPath = (url: string, path: string): URL => new URL(`${url.replace(/\/+$/, "")}${path}`);
 
-export const toWsUrl = (url: string, ticket: string): string => {
+const toWsUrl = (url: string, ticket: string): string => {
   const next = workerPath(url, "/ws");
   next.protocol = next.protocol === "https:" ? "wss:" : "ws:";
   next.searchParams.set("wsTicket", ticket);

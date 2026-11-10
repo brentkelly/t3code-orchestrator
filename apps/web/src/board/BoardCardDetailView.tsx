@@ -310,7 +310,7 @@ export function boardCardHasThreadPane(
  * narrow until the user opens another pane. The single source for the dialog
  * frame (which sizes the popup by it) and the panel (which lays out by it).
  */
-export function boardCardDetailIsWide(
+function boardCardDetailIsWide(
   stages: ReadonlyArray<BoardStageDefinition>,
   stage: BoardStageId,
   paneChoice: BoardCardPane | null,

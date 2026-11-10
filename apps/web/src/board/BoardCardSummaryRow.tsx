@@ -45,10 +45,6 @@ import type { BoardCardWorkerChip } from "./workers/cardWorker";
 import type { BoardCardMeta, BoardCardSummaryItem } from "./boardCardSummary";
 import { BoardHint } from "./BoardHint";
 
-/** Max pips rendered for the plan-progress dot row (`PlanPips`), so a
-    pathological count cannot blow out the card width. */
-const MAX_SUMMARY_PIPS = 6;
-
 /**
  * The review-round bar: one segment per round in the budget, at `flex:1`, the
  * same full-width treatment the plan bar and the todo strip wear. It is the
@@ -313,35 +309,6 @@ export function BoardCardPlansRow({
   );
 }
 
-/** Exported for the sub-board parent header (t3o-25, D2), which wears the
-    same pips the parent's card face does. */
-export function PlanPips({ done, total }: { readonly done: number; readonly total: number }) {
-  const shown = Math.min(total, MAX_SUMMARY_PIPS);
-  return (
-    <BoardHint label={`${done} of ${total} plans done`}>
-      <span
-        className="inline-flex items-center gap-0.5"
-        aria-label={`${done} of ${total} plans done`}
-      >
-        <span className="inline-flex items-center gap-0.5">
-          {Array.from({ length: shown }, (_, index) => (
-            <span
-              key={index}
-              className={cn(
-                "size-1.5 rounded-full",
-                index < done ? "bg-success" : "bg-muted-foreground/30",
-              )}
-            />
-          ))}
-        </span>
-        <span className="ml-0.5 text-[10.5px] font-medium text-muted-foreground">
-          {done}/{total} plans
-        </span>
-      </span>
-    </BoardHint>
-  );
-}
-
 function SeverityTriple({
   critical,
   improvement,
@@ -593,7 +560,7 @@ export function BoardTodoPips({
       <span aria-label={label} className="flex items-center gap-[2px]">
         {/* Indexed rather than mapped over the characters: a pip IS its position
           — the row is a positional progress bar and items never reorder within a
-          render — which is the same shape `PlanPips` and `RoundBar` use. */}
+          render — which is the same shape `RoundBar` uses. */}
         {Array.from({ length: statuses.length }, (_, index) => (
           <span
             className={cn(

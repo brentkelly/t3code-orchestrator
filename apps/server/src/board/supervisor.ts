@@ -69,7 +69,7 @@ export {
     Deliberately a multiple of the step's own `timeoutMs` rather than a new
     setting: a stage that has been given a longer timeout has said its work is
     slower, and the ceiling should stretch with it. */
-export const BOARD_OUTPUT_SIGNAL_MAX_WINDOWS = 8;
+const BOARD_OUTPUT_SIGNAL_MAX_WINDOWS = 8;
 
 /** Whether the thread-output life sign still shields this step (T3O-12, D9).
     A step whose `startedAt` is unreadable cannot have its age measured, so the
@@ -323,8 +323,8 @@ export function boardRecoveryNudge(input: {
  * Fixed constants rather than a multiple of the step's `timeoutMs`: how long a
  * background job runs says nothing about how long a turn should take.
  */
-export const BOARD_BACKGROUND_CHECK_IN_OFFSETS_MS = [5 * 60_000, 15 * 60_000, 30 * 60_000] as const;
-export const BOARD_BACKGROUND_CHECK_IN_INTERVAL_MS = 30 * 60_000;
+const BOARD_BACKGROUND_CHECK_IN_OFFSETS_MS = [5 * 60_000, 15 * 60_000, 30 * 60_000] as const;
+const BOARD_BACKGROUND_CHECK_IN_INTERVAL_MS = 30 * 60_000;
 
 /** When the next check-in of a wait is due, in epoch ms. `checkInsSent` is how
     many this wait has already had. */

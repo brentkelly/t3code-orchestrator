@@ -687,7 +687,7 @@ export default defineConfig({
       },
       {
         // T3o: last, so it wins. Board UI predates upstream's token, React Compiler and copy
-        // rules; they stay off for fork-owned web files only until T3O-75 moves it onto
+        // rules; they stay off for fork-owned web files only until T3O-67 moves it onto
         // them. Upstream files keep the full rule set (T3O-54, T3O-74).
         files: [
           "apps/web/src/board/**",
@@ -715,7 +715,7 @@ export default defineConfig({
       },
       {
         // T3o: the same deferral for fork-owned server, package and script files, which
-        // predate upstream's comment, copy and Effect.fn rules (T3O-74; cleanup is T3O-75).
+        // predate upstream's comment, copy and Effect.fn rules (T3O-74; cleanup is T3O-67).
         files: [
           "apps/server/src/board/**",
           "apps/server/src/mcp/toolkits/board/**",

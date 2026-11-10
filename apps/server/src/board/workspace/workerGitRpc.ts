@@ -122,7 +122,7 @@ const guardBranch = (
     });
   });
 
-export const boardWorkerGitRpcHandlers = (
+const boardWorkerGitRpcHandlers = (
   currentSession: AuthenticatedSession,
   workspaces: BoardWorkspacesShape,
 ): BoardWorkerGitHandlers => {

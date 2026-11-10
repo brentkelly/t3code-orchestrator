@@ -69,7 +69,7 @@ const namesIn = (parts: GraphQL.DocumentTemplate.Parts | undefined) =>
  * `template` without the gated selections, and without the variables and fragments only they
  * used: GitHub rejects a document that declares a variable or fragment it never uses.
  */
-export const templateWithout = (
+const templateWithout = (
   template: GraphQL.DocumentTemplate,
   gated: ReadonlyArray<GatedSelection>,
 ): GraphQL.DocumentTemplate => {

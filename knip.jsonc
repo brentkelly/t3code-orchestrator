@@ -35,6 +35,8 @@
         "sign-macos.ts",
         "prepare-server-compile-cache.cjs",
         "smoke-desktop-app.ts",
+        // T3o: the fork's npm tarball packer, run by hand.
+        "t3o-pack.mjs",
         "verify-windows-desktop-artifact.ts",
       ],
       "ignoreDependencies": ["agent-device", "esbuild"],

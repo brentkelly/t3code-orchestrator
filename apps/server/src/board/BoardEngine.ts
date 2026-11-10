@@ -133,7 +133,7 @@ export const loadDecisionContext = (
     return { ...brief, ...projects, ...thread } satisfies BoardDecisionContext;
   });
 
-export const makeBoardEngine = Effect.gen(function* () {
+const makeBoardEngine = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const queries = yield* BoardQueries;
   const threads = yield* ThreadGateway;

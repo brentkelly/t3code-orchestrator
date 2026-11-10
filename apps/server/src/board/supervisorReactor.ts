@@ -133,7 +133,6 @@ import {
   ThreadId,
   type ChatAttachment,
   type BoardCard,
-  type BoardWorkerGitError,
   type BoardWorkspaceIntegrationBranch,
   type BoardCardId,
   type BoardCheckCardWorktreeResult,
@@ -206,7 +205,6 @@ import {
   stageBoardCardImagesAsPending,
 } from "./attachments.ts";
 import { BoardPlacement, boardPlacementGate } from "./workers/BoardPlacement.ts";
-import { WorkerRpcError } from "./workers/WorkerTransport.ts";
 import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
@@ -7370,7 +7368,7 @@ const make = Effect.gen(function* () {
     }
     const removed = yield* forceRemoveWorktree(workspace, worktree.path).pipe(
       Effect.map((hookWarning) => ({ hookWarning })),
-      Effect.catchTag("WorkerUnavailable", () => Effect.succeed(null)),
+      Effect.catchTags({ WorkerUnavailable: () => Effect.succeed(null) }),
     );
     // The worker is out of reach: nothing was removed, and saying so beats
     // recording a removal that did not happen (T3O-64).

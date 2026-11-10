@@ -21,10 +21,10 @@
  */
 
 /** Prefix a provider adapter stamps onto commands it originates. */
-export const PROVIDER_COMMAND_ID_PREFIX = "provider:";
+const PROVIDER_COMMAND_ID_PREFIX = "provider:";
 
 /** Prefix the server stamps onto commands it originates. */
-export const SERVER_COMMAND_ID_PREFIX = "server:";
+const SERVER_COMMAND_ID_PREFIX = "server:";
 
 /**
  * Prefix the board supervisor stamps onto its own commands, as

@@ -14,7 +14,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "../lib/storage";
 
-export const BOARD_UI_STATE_STORAGE_KEY = "t3code:board-ui:v1";
+const BOARD_UI_STATE_STORAGE_KEY = "t3code:board-ui:v1";
 
 export type WorkspaceMode = "threads" | "board" | "list";
 

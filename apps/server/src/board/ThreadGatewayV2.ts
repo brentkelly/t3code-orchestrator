@@ -167,7 +167,7 @@ const turnOutcomeOf = (status: OrchestrationV2Run["status"]): TurnOutcome | null
 const todoStatusOf = (status: string): string => (status === "running" ? "inProgress" : status);
 
 /** The todo signal one stored event carries, if any. */
-export const todoSignal = (stored: OrchestrationV2StoredEvent): TodoSignal | null => {
+const todoSignal = (stored: OrchestrationV2StoredEvent): TodoSignal | null => {
   const event = stored.event;
   if (event.type === "plan.updated" && event.payload.kind === "todo_list") {
     const todos: ReadonlyArray<BoardTodoItem> = event.payload.steps.map((step) => ({
@@ -210,7 +210,7 @@ const isHumanCommandId = (commandId: CommandId | null): boolean =>
  * v2 carrying on work it already had (a wake, a restart continuation, a
  * delegated task's result or question, the follow-up a steer becomes).
  */
-export const runOrigin = (
+const runOrigin = (
   commandId: CommandId | null,
   run: OrchestrationV2Run,
   message: Pick<OrchestrationV2ConversationMessage, "createdBy" | "creationSource">,
@@ -467,7 +467,7 @@ export const followStoredEvents = (
     started further back than this loses that memory. A queued run forgotten
     that way and later cancelled out of the queue falls back to the Stop
     reading, and pauses its card. */
-export const SIGNAL_READER_WARMUP_EVENTS = 4096;
+const SIGNAL_READER_WARMUP_EVENTS = 4096;
 
 /**
  * The signals after `afterSequence` (from now on when null), batched by the log
@@ -536,7 +536,7 @@ const readError = (operation: string) => (cause: unknown) =>
 
 // ── The gateway ────────────────────────────────────────────────────────
 
-export const makeThreadGatewayV2 = Effect.gen(function* () {
+const makeThreadGatewayV2 = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projectRows = yield* ProjectStore.ProjectStoreV2;

@@ -45,7 +45,7 @@ import { makeFakeWorkerLayer } from "./workers.testkit.ts";
 
 export const CENTRAL_ID = EnvironmentId.make("env-central");
 export const WORKER_ID = EnvironmentId.make("env-w1");
-export const WORKER_URL = "http://w1:3773";
+const WORKER_URL = "http://w1:3773";
 
 /** The repository both servers have a checkout of. */
 export const REPOSITORY: RepositoryIdentity = {
@@ -62,11 +62,11 @@ export const REPOSITORY: RepositoryIdentity = {
 
 export const WORKER_PROJECT_ID = ProjectId.make("worker-project");
 /** The session the central server holds on the worker. */
-export const BOARD_SESSION_ID = AuthSessionId.make("session-board");
+const BOARD_SESSION_ID = AuthSessionId.make("session-board");
 export const WORKER_ROOT = "/home/worker/repo";
 
 /** The provider instance the worker reports — the one the harness's steps use. */
-export const WORKER_PROVIDER: BoardWorkerProvider = {
+const WORKER_PROVIDER: BoardWorkerProvider = {
   instanceId: ProviderInstanceId.make("codex"),
   driver: "codex",
   displayName: "Codex",

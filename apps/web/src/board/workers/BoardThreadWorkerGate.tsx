@@ -23,7 +23,7 @@ import {
 } from "./threadWorker";
 
 /** This device's way into a thread on `worker`. */
-export function useWorkerThreadAccess(worker: BoardThreadWorker): WorkerThreadAccess {
+function useWorkerThreadAccess(worker: BoardThreadWorker): WorkerThreadAccess {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const state = useAtomValue(environmentCatalog.stateAtom(worker.environmentId));
   const connection = catalog.entries.has(worker.environmentId)

@@ -23,7 +23,7 @@ export type BoardRegroupPlan =
   | { readonly kind: "refused"; readonly reason: string };
 
 /** A group's live children in board order: stage order, then column order. */
-export function boardSiblingsInOrder(
+function boardSiblingsInOrder(
   board: BoardState,
   parentCardId: BoardCardId | null,
 ): ReadonlyArray<BoardCard> {

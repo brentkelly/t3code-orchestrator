@@ -200,7 +200,7 @@ const run = Migrator.make({});
  * Idempotent: a no-op on a fresh database (no `effect_sql_migrations` yet) or one
  * already migrated to the split scheme (no legacy rows left).
  */
-export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger")(function* () {
+const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger")(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   const upstreamLedger = yield* sql<{ readonly name: string }>`

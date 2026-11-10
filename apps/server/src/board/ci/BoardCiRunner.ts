@@ -123,7 +123,7 @@ class BoardCiLogExcludeError extends Schema.TaggedError<BoardCiLogExcludeError>(
 /** Keep CI logs out of `git status` (worktree reclaim refuses an untracked
     file) and out of the fix agent's commits, in repos that don't ignore
     `.t3/`. `info/exclude` is shared by every worktree of the repository. */
-export const ensureCiLogsExcluded = (cwd: string): Effect.Effect<void> =>
+const ensureCiLogsExcluded = (cwd: string): Effect.Effect<void> =>
   Effect.callback<string | null>((resume) => {
     NodeChildProcess.execFile(
       "git",

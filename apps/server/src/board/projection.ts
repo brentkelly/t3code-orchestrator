@@ -117,7 +117,7 @@ import {
 
 /** How many trailing activity entries a context read returns (t3o-08 hygiene);
     outstanding `input-requested` entries are always included on top. */
-export const BOARD_CARD_ACTIVITY_TAIL_LIMIT = 50;
+const BOARD_CARD_ACTIVITY_TAIL_LIMIT = 50;
 
 // `blocked` travels as 0/1 (SQLite has no boolean); the JSON-shaped columns
 // encode/decode through fromJsonString so the row schema's Type side stays
@@ -3799,7 +3799,7 @@ type BoardCardQueries = ReturnType<typeof makeBoardCardQueries>;
  * enricher note below). Archived cards are included: they stay in the read
  * model so unarchive and replay work; the shell filter drops them.
  */
-export function loadBoardState(
+function loadBoardState(
   queries: BoardCardQueries,
 ): Effect.Effect<BoardState | null, ProjectionRepositoryError> {
   return Effect.all([
@@ -4365,7 +4365,7 @@ function boardShellStages(
  * replayed over them harmlessly: every board delta is an idempotent upsert or
  * removal.
  */
-export function loadBoardShellSnapshot(
+function loadBoardShellSnapshot(
   queries: BoardCardQueries,
   latestSequence: Effect.Effect<number, ProjectionRepositoryError>,
 ): Effect.Effect<BoardShellSnapshot, ProjectionRepositoryError> {
@@ -4399,7 +4399,7 @@ export function loadBoardShellSnapshot(
  * A maker (queries compiled once at assembly) rather than a per-call
  * loader: the reader runs on every board event for a subscribed card.
  */
-export function makeBoardCardDetailLoader(
+function makeBoardCardDetailLoader(
   queries: BoardCardQueries,
 ): (cardId: BoardCardId) => Effect.Effect<BoardCardDetail | null, ProjectionRepositoryError> {
   return (cardId) =>
@@ -4544,7 +4544,7 @@ export function makeBoardCardDetailLoader(
  * A card's activity log for `board_get_card_context` (t3o-08), in chronological
  * order. Table-only data (D8): the read model never holds activity bodies.
  */
-export function makeBoardCardActivityLoader(
+function makeBoardCardActivityLoader(
   queries: BoardCardQueries,
 ): (
   cardId: BoardCardId,
@@ -4561,7 +4561,7 @@ export function makeBoardCardActivityLoader(
  * (t3o-08); null when the plan does not exist. The body lives only in the
  * table (D8); the plan metadata rides the read model.
  */
-export function makeBoardPlanBodyLoader(
+function makeBoardPlanBodyLoader(
   queries: BoardCardQueries,
 ): (planId: BoardPlanId) => Effect.Effect<string | null, ProjectionRepositoryError> {
   return (planId) =>

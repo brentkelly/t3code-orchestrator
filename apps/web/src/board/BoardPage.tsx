@@ -210,7 +210,7 @@ function boardDropIndexIn(columnEl: Element, y: number): number {
   return cards.length;
 }
 
-export function BoardPage({
+function BoardPage({
   scope = ROOT_BOARD_SCOPE,
 }: {
   /** Which board this mount is (t3o-25, D1): the root board, or one parent's

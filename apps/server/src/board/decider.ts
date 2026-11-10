@@ -70,7 +70,6 @@ import {
   effectiveBoardStageRole,
   EMPTY_BOARD_STATE,
   EventId,
-  isBoardCommand,
   boardCardActiveChildren,
   boardCardAncestors,
   boardCardGroupOf,
@@ -198,8 +197,6 @@ type BoardCardCommand = Exclude<
   BoardCommand,
   BoardLabelCommand | BoardStageCommand | BoardWorkerCommand | BoardProjectCommand
 >;
-
-export { isBoardCommand };
 
 // Distributive so the planned event stays a discriminated union — a plain
 // `Omit` over the union flattens `type` and `payload` into independent
@@ -1100,7 +1097,7 @@ function boardCardReviewSummary(
 }
 
 /** The round a card's review loop is stuck on (T3O-51), or null. */
-export function boardCardStuckReviewRound(board: BoardState, card: BoardCard): number | null {
+function boardCardStuckReviewRound(board: BoardState, card: BoardCard): number | null {
   const summary = boardCardReviewSummary(board, card.id, card.reviewOverrides);
   return summary?.outcome === "stuck" ? summary.roundCurrent : null;
 }

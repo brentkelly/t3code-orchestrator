@@ -42,7 +42,7 @@ import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { inferImageExtension } from "../imageMime.ts";
 
 /** Where every card's attachment folder lives. */
-export function boardAttachmentsRoot(input: {
+function boardAttachmentsRoot(input: {
   readonly path: Path.Path;
   readonly stateDir: string;
 }): string {

@@ -105,18 +105,18 @@ export const encodeWorkerToken = (token: string): Uint8Array => textEncoder.enco
 export const decodeWorkerToken = (bytes: Uint8Array): string => textDecoder.decode(bytes);
 
 /** Redial delays: quick at first, then every 30 seconds. */
-export function workerRedialDelay(failures: number): Duration.Duration {
+function workerRedialDelay(failures: number): Duration.Duration {
   return Duration.seconds(Math.min(30, 2 ** Math.min(failures, 5)));
 }
 
 /** How long before the board's session on a worker expires that it is renewed.
     A board server down for longer than the rest of the lifetime comes back to
     an expired session, which only a re-pair recovers. */
-export const SESSION_RENEW_AHEAD = Duration.days(7);
+const SESSION_RENEW_AHEAD = Duration.days(7);
 
 /** How long to hold a connection before renewing its session; null for a
     session that never expires. */
-export function sessionRenewalDelay(
+function sessionRenewalDelay(
   sessionExpiresAt: string | null,
   nowMillis: number,
 ): Duration.Duration | null {
@@ -130,7 +130,7 @@ export function sessionRenewalDelay(
 
 /** Delays between attempts at a renewal that failed: a minute at first,
     then hourly, well inside `SESSION_RENEW_AHEAD`. */
-export function sessionRenewalRetryDelay(failures: number): Duration.Duration {
+function sessionRenewalRetryDelay(failures: number): Duration.Duration {
   return Duration.minutes(Math.min(60, 2 ** Math.min(failures, 6)));
 }
 

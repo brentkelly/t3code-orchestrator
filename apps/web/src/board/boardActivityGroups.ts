@@ -25,7 +25,7 @@ import type { BoardCardActivityEntry } from "@t3tools/contracts";
  * toggle, which is the same height for less information — so the floor is
  * three.
  */
-export const BOARD_ACTIVITY_COLLAPSE_MIN_RUN = 3;
+const BOARD_ACTIVITY_COLLAPSE_MIN_RUN = 3;
 
 export interface BoardActivityGroup {
   /** Stable across re-renders and across the run GROWING, so an expanded run
