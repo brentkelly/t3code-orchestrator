@@ -16,6 +16,7 @@ import {
   type BoardCiPassStep,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
@@ -36,7 +37,7 @@ const tempLog = (contents: string | Uint8Array = "") => {
   return path;
 };
 
-const collect = (stream: Stream.Stream<BoardCiLogItem, unknown>) =>
+const collect = (stream: Stream.Stream<BoardCiLogItem>) =>
   Stream.runCollect(stream).pipe(Effect.map((items) => [...items]));
 
 const textOf = (items: ReadonlyArray<BoardCiLogItem>) =>
@@ -44,7 +45,7 @@ const textOf = (items: ReadonlyArray<BoardCiLogItem>) =>
 
 /** A followed read whose growth checks the test steps one at a time. */
 const following = Effect.fn(function* (
-  start: (poll: Effect.Effect<void>) => Stream.Stream<BoardCiLogItem, unknown>,
+  start: (poll: Effect.Effect<void>) => Stream.Stream<BoardCiLogItem>,
 ) {
   const ticks = yield* Queue.unbounded<void>();
   const items = yield* Queue.unbounded<BoardCiLogItem>();
@@ -110,7 +111,7 @@ it.effect("starts a read with no offset at the last 256 KiB, on a line start", (
     assert.strictEqual(textOf(items), contents.slice(offset));
 
     const small = yield* collect(readBoardCiLogFile(tempLog("one\ntwo\n"), { follow: false }));
-    assert.deepStrictEqual(small[0], { _tag: "chunk", offset: 0, text: "one\ntwo\n" });
+    assert.deepStrictEqual(small[0], { _tag: "chunk", offset: 0, end: 8, text: "one\ntwo\n" });
   }),
 );
 
@@ -125,6 +126,20 @@ it.effect("keeps a character cut by the chunk boundary whole, in the later chunk
     assert.strictEqual(chunks[1]!.offset, BOARD_CI_LOG_CHUNK_BYTES - 1);
     assert.isTrue(chunks[1]!.text.startsWith("é"));
     assert.strictEqual(textOf(items), contents);
+  }),
+);
+
+it.effect("an invalid byte keeps every chunk's end on the file's real bytes", () =>
+  Effect.gen(function* () {
+    // 0xff decodes to U+FFFD, three bytes in UTF-8 for one in the file.
+    const contents = Buffer.concat([Buffer.from("bad "), Buffer.from([0xff]), Buffer.from(" x\n")]);
+    const items = yield* collect(
+      readBoardCiLogFile(tempLog(contents), { fromOffset: 0, follow: false }),
+    );
+    assert.deepStrictEqual(items, [
+      { _tag: "chunk", offset: 0, end: contents.length, text: "bad � x\n" },
+      { _tag: "end", size: contents.length },
+    ]);
   }),
 );
 
@@ -148,16 +163,16 @@ it.effect("follows a growing log, holding a cut character, until it shrinks", ()
       const log = yield* following((poll) =>
         readBoardCiLogFile(path, { fromOffset: 0, follow: true, poll }),
       );
-      assert.deepStrictEqual(yield* log.next, { _tag: "chunk", offset: 0, text: "one\n" });
+      assert.deepStrictEqual(yield* log.next, { _tag: "chunk", offset: 0, end: 4, text: "one\n" });
 
       const accent = Buffer.from("é", "utf8");
       NodeFS.appendFileSync(path, Buffer.concat([Buffer.from("two\n"), accent.subarray(0, 1)]));
       yield* log.tick;
-      assert.deepStrictEqual(yield* log.next, { _tag: "chunk", offset: 4, text: "two\n" });
+      assert.deepStrictEqual(yield* log.next, { _tag: "chunk", offset: 4, end: 8, text: "two\n" });
 
       NodeFS.appendFileSync(path, Buffer.concat([accent.subarray(1), Buffer.from("\n")]));
       yield* log.tick;
-      assert.deepStrictEqual(yield* log.next, { _tag: "chunk", offset: 8, text: "é\n" });
+      assert.deepStrictEqual(yield* log.next, { _tag: "chunk", offset: 8, end: 11, text: "é\n" });
 
       NodeFS.truncateSync(path, 2);
       yield* log.tick;
@@ -173,7 +188,12 @@ it.effect("a followed log that doesn't exist yet is waited for", () =>
       const log = yield* following((poll) => readBoardCiLogFile(path, { follow: true, poll }));
       NodeFS.writeFileSync(path, "hello\n");
       yield* log.tick;
-      assert.deepStrictEqual(yield* log.next, { _tag: "chunk", offset: 0, text: "hello\n" });
+      assert.deepStrictEqual(yield* log.next, {
+        _tag: "chunk",
+        offset: 0,
+        end: 6,
+        text: "hello\n",
+      });
     }),
   ),
 );
@@ -248,21 +268,97 @@ it.effect("follows a running step, then reads the flushed rest and ends once it 
         readBoardCiLog(
           {
             readDetail: () => Effect.succeed(detail),
-            changes: Stream.fromQueue(changes),
+            subscribeChanges: Effect.succeed(Stream.fromQueue(changes)),
             poll,
             worker: () => Effect.succeed(null),
           },
           readInput as never,
         ),
       );
-      assert.deepStrictEqual(yield* log.next, { _tag: "chunk", offset: 0, text: "first\n" });
+      assert.deepStrictEqual(yield* log.next, {
+        _tag: "chunk",
+        offset: 0,
+        end: 6,
+        text: "first\n",
+      });
 
       // The step settles with its last output flushed, before any poll sees it.
       NodeFS.appendFileSync(path, "last\n");
       detail = cardDetail({ logDir, status: "passed" });
       yield* Queue.offer(changes, undefined);
-      assert.deepStrictEqual(yield* log.next, { _tag: "chunk", offset: 6, text: "last\n" });
+      assert.deepStrictEqual(yield* log.next, {
+        _tag: "chunk",
+        offset: 6,
+        end: 11,
+        text: "last\n",
+      });
       assert.deepStrictEqual(yield* log.next, { _tag: "end", size: 11 });
+    }),
+  ),
+);
+
+it.effect("a log with an invalid byte still ends cleanly when its step settles", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { logDir } = passLogDir();
+      const path = NodePath.join(logDir, "0.log");
+      NodeFS.writeFileSync(path, Buffer.from([0x61, 0xff, 0x0a]));
+      let detail = cardDetail({ logDir, status: "running" });
+      const changes = yield* Queue.unbounded<void>();
+      const log = yield* following((poll) =>
+        readBoardCiLog(
+          {
+            readDetail: () => Effect.succeed(detail),
+            subscribeChanges: Effect.succeed(Stream.fromQueue(changes)),
+            poll,
+            worker: () => Effect.succeed(null),
+          },
+          readInput as never,
+        ),
+      );
+      assert.deepStrictEqual(yield* log.next, {
+        _tag: "chunk",
+        offset: 0,
+        end: 3,
+        text: "a�\n",
+      });
+      detail = cardDetail({ logDir, status: "failed" });
+      yield* Queue.offer(changes, undefined);
+      assert.deepStrictEqual(yield* log.next, { _tag: "end", size: 3 });
+    }),
+  ),
+);
+
+it.effect("a settle committed while the first detail read runs still ends the follow", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { logDir } = passLogDir();
+      NodeFS.writeFileSync(NodePath.join(logDir, "0.log"), "only\n");
+      const board = yield* PubSub.unbounded<void>();
+      let reads = 0;
+      const log = yield* following((poll) =>
+        readBoardCiLog(
+          {
+            // The step's settle event is published while each of the
+            // first two reads is in flight, and both still see it running.
+            readDetail: () =>
+              Effect.gen(function* () {
+                reads++;
+                if (reads <= 2) {
+                  yield* PubSub.publish(board, undefined);
+                  return cardDetail({ logDir, status: "running" });
+                }
+                return cardDetail({ logDir, status: "passed" });
+              }),
+            subscribeChanges: PubSub.subscribe(board).pipe(Effect.map(Stream.fromSubscription)),
+            poll,
+            worker: () => Effect.succeed(null),
+          },
+          readInput as never,
+        ),
+      );
+      assert.strictEqual((yield* log.next)._tag, "chunk");
+      assert.deepStrictEqual(yield* log.next, { _tag: "end", size: 5 });
     }),
   ),
 );
@@ -276,7 +372,7 @@ it.effect("reads a placed card's log from its worker, and an old worker's is mis
     ): BoardCiLogDeps<never> => ({
       readDetail: () =>
         Effect.succeed(cardDetail({ logDir, status: "passed", placedWorkerId: "worker-1" })),
-      changes: Stream.empty,
+      subscribeChanges: Effect.succeed(Stream.empty),
       worker: () => Effect.succeed(remote),
     });
     const served = yield* collect(
@@ -284,7 +380,7 @@ it.effect("reads a placed card's log from its worker, and an old worker's is mis
         deps((input) => {
           asked.push(input);
           return Stream.make<ReadonlyArray<BoardCiLogItem>>(
-            { _tag: "chunk", offset: 0, text: "remote\n" },
+            { _tag: "chunk", offset: 0, end: 7, text: "remote\n" },
             { _tag: "end", size: 7 },
           );
         }),
@@ -315,7 +411,7 @@ it.effect("names no log for a step that isn't a script", () =>
       readBoardCiLog(
         {
           readDetail: () => Effect.succeed(cardDetail({ logDir, status: "passed", kind: "agent" })),
-          changes: Stream.empty,
+          subscribeChanges: Effect.succeed(Stream.empty),
           worker: () => Effect.succeed(null),
         },
         readInput as never,

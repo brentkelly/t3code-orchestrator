@@ -10,7 +10,12 @@ import {
   type BoardCiLogView,
 } from "./boardCiLog.ts";
 
-const chunk = (offset: number, text: string) => ({ _tag: "chunk" as const, offset, text });
+const chunk = (offset: number, text: string, end = offset + utf8ByteLength(text)) => ({
+  _tag: "chunk" as const,
+  offset,
+  end,
+  text,
+});
 
 const fold = (
   items: ReadonlyArray<Parameters<typeof applyBoardCiLogItem>[1]>,
@@ -20,7 +25,7 @@ const fold = (
 
 describe("the CI log viewer's model (T3O-60)", () => {
   it("joins a line split across chunks and keeps each line's byte offset", () => {
-    const view = fold([chunk(10, "héllo\nwor"), chunk(17, "ld\r\nlast")]);
+    const view = fold([chunk(10, "héllo\nwor"), chunk(20, "ld\r\nlast")]);
     expect(view.blocks.flatMap((block) => block.lines)).toEqual(["héllo", "world"]);
     expect(view.blocks[0]!.offsets).toEqual([10, 17]);
     expect(view.partial).toBe("last");
@@ -38,6 +43,7 @@ describe("the CI log viewer's model (T3O-60)", () => {
     expect(view.truncated).toBe(true);
     expect(view.blocks[0]!.offsets[0]).toBe(100 * BOARD_CI_LOG_BLOCK_LINES);
     expect(view.bytes).toBe(100 * BOARD_CI_LOG_BLOCK_LINES * 2);
+    expect(view.droppedLines).toBe(BOARD_CI_LOG_BLOCK_LINES);
 
     // An append fills the last block in place, keeping earlier blocks as they were.
     const before = fold([chunk(0, "a\nb\n")]);
@@ -51,6 +57,14 @@ describe("the CI log viewer's model (T3O-60)", () => {
     const view = fold([chunk(50, "tail of a line\nfirst\nsecond\n")], { alignStart: true });
     expect(view.blocks[0]!.lines).toEqual(["first", "second"]);
     expect(view.blocks[0]!.offsets[0]).toBe(50 + "tail of a line\n".length);
+  });
+
+  it("takes where the next read starts from the file's bytes, not the decoded text", () => {
+    // One invalid byte in the file decoded to U+FFFD, three bytes as UTF-8.
+    const view = fold([chunk(0, "a\ufffd\nb", 4)]);
+    expect(view.nextOffset).toBe(4);
+    expect(view.partialOffset).toBe(3);
+    expect(applyBoardCiLogItem(view, chunk(4, "c\n")).blocks[0]!.lines).toEqual(["a\ufffd", "bc"]);
   });
 
   it("ends, or says the log is missing", () => {

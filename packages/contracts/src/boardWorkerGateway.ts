@@ -440,10 +440,15 @@ export const BOARD_CI_LOG_CHUNK_BYTES = 1024 * 1024;
  * One item of a CI step log read (T3O-60): text from a byte offset, the end
  * of the read with the file's size, or why there is no log to read. `offset`
  * and `size` are bytes of `<n>.log`; `text` is UTF-8 decoded, so a character
- * split across reads arrives whole in the later chunk.
+ * split across reads arrives whole in the later chunk. `end` is the byte just
+ * past the chunk: an invalid byte decodes to U+FFFD, so `text` can't tell it.
  */
 export const BoardCiLogItem = Schema.Union([
-  Schema.TaggedStruct("chunk", { offset: NonNegativeInt, text: Schema.String }),
+  Schema.TaggedStruct("chunk", {
+    offset: NonNegativeInt,
+    end: NonNegativeInt,
+    text: Schema.String,
+  }),
   Schema.TaggedStruct("end", { size: NonNegativeInt }),
   Schema.TaggedStruct("missing", { reason: TrimmedNonEmptyString }),
 ]);

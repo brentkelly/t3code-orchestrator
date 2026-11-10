@@ -41,6 +41,8 @@ export interface BoardCiLogView {
   readonly partialOffset: number;
   /** Lines loaded, the unfinished one included. */
   readonly lineCount: number;
+  /** Lines dropped from the start to stay within the limit. */
+  readonly droppedLines: number;
   /** Bytes the blocks and the partial line hold. */
   readonly bytes: number;
   /** Older output was dropped to stay within the limit. */
@@ -61,6 +63,7 @@ export const EMPTY_BOARD_CI_LOG_VIEW: BoardCiLogView = {
   partial: "",
   partialOffset: 0,
   lineCount: 0,
+  droppedLines: 0,
   bytes: 0,
   truncated: false,
   nextOffset: null,
@@ -99,7 +102,7 @@ export function applyBoardCiLogItem(
   if (options.alignStart === true && view.nextOffset === null && offset > 0) {
     const newline = text.indexOf("\n");
     if (newline === -1) {
-      return { ...view, status: "live", nextOffset: offset + utf8ByteLength(text) };
+      return { ...view, status: "live", nextOffset: item.end };
     }
     offset += utf8ByteLength(text.slice(0, newline + 1));
     text = text.slice(newline + 1);
@@ -139,9 +142,12 @@ export function applyBoardCiLogItem(
   const partialBytes = utf8ByteLength(partial);
   let bytes = view.bytes - utf8ByteLength(view.nextOffset === null ? "" : view.partial) + added;
   let truncated = view.truncated;
+  let droppedLines = view.droppedLines;
   const maxBytes = options.maxBytes ?? BOARD_CI_LOG_VIEW_BYTES;
   while (blocks.length > 1 && bytes + partialBytes > maxBytes) {
-    bytes -= blocks.shift()!.bytes;
+    const dropped = blocks.shift()!;
+    bytes -= dropped.bytes;
+    droppedLines += dropped.lines.length;
     truncated = true;
   }
   bytes += partialBytes;
@@ -150,11 +156,13 @@ export function applyBoardCiLogItem(
     missingReason: null,
     blocks,
     partial,
-    partialOffset: position,
+    // The file's own end, not the text's: an invalid byte decoded to U+FFFD.
+    partialOffset: Math.max(start, item.end - partialBytes),
     lineCount: blocks.reduce((total, block) => total + block.lines.length, 0) + (partial ? 1 : 0),
+    droppedLines,
     bytes,
     truncated,
-    nextOffset: position + partialBytes,
+    nextOffset: item.end,
   };
 }
 
@@ -196,7 +204,7 @@ const readCiLogItems = (request: BoardCiLogRequest) => {
   ).pipe(
     Stream.tap((item) =>
       Effect.sync(() => {
-        if (item._tag === "chunk") next = item.offset + utf8ByteLength(item.text);
+        if (item._tag === "chunk") next = item.end;
       }),
     ),
     Stream.takeUntil((item) => item._tag !== "chunk"),

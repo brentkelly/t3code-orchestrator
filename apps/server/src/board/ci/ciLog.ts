@@ -28,6 +28,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { boardCiLogDir } from "./BoardCiRunner.ts";
@@ -145,6 +146,7 @@ export const readBoardCiLogFile = (
             yield* Queue.offer(queue, {
               _tag: "chunk",
               offset,
+              end: offset + complete,
               text: decoder.decode(combined.subarray(0, complete)),
             });
           }
@@ -164,6 +166,7 @@ export const readBoardCiLogFile = (
         yield* Queue.offer(queue, {
           _tag: "chunk",
           offset: end - held.length,
+          end,
           text: decoder.decode(held),
         });
       }
@@ -195,10 +198,6 @@ export const readBoardCiLogFile = (
     );
   });
 
-/** The byte just past a chunk's text. */
-const chunkEnd = (item: Extract<BoardCiLogItem, { _tag: "chunk" }>) =>
-  item.offset + Buffer.byteLength(item.text, "utf8");
-
 /**
  * Follow a log until `settled` completes, then read what's left and end.
  * Without `follow`, a single read to the end.
@@ -218,7 +217,7 @@ const followBoardCiLogUntil = (input: {
   const live = input.read({ fromOffset: input.fromOffset, follow: true }).pipe(
     Stream.tap((item) =>
       Effect.sync(() => {
-        if (item._tag === "chunk") next = chunkEnd(item);
+        if (item._tag === "chunk") next = item.end;
         else ended = true;
       }),
     ),
@@ -249,8 +248,8 @@ export interface BoardCiLogDeps<E> {
   readonly readDetail: (
     cardId: BoardReadCiLogInput["cardId"],
   ) => Effect.Effect<BoardCardDetail | null, E>;
-  /** Ticks whenever the board may have changed. Each access subscribes. */
-  readonly changes: Stream.Stream<unknown>;
+  /** Subscribes, in the scope, to ticks whenever the board may have changed. */
+  readonly subscribeChanges: Effect.Effect<Stream.Stream<unknown>, never, Scope.Scope>;
   /** The local reader's wait between growth checks; tests step it by hand. */
   readonly poll?: Effect.Effect<void>;
   /** A worker's log reader, or null when the worker can't be reached. */
@@ -275,6 +274,13 @@ export const readBoardCiLog = <E>(
 ): Stream.Stream<BoardCiLogItem, E> =>
   Stream.unwrap(
     Effect.gen(function* () {
+      // Attached before the first read, so a settle committed during it
+      // still wakes the end rule (as `board.subscribeCard` does).
+      const wake = yield* Queue.sliding<void>(1);
+      if (input.follow === true) {
+        const changes = yield* deps.subscribeChanges;
+        yield* Effect.forkScoped(Stream.runForEach(changes, () => Queue.offer(wake, undefined)));
+      }
       const detail = yield* deps.readDetail(input.cardId);
       if (detail === null) return Stream.make(missing("The card no longer exists."));
       const pass = detail.ciPasses.find((candidate) => candidate.runId === input.runId);
@@ -320,9 +326,8 @@ export const readBoardCiLog = <E>(
       }
 
       const settledNow = isBoardCiLogSettled(detail, input.runId, input.index);
-      const settled = Stream.concat(Stream.make(undefined), deps.changes).pipe(
-        // A burst of board changes landing during a re-read is one more.
-        Stream.buffer({ capacity: 1, strategy: "sliding" }),
+      // A burst of board changes landing during a re-read is one more wake.
+      const settled = Stream.fromQueue(wake).pipe(
         Stream.mapEffect(() =>
           deps.readDetail(input.cardId).pipe(Effect.catch(() => Effect.succeed(null))),
         ),

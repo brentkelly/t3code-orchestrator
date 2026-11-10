@@ -84,7 +84,7 @@ it.effect("flags a step silent after 10 min without output, and clears it on out
       yield* TestClock.adjust("1 minute");
       assert.lengthOf(reports, 1);
       // Silent since the last output, two minutes in.
-      assert.strictEqual(reports[0]!.silentSince, new Date(2 * 60_000).toISOString());
+      assert.strictEqual(reports[0]!.silentSince, "1970-01-01T00:02:00.000Z");
 
       yield* TestClock.adjust("5 minutes");
       assert.lengthOf(reports, 1, "it is set once");

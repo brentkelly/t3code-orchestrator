@@ -620,7 +620,7 @@ function makeBoardRpcHandlers(
             readBoardCiLog(
               {
                 readDetail,
-                changes: boardEngine.liveBoardEvents,
+                subscribeChanges: boardEngine.subscribeBoardEvents,
                 worker: services.ciLogWorker,
               },
               input,
