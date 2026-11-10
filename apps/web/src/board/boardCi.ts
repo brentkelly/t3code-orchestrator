@@ -13,6 +13,7 @@ import {
   boardCiFixStepId,
   decodeBoardCiFixPayload,
   isBoardCiStepFailure,
+  parseBoardCiFixStepId,
   type BoardCiFixIssueStatus,
   type BoardCardCi,
   type BoardStepCompletion,
@@ -355,9 +356,10 @@ export function boardCiTailMeta(tail: string): string {
 
 /**
  * A failed pass's "Fix failures" row (T3O-57): the fix as the pass's last
- * step, with one row per issue. Pass N of an entry is followed by fix N, so
- * the fix's completion is found by `boardCiFixStepId(entry, ordinal)`.
- * Outcomes show once the fix has reported; there is no live progress.
+ * step, with one row per issue. A pass's ordinal is not its fix attempt (a held
+ * or restarted pass takes an ordinal without a fix), so the fix's completion is
+ * the one from the pass's recorded fix thread, or the live attempt while the
+ * card is still fixing this pass. There is no live per-issue progress.
  */
 export interface BoardCiFixRow {
   readonly state: "running" | "reported" | "not-run";
@@ -375,16 +377,23 @@ export interface BoardCiFixRow {
 }
 
 export function boardCiFixRow(input: {
-  readonly pass: Pick<BoardCiPass, "runId" | "entry" | "ordinal" | "steps">;
-  readonly completions: ReadonlyArray<Pick<BoardStepCompletion, "stepId" | "payload">>;
+  readonly pass: Pick<BoardCiPass, "runId" | "entry" | "steps" | "fixThreadId">;
+  readonly completions: ReadonlyArray<Pick<BoardStepCompletion, "stepId" | "payload" | "threadId">>;
   readonly ci: Pick<BoardCardCi, "runId" | "phase" | "fixAttempts" | "maxFixAttempts"> | null;
 }): BoardCiFixRow | null {
   const issues = boardCiFixIssues(input.pass.steps);
   if (issues.length === 0) return null;
-  const stepId = boardCiFixStepId(input.pass.entry, input.pass.ordinal);
-  const completion = input.completions.findLast((candidate) => candidate.stepId === stepId);
   const fixingNow =
     input.ci !== null && input.ci.runId === input.pass.runId && input.ci.phase === "fixing";
+  const { entry, fixThreadId } = input.pass;
+  const liveStepId =
+    fixingNow && input.ci !== null ? boardCiFixStepId(entry, input.ci.fixAttempts) : null;
+  const completion = input.completions.findLast((candidate) =>
+    fixThreadId === null
+      ? candidate.stepId === liveStepId
+      : candidate.threadId === fixThreadId &&
+        parseBoardCiFixStepId(candidate.stepId)?.entry === entry,
+  );
   const payload = completion === undefined ? null : decodeBoardCiFixPayload(completion.payload);
   const outcomes = boardCiFixIssueOutcomes(issues, payload).map((outcome) => ({
     id: outcome.issue.id,

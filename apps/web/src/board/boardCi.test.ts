@@ -1,5 +1,6 @@
 import {
   boardCiFixStepId,
+  ThreadId,
   type BoardCardCi,
   type BoardCardCiStep,
   type BoardCiPassStep,
@@ -247,15 +248,19 @@ describe("a failed pass's fix row (T3O-57)", () => {
     exitCode: null,
     tail: "",
   });
+  // Ordinal 3 but fix 2: an earlier pass in the entry was held and retried.
   const pass = {
-    runId: "run-2",
+    runId: "run-3",
     entry: 1,
-    ordinal: 2,
+    ordinal: 3,
+    fixThreadId: null,
     steps: [passStep("Build", "failed"), passStep("Lint", "passed"), passStep("Test", "failed")],
   };
+  const fixThread = ThreadId.make("thread-fix-2");
   const completion = (payload: unknown) => ({
     stepId: boardCiFixStepId(1, 2),
     payload: JSON.stringify(payload),
+    threadId: fixThread,
   });
 
   it("is absent on a pass with no failure", () => {
@@ -268,24 +273,38 @@ describe("a failed pass's fix row (T3O-57)", () => {
     ).toBeNull();
   });
 
-  it("matches pass N to fix N, open while the fix runs, outcomes once it reports", () => {
-    const running = boardCiFixRow({
-      pass,
-      completions: [],
-      ci: { runId: "run-2", phase: "fixing", fixAttempts: 2, maxFixAttempts: 3 },
-    });
+  it("matches a pass to the fix that worked on it, not to its ordinal", () => {
+    const fixing = { runId: "run-3", phase: "fixing", fixAttempts: 2, maxFixAttempts: 3 } as const;
+    const running = boardCiFixRow({ pass, completions: [], ci: fixing });
     expect(running).toMatchObject({ state: "running", headline: "Fix 2 of 3 · 2 issues" });
     expect(running?.issues.map((issue) => issue.status)).toEqual(["open", "open"]);
 
-    // Fix 1 reports for pass 1, not this one.
-    const other = { stepId: boardCiFixStepId(1, 1), payload: JSON.stringify({ verdict: "fixed" }) };
-    expect(boardCiFixRow({ pass, completions: [other], ci: null })).toMatchObject({
+    // Fix 1 reported for an earlier pass, and fix 3 shares this pass's ordinal.
+    const other = (attempt: number) => ({
+      stepId: boardCiFixStepId(1, attempt),
+      payload: JSON.stringify({ verdict: "fixed" }),
+      threadId: ThreadId.make(`thread-fix-${attempt}`),
+    });
+    const others = [other(1), other(3)];
+    expect(boardCiFixRow({ pass, completions: others, ci: null })).toMatchObject({
       state: "not-run",
       headline: "Not run",
     });
+    expect(
+      boardCiFixRow({ pass: { ...pass, fixThreadId: fixThread }, completions: others, ci: null }),
+    ).toMatchObject({ state: "not-run" });
+
+    // Reported before the re-run records the fix thread on the pass.
+    expect(
+      boardCiFixRow({
+        pass,
+        completions: [...others, completion({ verdict: "fixed" })],
+        ci: fixing,
+      }),
+    ).toMatchObject({ state: "reported", headline: "2 of 2 resolved" });
 
     const reported = boardCiFixRow({
-      pass,
+      pass: { ...pass, fixThreadId: fixThread },
       completions: [
         completion({
           verdict: "cannot-fix",
