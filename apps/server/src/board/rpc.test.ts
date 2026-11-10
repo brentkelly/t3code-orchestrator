@@ -185,12 +185,10 @@ const supervisorStub: SupervisorReactorShape = {
 };
 
 const makeHandlers = (scopes: ReadonlyArray<AuthenticatedSession["scopes"][number]>) =>
-  Effect.gen(function* () {
-    return yield* boardRpcHandlers({
-      currentSession: session(scopes),
-      boardSupervisor: supervisorStub,
-      clientAnalyticsProps: {},
-    });
+  boardRpcHandlers({
+    currentSession: session(scopes),
+    boardSupervisor: supervisorStub,
+    clientAnalyticsProps: {},
   });
 
 it.layer(makeBoardRpcTestLayer("t3o-board-rpc-test-"))("board.subscribeCard", (it) => {
@@ -225,16 +223,13 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-test-"))("board.subscribeCard", (i
       const collected = yield* Deferred.make<ReadonlyArray<BoardCardDetailStreamItem>>();
       const firstFrame = yield* Deferred.make<void>();
       yield* Effect.forkScoped(
-        handlers["board.subscribeCard"]({ cardId })
-          .pipe(
-            Stream.tap(() => Deferred.succeed(firstFrame, undefined)),
-            Stream.take(2),
-            Stream.runCollect,
-          )
-          .pipe(
-            Effect.flatMap((items) => Deferred.succeed(collected, Array.from(items))),
-            Effect.scoped,
-          ),
+        handlers["board.subscribeCard"]({ cardId }).pipe(
+          Stream.tap(() => Deferred.succeed(firstFrame, undefined)),
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.flatMap((items) => Deferred.succeed(collected, Array.from(items))),
+          Effect.scoped,
+        ),
       );
 
       // Dispatch the update only after the initial frame arrived, so the

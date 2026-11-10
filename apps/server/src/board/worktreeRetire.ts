@@ -209,19 +209,19 @@ const findProcessesInDirectoryMac = (directory: string): Promise<ReadonlyArray<W
   });
 
 /** The host's process finder. Windows refuses to delete open files on its own. */
-const findProcessesInDirectory = (
-  directory: string,
-): Effect.Effect<ReadonlyArray<WorktreeProcess>> =>
-  Effect.gen(function* () {
+const findProcessesInDirectory = Effect.fn("worktreeRetire.findProcessesInDirectory")(
+  function* (directory: string) {
     const platform = yield* HostProcessPlatform;
-    return yield* Effect.promise(() =>
+    return yield* Effect.promise((): Promise<ReadonlyArray<WorktreeProcess>> =>
       platform === "linux"
         ? findProcessesInDirectoryLinux(directory)
         : platform === "darwin"
           ? findProcessesInDirectoryMac(directory)
           : Promise.resolve([]),
     );
-  }).pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<WorktreeProcess>));
+  },
+  Effect.orElseSucceed((): ReadonlyArray<WorktreeProcess> => []),
+);
 
 const signalProcessDefault = (pid: number, signal: NodeJS.Signals) =>
   Effect.sync(() => {
@@ -342,240 +342,240 @@ const worktreeRemoveScripts = (
   scripts: ReadonlyArray<ProjectScript>,
 ): ReadonlyArray<ProjectScript> => scripts.filter((script) => script.runOnWorktreeRemove === true);
 
-export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
-  Effect.gen(function* () {
-    const terminals = yield* BoardTerminals;
-    const threads = yield* ThreadGateway;
-    const serverSettings = yield* ServerSettingsService;
-    const git = yield* GitVcsDriver.GitVcsDriver;
-    const findProcesses = options.findProcessesInDirectory ?? findProcessesInDirectory;
-    const signalProcess = options.signalProcess ?? signalProcessDefault;
-    const hookTimeoutMs = options.hookTimeoutMs ?? HOOK_TIMEOUT_MS;
-    const killGraceMs = options.killGraceMs ?? KILL_GRACE_MS;
-    const settleIntervalMs = options.settleIntervalMs ?? SETTLE_INTERVAL_MS;
-    const settleAttempts = options.settleAttempts ?? SETTLE_ATTEMPTS;
+export const makeWorktreeRetirer = Effect.fn("worktreeRetire.makeWorktreeRetirer")(function* (
+  options: WorktreeRetirerOptions = {},
+) {
+  const terminals = yield* BoardTerminals;
+  const threads = yield* ThreadGateway;
+  const serverSettings = yield* ServerSettingsService;
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const findProcesses = options.findProcessesInDirectory ?? findProcessesInDirectory;
+  const signalProcess = options.signalProcess ?? signalProcessDefault;
+  const hookTimeoutMs = options.hookTimeoutMs ?? HOOK_TIMEOUT_MS;
+  const killGraceMs = options.killGraceMs ?? KILL_GRACE_MS;
+  const settleIntervalMs = options.settleIntervalMs ?? SETTLE_INTERVAL_MS;
+  const settleAttempts = options.settleAttempts ?? SETTLE_ATTEMPTS;
 
-    const samePath = (left: string, right: string) =>
-      NodePath.resolve(left) === NodePath.resolve(right);
+  const samePath = (left: string, right: string) =>
+    NodePath.resolve(left) === NodePath.resolve(right);
 
-    /** Survivors once the asynchronous kills have had a moment to land. */
-    const settledSurvivors = Effect.fn("worktreeRetire.settledSurvivors")(function* (path: string) {
-      let survivors = yield* findProcesses(path);
-      for (let attempt = 1; attempt < settleAttempts && survivors.length > 0; attempt += 1) {
-        yield* Effect.sleep(settleIntervalMs);
-        survivors = yield* findProcesses(path);
-      }
-      return survivors;
-    });
+  /** Survivors once the asynchronous kills have had a moment to land. */
+  const settledSurvivors = Effect.fn("worktreeRetire.settledSurvivors")(function* (path: string) {
+    let survivors = yield* findProcesses(path);
+    for (let attempt = 1; attempt < settleAttempts && survivors.length > 0; attempt += 1) {
+      yield* Effect.sleep(settleIntervalMs);
+      survivors = yield* findProcesses(path);
+    }
+    return survivors;
+  });
 
-    const stopOwnProcesses = Effect.fn("worktreeRetire.stopOwnProcesses")(function* (
-      inWorktree: ReadonlyArray<BoardWorktreeThread>,
-    ) {
-      for (const thread of inWorktree) {
-        yield* terminals.close({ threadId: thread.threadId, deleteHistory: false }).pipe(
+  const stopOwnProcesses = Effect.fn("worktreeRetire.stopOwnProcesses")(function* (
+    inWorktree: ReadonlyArray<BoardWorktreeThread>,
+  ) {
+    for (const thread of inWorktree) {
+      yield* terminals.close({ threadId: thread.threadId, deleteHistory: false }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("worktree retire: closing a thread's terminals failed", {
+            threadId: thread.threadId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
+      // A deleted thread's session is stopped by its deletion.
+      if (thread.deleted || !thread.sessionLive) continue;
+      yield* threads
+        .stopSession({
+          commandId: CommandId.make(`server:worktree-retire-stop:${NodeCrypto.randomUUID()}`),
+          threadId: thread.threadId,
+        })
+        .pipe(
           Effect.catchCause((cause) =>
-            Effect.logWarning("worktree retire: closing a thread's terminals failed", {
+            Effect.logWarning("worktree retire: stopping a thread's session failed", {
               threadId: thread.threadId,
               cause: Cause.pretty(cause),
             }),
           ),
         );
-        // A deleted thread's session is stopped by its deletion.
-        if (thread.deleted || !thread.sessionLive) continue;
-        yield* threads
-          .stopSession({
-            commandId: CommandId.make(`server:worktree-retire-stop:${NodeCrypto.randomUUID()}`),
-            threadId: thread.threadId,
-          })
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("worktree retire: stopping a thread's session failed", {
-                threadId: thread.threadId,
-                cause: Cause.pretty(cause),
-              }),
-            ),
-          );
-      }
-    });
+    }
+  });
 
-    const killSurvivors = Effect.fn("worktreeRetire.killSurvivors")(function* (
-      worktreePath: string,
-      survivors: ReadonlyArray<WorktreeProcess>,
-    ) {
-      yield* Effect.logWarning("worktree retire: stopping processes left in the worktree", {
+  const killSurvivors = Effect.fn("worktreeRetire.killSurvivors")(function* (
+    worktreePath: string,
+    survivors: ReadonlyArray<WorktreeProcess>,
+  ) {
+    yield* Effect.logWarning("worktree retire: stopping processes left in the worktree", {
+      worktreePath,
+      processes: survivors.map((survivor) => `${survivor.name} (${survivor.pid})`),
+    });
+    for (const survivor of survivors) yield* signalProcess(survivor.pid, "SIGTERM");
+    yield* Effect.sleep(killGraceMs);
+    const stubborn = yield* findProcesses(worktreePath);
+    if (stubborn.length === 0) return;
+    for (const survivor of stubborn) yield* signalProcess(survivor.pid, "SIGKILL");
+    const left = yield* settledSurvivors(worktreePath);
+    if (left.length > 0) {
+      yield* Effect.logWarning("worktree retire: processes survived SIGKILL; removing anyway", {
         worktreePath,
-        processes: survivors.map((survivor) => `${survivor.name} (${survivor.pid})`),
+        reason: survivorReason(left),
       });
-      for (const survivor of survivors) yield* signalProcess(survivor.pid, "SIGTERM");
-      yield* Effect.sleep(killGraceMs);
-      const stubborn = yield* findProcesses(worktreePath);
-      if (stubborn.length === 0) return;
-      for (const survivor of stubborn) yield* signalProcess(survivor.pid, "SIGKILL");
-      const left = yield* settledSurvivors(worktreePath);
-      if (left.length > 0) {
-        yield* Effect.logWarning("worktree retire: processes survived SIGKILL; removing anyway", {
-          worktreePath,
-          reason: survivorReason(left),
-        });
-      }
-    });
+    }
+  });
 
-    const runHooks = Effect.fn("worktreeRetire.runHooks")(function* (
-      projects: ReadonlyArray<BoardProject>,
-      input: WorktreeRetireInput,
-    ) {
-      const project =
-        projects.find(
-          (candidate) =>
-            !candidate.deleted &&
-            (input.projectId !== undefined
-              ? candidate.id === input.projectId
-              : samePath(candidate.workspaceRoot, input.projectCwd)),
-        ) ?? null;
-      if (project === null) return null;
-      const settings = yield* serverSettings.getSettings.pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("worktree retire: settings unreadable; no remove scripts run", {
-            worktreePath: input.worktreePath,
-            cause: Cause.pretty(cause),
-          }).pipe(Effect.as(null)),
-        ),
-      );
-      if (settings === null) return null;
-      const scripts = worktreeRemoveScripts(resolveProjectScripts(settings, project));
-      if (scripts.length === 0) return null;
-      if (input.onScriptsStarting !== undefined) yield* input.onScriptsStarting;
-      const env = {
-        ...projectScriptRuntimeEnv({
-          project: { cwd: project.workspaceRoot },
-          worktreePath: input.worktreePath,
-        }),
-        T3_WORKTREE_PATH: input.worktreePath,
-        T3_PROJECT_ROOT: project.workspaceRoot,
-        T3_REMOVAL: input.kind,
-        T3_WORKTREE_VERIFIED_CLEAN: input.verifiedClean ? "1" : "0",
-      };
-      const failures: Array<string> = [];
-      for (const script of scripts) {
-        yield* Effect.logInfo("worktree retire: running remove script", {
-          worktreePath: input.worktreePath,
-          script: script.name,
-        });
-        const exit = yield* runWorktreeHook({
-          script,
-          cwd: input.worktreePath,
-          env,
-          timeoutMs: hookTimeoutMs,
-        });
-        const failure = hookFailure(script.name, exit, hookTimeoutMs);
-        if (failure === null) continue;
-        yield* Effect.logWarning("worktree retire: remove script failed; removing anyway", {
-          worktreePath: input.worktreePath,
-          failure,
-        });
-        failures.push(failure);
-      }
-      return failures.length === 0 ? null : failures.join("; ");
-    });
-
-    const retireOnce = Effect.fn("worktreeRetire.retireOnce")(function* (
-      input: WorktreeRetireInput,
-    ) {
-      const stillWanted = input.stillWanted ?? Effect.succeed(true);
-      // Before anything is stopped, too: a card restarted since the caller
-      // decided owns live sessions in this checkout.
-      if (!(yield* stillWanted)) return null;
-      const unreadable = (cause: Cause.Cause<unknown>) =>
-        Effect.logWarning("worktree retire: threads and projects unreadable", {
+  const runHooks = Effect.fn("worktreeRetire.runHooks")(function* (
+    projects: ReadonlyArray<BoardProject>,
+    input: WorktreeRetireInput,
+  ) {
+    const project =
+      projects.find(
+        (candidate) =>
+          !candidate.deleted &&
+          (input.projectId !== undefined
+            ? candidate.id === input.projectId
+            : samePath(candidate.workspaceRoot, input.projectCwd)),
+      ) ?? null;
+    if (project === null) return null;
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("worktree retire: settings unreadable; no remove scripts run", {
           worktreePath: input.worktreePath,
           cause: Cause.pretty(cause),
-        });
-      const inWorktree = yield* threads
-        .threadsInWorktree(input.worktreePath)
-        .pipe(Effect.catchCause((cause) => unreadable(cause).pipe(Effect.as([]))));
-      const projects = yield* threads
-        .projects()
-        .pipe(Effect.catchCause((cause) => unreadable(cause).pipe(Effect.as([]))));
-      yield* stopOwnProcesses(inWorktree);
-      const survivors = yield* settledSurvivors(input.worktreePath);
-      if (survivors.length > 0) {
-        if (input.kind === "reclaim") {
-          return { outcome: "blocked", reason: survivorReason(survivors) } as const;
-        }
-        yield* killSurvivors(input.worktreePath, survivors);
+        }).pipe(Effect.as(null)),
+      ),
+    );
+    if (settings === null) return null;
+    const scripts = worktreeRemoveScripts(resolveProjectScripts(settings, project));
+    if (scripts.length === 0) return null;
+    if (input.onScriptsStarting !== undefined) yield* input.onScriptsStarting;
+    const env = {
+      ...projectScriptRuntimeEnv({
+        project: { cwd: project.workspaceRoot },
+        worktreePath: input.worktreePath,
+      }),
+      T3_WORKTREE_PATH: input.worktreePath,
+      T3_PROJECT_ROOT: project.workspaceRoot,
+      T3_REMOVAL: input.kind,
+      T3_WORKTREE_VERIFIED_CLEAN: input.verifiedClean ? "1" : "0",
+    };
+    const failures: Array<string> = [];
+    for (const script of scripts) {
+      yield* Effect.logInfo("worktree retire: running remove script", {
+        worktreePath: input.worktreePath,
+        script: script.name,
+      });
+      const exit = yield* runWorktreeHook({
+        script,
+        cwd: input.worktreePath,
+        env,
+        timeoutMs: hookTimeoutMs,
+      });
+      const failure = hookFailure(script.name, exit, hookTimeoutMs);
+      if (failure === null) continue;
+      yield* Effect.logWarning("worktree retire: remove script failed; removing anyway", {
+        worktreePath: input.worktreePath,
+        failure,
+      });
+      failures.push(failure);
+    }
+    return failures.length === 0 ? null : failures.join("; ");
+  });
+
+  const retireOnce = Effect.fn("worktreeRetire.retireOnce")(function* (input: WorktreeRetireInput) {
+    const stillWanted = input.stillWanted ?? Effect.succeed(true);
+    // Before anything is stopped, too: a card restarted since the caller
+    // decided owns live sessions in this checkout.
+    if (!(yield* stillWanted)) return null;
+    const unreadable = (cause: Cause.Cause<unknown>) =>
+      Effect.logWarning("worktree retire: threads and projects unreadable", {
+        worktreePath: input.worktreePath,
+        cause: Cause.pretty(cause),
+      });
+    const inWorktree = yield* threads
+      .threadsInWorktree(input.worktreePath)
+      .pipe(Effect.catchCause((cause) => unreadable(cause).pipe(Effect.as([]))));
+    const projects = yield* threads
+      .projects()
+      .pipe(Effect.catchCause((cause) => unreadable(cause).pipe(Effect.as([]))));
+    yield* stopOwnProcesses(inWorktree);
+    const survivors = yield* settledSurvivors(input.worktreePath);
+    if (survivors.length > 0) {
+      if (input.kind === "reclaim") {
+        return { outcome: "blocked", reason: survivorReason(survivors) } as const;
       }
-      const hookWarning = yield* runHooks(projects, input);
-      // Stopping and the scripts take long enough for a person to drag the
-      // card back out of Done. Its caches may have moved out; that only costs
-      // a rebuild.
-      if (!(yield* stillWanted)) return null;
-      yield* (
-        input.remove ??
-          git.removeWorktree({
-            cwd: input.projectCwd,
-            path: input.worktreePath,
-            ...(input.kind === "forced" ? { force: true } : {}),
-          })
-      );
-      return { outcome: "removed", hookWarning } as const;
-    });
+      yield* killSurvivors(input.worktreePath, survivors);
+    }
+    const hookWarning = yield* runHooks(projects, input);
+    // Stopping and the scripts take long enough for a person to drag the
+    // card back out of Done. Its caches may have moved out; that only costs
+    // a rebuild.
+    if (!(yield* stillWanted)) return null;
+    yield* (
+      input.remove ??
+        git.removeWorktree({
+          cwd: input.projectCwd,
+          path: input.worktreePath,
+          ...(input.kind === "forced" ? { force: true } : {}),
+        })
+    );
+    return { outcome: "removed", hookWarning } as const;
+  });
 
-    // Paths being retired right now, each with a latch released when its
-    // retirement ends. A deleted card's retirement and an orphan sweep can both
-    // reach the same checkout, and the remove scripts must never run twice at
-    // once. A second reclaim is abandoned (null): leaving the worktree is
-    // always a reclaim's safe answer. A second forced removal, which a person
-    // confirmed, waits its turn instead, so it never reports a removal that did
-    // not happen. If the folder is gone once it is through, the first one
-    // removed it.
-    const retiring = new Map<string, Deferred.Deferred<void>>();
+  // Paths being retired right now, each with a latch released when its
+  // retirement ends. A deleted card's retirement and an orphan sweep can both
+  // reach the same checkout, and the remove scripts must never run twice at
+  // once. A second reclaim is abandoned (null): leaving the worktree is
+  // always a reclaim's safe answer. A second forced removal, which a person
+  // confirmed, waits its turn instead, so it never reports a removal that did
+  // not happen. If the folder is gone once it is through, the first one
+  // removed it.
+  const retiring = new Map<string, Deferred.Deferred<void>>();
 
-    const retire = (
-      input: WorktreeRetireInput,
-    ): Effect.Effect<WorktreeRetireResult, GitCommandError> =>
-      Effect.gen(function* () {
-        const key = NodePath.resolve(input.worktreePath);
-        let waited = false;
-        while (true) {
-          // Checked and claimed in one step, so two callers never both win.
-          const claim = yield* Effect.sync(() => {
-            const busy = retiring.get(key);
-            if (busy !== undefined) return { busy } as const;
-            const done = Deferred.makeUnsafe<void>();
-            retiring.set(key, done);
-            return { done } as const;
-          });
-          if ("done" in claim) {
-            const release = Effect.sync(() => retiring.delete(key)).pipe(
-              Effect.andThen(Deferred.succeed(claim.done, undefined)),
-            );
-            const gone = waited ? pathExists(key).pipe(Effect.map((exists) => !exists)) : null;
-            return yield* (gone === null ? Effect.succeed(false) : gone).pipe(
-              Effect.flatMap(
-                (removedMeanwhile): Effect.Effect<WorktreeRetireResult, GitCommandError> =>
-                  removedMeanwhile
-                    ? Effect.succeed({ outcome: "removed", hookWarning: null })
-                    : retireOnce(input),
-              ),
-              Effect.ensuring(release),
-            );
-          }
-          if (input.kind === "reclaim" || input.skipIfBusy === true) {
-            yield* Effect.logInfo("worktree retire: already being retired; skipped", {
-              worktreePath: input.worktreePath,
-            });
-            return null;
-          }
-          yield* Effect.logInfo("worktree retire: already being retired; waiting", {
+  const retire: (
+    input: WorktreeRetireInput,
+  ) => Effect.Effect<WorktreeRetireResult, GitCommandError> = Effect.fn("worktreeRetire.retire")(
+    function* (input) {
+      const key = NodePath.resolve(input.worktreePath);
+      let waited = false;
+      while (true) {
+        // Checked and claimed in one step, so two callers never both win.
+        const claim = yield* Effect.sync(() => {
+          const busy = retiring.get(key);
+          if (busy !== undefined) return { busy } as const;
+          const done = Deferred.makeUnsafe<void>();
+          retiring.set(key, done);
+          return { done } as const;
+        });
+        if ("done" in claim) {
+          const release = Effect.sync(() => retiring.delete(key)).pipe(
+            Effect.andThen(Deferred.succeed(claim.done, undefined)),
+          );
+          const gone = waited ? pathExists(key).pipe(Effect.map((exists) => !exists)) : null;
+          return yield* (gone === null ? Effect.succeed(false) : gone).pipe(
+            Effect.flatMap(
+              (removedMeanwhile): Effect.Effect<WorktreeRetireResult, GitCommandError> =>
+                removedMeanwhile
+                  ? Effect.succeed({ outcome: "removed", hookWarning: null })
+                  : retireOnce(input),
+            ),
+            Effect.ensuring(release),
+          );
+        }
+        if (input.kind === "reclaim" || input.skipIfBusy === true) {
+          yield* Effect.logInfo("worktree retire: already being retired; skipped", {
             worktreePath: input.worktreePath,
           });
-          yield* Deferred.await(claim.busy);
-          waited = true;
+          return null;
         }
-      });
+        yield* Effect.logInfo("worktree retire: already being retired; waiting", {
+          worktreePath: input.worktreePath,
+        });
+        yield* Deferred.await(claim.busy);
+        waited = true;
+      }
+    },
+  );
 
-    return WorktreeRetirer.of({ retire });
-  });
+  return WorktreeRetirer.of({ retire });
+});
 
 /**
  * The stock thread-delete removal (`vcsRemoveWorktree`), retired first. The
@@ -594,13 +594,13 @@ export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
  * only the server log: the client already has its success, and the refreshed
  * status is what shows the worktree still there.
  */
-export const retireRemovedThreadWorktree = (
-  retirer: WorktreeRetirer["Service"],
-  input: { readonly cwd: string; readonly path: string; readonly force?: boolean | undefined },
-  remove: Effect.Effect<void, GitCommandError>,
-  afterRemoval: Effect.Effect<void>,
-) =>
-  Effect.gen(function* () {
+export const retireRemovedThreadWorktree = Effect.fn("worktreeRetire.retireRemovedThreadWorktree")(
+  function* (
+    retirer: WorktreeRetirer["Service"],
+    input: { readonly cwd: string; readonly path: string; readonly force?: boolean | undefined },
+    remove: Effect.Effect<void, GitCommandError>,
+    afterRemoval: Effect.Effect<void>,
+  ) {
     const scriptsStarted = yield* Deferred.make<void>();
     const retirement = yield* retirer
       .retire({
@@ -642,6 +642,7 @@ export const retireRemovedThreadWorktree = (
         Effect.forkDetach,
       );
     yield* Effect.raceFirst(Fiber.join(retirement), Deferred.await(scriptsStarted));
-  });
+  },
+);
 
 export const WorktreeRetirerLive = Layer.effect(WorktreeRetirer, makeWorktreeRetirer());

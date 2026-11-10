@@ -928,13 +928,14 @@ const make = Effect.gen(function* () {
   const answeredReviewQuestion = (state: BoardCardStepState) =>
     answeredReviewQuestions.get(state.cardId) === `${state.stepId} ${state.attempt}`;
   /** The live thread is still running the run auto-plan interrupted. */
-  const stillOnSteeredRun = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const runId = steeredThreads.get(String(threadId));
-      if (runId === undefined) return false;
-      const shell = yield* liveThread(threadId).pipe(Effect.orElseSucceed(() => undefined));
-      return shell?.activeTurnRef === runId;
-    });
+  const stillOnSteeredRun = Effect.fn("board-supervisor-stillOnSteeredRun")(function* (
+    threadId: ThreadId,
+  ) {
+    const runId = steeredThreads.get(String(threadId));
+    if (runId === undefined) return false;
+    const shell = yield* liveThread(threadId).pipe(Effect.orElseSucceed(() => undefined));
+    return shell?.activeTurnRef === runId;
+  });
 
   /**
    * Settle every thread the board is finished with (t3o-13).
@@ -1845,7 +1846,7 @@ const make = Effect.gen(function* () {
     if (input.branch !== null) {
       yield* workspaceFor(card).pipe(
         Effect.flatMap((workspace) => workspace.pinGhDefault({ worktreePath: input.worktreePath })),
-        Effect.catchCause(() => Effect.void),
+        Effect.ignoreCause,
       );
     }
     // A spawn whose create or first turn is refused leaves no thread behind
@@ -4265,11 +4266,8 @@ const make = Effect.gen(function* () {
       };
       const nowMs = yield* clockNowMs;
       const elapsedMs = nowMs - entry.startedMs;
-      const settle = (
-        status: "passed" | "failed" | "timed-out",
-        note: string,
-      ): Effect.Effect<void> =>
-        Effect.gen(function* () {
+      const settle = Effect.fn("board-supervisor-settleForgeStep")(
+        function* (status: "passed" | "failed" | "timed-out", note: string) {
           forgeSteps.delete(String(cardId));
           const recorded = yield* recordCiStep(card.id, entry.runId, entry.index, {
             ...row,
@@ -4292,13 +4290,13 @@ const make = Effect.gen(function* () {
             tail: note,
             logPath: null,
           });
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("board supervisor: forge step settle failed", {
-              cause: Cause.pretty(cause),
-            }),
-          ),
-        );
+        },
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: forge step settle failed", {
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
       if (checks.failed > 0) {
         yield* settle(
           "failed",
@@ -6736,8 +6734,8 @@ const make = Effect.gen(function* () {
    * answers no — keeping a worktree is always the safe side, and the next
    * sweep asks again.
    */
-  const cardStillFinished = (card: BoardCard, path: string) =>
-    Effect.gen(function* () {
+  const cardStillFinished = Effect.fn("board-supervisor-cardStillFinished")(
+    function* (card: BoardCard, path: string) {
       const board = yield* readBoard;
       const current = board.cards.find((candidate) => candidate.id === card.id);
       if (current === undefined || current.worktree?.status !== "ready") return false;
@@ -6746,7 +6744,9 @@ const make = Effect.gen(function* () {
       if (boardCardRound(current) !== boardCardRound(card)) return false;
       const state = boardCardStepState(board, current.id);
       return state === null || isBoardTerminalStepStatus(state.status);
-    }).pipe(Effect.orElseSucceed(() => false));
+    },
+    Effect.orElseSucceed(() => false),
+  );
 
   /**
    * Remove a card's worktree when its work is durable, reporting the outcome
@@ -7277,12 +7277,12 @@ const make = Effect.gen(function* () {
         if (card !== null) yield* reclaimCardWorktree(card);
         if (card !== null) yield* reclaimArchivedIntegrationBranch(card);
       }).pipe(
-        Effect.catchCause((cause) =>
-          Cause.hasInterruptsOnly(cause)
-            ? Effect.failCause(cause)
-            : Effect.logWarning("board supervisor: card worktree cleanup failed", {
-                cause: Cause.pretty(cause),
-              }),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("board supervisor: card worktree cleanup failed", {
+              cause: Cause.pretty(cause),
+            }),
         ),
       ),
   );
@@ -7295,12 +7295,12 @@ const make = Effect.gen(function* () {
   const cardRetireWorker = yield* makeDrainableWorker(
     (request: Parameters<typeof retireDeletedCardWorktree>[0]) =>
       retireDeletedCardWorktree(request).pipe(
-        Effect.catchCause((cause) =>
-          Cause.hasInterruptsOnly(cause)
-            ? Effect.failCause(cause)
-            : Effect.logWarning("board supervisor: card worktree cleanup failed", {
-                cause: Cause.pretty(cause),
-              }),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("board supervisor: card worktree cleanup failed", {
+              cause: Cause.pretty(cause),
+            }),
         ),
       ),
   );
@@ -7319,12 +7319,12 @@ const make = Effect.gen(function* () {
       sweepRefreshQueued = false;
       return sweepWorktrees({ refreshOpenPullRequests });
     }).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("board supervisor: worktree sweep failed", {
-              cause: Cause.pretty(cause),
-            }),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.logWarning("board supervisor: worktree sweep failed", {
+            cause: Cause.pretty(cause),
+          }),
       ),
     ),
   );
@@ -11759,21 +11759,21 @@ const make = Effect.gen(function* () {
    * reconcile scoped to it acts first. A removed worker's signals are dropped —
    * its steps were stalled, and nothing it says changes that.
    */
-  const gateThreadSignal = (signal: ThreadSignal) =>
-    Effect.gen(function* () {
-      if (Option.isNone(placement)) return yield* processThreadSignal(signal);
-      const board = yield* readBoard;
-      if ((board.workers ?? []).length === 0) return yield* processThreadSignal(signal);
-      const workerId = threadWorkerId(board, signal.threadId);
-      if (workerId === null || workerId === BOARD_LOCAL_WORKER_ID || workerReconciled(workerId)) {
-        return yield* processThreadSignal(signal);
-      }
-      if (!(board.workers ?? []).some((worker) => worker.id === workerId)) return;
-      const held = heldSignals.get(workerId) ?? [];
-      held.push(signal);
-      if (held.length > HELD_SIGNALS_MAX) held.shift();
-      heldSignals.set(workerId, held);
-    });
+  // Untraced: runs once per thread signal, a per-event hot path.
+  const gateThreadSignal = Effect.fnUntraced(function* (signal: ThreadSignal) {
+    if (Option.isNone(placement)) return yield* processThreadSignal(signal);
+    const board = yield* readBoard;
+    if ((board.workers ?? []).length === 0) return yield* processThreadSignal(signal);
+    const workerId = threadWorkerId(board, signal.threadId);
+    if (workerId === null || workerId === BOARD_LOCAL_WORKER_ID || workerReconciled(workerId)) {
+      return yield* processThreadSignal(signal);
+    }
+    if (!(board.workers ?? []).some((worker) => worker.id === workerId)) return;
+    const held = heldSignals.get(workerId) ?? [];
+    held.push(signal);
+    if (held.length > HELD_SIGNALS_MAX) held.shift();
+    heldSignals.set(workerId, held);
+  });
 
   const processThreadSignal = (signal: ThreadSignal) => {
     switch (signal.type) {
@@ -12054,19 +12054,19 @@ const make = Effect.gen(function* () {
 
   const processInputSafely = (input: SupervisorInput) =>
     processInput(input).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("board supervisor failed to process input", {
-              source: input.source,
-              eventType:
-                input.source === "domain"
-                  ? input.event.type
-                  : input.source === "thread"
-                    ? input.signal.type
-                    : input.source,
-              cause: Cause.pretty(cause),
-            }),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.logWarning("board supervisor failed to process input", {
+            source: input.source,
+            eventType:
+              input.source === "domain"
+                ? input.event.type
+                : input.source === "thread"
+                  ? input.signal.type
+                  : input.source,
+            cause: Cause.pretty(cause),
+          }),
       ),
     );
 
@@ -12272,22 +12272,20 @@ const make = Effect.gen(function* () {
     // A card being created has no placement yet, so its project's own
     // checkout on this server answers.
     resolvePullRequestLink: (projectId, target) =>
-      workspaces
-        .localProject(projectId)
-        .pipe(Effect.flatMap((workspace) => resolvePullRequestLink(workspace, target)))
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("board supervisor: pull request link lookup failed", {
-              projectId,
-              cause: Cause.pretty(cause),
-            }).pipe(
-              Effect.as({
-                outcome: "refused",
-                detail: "The pull request could not be looked up. See the server log for details.",
-              } as const),
-            ),
+      workspaces.localProject(projectId).pipe(
+        Effect.flatMap((workspace) => resolvePullRequestLink(workspace, target)),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: pull request link lookup failed", {
+            projectId,
+            cause: Cause.pretty(cause),
+          }).pipe(
+            Effect.as({
+              outcome: "refused",
+              detail: "The pull request could not be looked up. See the server log for details.",
+            } as const),
           ),
         ),
+      ),
     linkPullRequest: (cardId, target, options) =>
       linkPullRequest(cardId, target, options).pipe(
         Effect.catchCause((cause) =>

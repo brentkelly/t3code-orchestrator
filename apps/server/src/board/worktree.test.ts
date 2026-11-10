@@ -15,6 +15,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
+import * as Predicate from "effect/Predicate";
 import type * as Scope from "effect/Scope";
 
 import { GitCommandError } from "@t3tools/contracts";
@@ -740,9 +741,7 @@ const reclaimCard = (
     mergedPullRequestNumbers: extra.mergedPullRequestNumbers ?? [],
   }).pipe(
     // Only a `stillWanted` that answers no abandons a reclaim, and none is passed.
-    Effect.flatMap((result) =>
-      result === null ? Effect.die("reclaim abandoned") : Effect.succeed(result),
-    ),
+    Effect.filterOrElse(Predicate.isNotNull, () => Effect.die("reclaim abandoned")),
   );
 
 const worktreeExists = (path: string) =>

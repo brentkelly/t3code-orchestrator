@@ -126,52 +126,53 @@ export const boardClientOrigin = (
   return origin.surface === undefined && origin.appVersion === undefined ? undefined : origin;
 };
 
-export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
-  Effect.gen(function* () {
-    const boardEngine = yield* BoardEngine;
-    const boardQueries = yield* BoardQueries;
-    // Built once per connection, so the actor-name caches live as long as it does.
-    const workspaces = yield* BoardWorkspaces;
-    const threads = yield* ThreadGateway;
-    const stampActor = boardActorStamp({ threads, boardQueries, workspaces });
-    const projectActorName = boardProjectActorName({ threads, workspaces });
-    // The subscription's services, provided here so the handler's stream needs
-    // only the RPC scope.
-    const subscriptionContext = yield* Effect.context<
-      BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
-    >();
-    const workerConnections = yield* Effect.serviceOption(WorkerConnections);
-    return {
-      ...makeBoardRpcHandlers(deps, {
-        ciLogWorker: (workerId) =>
-          Option.isNone(workerConnections)
-            ? Effect.succeed(null)
-            : workerConnections.value.get(workerId).pipe(
-                Effect.map((rpc) => rpc.gateway.readCiLog),
-                Effect.catch(() => Effect.succeed(null)),
-              ),
-        boardEngine,
-        boardQueries,
-        stampActor,
-        projectActorName,
-        projectConfig: yield* makeBoardProjectConfigService,
-        mover: yield* BoardCardMover,
-        subscriptionContext,
-        // Optional so board-only harnesses need no source control stack; ws.ts always has one.
-        projectTokenStatus: boardProjectTokenStatus(
-          threads,
-          Option.getOrElse(yield* Effect.serviceOption(SourceControlDrivers), () => []),
-        ),
-      }),
-      // T3O-62: worker management, and the worker side's handshake.
-      ...(yield* boardWorkerRpcHandlers(deps.currentSession)),
-      // T3O-63: the worker side's thread gateway, MCP relay and staging.
-      ...workerGatewayRpcHandlers(deps.currentSession),
-      // T3O-64: the named git and forge operations, for a central server
-      // whose cards run here.
-      ...boardWorkerGitCallRpcHandlers(deps.currentSession, workspaces),
-    };
-  });
+export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
+  deps: BoardRpcHandlerDeps,
+) {
+  const boardEngine = yield* BoardEngine;
+  const boardQueries = yield* BoardQueries;
+  // Built once per connection, so the actor-name caches live as long as it does.
+  const workspaces = yield* BoardWorkspaces;
+  const threads = yield* ThreadGateway;
+  const stampActor = boardActorStamp({ threads, boardQueries, workspaces });
+  const projectActorName = boardProjectActorName({ threads, workspaces });
+  // The subscription's services, provided here so the handler's stream needs
+  // only the RPC scope.
+  const subscriptionContext = yield* Effect.context<
+    BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
+  >();
+  const workerConnections = yield* Effect.serviceOption(WorkerConnections);
+  return {
+    ...makeBoardRpcHandlers(deps, {
+      ciLogWorker: (workerId) =>
+        Option.isNone(workerConnections)
+          ? Effect.succeed(null)
+          : workerConnections.value.get(workerId).pipe(
+              Effect.map((rpc) => rpc.gateway.readCiLog),
+              Effect.orElseSucceed(() => null),
+            ),
+      boardEngine,
+      boardQueries,
+      stampActor,
+      projectActorName,
+      projectConfig: yield* makeBoardProjectConfigService,
+      mover: yield* BoardCardMover,
+      subscriptionContext,
+      // Optional so board-only harnesses need no source control stack; ws.ts always has one.
+      projectTokenStatus: boardProjectTokenStatus(
+        threads,
+        Option.getOrElse(yield* Effect.serviceOption(SourceControlDrivers), () => []),
+      ),
+    }),
+    // T3O-62: worker management, and the worker side's handshake.
+    ...(yield* boardWorkerRpcHandlers(deps.currentSession)),
+    // T3O-63: the worker side's thread gateway, MCP relay and staging.
+    ...workerGatewayRpcHandlers(deps.currentSession),
+    // T3O-64: the named git and forge operations, for a central server
+    // whose cards run here.
+    ...boardWorkerGitCallRpcHandlers(deps.currentSession, workspaces),
+  };
+});
 
 function makeBoardRpcHandlers(
   deps: BoardRpcHandlerDeps,
@@ -767,7 +768,7 @@ export function boardActorStamp(deps: {
       // This row keeps the old project's identity — the human acted there — and
       // the next command on the card resolves against the new one.
       if (command.type === "board.card.set-project") projectByCard.delete(String(cardId));
-    }).pipe(Effect.catchCause(() => Effect.void));
+    }).pipe(Effect.ignoreCause);
 }
 
 /**

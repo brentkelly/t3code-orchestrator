@@ -1088,22 +1088,21 @@ export function withGovernor(
         Ref.update(pullRequestLookups, (lookups) => [
           ...lookups,
           { forced: request.force === true },
-        ])
-          .pipe(Effect.andThen(input.onPullRequestLookup ?? Effect.void))
-          .pipe(
-            Effect.andThen(() => {
-              const configured = input.pullRequestOf?.() ?? input.pullRequest;
-              if (configured !== undefined && configured !== null && "failWith" in configured) {
-                return Effect.fail(
-                  new BoardPullRequestGatewayError({
-                    operation: "find",
-                    detail: configured.failWith,
-                  }),
-                );
-              }
-              return Effect.succeed(configured ?? null);
-            }),
-          ),
+        ]).pipe(
+          Effect.andThen(input.onPullRequestLookup ?? Effect.void),
+          Effect.andThen(() => {
+            const configured = input.pullRequestOf?.() ?? input.pullRequest;
+            if (configured !== undefined && configured !== null && "failWith" in configured) {
+              return Effect.fail(
+                new BoardPullRequestGatewayError({
+                  operation: "find",
+                  detail: configured.failWith,
+                }),
+              );
+            }
+            return Effect.succeed(configured ?? null);
+          }),
+        ),
       get: (request) =>
         Ref.update(pullRequestGets, (gets) => [
           ...gets,

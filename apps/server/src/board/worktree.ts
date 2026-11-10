@@ -461,7 +461,7 @@ export const probeBoardWorktreeDurability = Effect.fn("probeBoardWorktreeDurabil
         allowNonZeroExit: true,
         timeoutMs: 60_000,
       })
-      .pipe(Effect.catch(() => Effect.succeed(null)));
+      .pipe(Effect.orElseSucceed(() => null));
   const ok = (result: { readonly exitCode: number } | null) =>
     result !== null && result.exitCode === 0;
 
@@ -488,7 +488,7 @@ export const probeBoardWorktreeDurability = Effect.fn("probeBoardWorktreeDurabil
 
   const remote = yield* git
     .resolvePrimaryRemoteName(input.projectCwd)
-    .pipe(Effect.catch(() => Effect.succeed(null)));
+    .pipe(Effect.orElseSucceed(() => null));
 
   if (remote !== null) {
     // (1) The remote base branch: merged without a PR, fast-forwarded, or no
@@ -591,7 +591,7 @@ export const goneBoardWorktreePath = Effect.fn("goneBoardWorktreePath")(function
       args: ["worktree", "list", "--porcelain"],
       allowNonZeroExit: true,
     })
-    .pipe(Effect.catch(() => Effect.succeed(null)));
+    .pipe(Effect.orElseSucceed(() => null));
   // git always lists the main checkout, so an empty list is no answer at all.
   const registered =
     listed === null || listed.exitCode !== 0 ? [] : parseRegisteredWorktrees(listed.stdout);
@@ -606,7 +606,7 @@ export const goneBoardWorktreePath = Effect.fn("goneBoardWorktreePath")(function
   if (prunableOnBranch !== undefined) return prunableOnBranch.path;
   const onDisk = yield* fileSystem
     .exists(input.worktreePath)
-    .pipe(Effect.catch(() => Effect.succeed(true)));
+    .pipe(Effect.orElseSucceed(() => true));
   return onDisk ? null : input.worktreePath;
 });
 
