@@ -1273,11 +1273,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         (SELECT COUNT(*) FROM board_card_attachments
           WHERE board_card_attachments.card_id = board_cards.card_id)
           AS "attachmentCount",
-        -- Unlike the two indicators above this is a plain column read, not a
-        -- correlated subquery, so the archive list carries it for free — and
-        -- an archived card's PR is exactly what you look for when working out
-        -- what happened to abandoned work. Same retired-round fallback as the
-        -- live query, and for the same reason.
+        -- A plain column read, so the archive list carries it for free. Same
+        -- retired-round fallback as the live query.
         COALESCE(
           json_extract(pull_request, '$.number'),
           json_extract(pull_request_history, '$[#-1].number')

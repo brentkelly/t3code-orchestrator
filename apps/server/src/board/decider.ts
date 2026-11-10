@@ -1194,7 +1194,7 @@ function requireBoardProject(input: {
   const project = projects.find((candidate) => candidate.id === input.projectId);
   if (project !== undefined) return Effect.succeed(project);
   const live = projects.filter((candidate) => !candidate.deleted);
-  const shown = live.slice(0, 10).map((candidate) => `${candidate.id} — ${candidate.title}`);
+  const shown = live.slice(0, 10).map((candidate) => `${candidate.id} (${candidate.title})`);
   const available =
     shown.length === 0
       ? "(none)"
@@ -2046,7 +2046,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         case "built":
           return yield* invariant(
             command,
-            `Card '${card.key}' has already been built — it has a worktree, a pull request, or has reached the build stage — so its project is pinned.`,
+            `Card '${card.key}' has already been built (it has a worktree, a pull request, or has reached the build stage), so its project is pinned.`,
           );
         case undefined:
           break;
@@ -4536,7 +4536,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           command,
           `Card '${card.key}' has ${plans.length} plan${
             plans.length === 1 ? "" : "s"
-          }; a split needs at least two — move the card onward instead.`,
+          }; a split needs at least two. Move the card onward instead.`,
         );
       }
       const buildStage = boardStageWithRole(board, "build");
