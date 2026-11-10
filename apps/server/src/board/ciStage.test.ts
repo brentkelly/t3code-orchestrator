@@ -10,6 +10,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
   BoardStageId,
+  EnvironmentId,
   boardCiFixStepId,
   resolveT3oProjectFile,
   withBoardProjectConfigVersion,
@@ -1065,6 +1066,42 @@ it.effect("Retry CI restarts a pass with nothing behind it before the sweep hold
         const settled = ciRecords(yield* h.decided).flatMap((record) => record.payload.settled);
         assert.isTrue(
           settled.some((entry) => entry.runId === stuck && entry.outcome === "interrupted"),
+        );
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("Retry CI on a stuck pass that can't start holds that pass with the real reason", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([{ result: "failed", failedIndex: 1, exitCode: 3 }]);
+    const subject = card("lost-no-steps", review);
+    const { disk, onDispatch } = failingWrites(lastStepAndFinish);
+    yield* withGovernor({ board: boardWith([subject]), settings, onDispatch }, (h) =>
+      Effect.gen(function* () {
+        disk.full = true;
+        yield* enterCiAndRun(h, subject, 1);
+        disk.full = false;
+        const stuck = (yield* live(h, subject.id)).ci!.runId;
+        yield* Ref.update(h.model, (model) => ({
+          ...model,
+          // The card now sits on a worker this server has no connection to.
+          board: {
+            ...model.board!,
+            cards: model.board!.cards.map((existing) =>
+              existing.id === subject.id
+                ? { ...existing, placedWorkerId: EnvironmentId.make("env-worker-gone") }
+                : existing,
+            ),
+          },
+        }));
+        assert.deepStrictEqual(yield* h.reactor.retryCi(subject.id), { outcome: "retried" });
+        const held = (yield* live(h, subject.id)).ci;
+        assert.strictEqual(held?.runId, stuck);
+        assert.strictEqual(held?.phase, "held");
+        assert.strictEqual(
+          held?.stopReason,
+          "CI can't reach the card's worker. Retry CI, or Skip CI.",
         );
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));

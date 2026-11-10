@@ -3458,10 +3458,16 @@ const make = Effect.gen(function* () {
       yield* leaveCiSwitchedOff(card);
       return;
     }
+    // A Retry or recovery can land here with a live pass: hold that pass with
+    // the real reason, or the sweep later holds it as one that stopped silently.
+    const holdBeforeStart = (held: BoardCard, why: string, action?: string) =>
+      held.ci !== null && isCiPassLive(held, held.ci.runId)
+        ? holdCiPass(held, held.ci.runId, why).pipe(Effect.asVoid)
+        : holdInCi(held, action === undefined ? why : `${why} ${action}`);
     const steps = projectConfig.ci.steps;
     if (steps.length === 0) {
       // T3O-49: emptying the step list doesn't turn CI off; the card waits.
-      yield* holdInCi(card, "This project's CI has no steps. Add one, or skip CI.");
+      yield* holdBeforeStart(card, "This project's CI has no steps.", "Add one, or skip CI.");
       return;
     }
     const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
@@ -3473,12 +3479,16 @@ const make = Effect.gen(function* () {
           ? remoteCiRunner(workerConnections.value, workerId)
           : null;
     if (runner === null) {
-      yield* holdInCi(card, "CI can't reach the card's worker. Restart the stage, or Skip CI.");
+      yield* holdBeforeStart(
+        card,
+        "CI can't reach the card's worker.",
+        "Restart the stage, or Skip CI.",
+      );
       return;
     }
     const worktree = yield* ensureWorktree(card);
     if (worktree.kind !== "ready") {
-      yield* holdInCi(card, "CI is waiting for the card's worktree, which is not ready.");
+      yield* holdBeforeStart(card, "CI is waiting for the card's worktree, which is not ready.");
       return;
     }
     const detail = yield* boardQueries
