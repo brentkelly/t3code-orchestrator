@@ -28,6 +28,7 @@ import {
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
@@ -116,7 +117,7 @@ const orchestrationStack = (prefix: string) =>
     Layer.provideMerge(CommandReceiptStore.layer),
     Layer.provideMerge(layerDatabase),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 /** The whole stack on in-memory SQLite, board included. */

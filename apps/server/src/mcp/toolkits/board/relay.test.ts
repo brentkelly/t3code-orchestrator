@@ -18,9 +18,10 @@ import {
   boardCardStepCompletions,
   type BoardMcpRelayRequest,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -84,7 +85,7 @@ const CODEX = ProviderInstanceId.make("codex");
 const centralBase = Layer.mergeAll(ServerSettings.layerTest(), BoardRelayStoreLive).pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3o-relay-central-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 /** The supervisor is not this suite's subject; the tools here never reach it. */
@@ -113,7 +114,7 @@ const setup = (options: { readonly relay?: boolean } = {}) =>
     yield* waitOnline(env.connections);
     const sql = yield* SqlClient.SqlClient;
     const fileSystem = yield* FileSystem.FileSystem;
-    const crypto = yield* Crypto.Crypto;
+    const digest = yield* Digest.Digest;
     const router = makeThreadGatewayRouter({
       local: central.gateway,
       connections: env.connections,
@@ -126,7 +127,7 @@ const setup = (options: { readonly relay?: boolean } = {}) =>
           local: central.gateway,
           centralEnvironmentId: CENTRAL_ID,
           fileSystem,
-          crypto,
+          digest,
         }),
     });
     const runtime = yield* Layer.build(

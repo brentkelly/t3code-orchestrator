@@ -16,7 +16,9 @@ import {
   type BoardProposedPlanInput,
   type BoardState,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -223,7 +225,7 @@ const ownGroup = makeCard({
   },
 });
 
-it.layer(NodeServices.layer)("split gate (T3O-31)", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("split gate (T3O-31)", (it) => {
   // ── Propose: the Planned flag and the recommendation ────────────────
 
   it.effect("records Needs planning on a split plan and leaves Planned absent", () =>

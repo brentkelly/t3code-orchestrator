@@ -21,12 +21,11 @@ import {
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
 import * as Base64 from "effect/encoding/Base64";
-import * as Hex from "effect/encoding/Hex";
 
 import {
   ThreadCommandFailedError,
@@ -73,15 +72,16 @@ export interface RemoteThreadGatewayDeps {
   readonly local: Pick<LocalThreadGatewayShape, "projects" | "project">;
   readonly centralEnvironmentId: EnvironmentId;
   readonly fileSystem: FileSystem.FileSystem;
-  readonly crypto: Crypto.Crypto;
+  readonly digest: Digest.Digest["Service"];
 }
 
 /** The card's files didn't reach the worker, so its spawn was never sent.
     Kept apart from a `WorkerRpcError` on the spawn call itself, which may
     have left a thread behind (D22). */
-export class CardFilesNotStaged extends Data.TaggedError("CardFilesNotStaged")<{
-  readonly cause: unknown;
-}> {}
+export class CardFilesNotStaged extends Schema.TaggedError<CardFilesNotStaged>()(
+  "CardFilesNotStaged",
+  { cause: Schema.Defect() },
+) {}
 
 const unavailableCommand = (command: string, threadId: ThreadId) => (cause: WorkerUnavailable) =>
   new ThreadCommandFailedError({ command, threadId, detail: cause.message, cause });
@@ -98,7 +98,7 @@ const unavailableRead = (operation: string) => (cause: WorkerUnavailable) =>
 export const stageCardFilesOnWorker = (input: {
   readonly rpc: WorkerRpc;
   readonly fileSystem: FileSystem.FileSystem;
-  readonly crypto: Crypto.Crypto;
+  readonly digest: Digest.Digest["Service"];
   readonly staging: NonNullable<ThreadSpawnInput["stageAttachments"]>;
 }) =>
   Effect.gen(function* () {
@@ -108,9 +108,9 @@ export const stageCardFilesOnWorker = (input: {
         .readFile(file.path)
         .pipe(
           Effect.flatMap((bytes) =>
-            input.crypto
-              .digest("SHA-256", bytes)
-              .pipe(Effect.map((digest) => ({ name: file.name, hash: Hex.encode(digest), bytes }))),
+            input.digest
+              .digestHex(Digest.sha256, bytes)
+              .pipe(Effect.map((hash) => ({ name: file.name, hash, bytes }))),
           ),
         ),
     );
@@ -195,7 +195,7 @@ export const makeRemoteThreadGateway = (
         stageCardFilesOnWorker({
           rpc,
           fileSystem: deps.fileSystem,
-          crypto: deps.crypto,
+          digest: deps.digest,
           staging,
         }),
       ),
@@ -207,7 +207,7 @@ export const makeRemoteThreadGateway = (
             detail: `Couldn't copy the card's files to worker ${workerId}.`,
             // An unreachable worker is still offline; anything else failed
             // before the spawn was sent.
-            cause: cause instanceof WorkerUnavailable ? cause : new CardFilesNotStaged({ cause }),
+            cause: Schema.is(WorkerUnavailable)(cause) ? cause : new CardFilesNotStaged({ cause }),
           }),
       ),
     );

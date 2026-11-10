@@ -27,7 +27,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { boardThreadSessionStatus, boardThreadStateSource } from "@t3tools/shared/boardThreadState";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -542,10 +542,10 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
   const projectRows = yield* ProjectStore.ProjectStoreV2;
   const projectService = yield* ProjectService.ProjectService;
   const eventSink = yield* EventSink.EventSinkV2;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const path = yield* Path.Path;
   const nowMs = Effect.map(DateTime.now, DateTime.toEpochMillis);
-  const freshMessageId = crypto.randomUUIDv4().pipe(
+  const freshMessageId = crypto.uuidV4().pipe(
     Effect.map((uuid) => MessageId.make(`msg-${uuid}`)),
     Effect.orDie,
   );

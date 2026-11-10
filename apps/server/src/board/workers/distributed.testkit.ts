@@ -20,6 +20,7 @@ import {
   type RepositoryIdentity,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -111,7 +112,7 @@ export const makeInProcessWorker = (
       threads.localLayer,
       relayStore.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3o-worker-" }),
-    ).pipe(Layer.provideMerge(NodeServices.layer));
+    ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
     // Built once: each build of the config makes a state directory of its own.
     const workerContext = yield* Layer.build(workerServices);
     const relayHost = yield* makeMcpRelayHost(options.relayTimeout).pipe(

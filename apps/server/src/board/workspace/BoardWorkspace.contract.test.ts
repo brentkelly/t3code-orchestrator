@@ -14,6 +14,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it as vitest } from "@effect/vitest";
 import {
@@ -49,12 +50,12 @@ const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
 });
 const GitLayer = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfigLayer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const TestLayer = worktreeRetirerTestLayer().pipe(
   Layer.provideMerge(GitLayer),
   Layer.provideMerge(ServerConfigLayer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const projectId = ProjectId.make("project-repo");

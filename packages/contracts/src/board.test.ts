@@ -205,7 +205,7 @@ const fullyPopulatedShell = {
   issuesRejected: 90,
   issuesOpen: 12,
   issuesDisputed: 34,
-} satisfies typeof BoardCardShell.Type;
+} satisfies BoardCardShell;
 
 const typicalCard = (index: number): BoardCard => ({
   id: BoardCardId.make(`card-${String(index).padStart(4, "0")}-4e5f-6789-abcd-ef0123456789`),

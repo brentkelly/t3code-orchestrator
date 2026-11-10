@@ -8,6 +8,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProjectId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -44,7 +45,7 @@ const layerFor = (root: string) =>
     ),
     Layer.provideMerge(GitVcsDriver.layer),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3o-project-file-" })),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 it.live("reads the default branch's file, not the checkout's feature branch", () => {

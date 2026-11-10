@@ -17,7 +17,9 @@ import {
   type BoardEvent,
   isLiveBoardCardThreadLink,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
@@ -95,7 +97,7 @@ const completePlanning = (h: Harness, threadId: ThreadId, sequence: number) =>
         createdAt: NOW,
       },
       readModel: yield* Ref.get(h.model),
-    }).pipe(Effect.provide(NodeServices.layer), Effect.orDie);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.orDie);
     for (const planned of boardDecidedEvents(decided)) {
       const event = { ...planned, sequence } as BoardEvent;
       const next = yield* projectBoardEvent(yield* Ref.get(h.model), event).pipe(Effect.orDie);

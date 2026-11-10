@@ -14,9 +14,10 @@ import {
   ThreadId,
   type BoardWorkerId,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -24,7 +25,6 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import * as Hex from "effect/encoding/Hex";
 import * as Base64 from "effect/encoding/Base64";
 
 import * as ServerConfig from "../../config.ts";
@@ -57,7 +57,7 @@ const OTHER_PROJECT_ID = ProjectId.make("project-2");
 /** A real board database, for the feed's cursor and the todo cache. */
 const centralDatabase = SqlitePersistence.layerMemory.pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3o-central-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const spawnInput = (
@@ -110,7 +110,7 @@ const setup = (links: ReadonlyMap<string, BoardWorkerId> = new Map()) =>
       Effect.provide(Layer.succeed(WorkerConnections, env.connections)),
     );
     const fileSystem = yield* FileSystem.FileSystem;
-    const crypto = yield* Crypto.Crypto;
+    const digest = yield* Digest.Digest;
     const router = makeThreadGatewayRouter({
       local: central.gateway,
       connections: env.connections,
@@ -131,7 +131,7 @@ const setup = (links: ReadonlyMap<string, BoardWorkerId> = new Map()) =>
           local: central.gateway,
           centralEnvironmentId: CENTRAL_ID,
           fileSystem,
-          crypto,
+          digest,
         }),
     });
     return { ...env, central, feed, router };
@@ -358,9 +358,9 @@ describe("the remote thread gateway", () => {
         const { host, workerStateDir } = yield* setup();
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const digest = yield* Digest.Digest;
         const hash = (text: string) =>
-          crypto.digest("SHA-256", new TextEncoder().encode(text)).pipe(Effect.map(Hex.encode));
+          digest.digestHex(Digest.sha256, new TextEncoder().encode(text));
         const file = (name: string, text: string, withContent: boolean) =>
           hash(text).pipe(
             Effect.map((sha256) => ({

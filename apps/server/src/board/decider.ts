@@ -139,7 +139,7 @@ import {
   type BoardCardWorkerMove,
   type BoardWorkerId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import type * as PlatformError from "effect/PlatformError";
 
@@ -517,8 +517,8 @@ const makeBoardEventBase = Effect.fn("makeBoardEventBase")(function* (input: {
   readonly occurredAt: string;
   readonly commandId: BoardCommand["commandId"];
 }) {
-  const crypto = yield* Crypto.Crypto;
-  const eventId = yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const eventId = yield* crypto.uuidV4();
   return {
     eventId: EventId.make(eventId),
     aggregateKind: "card" as const,
@@ -549,7 +549,11 @@ const boardDependentBlockedEvents = Effect.fn("boardDependentBlockedEvents")(fun
   readonly board: BoardState;
   readonly command: BoardCardCommand;
   readonly changed: BoardCard;
-}): Effect.fn.Return<ReadonlyArray<PlannedBoardEvent>, PlatformError.PlatformError, Crypto.Crypto> {
+}): Effect.fn.Return<
+  ReadonlyArray<PlannedBoardEvent>,
+  PlatformError.PlatformError,
+  SecureRandom.SecureRandom
+> {
   const cards = input.board.cards.map((card) =>
     card.id === input.changed.id ? input.changed : card,
   );
@@ -574,7 +578,11 @@ const boardReflagBlockedEvents = Effect.fn("boardReflagBlockedEvents")(function*
   readonly command: BoardCardCommand;
   readonly cards: ReadonlyArray<BoardCard>;
   readonly includes: (card: BoardCard) => boolean;
-}): Effect.fn.Return<ReadonlyArray<PlannedBoardEvent>, PlatformError.PlatformError, Crypto.Crypto> {
+}): Effect.fn.Return<
+  ReadonlyArray<PlannedBoardEvent>,
+  PlatformError.PlatformError,
+  SecureRandom.SecureRandom
+> {
   const events: PlannedBoardEvent[] = [];
   for (const dependent of input.cards) {
     if (dependent.archivedAt !== null) continue;
@@ -870,8 +878,8 @@ const makeBoardLabelEventBase = Effect.fn("makeBoardLabelEventBase")(function* (
   readonly occurredAt: string;
   readonly commandId: BoardCommand["commandId"];
 }) {
-  const crypto = yield* Crypto.Crypto;
-  const eventId = yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const eventId = yield* crypto.uuidV4();
   return {
     eventId: EventId.make(eventId),
     aggregateKind: "label" as const,
@@ -908,8 +916,8 @@ const makeBoardWorkerEventBase = Effect.fn("makeBoardWorkerEventBase")(function*
   readonly occurredAt: string;
   readonly commandId: BoardCommand["commandId"];
 }) {
-  const crypto = yield* Crypto.Crypto;
-  const eventId = yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const eventId = yield* crypto.uuidV4();
   return {
     eventId: EventId.make(eventId),
     aggregateKind: "worker" as const,
@@ -928,8 +936,8 @@ const makeBoardStageEventBase = Effect.fn("makeBoardStageEventBase")(function* (
   readonly occurredAt: string;
   readonly commandId: BoardCommand["commandId"];
 }) {
-  const crypto = yield* Crypto.Crypto;
-  const eventId = yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const eventId = yield* crypto.uuidV4();
   return {
     eventId: EventId.make(eventId),
     aggregateKind: "stage" as const,
@@ -1517,7 +1525,11 @@ const groupConversionEvents = Effect.fn("groupConversionEvents")(function* (inpu
   readonly board: BoardState;
   readonly command: BoardCardCommand;
   readonly card: BoardCard;
-}): Effect.fn.Return<ReadonlyArray<PlannedBoardEvent>, PlatformError.PlatformError, Crypto.Crypto> {
+}): Effect.fn.Return<
+  ReadonlyArray<PlannedBoardEvent>,
+  PlatformError.PlatformError,
+  SecureRandom.SecureRandom
+> {
   const { board, command, card } = input;
   // The leaf's resolved Auto-plan / Auto-build seed the group its children
   // inherit, and leave the card; its own Auto-merge stays, as the group's own
@@ -1631,7 +1643,7 @@ const deriveGroupEvents = Effect.fn("deriveGroupEvents")(function* (input: {
 }): Effect.fn.Return<
   ReadonlyArray<PlannedBoardEvent>,
   BoardCommandInvariantError | PlatformError.PlatformError,
-  Crypto.Crypto
+  SecureRandom.SecureRandom
 > {
   const { before, command, planned } = input;
   const derivedFrom = yield* projectPlannedBoardEvents(before, command, planned);
@@ -1772,7 +1784,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
   // its own `aggregateId`, so a command may touch more than one card.
   BoardDecision,
   BoardCommandInvariantError | PlatformError.PlatformError,
-  Crypto.Crypto
+  SecureRandom.SecureRandom
 > {
   const board = readModel.board ?? EMPTY_BOARD_STATE;
 
@@ -4581,7 +4593,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         );
       }
 
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       // Children share the parent's key sequence — its prefix, the project's
       // next numbers — exactly as if each had been created by hand.
       const lastDash = card.key.lastIndexOf("-");
@@ -4607,7 +4619,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const inheritedPin = inheritedBoardWorkerPin(board, boardCardBoundWorkerId(card));
       const childIdByPlan = new Map<BoardPlanId, BoardCardId>();
       for (const plan of plans) {
-        childIdByPlan.set(plan.planId, BoardCardId.make(yield* crypto.randomUUIDv4()));
+        childIdByPlan.set(plan.planId, BoardCardId.make(yield* crypto.uuidV4()));
       }
       const events: Array<PlannedBoardEvent> = [];
       const childCardIds: Array<BoardCardId> = [];
@@ -6645,7 +6657,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* (inp
 }): Effect.fn.Return<
   BoardDecision,
   BoardCommandInvariantError | PlatformError.PlatformError,
-  Crypto.Crypto
+  SecureRandom.SecureRandom
 > {
   const { command } = input;
   const followUps = boardAdoptionCommands(command);
@@ -6679,7 +6691,7 @@ const decideOneBoardCommand = Effect.fn("decideOneBoardCommand")(function* (inpu
 }): Effect.fn.Return<
   BoardDecision,
   BoardCommandInvariantError | PlatformError.PlatformError,
-  Crypto.Crypto
+  SecureRandom.SecureRandom
 > {
   const decided = yield* decideBoardCommandCore(input);
   const command = input.command;

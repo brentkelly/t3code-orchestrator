@@ -24,7 +24,7 @@ import {
   type BoardSettingsClientCommand,
   type ProjectId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
@@ -100,15 +100,15 @@ type DispatchTag = typeof BOARD_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
   EnvironmentRpcSuccess<DispatchTag>,
   EnvironmentRpcFailure<DispatchTag> | EnvironmentRpcUnavailableError,
-  Crypto.Crypto | EnvironmentSupervisor
+  SecureRandom.SecureRandom | EnvironmentSupervisor
 >;
 
 const commandMetadata = (input: { readonly commandId?: CommandId; readonly createdAt?: string }) =>
   Effect.all({
     commandId:
       input.commandId === undefined
-        ? Effect.flatMap(Crypto.Crypto, (crypto) =>
-            crypto.randomUUIDv4().pipe(Effect.orDie, Effect.map(CommandId.make)),
+        ? Effect.flatMap(SecureRandom.SecureRandom, (crypto) =>
+            crypto.uuidV4().pipe(Effect.orDie, Effect.map(CommandId.make)),
           )
         : Effect.succeed(input.commandId),
     createdAt:

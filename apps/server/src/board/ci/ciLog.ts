@@ -70,7 +70,10 @@ const missing = (reason: string): BoardCiLogItem => ({ _tag: "missing", reason }
 
 /** The file's size, or null when it doesn't exist. */
 const statSize = (path: string) =>
-  Effect.tryPromise(() => NodeFS.promises.stat(path)).pipe(
+  Effect.tryPromise({
+    try: () => NodeFS.promises.stat(path),
+    catch: (error) => (error instanceof Error ? error.message : String(error)),
+  }).pipe(
     Effect.map((stats) => stats.size),
     Effect.catch(() => Effect.succeed(null)),
   );

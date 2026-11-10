@@ -50,7 +50,7 @@ import {
   type ProjectCloneSnapshot,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
@@ -143,7 +143,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
   const projects = yield* ProjectService;
   const git = yield* GitVcsDriver;
   const http = yield* HttpClient.HttpClient;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const relayStore = yield* BoardRelayStore;
 
   const setups = yield* SubscriptionRef.make(new Map<string, BoardWorkerSetup>());
@@ -151,7 +151,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   // A failing random source is a broken host, not something a caller handles.
-  const newUuid = crypto.randomUUIDv4().pipe(Effect.orDie);
+  const newUuid = crypto.uuidV4().pipe(Effect.orDie);
   const newCommandId = newUuid.pipe(Effect.map(CommandId.make));
   const registry = engine.getReadModel.pipe(
     Effect.map((model) => model.board?.workers ?? ([] as ReadonlyArray<BoardWorker>)),

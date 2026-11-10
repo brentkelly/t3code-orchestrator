@@ -36,7 +36,6 @@ import {
 } from "@t3tools/contracts";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -55,18 +54,18 @@ import { decodeGatewayCallResult, type WorkerGatewayRpc } from "./gatewayWire.ts
 /** A worker RPC failed: refused, or the connection went. `unsupported` is a
     worker that does not have the call at all — an upstream server, or a T3o
     too old for it — rather than one that failed to answer. */
-export class WorkerRpcError extends Data.TaggedError("WorkerRpcError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-  readonly unsupported?: boolean;
-}> {}
+export class WorkerRpcError extends Schema.TaggedError<WorkerRpcError>()("WorkerRpcError", {
+  message: Schema.String,
+  cause: Schema.optionalKey(Schema.Defect()),
+  unsupported: Schema.optionalKey(Schema.Boolean),
+}) {}
 
 /** Why a dial failed. `unauthorized` is the worker refusing the board's
     session — revoked on its side, or the worker was reset. */
-export class WorkerConnectError extends Data.TaggedError("WorkerConnectError")<{
-  readonly reason: "unreachable" | "unauthorized";
-  readonly message: string;
-}> {}
+export class WorkerConnectError extends Schema.TaggedError<WorkerConnectError>()(
+  "WorkerConnectError",
+  { reason: Schema.Literals(["unreachable", "unauthorized"]), message: Schema.String },
+) {}
 
 /** The slice of a worker's RPC the board uses. */
 export interface WorkerRpc {

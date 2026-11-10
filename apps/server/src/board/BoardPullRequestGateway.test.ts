@@ -179,7 +179,9 @@ function makeGateway(
               if (options.runActionError !== undefined) {
                 return Effect.fail(options.runActionError as PullRequestOperationError);
               }
-              return options.runActionFails === true ? Effect.fail(hostRefusal()) : Effect.void;
+              return options.runActionFails === true
+                ? Effect.fail(hostRefusal())
+                : Effect.undefined;
             }),
           invalidate: (input: PullRequestInvalidateInput) =>
             Effect.sync(() => {

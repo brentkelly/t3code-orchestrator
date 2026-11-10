@@ -74,7 +74,7 @@ import {
   type BoardCommand,
   type ProjectId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -305,16 +305,18 @@ const planReviewStartedBy = (
 
 /** Mint a command id (server-dispatched board command, like ws.ts). Yields
     Crypto from context, so callers need only list it as a tool dependency. */
-const mintCommandId: Effect.Effect<CommandId, never, Crypto.Crypto> = Crypto.Crypto.pipe(
-  Effect.flatMap((crypto) => crypto.randomUUIDv4()),
-  Effect.map((uuid) => CommandId.make(`mcp:board:${uuid}`)),
-  Effect.orDie,
-);
+const mintCommandId: Effect.Effect<CommandId, never, SecureRandom.SecureRandom> =
+  SecureRandom.SecureRandom.pipe(
+    Effect.flatMap((crypto) => crypto.uuidV4()),
+    Effect.map((uuid) => CommandId.make(`mcp:board:${uuid}`)),
+    Effect.orDie,
+  );
 
-const mintUuid: Effect.Effect<string, never, Crypto.Crypto> = Crypto.Crypto.pipe(
-  Effect.flatMap((crypto) => crypto.randomUUIDv4()),
-  Effect.orDie,
-);
+const mintUuid: Effect.Effect<string, never, SecureRandom.SecureRandom> =
+  SecureRandom.SecureRandom.pipe(
+    Effect.flatMap((crypto) => crypto.uuidV4()),
+    Effect.orDie,
+  );
 
 /** Check a pull request can be linked to a card in `projectId` (T3O-18) —
     on the project's repository and known to the forge — or reject the call
@@ -1168,7 +1170,7 @@ export const boardHandlers = {
       // comes off first and storage stays canonical.
       const structured =
         input.payload === undefined ? undefined : unwrapStringifiedBoardStepPayload(input.payload);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      // @effect-diagnostics-next-line globalJsonInEffect:off
       const payload = structured === undefined ? null : JSON.stringify(structured);
       // The payload never arrived as its own argument (T3O-14). Checked BEFORE
       // the caps, because this is exactly what the cap check used to misreport:

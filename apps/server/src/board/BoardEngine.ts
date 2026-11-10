@@ -24,7 +24,7 @@
 import { type CommandId, type OrchestrationClientOrigin } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -137,7 +137,7 @@ export const makeBoardEngine = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const queries = yield* BoardQueries;
   const threads = yield* ThreadGateway;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const store = makeBoardEventStore(sql);
   const projector = makeBoardSqlProjector(sql);
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -218,7 +218,7 @@ export const makeBoardEngine = Effect.gen(function* () {
 
       const context = yield* loadDecisionContext(command, queries, threads);
       const decided = yield* decideBoardCommand({ command, readModel, context }).pipe(
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(SecureRandom.SecureRandom, crypto),
         Effect.mapError((cause) =>
           isBoardCommandInvariantError(cause)
             ? cause

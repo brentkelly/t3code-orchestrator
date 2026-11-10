@@ -27,7 +27,7 @@ import {
   type BoardCardId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -36,7 +36,6 @@ import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as Base64 from "effect/encoding/Base64";
-import * as Hex from "effect/encoding/Hex";
 
 import * as ServerConfig from "../../config.ts";
 import { boardCardAttachmentsDir, resolveBoardCardAttachmentPath } from "../attachments.ts";
@@ -112,7 +111,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const ciRunner = yield* BoardCiRunner;
 
   // A deleted thread makes no more board calls; its relay record goes too,
@@ -132,8 +131,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     Effect.forkScoped,
   );
 
-  const sha256 = (bytes: Uint8Array) =>
-    crypto.digest("SHA-256", bytes).pipe(Effect.map(Hex.encode), Effect.orDie);
+  const sha256 = (bytes: Uint8Array) => digest.digestHex(Digest.sha256, bytes);
 
   /** Write what changed, ask for what is missing, and drop what the card no
       longer has (prototype K3: the agent reads them by path). */

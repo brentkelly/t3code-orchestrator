@@ -53,7 +53,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -490,7 +490,7 @@ function makeBoardRpcHandlers(
         BOARD_WS_METHODS.attachCardFile,
         Effect.gen(function* () {
           const config = yield* ServerConfig.ServerConfig;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
           const detail = yield* readDetail(input.cardId).pipe(
             Effect.mapError(
               (cause) =>
@@ -513,7 +513,7 @@ function makeBoardRpcHandlers(
             attachmentsDir: config.attachmentsDir,
             card: detail.card,
             pendingAttachmentId: input.pendingAttachmentId,
-            attachmentId: BoardCardAttachmentId.make(yield* crypto.randomUUIDv4()),
+            attachmentId: BoardCardAttachmentId.make(yield* crypto.uuidV4()),
             name: input.name,
             type: input.type,
             mimeType: input.mimeType,
@@ -521,7 +521,7 @@ function makeBoardRpcHandlers(
             addedAt: createdAt,
           }).pipe(
             Effect.mapError((error) =>
-              error instanceof BoardAttachmentClaimError
+              Schema.is(BoardAttachmentClaimError)(error)
                 ? new BoardCardAttachmentError({
                     code: error.failure.reason,
                     message: error.failure.message,
@@ -536,7 +536,7 @@ function makeBoardRpcHandlers(
                   }),
             ),
           );
-          const uuid = yield* crypto.randomUUIDv4();
+          const uuid = yield* crypto.uuidV4();
           yield* boardEngine
             .dispatch({
               type: "board.card.attach",
@@ -576,7 +576,7 @@ function makeBoardRpcHandlers(
         BOARD_WS_METHODS.detachCardFile,
         Effect.gen(function* () {
           const config = yield* ServerConfig.ServerConfig;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
           const detail = yield* readDetail(input.cardId).pipe(
             Effect.mapError(
               (cause) =>
@@ -596,7 +596,7 @@ function makeBoardRpcHandlers(
               message: `Attachment ${input.attachmentId} is not on card ${input.cardId}.`,
             });
           }
-          const uuid = yield* crypto.randomUUIDv4();
+          const uuid = yield* crypto.uuidV4();
           yield* boardEngine
             .dispatch({
               type: "board.card.detach",

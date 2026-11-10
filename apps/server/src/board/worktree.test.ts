@@ -7,6 +7,7 @@
  * proving that entering Building creates a branch + worktree and that reclaim
  * removes a clean-and-pushed tree but refuses a dirty one (and says why).
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -39,7 +40,7 @@ const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
 });
 const GitLayer = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfigLayer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 // T3O-23: reclaim and forced removal retire through the real retirer; no
 // threads, no survivors and no remove scripts, so it only removes.

@@ -31,7 +31,9 @@ import {
   type BoardPlan,
   type BoardState,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -296,7 +298,7 @@ const moveCommand = (input: {
     createdAt: NOW,
   }) as const;
 
-it.layer(NodeServices.layer)("board decider", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", (it) => {
   // ── Key allocation ───────────────────────────────────────────────────
 
   it.effect("allocates keys from the per-project counter with the default prefix", () =>

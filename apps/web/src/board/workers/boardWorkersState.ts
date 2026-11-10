@@ -6,17 +6,18 @@ import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { mintEnvironmentPairingToken } from "@t3tools/client-runtime/state/shell";
 import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import type { BoardWorkersState, EnvironmentId } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { useEffect, useRef, useState } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { boardEnvironment, environmentBoard } from "../../state/board";
 import { readPreparedConnection } from "../../state/session";
 
-export class WorkerEnvironmentNotConnected extends Data.TaggedError(
+export class WorkerEnvironmentNotConnected extends Schema.TaggedError<WorkerEnvironmentNotConnected>()(
   "WorkerEnvironmentNotConnected",
-)<{ readonly message: string }> {}
+  { message: Schema.String },
+) {}
 
 /**
  * Mint a one-time pairing token on a worker environment with THIS client's

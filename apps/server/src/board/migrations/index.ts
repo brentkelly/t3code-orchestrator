@@ -14,6 +14,7 @@
  */
 import * as Migrator from "effect/sql/Migrator";
 import { backupBoardDatabaseBeforeV2 } from "../boardPreV2Backup.ts";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -235,7 +236,7 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
       .map((row) => row.migration_id - (LEGACY_BOARD_ID_FLOOR - 1))
       .filter((id): id is number => nameById.has(id))
       .map((id) => ({ migration_id: id, name: nameById.get(id) as string }));
-    if (seedRows.length > 0) {
+    if (Arr.isArrayNonEmpty(seedRows)) {
       yield* sql`INSERT INTO ${sql(LEGACY_SEED_TABLE)} ${sql.insert(seedRows)}`;
     }
   }

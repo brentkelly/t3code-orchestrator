@@ -101,7 +101,7 @@ import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
 // T3o: the services `runServer`'s annotation names (T3O-59).
-import type * as Crypto from "effect/Crypto";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -1246,8 +1246,9 @@ export const runServer: Effect.Effect<
   never,
   Layer.Error<typeof layerMakeServer>,
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
+  | NetService.NetService
   | Path.Path
   | ServerConfig.ServerConfig
 > = Layer.launch(layerMakeServer);

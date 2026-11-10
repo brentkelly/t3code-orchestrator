@@ -9,7 +9,9 @@ import {
   type BoardCardStepState,
   type BoardState,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -126,7 +128,7 @@ const decide = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =
   decideBoardCommandOnModel({ command, readModel }).pipe(
     Effect.map(boardDecidedEvents),
     Effect.map((events) => events[0]!),
-    Effect.provide(NodeServices.layer),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 const decideFail = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>

@@ -70,3 +70,19 @@ export function boardBaseBranchSelectedName(input: {
   if (input.baseBranch !== null) return input.baseBranch;
   return input.options.find((option) => option.isDefault)?.localName ?? null;
 }
+
+const NEXT_PAGE_DISTANCE_PX = 96;
+
+/** Whether a scroll should fetch the next branch page: only a downward scroll that reaches the
+    end, never mount or layout. Upstream dropped its copy with its move to Legend List. */
+export function shouldLoadNextBranchPageAfterScroll(input: {
+  readonly previousScrollTop: number | null;
+  readonly scrollTop: number;
+  readonly scrollHeight: number;
+  readonly clientHeight: number;
+}): boolean {
+  if (input.previousScrollTop === null || input.scrollTop <= input.previousScrollTop) {
+    return false;
+  }
+  return input.scrollHeight - input.scrollTop - input.clientHeight <= NEXT_PAGE_DISTANCE_PX;
+}

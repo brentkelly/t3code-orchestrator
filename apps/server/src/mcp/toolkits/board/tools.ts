@@ -48,7 +48,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Path from "effect/Path";
 import { Tool, Toolkit } from "effect/ai";
 
@@ -105,7 +105,7 @@ const dependencies = [
   BoardEngine,
   BoardQueries,
   ThreadGateway,
-  Crypto.Crypto,
+  SecureRandom.SecureRandom,
   ServerSettings.ServerSettingsService,
   // The brief-attachment manifest (t3o-32) resolves absolute paths off the
   // state directory.

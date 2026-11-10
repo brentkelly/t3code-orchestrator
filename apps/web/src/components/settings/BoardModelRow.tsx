@@ -31,7 +31,7 @@ import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
 import { BoardModelControlsMenu } from "./BoardModelControlsMenu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { useBoardEnvironmentId, useBoardSettings } from "../../board/useBoardEnvironmentId";
+import { useBoardEnvironmentId } from "../../board/useBoardEnvironmentId";
 
 export type InstanceEntries = ReturnType<typeof sortProviderInstanceEntries>;
 export type ActiveModel = { instanceId: ProviderInstanceId; model: string };
@@ -61,21 +61,16 @@ function ModelControlsMenu(props: {
   runtimeMode: RuntimeMode | undefined;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
-  // Upstream gates plan-mode traits on the client setting; the row reads the
-  // same source as the composer so both show the same controls for a model.
-  const planModeEnabled = useBoardSettings((settings) => settings.planModeEnabled);
   const traits = getTraitsSectionVisibility({
     provider: props.provider,
     models: props.models,
     model: props.model,
     modelOptions: props.modelOptions,
     allowPromptInjectedEffort: false,
-    planModeEnabled,
   });
   const labels: string[] = [];
   if (traits.hasAnyControls) {
     const display = buildTraitsTriggerDisplay({
-      provider: props.provider,
       descriptors: traits.descriptors,
       primarySelectDescriptorId: traits.primarySelectDescriptor?.id ?? null,
       ultrathinkPromptControlled: false,
@@ -103,7 +98,6 @@ function ModelControlsMenu(props: {
             model={props.model}
             modelOptions={props.modelOptions}
             allowPromptInjectedEffort={false}
-            planModeEnabled={planModeEnabled}
             onModelOptionsChange={props.onModelOptionsChange}
           />
         ) : undefined

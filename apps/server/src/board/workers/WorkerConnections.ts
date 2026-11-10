@@ -26,17 +26,17 @@ import {
   BOARD_WORKER_PROTOCOL_FLOOR,
   boardRepositoryGroupingKey,
   type BoardWorker,
-  type BoardWorkerConnectionState,
+  BoardWorkerConnectionState,
   type BoardWorkerHello,
   type BoardWorkerSnapshot,
   type BoardWorkerStatus,
-  type EnvironmentId,
+  EnvironmentId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -52,11 +52,14 @@ import {
 import { WorkerTransport, type WorkerLink, type WorkerRpc } from "./WorkerTransport.ts";
 
 /** A worker the board cannot use right now. */
-export class WorkerUnavailable extends Data.TaggedError("WorkerUnavailable")<{
-  readonly workerId: EnvironmentId;
-  readonly state: BoardWorkerConnectionState | "unknown";
-  readonly message: string;
-}> {}
+export class WorkerUnavailable extends Schema.TaggedError<WorkerUnavailable>()(
+  "WorkerUnavailable",
+  {
+    workerId: EnvironmentId,
+    state: Schema.Union([BoardWorkerConnectionState, Schema.Literal("unknown")]),
+    message: Schema.String,
+  },
+) {}
 
 /** What the central server knows about one worker at runtime. */
 export interface WorkerRuntime {
