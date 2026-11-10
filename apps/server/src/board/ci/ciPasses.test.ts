@@ -51,7 +51,9 @@ it.effect("admitting queued passes skips one whose worker is full and starts the
     const passes = yield* makeBoardCiPasses({
       runner: {
         run: () =>
-          Deferred.await(release).pipe(Effect.as({ result: "passed" as const, failedIndex: null })),
+          Deferred.await(release).pipe(
+            Effect.as({ result: "passed" as const, failedIndex: null, ranAll: true }),
+          ),
       },
       slots,
       dispatch: () => Effect.void,

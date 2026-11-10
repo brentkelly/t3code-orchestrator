@@ -3600,6 +3600,7 @@ const make = Effect.gen(function* () {
         workerId,
         steps: boardCiScriptDefinitions(steps.slice(segment.start, segment.end)),
         indexOffset: segment.start,
+        ...(card.ci.continueOnFailure === true ? { stopOnFailure: false } : {}),
         limits: resolveBoardConcurrencyLimit(
           settings.concurrency,
           BOARD_CI_SLOT_INSTANCE,
