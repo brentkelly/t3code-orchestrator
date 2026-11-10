@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 
 import type { BoardCiStepResult } from "@t3tools/contracts";
 
@@ -107,10 +107,18 @@ describe("boardCiFailureHeadline", () => {
     },
     {
       name: "SIGKILL without a timeout",
-      log: "running\n",
+      log: "running\nOut of memory: Killed process 4242 (node)\n",
       input: { exitCode: null, signal: "SIGKILL" },
       why: "Killed (out of memory?)",
       machine: true,
+    },
+    {
+      name: "exit 137 without Killed or Out of memory is not a machine problem",
+      log: "running\nsleep 5; timeout -s KILL 1 ./slow\n",
+      input: { exitCode: 137 },
+      why: "sleep 5; timeout -s KILL 1 ./slow",
+      machine: false,
+      source: "last-line",
     },
     {
       name: "SIGKILL from the time limit is a timeout",
@@ -194,6 +202,20 @@ describe("boardCiFailureHeadline", () => {
       why: "a.test.ts: expected 2 to be 3",
       machine: false,
       source: "result-file",
+    },
+    {
+      name: "a short Playwright log: the launch error around a missing library is a machine problem",
+      log: `${passing(5)}  1) [chromium] › a.spec.ts:3:5 › opens\n    Error: browserType.launch: Target page, context or browser has been closed\n    Browser logs:\n${LIBNSPR}  Retry #1\n    Error: browserType.launch: Target page, context or browser has been closed\n    Browser logs:\n${LIBNSPR}  1 failed\n`,
+      why: "Missing system library: libnspr4.so",
+      machine: true,
+      source: "machine",
+    },
+    {
+      name: "a short Playwright log: a repeated launch error after the library line",
+      log: `    Error: browserType.launch: Target page, context or browser has been closed\n${LIBNSPR}    Error: browserType.launch: Target page, context or browser has been closed\n  1 failed\n`,
+      why: "Missing system library: libnspr4.so",
+      machine: true,
+      source: "machine",
     },
     {
       name: "a missing library at the end of a long log counts",

@@ -9,8 +9,8 @@
  *    `machine: true` (a script's flag always wins over a pattern).
  * 2. A strong machine pattern: a missing shared library, no space left, a
  *    read-only filesystem.
- * 3. A weak machine pattern the exit agrees with: exit 127, a kill with 137 or
- *    SIGKILL and no timeout, a bare ENOSPC on a disk that is low now.
+ * 3. A weak machine pattern the exit agrees with: exit 127, "Killed" or "Out
+ *    of memory" with 137 or SIGKILL and no timeout, a bare ENOSPC on a disk that is low now.
  * 4. The result file's first failure.
  * 5. A tool that stopped the step outright ("No files matching the pattern").
  * 6. The first anchored error line in the end window (the last 500 lines).
@@ -140,6 +140,32 @@ export class BoardCiFailureFacts {
     return this.window[0]?.lineNo ?? Number.POSITIVE_INFINITY;
   }
 
+  /** The last line in the end window matching `patterns`. */
+  lastInWindow(patterns: ReadonlyArray<RegExp>): Fact | null {
+    return (
+      this.window.findLast((fact) => patterns.some((pattern) => pattern.test(fact.text))) ?? null
+    );
+  }
+
+  /** The first new error after `library`: one that neither repeats an error
+      printed before it (a retried launch) nor names the library itself. */
+  firstNewErrorAfter(library: Fact, lib: string | null): Fact | null {
+    const seen = new Set(
+      this.window
+        .filter((fact) => fact.lineNo <= library.lineNo && GENERIC.some((p) => p.test(fact.text)))
+        .map((fact) => fact.text),
+    );
+    return (
+      this.window.find(
+        (fact) =>
+          fact.lineNo > library.lineNo &&
+          GENERIC.some((pattern) => pattern.test(fact.text)) &&
+          !seen.has(fact.text) &&
+          (lib === null || !fact.text.includes(lib)),
+      ) ?? null
+    );
+  }
+
   /** The first line in the end window matching `patterns`. */
   firstInWindow(patterns: ReadonlyArray<RegExp>, after = 0): Fact | null {
     return (
@@ -218,15 +244,16 @@ function machineVerdict(facts: BoardCiFailureFacts, input: BoardCiHeadlineInput)
   }
   // Optional native modules print a missing library and recover, so it only
   // counts in the end window, or when nothing later or reported explains it.
-  const library = facts.firstInWindow([SHARED_LIBRARY]) ?? facts.library;
+  // The last one in the window: a retried browser launch prints it again.
+  const library = facts.lastInWindow([SHARED_LIBRARY]) ?? facts.library;
   if (library !== null) {
+    const lib = libraryName(library.text);
     // A log that fits the window entirely says nothing by position.
     const inWindow = facts.windowTrimmed() && library.lineNo >= facts.windowStart();
-    const laterGeneric = facts.firstInWindow(GENERIC, library.lineNo);
+    const laterError = facts.firstNewErrorAfter(library, lib);
     const codeFailureReported =
       input.result?.failures.some((failure) => failure.machine !== true) ?? false;
-    if (inWindow || (laterGeneric === null && !codeFailureReported)) {
-      const lib = libraryName(library.text);
+    if (inWindow || (laterError === null && !codeFailureReported)) {
       return {
         why: `Missing system library: ${lib ?? library.text}`,
         fact: library,
@@ -252,7 +279,11 @@ function machineVerdict(facts: BoardCiFailureFacts, input: BoardCiHeadlineInput)
       hint: command === null ? "Install the missing tool." : `Install ${command}.`,
     };
   }
-  if (!timedOut && (input.exitCode === 137 || input.signal === "SIGKILL")) {
+  if (
+    !timedOut &&
+    facts.killed !== null &&
+    (input.exitCode === 137 || input.signal === "SIGKILL")
+  ) {
     return {
       why: "Killed (out of memory?)",
       fact: facts.killed,

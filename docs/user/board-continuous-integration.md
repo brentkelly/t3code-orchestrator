@@ -64,7 +64,7 @@ output is read.
 
 **Machine problems** are held for you instead of being handed to a fix agent: a missing system
 library, no space left on the disk, a read-only filesystem, a command that isn't installed (exit
-127), and a step killed by the system (exit 137, likely out of memory). The card shows **Machine
+127), and a step the system killed, saying "Killed" or "Out of memory" (exit 137, likely out of memory). The card shows **Machine
 problem** in amber, naming the machine and what to fix there. No fix attempt or round trip is used:
 fix the machine, then press **Retry CI**. A script's own `machine` flag always wins: `false` keeps a
 failure with the code even when its output looks like a machine problem.

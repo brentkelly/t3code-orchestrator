@@ -211,7 +211,7 @@ it.effect("a worker's headline is clamped here, so a long reason can't break the
       source: "something-new",
       hint: "Install it.",
     };
-    const wire = Schema.decodeUnknownSync(Schema.Array(BoardWorkerCiProgress))([
+    const wire = yield* Schema.decodeUnknownEffect(Schema.Array(BoardWorkerCiProgress))([
       { _tag: "step", index: 0, step: { ...step, headline: loose } },
       {
         ...toWireCiDone({ result: "failed", failedIndex: 0, exitCode: 1 }),
