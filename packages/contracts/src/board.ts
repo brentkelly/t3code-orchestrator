@@ -1914,7 +1914,7 @@ export function isBoardCiPassSettledPhase(phase: BoardCardCiPhase): boolean {
 
 /** Whether a card's CI round is queued, running or being fixed (T3O-68): work
     in progress, so no "nobody is working on this" chip may show. */
-export function isBoardCardCiActive(card: Pick<BoardCardShell, "ci">): boolean {
+function isBoardCardCiActive(card: Pick<BoardCardShell, "ci">): boolean {
   return card.ci != null && !isBoardCiPassSettledPhase(card.ci.phase);
 }
 

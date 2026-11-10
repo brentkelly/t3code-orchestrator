@@ -99,7 +99,12 @@ import {
   BoardShellSnapshot,
 } from "./board.ts";
 import { defaultBoardCardGroup } from "./boardGroups.ts";
-import type { BoardCardAutoMergeHold, BoardCardCiPhase, BoardCardWorktree } from "./board.ts";
+import type {
+  BoardCardAutoMergeHold,
+  BoardCardCi,
+  BoardCardCiPhase,
+  BoardCardWorktree,
+} from "./board.ts";
 import { ProjectId, ThreadId } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -1826,7 +1831,7 @@ describe("cards that need a human (boardCardAttention)", () => {
   // T3O-68: a held card sat in amber for a whole CI pass. A running CI script
   // is not a thread and not `stepRunning`, so nothing vetoed the chip.
   it("never says a card needs a human while its CI round is active", () => {
-    const ci = (phase: BoardCardCiPhase): BoardCardShell["ci"] => ({
+    const ci = (phase: BoardCardCiPhase): BoardCardCi => ({
       runId: "ci-1",
       entry: 1,
       fixAttempts: 0,
@@ -2150,7 +2155,7 @@ describe("children actively working (deriveBoardCardChildRunning)", () => {
   });
 
   it("T3O-68: a running or fixing CI round lights the dot", () => {
-    const ci = (phase: BoardCardCiPhase): BoardCardShell["ci"] => ({
+    const ci = (phase: BoardCardCiPhase): BoardCardCi => ({
       runId: "ci-1",
       entry: 1,
       fixAttempts: 0,

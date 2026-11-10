@@ -323,7 +323,9 @@ describe("formatting", () => {
     // T3O-68: the limit shows only once it matters, from 85% of it.
     const minutesAgo = (minutes: number) => new Date(NOW_MS - minutes * 60_000).toISOString();
     expect(boardCiStepLimit({ startedAt, timeoutMinutes: 60 }, NOW_MS)).toBeNull();
-    expect(boardCiStepLimit({ startedAt: minutesAgo(50.9), timeoutMinutes: 60 }, NOW_MS)).toBeNull();
+    expect(
+      boardCiStepLimit({ startedAt: minutesAgo(50.9), timeoutMinutes: 60 }, NOW_MS),
+    ).toBeNull();
     expect(boardCiStepLimit({ startedAt: minutesAgo(51), timeoutMinutes: 60 }, NOW_MS)).toBe(
       "Stops at 60 min",
     );
@@ -333,9 +335,7 @@ describe("formatting", () => {
     expect(boardCiStepLimit({ startedAt: minutesAgo(60.1), timeoutMinutes: 60 }, NOW_MS)).toBe(
       "Over its 60 min limit",
     );
-    expect(boardCiStepLimit({ startedAt, timeoutMinutes: 5 }, NOW_MS)).toBe(
-      "Over its 5 min limit",
-    );
+    expect(boardCiStepLimit({ startedAt, timeoutMinutes: 5 }, NOW_MS)).toBe("Over its 5 min limit");
     expect(boardCiStepLimit({ startedAt: null, timeoutMinutes: 5 }, NOW_MS)).toBeNull();
     expect(boardCiSilenceLabel("2026-01-01T00:02:00.000Z", NOW_MS)).toBe("No output for 8 min");
     expect(boardCiSilenceLabel(undefined, NOW_MS)).toBeNull();
