@@ -48,6 +48,7 @@ import {
   type BoardSettings,
   type BoardStageExecution,
   type BoardState,
+  type BoardCiPass,
   type BoardEvent,
   type BoardConcurrencySettings,
   SourceControlProviderKind,
@@ -543,6 +544,8 @@ export function withGovernor(
     /** Reject every `thread.create`, so a test can drive the spawn-failure path
         (a thread the engine refuses to create) without a provider double. */
     readonly rejectThreadCreate?: boolean;
+    /** The card detail's CI pass rows can't be read (T3O-57). */
+    readonly ciPassesUnreadable?: boolean;
     /** What a branch pull-request lookup answers. `undefined` (the default) is
         "no pull request"; a `detail` string makes the lookup FAIL, which is a
         different answer the reactor must not confuse with "there is none". */
@@ -690,7 +693,36 @@ export function withGovernor(
         yield* Ref.update(decided, (current) => [...current, event]);
         const next = yield* projectBoardEvent(yield* Ref.get(model), event);
         yield* Ref.set(model, next);
+        if (event.type === "board.card-ci-recorded") projectCiPassRows(event.payload);
       });
+
+    // The CI pass rows, as the SQL projection keeps them (`projection.ts`).
+    const ciPassRows = new Map<string, BoardCiPass>();
+    const projectCiPassRows = (
+      payload: Extract<BoardEvent, { type: "board.card-ci-recorded" }>["payload"],
+    ) => {
+      for (const settle of payload.settled) {
+        const row = ciPassRows.get(settle.runId);
+        if (row === undefined) continue;
+        ciPassRows.set(settle.runId, {
+          ...row,
+          outcome: row.outcome ?? settle.outcome ?? null,
+          finishedAt: row.finishedAt ?? settle.finishedAt ?? null,
+          fixThreadId: settle.fixThreadId ?? row.fixThreadId,
+        });
+      }
+      if (payload.started !== null) ciPassRows.set(payload.started.runId, payload.started);
+      const action = payload.action;
+      if (action.kind === "step") {
+        const row = ciPassRows.get(action.runId);
+        if (row !== undefined) {
+          ciPassRows.set(action.runId, {
+            ...row,
+            steps: row.steps.map((step, index) => (index === action.index ? action.step : step)),
+          });
+        }
+      }
+    };
 
     // Board commands and thread-gateway calls, in the one order they were sent.
     const commands = yield* Ref.make<ReadonlyArray<HarnessCommand>>([]);
@@ -752,7 +784,14 @@ export function withGovernor(
     const boardQueriesStub = {
       // The reactor's todo signal + boot sweep have something to call;
       // `boardThreadTodo` is fixture-driven, the rest are inert.
-      boardCardDetail: () => Effect.succeed(null),
+      boardCardDetail: (cardId: BoardCardId) =>
+        Effect.succeed(
+          input.ciPassesUnreadable === true
+            ? null
+            : {
+                ciPasses: [...ciPassRows.values()].filter((pass) => pass.cardId === cardId),
+              },
+        ),
       boardCardActivity: () => Effect.succeed([]),
       boardCardBrief: () => Effect.succeed(null),
       boardPlanBody: () => Effect.succeed(null),

@@ -73,6 +73,7 @@ project's checkout on the board's own server.
   },
   "ci": {
     "enabled": true,
+    "stopOnFailure": false,
     "steps": [{ "kind": "script", "id": "test", "name": "Test", "command": "bun run test" }]
   }
 }

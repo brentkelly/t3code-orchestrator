@@ -1,5 +1,5 @@
 /**
- * T3O-44 — CI records through the real seams: decider, event store, SQL
+ * T3O-44/57 — CI records through the real seams: decider, event store, SQL
  * projection, the card detail's pass rows, the activity rail and the
  * rehydrated read model.
  */
@@ -11,6 +11,7 @@ import {
   boardCiStepsFromLegacy,
   ProjectId,
   ProviderInstanceId,
+  ThreadId,
   type BoardCardRecordCiCommand,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -156,6 +157,77 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-"))("a CI pass", (it) => {
       assert.deepStrictEqual(
         rehydrated.board?.cards.find((candidate) => candidate.id === cardId)?.ci,
         detail!.card.ci,
+      );
+
+      // T3O-57: Stop on failure saves to the project's CI config, and a pass
+      // started with it off carries that, its fix's issue count, and a stop
+      // with the fix thread on its row.
+      yield* engine.dispatch({
+        type: "board.project.set-ci-stop-on-failure",
+        commandId: id(),
+        projectId,
+        stopOnFailure: false,
+        createdAt: at,
+      });
+      const configured = yield* (yield* boardStackSnapshotQuery).getCommandReadModel();
+      assert.isFalse(configured.board?.projectStageConfigs?.[projectId]?.ci.stopOnFailure);
+      assert.lengthOf(configured.board?.projectStageConfigs?.[projectId]?.ci.steps ?? [], 2);
+      // Editing the steps keeps the setting; Yes stores nothing.
+      yield* engine.dispatch({
+        type: "board.project.set-ci-steps",
+        commandId: id(),
+        projectId,
+        steps: ciSteps.slice(0, 1),
+        createdAt: at,
+      });
+      const edited = yield* (yield* boardStackSnapshotQuery).getCommandReadModel();
+      assert.isFalse(edited.board?.projectStageConfigs?.[projectId]?.ci.stopOnFailure);
+      yield* engine.dispatch({
+        type: "board.project.set-ci-stop-on-failure",
+        commandId: id(),
+        projectId,
+        stopOnFailure: true,
+        createdAt: at,
+      });
+      const yes = yield* (yield* boardStackSnapshotQuery).getCommandReadModel();
+      assert.notProperty(yes.board?.projectStageConfigs?.[projectId]?.ci ?? {}, "stopOnFailure");
+      yield* record({
+        kind: "start-pass",
+        runId: "run-b",
+        entry: 1,
+        ordinal: 2,
+        steps: ciSteps,
+        maxFixAttempts: 2,
+        logDir: "/wt/.t3/ci/run-b",
+        queued: false,
+        fixThreadId: null,
+        continueOnFailure: true,
+      });
+      yield* record({ kind: "finish-pass", runId: "run-b", result: "failed" });
+      yield* record({ kind: "begin-fix", runId: "run-b", fixIssues: 2 });
+      yield* record({
+        kind: "stop",
+        runId: "run-b",
+        reason: "The fix agent couldn't fix Test: needs a database.",
+        finding: "",
+        fixThreadId: ThreadId.make("thread-fix-b"),
+      });
+      const stopped = yield* (yield* BoardQueries).boardCardDetail(cardId);
+      assert.deepStrictEqual(
+        {
+          phase: stopped!.card.ci?.phase,
+          continueOnFailure: stopped!.card.ci?.continueOnFailure,
+          fixIssues: stopped!.card.ci?.fixIssues,
+        },
+        { phase: "stopped", continueOnFailure: true, fixIssues: 2 },
+      );
+      const passB = stopped!.ciPasses.find((entry) => entry.runId === "run-b");
+      assert.strictEqual(passB?.outcome, "stopped");
+      assert.strictEqual(passB?.fixThreadId, "thread-fix-b");
+      const reread = yield* (yield* boardStackSnapshotQuery).getCommandReadModel();
+      assert.deepStrictEqual(
+        reread.board?.cards.find((candidate) => candidate.id === cardId)?.ci,
+        stopped!.card.ci,
       );
     }),
   );

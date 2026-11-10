@@ -632,6 +632,14 @@ textarea{font-family:var(--font-sans)}
                   </div>
                   <button type="button" onClick="{{ ci.flipOn }}" role="switch" style="{{ ci.onTrack }}"><span style="{{ ci.onKnob }}"></span></button>
                 </div>
+                <div style="display:flex;align-items:center;gap:16px;padding:12px 16px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow-xs)">
+                  <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+                    <span style="font:500 13.5px var(--font-sans)">Stop on failure</span>
+                    <span style="font:400 12px var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ci.stopHint }}</span>
+                  </div>
+                  <span style="flex:none;font:500 12px var(--font-sans);color:var(--muted-fg)">{{ ci.stopLabel }}</span>
+                  <button type="button" onClick="{{ ci.flipStop }}" role="switch" aria-checked="{{ ci.stopOnFail }}" style="{{ ci.stopTrack }}"><span style="{{ ci.stopKnob }}"></span></button>
+                </div>
 
                 <div style="display:flex;flex-direction:column;gap:8px">
                   <div style="display:flex;align-items:baseline;gap:8px">
@@ -958,7 +966,7 @@ textarea{font-family:var(--font-sans)}
 const ROLE = { backlog: 1, planning: 1, building: 1, review: 1, merge: 1, done: 1 };
 const ROLE_NOTE = "Role stage. The board needs it to plan, build, review or merge, so every project runs it and it can't be switched off.";
 const MODELS = ["claude-opus-4", "claude-sonnet-4", "claude-haiku-4", "gpt-5-codex"];
-const FIX_PROMPT = "A CI step failed on this card's branch. Read the failures and output and find the cause. Make the smallest change that fixes it, run the failing command locally until it passes, then commit. Do not disable, skip or loosen a check to make it pass. If the failure is outside this card's change (flaky test, broken main, missing secret), say so with board_report_ci and stop without changing code.";
+const FIX_PROMPT = "This card must pass the project's CI steps to become ready for merge. Fix every failure CI reported, commit and push.";
 const AGENT_PRE = (proj, n, name) => "Card RL-16 “Weighted fair queueing for fan-out” in " + proj + ".\nCI step " + n + " · " + name + ". The branch, its base ref and the diff are attached.\nThis thread can read and run commands in the worktree but cannot push.";
 const AGENT_POST = "Report with board_ci_result: verdict passed or failed, a one-paragraph summary, and failures[] each with title, detail, file and line. Do not fix anything and do not move the card.";
 const STARTER_PROMPT = "Read AGENTS.md and run every check it lists for this repository (typecheck, lint, tests, build), in the order it gives. Report failed if any check fails, with one failure per problem.";
@@ -1011,7 +1019,7 @@ class Component extends DCLogic {
           { id: "a5", type: "forge", name: "GitHub checks", only: ["ci/build", "ci/e2e"], appear: 10 },
         ], fix: {} },
       web: { on: { sprint: false, ready: false, qa: true }, ov: { qa: { auto: false } }, steps: [], fix: {} },
-      relay: { on: { sprint: false, soak: true, ci: true }, ov: { ci: { attempts: 1 } },
+      relay: { on: { sprint: false, soak: true, ci: true }, ov: { ci: { attempts: 1 } }, stopOnFail: false,
         steps: [
           { id: "r1", type: "script", name: "Check", run: "cargo xtask check", timeout: 10 },
           { id: "r2", type: "script", name: "Test", run: "cargo nextest run --workspace", timeout: 20 },
@@ -1034,8 +1042,8 @@ class Component extends DCLogic {
         note: "A loop: review, triage, adjudicate, repeat until a pass raises no blocking findings, the adjudicator rules a round found nothing new, a finding gets stuck for a human, or the round cap stops it." },
       { id: "qa", name: "Visual QA", key: "qa", auto: true, def: false, only: "web", model: "claude-sonnet-4",
         prompt: "Open the preview deploy at desktop, tablet and phone widths in light and dark. Compare against the card's screenshots and report each visual regression as a finding with a screenshot.", pre: "", post: "" },
-      { id: "ci", name: "CI", key: "ci", auto: true, ci: true, def: false, attempts: 2, model: "claude-sonnet-4", prompt: FIX_PROMPT,
-        note: "Runs each project's CI steps: Sync with base first, then each group in order. A failure stops later groups once its own group finishes. The fix agent fixes and re-runs everything, or sends the card back to Code review with a finding." },
+      { id: "ci", name: "CI", key: "ci", auto: true, ci: true, def: false, attempts: 3, model: "claude-sonnet-4", prompt: FIX_PROMPT,
+        note: "Runs each project's CI steps: Sync with base first, then each group in order. When a pass fails, a fix agent fixes every reported failure and CI runs again from the top. If the fix attempts run out, or the agent can't fix something, the card stops in CI and waits for you." },
       { id: "merge", name: "Ready for merge", key: "merge", auto: false },
       { id: "soak", name: "Staging soak", key: "", auto: false, def: false },
       { id: "done", name: "Done", key: "", auto: false },
@@ -1203,9 +1211,9 @@ class Component extends DCLogic {
               steps: this.groupsOf(st).map(g => g.map(x => x.name).join(" ∥ ")).join(" → "),
               count: this.plural(st.length, "step", "steps") + (this.isOn(s, p.id) ? "" : " · off") };
           }) },
-        this.numberRow("Fix attempts", s.attempts, v => this.patch(s.id, "attempts", v), { min: 0, max: 5, hint: "Per pass. At 0, the first failure sends the card back to Code review." }),
+        this.numberRow("Fix attempts", s.attempts, v => this.patch(s.id, "attempts", v), { min: 0, max: 5, hint: "Per CI visit. When they run out the card stops in CI for you. At 0, the first failed pass stops for you." }),
         { isHeader: true, label: "Fix agent", step: "F" },
-        this.promptRow("Prompt", s.id, s.prompt, v => this.patch(s.id, "prompt", v), "Card T3-42 in core.agent.advisor. CI · fix attempt 1 of 2.\nThe failed step, its structured failures (if the step wrote any) and the last 200 lines of output are attached.", "Record what you changed with board_complete. The board re-runs every step from the top; do not move the card yourself."),
+        this.promptRow("Prompt", s.id, s.prompt, v => this.patch(s.id, "prompt", v), "Card T3-42 in core.agent.advisor. CI · fix attempt 1 of 3.\nEvery failed step from the pass is attached, each with its structured failures (if the step wrote any) and the last 200 lines of output.", "Record what you changed with board_complete. If a failure can't be fixed from this branch, report it with board_report_ci and say why; the card then stops for a human. The board re-runs every step from the top; do not move the card yourself."),
         this.modelRow(s, (k, v) => this.patch(s.id, k, v)),
       ];
     }
@@ -1367,6 +1375,7 @@ class Component extends DCLogic {
     const p = this.proj(pid);
     const ciStage = this.stage("ci");
     const on = this.isOn(ciStage, pid);
+    const stop = d.stopOnFail !== false;
     const groups = this.groupsOf(d.steps);
     const parallel = groups.filter(g => g.length > 1).length;
     const typeLabel = { script: "Script", agent: "Agent", forge: "Forge checks" };
@@ -1385,11 +1394,15 @@ class Component extends DCLogic {
       addButtons,
       onHint: on ? "Cards leaving Code review run these steps before Ready for merge." : "Off. Cards skip CI; the steps below are kept for when you switch it back on.",
       flipOn: () => this.setOn(pid, "ci", !on), onTrack: this.sw(on).trackStyle, onKnob: this.sw(on).knobStyle,
-      shape: "Sync, then " + this.plural(groups.length, "group", "groups") + " in order" + (parallel ? " (" + this.plural(parallel, "parallel group", "parallel groups") + ")" : "") + " · a failure stops later groups once its own group finishes",
+      stopOnFail: stop, stopLabel: stop ? "Yes" : "No",
+      stopHint: stop ? "A failed step stops the steps after it. Faster, but a pass may show only the first failure." : "Every step runs even after one fails, so one pass shows every failure. Passes take longer.",
+      flipStop: () => { this.setProjData(pid, dd => ({ ...dd, stopOnFail: !stop })); this.toastMsg("Saved. Stop on failure is " + (stop ? "off" : "on") + " for " + p.name + "; the next CI pass uses it."); },
+      stopTrack: this.sw(stop).trackStyle, stopKnob: this.sw(stop).knobStyle,
+      shape: "Sync, then " + this.plural(groups.length, "group", "groups") + " in order" + (parallel ? " (" + this.plural(parallel, "parallel group", "parallel groups") + ")" : "") + (stop ? " · a failure stops later groups once its own group finishes" : " · every step runs, even after a failure"),
       groups: groups.map((g, gi) => {
         const scripts = g.filter(x => x.type === "script");
         return {
-          then: gi === 0 ? "then" : "then, once the group above passes",
+          then: gi === 0 ? "then" : stop ? "then, once the group above passes" : "then, once the group above finishes",
           multi: g.length > 1,
           label: "Parallel",
           sub: g.length + " steps start together; the group passes when all of them pass",

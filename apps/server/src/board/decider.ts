@@ -6172,6 +6172,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     case "board.project.set-stage-override":
     case "board.project.set-ci-steps":
     case "board.project.set-ci-enabled":
+    case "board.project.set-ci-stop-on-failure":
     case "board.project.reset":
     case "board.project.import-file":
     case "board.project.dismiss-import":

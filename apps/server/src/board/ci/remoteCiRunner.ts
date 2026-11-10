@@ -37,6 +37,7 @@ export function toWireCiDone(outcome: BoardCiRunResult): WireCiDone {
         _tag: "done",
         result: outcome.result,
         failedIndex: outcome.failedIndex,
+        ranAll: outcome.ranAll,
         ...(outcome.exitCode === undefined ? {} : { exitCode: outcome.exitCode }),
         ...(outcome.result === "failed" && outcome.headline !== undefined
           ? { headline: outcome.headline }
@@ -71,6 +72,8 @@ function fromWireCiDone(done: WireCiDone): BoardCiRunResult {
   return {
     result: done.result,
     failedIndex: done.failedIndex,
+    // An older worker sends no `ranAll`: it stopped at the first failure.
+    ranAll: done.ranAll === true,
     ...(done.exitCode === undefined ? {} : { exitCode: done.exitCode }),
     ...(headline === null ? {} : { headline }),
   };
@@ -115,6 +118,7 @@ export const remoteCiRunner = (
           worktreePath: request.cwd,
           steps: request.steps,
           ...(request.indexOffset === undefined ? {} : { indexOffset: request.indexOffset }),
+          ...(request.stopOnFailure === false ? { stopOnFailure: false } : {}),
         })
         .pipe(
           Stream.runForEach((progress) =>

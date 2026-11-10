@@ -21,6 +21,9 @@ import {
   effectiveBoardStageRole,
 } from "./board.ts";
 import {
+  BOARD_CI_FIX_TAIL_BUDGET,
+  boardCiFixPromptRules,
+  composeBoardCiFixPrompt,
   composeBoardReviewFollowUpPrompt,
   BOARD_AUTO_PLAN_INSTRUCTION,
   boardAutoPlanInstruction,
@@ -882,5 +885,60 @@ describe("composeBoardSyncPhasePrompt retarget wording (T3O-5, D10)", () => {
       retargetedTo: "develop",
     });
     expect(same).toBe(composeBoardSyncPhasePrompt({ round: 1, baseRefName: "develop" }));
+  });
+});
+
+describe("the CI fix prompt (T3O-57)", () => {
+  const failure = (stepName: string, tail: string) => ({
+    stepName,
+    command: `run ${stepName}`,
+    status: "failed" as const,
+    exitCode: 1,
+    tail,
+    logPath: `/wt/.t3/ci/run/${stepName}.log`,
+  });
+  const lines = (prefix: string) =>
+    Array.from({ length: 2_000 }, (_, n) => `${prefix} line ${n}`).join("\n");
+
+  it("shares a bounded tail between every failure, keeping each one's last lines", () => {
+    const prompt = composeBoardCiFixPrompt({
+      prompt: "Fix it.",
+      attempt: 1,
+      maxAttempts: 3,
+      failures: [failure("Build", lines("build")), failure("Test", lines("test"))],
+      issues: [
+        { id: "s0", stepName: "Build", title: "Build failed" },
+        { id: "s1", stepName: "Test", title: "Test failed" },
+      ],
+    });
+    expect(prompt.length).toBeLessThan(BOARD_CI_FIX_TAIL_BUDGET + 4_000);
+    expect(prompt).toContain("build line 1999");
+    expect(prompt).toContain("test line 1999");
+    expect(prompt).not.toContain("build line 0\n");
+    expect(prompt).toContain("1. [s0] Build: Build failed");
+    expect(prompt).toContain("2. [s1] Test: Test failed");
+    for (const rule of boardCiFixPromptRules(2)) expect(prompt).toContain(rule);
+  });
+
+  it("clips each issue's detail so many issues can't blow the prompt's bound", () => {
+    const prompt = composeBoardCiFixPrompt({
+      prompt: "Fix it.",
+      attempt: 1,
+      maxAttempts: 3,
+      failures: [failure("Test", "boom")],
+      issues: Array.from({ length: 30 }, (_, n) => ({
+        id: `s0.${n}`,
+        stepName: "Test",
+        title: `case ${n}`,
+        detail: `${n}:`.padEnd(4_000, "x"),
+      })),
+    });
+    expect(prompt.length).toBeLessThan(20_000);
+    expect(prompt).toContain("30. [s0.29] Test: case 29 — 29:x");
+  });
+
+  it("says earlier failures may cause later ones only when there is more than one", () => {
+    expect(boardCiFixPromptRules(1).join("\n")).not.toContain("Work through them in order");
+    expect(boardCiFixPromptRules(2).join("\n")).toContain("Work through them in order");
   });
 });

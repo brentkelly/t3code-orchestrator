@@ -1,9 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * T3O-44 — the Continuous integration stage, driven through the supervisor
+ * T3O-44/57 — the Continuous integration stage, driven through the supervisor
  * reactor with a scripted CI runner: a pass moves the card on, a failure gets
- * a fix agent or goes back to review, a restart re-runs from the top, and Skip
- * CI stops everything and moves the card. Projects without CI are unchanged.
+ * a fix agent or stops for a human, a restart re-runs from the top, Stop on
+ * failure = No runs every step, and Skip CI stops everything and moves the
+ * card. Projects without CI are unchanged.
  */
 import {
   BOARD_SEED_STAGES,
@@ -35,6 +36,7 @@ import * as Ref from "effect/Ref";
 
 import {
   BoardCiRunner,
+  type BoardCiRunRequest,
   type BoardCiRunnerShape,
   type BoardCiRunResult,
 } from "./ci/BoardCiRunner.ts";
@@ -94,24 +96,44 @@ const ciConfig = (extra: Record<string, unknown> = {}) => configFrom(ciFile(extr
 
 /** `drop` is a worker connection closing mid-run: the stream is interrupted
     under a pass nobody cancelled. */
-type Script = BoardCiRunResult | "hang" | "drop";
+type Script =
+  | Extract<BoardCiRunResult, { result: "unavailable" }>
+  | (Omit<Extract<BoardCiRunResult, { result: "passed" | "failed" }>, "ranAll"> & {
+      /** More failing steps (request indexes) when the pass runs every step. */
+      readonly alsoFailed?: ReadonlyArray<number>;
+      /** Force `ranAll`, as an older worker that sends none reads (false). */
+      readonly ranAll?: boolean;
+    })
+  | "hang"
+  | "drop";
 
 /** A runner that plays back one script per pass, reporting each step it
-    "runs" the way the real one does, and counts its calls. */
+    "runs" the way the real one does, and counts its calls. With
+    `stopOnFailure: false` it runs every step, as the real one does. */
 const scriptedRunner = (scripts: ReadonlyArray<Script>) =>
   Effect.gen(function* () {
     const calls = yield* Ref.make(0);
+    const requests = yield* Ref.make<ReadonlyArray<BoardCiRunRequest>>([]);
     const runner: BoardCiRunnerShape = {
       run: (request, emit) =>
         Effect.gen(function* () {
           const call = yield* Ref.getAndUpdate(calls, (n) => n + 1);
+          yield* Ref.update(requests, (all) => [...all, request]);
           const script = scripts[call] ?? { result: "passed", failedIndex: null };
           if (script === "hang") return yield* Effect.never;
           if (script === "drop") return yield* Effect.interrupt;
-          const last = script.failedIndex ?? request.steps.length - 1;
+          if (script.result === "unavailable") return script;
+          const runsAll = request.stopOnFailure === false && script.ranAll !== false;
+          const failing = new Set([
+            ...(script.failedIndex === null ? [] : [script.failedIndex]),
+            ...(script.alsoFailed ?? []),
+          ]);
+          const last = runsAll
+            ? request.steps.length - 1
+            : (script.failedIndex ?? request.steps.length - 1);
           for (const [index, step] of request.steps.entries()) {
             if (index > last) break;
-            const failed = index === script.failedIndex;
+            const failed = failing.has(index);
             yield* emit({
               index,
               step: {
@@ -127,10 +149,14 @@ const scriptedRunner = (scripts: ReadonlyArray<Script>) =>
               },
             });
           }
-          return script;
+          const { alsoFailed: _alsoFailed, ...result } = script;
+          return {
+            ...result,
+            ranAll: script.ranAll ?? (runsAll || last === request.steps.length - 1),
+          };
         }),
     };
-    return { runner, calls: Ref.get(calls) };
+    return { runner, calls: Ref.get(calls), requests: Ref.get(requests) };
   });
 
 const card = (id: string, stage: string, extra: Partial<BoardCard> = {}): BoardCard => ({
@@ -314,7 +340,7 @@ it.effect("T3O-61: a code failure's fix agent is told what failed and why first"
 
 it.effect("a failure gets a fix agent; its fix re-runs every step from the top", () =>
   Effect.gen(function* () {
-    const { runner, calls } = yield* scriptedRunner([
+    const { runner, calls, requests } = yield* scriptedRunner([
       { result: "failed", failedIndex: 1 },
       { result: "passed", failedIndex: null },
     ]);
@@ -335,7 +361,11 @@ it.effect("a failure gets a fix agent; its fix re-runs every step from the top",
         assert.isDefined(select);
         if (select?.type !== "board.card.select-step") return;
         assert.strictEqual(select.stepId, fixStep);
-        assert.strictEqual(select.stepLabel, "CI fix 1 of 2");
+        assert.strictEqual(select.stepLabel, "CI fix 1 of 3");
+        assert.strictEqual(fixing.ci?.fixIssues, 1);
+        // Stop on failure is Yes by default: the runner is told nothing.
+        assert.isUndefined((yield* requests)[0]?.stopOnFailure);
+        assert.isUndefined(fixing.ci?.continueOnFailure);
         assert.strictEqual(select.mode, "build");
         assert.isFalse(select.humanInLoop);
         assert.include(select.prompt, 'CI step "Test" failed');
@@ -354,72 +384,62 @@ it.effect("a failure gets a fix agent; its fix re-runs every step from the top",
   }),
 );
 
-it.effect("a fix agent's return-to-review sends the card back for a fresh round", () =>
+it.effect("a fix agent's cannot-fix stops the card for a human, never back to review", () =>
   Effect.gen(function* () {
     const { runner } = yield* scriptedRunner([{ result: "failed", failedIndex: 0 }]);
     const subject = card("back", review);
     yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
       Effect.gen(function* () {
         yield* enterCiAndRun(h, subject, 1);
+        const runId = (yield* live(h, subject.id)).ci!.runId;
         yield* h.pumpDomain(
           fixCompleted(
             subject.id,
             boardCiFixStepId(1, 1),
-            { verdict: "return-to-review", finding: "The migration is wrong." },
+            {
+              verdict: "cannot-fix",
+              finding: "The migration needs a database this worktree doesn't have.",
+              issues: [{ id: "s0", status: "cannot-fix" }],
+            },
             2,
           ),
         );
-        const sent = yield* live(h, subject.id);
-        assert.strictEqual(sent.stage, review);
-        assert.isNull(sent.ci);
-        assert.deepStrictEqual(sent.ciLastOutcome, {
-          kind: "sent-back",
-          stepName: "Lint",
-          fixAttemptsUsed: 1,
-          finding: "The migration is wrong.",
-          round: 1,
-        });
-        // A fresh round: the review-overrides path floors the budget at it.
-        assert.strictEqual(sent.reviewOverrides?.runThroughRound, 1);
+        const stopped = yield* live(h, subject.id);
+        assert.strictEqual(stopped.stage, ci);
+        assert.strictEqual(stopped.ci?.phase, "stopped");
+        assert.strictEqual(
+          stopped.ci?.stopReason,
+          "The fix agent couldn't fix Lint: The migration needs a database this worktree doesn't have.",
+        );
+        assert.isNull(stopped.ciLastOutcome);
+        const stop = ciRecords(yield* h.decided).at(-1)!;
+        assert.strictEqual(stop.payload.activity?.kind, "card-ci-stopped");
+        const settledStop = stop.payload.settled.find((entry) => entry.runId === runId);
+        assert.strictEqual(settledStop?.outcome, "stopped");
+        assert.isDefined(settledStop?.fixThreadId);
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
-
-it.effect("with no fixes left, a failure goes straight back to review and buys a round", () =>
+it.effect("with no fixes allowed, a failure stops for a human and runs no agent", () =>
   Effect.gen(function* () {
     const { runner } = yield* scriptedRunner([{ result: "failed", failedIndex: 1 }]);
     const subject = card("capped", review);
-    const board = {
-      ...boardWith([subject], ciConfig({ maxFixAttempts: 0 })),
-      // Three review rounds already run: the card's budget is used up.
-      stepCompletions: [1, 2, 3].map((round) => ({
-        cardId: subject.id,
-        stepId: `adjudicate@${round}`,
-        outcome: "succeeded" as const,
-        summary: "",
-        payload: null,
-        threadId: null,
-        completedAt: NOW,
-      })),
-    };
+    const board = boardWith([subject], ciConfig({ maxFixAttempts: 0 }));
     yield* withGovernor({ board, settings }, (h) =>
       Effect.gen(function* () {
         yield* enterCiAndRun(h, subject, 1);
-        const sent = yield* live(h, subject.id);
-        assert.strictEqual(sent.stage, review);
-        assert.strictEqual(sent.ciLastOutcome?.kind, "sent-back");
-        assert.strictEqual(sent.ciLastOutcome?.fixAttemptsUsed, 0);
-        assert.include(sent.ciLastOutcome?.finding ?? "", 'CI step "Test"');
-        assert.strictEqual(sent.reviewOverrides?.runThroughRound, 4);
-        assert.strictEqual(sent.ciLastOutcome?.round, 4);
+        const stopped = yield* live(h, subject.id);
+        assert.strictEqual(stopped.stage, ci);
+        assert.strictEqual(stopped.ci?.phase, "stopped");
+        assert.strictEqual(stopped.ci?.stopReason, "CI failed: Test.");
+        assert.isNull(stopped.ciLastOutcome);
         const spawned = (yield* h.commands).filter((command) => command.type === "thread.spawn");
         assert.lengthOf(spawned, 0);
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
-
 it.effect("the board's own advance carries a card into CI", () =>
   Effect.gen(function* () {
     // A project stage between review and CI that auto-advances: finishing it
@@ -751,63 +771,73 @@ it.effect("switching CI off moves the project's cards on from CI, auto-merge dis
   }),
 );
 
-it.effect("a send-back counts a round trip, and at the limit CI stops for a human", () =>
+it.effect("after the last fix attempt the card stops in CI, and Retry CI starts afresh", () =>
   Effect.gen(function* () {
     const { runner } = yield* scriptedRunner([
       { result: "failed", failedIndex: 1 },
       { result: "failed", failedIndex: 1 },
       { result: "passed", failedIndex: null },
     ]);
-    const below = card("below", review);
-    const atLimit = { ...card("limit", review), ciRoundTrips: 1 };
-    const board = boardWith([below, atLimit], ciConfig({ maxFixAttempts: 0, maxRoundTrips: 1 }));
-    yield* withGovernor({ board, settings }, (h) =>
-      Effect.gen(function* () {
-        yield* enterCiAndRun(h, below, 1);
-        const sent = yield* live(h, below.id);
-        assert.strictEqual(sent.stage, review);
-        assert.strictEqual(sent.ciRoundTrips, 1);
-
-        yield* enterCiAndRun(h, atLimit, 2);
-        const stopped = yield* live(h, atLimit.id);
-        assert.strictEqual(stopped.stage, ci);
-        assert.strictEqual(stopped.ci?.phase, "stopped");
-        assert.include(stopped.ci?.stopReason ?? "", "after 1 round trip");
-        assert.strictEqual(
-          ciRecords(yield* h.decided).at(-1)?.payload.activity?.kind,
-          "card-ci-stopped",
-        );
-
-        // Retry CI starts afresh (no round trips), and this time it passes.
-        assert.deepStrictEqual(yield* h.reactor.retryCi(atLimit.id), { outcome: "retried" });
-        yield* h.reactor.drainCi;
-        const retried = yield* live(h, atLimit.id);
-        assert.strictEqual(retried.ciRoundTrips, 0);
-        assert.strictEqual(retried.stage, merge);
-      }),
-    ).pipe(Effect.provideService(BoardCiRunner, runner));
-  }),
-);
-
-it.effect("send back to review anyway starts the round trips again", () =>
-  Effect.gen(function* () {
-    const { runner } = yield* scriptedRunner([{ result: "failed", failedIndex: 1 }]);
-    const subject = { ...card("anyway", review), ciRoundTrips: 2 };
-    const board = boardWith([subject], ciConfig({ maxFixAttempts: 0, maxRoundTrips: 2 }));
+    const subject = card("limit", review);
+    const board = boardWith([subject], ciConfig({ maxFixAttempts: 1 }));
     yield* withGovernor({ board, settings }, (h) =>
       Effect.gen(function* () {
         yield* enterCiAndRun(h, subject, 1);
-        assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "stopped");
-        assert.deepStrictEqual(yield* h.reactor.ciSendBack(subject.id), { outcome: "sent-back" });
-        const sent = yield* live(h, subject.id);
-        assert.strictEqual(sent.stage, review);
-        assert.strictEqual(sent.ciRoundTrips, 0);
-        assert.strictEqual(sent.ciLastOutcome?.kind, "sent-back");
+        assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "fixing");
+        yield* h.pumpDomain(
+          fixCompleted(subject.id, boardCiFixStepId(1, 1), { verdict: "fixed", finding: "" }, 2),
+        );
+        yield* h.reactor.drainCi;
+        const stopped = yield* live(h, subject.id);
+        assert.strictEqual(stopped.stage, ci);
+        assert.strictEqual(stopped.ci?.phase, "stopped");
+        assert.strictEqual(stopped.ci?.stopReason, "CI still failing after 1 fix: Test.");
+        const sentBack = ciRecords(yield* h.decided).filter(
+          (record) => record.payload.action.kind === "send-back",
+        );
+        assert.lengthOf(sentBack, 0);
+
+        // Retry CI starts afresh, with new fix attempts, and this time it passes.
+        assert.deepStrictEqual(yield* h.reactor.retryCi(subject.id), { outcome: "retried" });
+        yield* h.reactor.drainCi;
+        assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
-
+it.effect(
+  "send back to review anyway names every failed step and starts the round trips again",
+  () =>
+    Effect.gen(function* () {
+      const { runner } = yield* scriptedRunner([
+        { result: "failed", failedIndex: 0, alsoFailed: [1] },
+      ]);
+      const subject = { ...card("anyway", review), ciRoundTrips: 2 };
+      const board = boardWith(
+        [subject],
+        withBoardProjectConfigVersion({
+          ...ciConfig({ maxFixAttempts: 0 }),
+          ci: { ...ciConfig().ci, stopOnFailure: false },
+        }),
+      );
+      yield* withGovernor({ board, settings }, (h) =>
+        Effect.gen(function* () {
+          yield* enterCiAndRun(h, subject, 1);
+          const stopped = yield* live(h, subject.id);
+          assert.strictEqual(stopped.ci?.phase, "stopped");
+          assert.strictEqual(stopped.ci?.stopReason, "CI failed: Lint, Test.");
+          assert.deepStrictEqual(yield* h.reactor.ciSendBack(subject.id), { outcome: "sent-back" });
+          const sent = yield* live(h, subject.id);
+          assert.strictEqual(sent.stage, review);
+          assert.strictEqual(sent.ciRoundTrips, 0);
+          assert.strictEqual(sent.ciLastOutcome?.kind, "sent-back");
+          const finding = sent.ciLastOutcome?.finding ?? "";
+          assert.isTrue(finding.startsWith("CI failed at Lint, Test."));
+          assert.include(finding, 'CI step "Test" (`vp test`) exited with code 1.');
+        }),
+      ).pipe(Effect.provideService(BoardCiRunner, runner));
+    }),
+);
 const mixedConfig = (steps: ReadonlyArray<BoardCiStep>) =>
   withBoardProjectConfigVersion({
     ...ciConfig(),
@@ -951,6 +981,56 @@ it.effect("a failed agent verdict is the pass's failure: a fix agent gets it", (
   }),
 );
 
+it.effect("with the pass record unreadable, the fix's issues still name the step that failed", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const subject = card("agent-lost", review);
+    const agentStep: BoardCiStep = {
+      kind: "agent",
+      id: "audit",
+      name: "Audit",
+      parallel: false,
+      prompt: "Audit it.",
+      model: null,
+      timeoutMinutes: 30,
+    };
+    const board = boardWith([subject], mixedConfig([SCRIPT_A, agentStep]));
+    yield* withGovernor({ board, settings, ciPassesUnreadable: true }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, subject, 1);
+        const stepId = boardCiAgentStepId((yield* live(h, subject.id)).ci!.runId, 1);
+        yield* h.pumpDomain(
+          fixCompleted(
+            subject.id,
+            stepId,
+            { verdict: "failed", summary: "Bad", failures: [{ title: "Irreversible" }] },
+            2,
+          ),
+        );
+        const fix = (yield* h.commands).find(
+          (command) =>
+            command.type === "board.card.select-step" &&
+            (command as { stepId: string }).stepId.startsWith("ci-fix@"),
+        ) as { prompt: string; stepId: string } | undefined;
+        assert.isDefined(fix);
+        assert.include(fix!.prompt, "[s1-1] Audit: Irreversible");
+        yield* h.pumpDomain(
+          fixCompleted(
+            subject.id,
+            fix!.stepId,
+            { verdict: "cannot-fix", issues: [{ id: "s1-1", status: "cannot-fix" }] },
+            3,
+          ),
+        );
+        assert.strictEqual(
+          (yield* live(h, subject.id)).ci?.stopReason,
+          "The fix agent couldn't fix Audit.",
+        );
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
 const FORGE: BoardCiStep = {
   kind: "forge-checks",
   id: "gh",
@@ -1038,7 +1118,7 @@ it.effect("a failing forge check (matched by its filter) fails the pass", () =>
           [failing],
           withBoardProjectConfigVersion({
             ...mixedConfig([SCRIPT_A, { ...FORGE, only: ["ci/*"] }]),
-            overrides: { ci: { maxFixAttempts: 0, maxRoundTrips: 3 } },
+            overrides: { ci: { maxFixAttempts: 0 } },
           }),
         ),
         settings,
@@ -1048,9 +1128,11 @@ it.effect("a failing forge check (matched by its filter) fails the pass", () =>
       (h) =>
         Effect.gen(function* () {
           yield* enterCiAndRun(h, failing, 1);
-          const sent = yield* live(h, failing.id);
-          assert.strictEqual(sent.stage, review);
-          assert.include(sent.ciLastOutcome?.finding ?? "", "ci/e2e");
+          const stopped = yield* live(h, failing.id);
+          assert.strictEqual(stopped.stage, ci);
+          assert.strictEqual(stopped.ci?.phase, "stopped");
+          assert.strictEqual(stopped.ci?.stopReason, "CI failed: GitHub checks.");
+          assert.strictEqual(stopped.ci?.steps[1]?.status, "failed");
         }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
@@ -1073,6 +1155,130 @@ it.effect("a forge-checks step with no pull request holds the card for a human",
             outcome: "not-stopped",
           });
         }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+const noStopConfig = (steps: ReadonlyArray<BoardCiStep>) =>
+  withBoardProjectConfigVersion({ ...ciConfig(), ci: { steps, stopOnFailure: false } });
+
+it.effect(
+  "Stop on failure No: script, agent and script all run after failures, then one fix gets every issue",
+  () =>
+    Effect.gen(function* () {
+      const { runner, calls, requests } = yield* scriptedRunner([
+        { result: "failed", failedIndex: 0 },
+        { result: "passed", failedIndex: null },
+      ]);
+      const subject = card("no-stop", review);
+      const agentStep: BoardCiStep = {
+        kind: "agent",
+        id: "audit",
+        name: "Audit",
+        parallel: false,
+        prompt: "Audit it.",
+        model: null,
+        timeoutMinutes: 30,
+      };
+      const board = boardWith([subject], noStopConfig([SCRIPT_A, agentStep, SCRIPT_B]));
+      yield* withGovernor({ board, settings }, (h) =>
+        Effect.gen(function* () {
+          yield* enterCiAndRun(h, subject, 1);
+          assert.strictEqual((yield* requests)[0]?.stopOnFailure, false);
+          const running = yield* live(h, subject.id);
+          assert.isTrue(running.ci?.continueOnFailure);
+          assert.strictEqual(running.ci?.phase, "running");
+          assert.deepStrictEqual(
+            running.ci?.steps.map((step) => step.status),
+            ["failed", "running", "pending"],
+          );
+          // A flip mid-pass applies from the next pass, not this one.
+          yield* Ref.update(h.model, (model) => ({
+            ...model,
+            board: {
+              ...model.board!,
+              projectStageConfigs: {
+                ...model.board!.projectStageConfigs,
+                [projectId]: withBoardProjectConfigVersion({
+                  ...ciConfig(),
+                  ci: { steps: [SCRIPT_A, agentStep, SCRIPT_B] },
+                }),
+              },
+            },
+          }));
+          yield* h.pumpDomain(
+            fixCompleted(
+              subject.id,
+              boardCiAgentStepId(running.ci!.runId, 1),
+              {
+                verdict: "failed",
+                summary: "One migration drops a column",
+                failures: [{ title: "Irreversible", file: "db/007.sql", line: 3 }],
+              },
+              2,
+            ),
+          );
+          yield* h.reactor.drainCi;
+          assert.strictEqual(yield* calls, 2);
+          const fixing = yield* live(h, subject.id);
+          assert.deepStrictEqual(
+            fixing.ci?.steps.map((step) => step.status),
+            ["failed", "failed", "passed"],
+          );
+          assert.strictEqual(fixing.ci?.phase, "fixing");
+          assert.strictEqual(fixing.ci?.fixIssues, 2);
+          const passed = ciRecords(yield* h.decided).some(
+            (record) =>
+              record.payload.action.kind === "finish-pass" &&
+              record.payload.action.result === "passed",
+          );
+          assert.isFalse(passed);
+          const fixes = (yield* h.commands).filter(
+            (command) =>
+              command.type === "board.card.select-step" &&
+              (command as { stepId: string }).stepId.startsWith("ci-fix@"),
+          ) as unknown as ReadonlyArray<{ prompt: string }>;
+          assert.lengthOf(fixes, 1);
+          assert.include(fixes[0]!.prompt, '2 CI steps failed: "Lint", "Audit".');
+          assert.include(fixes[0]!.prompt, "[s0] Lint: Lint failed");
+          assert.include(fixes[0]!.prompt, "[s1-1] Audit: Irreversible (db/007.sql:3)");
+        }),
+      ).pipe(Effect.provideService(BoardCiRunner, runner));
+    }),
+);
+
+it.effect("Stop on failure No, from an older worker that stopped early: the pass fails there", () =>
+  Effect.gen(function* () {
+    const { runner, calls } = yield* scriptedRunner([
+      { result: "failed", failedIndex: 0, ranAll: false },
+    ]);
+    const subject = card("old-worker", review);
+    const board = boardWith([subject], noStopConfig(mixedConfig([SCRIPT_A, SCRIPT_B]).ci.steps));
+    yield* withGovernor({ board, settings }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, subject, 1);
+        assert.strictEqual(yield* calls, 1);
+        const fixing = yield* live(h, subject.id);
+        assert.strictEqual(fixing.ci?.phase, "fixing");
+        assert.deepStrictEqual(
+          fixing.ci?.steps.map((step) => step.status),
+          ["failed", "pending"],
+        );
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("a pass whose record can't be read is held, never passed", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const subject = card("lost", review);
+    yield* withGovernor({ board: boardWith([subject]), settings, ciPassesUnreadable: true }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, subject, 1);
+        assert.strictEqual(cardStage(yield* h.board, subject.id), ci);
+        assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "held");
+      }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );

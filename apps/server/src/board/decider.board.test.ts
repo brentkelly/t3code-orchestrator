@@ -2974,6 +2974,14 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           actor: BOARD_SYSTEM_ACTOR,
           createdAt: NOW,
         },
+        "board.project.set-ci-stop-on-failure": {
+          type: "board.project.set-ci-stop-on-failure",
+          commandId: CommandId.make("cmd-project-ci-stop-on-failure"),
+          projectId: ProjectId.make("project-1"),
+          stopOnFailure: false,
+          actor: BOARD_SYSTEM_ACTOR,
+          createdAt: NOW,
+        },
         "board.project.reset": {
           type: "board.project.reset",
           commandId: CommandId.make("cmd-project-reset"),

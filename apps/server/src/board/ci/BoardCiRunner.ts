@@ -4,8 +4,10 @@
  *
  * Each step is a shell command run with the worktree as its cwd, stdout and
  * stderr merged into one log. Steps run in groups (a step marked `parallel`
- * joins the one before it); groups run in order, and a failure stops later
- * groups once its own group finishes. The exit code alone decides a step; a
+ * joins the one before it); groups run in order. With stop on failure (the
+ * default) a failure stops later groups once its own group finishes; without
+ * it every group runs and the pass fails at the end (T3O-57). The exit code
+ * alone decides a step; a
  * result file at `$T3O_CI_RESULT` adds detail. A group that leaves tracked
  * changes in the worktree fails. Every step change is reported through
  * `emit`, with the last `BOARD_CI_TAIL_LINES` lines of output; the full log
@@ -59,6 +61,8 @@ export interface BoardCiRunRequest {
   /** The pass index of `steps[0]`, so a later segment's logs don't overwrite
       an earlier one's (T3O-49). */
   readonly indexOffset?: number;
+  /** False runs every group even after a failure (T3O-57). Absent is true. */
+  readonly stopOnFailure?: boolean;
   /** Each complete output line of a step, by its pass index (T3O-59), in
       order, delivered before the step settles. */
   readonly onLine?: (index: number, line: BoardCiLine) => Effect.Effect<void>;
@@ -72,8 +76,11 @@ export interface BoardCiStepProgress {
 export type BoardCiRunResult =
   | {
       readonly result: "passed" | "failed";
-      /** The step that failed or timed out, or null on a pass. */
+      /** The step that failed or timed out (the first, unless a later one is a
+          machine problem), or null on a pass. */
       readonly failedIndex: number | null;
+      /** Every step of the request ran, rather than stopping at a failure. */
+      readonly ranAll: boolean;
       /** The failed step's exit code (T3O-59), so a result that can't be
           saved can still say how the script ended. */
       readonly exitCode?: number | null;
@@ -566,7 +573,13 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
       kind: "script" as const,
       parallel: definition.parallel === true,
     }));
-    for (const group of boardCiStepGroups(indexed)) {
+    const groups = boardCiStepGroups(indexed);
+    let firstFailed: {
+      readonly failedIndex: number;
+      readonly exitCode: number | null;
+      readonly headline?: BoardCiHeadline;
+    } | null = null;
+    for (const [groupIndex, group] of groups.entries()) {
       // What was already changed is not this group's doing.
       const before = changedSnapshot(request.cwd, yield* trackedChanges(request.cwd));
       const settled = yield* Effect.forEach(
@@ -691,16 +704,30 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
           failedHeadline = headline ?? undefined;
         }
       }
-      if (failedIndex !== null) {
-        return {
-          result: "failed",
+      // A later group's failure only takes over the pass's for a machine
+      // problem, by the same rule as within a group.
+      if (
+        failedIndex !== null &&
+        (firstFailed === null ||
+          (firstFailed.headline?.machine !== true && failedHeadline?.machine === true))
+      ) {
+        firstFailed = {
           failedIndex,
           exitCode,
           ...(failedHeadline === undefined ? {} : { headline: failedHeadline }),
+        };
+      }
+      if (firstFailed !== null && request.stopOnFailure !== false) {
+        return {
+          result: "failed",
+          ...firstFailed,
+          ranAll: groupIndex === groups.length - 1,
         } as const;
       }
     }
-    return { result: "passed", failedIndex: null } as const;
+    return firstFailed === null
+      ? ({ result: "passed", failedIndex: null, ranAll: true } as const)
+      : ({ result: "failed", ...firstFailed, ranAll: true } as const);
   },
 );
 

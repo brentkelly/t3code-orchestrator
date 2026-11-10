@@ -1,5 +1,7 @@
 import {
   BOARD_CI_STOPPED_BY_YOU_REASON,
+  boardCiFixStepId,
+  ThreadId,
   type BoardCardCi,
   type BoardCardCiStep,
   type BoardCiPass,
@@ -9,10 +11,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardCiFace,
+  boardCiFixRow,
   boardCiLastOutcomeFace,
   boardCiPaneHeadline,
   boardCiPaneStatus,
   boardCiPassOutcomeChip,
+  boardCiPassSummary,
   boardCiSegments,
   boardCiSentBackBanner,
   boardCiLogFileName,
@@ -114,19 +118,46 @@ describe("boardCiFace", () => {
     );
     expect(face.chip).toEqual({ label: "Fixing", tone: "info" });
     expect(face.detail).toBe("Check failed · fix 1 of 2");
+    expect(face.fixSegment).toBe("fixing");
+    // T3O-57: with an issue count, the fix leads with it.
+    const counted = (fixIssues: number) =>
+      boardCiFace(ci({ phase: "fixing", fixAttempts: 1, fixIssues, steps: [] }), NOW_MS).detail;
+    expect(counted(3)).toBe("Fix 1 of 2 · 3 issues");
+    expect(counted(1)).toBe("Fix 1 of 2 · 1 issue");
+  });
+
+  it("leads with failures so far while a pass runs on, and outlines the fix to come", () => {
+    const face = boardCiFace(
+      ci({
+        steps: [
+          step("Build", "failed"),
+          step("Lint", "timed-out"),
+          step("Panel", "running", "2026-01-01T00:06:00.000Z"),
+          step("Browser", "pending"),
+        ],
+      }),
+      NOW_MS,
+    );
+    expect(face.detail).toBe("2 failed · running Panel · 4m");
+    expect(face.fixSegment).toBe("pending");
+    expect(
+      boardCiFace(ci({ steps: [step("Build", "running", "2026-01-01T00:06:00.000Z")] }), NOW_MS)
+        .fixSegment,
+    ).toBeNull();
   });
 
   it("is a violet Needs you chip when CI stopped for a human, and amber when it can't run", () => {
     const stopped = boardCiFace(
       ci({
         phase: "stopped",
-        stopReason: "CI failed at Test after 3 round trips to review.",
+        stopReason: "CI still failing after 3 fixes: Test.",
         steps: [step("Test", "failed")],
       }),
       NOW_MS,
     );
     expect(stopped.chip).toEqual({ label: "Needs you", tone: "attention" });
-    expect(stopped.detail).toBe("CI failed at Test after 3 round trips to review.");
+    expect(stopped.detail).toBe("CI still failing after 3 fixes: Test.");
+    expect(stopped.fixSegment).toBe("stopped");
     const held = boardCiFace(ci({ phase: "held", steps: [step("Test", "cancelled")] }), NOW_MS);
     expect(held.chip).toEqual({ label: "Can't run", tone: "warning" });
     expect(held.detail).toBe("CI couldn't finish this pass");
@@ -347,5 +378,115 @@ describe("boardCiPaneHeadline", () => {
       index: null,
     });
     expect(boardCiPaneHeadline({ pass: steps, ci: card, live: false })).toBeNull();
+  });
+});
+
+describe("a failed pass's fix row (T3O-57)", () => {
+  const passStep = (name: string, status: BoardCiPassStep["status"]): BoardCiPassStep => ({
+    name,
+    command: "x",
+    timeoutMinutes: 5,
+    status,
+    startedAt: null,
+    finishedAt: null,
+    exitCode: null,
+    tail: "",
+  });
+  // Ordinal 3 but fix 2: an earlier pass in the entry was held and retried.
+  const pass = {
+    runId: "run-3",
+    entry: 1,
+    ordinal: 3,
+    fixThreadId: null,
+    steps: [passStep("Build", "failed"), passStep("Lint", "passed"), passStep("Test", "failed")],
+  };
+  const fixThread = ThreadId.make("thread-fix-2");
+  const completion = (payload: unknown) => ({
+    stepId: boardCiFixStepId(1, 2),
+    payload: JSON.stringify(payload),
+    threadId: fixThread,
+  });
+
+  it("is absent on a pass with no failure", () => {
+    expect(
+      boardCiFixRow({
+        pass: { ...pass, steps: [passStep("Lint", "passed")] },
+        completions: [],
+        ci: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("matches a pass to the fix that worked on it, not to its ordinal", () => {
+    const fixing = { runId: "run-3", phase: "fixing", fixAttempts: 2, maxFixAttempts: 3 } as const;
+    const running = boardCiFixRow({ pass, completions: [], ci: fixing });
+    expect(running).toMatchObject({ state: "running", headline: "Fix 2 of 3 · 2 issues" });
+    expect(running?.issues.map((issue) => issue.status)).toEqual(["open", "open"]);
+    // Without stop on failure, the pass keeps running with its failures queued.
+    expect(
+      boardCiFixRow({ pass, completions: [], ci: { ...fixing, phase: "running" } }),
+    ).toMatchObject({
+      state: "after-pass",
+      headline: "After the pass · 2 issues",
+    });
+
+    // Fix 1 reported for an earlier pass, and fix 3 shares this pass's ordinal.
+    const other = (attempt: number) => ({
+      stepId: boardCiFixStepId(1, attempt),
+      payload: JSON.stringify({ verdict: "fixed" }),
+      threadId: ThreadId.make(`thread-fix-${attempt}`),
+    });
+    const others = [other(1), other(3)];
+    expect(boardCiFixRow({ pass, completions: others, ci: null })).toMatchObject({
+      state: "not-run",
+      headline: "Not run",
+    });
+    expect(
+      boardCiFixRow({ pass: { ...pass, fixThreadId: fixThread }, completions: others, ci: null }),
+    ).toMatchObject({ state: "not-run" });
+
+    // Reported before the re-run records the fix thread on the pass.
+    expect(
+      boardCiFixRow({
+        pass,
+        completions: [...others, completion({ verdict: "fixed" })],
+        ci: fixing,
+      }),
+    ).toMatchObject({ state: "reported", headline: "2 of 2 resolved" });
+
+    const reported = boardCiFixRow({
+      pass: { ...pass, fixThreadId: fixThread },
+      completions: [
+        completion({
+          verdict: "cannot-fix",
+          finding: "Needs a database.",
+          fixedSha: "abcdef1234",
+          issues: [
+            { id: "s0", status: "resolved" },
+            { id: "s2", status: "cannot-fix", note: "needs Postgres" },
+          ],
+        }),
+      ],
+      ci: null,
+    });
+    expect(reported).toMatchObject({
+      state: "reported",
+      headline: "1 of 2 resolved",
+      fixedSha: "abcdef1234",
+    });
+    expect(reported?.issues.map((issue) => [issue.id, issue.status, issue.note])).toEqual([
+      ["s0", "resolved", null],
+      ["s2", "cannot-fix", "needs Postgres"],
+    ]);
+  });
+
+  it("counts a pass's failures in its headline when there is more than one", () => {
+    expect(boardCiPassSummary({ outcome: null, steps: pass.steps })).toBe("2 of 3 steps failed");
+    expect(
+      boardCiPassSummary({
+        outcome: null,
+        steps: [passStep("Build", "failed"), passStep("Lint", "passed")],
+      }),
+    ).toBe("Build failed");
   });
 });

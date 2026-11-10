@@ -52,8 +52,14 @@ it.effect("reports the worker's step progress and its result", () =>
       ]),
       worker,
     ).run(request, (progress) => Effect.sync(() => seen.push(progress)));
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0 });
+    // An older worker sends no `ranAll`: it stopped at the first failure.
+    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, ranAll: false });
     assert.deepStrictEqual(seen, [{ index: 0, step }]);
+    const ranAll = yield* remoteCiRunner(
+      connected([toWireCiDone({ result: "failed", failedIndex: 0, ranAll: true })]),
+      worker,
+    ).run(request, () => Effect.void);
+    assert.deepStrictEqual(ranAll, { result: "failed", failedIndex: 0, ranAll: true });
   }),
 );
 
@@ -125,10 +131,15 @@ it.effect("a machine problem on the worker keeps its machine flag across the wir
 it.effect("a failed step's exit code crosses the wire", () =>
   Effect.gen(function* () {
     const done = yield* Schema.decodeUnknownEffect(BoardWorkerCiProgress)(
-      toWireCiDone({ result: "failed", failedIndex: 1, exitCode: 2 }),
+      toWireCiDone({ result: "failed", failedIndex: 1, exitCode: 2, ranAll: false }),
     );
     const result = yield* remoteCiRunner(connected([done]), worker).run(request, () => Effect.void);
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 1, exitCode: 2 });
+    assert.deepStrictEqual(result, {
+      result: "failed",
+      failedIndex: 1,
+      ranAll: false,
+      exitCode: 2,
+    });
   }),
 );
 
@@ -158,46 +169,50 @@ it.effect("a worker that stays connected but never finishes is stopped at its bu
   }),
 );
 
-it.effect("a later segment's parallel steps, offset and result detail cross the wire intact", () =>
-  Effect.gen(function* () {
-    const sent: BoardWorkerRunCiInput[] = [];
-    const reported = {
-      ...step,
-      parallel: true,
-      result: { summary: "1 failed", failures: [{ title: "boom", file: "a.ts", line: 3 }] },
-    };
-    const wire = {
-      get: () =>
-        Effect.succeed({
-          gateway: {
-            runCi: (input: unknown) => {
-              sent.push(Schema.decodeUnknownSync(BoardWorkerRunCiInput)(input));
-              return Stream.fromIterable(
-                [
-                  { _tag: "step", index: 0, step: reported },
-                  { _tag: "done", result: "failed", failedIndex: 0 },
-                ].map((progress) => Schema.decodeUnknownSync(BoardWorkerCiProgress)(progress)),
-              );
+it.effect(
+  "a later segment's parallel steps, offset, stop-on-failure and result detail cross the wire intact",
+  () =>
+    Effect.gen(function* () {
+      const sent: BoardWorkerRunCiInput[] = [];
+      const reported = {
+        ...step,
+        parallel: true,
+        result: { summary: "1 failed", failures: [{ title: "boom", file: "a.ts", line: 3 }] },
+      };
+      const wire = {
+        get: () =>
+          Effect.succeed({
+            gateway: {
+              runCi: (input: unknown) => {
+                sent.push(Schema.decodeUnknownSync(BoardWorkerRunCiInput)(input));
+                return Stream.fromIterable(
+                  [
+                    { _tag: "step", index: 0, step: reported },
+                    { _tag: "done", result: "failed", failedIndex: 0 },
+                  ].map((progress) => Schema.decodeUnknownSync(BoardWorkerCiProgress)(progress)),
+                );
+              },
             },
-          },
-        } as unknown as WorkerRpc),
-    } satisfies Pick<WorkerConnectionsShape, "get">;
-    const seen: BoardCiStepProgress[] = [];
-    yield* remoteCiRunner(wire, worker).run(
-      {
-        ...request,
-        steps: [
-          { name: "Lint", command: "vp lint", timeoutMinutes: 5 },
-          { name: "Test", command: "vp test", timeoutMinutes: 5, parallel: true },
-        ],
-        indexOffset: 2,
-      },
-      (progress) => Effect.sync(() => seen.push(progress)),
-    );
-    assert.strictEqual(sent[0]?.indexOffset, 2);
-    assert.strictEqual(sent[0]?.steps[1]?.parallel, true);
-    assert.deepStrictEqual(seen, [{ index: 0, step: reported }]);
-  }),
+          } as unknown as WorkerRpc),
+      } satisfies Pick<WorkerConnectionsShape, "get">;
+      const seen: BoardCiStepProgress[] = [];
+      yield* remoteCiRunner(wire, worker).run(
+        {
+          ...request,
+          steps: [
+            { name: "Lint", command: "vp lint", timeoutMinutes: 5 },
+            { name: "Test", command: "vp test", timeoutMinutes: 5, parallel: true },
+          ],
+          indexOffset: 2,
+          stopOnFailure: false,
+        },
+        (progress) => Effect.sync(() => seen.push(progress)),
+      );
+      assert.strictEqual(sent[0]?.indexOffset, 2);
+      assert.strictEqual(sent[0]?.stopOnFailure, false);
+      assert.strictEqual(sent[0]?.steps[1]?.parallel, true);
+      assert.deepStrictEqual(seen, [{ index: 0, step: reported }]);
+    }),
 );
 
 it.effect("a worker's headline is clamped here, so a long reason can't break the stream", () =>
@@ -214,7 +229,7 @@ it.effect("a worker's headline is clamped here, so a long reason can't break the
     const wire = yield* Schema.decodeUnknownEffect(Schema.Array(BoardWorkerCiProgress))([
       { _tag: "step", index: 0, step: { ...step, headline: loose } },
       {
-        ...toWireCiDone({ result: "failed", failedIndex: 0, exitCode: 1 }),
+        ...toWireCiDone({ result: "failed", failedIndex: 0, exitCode: 1, ranAll: true }),
         headline: loose,
       },
     ]);
@@ -246,8 +261,20 @@ it.effect("a failed result's headline crosses the wire", () =>
       logOffset: 40,
       source: "failure-line" as const,
     };
-    const wire = toWireCiDone({ result: "failed", failedIndex: 0, exitCode: 1, headline });
+    const wire = toWireCiDone({
+      result: "failed",
+      failedIndex: 0,
+      ranAll: true,
+      exitCode: 1,
+      headline,
+    });
     const result = yield* remoteCiRunner(connected([wire]), worker).run(request, () => Effect.void);
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, exitCode: 1, headline });
+    assert.deepStrictEqual(result, {
+      result: "failed",
+      failedIndex: 0,
+      ranAll: true,
+      exitCode: 1,
+      headline,
+    });
   }),
 );

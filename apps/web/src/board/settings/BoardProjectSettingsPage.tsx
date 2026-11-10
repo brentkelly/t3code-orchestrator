@@ -136,7 +136,10 @@ function ProjectHeader(props: {
   const differences = boardProjectConfigDifferenceCount({
     stageSwitches: props.config.stageSwitches,
     overrides: props.config.overrides,
-    ci: { steps: props.config.ciSteps as never },
+    ci: {
+      steps: props.config.ciSteps as never,
+      ...(props.config.ciStopOnFailure === false ? { stopOnFailure: false } : {}),
+    },
   });
   const onReset = () => {
     setConfirming(false);

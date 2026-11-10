@@ -795,15 +795,13 @@ export function composeBoardCiAgentStepPrompt(input: {
   readonly pass: number;
   readonly fixAttempt: number;
   readonly maxFixAttempts: number;
-  readonly roundTrip: number;
-  readonly maxRoundTrips: number;
   readonly earlier: ReadonlyArray<{ readonly name: string; readonly status: string }>;
   readonly remaining: ReadonlyArray<string>;
   readonly prompt: string;
 }): string {
   const where = [
     `Card ${input.cardKey} · ${input.cardTitle}`,
-    `CI step "${input.stepName}" · pass ${input.pass} · fix ${input.fixAttempt} of ${input.maxFixAttempts} · round trip ${input.roundTrip} of ${input.maxRoundTrips}`,
+    `CI step "${input.stepName}" · pass ${input.pass} · fix ${input.fixAttempt} of ${input.maxFixAttempts}`,
     ...(input.branch === null
       ? []
       : [
@@ -833,71 +831,129 @@ export function composeBoardCiAgentStepPrompt(input: {
   ].join("\n");
 }
 
+/** A failed CI step, as the fix agent sees it (T3O-44/57). */
+export interface BoardCiFixFailure {
+  readonly stepName: string;
+  readonly command: string;
+  readonly status: "failed" | "timed-out";
+  readonly exitCode: number | null;
+  readonly tail: string;
+  readonly logPath: string | null;
+  /** What the step reported in its result file (T3O-49). */
+  readonly result?: {
+    readonly summary: string | null;
+    readonly failures: ReadonlyArray<unknown>;
+  } | null;
+  /** What failed and why, as the runner read it (T3O-61). */
+  readonly headline?: {
+    readonly what: string;
+    readonly why: string;
+    readonly logLine: number | null;
+  } | null;
+}
+
+/** The output tail allowance shared by every failure in one fix prompt. */
+export const BOARD_CI_FIX_TAIL_BUDGET = 16_000;
+
+/** Each issue's detail line in a fix prompt; the step's log has the rest. */
+const BOARD_CI_FIX_ISSUE_DETAIL_MAX = 400;
+
+const clipIssueDetail = (detail: string) =>
+  detail.length <= BOARD_CI_FIX_ISSUE_DETAIL_MAX
+    ? detail
+    : `${detail.slice(0, BOARD_CI_FIX_ISSUE_DETAIL_MAX - 1)}…`;
+
+/** The last lines of `tail` that fit in `budget` characters. */
+function lastLinesWithin(tail: string, budget: number): string {
+  if (tail.length <= budget) return tail;
+  const cut = tail.slice(-budget);
+  const lineStart = cut.indexOf("\n");
+  return lineStart === -1 ? cut : cut.slice(lineStart + 1);
+}
+
 /**
- * The CI fix agent's step body (T3O-44): the stage's fix prompt, the failure
- * it is looking at, and the completion contract. The board runs the steps; the
- * agent only fixes, so it is told what failed rather than asked to find out.
+ * The board-owned lines that close every CI fix prompt (T3O-57): guard rails
+ * and the completion contract. Not editable; Settings shows them after the
+ * project's fix prompt.
+ */
+export function boardCiFixPromptRules(failureCount: number): ReadonlyArray<string> {
+  return [
+    ...(failureCount > 1
+      ? ["Later failures may be caused by earlier ones. Work through them in order."]
+      : []),
+    "Updating a test that this card's change made out of date is fine. Never delete, skip or loosen a check to hide a real failure.",
+    "If a failure also happens on the base branch, still fix it, but keep that fix minimal and in its own commit.",
+    "",
+    `Do not run the CI steps yourself to finish: the board re-runs every step from the top after you report. Complete with outcome "succeeded" and a payload shaped ${BOARD_CI_FIX_PAYLOAD_SHAPE}, giving every issue by its id. Use "fixed" once your fixes are committed and pushed (give \`fixedSha\`), or with nothing to commit when a failure looks transient and a re-run should clear it. Use "cannot-fix", with a \`finding\` saying why, when any issue can't be fixed from this worktree, or only by hiding it: still fix and push the others, and mark each issue "resolved" or "cannot-fix".`,
+  ];
+}
+
+/**
+ * The CI fix agent's step body (T3O-44/57): the stage's fix prompt, every
+ * issue the failed pass reported as a numbered list, each failed step's
+ * output, the board's guard rails and the completion contract. The board
+ * runs the steps; the agent only fixes, so it is told what failed rather
+ * than asked to find out.
  */
 export function composeBoardCiFixPrompt(input: {
   readonly prompt: string;
   readonly attempt: number;
   readonly maxAttempts: number;
-  readonly failure: {
+  /** Every failed step of the pass, in step order; at least one. */
+  readonly failures: ReadonlyArray<BoardCiFixFailure>;
+  readonly issues: ReadonlyArray<{
+    readonly id: string;
     readonly stepName: string;
-    readonly command: string;
-    readonly status: "failed" | "timed-out";
-    readonly exitCode: number | null;
-    readonly tail: string;
-    readonly logPath: string | null;
-    /** What the step reported in its result file (T3O-49). */
-    readonly result?: {
-      readonly summary: string | null;
-      readonly failures: ReadonlyArray<{
-        readonly title: string;
-        readonly detail?: string;
-        readonly file?: string;
-        readonly line?: number;
-      }>;
-    } | null;
-    /** What failed and why, as the runner read it (T3O-61). */
-    readonly headline?: {
-      readonly what: string;
-      readonly why: string;
-      readonly logLine: number | null;
-    } | null;
-  };
+    readonly title: string;
+    readonly file?: string;
+    readonly line?: number;
+    readonly detail?: string;
+  }>;
 }): string {
-  const { failure } = input;
-  const reported = failure.result ?? null;
-  const ended =
-    failure.status === "timed-out"
-      ? "timed out and was killed"
-      : `exited with code ${failure.exitCode ?? "unknown"}`;
+  const { failures, issues } = input;
+  const tailBudget = Math.floor(BOARD_CI_FIX_TAIL_BUDGET / Math.max(1, failures.length));
+  const where = (issue: { readonly file?: string; readonly line?: number }) =>
+    issue.file === undefined
+      ? ""
+      : ` (${issue.file}${issue.line === undefined ? "" : `:${issue.line}`})`;
+  const failedSteps =
+    failures.length === 1
+      ? `CI step "${failures[0]!.stepName}" failed.`
+      : `${failures.length} CI steps failed: ${failures.map((failure) => `"${failure.stepName}"`).join(", ")}.`;
+  const blocks = failures.flatMap((failure) => {
+    const ended =
+      failure.status === "timed-out"
+        ? "timed out and was killed"
+        : `exited with code ${failure.exitCode ?? "unknown"}`;
+    const tail = lastLinesWithin(failure.tail, tailBudget);
+    const summary = failure.result?.summary ?? null;
+    return [
+      "",
+      `## ${failure.stepName}`,
+      ...(failure.headline == null
+        ? []
+        : [`What failed: ${boardCiHeadlineLead(failure.headline)}`]),
+      `\`${failure.command}\` ${ended}.`,
+      ...(failure.logPath === null ? [] : [`The full log is at \`${failure.logPath}\`.`]),
+      ...(summary === null ? [] : [`The step reported: ${summary}`]),
+      "The last lines of its output:",
+      "```",
+      tail.length > 0 ? tail : "(no output)",
+      "```",
+    ];
+  });
   return [
     input.prompt,
     "",
-    ...(failure.headline == null ? [] : [`What failed: ${boardCiHeadlineLead(failure.headline)}`]),
-    `CI step "${failure.stepName}" failed: \`${failure.command}\` ${ended}. This is fix attempt ${input.attempt} of ${input.maxAttempts}.`,
-    ...(failure.logPath === null ? [] : [`The full log is at \`${failure.logPath}\`.`]),
-    ...(reported === null
-      ? []
-      : [
-          ...(reported.summary === null ? [] : [`The step reported: ${reported.summary}`]),
-          ...(reported.failures.length === 0
-            ? []
-            : [
-                "Its reported failures:",
-                ...reported.failures.map(
-                  (entry) =>
-                    `- ${entry.title}${entry.file === undefined ? "" : ` (${entry.file}${entry.line === undefined ? "" : `:${entry.line}`})`}${entry.detail === undefined ? "" : `: ${entry.detail}`}`,
-                ),
-              ]),
-        ]),
-    "The last lines of its output:",
-    "```",
-    failure.tail.length > 0 ? failure.tail : "(no output)",
-    "```",
+    `${failedSteps} This is fix attempt ${input.attempt} of ${input.maxAttempts}.`,
     "",
-    `Do not run the CI steps yourself to finish: the board re-runs every step from the top after you report a fix. Complete with a payload shaped ${BOARD_CI_FIX_PAYLOAD_SHAPE}: "fixed" once your fix is committed and pushed, or "return-to-review" with a finding that says what failed and why, which the next review round must fix.`,
+    `The issues to fix (${issues.length}):`,
+    ...issues.map(
+      (issue, index) =>
+        `${index + 1}. [${issue.id}] ${issue.stepName}: ${issue.title}${where(issue)}${issue.detail === undefined ? "" : ` — ${clipIssueDetail(issue.detail)}`}`,
+    ),
+    ...blocks,
+    "",
+    ...boardCiFixPromptRules(failures.length),
   ].join("\n");
 }

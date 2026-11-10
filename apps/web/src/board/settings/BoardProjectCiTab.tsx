@@ -1,5 +1,6 @@
 /**
- * T3o: a project's CI tab (T3O-49): the "Run CI for this project" switch,
+ * T3o: a project's CI tab (T3O-49): the "Run CI for this project" and "Stop
+ * on failure" (T3O-57) switches,
  * the step list behind the built-in Sync with base, the fix agent and how a
  * script reports. Steps save together, against the version they were loaded
  * at. Turning CI off with cards in CI asks first: those cards move on with
@@ -87,7 +88,11 @@ export function BoardProjectCiTab(props: {
   ).length;
   const setEnabled = useAtomCommand(boardEnvironment.setProjectCiEnabled, { reportFailure: false });
   const setSteps = useAtomCommand(boardEnvironment.setProjectCiSteps, { reportFailure: false });
+  const setStopOnFailure = useAtomCommand(boardEnvironment.setProjectCiStopOnFailure, {
+    reportFailure: false,
+  });
   const ciOn = shell.stageSwitches[BOARD_SEED_STAGE_IDS.ci] === true;
+  const stopOnFailure = shell.ciStopOnFailure !== false;
   const [confirmOff, setConfirmOff] = useState(false);
   // A draft saves against the version it was started from, so another
   // client's newer edit is a conflict rather than silently overwritten.
@@ -119,6 +124,17 @@ export function BoardProjectCiTab(props: {
       environmentId,
       input: { projectId: props.projectId, on, expectedConfigVersion: shell.version },
     }).then(report(on ? "Couldn't turn CI on" : "Couldn't turn CI off"));
+  };
+
+  const switchStopOnFailure = (on: boolean) => {
+    void setStopOnFailure({
+      environmentId,
+      input: {
+        projectId: props.projectId,
+        stopOnFailure: on,
+        expectedConfigVersion: shell.version,
+      },
+    }).then(report("Couldn't change Stop on failure"));
   };
 
   const save = (turnOn: boolean) => {
@@ -201,6 +217,36 @@ export function BoardProjectCiTab(props: {
               if (!checked && cardsInCi > 0) setConfirmOff(true);
               else switchCi(checked);
             }}
+          />
+        </div>
+      ) : null}
+      {ciOn || steps.length > 0 ? (
+        <div
+          className={cn(
+            "flex items-center gap-4 rounded-xl border border-border bg-card px-4 py-3 shadow-xs",
+            !ciOn && "opacity-60",
+          )}
+        >
+          <div className="flex min-w-0 flex-1 flex-col gap-px">
+            <span className="text-[13.5px] font-medium text-foreground">Stop on failure</span>
+            <span className="text-xs text-pretty text-muted-foreground">
+              {draft !== null
+                ? "Save or discard your step changes before changing this."
+                : stopOnFailure
+                  ? "A failed step stops the steps after it. Faster, but a pass may show only the first failure."
+                  : "Every step runs even after one fails, so one pass shows every failure. Passes take longer."}
+            </span>
+          </div>
+          <span className="text-xs font-medium text-foreground">
+            {stopOnFailure ? "Yes" : "No"}
+          </span>
+          <Switch
+            aria-label={`Stop CI on the first failure for ${props.projectTitle}`}
+            checked={stopOnFailure}
+            // It saves straight away and moves the config version, which would
+            // refuse an open steps draft's save as a version mismatch.
+            disabled={!canWrite || !ciOn || draft !== null}
+            onCheckedChange={switchStopOnFailure}
           />
         </div>
       ) : null}
@@ -299,7 +345,11 @@ export function BoardProjectCiTab(props: {
               parallelGroups > 0
                 ? ` (${plural(parallelGroups, "parallel group", "parallel groups")})`
                 : ""
-            } · a failure stops later groups once its own group finishes`}
+            } · ${
+              stopOnFailure
+                ? "a failure stops later groups once its own group finishes"
+                : "every step runs, even after a failure"
+            }`}
           >
             Steps
           </SectionHeading>

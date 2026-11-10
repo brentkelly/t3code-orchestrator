@@ -86,6 +86,7 @@ a{color:#1d4ed8;text-decoration:none} a:hover{text-decoration:underline}
 .c-ok{background:color-mix(in srgb,var(--success) 15%,transparent);color:var(--success-fg)}
 .c-plain{background:var(--accent);color:var(--fg)}
 .c-pri{background:color-mix(in srgb,var(--primary) 12%,transparent);color:var(--primary)}
+.c-attn{background:color-mix(in srgb,var(--attention) 14%,transparent);color:var(--attention-fg)}
 .segs{display:flex;gap:3px;height:5px}
 .sg{display:flex;flex-direction:column;gap:1px;min-width:0}
 .sg>i{flex:1;border-radius:2px;display:block}
@@ -176,7 +177,7 @@ table.tiers td{padding:9px 10px;border-bottom:1px solid var(--doc-border);vertic
       <span style="font:500 12.5px var(--font-sans);color:var(--doc-muted)">UX spec · board, card and settings</span>
     </div>
     <h1 style="margin:0;font:600 30px/1.15 var(--font-sans);letter-spacing:-0.025em">CI and project-based stages, v2</h1>
-    <p style="margin:0;max-width:80ch;font:400 14.5px/1.6 var(--font-sans);color:var(--doc-muted);text-wrap:pretty">One global list of stages with per-project switches and overrides, edited on the board rather than in <span class="mono" style="font-size:13px;color:var(--doc-fg)">t3o.json</span>. CI becomes a list of typed steps per project with parallel groups and a built-in Sync with base. Each screen below is shown in light and dark, with numbered notes and the interaction flows. Interactive versions: <a href="t3o.dc.html">the board</a> (Tweaks → CI demo states for the rarer CI states) and <a href="T3 Settings.dc.html">Settings</a>.</p>
+    <p style="margin:0;max-width:80ch;font:400 14.5px/1.6 var(--font-sans);color:var(--doc-muted);text-wrap:pretty">One global list of stages with per-project switches and overrides, edited on the board rather than in <span class="mono" style="font-size:13px;color:var(--doc-fg)">t3o.json</span>. CI becomes a list of typed steps per project with parallel groups and a built-in Sync with base. Each screen below is shown in light and dark, with numbered notes and the interaction flows. Interactive versions: <a href="t3o.dc.html">the board</a> (Tweaks → CI demo states for the rarer CI states) and <a href="T3 Settings.dc.html">Settings</a>. <b style="color:var(--doc-fg);font-weight:600">Updated for T3O-57</b>: CI now fixes in place and stops for a human instead of sending cards back to Code review, and projects get a Stop on failure setting. <a href="#t3o-57">Jump to the T3O-57 screens</a>.</p>
     <div style="display:flex;flex-direction:column;gap:8px;padding:14px 16px;border:1px solid var(--doc-border);border-radius:12px;background:var(--doc-card)">
       <span style="font:600 12px var(--font-sans)">Status colours (docs/t3o/status-colours.md) and motion</span>
       <div class="legend">
@@ -184,11 +185,324 @@ table.tiers td{padding:9px 10px;border-bottom:1px solid var(--doc-border);vertic
         <span><i class="sw-c" style="background:#3b82f6"></i>Blue · running, including a fix agent at work</span>
         <span><i class="sw-c" style="background:#8b5cf6"></i>Violet · waiting on a human</span>
         <span><i class="sw-c" style="background:#f59e0b"></i>Amber · blocked or failed check (never red)</span>
+        <span><i class="sw-c" style="background:#a1a1aa"></i>Grey · cancelled</span>
         <span><i class="sw-c" style="background:var(--anno)"></i>Pink markers · spec annotations, not UI</span>
       </div>
       <span style="font:400 12px/1.55 var(--font-sans);color:var(--doc-muted);text-wrap:pretty">Nothing on a card face animates. Inside the open card, the only motion is the existing shimmer on a running step's name, which pauses when the tab is hidden and under reduced motion. This pass also removed the pulsing "thread running" dot and the pulsing planning pip from card faces, and moved CI failures from red to amber everywhere.</span>
     </div>
   </header>
+
+  <!-- ═══ T3O-57 · CI fixes in place, Stop on failure ═══ -->
+  <section class="sec" id="t3o-57">
+    <div class="sec-h"><span class="sec-n" style="width:auto;padding:0 7px;background:#6366f1">T3O-57</span><h2 class="sec-t">CI fixes in place · Stop on failure</h2></div>
+    <p class="sec-d">Two changes to the CI stage. A new per-project setting, <b>Stop on failure</b> (default Yes), decides whether a failed step stops the steps after it. And CI never sends a card back to Code review by itself any more: when a pass fails, a fix agent fixes every reported failure and CI re-runs from the top, up to the fix-attempt limit (default 3). If attempts run out, or the agent says it can't fix something, the card stops in CI for a human (violet "Needs you"). Sections 3b, 5 and 6 below are updated to match.</p>
+    <div class="legend" style="padding:12px 14px;border:1px solid var(--doc-border);border-radius:12px;background:var(--doc-card)">
+      <span><i class="sw-c" style="background:#10b981"></i>Green · done</span>
+      <span><i class="sw-c" style="background:#3b82f6"></i>Blue · running, including the fix agent</span>
+      <span><i class="sw-c" style="background:#8b5cf6"></i>Violet · waiting on a human</span>
+      <span><i class="sw-c" style="background:#f59e0b"></i>Amber · failed or blocked</span>
+      <span><i class="sw-c" style="background:#a1a1aa"></i>Grey · cancelled (only ever with Stop on failure = Yes)</span>
+    </div>
+
+    <!-- 57.1 Project settings → CI tab -->
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">1 · Project settings → CI tab · Stop on failure</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · Yes (default), then No</span>
+          <div class="{{ th.mock }}" style="display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <span class="lbl">Stop on failure · Yes</span>
+              <div class="panel" style="flex-direction:row;align-items:center;gap:12px;padding:10px 13px"><span style="display:flex;flex-direction:column;gap:1px;flex:1"><span style="font:500 12.5px var(--font-sans)">Run CI for this project</span><span class="small">Cards leaving Code review run these steps before Ready for merge.</span></span><span class="sw on"></span></div>
+              <div class="panel" style="flex-direction:row;align-items:center;gap:12px;padding:10px 13px"><span style="display:flex;flex-direction:column;gap:1px;flex:1"><span style="font:500 12.5px var(--font-sans)">Stop on failure</span><span class="small" style="text-wrap:pretty">A failed step stops the steps after it. Faster, but a pass may show only the first failure.</span></span><span class="small" style="font-weight:500">Yes</span><span class="sw on"></span></div>
+              <div class="row"><span style="font:600 12px var(--font-sans)">Steps</span><span class="small">Sync, then 3 groups in order · a failure stops later groups once its own group finishes</span></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;padding-top:14px;border-top:1px dashed var(--border)">
+              <span class="lbl">Stop on failure · No</span>
+              <div class="panel" style="flex-direction:row;align-items:center;gap:12px;padding:10px 13px"><span style="display:flex;flex-direction:column;gap:1px;flex:1"><span style="font:500 12.5px var(--font-sans)">Run CI for this project</span><span class="small">Cards leaving Code review run these steps before Ready for merge.</span></span><span class="sw on"></span></div>
+              <div class="panel" style="flex-direction:row;align-items:center;gap:12px;padding:10px 13px"><span style="display:flex;flex-direction:column;gap:1px;flex:1"><span style="font:500 12.5px var(--font-sans)">Stop on failure</span><span class="small" style="text-wrap:pretty">Every step runs even after one fails, so one pass shows every failure. Passes take longer.</span></span><span class="small" style="font-weight:500">No</span><span class="sw"></span></div>
+              <div class="row"><span style="font:600 12px var(--font-sans)">Steps</span><span class="small">Sync, then 3 groups in order · every step runs, even after a failure</span></div>
+              <div class="row" style="justify-content:flex-end"><span class="small">✓ Saved just now</span><span class="btn sm" style="opacity:.5">Save steps</span></div>
+            </div>
+            <span class="mk" style="top:120px;right:18px">1</span>
+            <span class="mk" style="top:108px;left:8px">2</span>
+            <span class="mk" style="bottom:22px;right:96px">3</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">1</span><span><b>Same row style</b> as Run CI, directly under it. "Yes" / "No" sits beside the switch so the state reads without decoding the knob. Disabled (greyed, still visible) while Run CI is off.</span></div>
+      <div class="note"><span class="mk-i">2</span><span><b>Help text follows the state</b>: Yes explains the speed trade-off, No the fuller report. The Steps caption under the list changes with it.</span></div>
+      <div class="note"><span class="mk-i">3</span><span><b>Saves when flipped</b>, with the usual "Saved just now" and a toast. It is not part of the step edits, so it doesn't light up Save steps. The next pass uses it; a pass already running keeps the value it started with.</span></div>
+    </div>
+
+    <!-- 57.2 Pipeline settings → CI stage -->
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">2 · Pipeline settings → CI stage · global and per project</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · global CI stage, then the project's fix-agent rows</span>
+          <div class="{{ th.mock }}" style="display:flex;flex-direction:column;gap:14px">
+            <div class="panel">
+              <div class="pr" style="background:var(--muted)"><span class="num">8</span>CI<span style="flex:1"></span><span class="pill">Opt-in</span><span class="pill">3 fix attempts</span><span class="mut" style="font:400 11px var(--font-sans)">▴</span></div>
+              <div style="display:flex;flex-direction:column;gap:10px;padding:8px 14px 14px 40px">
+                <p style="margin:0;font:400 11.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Runs each project's CI steps: Sync with base first, then each group in order. When a pass fails, a fix agent fixes every reported failure and CI runs again from the top. If the fix attempts run out, or the agent can't fix something, the card stops in CI and waits for you.</p>
+                <div class="row" style="padding:2px 0"><span style="display:flex;flex-direction:column;gap:1px;flex:1"><span style="font:400 12.5px var(--font-sans)">Fix attempts</span><span class="small">Per CI visit. When they run out the card stops in CI for you.</span></span><span class="btn" style="padding:0 4px;gap:12px">− <b style="font-weight:500">3</b> +</span></div>
+                <div class="row" style="padding:2px 0;opacity:.55;text-decoration:line-through;text-decoration-color:var(--anno)"><span style="display:flex;flex-direction:column;gap:1px;flex:1"><span style="font:400 12.5px var(--font-sans)">Max round trips</span><span class="small">Removed</span></span><span class="btn" style="padding:0 4px;gap:12px">− <b style="font-weight:500">2</b> +</span></div>
+                <div class="row"><span class="lbl">F</span><span style="font:600 12px var(--font-sans)">Fix agent</span></div>
+                <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+                  <div class="sys" style="border-bottom:1px solid var(--border)">Card T3-42 in core.agent.advisor. CI · fix attempt 1 of 3.
+Every failed step from the pass is attached, each with its failures and output.</div>
+                  <div style="padding:8px 10px;font:400 11.5px/1.5 var(--font-sans);background:var(--card)">This card must pass the project's CI steps to become ready for merge. Fix every failure CI reported, commit and push.</div>
+                  <div class="sys" style="border-top:1px solid var(--border)">If a failure can't be fixed from this branch, report it with board_report_ci and say why. Don't move the card.</div>
+                </div>
+                <div class="row"><span style="font:400 12.5px var(--font-sans);flex:1">Model</span><span class="btn" style="min-width:130px">claude-sonnet-4 ▾</span></div>
+              </div>
+            </div>
+            <div class="panel" style="padding:2px 13px 4px">
+              <div class="row" style="padding:8px 0 4px"><b style="font:600 12px var(--font-sans)">Fix agent</b><span class="small">core.agent.advisor · runs when a pass fails, then every step re-runs from the top</span></div>
+              <div class="row" style="padding:8px 0;border-top:1px solid var(--border)"><span style="display:flex;flex-direction:column;flex:1"><span style="font:400 12.5px var(--font-sans)">Fix attempts</span><span class="small">Global · 3</span></span><span class="btn" style="padding:0 4px;gap:12px">− <b style="font-weight:500">3</b> +</span></div>
+              <div class="row" style="padding:8px 0;border-top:1px solid var(--border)"><span style="display:flex;flex-direction:column;flex:1"><span style="font:400 12.5px var(--font-sans)">Model</span><span class="small">Global</span></span><span class="btn" style="min-width:130px">claude-sonnet-4 ▾</span></div>
+              <div class="row" style="padding:8px 0;border-top:1px solid var(--border)"><span style="display:flex;flex-direction:column;flex:1"><span style="font:400 12.5px var(--font-sans)">Prompt</span><span class="small">Uses the global prompt · 22 words</span></span><span class="btn sm">Override for this project</span></div>
+            </div>
+            <span class="mk" style="top:58px;right:18px">4</span>
+            <span class="mk" style="top:140px;left:8px">5</span>
+            <span class="mk" style="top:258px;left:8px">6</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">4</span><span><b>Summary line</b> no longer mentions round trips or Code review. The collapsed chips read "Opt-in · 3 fix attempts".</span></div>
+      <div class="note"><span class="mk-i">5</span><span><b>Max round trips is gone</b>, globally and per project (struck through here only to show what's removed). Fix attempts stays, default 3, counted per CI visit and reset by Retry CI. 0 means the first failed pass stops for a human.</span></div>
+      <div class="note"><span class="mk-i">6</span><span><b>New default prompt</b>. The board's prefix now attaches every failed step at once; its suffix tells the agent to report what it can't fix with board_report_ci, which stops the card for a human.</span></div>
+    </div>
+
+    <!-- 57.3 Card face -->
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">3 · Card face in CI · Stop on failure No, with Yes beside it</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · 6 steps: Sync · Typecheck ∥ Lint · Rust tests ∥ Panel · Browser sweep</span>
+          <div class="{{ th.mock }}">
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <span class="lbl">Stop on failure · No</span>
+                <div class="card"><span class="row"><span class="key k-adv">T3-201</span></span><span class="ttl">Panel layout survives a resize mid-drag</span>
+                  <div class="ci"><div class="ci-h">CI<span class="chip c-info">Running</span></div>
+                    <div class="segs"><span class="sg" style="flex:0 0 10px"><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-ok"></i><i class="s-fail"></i></span><span class="sg" style="flex:2"><i class="s-fail"></i><i class="s-run"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span><span class="sg" style="flex:0 0 10px"><i class="s-pend"></i></span></div>
+                    <div class="ci-l"><b>2/6</b><span>2 failed · running Panel · 3 min</span></div></div></div>
+                <div class="card"><span class="row"><span class="key k-adv">T3-201</span></span><span class="ttl">Panel layout survives a resize mid-drag</span>
+                  <div class="ci"><div class="ci-h">CI<span class="chip c-info">Fixing</span></div>
+                    <div class="segs"><span class="sg" style="flex:0 0 10px"><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-ok"></i><i class="s-fail"></i></span><span class="sg" style="flex:2"><i class="s-fail"></i><i class="s-ok"></i></span><span class="sg" style="flex:1"><i class="s-fail"></i></span><span class="sg" style="flex:0 0 10px"><i class="s-run"></i></span></div>
+                    <div class="ci-l"><b>3/6</b><span>Fix 1 of 3 · 2 of 5 issues resolved</span></div></div></div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <span class="lbl">Stop on failure · Yes (unchanged)</span>
+                <div class="card"><span class="row"><span class="key k-adv">T3-201</span></span><span class="ttl">Panel layout survives a resize mid-drag</span>
+                  <div class="ci"><div class="ci-h">CI<span class="chip c-info">Running</span></div>
+                    <div class="segs"><span class="sg" style="flex:0 0 10px"><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-ok"></i><i class="s-run"></i></span><span class="sg" style="flex:2"><i class="s-pend"></i><i class="s-pend"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span></div>
+                    <div class="ci-l"><b>2/6</b><span>Lint · 1m</span></div></div></div>
+                <div class="card"><span class="row"><span class="key k-adv">T3-201</span></span><span class="ttl">Panel layout survives a resize mid-drag</span>
+                  <div class="ci"><div class="ci-h">CI<span class="chip c-info">Fixing</span></div>
+                    <div class="segs"><span class="sg" style="flex:0 0 10px"><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-ok"></i><i class="s-fail"></i></span><span class="sg" style="flex:2"><i class="s-cx"></i><i class="s-cx"></i></span><span class="sg" style="flex:1"><i class="s-cx"></i></span><span class="sg" style="flex:0 0 10px"><i class="s-run"></i></span></div>
+                    <div class="ci-l"><b>2/6</b><span>Fix 1 of 3 · 0 of 2 issues resolved</span></div></div></div>
+              </div>
+            </div>
+            <span class="mk" style="top:88px;left:100px">7</span>
+            <span class="mk" style="top:160px;left:22px">8</span>
+            <span class="mk" style="top:232px;right:24px">9</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">7</span><span><b>No, mid-pass</b>: a failed step's lane turns amber and its neighbours keep going. Later steps stay blue or pending, never grey. The line leads with the failure count, then what's running, in whole minutes: "2 failed · running Panel · 3 min".</span></div>
+      <div class="note"><span class="mk-i">8</span><span><b>No, pass finished</b>: the fix agent gets every failure at once. Chip "Fixing" (blue), line "Fix 1 of 3 · 2 of 5 issues resolved". The fix is the pass's last segment, after the last check: outlined while the pass is still running, blue while fixing, violet when the card stops for you.</span></div>
+      <div class="note"><span class="mk-i">9</span><span><b>Yes, unchanged</b>: one amber segment, the group finishes, later steps are cancelled (grey), and the line names the one failed step. Grey appears only under Yes.</span></div>
+    </div>
+
+    <!-- 57.4 Card detail → CI pane -->
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">4 · Card detail → CI pane · Stop on failure No</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · pass 3 of this CI visit, fix 3 working</span>
+          <div class="{{ th.mock }}" style="background:color-mix(in srgb,var(--muted) 55%,var(--card));padding:0">
+            <div class="row" style="height:40px;padding:0 13px;border-bottom:1px solid var(--border)"><b style="font:600 12px var(--font-sans)">Continuous integration</b><span class="small">Pass 3 · fix 3 of 3 · stop on failure No</span><span class="chip c-info" style="text-transform:none;letter-spacing:0">Fixing · 2/5 resolved</span></div>
+            <div style="display:flex;flex-direction:column;gap:10px;padding:12px">
+              <div class="panel" style="border-radius:11px">
+                <div class="row" style="padding:9px 11px;border-bottom:1px solid var(--border)"><b style="font:600 12px var(--font-sans)">Pass 3</b><span class="chip c-warn" style="margin-left:0;text-transform:none;letter-spacing:0">3 of 6 steps failed</span><span class="small" style="margin-left:auto">9m ago</span></div>
+                <div class="st"><span class="bdg">1<i class="ok">✓</i></span><span class="mut" style="font-size:11px">⇄</span><span class="st-n"><b>Sync with base</b><span>Already up to date with main</span></span><small class="mono small">2s</small><span class="small" style="color:var(--success-fg);font-weight:500">Passed</span></div>
+                <div style="border-top:1px solid var(--border);box-shadow:inset 3px 0 0 color-mix(in srgb,var(--info) 55%,var(--border))">
+                  <div class="small" style="padding:6px 11px 0 38px;font-weight:500">In parallel · 2 steps</div>
+                  <div class="st"><span class="bdg">2<i class="ok">✓</i></span><span class="mut" style="font-size:11px">›_</span><span class="st-n"><b>Typecheck</b><span class="mono">bun run typecheck</span></span><small class="mono small">51s</small><span class="small" style="color:var(--success-fg);font-weight:500">Passed</span></div>
+                  <div class="st" style="background:color-mix(in srgb,var(--warning) 5%,transparent)"><span class="bdg">3<i class="fx">✕</i></span><span class="mut" style="font-size:11px">›_</span><span class="st-n"><b>Lint</b><span class="mono">bun run lint</span></span><small class="mono small">22s</small><span class="small" style="color:var(--warning-fg);font-weight:500">Failed</span><span class="mut">▴</span></div>
+                  <div style="display:flex;flex-direction:column;gap:6px;padding:0 11px 10px 54px;background:color-mix(in srgb,var(--warning) 5%,transparent)">
+                    <div style="display:flex;flex-direction:column;border-left:2px solid var(--warning);padding-left:2px">
+                      <div class="fl"><b>no-floating-promises: resize handler drops a promise</b><code>apps/web/src/board/Panel.tsx:88</code></div>
+                      <div class="fl"><b>no-unused-vars: lastWidth</b><code>apps/web/src/board/Panel.tsx:41</code></div>
+                    </div>
+                    <span><span class="btn sm">›_ View log</span></span>
+                  </div>
+                </div>
+                <div style="border-top:1px solid var(--border);box-shadow:inset 3px 0 0 color-mix(in srgb,var(--info) 55%,var(--border))">
+                  <div class="small" style="padding:6px 11px 0 38px;font-weight:500">In parallel · 2 steps</div>
+                  <div class="st" style="background:color-mix(in srgb,var(--warning) 5%,transparent)"><span class="bdg">4<i class="fx">✕</i></span><span class="mut" style="font-size:11px">›_</span><span class="st-n"><b>Rust tests</b><span class="mono">cargo nextest run</span></span><small class="mono small">15m 00s</small><span class="small" style="color:var(--warning-fg);font-weight:500">Timed out</span><span class="mut">▾</span></div>
+                  <div class="st"><span class="bdg">5<i class="ok">✓</i></span><span class="mut" style="font-size:11px">›_</span><span class="st-n"><b>Panel</b><span class="mono">bun run test:panel</span></span><small class="mono small">3m 12s</small><span class="small" style="color:var(--success-fg);font-weight:500">Passed</span></div>
+                </div>
+                <div class="st" style="border-top:1px solid var(--border);background:color-mix(in srgb,var(--warning) 5%,transparent)"><span class="bdg">6<i class="fx">✕</i></span><span class="mut" style="font-size:11px">⚙</span><span class="st-n"><b>Browser sweep</b><span>Agent · 2 regressions at tablet width</span></span><small class="mono small">4m 40s</small><span class="small" style="color:var(--warning-fg);font-weight:500">Failed</span><span class="mut">▾</span></div>
+                <div style="border-top:1px solid var(--border)">
+                  <div class="st" style="background:color-mix(in srgb,var(--info) 5%,transparent)"><span class="bdg run">F</span><span class="mut" style="font-size:11px">🔧</span><span class="st-n"><b>Fix failures</b><span>Fix agent · fix 3 of 3 · has all 5 issues at once</span></span><small class="mono" style="font-size:10.5px">1:48</small><span class="small" style="color:var(--info-fg);font-weight:500">2/5 resolved</span><span class="mut">▴</span></div>
+                  <div style="display:flex;flex-direction:column;gap:8px;padding:0 11px 11px 54px;background:color-mix(in srgb,var(--info) 5%,transparent)">
+                    <div class="row small" style="color:var(--fg)"><span style="flex:1">2 of 5 issues resolved</span></div>
+                    <div style="height:4px;border-radius:2px;background:color-mix(in srgb,var(--fg) 8%,transparent)"><div style="width:40%;height:100%;border-radius:2px;background:var(--info)"></div></div>
+                    <div style="display:flex;flex-direction:column">
+                      <div class="row" style="align-items:flex-start;gap:9px;padding:6px 0"><span style="width:15px;height:15px;flex:none;border-radius:99px;background:var(--success);color:#fff;font:700 9px/15px var(--font-sans);text-align:center">✓</span><span class="st-n"><b style="color:var(--muted-fg)">no-floating-promises: resize handler drops a promise</b><span class="mono">Lint · apps/web/src/board/Panel.tsx:88</span></span><span class="small" style="color:var(--success-fg);font-weight:500">Resolved</span></div>
+                      <div class="row" style="align-items:flex-start;gap:9px;padding:6px 0;border-top:1px solid var(--border)"><span style="width:15px;height:15px;flex:none;border-radius:99px;background:var(--success);color:#fff;font:700 9px/15px var(--font-sans);text-align:center">✓</span><span class="st-n"><b style="color:var(--muted-fg)">no-unused-vars: lastWidth</b><span class="mono">Lint · apps/web/src/board/Panel.tsx:41</span></span><span class="small" style="color:var(--success-fg);font-weight:500">Resolved</span></div>
+                      <div class="row" style="align-items:flex-start;gap:9px;padding:6px 0;border-top:1px solid var(--border)"><span style="width:15px;height:15px;flex:none;border-radius:99px;background:var(--info);box-shadow:inset 0 0 0 3px color-mix(in srgb,var(--info) 35%,var(--card))"></span><span class="st-n"><b>Rust tests timed out</b><span class="mono">Rust tests · layout::drag_resize hangs</span></span><span class="small" style="color:var(--info-fg);font-weight:500">Fixing</span></div>
+                      <div class="row" style="align-items:flex-start;gap:9px;padding:6px 0;border-top:1px solid var(--border)"><span style="width:15px;height:15px;flex:none;border-radius:99px;box-shadow:inset 0 0 0 1.5px var(--input)"></span><span class="st-n"><b>Panel overlaps the inspector at 768px</b><span class="mono">Browser sweep · tablet, light</span></span><span class="small">Open</span></div>
+                      <div class="row" style="align-items:flex-start;gap:9px;padding:6px 0;border-top:1px solid var(--border)"><span style="width:15px;height:15px;flex:none;border-radius:99px;box-shadow:inset 0 0 0 1.5px var(--input)"></span><span class="st-n"><b>Resize handle missing in dark mode</b><span class="mono">Browser sweep · tablet, dark</span></span><span class="small">Open</span></div>
+                    </div>
+                    <span class="small">When every issue is resolved the agent commits and pushes, and CI runs again from Sync with base. Last attempt; if CI still fails, the card stops for you.</span>
+                    <span><span class="btn sm">💬 Open fix thread</span></span>
+                  </div>
+                </div>
+                <div class="small" style="padding:7px 11px;border-top:1px solid var(--border)">6 steps, then the fix · every step runs, even after a failure · Rust tests timed out and the steps after it still ran</div>
+              </div>
+              <span class="lbl" style="padding:2px 2px 0">Earlier passes in this CI visit</span>
+              <div class="panel" style="border-radius:11px">
+                <div class="row" style="padding:9px 11px"><b style="font:600 12px var(--font-sans)">Pass 2</b><span class="chip c-warn" style="margin-left:0;text-transform:none;letter-spacing:0">2 of 6 steps failed</span><span class="small">Lint, Browser sweep</span><span class="small" style="margin-left:auto">31m ago ▾</span></div>
+                <div class="row" style="gap:8px;padding:7px 11px;border-top:1px solid var(--border)"><span class="bdg" style="width:16px;height:16px;font-size:8.5px">F<i class="ok">✓</i></span><span class="small" style="color:var(--fg);flex:1">Fix failures · fix 2 of 3 · 2 of 2 resolved · committed <span class="mono">5d2f6a0</span></span><a class="small" style="color:var(--info-fg);font-weight:500">Fix agent thread ↗</a></div>
+              </div>
+              <div class="panel" style="border-radius:11px">
+                <div class="row" style="padding:9px 11px"><b style="font:600 12px var(--font-sans)">Pass 1</b><span class="chip c-warn" style="margin-left:0;text-transform:none;letter-spacing:0">4 of 6 steps failed</span><span class="small">Typecheck, Lint, Rust tests, Browser sweep</span><span class="small" style="margin-left:auto">52m ago ▾</span></div>
+                <div class="row" style="gap:8px;padding:7px 11px;border-top:1px solid var(--border)"><span class="bdg" style="width:16px;height:16px;font-size:8.5px">F<i class="ok">✓</i></span><span class="small" style="color:var(--fg);flex:1">Fix failures · fix 1 of 3 · 6 of 6 resolved · committed <span class="mono">c19e0b7</span></span><a class="small" style="color:var(--info-fg);font-weight:500">Fix agent thread ↗</a></div>
+              </div>
+            </div>
+            <span class="mk" style="top:54px;left:96px">10</span>
+            <span class="mk" style="top:118px;right:14px">11</span>
+            <span class="mk" style="top:290px;right:14px">12</span>
+            <span class="mk" style="top:452px;left:6px">13</span>
+            <span class="mk" style="bottom:110px;right:14px">14</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">10</span><span><b>Pass headline</b> is the failure count, "3 of 6 steps failed" (amber), not a single step name. Header status: "Fixing 3 steps" while the agent works.</span></div>
+      <div class="note"><span class="mk-i">11</span><span><b>Each row shows its own outcome</b>, timer and output. Failed rows are amber and expandable (the first opens by default); passed rows are green. No row ever reads "skipped" or "cancelled" under No.</span></div>
+      <div class="note"><span class="mk-i">12</span><span><b>Timed out</b> is its own label, amber like a failure, with the timeout as its timer. The steps after it still ran (Panel passed, Browser sweep failed).</span></div>
+      <div class="note"><span class="mk-i">13</span><span><b>Fix failures is the pass's last step</b>, after the last check, with its own badge, timer and status ("2/5 resolved"). Expanded like a review round: a progress bar, then one row per issue CI reported (step and file:line) marked Resolved, Fixing or Open, then Can't fix (violet) when the agent gives up on one. Earlier passes keep a one-line fix row with the commit it pushed. Each links to the fix thread.</span></div>
+      <div class="note"><span class="mk-i">14</span><span><b>Pass history</b> for this CI visit, newest first, collapsed to headline + failed step names. A Retry CI by a human starts a new visit and resets the count.</span></div>
+    </div>
+
+    <!-- 57.5 Needs you -->
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">5 · Card stopped for a human · Needs you</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · fixes ran out, and the agent couldn't fix it</span>
+          <div class="{{ th.mock }}" style="display:flex;flex-direction:column;gap:14px">
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+              <div class="card"><span class="row"><span class="key k-adv">T3-201</span></span><span class="ttl">Panel layout survives a resize mid-drag</span>
+                <div class="ci"><div class="ci-h">CI · pass 4<span class="chip c-attn">Needs you</span></div>
+                  <div class="segs"><span class="sg" style="flex:0 0 10px"><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-ok"></i><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-fail"></i><i class="s-ok"></i></span><span class="sg" style="flex:1"><i class="s-fail"></i></span><span class="sg" style="flex:0 0 10px"><i style="background:var(--attention)"></i></span></div>
+                  <div class="ci-l" style="align-items:flex-start"><b>4/6</b><span style="white-space:normal;color:var(--attention-fg);line-height:1.4">CI still failing after 3 fixes: Rust tests, Browser sweep.</span></div>
+                  <div class="row" style="gap:5px;margin-top:3px"><span class="btn sm" style="border-color:transparent;background:var(--attention);color:#fff">Retry CI</span><span class="btn sm">More ▾</span></div></div></div>
+              <div class="card"><span class="row"><span class="key k-adv">T3-201</span></span><span class="ttl">Panel layout survives a resize mid-drag</span>
+                <div class="ci"><div class="ci-h">CI · pass 2<span class="chip c-attn">Needs you</span></div>
+                  <div class="segs"><span class="sg" style="flex:0 0 10px"><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-ok"></i><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-ok"></i><i class="s-ok"></i></span><span class="sg" style="flex:1"><i class="s-fail"></i></span><span class="sg" style="flex:0 0 10px"><i style="background:var(--attention)"></i></span></div>
+                  <div class="ci-l" style="align-items:flex-start"><b>5/6</b><span style="white-space:normal;color:var(--attention-fg);line-height:1.4">The fix agent couldn't fix Browser sweep: the staging preview has no tablet viewport.</span></div>
+                  <div class="row" style="gap:5px;margin-top:3px"><span class="btn sm" style="border-color:transparent;background:var(--attention);color:#fff">Retry CI</span><span class="btn sm">More ▾</span></div></div></div>
+            </div>
+            <div class="vbox" style="gap:8px;padding:12px 14px">
+              <div class="row"><span class="chip c-attn" style="margin-left:0;text-transform:none;letter-spacing:0">Needs you</span><b style="font:600 12.5px var(--font-sans)">CI still failing after 3 fixes: Rust tests, Browser sweep.</b></div>
+              <span class="small" style="font-size:11.5px;line-height:1.5">Each fix got further, but the same two steps fail in pass 4. 3 of 3 fix attempts used · 18m ago</span>
+              <div class="row" style="flex-wrap:wrap;gap:7px"><span class="btn" style="border-color:transparent;background:var(--attention);color:#fff">Retry CI</span><span class="btn">Send back to review anyway</span><span class="btn">» Skip CI…</span></div>
+            </div>
+            <div class="vbox" style="gap:8px;padding:12px 14px">
+              <div class="row" style="align-items:flex-start"><span class="chip c-attn" style="margin-left:0;text-transform:none;letter-spacing:0;flex:none">Needs you</span><b style="font:600 12.5px var(--font-sans);text-wrap:pretty">The fix agent couldn't fix Browser sweep: the staging preview has no tablet viewport.</b></div>
+              <span class="small" style="font-size:11.5px;line-height:1.5">Reported with board_report_ci on fix 1 of 3. The other failures were fixed in c19e0b7. <a style="color:var(--attention-fg);font-weight:500">Fix agent thread ↗</a></span>
+              <div class="row" style="flex-wrap:wrap;gap:7px"><span class="btn" style="border-color:transparent;background:var(--attention);color:#fff">Retry CI</span><span class="btn">Send back to review anyway</span><span class="btn">» Skip CI…</span></div>
+            </div>
+            <span class="mk" style="top:86px;left:96px">15</span>
+            <span class="mk" style="top:150px;left:22px">16</span>
+            <span class="mk" style="bottom:156px;right:18px">17</span>
+            <span class="mk" style="bottom:28px;right:18px">18</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">15</span><span><b>Needs you</b> is the violet chip, the same one the board uses for any card waiting on a person. The card stays in the CI column; segments keep the last pass's outcomes.</span></div>
+      <div class="note"><span class="mk-i">16</span><span><b>Reason text</b>, two variants, in violet: "CI still failing after 3 fixes: &lt;failed steps&gt;." or "The fix agent couldn't fix &lt;step&gt;: &lt;agent's reason&gt;." It wraps to two lines on the face; the full text is in the tooltip and the pane. Retry CI sits on the face; More holds the other two actions.</span></div>
+      <div class="note"><span class="mk-i">17</span><span><b>Top of the CI pane</b>: the same reason, attempts used and when, then the three actions. Retry CI (primary) starts a fresh pass from Sync with base with the fix attempts reset. Send back to review anyway moves it to Code review with CI's failures as a finding. Skip CI opens the existing confirm.</span></div>
+      <div class="note"><span class="mk-i">18</span><span><b>Removed</b>: the amber "Sent back by CI" card on Code review, the red "Sent back from CI" banner in the card view, the "sent the card back to code review" activity row, and any "round trip N of M" wording. Only a human can send a card from CI to review now, and the activity row says who.</span></div>
+    </div>
+
+    <!-- 57.6 Ready for merge -->
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">6 · Ready for merge after CI needed fixes</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · held for a look, beside a clean pass auto-merging</span>
+          <div class="{{ th.mock }}" style="display:flex;flex-direction:column;gap:14px">
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <span class="lbl">CI made fixes · held</span>
+                <div class="card"><span class="row"><span class="key k-adv">T3-189</span><span style="flex:1"></span><span class="small" style="font-weight:500">⑂ Auto</span></span><span class="ttl">Worktree size refresh blocks the picker</span>
+                  <div style="display:flex;flex-direction:column;gap:6px;margin-top:9px;padding:7px 8px;border-radius:7px;background:color-mix(in srgb,var(--attention) 9%,transparent)">
+                    <span style="font:400 10.5px/1.4 var(--font-sans);color:var(--fg);text-wrap:pretty">CI made 2 fix commits. Auto-merge is waiting for you to look.</span>
+                    <div class="row" style="gap:8px"><span class="btn sm" style="height:20px;border-color:transparent;background:var(--attention);color:#fff">Merge</span><a style="font:500 10.5px var(--font-sans);color:var(--attention-fg)">Fix commits</a></div>
+                  </div></div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <span class="lbl">Clean pass · auto-merging</span>
+                <div class="card"><span class="row"><span class="key k-adv">T3-190</span><span style="flex:1"></span><span class="small" style="font-weight:500">⑂ Auto</span></span><span class="ttl">Rename board_ci_result to board_report_ci</span>
+                  <div class="row small" style="margin-top:8px;gap:5px"><span class="dot" style="background:var(--success)"></span>CI passed first time · merging when the forge accepts</div></div>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <span class="lbl">Merge pane</span>
+              <div class="row" style="align-items:flex-start;gap:10px;padding:10px 11px;border:1px solid color-mix(in srgb,var(--attention) 40%,transparent);border-radius:10px;background:color-mix(in srgb,var(--attention) 7%,var(--card))">
+                <span style="color:var(--attention-fg);font-size:13px">⑂</span>
+                <span style="display:flex;flex-direction:column;gap:3px;flex:1;min-width:0"><b style="font:500 12.5px var(--font-sans)">CI made 2 fix commits. Auto-merge is waiting for you to look.</b><span class="small" style="font-size:11.5px;line-height:1.45;text-wrap:pretty">Auto-merge is on for this card, but holds whenever CI changed code. Merge once you've looked, or turn auto-merge off to keep it here.</span><a style="font:500 11.5px var(--font-sans);color:var(--attention-fg)">View the fix commits · e4a17c2, 0b93f5d</a></span>
+                <span class="btn" style="border-color:transparent;background:var(--attention);color:#fff">Merge</span>
+              </div>
+              <div class="row" style="gap:10px;padding:10px 11px;border:1px solid var(--border);border-radius:10px;background:var(--card)">
+                <span class="mut" style="font-size:13px">⑂</span>
+                <span style="display:flex;flex-direction:column;gap:2px;flex:1"><b style="font:500 12.5px var(--font-sans)">Auto-merge on</b><span class="small">CI passed with no fixes. Merges as soon as the forge accepts.</span></span>
+                <span class="chip c-ok" style="text-transform:none;letter-spacing:0">CI passed</span>
+              </div>
+            </div>
+            <span class="mk" style="top:96px;left:22px">19</span>
+            <span class="mk" style="bottom:118px;right:18px">20</span>
+            <span class="mk" style="bottom:28px;right:18px">21</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">19</span><span><b>Held note on the face</b>, violet because it waits on a person: "CI made 2 fix commits. Auto-merge is waiting for you to look." Merge merges straight away; Fix commits opens the card on its CI pass history. The plain "Auto" marker stays so it's clear auto-merge is still on.</span></div>
+      <div class="note"><span class="mk-i">20</span><span><b>Merge pane</b> shows the same note with the commit SHAs as one link and a Merge button. Opening the fix commits doesn't release the hold; only Merge (or turning auto-merge off) does.</span></div>
+      <div class="note"><span class="mk-i">21</span><span><b>Contrast</b>: a card that passed CI with no fix commits auto-merges as normal, no note and no extra click.</span></div>
+    </div>
+
+    <div class="pair">
+      <div class="flow"><span class="flow-h">A pass fails (either setting)</span><ol>
+        <li>Stop on failure Yes: the failed step's group finishes, later steps are cancelled. No: every step runs to the end.</li>
+        <li>The fix agent gets every reported failure at once, fixes, commits and pushes. Chip "Fixing", line "N of 6 steps failed · fix 1 of 3".</li>
+        <li>CI re-runs from Sync with base. A clean pass moves the card to Ready for merge, where auto-merge holds if any fix was committed.</li>
+      </ol></div>
+      <div class="flow"><span class="flow-h">The card stops for you</span><ol>
+        <li>Fix attempts run out with steps still failing, or the agent reports with board_report_ci that it can't fix a step.</li>
+        <li>The card stays in CI with a violet "Needs you" and the reason. Nothing moves it on its own.</li>
+        <li>Retry CI (fresh visit, attempts reset), Send back to review anyway (recorded under your name, failures attached as a finding), or Skip CI.</li>
+      </ol></div>
+    </div>
+  </section>
 
   <!-- ═══ 1 · Board partial stages ═══ -->
   <section class="sec">
@@ -386,7 +700,8 @@ table.tiers td{padding:9px 10px;border-bottom:1px solid var(--doc-border);vertic
         <div class="frame">
           <span class="frame-l">{{ th.label }}</span>
           <div class="{{ th.mock }}">
-            <div class="panel" style="flex-direction:row;align-items:center;gap:12px;padding:10px 13px;margin-bottom:12px"><span style="display:flex;flex-direction:column;gap:1px;flex:1"><span style="font:500 12.5px var(--font-sans)">Run CI for this project</span><span class="small">Cards leaving Code review run these steps before Ready for merge.</span></span><span class="sw on"></span></div>
+            <div class="panel" style="flex-direction:row;align-items:center;gap:12px;padding:10px 13px;margin-bottom:8px"><span style="display:flex;flex-direction:column;gap:1px;flex:1"><span style="font:500 12.5px var(--font-sans)">Run CI for this project</span><span class="small">Cards leaving Code review run these steps before Ready for merge.</span></span><span class="sw on"></span></div>
+            <div class="panel" style="flex-direction:row;align-items:center;gap:12px;padding:10px 13px;margin-bottom:12px"><span style="display:flex;flex-direction:column;gap:1px;flex:1"><span style="font:500 12.5px var(--font-sans)">Stop on failure</span><span class="small">A failed step stops the steps after it. Faster, but a pass may show only the first failure.</span></span><span class="small" style="font-weight:500">Yes</span><span class="sw on"></span></div>
             <div class="row" style="gap:9px;padding:8px 11px;border:1px solid var(--border);border-radius:9px;background:var(--muted)">
               <span class="mut" style="font-size:10px">🔒</span><span class="ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="6" r="3"></circle><path d="M12 6h5a2 2 0 0 1 2 2v7"></path><circle cx="19" cy="18" r="3"></circle><path d="M12 18H7a2 2 0 0 1-2-2V9"></path></svg></span>
               <span class="st-n"><b>Sync with base</b><span>Always first, always alone. A conflict starts a fix agent inside CI.</span></span><span class="pill">Built in</span>
@@ -416,10 +731,10 @@ The branch, its base ref and the diff are attached.</div>
             <div class="panel"><div class="st"><span class="mut">⋮⋮</span><span class="ico">⎇</span><span class="st-n"><b>GitHub checks <span class="lbl" style="margin-left:4px">Forge checks</span></b><span>Only ci/build, ci/e2e · gives up after 10 min</span></span><span class="row small" style="gap:6px"><span class="sw sm"></span>Parallel with previous</span></div></div>
             <div class="row" style="padding-top:10px;gap:6px"><span class="small" style="font-weight:500">Add step</span><span class="btn sm">＋ Script</span><span class="btn sm">＋ Agent</span><span class="btn sm">＋ Forge checks</span></div>
             <span class="mk" style="top:80px;right:24px">1</span>
-            <span class="mk" style="top:146px;left:8px">2</span>
-            <span class="mk" style="top:168px;right:24px">3</span>
-            <span class="mk" style="top:250px;left:8px">4</span>
-            <span class="mk" style="top:358px;right:24px">5</span>
+            <span class="mk" style="top:198px;left:8px">2</span>
+            <span class="mk" style="top:220px;right:24px">3</span>
+            <span class="mk" style="top:302px;left:8px">4</span>
+            <span class="mk" style="top:410px;right:24px">5</span>
             <span class="mk" style="bottom:62px;right:24px">6</span>
           </div>
         </div>
@@ -430,11 +745,11 @@ The branch, its base ref and the diff are attached.</div>
         <div class="frame">
           <span class="frame-l">{{ th.label }} · fix agent and progress help</span>
           <div class="{{ th.mock }}">
-            <div class="row" style="align-items:baseline;margin-bottom:7px"><b style="font:600 13px var(--font-sans)">Fix agent</b><span class="small">Runs when a step fails, then every step re-runs from the top.</span></div>
+            <div class="row" style="align-items:baseline;margin-bottom:7px"><b style="font:600 13px var(--font-sans)">Fix agent</b><span class="small">Runs when a pass fails, with every failure at once, then every step re-runs from the top.</span></div>
             <div class="panel" style="padding:2px 13px 4px;margin-bottom:12px">
-              <div class="row ov" style="padding:8px 0 8px 9px"><span style="display:flex;flex-direction:column;flex:1"><span style="font:400 12.5px var(--font-sans)">Fix attempts</span><span style="font:500 10.5px var(--font-sans);color:var(--primary)">Overridden here · global 2</span></span><span class="btn sm">Reset to global</span><span class="btn" style="padding:0 4px;gap:12px">− <b style="font-weight:500">1</b> +</span></div>
+              <div class="row ov" style="padding:8px 0 8px 9px"><span style="display:flex;flex-direction:column;flex:1"><span style="font:400 12.5px var(--font-sans)">Fix attempts</span><span style="font:500 10.5px var(--font-sans);color:var(--primary)">Overridden here · global 3</span></span><span class="btn sm">Reset to global</span><span class="btn" style="padding:0 4px;gap:12px">− <b style="font-weight:500">1</b> +</span></div>
               <div class="row" style="padding:8px 0"><span style="display:flex;flex-direction:column;flex:1"><span style="font:400 12.5px var(--font-sans)">Model</span><span class="small">Global</span></span><span class="btn" style="min-width:130px">claude-sonnet-4 ▾</span></div>
-              <div class="row" style="padding:8px 0"><span style="display:flex;flex-direction:column;flex:1"><span style="font:400 12.5px var(--font-sans)">Prompt</span><span class="small">Uses the global prompt · 74 words</span></span><span class="btn sm">Override for this project</span></div>
+              <div class="row" style="padding:8px 0"><span style="display:flex;flex-direction:column;flex:1"><span style="font:400 12.5px var(--font-sans)">Prompt</span><span class="small">Uses the global prompt · 22 words</span></span><span class="btn sm">Override for this project</span></div>
             </div>
             <div class="panel">
               <div class="row" style="padding:9px 12px"><span style="font:500 12px var(--font-sans);flex:1">‹/› Report progress and results from a script</span><span class="small">Optional ▴</span></div>
@@ -467,7 +782,7 @@ JSON</pre>
       <div class="note"><span class="mk-i">4</span><span><b>Shared-worktree warning</b> appears inside any group holding two or more Script steps. It's a warning, not a block.</span></div>
       <div class="note"><span class="mk-i">5</span><span><b>Agent step</b> expanded: the board's prefix and suffix are shown read-only around the editable prompt, in the same "Added by the board" style as stage prompts. Script: command + timeout. Forge checks: forge (from the repo, read-only), "Only these" name chips (Enter to add, empty = all), and the no-checks timeout.</span></div>
       <div class="note"><span class="mk-i">6</span><span><b>Reorder</b> by dragging the handle; a 2px blue line shows the drop point (above or below the hovered row). Dropping a step into the first slot clears its parallel flag. Click a row to expand its fields.</span></div>
-      <div class="note"><span class="mk-i">7</span><span><b>Fix agent</b>: attempts, model and prompt follow global until overridden, with the same override pattern as the Pipeline tab.</span></div>
+      <div class="note"><span class="mk-i">7</span><span><b>Fix agent</b>: attempts (global default 3), model and prompt follow global until overridden, with the same override pattern as the Pipeline tab. There is no round-trip limit any more; see T3O-57.</span></div>
       <div class="note"><span class="mk-i">8</span><span><b>Progress and result help</b>, collapsed by default, with copyable examples of the progress line and the <span class="mono">$T3O_CI_RESULT</span> file. Agent steps report the same shape through their tool, so no help is needed there.</span></div>
     </div>
 
@@ -576,13 +891,11 @@ JSON</pre>
                 <div class="card"><span class="row"><span class="key k-rel">RL-16</span></span><span class="ttl">Weighted fair queueing for fan-out</span>
                   <div class="ci"><div class="ci-h">CI<span class="chip c-info">Fixing</span></div>
                     <div class="segs"><span class="sg" style="flex:0 0 10px"><i class="s-ok"></i></span><span class="sg" style="flex:1"><i class="s-fail"></i></span><span class="sg" style="flex:2"><i class="s-pend"></i><i class="s-pend"></i></span></div>
-                    <div class="ci-l"><b>1/4</b><span>Check failed · fix 1 of 2</span></div></div></div>
+                    <div class="ci-l"><b>1/4</b><span>Check failed · fix 1 of 3</span></div></div></div>
                 <div class="card"><span class="row"><span class="key k-adv">T3-187</span></span><span class="ttl">File watcher misses renames inside new folders</span>
                   <div class="ci"><div class="ci-h">CI · pass 3<span class="chip c-warn">Blocked</span></div>
                     <div class="segs"><span class="sg" style="flex:0 0 10px"><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-ok"></i><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-ok"></i><i class="s-ok"></i></span><span class="sg" style="flex:1"><i class="s-fail"></i></span></div>
                     <div class="ci-l"><b>5/6</b><span style="color:var(--warning-fg)">Can't read Azure DevOps checks</span></div></div></div>
-                <div class="card"><span class="row"><span class="key k-rel">RL-15</span><span class="small" style="margin-left:auto">Code review</span></span><span class="ttl">Drop metric for slow subscribers</span>
-                  <div class="sent"><span style="color:var(--warning-fg);font-size:11px">↶</span><span style="display:flex;flex-direction:column;gap:1px"><span style="font:500 10.5px var(--font-sans)">Sent back by CI</span><span class="small">Test · 3 failures still failing after 2 fix attempts</span></span></div></div>
                 <div class="card"><span class="row"><span class="key k-adv">T3-173</span><span class="small" style="margin-left:auto">Ready for merge</span></span><span class="ttl">Drop the legacy thread migration path</span>
                   <div class="row small" style="margin-top:7px;font-weight:500;gap:5px">» CI skipped by brent</div></div>
               </div>
@@ -592,7 +905,7 @@ JSON</pre>
             <span class="mk" style="top:104px;left:160px">3</span>
             <span class="mk" style="top:168px;left:22px">4</span>
             <span class="mk" style="top:86px;right:24px">5</span>
-            <span class="mk" style="top:214px;right:24px">6</span>
+            <span class="mk" style="top:256px;right:24px">6</span>
           </div>
         </div>
       </sc-for>
@@ -602,8 +915,8 @@ JSON</pre>
       <div class="note"><span class="mk-i">2</span><span><b>Group segments</b> grow with step count. Parallel steps stack as 2px lanes in one 5px segment, so "two things at once" reads without labels. Hover a lane for the step name and state (title only, no tooltip chrome).</span></div>
       <div class="note"><span class="mk-i">3</span><span><b>Status line</b> priority: sync conflict → script with progress (fraction, not timer) → forge checks ("Waiting on GitHub checks 3/5", "…to appear", "…PR head to be pushed") → script time in whole minutes → agent. "+1" means another step in the group is also running. Counts are passed/total steps.</span></div>
       <div class="note"><span class="mk-i">4</span><span><b>Back from Ready for merge</b>: a muted line above the head when Ready for merge returned the card (stale base, conflicts, or failing forge checks). It stays for the whole pass.</span></div>
-      <div class="note"><span class="mk-i">5</span><span><b>Chips</b>: Running and Fixing are blue (an agent or step is working). A failed step's segment is amber. Blocked (forge unreadable) is the only amber chip, and its status line is amber too.</span></div>
-      <div class="note"><span class="mk-i">6</span><span><b>Outside CI</b>: "Sent back by CI" on Code review cards moves from red to an amber tint and adds the failure count. "CI skipped by &lt;name&gt;" on later cards is unchanged.</span></div>
+      <div class="note"><span class="mk-i">5</span><span><b>Chips</b>: Running and Fixing are blue (an agent or step is working). A failed step's segment is amber. Blocked (forge unreadable) is the only amber chip, and its status line is amber too. Needs you (T3O-57) is violet.</span></div>
+      <div class="note"><span class="mk-i">6</span><span><b>Outside CI</b>: "CI skipped by &lt;name&gt;" on later cards is unchanged. The "Sent back by CI" state is gone (T3O-57): CI never returns a card to Code review on its own; it stops in CI with "Needs you" instead.</span></div>
     </div>
   </section>
 
@@ -616,7 +929,7 @@ JSON</pre>
         <div class="frame">
           <span class="frame-l">{{ th.label }} · T3-185 running</span>
           <div class="{{ th.mock }}" style="background:color-mix(in srgb,var(--muted) 55%,var(--card));padding:0">
-            <div class="row" style="height:40px;padding:0 13px;border-bottom:1px solid var(--border)"><b style="font:600 12px var(--font-sans)">Continuous integration</b><span class="small">Pass 1 · fix attempts 0 of 2</span><span class="chip c-info" style="text-transform:none;letter-spacing:0">Test · 128/212</span></div>
+            <div class="row" style="height:40px;padding:0 13px;border-bottom:1px solid var(--border)"><b style="font:600 12px var(--font-sans)">Continuous integration</b><span class="small">Pass 1 · fix 0 of 3 · stop on failure Yes</span><span class="chip c-info" style="text-transform:none;letter-spacing:0">Test · 128/212</span></div>
             <div style="display:flex;flex-direction:column;gap:10px;padding:12px">
               <div class="panel" style="border-radius:11px">
                 <div class="row" style="padding:9px 11px;border-bottom:1px solid var(--border)"><b style="font:600 12px var(--font-sans)">Pass 1</b><span class="chip c-info" style="margin-left:0;text-transform:none;letter-spacing:0">Running</span><span class="small" style="margin-left:auto">3m ago</span></div>
@@ -642,7 +955,7 @@ JSON</pre>
                   </div>
                 </div>
                 <div class="st" style="border-top:1px solid var(--border)"><span class="bdg pend">6</span><span class="mut" style="font-size:11px">⎇</span><span class="st-n"><b>GitHub checks</b><span>5 named checks · GitHub</span></span><span class="small">Not started</span></div>
-                <div class="small" style="padding:7px 11px;border-top:1px solid var(--border)">6 steps · Sync with base, then 3 groups in order · a failure stops later groups once its own group finishes</div>
+                <div class="small" style="padding:7px 11px;border-top:1px solid var(--border)">6 steps · Sync with base, then 3 groups in order · a failure stops later groups once its own group finishes (Stop on failure: Yes)</div>
               </div>
               <span style="font:500 11.5px var(--font-sans);color:var(--info-fg)">⚙ CI settings for core.agent.advisor</span>
               <div class="row" style="padding:10px 12px;border:1px dashed var(--input);border-radius:11px"><span class="small" style="flex:1">Moves the card to Ready for merge without a passing CI run.</span><span class="btn">» Skip CI…</span></div>
@@ -661,7 +974,7 @@ JSON</pre>
         <div class="frame">
           <span class="frame-l">{{ th.label }} · forge checks, failures, fix agent</span>
           <div class="{{ th.mock }}" style="display:flex;flex-direction:column;gap:10px;background:color-mix(in srgb,var(--muted) 55%,var(--card))">
-            <div class="row" style="align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--info) 35%,transparent);border-radius:11px;background:color-mix(in srgb,var(--info) 6%,var(--card))"><span style="display:flex;flex-direction:column;gap:2px;flex:1"><b style="font:600 12px var(--font-sans)">Fix agent is working on Check</b><span class="small">Attempt 1 of 2. It has the step's structured failures and output. When it commits, every step re-runs from Sync with base.</span></span><span class="btn sm">💬 View thread</span></div>
+            <div class="row" style="align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--info) 35%,transparent);border-radius:11px;background:color-mix(in srgb,var(--info) 6%,var(--card))"><span style="display:flex;flex-direction:column;gap:2px;flex:1"><b style="font:600 12px var(--font-sans)">Fix agent is working on Check</b><span class="small">Fix 1 of 3. It has every failed step's structured failures and output. When it commits and pushes, every step re-runs from Sync with base.</span></span><span class="btn sm">💬 View thread</span></div>
             <div class="panel" style="border-radius:11px">
               <div class="st"><span class="bdg">2<i class="fx">✕</i></span><span class="mut" style="font-size:11px">›_</span><span class="st-n"><b>Check</b><span class="mono">cargo xtask check</span></span><small class="mono small">2m 04s</small><span class="small" style="color:var(--info-fg);font-weight:500">Failed · fixing</span></div>
               <div style="display:flex;flex-direction:column;gap:7px;padding:0 11px 11px 54px">
@@ -757,7 +1070,7 @@ JSON</pre>
       <div class="note"><span class="mk-i">3</span><span><b>Parallel groups</b> stay flat: a blue rule down the left edge of the group's rows and an "In parallel · N steps" caption, no nested box. Checks and failures inside a step are also unboxed (hairline rows; an amber left rule for failures), so the pass card is the only container.</span></div>
       <div class="note"><span class="mk-i">4</span><span><b>Script</b>: progress message, fraction and bar (from <span class="mono">::t3o-progress::</span>); "View live log" while running, "View log" afterwards. Without progress lines the row shows only the live timer.</span></div>
       <div class="note"><span class="mk-i">5</span><span><b>CI settings for &lt;project&gt;</b> deep-links to that project's CI tab. Skip CI is unchanged.</span></div>
-      <div class="note"><span class="mk-i">6</span><span><b>Fix agent box</b> (existing), now mentioning the structured failures it received.</span></div>
+      <div class="note"><span class="mk-i">6</span><span><b>Fix agent box</b> (existing), now mentioning the structured failures it received. On its last attempt it says the card stops for you if CI still fails.</span></div>
       <div class="note"><span class="mk-i">7</span><span><b>Failures</b> from <span class="mono">$T3O_CI_RESULT</span> (or an agent's report): title, <span class="mono">file:line</span> (opens the file in the diff panel), detail. Without a result file, a line says the fix agent gets the output tail.</span></div>
       <div class="note"><span class="mk-i">8</span><span><b>Forge checks</b>: one sub-row per check with badge, name, Required (GitHub), elapsed where known, status. "Open on GitHub/Forgejo" opens the run in a popup window (1120×820), not a tab, so the card stays put.</span></div>
       <div class="note"><span class="mk-i">9</span><span><b>Agent step</b>: verdict chip (green passed, amber failed), summary, failures, and "Open … thread", which switches the card to that thread.</span></div>

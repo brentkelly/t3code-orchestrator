@@ -20,12 +20,26 @@ Turn on **Run CI for this project**, then add steps. They run in order:
   request, or on a forge with no checks API (Azure DevOps, GitCafe), the card waits for you.
 
 A script marked **Parallel with previous** starts together with the script before it; the group
-finishes before the next step starts, and a failure stops the steps after its group. Scripts in one
+finishes before the next step starts. Scripts in one
 group share a worktree, so they can collide on build output or caches. Agent and forge-check steps
 always run on their own. A group that leaves changes to tracked files fails. A project can have at
 most 12 steps.
 
 Scripts run in the card's worktree as they are, so install what they need in the command.
+
+## Stop on failure
+
+**Stop on failure** on the CI tab decides what a failed step does to the steps after it:
+
+- **Yes** (the default): a failure stops the steps after its group. Passes end sooner, but one pass
+  may show only the first failure, so finding the rest can take several fix rounds.
+- **No**: every step runs even after one fails, and the pass fails at the end if any step did. One
+  pass shows every failure, and the fix agent gets all of them at once. Passes take longer.
+
+Choose **No** when you want several steps for their status and timings on the card and still want
+every failure from one pass. Steps still run one after another, never side by side. Skip CI, moving
+the card out of CI and a pass that can't run still stop everything. A change applies from the next
+pass.
 
 ## Reporting from a script
 
@@ -66,25 +80,27 @@ output is read.
 library, no space left on the disk, a read-only filesystem, a command that isn't installed (exit
 127), and a step the system killed: "Killed" or "Out of memory" in its output, exit 137 or SIGKILL,
 and no time limit reached. The card shows **Machine problem** in amber, naming the machine and what
-to fix there. No fix attempt or round trip is used:
+to fix there. No fix attempt is used:
 fix the machine, then press **Retry CI**. A script's own `machine` flag always wins: `false` keeps a
 failure with the code even when its output looks like a machine problem.
 
-Any other failure goes to a fix agent, which is told what failed and why first. If it is small and
-mechanical, it fixes it on the card's branch and every step runs again from the top. Otherwise the
-card goes back to Code review with the failure as a must-fix finding for a fresh round.
+Any other failure goes to a fix agent. It gets every failure the pass reported, each told what failed
+and why first, as a numbered list of issues, and fixes them on the card's branch. Then every step
+runs again from the top. CI never sends a card back to Code review by itself.
 
-**Fix attempts** caps the fix agents one visit to CI may start (2 by default). **Max round trips**
-caps how many times CI may send a card back to review (3 by default). Past it, CI stops and the card
-waits for you, marked **Needs you**: **Retry CI** starts over with fresh attempts, **Send back to
-review anyway** sends it back, and **Skip CI…** moves it on. Moving a card yourself starts its round
-trips again. Defaults are in **Settings** → **Board** → **Pipeline** → **Continuous integration**;
-each project can override them on its **CI** tab, under **Fix agent**.
+**Fix attempts** caps the fix agents one visit to CI may start (3 by default). When they run out, or
+the fix agent reports something it can't fix, CI stops and the card waits for you, marked **Needs
+you** with the reason: **Retry CI** starts over with fresh attempts, **Send back to review anyway**
+sends the card to Code review with every failure as a must-fix finding, and **Skip CI…** moves it
+on. Defaults are in **Settings** → **Board** → **Pipeline** → **Continuous integration**; each
+project can override them on its **CI** tab, under **Fix agent**.
 
 ## Following a run
 
 The card's **CI** tab shows each step, how long it took, a failed step's output and reported
 failures, an agent step's thread, a forge step's checks, the fix agent at work, and earlier passes.
+A failed pass ends with a **Fix failures** row listing each issue; once the fix agent reports, each
+shows as resolved or can't fix.
 
 - A running script shows its time against its limit, such as "Running 12 / 60 min", and its progress
   if it prints any. The card catches up about every 10 seconds, and a failed step keeps the last

@@ -102,7 +102,7 @@ describe("normalization and version", () => {
       delta: {
         stageSwitches: { backlog: true, sprint: false, review: false, ready: false, nope: true },
         overrides: {
-          ci: { maxFixAttempts: 2, maxRoundTrips: 5 },
+          ci: { maxFixAttempts: 3, maxRoundTrips: 5, autoExecute: false },
           building: { prompt: DEFAULT_BOARD_SETTINGS.pipeline.building?.prompt ?? "x" },
           nope: { autoExecute: true },
         },
@@ -110,7 +110,8 @@ describe("normalization and version", () => {
       },
     });
     expect(normalized.stageSwitches).toEqual({ sprint: false });
-    expect(normalized.overrides.ci).toEqual({ maxRoundTrips: 5 });
+    // T3O-57: `maxRoundTrips` is no longer a CI key, so a stored one is dropped.
+    expect(normalized.overrides.ci).toEqual({ autoExecute: false });
     // A prompt override is kept even when it matches: it pins the text.
     expect(normalized.overrides.building).toHaveProperty("prompt");
     expect(normalized.overrides).not.toHaveProperty("nope");

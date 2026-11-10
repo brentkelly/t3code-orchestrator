@@ -377,6 +377,9 @@ export const BoardWorkerRunCiInput = Schema.Struct({
   /** The pass index of `steps[0]`, so a later segment's log files don't
       overwrite an earlier one's (T3O-49). */
   indexOffset: Schema.optionalKey(NonNegativeInt),
+  /** False runs every step even after a failure (T3O-57). An older worker
+      ignores it and stops at the first failure. */
+  stopOnFailure: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardWorkerRunCiInput = typeof BoardWorkerRunCiInput.Type;
 
@@ -439,6 +442,8 @@ export const BoardWorkerCiProgress = Schema.Union([
     failedIndex: Schema.NullOr(NonNegativeInt),
     /** Why the pass could not run, when `result` is "unavailable". */
     detail: Schema.optional(Schema.String),
+    /** Every step ran (T3O-57). Absent, from an older worker, reads false. */
+    ranAll: Schema.optionalKey(Schema.Boolean),
     /** The pass could not run because of the worker's machine (T3O-59). */
     machine: Schema.optionalKey(Schema.Boolean),
     /** The failed step's exit code, when `result` is "failed" (T3O-59). */

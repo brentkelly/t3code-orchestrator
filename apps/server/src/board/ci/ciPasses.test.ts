@@ -51,7 +51,9 @@ it.effect("admitting queued passes skips one whose worker is full and starts the
     const passes = yield* makeBoardCiPasses({
       runner: {
         run: () =>
-          Deferred.await(release).pipe(Effect.as({ result: "passed" as const, failedIndex: null })),
+          Deferred.await(release).pipe(
+            Effect.as({ result: "passed" as const, failedIndex: null, ranAll: true }),
+          ),
       },
       slots,
       dispatch: () => Effect.void,
@@ -121,7 +123,9 @@ it.effect("a finished pass stays current until its result is claimed, once, and 
   Effect.gen(function* () {
     const finished: BoardCiPassFinished[] = [];
     const { passes, slots } = yield* passesWith(
-      { run: () => Effect.succeed({ result: "failed", failedIndex: 0, exitCode: 2 }) },
+      {
+        run: () => Effect.succeed({ result: "failed", failedIndex: 0, ranAll: false, exitCode: 2 }),
+      },
       finished,
     );
     const card = BoardCardId.make("card-1");
@@ -152,7 +156,7 @@ it.effect("settling an old launch leaves the next segment's entry, which shares 
       {
         run: () =>
           (calls++ === 0 ? Effect.void : Deferred.await(release)).pipe(
-            Effect.as({ result: "passed" as const, failedIndex: null }),
+            Effect.as({ result: "passed" as const, failedIndex: null, ranAll: true }),
           ),
       },
       finished,

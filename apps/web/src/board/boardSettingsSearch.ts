@@ -44,7 +44,7 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     id: "board-pipeline",
     title: "Pipeline",
     to: "/settings/board",
-    searchTerms: ["stages default for projects continuous integration ci round trips"],
+    searchTerms: ["stages default for projects continuous integration ci fix attempts"],
   },
   // T3O-49: each project's pipeline, CI and t3o.json live on its own page,
   // reached from the project list.
@@ -53,7 +53,7 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     title: "Project pipelines and CI",
     to: "/settings/board",
     targetId: "board-projects",
-    searchTerms: ["t3o.json import export per project stages override ci steps"],
+    searchTerms: ["t3o.json import export per project stages override ci steps stop on failure"],
   },
   {
     id: "board-default-model",
