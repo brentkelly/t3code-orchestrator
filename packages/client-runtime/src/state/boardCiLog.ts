@@ -114,7 +114,19 @@ export function applyBoardCiLogItem(
   // A `\r` redraw keeps only its last frame, so `\r`-only progress stays one
   // short line. A trailing `\r` may be the first half of a CRLF.
   const rawPartial = parts.pop()!;
-  const partial = rawPartial.slice(rawPartial.lastIndexOf("\r", rawPartial.length - 2) + 1);
+  const maxBytes = options.maxBytes ?? BOARD_CI_LOG_VIEW_BYTES;
+  let partial = rawPartial.slice(rawPartial.lastIndexOf("\r", rawPartial.length - 2) + 1);
+  let truncated = view.truncated;
+  // A line with no newline yet is kept to its last `maxBytes`, so one endless
+  // line can't grow without bound.
+  if (utf8ByteLength(partial) > maxBytes) {
+    partial = partial.slice(-maxBytes);
+    while (utf8ByteLength(partial) > maxBytes) {
+      partial = partial.slice(Math.max(1, Math.floor((utf8ByteLength(partial) - maxBytes) / 4)));
+    }
+    if (/^[\udc00-\udfff]/.test(partial)) partial = partial.slice(1);
+    truncated = true;
+  }
 
   const blocks = [...view.blocks];
   let last = blocks.at(-1);
@@ -148,9 +160,7 @@ export function applyBoardCiLogItem(
 
   const partialBytes = utf8ByteLength(partial);
   let bytes = view.bytes - utf8ByteLength(view.nextOffset === null ? "" : view.partial) + added;
-  let truncated = view.truncated;
   let droppedLines = view.droppedLines;
-  const maxBytes = options.maxBytes ?? BOARD_CI_LOG_VIEW_BYTES;
   while (blocks.length > 1 && bytes + partialBytes > maxBytes) {
     const dropped = blocks.shift()!;
     bytes -= dropped.bytes;

@@ -622,6 +622,27 @@ it.live("a missing tool is a machine problem, and an empty result file is said",
   }),
 );
 
+it.live("a machine problem in a parallel group outranks an earlier code failure", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { emit } = collect();
+    const result = yield* runBoardCiPass(
+      request(cwd, [
+        { name: "Lint", command: "echo 'error: bad style'; exit 1", timeoutMinutes: 1 },
+        {
+          name: "Browser",
+          command: "t3o-no-such-tool-xyz --run",
+          timeoutMinutes: 1,
+          parallel: true,
+        },
+      ]),
+      emit,
+    );
+    assert.deepInclude(result, { result: "failed", failedIndex: 1, exitCode: 127 });
+    assert.strictEqual(result.result === "failed" ? result.headline?.machine : null, true);
+  }),
+);
+
 it.live("a passing step carries no headline", () =>
   Effect.gen(function* () {
     const cwd = workdir();

@@ -680,7 +680,12 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
             ...(headline === null ? {} : { headline }),
           },
         });
-        if (status !== "passed" && failedIndex === null) {
+        // A machine problem in the group outranks a code failure beside it,
+        // so the pass is held rather than sent to a fix round that can't help.
+        if (
+          status !== "passed" &&
+          (failedIndex === null || (failedHeadline?.machine !== true && headline?.machine === true))
+        ) {
           failedIndex = step.index;
           exitCode = step.exit.exitCode;
           failedHeadline = headline ?? undefined;

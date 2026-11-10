@@ -51,6 +51,18 @@ describe("the CI log viewer's model (T3O-60)", () => {
     expect(after.blocks).toHaveLength(1);
     expect(after.blocks[0]!.id).toBe(before.blocks[0]!.id);
     expect(after.blocks[0]!.lines).toEqual(["a", "b", "c"]);
+
+    // A line that never ends is kept to its last `maxBytes`, still in step with the file.
+    const endless = fold([chunk(0, "é".repeat(40)), chunk(80, "abcdefghij"), chunk(90, "z\nok")], {
+      maxBytes: 16,
+    });
+    expect(endless.truncated).toBe(true);
+    expect(endless.blocks[0]!.lines).toEqual(["éééabcdefghijz"]);
+    expect(endless.blocks[0]!.offsets).toEqual([74]);
+    expect(endless.partial).toBe("ok");
+    const capped = fold([chunk(0, "x".repeat(50))], { maxBytes: 16 });
+    expect(capped.partial).toBe("x".repeat(16));
+    expect(capped.bytes).toBe(16);
   });
 
   it("starts on a whole line when opened at an offset mid-line", () => {
