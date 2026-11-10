@@ -3555,8 +3555,8 @@ const make = Effect.gen(function* () {
           action: { kind: "finish-pass", runId, result: "passed" },
           createdAt: yield* nowIso,
         });
-        if (recorded) yield* advanceFromCi(card);
-        else ciLostResults.set(runId, { exitCode: 0, stepName: null });
+        if (!recorded) ciLostResults.set(runId, { exitCode: 0, stepName: null });
+        else if (yield* ciPassRecordedAs(card.id, runId, "passed")) yield* advanceFromCi(card);
         return;
       }
       if (segment.kind !== "scripts") {
@@ -3856,6 +3856,22 @@ const make = Effect.gen(function* () {
     card.stage === BOARD_SEED_STAGE_IDS.ci &&
     card.ci?.runId === runId &&
     !isBoardCiPassSettledPhase(card.ci.phase);
+
+  /** Whether the result just recorded for `runId` took: a Stop or hold that
+      landed between the liveness read and the record leaves the card's pass
+      settled, and nothing may move it on (T3O-59). */
+  const ciPassRecordedAs = (cardId: BoardCardId, runId: string, result: "passed" | "failed") =>
+    readCard(cardId).pipe(
+      Effect.map((card) =>
+        result === "passed"
+          ? card !== null &&
+            card.archivedAt === null &&
+            card.stage === BOARD_SEED_STAGE_IDS.ci &&
+            card.ci?.runId === runId &&
+            card.ci.phase === "passed"
+          : card !== null && isCiPassLive(card, runId),
+      ),
+    );
 
   /**
    * Results whose record didn't land (T3O-59), by run id: in memory only, to
@@ -4445,6 +4461,7 @@ const make = Effect.gen(function* () {
       });
       return;
     }
+    if (!(yield* ciPassRecordedAs(card.id, finished.runId, "failed"))) return;
     const detail = yield* boardQueries
       .boardCardDetail(card.id)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));

@@ -1202,6 +1202,47 @@ it.effect("Stop CI holds a queued or running pass, and Retry CI runs it again", 
   }),
 );
 
+it.effect.each(["failed", "passed"] as const)(
+  "Stop CI landing as a %s result is recorded wins: the card stays held in CI",
+  (result) =>
+    Effect.gen(function* () {
+      const { runner } = yield* scriptedRunner([
+        result === "failed"
+          ? { result: "failed", failedIndex: 1, exitCode: 1 }
+          : { result: "passed", failedIndex: null },
+      ]);
+      const subject = card(`stop-race-${result}`, review);
+      // The stop lands after the result handler's liveness read, just before
+      // its record.
+      const stopper: { stop: Effect.Effect<unknown> | null } = { stop: null };
+      const onDispatch = (command: HarnessCommand) => {
+        const stop = stopper.stop;
+        if (
+          stop === null ||
+          command.type !== "board.card.record-ci" ||
+          command.action.kind !== "finish-pass" ||
+          command.action.result !== result
+        ) {
+          return Effect.void;
+        }
+        stopper.stop = null;
+        return Effect.asVoid(stop);
+      };
+      yield* withGovernor(
+        { board: boardWith([subject], ciConfig({ maxFixAttempts: 0 })), settings, onDispatch },
+        (h) =>
+          Effect.gen(function* () {
+            stopper.stop = h.reactor.retryCi(subject.id, "stop");
+            yield* enterCiAndRun(h, subject, 1);
+            const held = yield* live(h, subject.id);
+            assert.strictEqual(held.stage, ci);
+            assert.strictEqual(held.ci?.phase, "held");
+            assert.strictEqual(held.ci?.stopReason, "Stopped by you. Retry CI to run it again.");
+          }),
+      ).pipe(Effect.provideService(BoardCiRunner, runner));
+    }),
+);
+
 it.effect("Stop CI while a fix agent works abandons its step and holds the pass", () =>
   Effect.gen(function* () {
     const { runner } = yield* scriptedRunner([{ result: "failed", failedIndex: 1, exitCode: 1 }]);
