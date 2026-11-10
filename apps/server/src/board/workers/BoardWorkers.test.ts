@@ -186,8 +186,7 @@ const setupWith = (
         ...boardEngine,
         dispatch: options.dispatch?.(boardEngine.dispatch) ?? boardEngine.dispatch,
       }),
-      Effect.provide(relay.layer),
-      Effect.provide(kit.layer),
+      Effect.provide(relay.layer.pipe(Layer.provideMerge(kit.layer))),
     );
     return { http, kit, worker, connections, workers, relay };
   });

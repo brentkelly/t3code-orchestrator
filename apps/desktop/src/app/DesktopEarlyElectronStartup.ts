@@ -15,9 +15,7 @@ import {
   type JoinPath,
 } from "./DesktopStatePaths.ts";
 // T3o: desktop identity.
-import {
-  resolveT3oLinuxDesktopEntryName,
-} from "../../../../scripts/lib/t3o-desktop-identity.ts";
+import { resolveT3oLinuxDesktopEntryName } from "../../../../scripts/lib/t3o-desktop-identity.ts";
 
 interface EarlyDesktopSettingsInput {
   readonly env: NodeJS.ProcessEnv;

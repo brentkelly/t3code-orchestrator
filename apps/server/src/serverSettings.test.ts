@@ -1149,7 +1149,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       // The file keeps only what differs, and every surviving object is whole
       // enough to decode on its own.
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const parsed = JSON.parse(raw) as { readonly board: Record<string, unknown> };
       assert.deepEqual(Object.keys(parsed.board).sort(), ["concurrency", "lifecycle", "pipeline"]);
       assert.deepEqual(Object.keys(parsed.board.pipeline as object), ["building"]);
@@ -1214,7 +1213,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.deepEqual(next.board.defaultModel, chosen);
 
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const parsed = JSON.parse(raw) as { readonly board: Record<string, unknown> };
       // Whole, not diffed field-wise: a `{ instanceId }` with no `model` fails
       // the write-time validation and loses the ENTIRE settings write.

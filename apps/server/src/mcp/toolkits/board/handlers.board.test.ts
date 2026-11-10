@@ -1202,7 +1202,6 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       assert.strictEqual(repaired.outcome, "succeeded");
       const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
       assert.strictEqual(context.steps.length, 1);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserts the exact stored encoding.
       assert.strictEqual(context.steps[0]?.payload, JSON.stringify(validReview));
       assert.strictEqual(context.steps[0]?.summary, "Re-recording round 1");
     }),
@@ -1235,7 +1234,6 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
         .pipe(withScope(own.ownThread));
       assert.strictEqual(retry.alreadyCompleted, true);
       const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserts the exact stored encoding.
       assert.strictEqual(context.steps[0]?.payload, JSON.stringify(validReview));
       assert.strictEqual(context.steps[0]?.summary, "Reviewed");
     }),
@@ -1267,7 +1265,6 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       assert.strictEqual(retry.outcome, "succeeded");
       const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
       assert.strictEqual(context.steps.length, 1);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserts the exact stored encoding.
       assert.strictEqual(context.steps[0]?.payload, JSON.stringify(validReview));
       assert.strictEqual(context.steps[0]?.summary, "Reviewed");
     }),

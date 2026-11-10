@@ -158,7 +158,7 @@ describe("GitHubRequestPolicy.credential under gitenv", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Since v0.1.7 a saved Settings token may be a secret-provider reference (upstream #27756).
+  // Since v0.1.7 a saved Settings token may be a secret-provider reference.
   it.effect(
     "outranks a saved token read from a secret provider, even one that will not unlock",
     () => {
@@ -217,7 +217,7 @@ describe("a refused token", () => {
       expect(invalidated).toEqual(["github.com"]);
       expect(appInvalidated).toEqual(["github.com"]);
       expect(warnings).toHaveLength(1);
-    }).pipe(Effect.provide(layer), Effect.provide(Logger.layer([logger])));
+    }).pipe(Effect.provide(Layer.merge(layer, Logger.layer([logger]))));
   });
 });
 

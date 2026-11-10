@@ -139,7 +139,6 @@ it.effect("a repaired review payload restarts the loop at the step it was blocki
         completionEvent({
           outcome: "succeeded",
           summary: "Re-recording round 1",
-          // @effect-diagnostics-next-line preferSchemaOverJson:off - the stored payload is an opaque JSON string.
           payload: JSON.stringify({
             reviewedSha: "abc123",
             findings: [

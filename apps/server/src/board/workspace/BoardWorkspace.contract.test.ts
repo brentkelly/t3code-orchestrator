@@ -368,7 +368,7 @@ const scenario = (ws: BoardWorkspace, env: Env, forgeAsked: Array<string>) =>
   });
 
 /** A transcript with its temp root, per-run repository name and the worktree folder suffix
-    upstream hashes from the repository's own git dir (#32934) taken out. */
+    upstream hashes from the repository's own git dir taken out. */
 const normalise = (env: Env, label: string, transcript: unknown) =>
   JSON.parse(
     JSON.stringify(transcript)

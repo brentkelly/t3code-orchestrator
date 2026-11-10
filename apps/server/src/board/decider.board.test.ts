@@ -3637,7 +3637,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
       assert.strictEqual(repaired.type, "board.card-step-completed");
       if (repaired.type !== "board.card-step-completed") return;
       assert.strictEqual(repaired.payload.completion.summary, "Re-recording round 10");
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserts the exact stored encoding.
       assert.strictEqual(repaired.payload.completion.payload, JSON.stringify(validReviewPayload));
       // The reactor ignores a completion whose step already settled, so the
       // repair has to say it was one or the loop never restarts.
@@ -3680,7 +3679,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
       assert.strictEqual(retried.type, "board.card-step-completed");
       if (retried.type !== "board.card-step-completed") return;
       assert.strictEqual(retried.payload.completion.summary, "Reviewed");
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserts the exact stored encoding.
       assert.strictEqual(retried.payload.completion.payload, JSON.stringify(validReviewPayload));
       assert.strictEqual(retried.payload.repaired, undefined);
     }),
