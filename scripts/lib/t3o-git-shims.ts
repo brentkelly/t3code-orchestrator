@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - run by the plain-Node service installer.
 /**
  * T3o (T3O-58): the `t3-git-credential` and `gh` shims `scripts/t3o-service.mjs` installs in
  * `~/.local/bin`, both running the built `dist/t3oGitCredential.mjs` against one gitenv file.
