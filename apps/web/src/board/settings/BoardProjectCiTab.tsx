@@ -929,9 +929,9 @@ function ScriptContractHelp() {
           <p className="max-w-[66ch] text-[12.5px] leading-[1.55] text-pretty text-muted-foreground">
             A failed step heads the card with what failed and why: a failure line if the script
             printed one, else a reason read from its result file and output. A machine problem (a
-            missing system library, a full or read-only disk, a command that isn&apos;t installed,
-            a step killed for memory) holds the card for you with no fix agent; fix the machine,
-            then Retry CI. Add <code className="font-mono text-xs">&quot;machine&quot;</code> to a
+            missing system library, a full or read-only disk, a command that isn&apos;t installed, a
+            step killed for memory) holds the card for you with no fix agent; fix the machine, then
+            Retry CI. Add <code className="font-mono text-xs">&quot;machine&quot;</code> to a
             failure line or a result-file failure to say so yourself: true holds the card, false
             keeps it with the fix agent.
           </p>

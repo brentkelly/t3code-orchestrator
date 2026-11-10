@@ -49,7 +49,7 @@ const fromWireHeadline = (headline: WireCiDone["headline"]) =>
   headline === undefined ? null : clampBoardCiHeadline(headline);
 
 /** A worker's step report as this board records it. */
-export function fromWireCiStep(step: WireCiStep): BoardCiPassStep {
+function fromWireCiStep(step: WireCiStep): BoardCiPassStep {
   const { headline, ...rest } = step;
   const clamped = fromWireHeadline(headline);
   return {

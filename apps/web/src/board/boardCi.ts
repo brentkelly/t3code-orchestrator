@@ -75,7 +75,7 @@ export interface BoardCiFace {
 }
 
 /** What failed and why, as one line (T3O-61). */
-export function boardCiHeadlineText(headline: { readonly what: string; readonly why: string }) {
+function boardCiHeadlineText(headline: { readonly what: string; readonly why: string }) {
   return `${headline.what}: ${headline.why}`;
 }
 

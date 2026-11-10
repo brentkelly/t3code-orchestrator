@@ -355,7 +355,10 @@ it.live("runs a parallel group together and stops later groups once it finishes"
       emit,
     );
     assert.deepInclude(result, { result: "failed", failedIndex: 1, exitCode: 7 });
-    assert.strictEqual(result.result === "failed" ? result.headline?.why : null, "Exited with code 7");
+    assert.strictEqual(
+      result.result === "failed" ? result.headline?.why : null,
+      "Exited with code 7",
+    );
     const finals = events.filter((event) => event.step.status !== "running");
     assert.deepStrictEqual(
       finals.map((event) => [event.index, event.step.status, event.step.exitCode]),

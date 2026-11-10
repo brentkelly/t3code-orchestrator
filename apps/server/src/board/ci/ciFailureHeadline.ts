@@ -35,11 +35,9 @@ const FACT_LINE_CHARS = 1_000;
 /** A bare ENOSPC is a machine problem only when the disk is still this low. */
 const LOW_DISK_BYTES = 2 * 1024 ** 3;
 
-// oxlint-disable-next-line no-control-regex -- ANSI escapes are control bytes.
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
 
-const SHARED_LIBRARY =
-  /error while loading shared libraries|cannot open shared object file/;
+const SHARED_LIBRARY = /error while loading shared libraries|cannot open shared object file/;
 const LIBRARY_NAME = [
   /error while loading shared libraries:\s*([^\s:]+)/,
   /([\w.+-]+\.so(?:\.[\w.]+)?)\s*:\s*cannot open shared object file/,
@@ -289,9 +287,7 @@ function pickVerdict(facts: BoardCiFailureFacts, input: BoardCiHeadlineInput): V
       source: "failure-line",
       machine: isMachine,
       subStep: line.step ?? firstFailure?.title ?? null,
-      ...(isMachine
-        ? { hint: machine?.hint ?? `Fix it on ${input.host}.` }
-        : {}),
+      ...(isMachine ? { hint: machine?.hint ?? `Fix it on ${input.host}.` } : {}),
     };
   }
   if (flagged !== null) {

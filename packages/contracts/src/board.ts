@@ -1824,8 +1824,8 @@ export function parseBoardCiProgressLine(line: string): {
 const BOARD_CI_FAILURE_MARKER = "::t3o-failure::";
 
 /** Longest sub-step name and reason a `::t3o-failure::` line keeps. */
-export const BOARD_CI_FAILURE_STEP_MAX = 80;
-export const BOARD_CI_FAILURE_REASON_MAX = 300;
+const BOARD_CI_FAILURE_STEP_MAX = 80;
+const BOARD_CI_FAILURE_REASON_MAX = 300;
 
 /** Parse one `::t3o-failure::{step?, reason, machine?}` output line, or null
     when the line is not one, its JSON is unreadable or it has no reason. */
@@ -1936,8 +1936,8 @@ export const BoardCiProgress = Schema.Struct({
 export type BoardCiProgress = typeof BoardCiProgress.Type;
 
 /** Most characters a CI headline's `what` and `why` keep (T3O-61). */
-export const BOARD_CI_HEADLINE_WHAT_MAX = 80;
-export const BOARD_CI_HEADLINE_WHY_MAX = 160;
+const BOARD_CI_HEADLINE_WHAT_MAX = 80;
+const BOARD_CI_HEADLINE_WHY_MAX = 160;
 
 const BOARD_CI_HEADLINE_SOURCES = [
   "failure-line",
