@@ -67,6 +67,7 @@ import {
   deriveBoardCardChildRunning,
   isBoardCardAwaitingPermission,
   isBoardCardWorking,
+  boardCardWorkingLabel,
   isBoardConflictFixLive,
   isBoardChecksFixLive,
   BoardCardPullRequest,
@@ -98,7 +99,7 @@ import {
   BoardShellSnapshot,
 } from "./board.ts";
 import { defaultBoardCardGroup } from "./boardGroups.ts";
-import type { BoardCardAutoMergeHold, BoardCardWorktree } from "./board.ts";
+import type { BoardCardAutoMergeHold, BoardCardCiPhase, BoardCardWorktree } from "./board.ts";
 import { ProjectId, ThreadId } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -1822,6 +1823,35 @@ describe("cards that need a human (boardCardAttention)", () => {
     );
   });
 
+  // T3O-68: a held card sat in amber for a whole CI pass. A running CI script
+  // is not a thread and not `stepRunning`, so nothing vetoed the chip.
+  it("never says a card needs a human while its CI round is active", () => {
+    const ci = (phase: BoardCardCiPhase): BoardCardShell["ci"] => ({
+      runId: "ci-1",
+      entry: 1,
+      fixAttempts: 0,
+      maxFixAttempts: 2,
+      phase,
+      steps: [],
+    });
+    for (const stage of [BOARD_SEED_STAGE_IDS.building, BOARD_SEED_STAGE_IDS.ci]) {
+      for (const phase of ["queued", "running", "fixing"] as const) {
+        expect(attention({ stage, held: true, ci: ci(phase) })).toBeNull();
+        expect(attention({ stage, stepAwaiting: "stopped", ci: ci(phase) })).toBeNull();
+      }
+      // Once the round settles the chip is back: stopped asks in its own words,
+      // a pass leaves the held claim standing.
+      expect(attention({ stage, held: true, ci: ci("stopped") })?.reason).toBe("ci-stopped");
+      expect(attention({ stage, held: true, ci: ci("passed") })?.reason).toBe("held");
+      expect(attention({ stage, held: true, ci: ci("held") })?.reason).toBe("held");
+      expect(attention({ stage, stepAwaiting: "stopped", ci: ci("passed") })?.reason).toBe(
+        "stopped",
+      );
+    }
+    // Real asks stay true during CI.
+    expect(attention({ held: true, awaitingInput: true, ci: ci("running") })?.reason).toBe("input");
+  });
+
   it("still parks a step whose threads are stopped or provably dead", () => {
     // The veto is EVIDENCE of work, not the absence of it: a failed thread is
     // not working (it vetoes the dot too), so the parked step still flags.
@@ -2117,6 +2147,33 @@ describe("children actively working (deriveBoardCardChildRunning)", () => {
       isBoardCardAwaitingPermission(card({ threadState: "waiting", awaitingInput: true })),
     ).toBe(false);
     expect(isBoardCardAwaitingPermission(card({ threadState: "working" }))).toBe(false);
+  });
+
+  it("T3O-68: a running or fixing CI round lights the dot", () => {
+    const ci = (phase: BoardCardCiPhase): BoardCardShell["ci"] => ({
+      runId: "ci-1",
+      entry: 1,
+      fixAttempts: 0,
+      maxFixAttempts: 2,
+      phase,
+      steps: [],
+    });
+    expect(isBoardCardWorking(card({ threadState: "stopped", ci: ci("running") }))).toBe(true);
+    expect(isBoardCardWorking(card({ threadState: "stopped", ci: ci("fixing") }))).toBe(true);
+    // A dead thread from the stage before does not veto a live CI script.
+    expect(isBoardCardWorking(card({ threadState: "failed", ci: ci("running") }))).toBe(true);
+    // Queued does not light the dot, as nowhere else does.
+    expect(isBoardCardWorking(card({ threadState: "stopped", ci: ci("queued") }))).toBe(false);
+    expect(isBoardCardWorking(card({ threadState: "stopped", ci: ci("passed") }))).toBe(false);
+    // A permission prompt still darkens it.
+    expect(isBoardCardWorking(card({ threadState: "waiting", ci: ci("running") }))).toBe(false);
+    expect(boardCardWorkingLabel(card({ threadState: "stopped", ci: ci("running") }))).toBe(
+      "CI running",
+    );
+    expect(boardCardWorkingLabel(card({ threadState: "working", ci: ci("fixing") }))).toBe(
+      "Thread running",
+    );
+    expect(boardCardWorkingLabel(card({ stepRunning: true }))).toBe("Thread running");
   });
 
   it("AC 13: a dead thread vetoes the board's claim that a step is running", () => {

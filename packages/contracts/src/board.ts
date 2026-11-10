@@ -1912,6 +1912,12 @@ export function isBoardCiPassSettledPhase(phase: BoardCardCiPhase): boolean {
   return phase === "passed" || phase === "held" || phase === "stopped";
 }
 
+/** Whether a card's CI round is queued, running or being fixed (T3O-68): work
+    in progress, so no "nobody is working on this" chip may show. */
+export function isBoardCardCiActive(card: Pick<BoardCardShell, "ci">): boolean {
+  return card.ci != null && !isBoardCiPassSettledPhase(card.ci.phase);
+}
+
 /** The hold reason Stop CI records (T3O-59); clients head such a pass as
     stopped rather than as one CI couldn't run. */
 export const BOARD_CI_STOPPED_BY_YOU_REASON = "Stopped by you. Retry CI to run it again.";
@@ -5354,8 +5360,12 @@ export function boardCardAttention(input: {
     input.now !== undefined &&
     Number.isFinite(idleSince) &&
     input.now - idleSince < BOARD_ATTENTION_SETTLE_MS;
+  // A running CI script is not a thread and not `stepRunning`, so an active
+  // round needs its own veto (T3O-68).
+  const ciActive = isBoardCardCiActive(card);
   if (
     card.held &&
+    !ciActive &&
     // `working` alone would let a `failed` thread through beside a stale
     // `stepRunning` claim, and a step cannot be both running and held.
     !working &&
@@ -5429,7 +5439,7 @@ export function boardCardAttention(input: {
   // Gated on `settling` as well, so the two chips that say the same words wait
   // out the same beat. `question` above is not: it is a real pending question,
   // answerable the moment it is asked.
-  if (stepAwaiting === "stopped" && !settling) {
+  if (stepAwaiting === "stopped" && !settling && !ciActive) {
     return {
       reason: "stopped",
       tone: ATTENTION_TONES.stopped,
@@ -5530,14 +5540,32 @@ export function boardCardChildAttentionLabel(attention: BoardCardChildAttention)
  * mid-turn: the card is blocked on the human either way.
  */
 export function isBoardCardWorking(
-  card: Pick<BoardCardShell, "threadState" | "stepRunning">,
+  card: Pick<BoardCardShell, "threadState" | "stepRunning" | "ci">,
 ): boolean {
+  if (card.threadState === "waiting") return false;
+  // A CI script running, or a fix agent on its failure (T3O-68), is work no
+  // thread state describes; a dead thread from an earlier stage cannot veto it.
+  if (isBoardCardCiRunning(card)) return true;
   // Evidence outranks the claim (t3o-10, D5): the board says a step is running
   // and every thread it could be running on is DEAD, so the dot goes dark. Only
   // `failed` does this — `stopped` is an idle thread between turns, which is
   // exactly the loop-stage gap `stepRunning` exists to cover.
-  if (card.threadState === "failed" || card.threadState === "waiting") return false;
+  if (card.threadState === "failed") return false;
   return card.threadState === "working" || card.stepRunning;
+}
+
+function isBoardCardCiRunning(card: Pick<BoardCardShell, "ci">): boolean {
+  return card.ci?.phase === "running" || card.ci?.phase === "fixing";
+}
+
+/** The working dot's tooltip on a card that is working: "CI running" when CI
+    is the only reason it is lit. */
+export function boardCardWorkingLabel(
+  card: Pick<BoardCardShell, "threadState" | "stepRunning" | "ci">,
+): string {
+  return isBoardCardCiRunning(card) && card.threadState !== "working" && !card.stepRunning
+    ? "CI running"
+    : "Thread running";
 }
 
 /**
@@ -5571,7 +5599,7 @@ export function isBoardCardAwaitingPermission(
  */
 export function deriveBoardCardChildRunning(input: {
   readonly cards: ReadonlyArray<
-    Pick<BoardCardShell, "threadState" | "stepRunning"> & {
+    Pick<BoardCardShell, "threadState" | "stepRunning" | "ci"> & {
       readonly parentCardId?: BoardCardId;
     }
   >;
