@@ -204,6 +204,13 @@ describe("boardCiFailureHeadline", () => {
       source: "result-file",
     },
     {
+      name: "a short mocha log: a recovered library warning, then an AssertionError",
+      log: `${LIBNSPR}${passing(20)}  1) adds:\n     AssertionError [ERR_ASSERTION]: expected 2 to be 3\n  1 failing\n`,
+      why: "AssertionError [ERR_ASSERTION]: expected 2 to be 3",
+      machine: false,
+      source: "pattern",
+    },
+    {
       name: "a short Playwright log: the launch error around a missing library is a machine problem",
       log: `${passing(5)}  1) [chromium] › a.spec.ts:3:5 › opens\n    Error: browserType.launch: Target page, context or browser has been closed\n    Browser logs:\n${LIBNSPR}  Retry #1\n    Error: browserType.launch: Target page, context or browser has been closed\n    Browser logs:\n${LIBNSPR}  1 failed\n`,
       why: "Missing system library: libnspr4.so",

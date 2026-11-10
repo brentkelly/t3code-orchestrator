@@ -56,6 +56,7 @@ const FATAL_ANYWHERE = [
 const GENERIC = [
   /\berror:/,
   /\bError:/,
+  /\b[A-Z]\w*Error\b(?: \[[A-Z_]+\])?:/,
   /^\s*ERROR\b/,
   /^\s*FAIL\b/,
   /ERR!/,
