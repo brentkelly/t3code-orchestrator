@@ -920,6 +920,23 @@ describe("the CI fix prompt (T3O-57)", () => {
     for (const rule of boardCiFixPromptRules(2)) expect(prompt).toContain(rule);
   });
 
+  it("clips each issue's detail so many issues can't blow the prompt's bound", () => {
+    const prompt = composeBoardCiFixPrompt({
+      prompt: "Fix it.",
+      attempt: 1,
+      maxAttempts: 3,
+      failures: [failure("Test", "boom")],
+      issues: Array.from({ length: 30 }, (_, n) => ({
+        id: `s0.${n}`,
+        stepName: "Test",
+        title: `case ${n}`,
+        detail: `${n}:`.padEnd(4_000, "x"),
+      })),
+    });
+    expect(prompt.length).toBeLessThan(20_000);
+    expect(prompt).toContain("30. [s0.29] Test: case 29 — 29:x");
+  });
+
   it("says earlier failures may cause later ones only when there is more than one", () => {
     expect(boardCiFixPromptRules(1).join("\n")).not.toContain("Work through them in order");
     expect(boardCiFixPromptRules(2).join("\n")).toContain("Work through them in order");

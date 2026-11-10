@@ -848,6 +848,14 @@ export interface BoardCiFixFailure {
 /** The output tail allowance shared by every failure in one fix prompt. */
 export const BOARD_CI_FIX_TAIL_BUDGET = 16_000;
 
+/** Each issue's detail line in a fix prompt; the step's log has the rest. */
+const BOARD_CI_FIX_ISSUE_DETAIL_MAX = 400;
+
+const clipIssueDetail = (detail: string) =>
+  detail.length <= BOARD_CI_FIX_ISSUE_DETAIL_MAX
+    ? detail
+    : `${detail.slice(0, BOARD_CI_FIX_ISSUE_DETAIL_MAX - 1)}…`;
+
 /** The last lines of `tail` that fit in `budget` characters. */
 function lastLinesWithin(tail: string, budget: number): string {
   if (tail.length <= budget) return tail;
@@ -932,7 +940,7 @@ export function composeBoardCiFixPrompt(input: {
     `The issues to fix (${issues.length}):`,
     ...issues.map(
       (issue, index) =>
-        `${index + 1}. [${issue.id}] ${issue.stepName}: ${issue.title}${where(issue)}${issue.detail === undefined ? "" : ` — ${issue.detail}`}`,
+        `${index + 1}. [${issue.id}] ${issue.stepName}: ${issue.title}${where(issue)}${issue.detail === undefined ? "" : ` — ${clipIssueDetail(issue.detail)}`}`,
     ),
     ...blocks,
     "",
