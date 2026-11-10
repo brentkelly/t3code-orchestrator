@@ -20,6 +20,8 @@ import * as Schema from "effect/Schema";
 import { makeBoardCard, NOW } from "../supervisorHarness.testkit.ts";
 import { decideBoardCiRecord } from "./ciRecord.ts";
 
+const decodeRecordCiCommand = Schema.decodeSync(BoardCardRecordCiCommand);
+
 const ci = (phase: BoardCardCi["phase"]): BoardCardCi => ({
   runId: "run-1",
   entry: 1,
@@ -167,7 +169,7 @@ it("a fix's re-run starts only on a pass still being fixed", () => {
 });
 
 it("a finish-pass recorded before held reasons existed still decodes", () => {
-  const decoded = Schema.decodeUnknownSync(BoardCardRecordCiCommand)({
+  const decoded = decodeRecordCiCommand({
     type: "board.card.record-ci",
     commandId: "cmd-old",
     cardId: "card-ci",

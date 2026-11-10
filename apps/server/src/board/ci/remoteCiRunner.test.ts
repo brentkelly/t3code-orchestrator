@@ -16,6 +16,11 @@ import type { WorkerRpc } from "../workers/WorkerTransport.ts";
 import type { BoardCiStepProgress } from "./BoardCiRunner.ts";
 import { remoteCiRunBudgetMs, remoteCiRunner, toWireCiDone } from "./remoteCiRunner.ts";
 
+const decodeCiProgress = Schema.decodeEffect(BoardWorkerCiProgress);
+const decodeCiProgressList = Schema.decodeEffect(Schema.Array(BoardWorkerCiProgress));
+const decodeCiProgressUnknown = Schema.decodeUnknownSync(BoardWorkerCiProgress);
+const decodeRunCiInputUnknown = Schema.decodeUnknownSync(BoardWorkerRunCiInput);
+
 const worker = EnvironmentId.make("worker-1");
 const request = {
   runId: "run-1",
@@ -100,7 +105,7 @@ it.effect("a pass the worker could not run arrives as unavailable, with its reas
 
 it.effect("a machine problem on the worker keeps its machine flag across the wire", () =>
   Effect.gen(function* () {
-    const done = yield* Schema.decodeUnknownEffect(BoardWorkerCiProgress)(
+    const done = yield* decodeCiProgress(
       toWireCiDone({
         result: "unavailable",
         failedIndex: null,
@@ -117,7 +122,7 @@ it.effect("a machine problem on the worker keeps its machine flag across the wir
     });
     // An older worker's `done` has no flag, and still decodes.
     assert.deepStrictEqual(
-      yield* Schema.decodeUnknownEffect(BoardWorkerCiProgress)({
+      yield* decodeCiProgress({
         _tag: "done",
         result: "unavailable",
         failedIndex: null,
@@ -130,7 +135,7 @@ it.effect("a machine problem on the worker keeps its machine flag across the wir
 
 it.effect("a failed step's exit code crosses the wire", () =>
   Effect.gen(function* () {
-    const done = yield* Schema.decodeUnknownEffect(BoardWorkerCiProgress)(
+    const done = yield* decodeCiProgress(
       toWireCiDone({ result: "failed", failedIndex: 1, exitCode: 2, ranAll: false }),
     );
     const result = yield* remoteCiRunner(connected([done]), worker).run(request, () => Effect.void);
@@ -184,12 +189,12 @@ it.effect(
           Effect.succeed({
             gateway: {
               runCi: (input: unknown) => {
-                sent.push(Schema.decodeUnknownSync(BoardWorkerRunCiInput)(input));
+                sent.push(decodeRunCiInputUnknown(input));
                 return Stream.fromIterable(
                   [
                     { _tag: "step", index: 0, step: reported },
                     { _tag: "done", result: "failed", failedIndex: 0 },
-                  ].map((progress) => Schema.decodeUnknownSync(BoardWorkerCiProgress)(progress)),
+                  ].map((progress) => decodeCiProgressUnknown(progress)),
                 );
               },
             },
@@ -226,7 +231,7 @@ it.effect("a worker's headline is clamped here, so a long reason can't break the
       source: "something-new",
       hint: "Install it.",
     };
-    const wire = yield* Schema.decodeUnknownEffect(Schema.Array(BoardWorkerCiProgress))([
+    const wire = yield* decodeCiProgressList([
       { _tag: "step", index: 0, step: { ...step, headline: loose } },
       {
         ...toWireCiDone({ result: "failed", failedIndex: 0, exitCode: 1, ranAll: true }),

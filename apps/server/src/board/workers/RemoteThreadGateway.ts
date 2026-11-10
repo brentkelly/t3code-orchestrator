@@ -83,6 +83,8 @@ export class CardFilesNotStaged extends Schema.TaggedError<CardFilesNotStaged>()
   { cause: Schema.Defect() },
 ) {}
 
+const isWorkerUnavailable = Schema.is(WorkerUnavailable);
+
 const unavailableCommand = (command: string, threadId: ThreadId) => (cause: WorkerUnavailable) =>
   new ThreadCommandFailedError({ command, threadId, detail: cause.message, cause });
 
@@ -207,7 +209,7 @@ export const makeRemoteThreadGateway = (
             detail: `Couldn't copy the card's files to worker ${workerId}.`,
             // An unreachable worker is still offline; anything else failed
             // before the spawn was sent.
-            cause: Schema.is(WorkerUnavailable)(cause) ? cause : new CardFilesNotStaged({ cause }),
+            cause: isWorkerUnavailable(cause) ? cause : new CardFilesNotStaged({ cause }),
           }),
       ),
     );
