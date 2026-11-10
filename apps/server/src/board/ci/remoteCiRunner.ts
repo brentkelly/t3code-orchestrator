@@ -53,8 +53,7 @@ export function remoteCiRunBudgetMs(steps: ReadonlyArray<BoardCiStepDefinition>)
     parallel: definition.parallel === true,
   }));
   const minutes = boardCiStepGroups(indexed).reduce(
-    (total, group) =>
-      total + Math.max(...group.map((member) => member.definition.timeoutMinutes)),
+    (total, group) => total + Math.max(...group.map((member) => member.definition.timeoutMinutes)),
     0,
   );
   return (minutes + 10) * 60_000;

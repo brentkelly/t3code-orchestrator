@@ -409,9 +409,10 @@ export const runBoardCiStep = (input: {
       if (settled) return;
       settled = true;
       clearTimers();
-      // Interrupted: kill now, and make sure nothing survives the grace.
+      // Interrupted: kill now, and make sure nothing survives the grace. The
+      // pipes stay open: a shell that can't report its killed child dies of
+      // SIGPIPE before its TERM trap runs.
       terminate();
-      destroyPipes();
       log.end();
     });
   });

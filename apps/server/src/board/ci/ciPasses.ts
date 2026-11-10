@@ -118,8 +118,7 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
     });
 
   /** This launch still owns the card's entry: nothing cancelled it. */
-  const owns = (cardId: BoardCardId, token: number) =>
-    running.get(String(cardId))?.token === token;
+  const owns = (cardId: BoardCardId, token: number) => running.get(String(cardId))?.token === token;
 
   const slotKey = (request: BoardCiPassRequest): BoardSlotKey => ({
     workerId: request.workerId,

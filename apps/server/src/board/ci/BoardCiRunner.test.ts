@@ -11,15 +11,20 @@ import * as NodePath from "node:path";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 
 import {
+  BoardCiLineReader,
   BoardCiTail,
   BOARD_CI_TAIL_LINE_CHARS,
   runBoardCiPass,
+  runBoardCiStep,
+  type BoardCiLine,
   type BoardCiStepProgress,
   type BoardCiRunRequest,
 } from "./BoardCiRunner.ts";
+import { BoardDiskSpace } from "./diskSpace.ts";
 
 const workdir = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-ci-"));
 
@@ -393,5 +398,107 @@ it.live("fails a group that leaves tracked changes in the worktree", () =>
       () => Effect.void,
     );
     assert.deepStrictEqual(reedit, { result: "failed", failedIndex: 0, exitCode: 0 });
+  }),
+);
+
+it("the line reader numbers lines from 1 with each line's byte offset in the log", () => {
+  const reader = new BoardCiLineReader();
+  const chunks = ["héllo\r\nwor", "ld\n", "a\rb\n\nlast"];
+  const lines = chunks.flatMap((chunk) => reader.push(chunk, 5));
+  lines.push(...reader.flush());
+  const log = Buffer.from(chunks.join(""), "utf8");
+  assert.deepStrictEqual(
+    lines.map((line) => [line.lineNo, line.line]),
+    [
+      [1, "héllo"],
+      [2, "world"],
+      // A bare \r doesn't end a line: only \n does, as the log file reads.
+      [3, "a\rb"],
+      [4, ""],
+      [5, "last"],
+    ],
+  );
+  for (const line of lines) {
+    const text = log.subarray(line.byteOffset).toString("utf8");
+    assert.isTrue(text.startsWith(line.line), `line ${line.lineNo} starts at its offset`);
+  }
+  assert.strictEqual(lines[1]!.byteOffset, Buffer.byteLength("héllo\r\n"));
+  assert.strictEqual(reader.lastOutputAt, 5);
+  assert.deepStrictEqual(reader.flush(), []);
+});
+
+it.live("delivers every output line to onLine, by pass index, before the step settles", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const seen: Array<[number, BoardCiLine]> = [];
+    const result = yield* runBoardCiPass(
+      {
+        ...request(cwd, [
+          { name: "Says", command: "printf 'one\\ntwo\\nthree'", timeoutMinutes: 1 },
+        ]),
+        indexOffset: 2,
+        onLine: (index, line) => Effect.sync(() => seen.push([index, line])),
+      },
+      () => Effect.void,
+    );
+    assert.strictEqual(result.result, "passed");
+    assert.deepStrictEqual(
+      seen.map(([index, line]) => [index, line.lineNo, line.line, line.byteOffset]),
+      [
+        [2, 1, "one", 0],
+        [2, 2, "two", 4],
+        [2, 3, "three", 8],
+      ],
+    );
+  }),
+);
+
+it.live("a step past its limit settles timed-out even when its kill never lands", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const tail = new BoardCiTail();
+    // The kill is stubbed out, so the child neither dies nor closes its pipes
+    // in time: only the hard bound can settle the step.
+    const exit = yield* runBoardCiStep({
+      command: "sleep 3",
+      cwd,
+      timeoutMs: 30,
+      tail,
+      logPath: NodePath.join(cwd, "0.log"),
+      resultPath: NodePath.join(cwd, "0.result.json"),
+      timing: { killGraceMs: 40, exitDrainMs: 40, killGroup: () => false },
+    }).pipe(Effect.timeoutOption("2 seconds"));
+    assert.deepStrictEqual(exit, Option.some({ status: "timed-out" as const, exitCode: null }));
+    assert.include(tail.text(), "timed out");
+  }),
+);
+
+it.live("a full disk makes the pass unavailable as a machine problem before any step runs", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { events, emit } = collect();
+    const result = yield* runBoardCiPass(
+      request(cwd, [{ name: "Say", command: "touch ran", timeoutMinutes: 1 }]),
+      emit,
+    ).pipe(Effect.provideService(BoardDiskSpace, { freeBytes: () => Effect.succeed(1.25e9) }));
+    assert.strictEqual(result.result, "unavailable");
+    assert.isTrue(result.result === "unavailable" && result.machine === true);
+    assert.match(
+      result.result === "unavailable" ? result.detail : "",
+      /^Disk nearly full on .+: 1\.3 GB free\.$/,
+    );
+    assert.lengthOf(events, 0);
+    assert.isFalse(NodeFS.existsSync(NodePath.join(cwd, "ran")));
+  }),
+);
+
+it.live("a disk that can't be read never blocks the pass", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const result = yield* runBoardCiPass(
+      request(cwd, [{ name: "Say", command: "echo hi", timeoutMinutes: 1 }]),
+      () => Effect.void,
+    ).pipe(Effect.provideService(BoardDiskSpace, { freeBytes: () => Effect.die("statfs broke") }));
+    assert.strictEqual(result.result, "passed");
   }),
 );
