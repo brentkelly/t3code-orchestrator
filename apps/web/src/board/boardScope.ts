@@ -1,10 +1,6 @@
 /**
- * T3o board scope (t3o-25, D1): one board component, scoped twice.
- *
- * `BoardPage` renders either the root board or one parent's sub-board; the
- * difference is DATA, held here as pure functions over the shells the page
- * already has. Root scope shows top-level cards across every stage; sub-board
- * scope shows one group's children across Deferred and every stage (T3O-29).
+ * Board scope: `BoardPage` renders the root board (top-level cards) or one
+ * group's sub-board (its children, Deferred included); the difference is data.
  */
 import {
   BOARD_DEFERRED_STAGE_ID,
@@ -74,11 +70,9 @@ export function boardScopeStages(
 }
 
 /**
- * A column's collapse default when the human has not set one. The root
- * board's first column (the intake) starts as a rail. Inside a group an empty
- * Deferred column, and every empty column before Ready, start as rails, so a
- * fully planned split reads like the sub-board it always was. A stored manual
- * collapse or expand always wins (`isBoardColumnCollapsed`).
+ * A column's collapse default. Root: the intake starts as a rail. In a group:
+ * an empty Deferred and every empty column before Ready. A stored manual
+ * collapse or expand always wins.
  */
 export function boardScopeColumnCollapsedByDefault(input: {
   readonly scope: BoardScope;
@@ -107,11 +101,9 @@ export function boardColumnAutoFolded(input: {
 }
 
 /**
- * A column's rendered collapse state with the auto-collapse setting applied
- * (T3O-40). While the setting is on, an empty column folds whatever the store
- * or the scope default says, and only a peek or a drag hovering it opens it.
- * A column holding cards falls back to the stored-or-default value, so a stage
- * collapsed by hand stays collapsed when cards arrive.
+ * Collapse with auto-collapse applied: while on, an empty column folds unless
+ * peeked or hovered by a drag. A column with cards uses the stored-or-default
+ * value, so a hand-collapsed stage stays collapsed when cards arrive.
  */
 export function boardColumnCollapsed(input: {
   readonly autoCollapseEmpty: boolean;
@@ -126,11 +118,9 @@ export function boardColumnCollapsed(input: {
 }
 
 /**
- * The auto-folded rail a live drag holds open (T3O-40): the latest one it
- * hovered. Hovering an ordinary column keeps it, so leaving the rail doesn't
- * snap it shut under the pointer; reaching another auto-folded rail replaces
- * it, so a long drag across empty stages never widens the board by more than
- * one opened rail.
+ * The auto-folded rail a live drag holds open: the latest one hovered.
+ * Hovering an ordinary column keeps it; another folded rail replaces it, so a
+ * drag never opens more than one.
  */
 export function boardDragOpenedRail<S extends string>(input: {
   readonly current: S | null;
@@ -160,11 +150,9 @@ export function boardCollapseToggle(input: {
 }
 
 /**
- * The peeks that survive this render (T3O-40): only those on a column of the
- * current scope that is still empty, and none while the setting is off. A peek
- * ends when cards arrive, so the column folds again the next time it empties.
- * Returns `peeked` itself when nothing was dropped, so callers can compare by
- * reference before setting state.
+ * The peeks that survive this render: still-empty columns of this scope, none
+ * while the setting is off. Returns `peeked` itself when nothing was dropped, so
+ * callers can compare by reference before setting state.
  */
 export function livePeekedColumns(input: {
   readonly autoCollapseEmpty: boolean;
@@ -193,11 +181,9 @@ export function boardScopeQueryKey(scope: BoardScope): string {
 }
 
 /**
- * Where a sub-board URL should land (D3): on the sub-board when the parent
- * exists and is a group; on the root board with the parent's sheet open
- * when the parent exists childless (children all deleted, or a stale link);
- * on the bare root board when the named card does not exist at all. Never a
- * 404 inside the shell — reverse states include navigation.
+ * Where a sub-board URL lands: the sub-board for a group; the root board with
+ * the parent's sheet open for a childless parent; the bare root board for a
+ * missing card. Never a 404.
  */
 export type SubBoardEntry =
   | { readonly kind: "sub-board" }

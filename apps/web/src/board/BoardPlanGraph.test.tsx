@@ -47,12 +47,8 @@ function rootClasses(rows: ReadonlyArray<BoardPlanRow>): ReadonlyArray<string> {
 
 describe("BoardPlanGraph", () => {
   it("keeps its height inside a scrolling column", () => {
-    // The Plans panel mounts the chart in an `overflow-y-auto` flex column
-    // whose other children are all `shrink-0`. The chart's own
-    // `overflow-x-auto` zeroes its automatic minimum height, so without
-    // `shrink-0` of its own the browser hands it every pixel of the column's
-    // negative free space and the chart collapses to an empty strip — which
-    // is what a split with a double-figure plan count actually rendered.
+    // The chart's own `overflow-x-auto` zeroes its minimum height in the Plans
+    // panel's flex column, so without `shrink-0` it collapses to an empty strip.
     expect(rootClasses(CHAIN)).toContain("shrink-0");
   });
 

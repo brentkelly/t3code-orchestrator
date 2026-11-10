@@ -1,9 +1,6 @@
 /**
- * The card detail's Automation section (T3O-38), as pure decisions: which
- * toggles are on, what each row says, the source tag beside it, and what a
- * group toggle would do to the children that inherit it. Resolution itself is
- * `resolveBoardCardAutomation` in contracts — the one reading the server uses —
- * so the switch and the server can never disagree about a card.
+ * The card detail's Automation section as pure decisions. Resolution is
+ * `resolveBoardCardAutomation` from contracts, the same reading the server uses.
  */
 import {
   BOARD_AUTOMATION_TOGGLE_LABELS,
@@ -258,11 +255,8 @@ export function boardAutomationRowsSummary(rows: ReadonlyArray<BoardAutomationRo
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /**
- * What flipping one group setting does to the children that inherit it and are
- * already mid-stage — the confirmation's lines. Empty when nothing in flight
- * changes, which is when the flip needs no confirmation. Counts only direct
- * leaf children with no value of their own for the toggle: inheritance is from
- * the nearest group alone, and an own value is untouched by the group.
+ * The confirmation lines for flipping one group setting: direct leaf children
+ * mid-stage that inherit it (no own value). Empty means no confirmation needed.
  */
 export function boardGroupAutomationEffects(input: {
   readonly shells: Shells;

@@ -1,17 +1,7 @@
 /**
- * Settings → Board → General (t3o-15, redesigned after `.plans/prototype/T3
- * Settings.dc.html`; split into pages by T3O-49). Per-project card identity,
- * the import notices, concurrency ceilings and lifecycle windows — all
- * sharing the prototype's bordered-card aesthetic. Execution config and
- * project edits reach the decider / reactor, so the panel reads and writes
- * through `useBoardSettings` / `useUpdateBoardSettings` — the board server's
- * settings (T3O-71); stage CRUD is a board command dispatched through the
- * environment.
- *
- * The pipeline is keyed by STAGE ID, so a rename never orphans a stage's config.
- * A stage's resolved config is frozen onto the card at stage entry (D12), so a
- * mid-flight edit here takes effect only on the next entry, never on a running
- * card.
+ * Settings > Board > General. Reads and writes the board server's settings via
+ * `useBoardSettings` / `useUpdateBoardSettings`. Config is keyed by stage id
+ * and frozen onto a card at stage entry, so edits apply on the next entry.
  */
 import {
   DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,

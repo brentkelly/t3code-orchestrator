@@ -1,10 +1,6 @@
 /**
- * T3o cold-start home (T3O-34, D1/D2/D3).
- *
- * The rule is one-shot on purpose: `/` is the "go home" target of a dozen
- * upstream call sites, so a redirect that fires on every `/` would drag the
- * user onto the board every time they deleted a thread. These tests pin both
- * halves — it fires for the cold start, and it never fires again.
+ * The cold-start redirect fires once and never again: `/` is upstream's "go
+ * home" target from many call sites.
  */
 import { describe, expect, it } from "vite-plus/test";
 

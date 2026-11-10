@@ -1,12 +1,7 @@
 /**
- * T3o (T3O-65, D20; prototype screens 3–6): every word the card's worker field,
- * its chip, the worker picker, the queue reasons and the move notices show, as
- * pure functions of the board's worker summary.
- *
- * Neither the field nor the chip exists on a board with one worker: a
- * local-only board renders exactly as it always has. The chip never takes a
- * status colour (`docs/t3o/status-colours.md`) — worker trouble goes in the
- * card's notice slot.
+ * The copy for a card's worker field, chip, picker, queue reasons and move
+ * notices. None show on a single-worker board. The chip never takes a status
+ * colour; worker trouble goes in the card's notice slot.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
@@ -517,11 +512,9 @@ export function boardCardMoveNotice(
 }
 
 /**
- * Where a move the Move dialog started has got to, read off the card. Until the
- * server records this move's start the card still shows whatever was there
- * before — no move on a first move, the last failure on a Retry — so a move
- * counts as this one only once its `startedAt` differs from the one seen when
- * the human pressed Move, and done only once the card is placed on the target.
+ * Where a Move-dialog move has got to. A move counts as this one only once its
+ * `startedAt` differs from the one seen when Move was pressed, and done only once
+ * the card is placed on the target.
  */
 export type BoardMoveDialogStatus = "pending" | "moving" | "retired" | "done" | "failed";
 
@@ -586,11 +579,9 @@ export function boardThreadMoveDividers(input: {
 // ── Model pickers (D10) ────────────────────────────────────────────────
 
 /**
- * Provider instances only workers have, shaped like this server's own so the
- * stage and card model pickers can offer them (T3O-65): a recipe names an
- * instance id, and the id resolves on whichever worker the card is placed on.
- * The central server's own list is unchanged and comes first; an id it already
- * has is never repeated.
+ * Provider instances only workers have, shaped like this server's own for the
+ * model pickers; an id resolves on whichever worker runs the card. This server's
+ * list comes first and its ids are never repeated.
  */
 export function boardWorkerOnlyProviders(
   state: BoardWorkersState,

@@ -1,32 +1,19 @@
 /**
- * T3o mode-tabs placement (T3O-34, D8/D9): does the thread sidebar's header
- * have room to hold the Threads/Board tabs, or do they stay in the top bar?
- *
- * The available width is *measured*, never calculated. What is left in that
- * header depends on the sidebar's dragged width, the sidebar toggle's inset,
- * the macOS traffic-light inset, whether the window is fullscreen and whether
- * the environment-identification pill is switched on. A formula would be
- * silently wrong on some of those combinations, and wrong here means two
- * pieces of chrome overlapping in the app's most visible row.
+ * Whether the thread sidebar's header has room for the mode tabs. The width is
+ * measured, never calculated: sidebar width, insets, fullscreen and the
+ * environment pill all change it.
  */
 import { isTablessLocation, modeForHref } from "./boardUiStore";
 
 /**
- * The rendered width of `BoardModeTabs` with every label showing: three
- * `h-[26px]` buttons (Board, List, Threads) carrying a 14px icon, a 6px gap
- * and 10px of padding either side, inside a 2px track with 3px gaps. Measured
- * at 233px in the default theme (`BoardModeTabs.browser.test.tsx` holds it to
- * this); rounded up because the control's metrics are in fixed pixels but its
- * glyphs are not — a custom interface font is wider or narrower.
+ * `BoardModeTabs`' rendered width with every label showing: measured at 233px
+ * (`BoardModeTabs.browser.test.tsx` holds it), rounded up for font variance.
  */
 export const MODE_TABS_WIDTH = 236;
 
 /**
- * Breathing room the slot must have on top of the control. Two jobs: it keeps
- * the tabs off the header's right edge, and it absorbs a wide custom interface
- * font, which is the one input to the control's width that this module cannot
- * see. Without it, the tabs would appear at the exact pixel they start to
- * touch the edge — the worst place to switch.
+ * Room the slot needs on top of the control: keeps the tabs off the right edge
+ * and absorbs a wide custom interface font.
  */
 const MODE_TABS_SLOT_GUTTER = 24;
 
@@ -34,11 +21,8 @@ const MODE_TABS_SLOT_GUTTER = 24;
 export const MODE_TABS_MIN_WIDTH = MODE_TABS_WIDTH + MODE_TABS_SLOT_GUTTER;
 
 /**
- * True at the locations whose top bar carries the tabs today. Tabless pages
- * (pull requests, a footer destination rather than a mode) get no sidebar
- * header tabs either — that would invent an entry point rather than move one
- * (D9). `modeForHref` already rules out settings, pairing, connect,
- * onboarding, usage, project links and the board itself.
+ * True where the top bar carries the tabs today. Tabless pages get no sidebar
+ * header tabs either.
  */
 export function locationHasModeTabs(pathname: string): boolean {
   return modeForHref(pathname) === "threads" && !isTablessLocation(pathname);

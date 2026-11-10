@@ -1,11 +1,6 @@
 /**
- * The Plans panel (t3o-29), rendered to static markup — the same technique
- * `BoardCardDetailView.test.tsx` uses, and for the same reason: the panel is a
- * pure function of derived rows, so its markup is assertable without a DOM or
- * a subscription.
- *
- * The chart is not here: it defaults closed, and its geometry is pinned in
- * `boardPlanRows.test.ts` where the arithmetic lives.
+ * The Plans panel rendered to static markup: it is a pure function of derived
+ * rows. The chart's geometry is tested in `boardPlanRows.test.ts`.
  */
 import {
   BOARD_SEED_STAGES,

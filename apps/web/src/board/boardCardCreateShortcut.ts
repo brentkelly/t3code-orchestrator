@@ -1,11 +1,6 @@
 /**
- * The create-card submit shortcut (T3O-43). Mod+Enter creates the card from
- * anywhere in the create dialog — title, brief, dependency picker — rather than
- * from the title field alone, and the Create button carries the label so the
- * shortcut is discoverable instead of folklore.
- *
- * Either modifier fires it on every platform (a Mac user with a PC keyboard
- * habit should not be told no); only the label is platform-shaped.
+ * Mod+Enter creates the card from anywhere in the create dialog. Either modifier
+ * works on every platform; only the label is platform-shaped.
  */
 import { isMacPlatform } from "../lib/utils";
 

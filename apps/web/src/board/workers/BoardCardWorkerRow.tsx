@@ -1,12 +1,7 @@
 /**
- * T3o (T3O-65, prototype 4.3 and 6): the card's Worker row in the details
- * column, and the worker notices' panel actions.
- *
- * Before a worktree exists, picking a worker just re-pins the card. Once it has
- * one the card is bound where it is, and picking another worker opens Move.
- * Absent on a board with one worker — unless the card's worker was removed,
- * whose panel stays until the card is moved (T3O-66). A card whose worker is
- * offline or removed is moved by force-move, from its pushed branch.
+ * The card's Worker row. Before a worktree exists, picking re-pins; after, it
+ * opens Move. Absent on a single-worker board unless the card's worker was
+ * removed. Offline or removed workers are left by force-move.
  */
 import {
   BOARD_LOCAL_WORKER_ID,

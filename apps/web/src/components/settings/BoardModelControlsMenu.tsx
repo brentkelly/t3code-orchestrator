@@ -14,22 +14,9 @@ import {
 } from "../ui/menu";
 
 /**
- * The board's "everything about how the agent runs" menu: the model's traits
- * (reasoning, context window, fast mode — whatever the model supports), the
- * chat/plan interaction mode, and the access level, one section each, behind a
- * summary label. It is a board model row's only settings control.
- *
- * It began as an extension of the chat composer's menu (t3o-27) and moved here
- * on the v0.0.42 sync (T3O-46), when upstream rebuilt that menu — now
- * `chat/CompactComposerControlsMenu` — around the composer's own sizing and
- * shortcut plumbing. The two share their vocabulary (`runtimeModeConfig`) and
- * nothing else.
- *
- * Every section is optional so a caller renders only what it owns: leave
- * `runtimeMode` unset to drop the Access section (the card's per-round review
- * override re-points model and effort for one round but not the stage's
- * authority), and `showInteractionModeToggle` false to drop Mode. When no
- * section is left the menu renders nothing at all.
+ * A board model row's settings menu: traits, interaction mode and access level.
+ * Shares only `runtimeModeConfig` with the composer's menu. Every section is
+ * optional; with none left the menu renders nothing.
  */
 export const BoardModelControlsMenu = memo(function BoardModelControlsMenu(props: {
   interactionMode?: ProviderInteractionMode;

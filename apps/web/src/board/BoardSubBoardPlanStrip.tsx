@@ -1,17 +1,7 @@
 /**
- * The sub-board's plan strip (t3o-29): the dependency chart and the
- * final-review footer, above the columns — where the prototype puts them on
- * the drill-in, and in that order.
- *
- * Its own component rather than markup inside `BoardPage` for one reason: it
- * needs the parent's `board.subscribeCard` detail (the plan graph's edges and
- * the integration branch), and the root board must not open one. Mounted only
- * in sub-board scope, the subscription can never exist on the root board —
- * which a `useAtomValue` call in `BoardPage` could not promise, hooks being
- * unconditional.
- *
- * The atom is keyed, so this shares `BoardSubBoardHeader`'s subscription to
- * the same parent rather than opening a second one.
+ * The sub-board's plan strip: dependency chart and final-review footer. Its own
+ * component so the parent's card subscription exists only in sub-board scope.
+ * The keyed atom shares `BoardSubBoardHeader`'s subscription.
  */
 import type {
   BoardCardId,

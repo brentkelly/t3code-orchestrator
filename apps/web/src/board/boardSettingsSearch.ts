@@ -1,12 +1,7 @@
 /**
- * T3o board settings search index (t3o-07).
- *
- * Spread into the core `SETTINGS_SEARCH_ITEMS` (`components/settings/settingsSearch.ts`)
- * as `...BOARD_SETTINGS_SEARCH_ITEMS` — a t3o-02a registry spread, so each
- * board setting is findable beside the settings it belongs to without
- * enumerating board entries in that upstream-owned file. New board settings
- * register here, next to the panel section they anchor to. `targetId`s match
- * the section/row `id`s in `BoardSettingsPanel`.
+ * Board settings search entries, spread into the core `SETTINGS_SEARCH_ITEMS`
+ * so the upstream file needs no per-entry edits. `targetId`s match the section
+ * and row ids in the board settings panels.
  */
 import type { SettingsSearchItem } from "../components/settings/settingsSearch";
 

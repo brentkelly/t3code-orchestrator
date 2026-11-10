@@ -1,10 +1,6 @@
 /**
- * T3o (T3O-48): what "Check again" says back.
- *
- * The refresh used to return nothing at all, so a card sitting at Ready for
- * merge with no pull request could not tell "the forge says this branch has
- * none" from "the forge could not be asked" — and only the second is worth
- * retrying. Every arm answers; the sentences are what the user reads.
+ * What "Check again" says back: every arm answers, so "no pull request" is told
+ * apart from "the forge could not be asked".
  */
 import { describe, expect, it } from "vite-plus/test";
 

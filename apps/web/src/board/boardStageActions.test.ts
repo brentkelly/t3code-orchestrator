@@ -1,9 +1,6 @@
 /**
- * T3o primary stage action (t3o-06, D18; t3o-15). The detail pane's forward
- * button is a human gate — and the build-role stage has none, because Building
- * -> Code review is board-driven, not a click. This pins that: every advance is
- * human-initiated, and no UI affordance auto-advances a card out of the build
- * role. Derived generically now from the user-defined stage list.
+ * The detail pane's forward button is a human gate, and the build-role stage has
+ * none while the pipeline drives it.
  */
 import { BOARD_SEED_STAGE_IDS, BOARD_SEED_STAGES } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -169,11 +166,8 @@ describe("boardStagePrimaryAction", () => {
   });
 
   it("leaves Merge live for a hand-opened merge-stage thread (T3O-9)", () => {
-    // The case the old `stepRunning` inference got wrong. A human can restart
-    // the merge stage's thread by hand and get a clean conversation — a running
-    // step at this stage that is NOT a conflict fix. Greying the button out for
-    // it claimed work that did not exist; the click now reaches the server,
-    // which refuses it with a true sentence naming the open thread.
+    // A human-restarted merge-stage thread is a running step that is NOT a
+    // conflict fix; the click must reach the server.
     expect(
       boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.merge, {
         pullRequestState: "open",
@@ -215,11 +209,8 @@ describe("boardStagePrimaryAction", () => {
   });
 
   it("offers the ordinary forward move from the build role once its step has settled", () => {
-    // A build that finished with auto-advance off does not move on, and a
-    // failed one never will either: the card sits in Building wearing a "Needs a human" chip
-    // with nothing to press. `stepHeld` is that chip's own condition, so the
-    // button appears exactly when the chip does — labelled and styled by the
-    // generic rule, not special-cased (D5, D6).
+    // A settled build step leaves the card in Building with a "Needs a human"
+    // chip; `stepHeld` is that chip's condition, so the button appears with it.
     expect(
       boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.building, { stepHeld: true }),
     ).toEqual({

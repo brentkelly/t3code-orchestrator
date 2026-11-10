@@ -1,22 +1,7 @@
 /**
- * T3o board corner menu (T3O-34, D4/D5/D6).
- *
- * The board is mounted without the thread sidebar, so the three destinations
- * that sidebar's footer carries — Settings, Pull Requests, Usage — have
- * nowhere else to live. They come back as a small glass pill in the board's
- * bottom-left corner.
- *
- * The items are not reimplemented here: this mounts upstream's own
- * `SidebarUtilityMenu`, the same component the sidebar footer mounts. Parity
- * with the threads surface then stays automatic — including the desktop
- * update pill at the end of that menu, and a fourth item if upstream ever adds
- * one — at a cost of zero upstream edits. It works off the sidebar because
- * `AppSidebarLayout` still mounts `SidebarProvider` on the board; only the
- * `Sidebar` itself is skipped.
- *
- * Deliberately not included: the provider update pill and the arm64/Intel
- * architecture warning. Both sit outside that menu in the footer and are built
- * as full-width cards, which a corner pill is the wrong shape for.
+ * The board's corner menu: Settings, Pull Requests and Usage, which the absent
+ * sidebar's footer would carry. Mounts upstream's own `SidebarUtilityMenu`
+ * (`SidebarProvider` is still mounted) so parity needs no upstream edits.
  */
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 
@@ -25,11 +10,9 @@ import { cn } from "../lib/utils";
 import { useBoardUiStore } from "./boardUiStore";
 
 /**
- * Height the board's column scroller reserves at its bottom edge so no card can
- * come to rest under the pill (D5): the corner's 14px inset plus the pill's
- * 40px, plus 6px so a card stops short of it rather than against it. The
- * reserve does not change when the menu collapses — quieting the corner should
- * not reflow every column under the user's cursor.
+ * Space the column scroller reserves so no card rests under the pill: 14px inset
+ * + 40px pill + 6px. Unchanged when the menu collapses, so columns never reflow
+ * under the cursor.
  */
 export const BOARD_UTILITY_MENU_RESERVED_SPACE = "pb-[60px]";
 

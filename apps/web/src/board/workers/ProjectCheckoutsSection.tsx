@@ -1,10 +1,6 @@
 /**
- * T3o (T3O-62): Settings → Board → Project checkouts (prototype 2.1–2.4).
- *
- * Board projects down, workers across. A worker can only run cards for a
- * project it has a checkout of — the checkout whose repository grouping key
- * matches the board project's (D20). Set up clones the project's remote onto
- * the worker, with that machine's git credentials; the clone runs on the
+ * Settings > Board > Project checkouts: projects down, workers across. A worker
+ * runs a project's cards only with a matching checkout. Set up clones on the
  * server, so leaving the page doesn't cancel it. Hidden on a local-only board.
  */
 import {

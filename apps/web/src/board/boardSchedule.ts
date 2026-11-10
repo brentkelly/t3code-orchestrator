@@ -1,17 +1,7 @@
 /**
- * The pure half of a card's scheduled start (T3O-19): the labels, the presets
- * and the copy, with no React and no clock of its own.
- *
- * Every function takes its "now" so the tests are deterministic and the
- * renderer decides how often to ask. That is what lets the pill's label be a
- * fixed string — `9:00 PM`, `tomorrow 8:00 AM` — rather than a relative one
- * that either repaints continuously or goes stale. Only the tooltip carries the
- * relative reading, computed once at render (D11).
- *
- * Times round-trip through the CLIENT's timezone: `datetime-local` has no zone,
- * so the local wall-clock string is parsed with the browser's own offset into a
- * UTC instant, and the server only ever compares instants. A phone in another
- * timezone is correct with no server configuration (D12).
+ * Pure scheduled-start labels, presets and copy. Every function takes `now`, so
+ * labels can be fixed strings that need no timer. Times are parsed in the
+ * client's timezone into UTC instants; the server only compares instants.
  */
 import { isBoardCardScheduleDue, type BoardStepStatus } from "@t3tools/contracts";
 
@@ -59,12 +49,8 @@ const clockLabel = (date: Date) => {
 };
 
 /**
- * The pill's label, which must stay true without a timer (D11).
- *
- * Today is the clock alone, tomorrow says so, the rest of the week names the
- * day, and anything further carries the date. Nothing here changes as time
- * passes except across a midnight, so thirty of these on a board repaint only
- * when the card itself does.
+ * The pill's label, true without a timer: only a midnight changes it. Today is
+ * the clock alone, tomorrow says so, this week names the day, later the date.
  */
 export function whenLabel(iso: string, nowMs: number): string {
   const date = new Date(iso);
@@ -100,31 +86,18 @@ export function untilLabel(iso: string, nowMs: number): string {
 }
 
 /**
- * The trigger's own label once a time is set: the moment, unless that moment
- * has passed, in which case "due now".
- *
- * `schedule()` admits a due card WITHOUT clearing `scheduledStartAt` — only the
- * 30s firing pass clears it — so for up to a tick the card is already moving
- * while its field still names a time that has gone. The board pill drops
- * itself in that window (`boardCardScheduleLabel`); this control cannot, because
- * it is an edit control and the field really is still set, with a live Clear
- * button under it. So it reads the same predicate and says what is true: due.
+ * The trigger's label: the moment, or "due now" once passed. A due card keeps
+ * `scheduledStartAt` until the next firing pass clears it, and this edit
+ * control still has a live Clear button in that window.
  */
 export function scheduleTriggerLabel(iso: string, nowMs: number): string {
   return isBoardCardScheduleDue(iso, nowMs) ? "due now" : whenLabel(iso, nowMs);
 }
 
 /**
- * What the picker shows while it is open: the user's own half-typed draft, else
- * the stored instant, else NOTHING.
- *
- * The empty third case is the whole point. The popover has no submit — it
- * commits on every COMPLETE value — so a pre-filled input turns the first
- * spinner nudge on an unscheduled card into a commit of a time the user never
- * chose. On a running card that commit stops the agent and releases its slot.
- * Starting empty makes an incomplete value the only thing a nudge can produce
- * (`localInputValueToIso` returns null for one), so closing the popover without
- * finishing a time is the cancel. The presets remain the one-click path.
+ * The picker's value: the draft, else the stored instant, else empty. The
+ * popover commits every complete value, so pre-filling would turn a first
+ * spinner nudge into an unchosen commit (stopping a running card's agent).
  */
 export function scheduleInputValue(input: {
   readonly draft: string;
@@ -140,12 +113,8 @@ export interface BoardSchedulePreset {
 }
 
 /**
- * The three quick picks (D12), rounded to a sensible boundary so the picker
- * never lands on 9:37.
- *
- * The prototype's fourth — "When the limit resets" — is deliberately absent:
- * the board has no notion of a provider usage limit anywhere, so a preset
- * claiming to know when one resets would be inventing a fact.
+ * The quick picks, rounded to a sensible boundary. No "when the limit
+ * resets": the board knows nothing about provider usage limits.
  */
 export function schedulePresets(nowMs: number): ReadonlyArray<BoardSchedulePreset> {
   const inAnHour = new Date(nowMs + 60 * 60_000);

@@ -1,22 +1,7 @@
 /**
- * Collapsing repeated rows in the card Activity rail (T3O-35).
- *
- * A long planning session asks 20-30 questions, and every one of them writes a
- * `card-input-requested` row that renders the same sentence as the one above
- * it. The rail is a deterministic projection, so it cannot suppress the events
- * — but it can say the same thing once. Consecutive rows that would render
- * IDENTICALLY collapse to their newest member plus a "+N more" toggle.
- *
- * Identity is the rendered row, not the kind: two rows collapse only when their
- * kind, actor and payload all match, so "asked for input on Planning" never
- * swallows "asked for input on Code review", and a run interrupted by a
- * different row stays two runs. `threadId` is deliberately not part of the
- * identity — the rail never shows it, so two rows that differ only there are
- * the same sentence twice.
- *
- * The run keeps its NEWEST member as the visible row, which is both the current
- * state and the only choice that keeps the rail's timestamps monotonic: the
- * rows after a run are newer than all of it.
+ * Collapses consecutive Activity rows that render identically (kind, actor and
+ * payload; `threadId` is never shown) into the newest one plus "+N more". The
+ * newest keeps the rail's timestamps monotonic.
  */
 import type { BoardCardActivityEntry } from "@t3tools/contracts";
 
@@ -38,12 +23,8 @@ export interface BoardActivityGroup {
   readonly collapsible: boolean;
 }
 
-/** Everything about a row that the rail turns into visible text.
- *
- * JSON is the delimiter: nesting the payload as a sorted array of pairs makes
- * the encoding unambiguous without inventing a separator that a payload value
- * could itself contain. Key order is normalised because the order the projector
- * happens to write fields in is not part of what the row says. */
+/** Everything about a row that renders as text. JSON over sorted payload pairs
+    is an unambiguous encoding, independent of the projector's key order. */
 function rowSignature(entry: BoardCardActivityEntry): string {
   const payload = entry.payload as Record<string, unknown>;
   const fields = Object.keys(payload)

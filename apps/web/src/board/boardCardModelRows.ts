@@ -1,12 +1,6 @@
 /**
- * What the card's model-override popover offers, and what each row falls back
- * to when the card says nothing (t3o-29, D1/D5).
- *
- * Pure and picker-free on purpose. The popover itself drags the model list, the
- * traits menu and the access picker, so it is lazily loaded — but the kebab
- * needs this card's summary ("Default" / "Planning · Build") to render the menu
- * item, before anyone has opened anything. Splitting the derivation out is what
- * lets the summary be eager and the pickers not.
+ * The card model-override popover's rows and fallbacks. Kept picker-free so the
+ * kebab's summary renders eagerly while the popover stays lazily loaded.
  */
 import {
   effectiveBoardStageRole,
@@ -46,15 +40,9 @@ const ROW_COPY = {
 } as const;
 
 /**
- * The rows the popover offers, resolved by ROLE — the stages holding the
- * `plan`, `build` and `review` roles, in pipeline order. A board whose
- * role-holder was deleted simply yields fewer rows, rather than offering an
- * override nothing would ever read. Planning is a simple stage, so its row
- * resolves exactly like Build's (#119).
- *
- * Only the REVIEW PHASE's model is reported for the review row: that is what a
- * card-level review override re-points (D3), so showing the stage's fallback
- * here would name a model the override does not actually replace.
+ * The popover's rows, resolved by role in pipeline order; a deleted role holder
+ * yields no row. The review row reports the review phase's model, the one a
+ * card-level override replaces.
  */
 export function boardCardModelRows(input: {
   readonly stages: ReadonlyArray<BoardStageDefinition>;

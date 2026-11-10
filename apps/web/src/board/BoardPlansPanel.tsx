@@ -1,20 +1,7 @@
 /**
- * The Cards panel (t3o-29, T3O-34): what a group's modal shows once it has
- * children.
- *
- * The pane it replaces rendered the plan markdown — which, after approval, is
- * a second copy of four Brief panes (`decider.ts` makes each plan body the
- * child's brief at materialisation). A parent whose whole job is to supervise
- * four cards was therefore showing prose the human read at approval and
- * nothing at all about what the four cards were doing. This shows the group:
- * one row per child card (plus any plan with no card), in dependency order,
- * each carrying its child's live stage, what is holding it up, and its PR.
- *
- * No "Back to thread" button, unlike the markdown pane: this panel is a split
- * parent's default pane (t3o-28, D4), and the header's Planning pill is
- * already the way to its planning thread.
- *
- * Pure presentation over `deriveBoardPlanRows` — see `boardPlanRows.ts`.
+ * The Cards panel a group's modal shows once it has children: one row per child
+ * (plus unclaimed plans) in dependency order, with live stage, blocker and PR.
+ * Pure presentation over `deriveBoardPlanRows`.
  */
 import {
   CheckIcon,
@@ -124,8 +111,7 @@ function PlanRow({
 }) {
   const cardId = row.live?.cardId ?? null;
   const openable = cardId !== null && onOpenChild !== undefined;
-  // "after #1, #2  ·  PR #303" — the plan's place in the order, then its
-  // card's pull request if it has one.
+  // The plan's place in the order, then its card's pull request if it has one.
   const meta = [
     row.dependsOnNumbers.length === 0
       ? "no dependencies"

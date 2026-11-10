@@ -1,24 +1,7 @@
 /**
- * The Review pane's read of the code-review loop (t3o-16, D9). Pure functions
- * over a card's step completions — the SAME opaque payloads the agents write —
- * mirroring `ReviewLoopExecutor`'s decision rules so the pane's "where the
- * loop is up to" can never disagree with what the server will actually run
- * next:
- *
- * - a round with no findings at all converges immediately;
- * - a round with only nitpicks runs one triage pass, then converges without
- *   adjudication or another round;
- * - a round with blocking findings runs triage, then adjudication; when the
- *   adjudicator overrules triage, re-triage and re-adjudication follow inside
- *   the round (T3O-51), and a dispute that survives them stops the loop
- *   `stuck` for a human;
- * - a malformed payload on any phase halts the loop (a review's is never read
- *   as "no findings", and no phase's is read as "it said nothing");
- * - running out of rounds holds the loop (`round-cap`) with the open findings
- *   still recorded here — it never reads as a pass.
- *
- * The executor itself lives server-side (it also owns prompts, models and
- * step dispatch); what is mirrored here is only the pure phase-order walk.
+ * The Review pane's read of the review loop: pure functions over the card's step
+ * completions that mirror `ReviewLoopExecutor`'s phase-order walk, so the pane
+ * cannot disagree with what the server runs next.
  */
 import {
   BOARD_REVIEW_PHASE_IDS,
@@ -142,19 +125,8 @@ export interface BoardReviewLoopRound {
 }
 
 /**
- * Where the loop stands. The vocabulary is `BoardReviewLoopOutcome` from
- * contracts, shared with the column card's summary so the two surfaces cannot
- * describe the same loop differently:
- *
- *  - `running`    — a phase is due (spinning when the card's thread is live).
- *  - `converged`  — a round closed with nothing blocking; the loop passed.
- *  - `round-cap`  — every round ran without a clean pass. The card does NOT
- *                   move on (t3o-22, D1): nothing was signed off.
- *  - `stopped`    — the user held the loop after a round, budget remaining.
- *  - `unreadable` — a review phase recorded a payload nothing can read.
- *  - `stuck`      — a dispute survived re-triage and re-adjudication; a human
- *                   must rule (T3O-51).
- *  - `advanced`   — a human advanced the card past a stuck round.
+ * Where the loop stands, in `BoardReviewLoopOutcome`'s vocabulary (shared with
+ * the column card). `round-cap` never moves the card on: nothing was signed off.
  */
 export type BoardReviewLoopStatus = BoardReviewLoopOutcome;
 
@@ -220,11 +192,8 @@ export function deriveBoardReviewLoop(
     highestRound = Math.max(highestRound, parsed.round);
   }
 
-  // The executor's walk, from contracts (t3o-22, D7) so the pane, the column
-  // card's cached summary and the executor cannot drift on where the loop is.
-  // It is bounded by the EFFECTIVE cap exactly as the executor's is — a round
-  // recorded beyond a since-lowered cap is history the executor will never
-  // re-enter, so it is rendered below but never treated as "still running".
+  // The executor's walk from contracts, bounded by the effective cap: rounds
+  // beyond a since-lowered cap render as history, never as still running.
   const walk = boardReviewLoopWalk({
     completions,
     maxRounds,

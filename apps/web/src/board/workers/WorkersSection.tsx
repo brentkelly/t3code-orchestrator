@@ -1,11 +1,7 @@
 /**
- * T3o (T3O-62): Settings → Board → Workers (prototype 1.1–1.3, 1.11).
- *
- * The built-in row is always first and can't be removed. Every other row is a
- * worker the board server dials with its own session (D19). Online is the
- * steady state and stays grey; colour appears only when a worker needs a
- * human. Status comes live from the board server, so every client shows the
- * same list.
+ * Settings > Board > Workers. The built-in row is first and permanent; other
+ * rows are workers the board server dials. Online stays grey; colour means a
+ * human is needed. Status is live from the board server.
  */
 import {
   BOARD_LOCAL_WORKER_ID,

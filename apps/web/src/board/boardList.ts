@@ -1,9 +1,7 @@
 /**
- * The List view's outline (T3O-30): the card tree as rows, which rows a
- * filter keeps, what indent and outdent would do, where a drop lands, and the
- * one move path every gesture goes through. Pure functions over the shells
- * the client already holds; the decider re-checks every move, these only say
- * why a move is refused before it is sent.
+ * The List view's outline as pure functions: rows, filtering, indent and
+ * outdent, drop targets, and the one move path. The decider re-checks every
+ * move; these only explain a refusal before sending.
  */
 import {
   boardGroupRevertStage,

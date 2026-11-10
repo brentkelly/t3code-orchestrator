@@ -1,10 +1,5 @@
 /**
- * The card's schedule labels, presets and copy (T3O-19).
- *
- * Every case pins its own "now", so nothing here depends on when the suite
- * runs — and the pill's label is asserted to be the kind of string that does
- * NOT go stale, which is the whole reason it is absolute and the tooltip is
- * relative (D11).
+ * Schedule labels, presets and copy. Every case pins its own "now".
  */
 import { describe, expect, it } from "vite-plus/test";
 
@@ -234,11 +229,8 @@ describe("scheduleTriggerLabel", () => {
 
 describe("scheduleInputValue", () => {
   it("opens EMPTY on an unscheduled card, so a nudge cannot commit a time nobody chose", () => {
-    // The popover has no submit: it writes on every complete value. A
-    // pre-filled field would therefore turn the first spinner nudge into a
-    // commit — and on a running card that commit stops the agent and releases
-    // its slot. Empty means an incomplete value is all a nudge can produce, and
-    // an incomplete value is never sent.
+    // The popover writes every complete value, so a pre-filled field would turn a
+    // first nudge into a commit; empty means a nudge yields an unsent partial value.
     const value = scheduleInputValue({ draft: "", scheduledStartAt: null });
     expect(value).toBe("");
     expect(localInputValueToIso(value)).toBeNull();

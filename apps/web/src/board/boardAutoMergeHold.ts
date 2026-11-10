@@ -1,22 +1,7 @@
 /**
- * T3o auto-merge copy (T3O-38). One place that turns "this card's merge was
- * refused" into the words every surface shows — the column card's pill and
- * tooltip, the card modal's banner, the Merge button's countdown and the header
- * chip — so no two of them can tell the user different stories.
- *
- * Pure: the facts are `BoardCardShell.autoMergeHeldSince` /
- * `autoMergeGaveUp` and the resolved Auto-merge on the board, and
- * `BoardCard.autoMergeHold` in the modal, both derived on the server. Nothing
- * here reads state or a clock — `nowMs` arrives as an argument, the same split
- * `boardCardScheduleLabel` keeps.
- *
- * On COLOUR (D12): both board states are AMBER. `docs/t3o/status-colours.md`
- * gives amber to "blocked or held", and a retrying hold and an exhausted one
- * are both held; the board card has never carried red and this does not give
- * it one. The two states are told apart by their LABEL and ICON instead. The
- * modal banner does split amber → red, exactly as the stalled banner has since
- * t3o-30: amber while the board will end the wait itself, red once it stays
- * put until a human acts.
+ * Auto-merge hold copy for every surface (pill, tooltip, banner, Merge countdown,
+ * header chip). Pure; `nowMs` is an argument. Both board states are amber
+ * (held), told apart by label and icon; the modal banner goes red once it gave up.
  */
 
 /** `12m`, `1h 5m`, `2d 3h`. Coarse on purpose: this is an elapsed figure a
@@ -47,13 +32,8 @@ export interface BoardAutoMergePill {
 }
 
 /**
- * The board card's pill, or null when its merge is not held.
- *
- * Mutually exclusive with the conflict pill by construction: a conflict fix
- * RUNS, a hold WAITS, and the server never records both — the conflict path
- * clears the hold. They share the same slot, and the caller gives the
- * conflict the slot when it somehow has both, because a running agent is the
- * more specific claim.
+ * The board card's pill, or null. The server never records a hold and a
+ * conflict fix together; if a caller has both, the conflict takes the slot.
  */
 export function boardAutoMergePill(input: {
   /** `BoardCardShell.autoMergeHeldSince`. */

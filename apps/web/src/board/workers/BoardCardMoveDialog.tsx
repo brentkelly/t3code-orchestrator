@@ -1,14 +1,7 @@
 /**
- * T3o (T3O-65, prototype 5.1–5.4): moving a card that has a worktree to
- * another worker.
- *
- * Opening it checks the source worker first, and a refusal replaces the body
- * before anything happens: a step running (blue — it is work in progress, not a
- * fault), unpushed work with the commits and files that would be left behind,
- * no upstream branch, or a source that didn't answer. Otherwise it says what
- * the card continues from and the three things the move does, and once
- * started it follows the card's own move state — the card shows Moving until
- * the new worktree is ready, so closing this loses nothing.
+ * Moving a card with a worktree to another worker. It checks the source first;
+ * a refusal replaces the body. Once started it follows the card's own move
+ * state, so closing the dialog loses nothing.
  */
 import {
   type BoardCard,

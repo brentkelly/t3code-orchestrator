@@ -1,14 +1,6 @@
 /**
- * The final-review footer (t3o-29, D5), shared by the Plans panel and the
- * sub-board — the prototype renders it in both, and it says the same thing in
- * each.
- *
- * It STATES; it does not act. The prototype's "Start final review" button had
- * no reactor behind it; we do. `advanceParentIfChildrenDone` moves the parent
- * out of build the instant the last child lands, and
- * `regressParentIfChildLeftDone` walks it back if one leaves — so a button
- * here would be a second path into a transition that already has an owner,
- * enabled only in a race the reactor normally wins.
+ * The final-review footer, shared by the Plans panel and the sub-board. It
+ * states and never acts: the reactor already advances and regresses the parent.
  */
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 

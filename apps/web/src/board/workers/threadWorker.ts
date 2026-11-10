@@ -1,12 +1,7 @@
 /**
- * T3o (T3O-63, D9; prototype 7.1–7.3): the worker a card's thread lives on,
- * and whether this client can open it there.
- *
- * A thread link names its worker's environment id. The board itself is fully
- * usable without a connection to that worker; only opening the thread needs
- * one, so everything here is about that one action. The connection states
- * come from client-runtime's own environment connection state, never a second
- * notion of "online".
+ * The worker a card's thread lives on, and whether this client can open it
+ * there. The board works without that connection; only opening the thread
+ * needs it. States come from client-runtime's connection state.
  */
 import type { SupervisorConnectionState } from "@t3tools/client-runtime/connection";
 import {
@@ -73,14 +68,8 @@ export function threadWorkerOpensOn(worker: BoardThreadWorker): string {
 }
 
 /**
- * Whether this client can open a thread on `worker` now (7.2/7.3).
- *
- * - `open` — this server, or a worker this client is connected to;
- * - `connect` — this client has no connection to the worker at all;
- * - `opening` — connecting for the first time, or a retry still early;
- * - `offline` — the connection is down;
- * - `removed` — the worker is no longer on the board;
- * - `sign-in` — the worker refused this client's session.
+ * Whether this client can open a thread on `worker` now: `open`, `connect` (no
+ * connection), `opening`, `offline`, `removed`, or `sign-in` (session refused).
  */
 export type WorkerThreadAccess = "open" | "connect" | "opening" | "offline" | "removed" | "sign-in";
 

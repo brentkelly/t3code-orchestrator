@@ -1,9 +1,7 @@
 /**
- * The Review pane's loop derivation (t3o-16, D9): pure over a completions
- * array, mirroring `ReviewLoopExecutor`'s decision rules — so these tests pin
- * the walk to the same semantics the server executes: any findings run one
- * triage pass, only blocking findings run adjudication, and the loop check
- * (blocking AND rounds remaining) is what opens another round.
+ * Pins the pane's loop walk to the server's semantics: any findings run triage,
+ * only blocking findings run adjudication, and blocking with rounds remaining
+ * opens another round.
  */
 import { BoardCardId, type BoardStepCompletion } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";

@@ -1,12 +1,7 @@
 /**
- * T3o: which environment's board this device shows (T3O-71).
- *
- * In the distributed board (D19–D22) one central server hosts the board. A desktop app's primary
- * environment is its own local server, so a client that only ever read the primary would show an
- * empty local board while paired with the central one. The per-device `boardEnvironmentId` client
- * setting nominates the board server; null means the primary. Every board surface — the board,
- * its card detail, and Settings → Board — reads its environment, its board settings and its
- * provider list through this module so they always agree on one server.
+ * Which environment's board this device shows: the `boardEnvironmentId` client
+ * setting, or the primary when null. Every board surface reads its environment,
+ * settings and providers through here so they agree on one server.
  */
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";

@@ -1,12 +1,7 @@
 /**
- * The dependency chart (t3o-29, D6): a split's shape, drawn once and mounted
- * twice — inside the modal's Plans panel and above the sub-board's columns,
- * exactly where the prototype puts it.
- *
- * All the arithmetic is in `boardPlanGraphLayout`, so this file is only
- * placement and colour. Nodes are absolutely positioned over one SVG that
- * carries the edges; the SVG is `pointer-events-none` so a curve passing
- * under a node never steals its click.
+ * The dependency chart, mounted in the modal's Plans panel and above the
+ * sub-board. Layout is `boardPlanGraphLayout`. The edge SVG is
+ * `pointer-events-none` so a curve under a node never steals its click.
  */
 import { cn } from "../lib/utils";
 import { BoardHint } from "./BoardHint";
@@ -42,12 +37,8 @@ export function BoardPlanGraph({
   return (
     <div
       className={cn(
-        // `shrink-0` is load-bearing: the Plans panel mounts this in a
-        // scrolling flex column, and this box's own `overflow-x-auto` zeroes
-        // its automatic minimum height. Without it the column hands the chart
-        // all of its negative free space and the chart collapses to an empty
-        // strip — every other child of that column is `shrink-0` for the same
-        // reason.
+        // `shrink-0` is load-bearing: in the Plans panel's scrolling flex column,
+        // `overflow-x-auto` zeroes the automatic minimum height and the chart collapses.
         "flex shrink-0 overflow-x-auto rounded-xl border border-border bg-card p-3.5",
         className,
       )}

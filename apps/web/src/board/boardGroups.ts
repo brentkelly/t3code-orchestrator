@@ -1,9 +1,7 @@
 /**
- * Groups on the board (T3O-29): everything the card face, the drag, the
- * sub-board header, the settings popover and the dialogs ask about a group,
- * answered over the client's shells. The decider owns the rules
- * (`@t3tools/contracts` `boardGroups.ts`); these mirror the ones a human hits
- * before a command is sent, so a refused column says why instead of bouncing.
+ * Group questions answered over the client's shells. The decider owns the rules
+ * (contracts `boardGroups.ts`); these mirror the ones a human hits so a refused
+ * column says why.
  */
 import {
   boardCardMoveRefusal,

@@ -1,21 +1,7 @@
 /**
- * Settings → Board → Pipeline (board settings redesign, after
- * `.plans/prototype/T3 Settings.dc.html`): a single bordered accordion of
- * stages — drag-handle reorder, inline rename, role key chips, collapsed-state
- * summary chips — where exactly one stage is expanded at a time.
- *
- * The per-stage body exposes only what the stage's effective role leaves
- * configurable: Planning (role `plan`) is forced read-only + human-in-the-loop
- * and Building (role `build`) forced build-mode at RESOLUTION
- * (`resolveBoardStageExecution`), so neither renders a mode or pause control
- * that could disagree with the runtime. The retired "pause when a plan
- * exists" toggle is gone with it. Roleless stages keep the capability behind
- * a clearer control — "Agent can edit the card's worktree" writes `mode`.
- *
- * Each prompt renders between its system Preamble / Postamble — composed by
- * the SAME contracts functions the server runs (`boardEnvelope.ts`), with
- * `{{card-key}}` placeholders where a run interpolates card identity — so
- * what the user reads here is exactly what wraps their prompt at run time.
+ * Settings > Board > Pipeline: one accordion of stages. A stage body shows only
+ * what its effective role leaves configurable, and each prompt renders inside
+ * the same envelope the server composes at run time.
  */
 import {
   BOARD_REVIEW_PHASE_IDS,
@@ -186,24 +172,10 @@ function ToggleRow(props: {
   );
 }
 
-/** The prototype's −/value/+ number control, shared by rounds, timeouts,
-    attempts and the concurrency rows.
-
-    The field is a plain `<input>`, not the shared `Input`: that component puts
-    the class list on a bordered wrapper span and keeps the real element out of
-    reach, so neither the stepper's own chrome nor the `appearance` reset that
-    hides the browser's native spin buttons (redundant beside −/+, and they
-    crowd the value) could be applied to it. The value is controlled with a
-    free-text draft so typing is never fought, and the draft is dropped the
-    moment −/+ writes a new value — an uncontrolled field would keep showing
-    what the user last typed.
-
-    A `nullable` stepper also carries an unset state — per-instance concurrency
-    means "no override", not zero — shown as `placeholder` and reached by
-    clearing the field. −/+ never lands back on it: from unset they step off
-    `stepFrom`, the value the unset state actually resolves to (the global
-    limit), so the first nudge continues from what the user sees rather than
-    from the minimum. */
+/** The -/value/+ number control. A plain `<input>` because the shared `Input`
+    keeps the real element out of reach of the spin-button reset. A `nullable`
+    stepper's unset state is cleared-field only; -/+ step off `stepFrom`, the
+    value unset resolves to. */
 type NumberStepperCommon = {
   min: number;
   max: number;
@@ -300,11 +272,8 @@ function NumberRow(props: { label: string; hint?: string; stepper: ReactNode }) 
   );
 }
 
-/** One side of the system envelope, rendered inline above or below the
-    editable body: the text the server composes around the prompt, tagged
-    "System" so it reads as chrome rather than something the user can type in.
-    Empty envelopes (a phase with no postamble, say) render nothing at all
-    rather than an empty grey band. */
+/** One side of the system envelope around the editable body. An empty side
+    renders nothing. */
 function SystemEnvelope(props: { text: string; edge: "top" | "bottom"; label: string }) {
   if (props.text.trim().length === 0) return null;
   return (
@@ -328,22 +297,9 @@ function SystemEnvelope(props: { text: string; edge: "top" | "bottom"; label: st
 }
 
 /**
- * The prompt row, laid out as the single document a run actually sends:
- * system preamble, the editable body, system postamble — one bordered card,
- * read top to bottom, so the envelope is visible in place instead of hidden
- * behind a disclosure the user has to open to see what wraps their words.
- *
- * The body is the only editable band: clicking it (or Edit) swaps in a
- * textarea. While editing, the text is a local `draft` committed to the store
- * on blur — the same commit-on-blur pattern the number steppers use — so
- * typing never writes settings per keystroke and Reset can rewrite the field
- * in place without a remount race. The whole document clamps to a few hundred
- * pixels with a fade + "See more" so a long envelope cannot push the rest of
- * the stage off screen.
- *
- * When `defaultValue` is given, a prompt that differs from it is "Modified":
- * the badge shows while reading, and while editing it becomes a Reset control
- * (confirmed by a modal, since a reset discards the user's prompt text).
+ * The prompt as the single document a run sends: preamble, editable body,
+ * postamble. Edits are a local draft committed on blur, so settings are never
+ * written per keystroke and Reset can rewrite the field without a remount race.
  */
 function PromptRow(props: {
   id: string;
@@ -367,11 +323,7 @@ function PromptRow(props: {
     confirmResetOpenRef.current = open;
     setConfirmReset(open);
   };
-  // Clipping is MEASURED, not guessed from character count: a short prompt
-  // with many lines overflows the clamp just as a long single-line one does,
-  // and a silent cut with no fade or "See more" would hide content. The
-  // measurement is on the document, not the body, because the envelope shares
-  // the same clamp.
+  // Clipping is measured, not guessed from length: many short lines overflow too.
   const documentRef = useRef<HTMLDivElement | null>(null);
   const [clipped, setClipped] = useState(false);
   const clamped = !editing && !expanded;
@@ -580,15 +532,8 @@ function PhaseHeader(props: { step?: number; label: string }) {
 
 // ── stage rows ─────────────────────────────────────────────────────────
 
-/**
- * A stage's name: plain text that becomes a field only once you click it.
- *
- * Rendering every name in a permanent text box drew a border and a drop shadow
- * around each one and reserved a fixed-width well, which shoved the role chip
- * far off the name it labels. Text sized to its content keeps the chip beside
- * the name, and the box appears exactly when it means something — you are
- * typing in it.
- */
+/** A stage's name: plain text that becomes a field only once clicked, so the
+    role chip stays beside the name. */
 function StageNameField(props: {
   label: string;
   editable: boolean;
@@ -948,11 +893,8 @@ function StageAccordionRow(props: {
   crudEnabled: boolean;
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
-  /** The workspace default's display name (t3o-30, D1), or null when nothing is
-      set. A row with no model of its own inherits it, so the row names it
-      instead of reading "Select a model" — three different situations rendered
-      identically is what left a stage silently running on a codex pair nobody
-      picked. */
+  /** The workspace default's display name, or null. A row with no model of its
+      own names the one it inherits rather than reading "Select a model". */
   inheritedModelName: string | null;
   onToggle: () => void;
   onRename: (label: string) => void;
@@ -1442,14 +1384,8 @@ function CiStageBody(props: {
 }
 
 /**
- * The merge-role stage's body.
- *
- * Deliberately short, and deliberately WITHOUT an "Auto execute" row: nothing
- * in this stage RUNS on entry. The only agent this stage ever starts is the
- * conflict-resolution step — started by a merge that was refused for
- * conflicts, never by a card arriving here. Auto-merge below is a forge
- * operation, not an agent run, which is why it gets its own row rather than
- * folding into the auto-execute one every other stage has.
+ * The merge-role stage's body. No "Auto execute" row: nothing runs on entry.
+ * Auto-merge is a forge operation, not an agent run.
  */
 function MergeStageBody(props: {
   stage: BoardStageDefinition;
@@ -1548,11 +1484,7 @@ function MergeStageBody(props: {
   );
 }
 
-/** Every non-review stage body. The rows a stage exposes follow its effective
-    role: `plan` is forced read-only + human-in-the-loop (no mode / pause /
-    ceiling rows), `build` runs the worktree unattended-with-plan (no worktree
-    or generic pause rows), and a roleless stage keeps the full set behind the
-    clearer worktree-access toggle. */
+/** Every non-review stage body; its rows follow the stage's effective role. */
 function SimpleStageBody(props: {
   stage: BoardStageDefinition;
   role: BoardStageRole | null;
@@ -1659,12 +1591,9 @@ function SimpleStageBody(props: {
                 ariaLabel="Human in the loop when no plan exists"
                 onChange={(checked) => set({ humanInLoopWithoutPlan: checked })}
               />
-              {/* The other half of the D6 pair. Previously only the no-plan
-                  default was offered, which left the with-plan one reachable
-                  solely by hand-editing settings.json — and it is the setting a
-                  sub-board child reads, since a child always counts as planned
-                  (`boardBuildHumanInLoopDefault`). Without this row there is no
-                  way in the UI to make a split's children pause. */}
+              {/* The with-plan default is the one a sub-board child reads (a child always
+                  counts as planned), so this row is the only UI way to make a split's
+                  children pause. */}
               <ToggleRow
                 label="Pause for a human when a plan exists"
                 hint="Also governs sub-board children: a child's approved plan became its brief, so it counts as planned."
@@ -1800,14 +1729,9 @@ function PlanReviewSettingsBlock(props: {
 }
 
 /**
- * "Submit for merge (no review)" (t3o-07) — the Build stage's second exit,
- * configured like a review phase because it is the same kind of thing: one
- * short agent run with its own prompt, model, access level and limits.
- *
- * Outside the `Auto execute` conditional above, deliberately. Auto-execute
- * governs whether a card arriving at this stage starts BUILDING on its own;
- * submitting is a human clicking a button on a card that has already built, and
- * it stays available on a stage the user drives entirely by hand.
+ * "Submit for merge (no review)": the Build stage's second exit, configured like
+ * a review phase. Outside the `Auto execute` conditional because submitting is a
+ * human click, available on a stage driven entirely by hand.
  */
 function SubmitStepBlock(props: {
   stage: BoardStageDefinition;
@@ -1956,12 +1880,8 @@ function ReviewStageBody(props: {
               />
             }
           />
-          {/* The review loop runs unattended by definition (D2/D6), so this
-              stage has no human-in-the-loop gate to hide the row behind the
-              way `SimpleStageBody` does — the loop ending IS the verdict, and
-              a converged card left sitting in Code review is one someone has
-              to notice. Reachable here or the setting is unreachable at all:
-              the reactor reads `autoAdvance` for every stage, review included. */}
+          {/* The review loop runs unattended, so there is no human-in-the-loop gate
+              to hide this behind; the reactor reads `autoAdvance` for review too. */}
           <ToggleRow
             label="Auto advance to the next stage"
             hint="On: the card moves itself on when the loop ends: a round with nothing blocking, or the round cap."
@@ -2027,13 +1947,8 @@ function ReviewStageBody(props: {
                   label="Prompt"
                   value={phase.prompt}
                   defaultValue={DEFAULT_BOARD_REVIEW_PHASES[phaseId].prompt}
-                  // A review phase's real run is the step envelope wrapped
-                  // around the phase envelope (the executor composes the phase
-                  // prompt, and the reactor then wraps THAT). The preview
-                  // reproduces both layers so the user sees the whole thing —
-                  // and since t3o-19 D6 moved the completion sentence out of
-                  // the protocol and into the postamble, showing only the
-                  // phase layer would hide the completion contract entirely.
+                  // The real run wraps the step envelope around the phase envelope, and the
+                  // completion sentence lives in the postamble, so the preview shows both.
                   preamble={[
                     boardStepPreamble({
                       card: {

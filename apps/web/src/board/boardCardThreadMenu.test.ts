@@ -1,10 +1,6 @@
 /**
- * t3o-14 — the card thread `+` menu's restart gate (D1).
- *
- * The load-bearing safety property: the menu must never offer a restart that
- * would put a second thread on a step the supervisor already owns. That reduces
- * to two pure decisions — is a run in flight, and does the current stage even
- * auto-execute — pinned here so the connected component stays a thin adapter.
+ * The `+` menu's restart gate: never offer a restart that would put a second
+ * thread on a step the supervisor owns.
  */
 import type { BoardCardShell, BoardCardThreadState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";

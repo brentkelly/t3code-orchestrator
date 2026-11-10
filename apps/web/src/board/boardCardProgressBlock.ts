@@ -1,26 +1,7 @@
 /**
- * T3o card progress block (t3o-18, D8) — the ONE progress element a column card
- * may render, chosen by a fixed precedence.
- *
- * `boardCardSummary` is provably shell-only: its test asserts it renders its
- * documented variant from `BoardCardShell` fields ALONE, and that guarantee is
- * what structurally prevents the column view from ever reaching for
- * `subscribeCard`. Todos need thread-joined data (`boardCardThreads`, which rides
- * the shell snapshot as its own array), so they cannot live inside it and its
- * signature is not widened. This is its pure sibling instead.
- *
- * Precedence is **review > subcards > todos** (the prototype's rule, `hasPlans:
- * stacked && !review`). A split parent builds THROUGH its children, so while it
- * is building, how its children are doing IS its progress — but once it reaches
- * code review the children are finished and the loop reviewing the merged
- * branch is the only thing still moving. A parent that keeps wearing a full
- * green plan bar in the review column reads as work that is over.
- * The sub-board door is not lost with the bar: the card's detail sheet opens
- * the sub-board (`onOpenOwnSubBoard`).
- *
- * It is also the one place the "a second thread must add no height until
- * clicked" rule can be verified: the block is chosen from exactly ONE thread, and
- * the extra threads are a count.
+ * The one progress block a column card renders. Precedence: review > subcards >
+ * todos. Kept out of the shell-only `boardCardSummary` because todos need
+ * thread-joined data.
  */
 import type { BoardCardShell, BoardCardThreadShell, ThreadId } from "@t3tools/contracts";
 import { boardThreadTodosComplete } from "@t3tools/contracts";
@@ -63,15 +44,9 @@ export const BOARD_CARD_REVIEW_ITEM_KINDS: ReadonlySet<BoardCardSummaryItem["kin
 ]);
 
 /**
- * Which thread's list the card STRIP shows (D7). Independent of the card badge,
- * which aggregates across every thread: the badge answers "does this card need
- * me", a question about *any* thread; the strip answers "what is being worked
- * on", a question about *one*. They are allowed to disagree, and neither is
- * wrong when they do.
- *
- * Order: awaiting input → running → most recently updated → `activeThreadId` as
- * the final tiebreak. Runs client-side because only the client holds the live
- * thread shells the rule reads.
+ * Which thread's list the strip shows: awaiting input, then running, then most
+ * recently updated, then `activeThreadId`. It may disagree with the card badge,
+ * which aggregates every thread.
  */
 export function pickBoardCardTodoThread(input: {
   readonly threads: ReadonlyArray<BoardCardThreadShell>;
@@ -103,16 +78,9 @@ export function pickBoardCardTodoThread(input: {
 }
 
 /**
- * The single progress block for a column card. Pure: everything it branches on
- * is passed in.
- *
- * The strip HIDES a finished list whose thread is also stopped (D5). Retention is
- * a storage rule and visibility is a render rule: the board keeps the last list
- * for a live-linked thread regardless of completion or thread state, which is
- * what lets a card show `5/5` at the moment the agent succeeds — while a stale
- * card falls back to its plain meta row instead of advertising `Migration spike
- * 3/3 idle 2h` forever. The expanded panel and the modal always show what is
- * stored.
+ * The single progress block for a column card. The strip hides a finished list
+ * whose thread has stopped; the stored list is kept and the expanded panel and
+ * modal still show it.
  */
 export function boardCardProgressBlock(
   summary: BoardCardSummary,

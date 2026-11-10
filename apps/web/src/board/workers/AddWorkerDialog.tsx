@@ -1,12 +1,7 @@
 /**
- * T3o (T3O-62): Add worker and Re-pair (prototype 1.4–1.10).
- *
- * The primary path picks an environment this device is already connected to:
- * the client mints a one-time pairing token there with its own session and
- * hands it to the board server, which spends it for a session of its own
- * (D19). When this device can't mint one — no admin access there, or not
- * connected at all — the dialog says why and takes a pasted `t3 pair` link
- * instead. Re-pair is the same flow aimed at one existing worker.
+ * Add worker and Re-pair. The client mints a one-time pairing token on a
+ * connected environment and hands it to the board server; when it can't, the
+ * dialog says why and takes a pasted `t3 pair` link.
  */
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";

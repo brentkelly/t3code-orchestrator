@@ -1,10 +1,6 @@
 /**
- * T3o Continuous integration on the client (T3O-44): what the card face, the
- * card view's CI tab and its banner say about a card's CI runs. Pure, over the
- * shell's compact `ci` entry and the detail's pass records.
- *
- * Colours follow `docs/t3o/status-colours.md`: running and fixing are blue, a
- * passed step green, a terminal failure or a stopped pass amber, cancelled grey.
+ * What the card face, CI tab and banner say about a card's CI runs. Colours
+ * follow `docs/t3o/status-colours.md`.
  */
 import {
   BOARD_CI_STOPPED_BY_YOU_REASON,
@@ -396,11 +392,9 @@ export function boardCiTailMeta(tail: string): string {
 }
 
 /**
- * A failed pass's "Fix failures" row (T3O-57): the fix as the pass's last
- * step, with one row per issue. A pass's ordinal is not its fix attempt (a held
- * or restarted pass takes an ordinal without a fix), so the fix's completion is
- * the one from the pass's recorded fix thread, or the live attempt while the
- * card is still fixing this pass. There is no live per-issue progress.
+ * A failed pass's "Fix failures" row. A pass's ordinal is not its fix attempt,
+ * so the completion comes from the pass's recorded fix thread, or the live
+ * attempt while still fixing. No live per-issue progress.
  */
 export interface BoardCiFixRow {
   readonly state: "running" | "reported" | "after-pass" | "not-run";

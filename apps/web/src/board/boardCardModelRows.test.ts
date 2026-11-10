@@ -1,12 +1,6 @@
 /**
- * The card model-override rows (t3o-29, D1/D5). Pure over stages + workspace
- * settings + the parent card, so the whole inheritance story is testable
- * without rendering a popover or standing up a provider list.
- *
- * The assertions that matter most are the ones about what a row SAYS it is
- * inheriting: once a card can inherit from a parent, "nothing set" is three
- * different situations, and a row that renders them identically leaves the user
- * unable to tell which model their card will actually run on.
+ * The card model-override rows. What matters most is what a row says it
+ * inherits, since "nothing set" can mean different fallbacks.
  */
 import { describe, expect, it } from "vite-plus/test";
 

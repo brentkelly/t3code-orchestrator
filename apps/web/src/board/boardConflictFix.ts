@@ -1,12 +1,6 @@
 /**
- * T3o merge-conflict copy (T3O-9). One place that turns "this card's merge is
- * held by conflicts" into the words every surface shows — the column card's
- * pill and its tooltip, and the card modal's banner — so the two can never tell
- * the user two different stories.
- *
- * Pure: the fact itself is `BoardCardShell.stepConflictFix`, derived on the
- * server from the step row's `Conflicts` label (`isBoardConflictFixLive`).
- * Nothing here reads state.
+ * Merge-conflict copy for the card pill, its tooltip and the modal banner, so
+ * they cannot disagree. Pure: the fact is the shell's `stepConflictFix`.
  */
 
 export interface BoardConflictFixInfo {
@@ -56,11 +50,8 @@ export function boardConflictFix(input: {
       tooltip:
         "The merge hit conflicts. An agent picks it up when one frees up, so nothing is needed from you.",
       headline: `Waiting for an agent to resolve conflicts against ${base}`,
-      // Names the wait and stops there. The queued case also draws the
-      // build-queue banner (t3o-33) a few lines below in the wide layout, and
-      // that banner owns the mechanics — the position, the agent count, the two
-      // override buttons — so repeating "it starts on its own when an agent
-      // frees up" here would print the same sentence twice on one screen.
+      // The build-queue banner owns the queue mechanics in the wide layout, so this
+      // names the wait and stops.
       detail: "The merge holds until an agent is free and the thread finishes.",
       mergeDisabledReason: "Resolving conflicts…",
     };

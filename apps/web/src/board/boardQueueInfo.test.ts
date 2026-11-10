@@ -36,11 +36,8 @@ describe("boardQueueInfo", () => {
     );
   });
 
-  // The client cannot see every slot-holder: a step parked on a question keeps
-  // its slot and reaches the shell as neither running nor queued, and a
-  // per-instance cap holds work back with the global count below its ceiling.
-  // A fraction here would imply spare capacity the card demonstrably could not
-  // get, so it is not stated.
+  // The client cannot see every slot-holder (parked steps, per-instance caps),
+  // so a fraction below the cap could imply capacity that isn't there.
   it("states no fraction below the cap, where the count could be an undercount", () => {
     const detail = boardQueueInfo({ slot: slot(1, 1), running: 1, cap: 3 })!.detail;
     expect(detail).toContain("No agent is free for this task");

@@ -1,12 +1,7 @@
 /**
- * Sub-board group header (t3o-25, D2; T3O-29): inside its own board the group
- * is a HEADER, not a card. It says the group's key and title, `n/m done · N
- * deferred`, where its cards merge, its auto-build state, and carries the
- * dependency chart toggle and the Automation popover.
- *
- * Counts and target come from the live shells; the pull request and the plans
- * ride the per-card detail, so the header opens the same `board.subscribeCard`
- * the modal does — one group per drill-in, so the board at rest opens none.
+ * The group's header inside its own sub-board. Counts come from live shells;
+ * the PR and plans need the card's detail subscription, opened only while
+ * drilled in.
  */
 import type {
   BoardCardAttention,

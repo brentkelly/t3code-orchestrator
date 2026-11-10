@@ -1,13 +1,6 @@
 /**
- * T3o per-project accent colour (t3o-05; follows the project icon since T3O-4).
- *
- * A project has one colour, set in one place: its icon colour in project
- * settings. When the project's icon is a Lucide icon or monogram, its colour
- * name is the Board accent; otherwise (no icon override, a favicon, an emoji)
- * the colour is a deterministic hash of the `ProjectId` so the project still
- * gets a stable, distinct colour. Every consumer renders from the returned
- * class set, reading the icon from the project read model, so an icon colour
- * change recolours the Board live.
+ * Per-project accent colour: the project's icon colour when it has a Lucide icon
+ * or monogram, otherwise a deterministic hash of the `ProjectId`.
  */
 import type { ProjectIconColor, ProjectIconOverride, ProjectId } from "@t3tools/contracts";
 
@@ -22,21 +15,16 @@ export interface ProjectAccent {
       `hex` and check the pill's foreground. */
   readonly mutedHex: string;
   /**
-   * Key pill: a SOLID fill of `mutedHex`, so the card's identity reads as a
-   * badge and stays distinct from the soft label chips beside it. The
-   * foreground follows the prototype's luminance split (`boardLabelForeground`)
-   * rather than being white everywhere — white on the lighter fills would be
-   * unreadable.
+   * Key pill: a solid fill of `mutedHex`, with the foreground from the
+   * luminance split (white would be unreadable on the lighter fills).
    */
   readonly pill: string;
 }
 
 /*
- * Fills are literal arbitrary values, never interpolated: Tailwind generates
- * utilities by scanning source text, so a `bg-[${hex}]` built at runtime would
- * emit no CSS at all. Foregrounds are the luminance split applied to the fill
- * beside them — the test asserts each one against `boardLabelForeground`, so a
- * hand-written mismatch cannot survive.
+ * Fills are literal arbitrary values, never interpolated: Tailwind scans source
+ * text, so a runtime-built `bg-[${hex}]` emits no CSS. The test checks each
+ * foreground against `boardLabelForeground`.
  */
 
 /**

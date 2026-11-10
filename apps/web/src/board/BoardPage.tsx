@@ -1,12 +1,7 @@
 /**
- * T3o board surface (t3o-05): mode tabs and project scope in a board-owned
- * top bar, the eight stage columns, and drag ordering.
- *
- * Every ordering number comes from `@t3tools/client-runtime` (t3o-04):
- * `compareBoardCardShells` orders columns, `boardColumnAppendOrderKey`
- * appends, `planBoardCardReorder` prices a drop, and the optimistic
- * placement overlay reconciles against the shell stream. This file decides
- * *when* to dispatch, never *what number* to store.
+ * Board surface: top bar, stage columns and drag ordering. Every ordering number
+ * comes from `@t3tools/client-runtime`; this file decides when to dispatch, never
+ * what number to store.
  */
 import { boardThreadStateSource } from "@t3tools/shared/boardThreadState";
 import {
@@ -87,7 +82,6 @@ import {
 } from "./boardCardNav";
 import type { BoardCardNav } from "./BoardCardNavRails";
 import { useBoardAttentionSettle } from "./boardAttentionSettle";
-// T3o: the card face's amber "No PR" chip (T3O-48).
 import { boardCardNoPullRequest } from "./boardCardNotice";
 import { boardQueueInfo, type BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardCardTodoContext } from "./BoardCardItem";
@@ -184,12 +178,9 @@ interface BoardDragOver {
 }
 
 /**
- * The insertion index a pointer at `y` maps to within a column element,
- * measured in the cards' "unshifted" coordinates: any card sitting below the
- * inserted placeholder is offset by its height, so we subtract that before
- * comparing midpoints — otherwise inserting the placeholder shifts the cards
- * and the next dragover computes a different index, flickering. (Ported from
- * the prototype's `dropIndexIn`.)
+ * The insertion index a pointer at `y` maps to, in the cards' unshifted
+ * coordinates: cards below the placeholder are offset by its height first, or
+ * the next dragover computes a different index and flickers.
  */
 function boardDropIndexIn(columnEl: Element, y: number): number {
   const placeholder = columnEl.querySelector("[data-board-ph]");
@@ -395,11 +386,8 @@ function EnvironmentBoard({
   if (unsettledPlacements.length !== placements.length) setPlacements(unsettledPlacements);
   const placedColumns = applyBoardCardPlacements(liveColumns, unsettledPlacements);
 
-  // Sub-board pips (t3o-23, D6): `planTotal` / `planDone` are DERIVED here,
-  // client-side, from the children the shell already carries — the server
-  // never produces them. Injected onto the parents' shells so the summary /
-  // progress-block chain (which predates the data) lights up unchanged.
-  // `parentKeyById` feeds the children's "part of <key>" chip.
+  // Plan pips are derived client-side from the children the shell already
+  // carries; the server never produces them.
   const { columns, parentKeyById, cardKeyById } = (() => {
     const cards = Object.values(placedColumns).flat();
     const progress = deriveBoardCardPlanProgress({ cards, stages: orderedStages });
@@ -475,11 +463,8 @@ function EnvironmentBoard({
       now: attentionNow,
     });
   };
-  // T3o (T3O-48): "this card is ready to merge and has nothing to merge" — the
-  // card face's amber `No PR` chip. Resolved here rather than in the column for
-  // the same reason `attentionFor` is: the settle grace is keyed on when the
-  // card's thread went quiet, which is a join across the thread shells only the
-  // page holds. Free otherwise — the stage and `hasPr` are already on the shell.
+  // Resolved here, not in the column, because the settle grace joins the thread
+  // shells only the page holds.
   const noPullRequestFor = (card: BoardCardShell) =>
     boardCardNoPullRequest({
       atMergeStage: mergeStageId !== null && card.stage === mergeStageId,
@@ -502,11 +487,8 @@ function EnvironmentBoard({
     })
       ? boardCardWorktreeKeptReason(card.worktreeKeptReason)
       : null;
-  // …and the same question asked of each parent's CHILDREN, folded once for the
-  // whole board rather than per card: a split parent builds through its
-  // children, so a child that needs a human blocks the parent too and the
-  // parent wears the child's tone. Free, like the plan pips beside it — every
-  // input is already on the shells the board holds.
+  // A child that needs a human blocks its split parent too, so the parent wears
+  // the child's tone. Folded once for the whole board.
   const childAttentionByParent = deriveBoardCardChildAttention({
     // Only a sub-board CHILD can roll up, so only a child pays for the
     // settle-grace join — on the ordinary board that is every card skipped.
@@ -539,11 +521,8 @@ function EnvironmentBoard({
       boardWideAutoMerge: false,
     }).autoBuild.value;
   const childAttentionFor = (card: BoardCardShell) => childAttentionByParent.get(card.cardId);
-  // …and the working dot asked of the children too. A split parent builds
-  // THROUGH its children and runs no step of its own while they go, so on its
-  // own signals it reads the same whether the split is moving or the whole
-  // thing is queued — the one thing the dot is there to tell apart. Folded once
-  // for the board, like the roll-up above it, and just as free.
+  // A split parent runs no step of its own while its children go, so its working
+  // dot comes from them.
   const childRunningByParent = deriveBoardCardChildRunning({ cards: allCards });
   const childRunningFor = (card: BoardCardShell) => childRunningByParent.get(card.cardId);
 
@@ -616,21 +595,14 @@ function EnvironmentBoard({
   // a navigation bug in this codebase (D9).
   const [subBoardChartOpen, setSubBoardChartOpen] = useState(false);
 
-  // Every card the environment holds, whatever project it belongs to and
-  // whether or not this scope renders it (t3o-33). The build queue is
-  // board-wide, so it is read from here rather than from the scoped columns: a
-  // hidden project's card still holds an agent, and a queue that skipped it
-  // would number every visible card wrong.
+  // Every card in the environment, scoped or not: the build queue is board-wide,
+  // and a queue that skipped a hidden project's card would number the rest wrong.
   const everyCard = [...cardsByProject.values()].flatMap((byStage) =>
     Object.values(byStage).flat(),
   );
 
-  // The queued cards' pills and their tooltips. One derivation for the whole
-  // board — positions are a view over the queue, so they are recomputed
-  // together or not at all — and it costs a single pass when nothing is queued.
-  // T3O-65: the board's workers, for the queue's reasons and every card below.
-  // What the cards and the queue read: the same object across a clone's
-  // progress ticks, so those don't rebuild the queue or re-render the columns.
+  // Stays the same object across a clone's progress ticks, so those don't
+  // rebuild the queue or re-render the columns.
   const cardWorkersState = useBoardWorkersCardView(environmentId);
   const queueSlots = (() => {
     const queue = boardBuildQueue(
@@ -665,12 +637,8 @@ function EnvironmentBoard({
     return info;
   })();
 
-  // ── Card todo strips (t3o-18) ────────────────────────────────────────
-  // The card→thread links and their cached lists ride the shell snapshot as
-  // their own array; everything else the strip needs — the thread's title and
-  // whether it is running or waiting — is joined here from the thread shells the
-  // client already holds. Nothing is duplicated onto the wire, and no card opens
-  // a subscription.
+  // The strip's thread title and state are joined from the thread shells the
+  // client already holds; nothing is duplicated onto the wire.
   const cardThreadsByCard = useAtomValue(boardEnvironment.cardThreadsByCardAtom(environmentId));
   // Which cards have their extra threads revealed. In-memory and session-scoped
   // (D9): a collapse preference has near-zero value across reloads, and persisted
@@ -708,15 +676,8 @@ function EnvironmentBoard({
     onToggleExpanded: () => toggleCardThreads(cardId),
   });
 
-  // Stalled cards (t3o-17, D3): the "find every stalled card" affordance. Count
-  // them across every column, and when the `stalled` filter is on, show only
-  // the cards recovery gave up on — so a human never has to open forty cards to
-  // find the one that needs rescuing.
-  // Scope filtering (t3o-25, D1): the root board renders top-level cards, a
-  // sub-board renders one parent's children. Like the stalled filter below,
-  // this thins what RENDERS while `columns` stays the full ordering substrate
-  // — a drop between two visible cards anchors into the real column, so
-  // hidden cards keep their order.
+  // Scope and the stalled filter thin what renders; `columns` stays the full
+  // ordering substrate so a drop anchors into the real column.
   const scopedColumns = filterBoardColumnsByScope(columns, scope);
 
   // Every live card, as the per-project stage helpers read them (T3O-43).
@@ -824,11 +785,7 @@ function EnvironmentBoard({
     countBoardColumnCards(visibleColumns) === 0 &&
     countBoardColumnCards(stalledColumns) > 0;
 
-  // ── Drag (native HTML5, the prototype's model) ──────────────────────
-  // dnd-kit's sortable transforms were incompatible with the virtualised
-  // list — cards vanished mid-drag and no gap opened. Native drag carries a
-  // tilted ghost clone; each column measures the drop index and opens a
-  // placeholder gap; the drop reuses the command layer below.
+  // Native HTML5 drag: dnd-kit's sortable transforms broke the virtualised list.
   const [drag, setDrag] = useState<BoardDrag | null>(null);
   const [dragOver, setDragOver] = useState<BoardDragOver | null>(null);
   const [dragOpenedRail, setDragOpenedRail] = useState<BoardStageId | null>(null);
@@ -938,12 +895,8 @@ function EnvironmentBoard({
         return;
       }
       if (targetStage === buildStageId) {
-        // D11: within Building, position is queue priority. Announce the
-        // slot the drop landed in — derived from the `queued` field, so a
-        // drop that did not land in the queue stays silent. Keyed on the
-        // stage's ROLE rather than the seed id, so a renamed build stage
-        // still announces (t3o-33: `buildStageId` was already resolved here
-        // for the old per-column derivation).
+        // Within Building, position is queue priority. Announce the slot the drop
+        // landed in, keyed on the stage's role so a renamed build stage still does.
         const movedAssignment = assignments.find((next) => next.cardId === cardId);
         if (movedAssignment === undefined) return;
         const slot = boardBuildQueue(
@@ -1006,12 +959,9 @@ function EnvironmentBoard({
     performDrop(targetStage, orderedIds, source);
   };
 
-  // Turns a target stage + raw insertion index into the settled card order.
-  // The index is measured against the RENDERED cards — `visibleColumns`, which
-  // the stalled filter may have thinned — so it is resolved to an anchor card
-  // in that same rendered list first, then mapped into the full column. A drop
-  // computed in filtered coordinates but spliced into the full list would
-  // persist a wrong order server-side, for every client.
+  // The index is measured against the rendered (possibly filtered) cards, so it
+  // resolves to an anchor card there first, then maps into the full column.
+  // Splicing filtered coordinates into the full list would persist a wrong order.
   const commitDrop = (targetStage: BoardStageId, insertIndex: number, cardId: string) => {
     const source = findBoardCard(columns, cardId);
     if (source === null) return;
@@ -1185,18 +1135,9 @@ function EnvironmentBoard({
   useEffect(() => {
     if (selectedCardId === null) setDetailMaximisedCardId(null);
   }, [selectedCardId, setDetailMaximisedCardId]);
-  // ── Stepping between cards (T3O-37) ────────────────────────────────
-  // The sibling list is `visibleColumns` itself — the very array each column
-  // renders — so what you step through is exactly what the board is currently
-  // showing: same scope, same project, same "Stalled only", same search box.
-  // There is no second filter here to drift from the first. A card that is not
-  // in it (a deep link, or one the query is hiding) resolves to index -1, and
-  // both the rails and the shortcuts go quiet rather than guessing.
-  //
-  // Read in `renderedStages` order, so a step runs off the bottom of one
-  // column into the top of the next (T3O-44): the columns are the list, not
-  // one column. `renderedStages` and not the full stage list — a sub-board
-  // steps through the columns it actually draws.
+  // Steps through `visibleColumns` in `renderedStages` order, exactly what the
+  // board shows, running off one column into the next. A card not in it resolves
+  // to index -1 and stepping goes quiet.
   const stageOrder = renderedStages.map((stage) => stage.stageId);
   const stageLabels = new Map(renderedStages.map((stage) => [stage.stageId, stage.label] as const));
   const neighbours = resolveBoardCardNeighbours(visibleColumns, stageOrder, selectedCardId);
@@ -1359,11 +1300,7 @@ function EnvironmentBoard({
     upKey,
   ]);
 
-  // ── Create dialog ───────────────────────────────────────────────────
-  // Both the column add buttons and the top-bar button open the same dialog
-  // (t3o-06). The dialog owns creation (title, brief, labels, project, stage
-  // and initial dependencies land in one atomic create); this only tracks
-  // which stage to prefill. Absent means closed.
+  // The stage the create dialog prefills; null means closed.
   const [createStage, setCreateStage] = useState<BoardStageId | null>(null);
   const openCreate = (stage: BoardStageId) => setCreateStage(stage);
 
@@ -1515,11 +1452,8 @@ function EnvironmentBoard({
                 scopeIsStale={scopeIsStale}
                 scopeProjectId={scopeProjectId}
               />
-              {/* The legend: which colour is which project, for as long as the board
-                is showing more than one project's cards. The prototype's swatch is
-                a short bar, not the scope picker's dot — the two never read as the
-                same control. Shown for a single project too: its colour is on every
-                card, so the board still owes you the key to it. */}
+              {/* The project legend. Shown for a single project too: its colour is on
+                  every card. */}
               {scopeProjectId === null && projects.length > 0 ? (
                 <div className="flex min-w-0 items-center gap-3 overflow-hidden">
                   {projects.map((project) => (
@@ -1697,21 +1631,10 @@ function EnvironmentBoard({
             })}
           </div>
         </div>
-        {/* The card opens as a centred modal over the board (t3o-06), not a
-          rail beside it — so it never squeezes the columns.
-
-          `key` is what gives every per-card view state its reset on a step
-          (T3O-37, D5) — and stepping does NOT replay the sheet's open
-          transition, despite remounting the Dialog with it. Base UI only
-          animates a popup that goes from closed to open: `useTransitionStatus`
-          seeds `mounted` from `open`, so a Root that mounts already open never
-          reaches the `'starting'` status, and `data-starting-style` — which is
-          the sole hook for the backdrop's fade and the popup's scale in
-          `dialog-styles.ts` — is never written. This sheet is only ever
-          mounted open, so that has always been true of opening a card too; a
-          step swaps the sheet's contents in one commit and the frame under it
-          does not flinch. Hoisting the Dialog above the key would buy nothing
-          and cost the reset. */}
+        {/* `key` resets per-card view state on a step. Base UI only animates a
+            popup that goes closed to open, and this sheet always mounts open, so a
+            step swaps contents without replaying the open transition. Hoisting the
+            Dialog above the key would lose the reset. */}
         {selectedCardId !== null ? (
           <BoardCardDetail
             cardId={BoardCardId.make(selectedCardId)}

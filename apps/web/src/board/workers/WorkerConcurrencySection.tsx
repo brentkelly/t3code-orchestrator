@@ -1,13 +1,7 @@
 /**
- * T3o (T3O-65, D11; prototype 3.1): Settings → Board → Concurrency on a board
- * with workers. The board limit first, then one block per worker — its own
- * limit on the header line, its provider instances indented below. Each
- * worker's providers are the ones it reports (this server's come from its own
- * config); an offline worker shows the last it reported, and a revoked or
- * incompatible one says why there is nothing to configure.
- *
- * A local-only board never renders this: its Concurrency section is exactly
- * what it was.
+ * Settings > Board > Concurrency on a board with workers: the board limit, then
+ * each worker's limit and provider instances. An offline worker shows its last
+ * report. A local-only board never renders this.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
