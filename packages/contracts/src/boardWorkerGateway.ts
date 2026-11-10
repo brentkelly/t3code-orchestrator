@@ -415,6 +415,8 @@ export const BoardWorkerCiProgress = Schema.Union([
     failedIndex: Schema.NullOr(NonNegativeInt),
     /** Why the pass could not run, when `result` is "unavailable". */
     detail: Schema.optional(Schema.String),
+    /** The pass could not run because of the worker's machine (T3O-59). */
+    machine: Schema.optionalKey(Schema.Boolean),
   }),
 ]);
 export type BoardWorkerCiProgress = typeof BoardWorkerCiProgress.Type;

@@ -1928,8 +1928,12 @@ export const BoardCardCi = Schema.Struct({
   /** CI failure round trips this card has made without a human (T3O-49);
       absent is none. */
   roundTrips: Schema.optionalKey(NonNegativeInt),
-  /** Why CI stopped, while `phase` is `stopped`. */
+  /** Why CI stopped or was held, while `phase` is `stopped` or `held`
+      (T3O-59 widened it to held). The key keeps its old name. */
   stopReason: Schema.optionalKey(TrimmedNonEmptyString),
+  /** A held pass was held for a problem with the machine, not the code
+      (T3O-59): a full disk, say. Drives the "Machine problem" label. */
+  machine: Schema.optionalKey(Schema.Literal(true)),
 });
 export type BoardCardCi = typeof BoardCardCi.Type;
 
@@ -6775,6 +6779,10 @@ export const BoardCardCiAction = Schema.Union([
     kind: Schema.Literal("finish-pass"),
     runId: TrimmedNonEmptyString,
     result: Schema.Literals(["passed", "failed", "interrupted", "cancelled"]),
+    /** Why a held pass was held (T3O-59); the card shows it. */
+    reason: Schema.optionalKey(TrimmedNonEmptyString),
+    /** The hold is a machine problem, not the code's (T3O-59). */
+    machine: Schema.optionalKey(Schema.Literal(true)),
   }),
   Schema.Struct({ kind: Schema.Literal("begin-fix"), runId: TrimmedNonEmptyString }),
   Schema.Struct({
@@ -10206,6 +10214,15 @@ export const BoardCardPullRequestActionInput = Schema.Struct({
 });
 export type BoardCardPullRequestActionInput = typeof BoardCardPullRequestActionInput.Type;
 
+/** Retry CI, or Stop CI (T3O-59). One method with an action rather than a new
+    one: the board RPC group sits at TypeScript's instantiation-depth limit.
+    An old client's `{ cardId }` still decodes, as a retry. */
+export const BoardCiActionInput = Schema.Struct({
+  cardId: BoardCardId,
+  action: Schema.optionalKey(Schema.Literals(["retry", "stop"])),
+});
+export type BoardCiActionInput = typeof BoardCiActionInput.Type;
+
 /**
  * T3o (T3O-48): the refresh takes its OWN input, rather than widening the
  * shared one above — merge, submit and requestReviewRound use that struct too,
@@ -10416,6 +10433,10 @@ export type BoardSkipCiResult = typeof BoardSkipCiResult.Type;
 export const BoardCiActionResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("retried") }),
   Schema.Struct({ outcome: Schema.Literal("sent-back") }),
+  /** Stop CI (T3O-59): the pass is held, and Retry CI runs it again. */
+  Schema.Struct({ outcome: Schema.Literal("stopped") }),
+  /** Stop CI on a pass that has already settled: nothing to stop. */
+  Schema.Struct({ outcome: Schema.Literal("not-running") }),
   /** The card is not in the CI stage — a stale client. */
   Schema.Struct({ outcome: Schema.Literal("not-in-ci") }),
   /** A pass is still running or a fix agent works on it. */
@@ -10916,7 +10937,7 @@ export const BOARD_RPCS = [
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
   Rpc.make(BOARD_WS_METHODS.retryCi, {
-    payload: BoardCardPullRequestActionInput,
+    payload: BoardCiActionInput,
     success: BoardCiActionResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),

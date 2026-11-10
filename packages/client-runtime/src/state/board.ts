@@ -800,6 +800,12 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:retry-ci",
       execute: (input: { readonly cardId: BoardCardId }) => retryBoardCardCi(input),
     }),
+    /** Stop CI (T3O-59): hold the card's pass; Retry CI runs it again. */
+    stopCi: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:stop-ci",
+      execute: (input: { readonly cardId: BoardCardId }) =>
+        retryBoardCardCi({ cardId: input.cardId, action: "stop" }),
+    }),
     sendBackCi: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:send-back-ci",
       execute: (input: { readonly cardId: BoardCardId }) => sendBackBoardCardCi(input),

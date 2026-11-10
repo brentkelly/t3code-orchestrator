@@ -21,6 +21,9 @@ export type BoardCiRecordResult =
   | { readonly ok: true; readonly payload: Omit<BoardCardCiRecordedPayload, "cardId" | "action"> }
   | { readonly ok: false; readonly refusal: string };
 
+/** A held pass's reason rides every card shell, so it stays short. */
+const BOARD_CI_HOLD_REASON_CHARS = 400;
+
 const refuse = (refusal: string): BoardCiRecordResult => ({ ok: false, refusal });
 
 export function decideBoardCiRecord(
@@ -104,9 +107,13 @@ export function decideBoardCiRecord(
     }
 
     case "step": {
-      if (current === null || current.runId !== action.runId) {
-        // A late report from a pass already superseded: its row still takes
-        // the step, the card does not.
+      if (
+        current === null ||
+        current.runId !== action.runId ||
+        isBoardCiPassSettledPhase(current.phase)
+      ) {
+        // A late report from a pass already superseded, held or stopped
+        // (T3O-59): its row still takes the step, the card does not.
         return done({ ci: current, ciLastOutcome: card.ciLastOutcome });
       }
       if (action.index >= current.steps.length) {
@@ -157,6 +164,10 @@ export function decideBoardCiRecord(
                   ? { ...step, status: "cancelled" as const }
                   : step,
               ),
+              ...(action.reason === undefined
+                ? {}
+                : { stopReason: action.reason.slice(0, BOARD_CI_HOLD_REASON_CHARS).trimEnd() }),
+              ...(action.machine === true ? { machine: true as const } : {}),
             }
           : null;
       return done(
@@ -168,6 +179,10 @@ export function decideBoardCiRecord(
     case "begin-fix": {
       if (current === null || current.runId !== action.runId) {
         return refuse(`Pass ${action.runId} is not this card's current CI pass.`);
+      }
+      // T3O-59: a late failure of a pass already held or stopped starts no fix.
+      if (current.phase !== "running") {
+        return refuse(`Pass ${action.runId} is ${current.phase}, so no fix can start on it.`);
       }
       if (current.fixAttempts >= current.maxFixAttempts) {
         return refuse(`Card '${card.key}' has used all ${current.maxFixAttempts} CI fixes.`);

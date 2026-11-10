@@ -79,7 +79,7 @@ it.live("stops at the first failing step", () =>
       ]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0 });
+    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, exitCode: 3 });
     const last = events.at(-1)!;
     assert.strictEqual(last.step.status, "failed");
     assert.strictEqual(last.step.exitCode, 3);
@@ -98,7 +98,7 @@ it.live("times a step out and kills it", () =>
       request(cwd, [{ name: "Hangs", command: "sleep 30", timeoutMinutes: 0.0005 }]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0 });
+    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, exitCode: null });
     assert.strictEqual(events.at(-1)!.step.status, "timed-out");
     assert.include(events.at(-1)!.step.tail, "timed out");
   }),
@@ -332,7 +332,7 @@ it.live("runs a parallel group together and stops later groups once it finishes"
       ]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 1 });
+    assert.deepStrictEqual(result, { result: "failed", failedIndex: 1, exitCode: 7 });
     const finals = events.filter((event) => event.step.status !== "running");
     assert.deepStrictEqual(
       finals.map((event) => [event.index, event.step.status, event.step.exitCode]),
@@ -379,7 +379,7 @@ it.live("fails a group that leaves tracked changes in the worktree", () =>
       request(cwd, [{ name: "Formats", command: "echo two > tracked.txt", timeoutMinutes: 1 }]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0 });
+    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, exitCode: 0 });
     assert.include(events.at(-1)!.step.tail, "left tracked changes");
     // An edit that was there before the group ran is not the group's.
     const again = yield* runBoardCiPass(
@@ -392,6 +392,6 @@ it.live("fails a group that leaves tracked changes in the worktree", () =>
       request(cwd, [{ name: "Formats", command: "echo three > tracked.txt", timeoutMinutes: 1 }]),
       () => Effect.void,
     );
-    assert.deepStrictEqual(reedit, { result: "failed", failedIndex: 0 });
+    assert.deepStrictEqual(reedit, { result: "failed", failedIndex: 0, exitCode: 0 });
   }),
 );
