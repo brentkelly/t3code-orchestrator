@@ -100,7 +100,7 @@ export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: 
   // ── Remote ──────────────────────────────────────────────────────────
   const remoteName = yield* git
     .resolvePrimaryRemoteName(input.cwd)
-    .pipe(Effect.catch(() => Effect.succeed(null)));
+    .pipe(Effect.orElseSucceed(() => null));
   let remoteDeleted = false;
   let remoteAbsent = false;
   if (remoteName === null) {
@@ -113,7 +113,7 @@ export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: 
         args: ["remote"],
         allowNonZeroExit: true,
       })
-      .pipe(Effect.catch(() => Effect.succeed(null)));
+      .pipe(Effect.orElseSucceed(() => null));
     remoteAbsent = remotes !== null && remotes.exitCode === 0 && remotes.stdout.trim() === "";
     skipped.push(
       remoteAbsent
@@ -133,7 +133,7 @@ export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: 
         args: ["push", remoteName, "--delete", input.branch],
         allowNonZeroExit: true,
       })
-      .pipe(Effect.catch(() => Effect.succeed(null)));
+      .pipe(Effect.orElseSucceed(() => null));
     remoteDeleted = result !== null && result.exitCode === 0;
     if (!remoteDeleted) {
       // Scrubbed, not raw: this string is persisted to an event log that is
@@ -159,7 +159,7 @@ export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: 
       args: ["worktree", "list", "--porcelain"],
       allowNonZeroExit: true,
     })
-    .pipe(Effect.catch(() => Effect.succeed(null)));
+    .pipe(Effect.orElseSucceed(() => null));
 
   // A worktree listing we could not read is treated as "held": guessing wrong
   // in the other direction strands a live checkout on a nameless HEAD, and the
@@ -185,7 +185,7 @@ export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: 
         args: ["branch", "-D", input.branch],
         allowNonZeroExit: true,
       })
-      .pipe(Effect.catch(() => Effect.succeed(null)));
+      .pipe(Effect.orElseSucceed(() => null));
     localDeleted = result !== null && result.exitCode === 0;
     if (!localDeleted) {
       const detail = safeProcessOutput(result?.stderr ?? "");

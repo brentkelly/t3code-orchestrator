@@ -40,7 +40,7 @@ export const probeLocalMergeConflict = Effect.fn("probeLocalMergeConflict")(func
 
   const remoteName = yield* git
     .resolvePrimaryRemoteName(cwd)
-    .pipe(Effect.catch(() => Effect.succeed(null)));
+    .pipe(Effect.orElseSucceed(() => null));
   if (remoteName === null) return "unknown" satisfies BoardLocalMergeConflict;
 
   const run = (operation: string, args: ReadonlyArray<string>, timeoutMs: number) =>

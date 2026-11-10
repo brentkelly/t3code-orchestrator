@@ -315,17 +315,15 @@ export const layer: Layer.Layer<
       refusal?: BoardPullRequestRefusal,
     ) =>
       repository(projectId, operation).pipe(
-        Effect.flatMap((repository) => {
-          return repository === null
-            ? Effect.fail(
-                new BoardPullRequestGatewayError({
-                  operation,
-                  detail: "This project has no recognised source-control remote.",
-                  ...(refusal === undefined ? {} : { refusal }),
-                }),
-              )
-            : Effect.succeed(repository);
-        }),
+        Effect.filterOrFail(
+          (repository): repository is BoardRepository => repository !== null,
+          () =>
+            new BoardPullRequestGatewayError({
+              operation,
+              detail: "This project has no recognised source-control remote.",
+              ...(refusal === undefined ? {} : { refusal }),
+            }),
+        ),
       );
 
     /** The `PullRequestService` reference fields for a board repository. */
@@ -407,10 +405,12 @@ export const layer: Layer.Layer<
       );
 
     return BoardPullRequestGateway.of({
-      repository: (projectId) => repository(projectId),
+      repository: Effect.fn("BoardPullRequestGateway.repository")((projectId) =>
+        repository(projectId),
+      ),
       markReady,
       close,
-      find: (input) =>
+      find: Effect.fn("BoardPullRequestGateway.find")((input) =>
         // T3o (T3O-48): a forced lookup bumps this checkout's PR-lookup epoch,
         // which is part of the cache key — so it bypasses the lookup TTL and
         // the per-branch failure backoff together. `{ refresh: true }` alone is
@@ -423,7 +423,8 @@ export const layer: Layer.Layer<
           Effect.andThen(gitManager.branchPullRequest({ cwd: input.cwd, branch: input.branch })),
           Effect.catch(fail("find")),
         ),
-      get: (input) =>
+      ),
+      get: Effect.fn("BoardPullRequestGateway.get")((input) =>
         repositoryOf("get", input.projectId).pipe(
           Effect.flatMap((repository) => {
             const reference = {
@@ -442,7 +443,8 @@ export const layer: Layer.Layer<
           }),
           Effect.catch(fail("get")),
         ),
-      merge: (input) =>
+      ),
+      merge: Effect.fn("BoardPullRequestGateway.merge")((input) =>
         repositoryOf("merge", input.projectId, "blocked").pipe(
           Effect.flatMap((repository) =>
             pullRequests.runAction({
@@ -462,7 +464,8 @@ export const layer: Layer.Layer<
               }),
           ),
         ),
-      mergeState: (input) =>
+      ),
+      mergeState: Effect.fn("BoardPullRequestGateway.mergeState")((input) =>
         repositoryOf("mergeState", input.projectId).pipe(
           Effect.flatMap((repository) => {
             const reference = {
@@ -483,6 +486,7 @@ export const layer: Layer.Layer<
           Effect.map(boardMergeStateOf),
           Effect.catch(fail("mergeState")),
         ),
+      ),
     });
   }),
 );

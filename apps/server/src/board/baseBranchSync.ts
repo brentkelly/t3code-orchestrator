@@ -50,7 +50,7 @@ export const pullMergedBaseBranch = Effect.fn("pullMergedBaseBranch")(function* 
 
   const remoteName = yield* git
     .resolvePrimaryRemoteName(cwd)
-    .pipe(Effect.catch(() => Effect.succeed(null)));
+    .pipe(Effect.orElseSucceed(() => null));
   if (remoteName === null) {
     return {
       updated: false,
@@ -70,7 +70,7 @@ export const pullMergedBaseBranch = Effect.fn("pullMergedBaseBranch")(function* 
       args: ["branch", "--show-current"],
       allowNonZeroExit: true,
     })
-    .pipe(Effect.catch(() => Effect.succeed(null)));
+    .pipe(Effect.orElseSucceed(() => null));
   const currentBranch =
     showCurrent !== null && showCurrent.exitCode === 0 ? showCurrent.stdout.trim() : null;
 
@@ -95,7 +95,7 @@ export const pullMergedBaseBranch = Effect.fn("pullMergedBaseBranch")(function* 
       args: fastForward.args,
       allowNonZeroExit: true,
     })
-    .pipe(Effect.catch(() => Effect.succeed(null)));
+    .pipe(Effect.orElseSucceed(() => null));
 
   if (result !== null && result.exitCode === 0) {
     return { updated: true, skippedReason: null } satisfies BoardBaseBranchSyncResult;

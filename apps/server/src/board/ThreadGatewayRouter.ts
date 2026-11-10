@@ -189,48 +189,46 @@ export const makeThreadGatewayRouter = (deps: ThreadGatewayRouterDeps): ThreadGa
     // a single thread's lookup (the engine's link and unlink checks) still
     // fails rather than reading an unreachable thread as one that never
     // existed.
-    threadRecords: (threadIds) =>
-      Effect.gen(function* () {
-        const byWorker = new Map<BoardWorkerId, Array<ThreadId>>();
-        for (const [threadId, { workerId, removed }] of yield* workersOf(threadIds)) {
-          if (removed) continue;
-          const ids = byWorker.get(workerId);
-          if (ids === undefined) byWorker.set(workerId, [threadId]);
-          else ids.push(threadId);
-        }
-        const found = new Map<ThreadId, BoardThreadRecord>();
-        let failure: ThreadReadError | null = null;
-        let answered = false;
-        for (const [workerId, ids] of byWorker) {
-          if (workerId === BOARD_LOCAL_WORKER_ID) {
-            for (const [threadId, record] of yield* local.threadRecords(ids)) {
-              found.set(threadId, record);
-            }
-            answered = true;
-            continue;
+    threadRecords: Effect.fn("ThreadGatewayRouter.threadRecords")(function* (threadIds) {
+      const byWorker = new Map<BoardWorkerId, Array<ThreadId>>();
+      for (const [threadId, { workerId, removed }] of yield* workersOf(threadIds)) {
+        if (removed) continue;
+        const ids = byWorker.get(workerId);
+        if (ids === undefined) byWorker.set(workerId, [threadId]);
+        else ids.push(threadId);
+      }
+      const found = new Map<ThreadId, BoardThreadRecord>();
+      let failure: ThreadReadError | null = null;
+      let answered = false;
+      for (const [workerId, ids] of byWorker) {
+        if (workerId === BOARD_LOCAL_WORKER_ID) {
+          for (const [threadId, record] of yield* local.threadRecords(ids)) {
+            found.set(threadId, record);
           }
-          const remote = yield* Effect.result(deps.remote(workerId).threadRecords(ids));
-          if (remote._tag === "Failure") {
-            failure = remote.failure;
-            continue;
-          }
-          for (const [threadId, record] of remote.success) found.set(threadId, record);
           answered = true;
+          continue;
         }
-        if (failure !== null && !answered) return yield* failure;
-        return found;
-      }),
+        const remote = yield* Effect.result(deps.remote(workerId).threadRecords(ids));
+        if (remote._tag === "Failure") {
+          failure = remote.failure;
+          continue;
+        }
+        for (const [threadId, record] of remote.success) found.set(threadId, record);
+        answered = true;
+      }
+      if (failure !== null && !answered) return yield* failure;
+      return found;
+    }),
     // Every live thread anywhere. A registered worker that cannot answer
     // fails the read, so a sweep keyed on it never mistakes that worker's
     // threads for deleted ones.
-    listLiveThreadIds: () =>
-      Effect.gen(function* () {
-        const ids = [...(yield* local.listLiveThreadIds())];
-        for (const workerId of yield* registeredWorkers) {
-          ids.push(...(yield* deps.remote(workerId).listLiveThreadIds()));
-        }
-        return ids;
-      }),
+    listLiveThreadIds: Effect.fn("ThreadGatewayRouter.listLiveThreadIds")(function* () {
+      const ids = [...(yield* local.listLiveThreadIds())];
+      for (const workerId of yield* registeredWorkers) {
+        ids.push(...(yield* deps.remote(workerId).listLiveThreadIds()));
+      }
+      return ids;
+    }),
 
     // Worktree retirement on a worker is T3O-64's: worktrees are this server's.
     threadsInWorktree: local.threadsInWorktree,

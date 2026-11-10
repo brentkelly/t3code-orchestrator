@@ -199,8 +199,9 @@ describe("claim, manifest, delete", () => {
       // Racing attaches that read the same (stale) record list land beside
       // each other, never on top: the name is claimed with an exclusive
       // create, so the filesystem decides the collision.
-      const racers = yield* Effect.all(
-        ["A", "B", "C"].map((marker) => {
+      const racers = yield* Effect.forEach(
+        ["A", "B", "C"],
+        (marker) => {
           const pendingId = createPendingAttachmentId();
           NodeFS.writeFileSync(
             NodePath.join(attachmentsDir, `${pendingId}.png`),
@@ -218,7 +219,7 @@ describe("claim, manifest, delete", () => {
             sizeBytes: 11,
             addedAt: NOW,
           });
-        }),
+        },
         { concurrency: "unbounded" },
       );
       // `-2` is already on disk from the claim above (the racers' stale record

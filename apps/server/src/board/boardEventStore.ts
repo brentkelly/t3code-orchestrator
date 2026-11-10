@@ -266,10 +266,9 @@ export function makeBoardEventStore(sql: SqlClient.SqlClient) {
     }).pipe(
       Effect.mapError(toPersistenceSqlError("BoardEventStore.append:insert")),
       Effect.flatMap(decodeRow),
-      Effect.flatMap((saved) =>
-        saved === undefined
-          ? Effect.die(new Error(`Appended an unknown board event type '${event.type}'.`))
-          : Effect.succeed(saved),
+      Effect.filterOrElse(
+        (saved): saved is BoardEvent => saved !== undefined,
+        () => Effect.die(new Error(`Appended an unknown board event type '${event.type}'.`)),
       ),
     );
 

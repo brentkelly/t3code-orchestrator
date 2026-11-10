@@ -563,10 +563,10 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
 
   /** A thread the command needs to exist, live. */
   const liveShell = (command: string, threadId: ThreadId) =>
-    Effect.flatMap(shellOf(threadId), (shell) =>
-      shell === null || shell.deletedAt !== null
-        ? Effect.fail(refused(command, threadId, `thread ${threadId} does not exist`))
-        : Effect.succeed(shell),
+    Effect.filterOrFail(
+      shellOf(threadId),
+      (shell): shell is NonNullable<typeof shell> => shell !== null && shell.deletedAt === null,
+      () => refused(command, threadId, `thread ${threadId} does not exist`),
     ).pipe(
       Effect.catchTags({
         ThreadReadError: (error) =>
@@ -588,24 +588,23 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
-  const startTurn = (input: {
+  const startTurn = Effect.fn("ThreadGatewayV2.startTurn")(function* (input: {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
     readonly text: string;
     readonly attachments: ReadonlyArray<ChatAttachment>;
-  }) =>
-    Effect.gen(function* () {
-      yield* run({
-        type: "message.dispatch",
-        commandId: input.commandId,
-        threadId: input.threadId,
-        messageId: yield* freshMessageId,
-        text: input.text,
-        attachments: input.attachments,
-        dispatchMode: { type: "start_immediately" },
-        ...BOARD_AUTHOR,
-      });
+  }) {
+    yield* run({
+      type: "message.dispatch",
+      commandId: input.commandId,
+      threadId: input.threadId,
+      messageId: yield* freshMessageId,
+      text: input.text,
+      attachments: input.attachments,
+      dispatchMode: { type: "start_immediately" },
+      ...BOARD_AUTHOR,
     });
+  });
 
   const gateway: LocalThreadGatewayShape = {
     // Upstream's `ThreadLaunchService.launch` is NOT used: its preparation runs
@@ -614,94 +613,91 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
     // planning would run it in the main checkout. The board provisions its own
     // worktrees and runs setup once (t3o-09); a spawn is `launch` minus
     // preparation — create, then start the first turn.
-    spawn: (input) =>
-      Effect.gen(function* () {
-        // v2 does not hold a thread to an existing project; the board does.
-        const project = yield* projectRows.get(input.projectId).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ThreadCommandFailedError({
-                command: "thread.create",
-                threadId: input.threadId,
-                detail: describe(cause),
-                cause,
-              }),
-          ),
-        );
-        if (Option.isNone(project)) {
-          return yield* refused(
-            "thread.create",
-            input.threadId,
-            `project ${input.projectId} does not exist`,
-          );
-        }
-        const inWorktree = input.branch !== null;
-        yield* run({
-          type: "thread.create",
-          commandId: input.commandId,
-          threadId: input.threadId,
-          projectId: input.projectId,
-          title: input.title,
-          modelSelection: input.modelSelection,
-          runtimeMode: input.runtimeMode,
-          interactionMode: input.interactionMode,
-          branch: inWorktree ? input.branch : null,
-          worktreePath: inWorktree ? input.worktreePath : null,
-          ...BOARD_AUTHOR,
-        });
-        yield* startTurn({
-          commandId: CommandId.make(`${input.commandId}:turn`),
-          threadId: input.threadId,
-          text: input.text,
-          attachments: input.attachments,
-        }).pipe(
-          // A thread whose first turn never started is deleted again rather
-          // than left empty in the sidebar.
-          Effect.tapError(() =>
-            run({
-              type: "thread.delete",
-              commandId: CommandId.make(`${input.commandId}:cleanup`),
+    spawn: Effect.fn("ThreadGatewayV2.spawn")(function* (input) {
+      // v2 does not hold a thread to an existing project; the board does.
+      const project = yield* projectRows.get(input.projectId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ThreadCommandFailedError({
+              command: "thread.create",
               threadId: input.threadId,
-            }).pipe(Effect.ignore),
-          ),
+              detail: describe(cause),
+              cause,
+            }),
+        ),
+      );
+      if (Option.isNone(project)) {
+        return yield* refused(
+          "thread.create",
+          input.threadId,
+          `project ${input.projectId} does not exist`,
         );
-      }),
-    send: (input) =>
-      Effect.gen(function* () {
-        const shell = yield* liveShell("message.dispatch", input.threadId);
-        // Modes are thread settings in v2, not per-turn fields; a stage that
-        // runs this turn differently sets them first.
-        if (shell.runtimeMode !== input.runtimeMode) {
-          yield* run({
-            type: "thread.runtime-mode.set",
-            commandId: CommandId.make(`${input.commandId}:runtime-mode`),
+      }
+      const inWorktree = input.branch !== null;
+      yield* run({
+        type: "thread.create",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        projectId: input.projectId,
+        title: input.title,
+        modelSelection: input.modelSelection,
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
+        branch: inWorktree ? input.branch : null,
+        worktreePath: inWorktree ? input.worktreePath : null,
+        ...BOARD_AUTHOR,
+      });
+      yield* startTurn({
+        commandId: CommandId.make(`${input.commandId}:turn`),
+        threadId: input.threadId,
+        text: input.text,
+        attachments: input.attachments,
+      }).pipe(
+        // A thread whose first turn never started is deleted again rather
+        // than left empty in the sidebar.
+        Effect.tapError(() =>
+          run({
+            type: "thread.delete",
+            commandId: CommandId.make(`${input.commandId}:cleanup`),
             threadId: input.threadId,
-            runtimeMode: input.runtimeMode,
-          });
-        }
-        if (shell.interactionMode !== input.interactionMode) {
-          yield* run({
-            type: "thread.interaction-mode.set",
-            commandId: CommandId.make(`${input.commandId}:interaction-mode`),
-            threadId: input.threadId,
-            interactionMode: input.interactionMode,
-          });
-        }
-        yield* startTurn(input);
-      }),
-    interrupt: (input) =>
-      Effect.gen(function* () {
-        const shell = yield* liveShell("run.interrupt", input.threadId);
-        if (shell.activeRunId === null) {
-          return yield* refused("run.interrupt", input.threadId, "no run is active");
-        }
+          }).pipe(Effect.ignore),
+        ),
+      );
+    }),
+    send: Effect.fn("ThreadGatewayV2.send")(function* (input) {
+      const shell = yield* liveShell("message.dispatch", input.threadId);
+      // Modes are thread settings in v2, not per-turn fields; a stage that
+      // runs this turn differently sets them first.
+      if (shell.runtimeMode !== input.runtimeMode) {
         yield* run({
-          type: "run.interrupt",
-          commandId: input.commandId,
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make(`${input.commandId}:runtime-mode`),
           threadId: input.threadId,
-          runId: shell.activeRunId,
+          runtimeMode: input.runtimeMode,
         });
-      }),
+      }
+      if (shell.interactionMode !== input.interactionMode) {
+        yield* run({
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.make(`${input.commandId}:interaction-mode`),
+          threadId: input.threadId,
+          interactionMode: input.interactionMode,
+        });
+      }
+      yield* startTurn(input);
+    }),
+    interrupt: Effect.fn("ThreadGatewayV2.interrupt")(function* (input) {
+      const shell = yield* liveShell("run.interrupt", input.threadId);
+      if (shell.activeRunId === null) {
+        return yield* refused("run.interrupt", input.threadId, "no run is active");
+      }
+      yield* run({
+        type: "run.interrupt",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        runId: shell.activeRunId,
+      });
+    }),
     stopSession: (input) =>
       run({ type: "thread.stop", commandId: input.commandId, threadId: input.threadId }),
     // The automatic settle re-reads candidacy itself and stamps the read time
@@ -741,69 +737,67 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
           }),
     delete: (input) =>
       run({ type: "thread.delete", commandId: input.commandId, threadId: input.threadId }),
-    armLimitRecovery: (input) =>
-      Effect.gen(function* () {
-        const shell = yield* liveShell("thread.metadata.update", input.threadId);
-        const state = boardThreadStateFromShell(shell, yield* nowMs);
-        const limit = state.usageLimit;
-        if (limit === null || limit.resetAt === null || shell.latestRunId === null) return false;
-        if (limit.resumeArmed) return true;
-        // An arm v2 would never act on leaves the resume to the board.
-        if (!v2RecoversLimit(shell)) return false;
-        yield* run({
-          type: "thread.metadata.update",
-          commandId: input.commandId,
-          threadId: input.threadId,
-          limitRecovery: { runId: shell.latestRunId, resetAt: limit.resetAt, autoResume: true },
-        });
-        return true;
-      }),
+    armLimitRecovery: Effect.fn("ThreadGatewayV2.armLimitRecovery")(function* (input) {
+      const shell = yield* liveShell("thread.metadata.update", input.threadId);
+      const state = boardThreadStateFromShell(shell, yield* nowMs);
+      const limit = state.usageLimit;
+      if (limit === null || limit.resetAt === null || shell.latestRunId === null) return false;
+      if (limit.resumeArmed) return true;
+      // An arm v2 would never act on leaves the resume to the board.
+      if (!v2RecoversLimit(shell)) return false;
+      yield* run({
+        type: "thread.metadata.update",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        limitRecovery: { runId: shell.latestRunId, resetAt: limit.resetAt, autoResume: true },
+      });
+      return true;
+    }),
 
-    answerPendingInput: (input) =>
-      Effect.gen(function* () {
-        const shell = yield* liveShell("runtime-request.respond", input.threadId);
-        const pending = shell.pendingRuntimeRequest;
-        if (pending === null || pending.kind !== "user_input") return false;
-        const context = yield* projections
-          .getRuntimeResponseContext(input.threadId, pending.id)
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new ThreadCommandFailedError({
-                  command: "runtime-request.respond",
-                  threadId: input.threadId,
-                  detail: describe(cause),
-                  cause,
-                }),
-            ),
-          );
-        const request = context.request;
-        if (request === undefined || request.status !== "pending") return false;
-        if (request.responseCapability.type === "not_resumable") return false;
-        const item = context.item;
-        if (item === undefined || item.type !== "user_input_request") return false;
-        if (item.questions.length === 0) return false;
-        yield* run({
-          type: "runtime-request.respond",
-          commandId: input.commandId,
-          threadId: input.threadId,
-          requestId: pending.id,
-          answers: Object.fromEntries(item.questions.map((question) => [question.id, input.text])),
-        });
-        return true;
-      }),
+    answerPendingInput: Effect.fn("ThreadGatewayV2.answerPendingInput")(function* (input) {
+      const shell = yield* liveShell("runtime-request.respond", input.threadId);
+      const pending = shell.pendingRuntimeRequest;
+      if (pending === null || pending.kind !== "user_input") return false;
+      const context = yield* projections.getRuntimeResponseContext(input.threadId, pending.id).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ThreadCommandFailedError({
+              command: "runtime-request.respond",
+              threadId: input.threadId,
+              detail: describe(cause),
+              cause,
+            }),
+        ),
+      );
+      const request = context.request;
+      if (request === undefined || request.status !== "pending") return false;
+      if (request.responseCapability.type === "not_resumable") return false;
+      const item = context.item;
+      if (item === undefined || item.type !== "user_input_request") return false;
+      if (item.questions.length === 0) return false;
+      yield* run({
+        type: "runtime-request.respond",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        requestId: pending.id,
+        answers: Object.fromEntries(item.questions.map((question) => [question.id, input.text])),
+      });
+      return true;
+    }),
 
-    threadState: (threadId) =>
-      Effect.gen(function* () {
+    threadState: Effect.fn("ThreadGatewayV2.threadState")(
+      function* (threadId) {
         const shell = yield* shellOf(threadId);
         if (shell !== null && shell.deletedAt === null) {
           return boardThreadStateFromShell(shell, yield* nowMs);
         }
         const deleted = shell ?? (yield* deletedRecord(threadId));
         return deleted === null ? null : deletedThreadState(threadId, deleted.projectId);
-      }).pipe(Effect.mapError(readError("threadState"))),
-    threadRecords: (threadIds) =>
-      Effect.gen(function* () {
+      },
+      Effect.mapError(readError("threadState")),
+    ),
+    threadRecords: Effect.fn("ThreadGatewayV2.threadRecords")(
+      function* (threadIds) {
         const records = new Map<ThreadId, BoardThreadRecord>();
         for (const threadId of threadIds) {
           const shell = yield* shellOf(threadId);
@@ -826,9 +820,11 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
           }
         }
         return records as ReadonlyMap<ThreadId, BoardThreadRecord>;
-      }).pipe(Effect.mapError(readError("threadRecords"))),
-    threadsInWorktree: (worktreePath) =>
-      Effect.gen(function* () {
+      },
+      Effect.mapError(readError("threadRecords")),
+    ),
+    threadsInWorktree: Effect.fn("ThreadGatewayV2.threadsInWorktree")(
+      function* (worktreePath) {
         const resolved = path.resolve(worktreePath);
         const rows = yield* projections.getThreadWorktreePaths();
         const matching = rows.filter((row) => path.resolve(row.worktreePath) === resolved);
@@ -855,7 +851,9 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
             };
           }),
         );
-      }).pipe(Effect.mapError(readError("threadsInWorktree"))),
+      },
+      Effect.mapError(readError("threadsInWorktree")),
+    ),
     listLiveThreadIds: () =>
       projections.getShellSnapshot({}).pipe(
         Effect.flatMap((active) =>
@@ -866,8 +864,8 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
         ),
         Effect.mapError(readError("listLiveThreadIds")),
       ),
-    latestAssistantMessage: (threadId) =>
-      Effect.gen(function* () {
+    latestAssistantMessage: Effect.fn("ThreadGatewayV2.latestAssistantMessage")(
+      function* (threadId) {
         // Read from the latest run only: a thread's whole assistant history is
         // unbounded, and anything older than the latest run predates the work
         // the caller is asking about.
@@ -881,7 +879,9 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
         return newest === undefined
           ? null
           : { text: newest.text, createdAt: DateTime.formatIso(newest.createdAt) };
-      }).pipe(Effect.mapError(readError("latestAssistantMessage"))),
+      },
+      Effect.mapError(readError("latestAssistantMessage")),
+    ),
     // The timeout sweep's life sign: the thread's own update time moves with
     // every message, turn item and run change the engine records.
     lastSignalAt: (threadId) =>

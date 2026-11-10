@@ -2697,6 +2697,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
       .upsertBoardCardRow(boardCardToRow(card))
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.upsert:query")));
 
+  // Untraced: the card writers below (through replacePlans) run per projected event.
   /**
    * Erase a card from every board table (card delete).
    *
@@ -2706,8 +2707,8 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
    * invisible (nothing joins to a card that is gone, and the boot sweep
    * collects orphaned todo rows); a re-issued key is a permanent collision.
    */
-  const purgeCard = (card: BoardCard) =>
-    Effect.gen(function* () {
+  const purgeCard = Effect.fnUntraced(
+    function* (card: BoardCard) {
       yield* queries.raiseBoardCardNumberFloor({
         projectId: card.projectId,
         cardNumber: card.cardNumber,
@@ -2724,12 +2725,14 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
       yield* queries.deleteBoardPlansForCard(card.id);
       yield* queries.deleteBoardCardDecisionsForCard(card.id);
       yield* queries.deleteBoardCiPassesForCard(card.id);
-    }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.purge:query")));
+    },
+    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.purge:query")),
+  );
 
   // Wholesale rewrite of a card's link rows from the event's card state:
   // idempotent, and structurally incapable of drifting from the read model.
-  const syncThreadLinks = (card: BoardCard) =>
-    Effect.gen(function* () {
+  const syncThreadLinks = Effect.fnUntraced(
+    function* (card: BoardCard) {
       yield* queries.deleteBoardCardThreadLinksForCard(card.id);
       for (const link of card.threadLinks) {
         yield* queries.insertBoardCardThreadLinkRow({
@@ -2742,12 +2745,14 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           retiredAt: link.retiredAt ?? null,
         });
       }
-    }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadLinks:query")));
+    },
+    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadLinks:query")),
+  );
 
   // The brief's attachments (t3o-32): the same wholesale rewrite from the
   // event's card state as the thread links, synced where they can change.
-  const syncAttachments = (card: BoardCard) =>
-    Effect.gen(function* () {
+  const syncAttachments = Effect.fnUntraced(
+    function* (card: BoardCard) {
       yield* queries.deleteBoardCardAttachmentsForCard(card.id);
       for (const attachment of card.attachments) {
         yield* queries.insertBoardCardAttachmentRow({
@@ -2760,14 +2765,16 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           addedAt: attachment.addedAt,
         });
       }
-    }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.attachments:query")));
+    },
+    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.attachments:query")),
+  );
 
   // Same wholesale-rewrite discipline for the card↔label join (t3o-06a): the
   // card's ordered label list is authoritative, and `ordinal` preserves its
   // order for rehydration. Synced only where labels can change (create /
   // update), mirroring the thread-link sync's link/unlink scope.
-  const syncCardLabels = (card: BoardCard) =>
-    Effect.gen(function* () {
+  const syncCardLabels = Effect.fnUntraced(
+    function* (card: BoardCard) {
       yield* queries.deleteBoardCardLabelsForCard(card.id);
       for (let ordinal = 0; ordinal < card.labels.length; ordinal += 1) {
         yield* queries.insertBoardCardLabelRow({
@@ -2776,7 +2783,9 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           ordinal,
         });
       }
-    }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardLabels:query")));
+    },
+    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardLabels:query")),
+  );
 
   const upsertLabel = (label: BoardLabel) =>
     queries
@@ -2857,12 +2866,12 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
    * or the in-progress item changes — the stall-reset signal (D16), recorded here
    * so `recoveryDecision` stays pure.
    */
-  const captureThreadTodos = (input: {
-    readonly threadId: ThreadId;
-    readonly plan: ReadonlyArray<{ readonly step: string; readonly status: string }>;
-    readonly occurredAt: string;
-  }) =>
-    Effect.gen(function* () {
+  const captureThreadTodos = Effect.fnUntraced(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly plan: ReadonlyArray<{ readonly step: string; readonly status: string }>;
+      readonly occurredAt: string;
+    }) {
       const cardRow = yield* queries.findBoardCardIdForLiveThread(input.threadId);
       if (Option.isNone(cardRow)) return;
       const summary = boardThreadTodoSummary(
@@ -2896,7 +2905,9 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         advancedAt: advanced ? input.occurredAt : (prior?.advancedAt ?? null),
         updatedAt: input.occurredAt,
       });
-    }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodos:query")));
+    },
+    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodos:query")),
+  );
 
   /** Drop one thread's cached list — an unlink, whether it removed the link or
       tombstoned it, ends the same way (t3o-18, AC 19). Also the `thread.deleted`
@@ -2929,8 +2940,8 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
    * under-report a still-running loop's pip count until the pane, which does
    * have the settings, renders the real budget.
    */
-  const refreshReviewSummary = (card: BoardCard) =>
-    Effect.gen(function* () {
+  const refreshReviewSummary = Effect.fnUntraced(
+    function* (card: BoardCard) {
       const rows = yield* queries.listBoardCardStepRowsForCard(card.id);
       const completions: ReadonlyArray<BoardStepCompletion> = rows;
       const summary = deriveBoardCardReviewSummary({
@@ -2942,7 +2953,9 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         stuckWaivedThrough: card.reviewOverrides?.stuckWaivedThrough ?? null,
       });
       yield* queries.updateBoardCardReviewSummaryRow({ cardId: card.id, reviewSummary: summary });
-    }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.reviewSummary:query")));
+    },
+    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.reviewSummary:query")),
+  );
 
   const upsertStep = (completion: BoardStepCompletion) =>
     queries
@@ -3033,11 +3046,8 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
   // Wholesale rewrite of a card's plan rows from the proposal (bodies live
   // here, D8): idempotent, and structurally incapable of drifting from the
   // read-model plan metadata.
-  const replacePlans = (
-    cardId: BoardCardId,
-    plans: ReadonlyArray<BoardPlan & { readonly body: string }>,
-  ) =>
-    Effect.gen(function* () {
+  const replacePlans = Effect.fnUntraced(
+    function* (cardId: BoardCardId, plans: ReadonlyArray<BoardPlan & { readonly body: string }>) {
       yield* queries.deleteBoardPlansForCard(cardId);
       for (const plan of plans) {
         yield* queries.insertBoardPlanRow({
@@ -3054,7 +3064,9 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           updatedAt: plan.updatedAt,
         });
       }
-    }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.plans:query")));
+    },
+    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.plans:query")),
+  );
 
   const writePlanBody = (planId: BoardPlanId, body: string, updatedAt: string) =>
     queries
@@ -4365,29 +4377,32 @@ function boardShellStages(
  * replayed over them harmlessly: every board delta is an idempotent upsert or
  * removal.
  */
-function loadBoardShellSnapshot(
+const loadBoardShellSnapshot: (
   queries: BoardCardQueries,
   latestSequence: Effect.Effect<number, ProjectionRepositoryError>,
-): Effect.Effect<BoardShellSnapshot, ProjectionRepositoryError> {
-  return Effect.gen(function* () {
-    const snapshotSequence = yield* latestSequence;
-    const [cards, labels, stages, cardThreads, projectStageConfigs] = yield* Effect.all([
-      boardShellCards(queries),
-      boardShellLabels(queries),
-      boardShellStages(queries),
-      boardShellCardThreads(queries),
-      boardShellProjectStageConfigs(queries),
-    ]);
-    return {
-      snapshotSequence,
-      cards,
-      labels,
-      stages,
-      cardThreads,
-      ...(projectStageConfigs === null ? {} : { projectStageConfigs }),
-    };
-  });
-}
+) => Effect.Effect<BoardShellSnapshot, ProjectionRepositoryError> = Effect.fn(
+  "BoardCardsProjection.loadBoardShellSnapshot",
+)(function* (
+  queries: BoardCardQueries,
+  latestSequence: Effect.Effect<number, ProjectionRepositoryError>,
+) {
+  const snapshotSequence = yield* latestSequence;
+  const [cards, labels, stages, cardThreads, projectStageConfigs] = yield* Effect.all([
+    boardShellCards(queries),
+    boardShellLabels(queries),
+    boardShellStages(queries),
+    boardShellCardThreads(queries),
+    boardShellProjectStageConfigs(queries),
+  ]);
+  return {
+    snapshotSequence,
+    cards,
+    labels,
+    stages,
+    cardThreads,
+    ...(projectStageConfigs === null ? {} : { projectStageConfigs }),
+  };
+});
 
 /**
  * Full detail for one open card (`board.subscribeCard`, t3o-04): the whole
@@ -4521,20 +4536,20 @@ function makeBoardCardDetailLoader(
       // the card being a child at all — a top-level card, which is most of
       // them, pays nothing — and the id is only known once the card row has
       // resolved, so it cannot ride in the `Effect.all` above.
-      Effect.flatMap((detail) =>
-        detail === null || detail.card.parentCardId === null
-          ? Effect.succeed(detail)
-          : queries.findBoardCardRow(detail.card.parentCardId).pipe(
-              Effect.map((parentRow) => ({
-                ...detail,
-                parentModelOverrides: Option.isNone(parentRow)
-                  ? null
-                  : parentRow.value.modelOverrides,
-                parentMergeStrategy: Option.isNone(parentRow)
-                  ? null
-                  : parentRow.value.mergeStrategy,
-              })),
-            ),
+      Effect.filterOrElse(
+        (detail) => detail === null || detail.card.parentCardId === null,
+        (detail) => {
+          const child = detail!;
+          return queries.findBoardCardRow(child.card.parentCardId!).pipe(
+            Effect.map((parentRow) => ({
+              ...child,
+              parentModelOverrides: Option.isNone(parentRow)
+                ? null
+                : parentRow.value.modelOverrides,
+              parentMergeStrategy: Option.isNone(parentRow) ? null : parentRow.value.mergeStrategy,
+            })),
+          );
+        },
       ),
       Effect.mapError(toPersistenceSqlError("BoardCardsProjection.detail:query")),
     );

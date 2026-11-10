@@ -102,36 +102,35 @@ interface CommandEnvelope {
 }
 
 /** The state a board command is decided against beyond the board itself. */
-export const loadDecisionContext = (
+export const loadDecisionContext = Effect.fn("BoardEngine.loadDecisionContext")(function* (
   command: BoardCommand,
   queries: BoardQueriesShape,
   threads: ThreadGatewayShape,
-) =>
-  Effect.gen(function* () {
-    const brief = boardCommandNeedsBrief(command)
-      ? { brief: yield* queries.boardCardBrief(command.cardId) }
-      : {};
-    const projects = boardCommandNeedsProjects(command)
-      ? {
-          projects: (yield* threads.projects()).map((project) => ({
-            id: project.id,
-            title: project.title,
-            deleted: project.deleted,
-          })),
-        }
-      : {};
-    const thread = boardCommandNeedsThread(command)
-      ? {
-          thread: yield* threads.threadRecords([command.threadId]).pipe(
-            Effect.map((records) => {
-              const record = records.get(command.threadId);
-              return record === undefined ? null : { deleted: record.deleted };
-            }),
-          ),
-        }
-      : {};
-    return { ...brief, ...projects, ...thread } satisfies BoardDecisionContext;
-  });
+) {
+  const brief = boardCommandNeedsBrief(command)
+    ? { brief: yield* queries.boardCardBrief(command.cardId) }
+    : {};
+  const projects = boardCommandNeedsProjects(command)
+    ? {
+        projects: (yield* threads.projects()).map((project) => ({
+          id: project.id,
+          title: project.title,
+          deleted: project.deleted,
+        })),
+      }
+    : {};
+  const thread = boardCommandNeedsThread(command)
+    ? {
+        thread: yield* threads.threadRecords([command.threadId]).pipe(
+          Effect.map((records) => {
+            const record = records.get(command.threadId);
+            return record === undefined ? null : { deleted: record.deleted };
+          }),
+        ),
+      }
+    : {};
+  return { ...brief, ...projects, ...thread } satisfies BoardDecisionContext;
+});
 
 const makeBoardEngine = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -180,8 +179,9 @@ const makeBoardEngine = Effect.gen(function* () {
   const queue = yield* Queue.unbounded<CommandEnvelope>();
   const pubsub = yield* PubSub.unbounded<BoardEvent>();
 
-  const process = (envelope: CommandEnvelope) =>
-    Effect.gen(function* () {
+  // The span is named per command type in the pipeline below.
+  const process = Effect.fnUntraced(
+    function* (envelope: CommandEnvelope) {
       const { command } = envelope;
       const aggregate = boardCommandAggregateRef(command);
 
@@ -278,46 +278,50 @@ const makeBoardEngine = Effect.gen(function* () {
         yield* PubSub.publish(pubsub, event);
       }
       return { sequence: latest };
-    }).pipe(
-      Effect.withSpan(`board.command.${envelope.command.type}`),
-      Effect.exit,
-      Effect.flatMap((exit) =>
-        Effect.gen(function* () {
-          if (Exit.isSuccess(exit)) {
-            yield* Deferred.succeed(envelope.result, exit.value);
-            return;
-          }
-          const error = Cause.squash(exit.cause) as BoardDispatchError;
-          // A refusal is recorded, so a retry of the same command id answers the
-          // same "no" rather than being re-decided against a board that moved.
-          if (isBoardCommandInvariantError(error)) {
-            const aggregate = boardCommandAggregateRef(envelope.command);
-            yield* store
-              .upsertReceipt({
-                commandId: envelope.command.commandId as CommandId,
-                aggregateKind: aggregate.aggregateKind,
-                aggregateId: aggregate.aggregateId,
-                acceptedAt: yield* nowIso,
-                resultSequence: latest,
-                status: "rejected",
-                error: error.message,
-              })
-              .pipe(Effect.ignore);
-          }
-          yield* Deferred.failCause(envelope.result, exit.cause);
-        }),
+    },
+    (effect, envelope) =>
+      effect.pipe(
+        Effect.withSpan(`board.command.${envelope.command.type}`),
+        Effect.exit,
+        Effect.flatMap((exit) =>
+          Effect.gen(function* () {
+            if (Exit.isSuccess(exit)) {
+              yield* Deferred.succeed(envelope.result, exit.value);
+              return;
+            }
+            const error = Cause.squash(exit.cause) as BoardDispatchError;
+            // A refusal is recorded, so a retry of the same command id answers the
+            // same "no" rather than being re-decided against a board that moved.
+            if (isBoardCommandInvariantError(error)) {
+              const aggregate = boardCommandAggregateRef(envelope.command);
+              yield* store
+                .upsertReceipt({
+                  commandId: envelope.command.commandId as CommandId,
+                  aggregateKind: aggregate.aggregateKind,
+                  aggregateId: aggregate.aggregateId,
+                  acceptedAt: yield* nowIso,
+                  resultSequence: latest,
+                  status: "rejected",
+                  error: error.message,
+                })
+                .pipe(Effect.ignore);
+            }
+            yield* Deferred.failCause(envelope.result, exit.cause);
+          }),
+        ),
       ),
-    );
+  );
 
   yield* Effect.forkScoped(Effect.forever(Queue.take(queue).pipe(Effect.flatMap(process))));
   yield* Effect.logDebug("board engine started").pipe(Effect.annotateLogs({ sequence: latest }));
 
-  const dispatch: BoardEngineShape["dispatch"] = (command, options) =>
-    Effect.gen(function* () {
+  const dispatch: BoardEngineShape["dispatch"] = Effect.fn("BoardEngine.dispatch")(
+    function* (command, options) {
       const result = yield* Deferred.make<{ readonly sequence: number }, BoardDispatchError>();
       yield* Queue.offer(queue, { command, origin: options?.origin, result });
       return yield* Deferred.await(result);
-    });
+    },
+  );
 
   const streamBoardEvents: BoardEngineShape["streamBoardEvents"] = ({ afterSequence }) =>
     Stream.unwrap(

@@ -84,40 +84,39 @@ const makeBoardThreadTail = Effect.gen(function* () {
     Ref.update(pinnedAt, (pinned) => (pinned === null ? sequence : Math.min(pinned, sequence)));
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-  const saveCursor = (sequence: number) =>
-    Effect.gen(function* () {
-      const pinned = yield* Ref.get(pinnedAt);
-      const at = yield* nowIso;
-      yield* store.setWatermark(
-        BOARD_THREAD_TAIL_PROJECTOR,
-        pinned === null ? sequence : Math.min(pinned, sequence),
-        at,
-      );
-    });
+  // Untraced: saveCursor and apply run once per thread-log entry.
+  const saveCursor = Effect.fnUntraced(function* (sequence: number) {
+    const pinned = yield* Ref.get(pinnedAt);
+    const at = yield* nowIso;
+    yield* store.setWatermark(
+      BOARD_THREAD_TAIL_PROJECTOR,
+      pinned === null ? sequence : Math.min(pinned, sequence),
+      at,
+    );
+  });
 
-  const apply = (entry: TodoLogEntry) =>
-    Effect.gen(function* () {
-      if (entry.cursor <= (yield* SubscriptionRef.get(processed))) return;
-      const signal = entry.signal;
-      if (signal !== null) {
-        const applied = yield* sql
-          .withTransaction(
-            projector.applyTodoSignal(signal).pipe(Effect.andThen(saveCursor(entry.cursor))),
-          )
-          .pipe(
-            Effect.as(true),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("board thread tail failed to apply a signal", {
-                signalType: signal.type,
-                cursor: entry.cursor,
-                cause,
-              }).pipe(Effect.andThen(pin(entry.cursor - 1)), Effect.as(false)),
-            ),
-          );
-        if (applied) yield* PubSub.publish(changes, signal.threadId);
-      }
-      yield* SubscriptionRef.set(processed, entry.cursor);
-    });
+  const apply = Effect.fnUntraced(function* (entry: TodoLogEntry) {
+    if (entry.cursor <= (yield* SubscriptionRef.get(processed))) return;
+    const signal = entry.signal;
+    if (signal !== null) {
+      const applied = yield* sql
+        .withTransaction(
+          projector.applyTodoSignal(signal).pipe(Effect.andThen(saveCursor(entry.cursor))),
+        )
+        .pipe(
+          Effect.as(true),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("board thread tail failed to apply a signal", {
+              signalType: signal.type,
+              cursor: entry.cursor,
+              cause,
+            }).pipe(Effect.andThen(pin(entry.cursor - 1)), Effect.as(false)),
+          ),
+        );
+      if (applied) yield* PubSub.publish(changes, signal.threadId);
+    }
+    yield* SubscriptionRef.set(processed, entry.cursor);
+  });
 
   // Catch up through the head captured above, then persist the cursor once so
   // the next boot does not re-scan what was just read.

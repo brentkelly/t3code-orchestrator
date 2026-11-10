@@ -81,7 +81,8 @@ export type BoardStreamInput =
  * client applies `card-threads` without the sequence guard, because it is
  * always a fresh read.
  */
-export const boardStreamWindowDeltas = (
+// Untraced: runs for every coalesced stream window of every board client.
+export const boardStreamWindowDeltas = Effect.fnUntraced(function* (
   inputs: Iterable<BoardStreamInput>,
   deps: {
     readonly queries: Pick<BoardQueriesShape, "boardCardThreads" | "boardCardIdForThread">;
@@ -90,64 +91,63 @@ export const boardStreamWindowDeltas = (
         (T3O-62). Absent in suites that are not about workers. */
     readonly workersState?: Effect.Effect<BoardWorkersState>;
   },
-): Effect.Effect<ReadonlyArray<BoardShellStreamEvent>> =>
-  Effect.gen(function* () {
-    const deltas: BoardShellStreamEvent[] = [];
-    const touchedCards = new Set<BoardCardId>();
-    const touchedThreads = new Set<ThreadId>();
-    let touchedWorkers = false;
-    for (const input of inputs) {
-      if (input.kind === "todo") {
-        touchedThreads.add(input.threadId);
-        continue;
-      }
-      const delta = boardShellStreamEvent(input.event);
-      if (Option.isSome(delta)) deltas.push(delta.value);
-      if (
-        input.event.type === "board.worker-registered" ||
-        input.event.type === "board.worker-removed" ||
-        input.event.type === "board.default-worker-set"
-      ) {
-        touchedWorkers = true;
-      }
-      // A card's link set changing is what the `card-threads` delta carries. An
-      // unarchived card is back on the board without the thread entries its
-      // archive's `card-removed` dropped.
-      if (
-        input.event.type === "board.card-thread-linked" ||
-        input.event.type === "board.card-thread-unlinked" ||
-        input.event.type === "board.card-unarchived"
-      ) {
-        touchedCards.add(input.event.payload.cardId);
-      }
+) {
+  const deltas: BoardShellStreamEvent[] = [];
+  const touchedCards = new Set<BoardCardId>();
+  const touchedThreads = new Set<ThreadId>();
+  let touchedWorkers = false;
+  for (const input of inputs) {
+    if (input.kind === "todo") {
+      touchedThreads.add(input.threadId);
+      continue;
     }
-    // A todo list changed (or its thread was deleted, which drops the row while
-    // the link stays live): find the card it belongs to.
-    for (const threadId of touchedThreads) {
-      const cardId = yield* deps.queries
-        .boardCardIdForThread(threadId)
-        .pipe(Effect.catchCause(() => Effect.succeed(null)));
-      if (cardId !== null) touchedCards.add(cardId);
+    const delta = boardShellStreamEvent(input.event);
+    if (Option.isSome(delta)) deltas.push(delta.value);
+    if (
+      input.event.type === "board.worker-registered" ||
+      input.event.type === "board.worker-removed" ||
+      input.event.type === "board.default-worker-set"
+    ) {
+      touchedWorkers = true;
     }
-    // A registry change replayed from the log (or live) carries no delta of
-    // its own: the summary mixes in runtime status, so it is read whole.
-    if (touchedWorkers && deps.workersState !== undefined) {
-      deltas.push({
-        kind: "workers",
-        sequence: yield* deps.latestSequence,
-        state: yield* deps.workersState,
-      });
+    // A card's link set changing is what the `card-threads` delta carries. An
+    // unarchived card is back on the board without the thread entries its
+    // archive's `card-removed` dropped.
+    if (
+      input.event.type === "board.card-thread-linked" ||
+      input.event.type === "board.card-thread-unlinked" ||
+      input.event.type === "board.card-unarchived"
+    ) {
+      touchedCards.add(input.event.payload.cardId);
     }
-    if (touchedCards.size === 0) return deltas;
-    const sequence = yield* deps.latestSequence;
-    for (const cardId of touchedCards) {
-      const threads = yield* deps.queries.boardCardThreads(cardId).pipe(Effect.option);
-      if (Option.isSome(threads)) {
-        deltas.push({ kind: "card-threads", sequence, cardId, threads: threads.value });
-      }
+  }
+  // A todo list changed (or its thread was deleted, which drops the row while
+  // the link stays live): find the card it belongs to.
+  for (const threadId of touchedThreads) {
+    const cardId = yield* deps.queries
+      .boardCardIdForThread(threadId)
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    if (cardId !== null) touchedCards.add(cardId);
+  }
+  // A registry change replayed from the log (or live) carries no delta of
+  // its own: the summary mixes in runtime status, so it is read whole.
+  if (touchedWorkers && deps.workersState !== undefined) {
+    deltas.push({
+      kind: "workers",
+      sequence: yield* deps.latestSequence,
+      state: yield* deps.workersState,
+    });
+  }
+  if (touchedCards.size === 0) return deltas;
+  const sequence = yield* deps.latestSequence;
+  for (const cardId of touchedCards) {
+    const threads = yield* deps.queries.boardCardThreads(cardId).pipe(Effect.option);
+    if (Option.isSome(threads)) {
+      deltas.push({ kind: "card-threads", sequence, cardId, threads: threads.value });
     }
-    return deltas;
-  });
+  }
+  return deltas as ReadonlyArray<BoardShellStreamEvent>;
+});
 
 const sameWorkersState = Schema.toEquivalence(BoardWorkersState);
 
@@ -181,100 +181,99 @@ const cardThreadsResync = (
 
 /** One client's board stream. Requires a scope: the todo subscription lives as
     long as the stream does. `maxGap` exists for tests. */
-export const subscribeBoard = (
+export const subscribeBoard: (
   input: BoardSubscribeBoardInput,
   options?: { readonly maxGap?: number },
-): Effect.Effect<
+) => Effect.Effect<
   Stream.Stream<BoardShellStreamItem, BoardSnapshotError>,
   BoardSnapshotError,
   BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers | Scope.Scope
-> =>
-  Effect.gen(function* () {
-    const engine = yield* BoardEngine;
-    const queries = yield* BoardQueries;
-    const threadTail = yield* BoardThreadTail;
-    const workers = yield* BoardWorkers;
-    const todoChanges = yield* threadTail.subscribeTodoChanges;
+> = Effect.fn("boardSubscription.subscribeBoard")(function* (
+  input: BoardSubscribeBoardInput,
+  options?: { readonly maxGap?: number },
+) {
+  const engine = yield* BoardEngine;
+  const queries = yield* BoardQueries;
+  const threadTail = yield* BoardThreadTail;
+  const workers = yield* BoardWorkers;
+  const todoChanges = yield* threadTail.subscribeTodoChanges;
 
-    // T3O-62: the worker summary is runtime state as much as log state, so it
-    // rides beside the log's deltas as a whole-state `workers` item, stamped
-    // with the board head and applied unguarded (like `card-threads`).
-    const workersItem = (state: BoardWorkersState) =>
-      engine.latestSequence.pipe(
-        Effect.map((sequence): BoardShellStreamItem => ({ kind: "workers", sequence, state })),
-      );
-    // `states` opens with the summary as it is when the stream starts, so a
-    // change between the opening read and that subscription still reaches the
-    // client; anything equal to what the client already holds is not re-sent.
-    const workerDeltas = (sent: BoardWorkersState) =>
-      Stream.concat(Stream.make(sent), workers.states).pipe(
-        Stream.changesWith(sameWorkersState),
-        Stream.drop(1),
-        Stream.mapEffect(workersItem),
-      );
+  // T3O-62: the worker summary is runtime state as much as log state, so it
+  // rides beside the log's deltas as a whole-state `workers` item, stamped
+  // with the board head and applied unguarded (like `card-threads`).
+  const workersItem = (state: BoardWorkersState) =>
+    engine.latestSequence.pipe(
+      Effect.map((sequence): BoardShellStreamItem => ({ kind: "workers", sequence, state })),
+    );
+  // `states` opens with the summary as it is when the stream starts, so a
+  // change between the opening read and that subscription still reaches the
+  // client; anything equal to what the client already holds is not re-sent.
+  const workerDeltas = (sent: BoardWorkersState) =>
+    Stream.concat(Stream.make(sent), workers.states).pipe(
+      Stream.changesWith(sameWorkersState),
+      Stream.drop(1),
+      Stream.mapEffect(workersItem),
+    );
 
-    const deltasAfter = (
-      afterSequence: number,
-      sentWorkers: BoardWorkersState,
-    ): Stream.Stream<BoardShellStreamItem, BoardSnapshotError> =>
-      Stream.merge(
-        engine
-          .streamBoardEvents({ afterSequence })
-          .pipe(Stream.map((event): BoardStreamInput => ({ kind: "board", event }))),
-        todoChanges.pipe(Stream.map((threadId): BoardStreamInput => ({ kind: "todo", threadId }))),
-      ).pipe(
-        Stream.groupedWithin(BOARD_STREAM_MAX_CHUNK, BOARD_STREAM_WINDOW),
-        Stream.mapEffect((window) =>
-          boardStreamWindowDeltas(window, {
-            queries,
-            latestSequence: engine.latestSequence,
-            workersState: workers.state,
-          }),
-        ),
-        Stream.flatMap((deltas) => Stream.fromIterable(deltas)),
-        Stream.mapError(toSnapshotError("Failed to replay board events.")),
-        Stream.merge(workerDeltas(sentWorkers)),
-      );
+  const deltasAfter = (
+    afterSequence: number,
+    sentWorkers: BoardWorkersState,
+  ): Stream.Stream<BoardShellStreamItem, BoardSnapshotError> =>
+    Stream.merge(
+      engine
+        .streamBoardEvents({ afterSequence })
+        .pipe(Stream.map((event): BoardStreamInput => ({ kind: "board", event }))),
+      todoChanges.pipe(Stream.map((threadId): BoardStreamInput => ({ kind: "todo", threadId }))),
+    ).pipe(
+      Stream.groupedWithin(BOARD_STREAM_MAX_CHUNK, BOARD_STREAM_WINDOW),
+      Stream.mapEffect((window) =>
+        boardStreamWindowDeltas(window, {
+          queries,
+          latestSequence: engine.latestSequence,
+          workersState: workers.state,
+        }),
+      ),
+      Stream.flatMap((deltas) => Stream.fromIterable(deltas)),
+      Stream.mapError(toSnapshotError("Failed to replay board events.")),
+      Stream.merge(workerDeltas(sentWorkers)),
+    );
 
-    const afterSequence = input.afterSequence;
-    if (afterSequence !== undefined) {
-      const head = yield* engine.latestSequence;
-      const maxGap = options?.maxGap ?? BOARD_RESUME_MAX_GAP;
-      if (afterSequence <= head && head - afterSequence <= maxGap) {
-        // Todo changes and thread deletions are not in the board log, so a
-        // replay alone leaves the client's `card-threads` as they were when it
-        // dropped. Re-send every card's link set first; the todo subscription
-        // is already attached, so nothing landing after this read is lost.
-        const resync = yield* cardThreadsResync(queries, head);
-        // Worker status moved on while the client was away, and none of it is
-        // in the log: send the whole summary again. A local-only board has
-        // none to send, and a registry emptied meanwhile is in the replayed
-        // log, which re-sends it.
-        const workersNow = yield* workers.state;
-        const workersResync = isLocalOnlyBoardWorkers(workersNow)
-          ? []
-          : [yield* workersItem(workersNow)];
-        return Stream.concat(
-          Stream.fromIterable([...resync, ...workersResync]),
-          deltasAfter(afterSequence, workersNow),
-        );
-      }
+  const afterSequence = input.afterSequence;
+  if (afterSequence !== undefined) {
+    const head = yield* engine.latestSequence;
+    const maxGap = options?.maxGap ?? BOARD_RESUME_MAX_GAP;
+    if (afterSequence <= head && head - afterSequence <= maxGap) {
+      // Todo changes and thread deletions are not in the board log, so a
+      // replay alone leaves the client's `card-threads` as they were when it
+      // dropped. Re-send every card's link set first; the todo subscription
+      // is already attached, so nothing landing after this read is lost.
+      const resync = yield* cardThreadsResync(queries, head);
+      // Worker status moved on while the client was away, and none of it is
+      // in the log: send the whole summary again. A local-only board has
+      // none to send, and a registry emptied meanwhile is in the replayed
+      // log, which re-sends it.
+      const workersNow = yield* workers.state;
+      const workersResync = isLocalOnlyBoardWorkers(workersNow)
+        ? []
+        : [yield* workersItem(workersNow)];
+      return Stream.concat(
+        Stream.fromIterable([...resync, ...workersResync]),
+        deltasAfter(afterSequence, workersNow),
+      );
     }
+  }
 
-    const snapshot = yield* queries.boardShellSnapshot().pipe(
-      Effect.tapError((cause) => Effect.logError("board snapshot load failed", { cause })),
-      Effect.mapError(toSnapshotError("Failed to load the board snapshot.")),
-    );
-    const workersState = yield* workers.state;
-    const opening: BoardShellStreamItem = {
-      kind: "snapshot",
-      // Absent on a local-only board, which is then exactly today's snapshot.
-      snapshot: isLocalOnlyBoardWorkers(workersState)
-        ? snapshot
-        : { ...snapshot, workers: workersState },
-    };
-    return Stream.concat(
-      Stream.make(opening),
-      deltasAfter(snapshot.snapshotSequence, workersState),
-    );
-  });
+  const snapshot = yield* queries.boardShellSnapshot().pipe(
+    Effect.tapError((cause) => Effect.logError("board snapshot load failed", { cause })),
+    Effect.mapError(toSnapshotError("Failed to load the board snapshot.")),
+  );
+  const workersState = yield* workers.state;
+  const opening: BoardShellStreamItem = {
+    kind: "snapshot",
+    // Absent on a local-only board, which is then exactly today's snapshot.
+    snapshot: isLocalOnlyBoardWorkers(workersState)
+      ? snapshot
+      : { ...snapshot, workers: workersState },
+  };
+  return Stream.concat(Stream.make(opening), deltasAfter(snapshot.snapshotSequence, workersState));
+});
