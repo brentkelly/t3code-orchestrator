@@ -106,7 +106,12 @@ const decoder = new TextDecoder();
     read ends the stream with `missing`. */
 export const readBoardCiLogFile = (
   path: string,
-  options: { readonly fromOffset?: number | undefined; readonly follow: boolean },
+  options: {
+    readonly fromOffset?: number | undefined;
+    readonly follow: boolean;
+    /** The wait between growth checks; tests step it by hand. */
+    readonly poll?: Effect.Effect<void> | undefined;
+  },
 ): Stream.Stream<BoardCiLogItem> =>
   Stream.callback<BoardCiLogItem>((queue) => {
     let position: number | null = null;
@@ -181,7 +186,7 @@ export const readBoardCiLogFile = (
           }
           yield* readTo(size);
         }
-        yield* Effect.sleep(BOARD_CI_LOG_POLL_MS);
+        yield* options.poll ?? Effect.sleep(BOARD_CI_LOG_POLL_MS);
       }
     });
 
@@ -246,6 +251,8 @@ export interface BoardCiLogDeps<E> {
   ) => Effect.Effect<BoardCardDetail | null, E>;
   /** Ticks whenever the board may have changed. Each access subscribes. */
   readonly changes: Stream.Stream<unknown>;
+  /** The local reader's wait between growth checks; tests step it by hand. */
+  readonly poll?: Effect.Effect<void>;
   /** A worker's log reader, or null when the worker can't be reached. */
   readonly worker: (
     workerId: EnvironmentId,
@@ -288,7 +295,7 @@ export const readBoardCiLog = <E>(
       }) => Stream.Stream<BoardCiLogItem>;
       if (workerId === BOARD_LOCAL_WORKER_ID) {
         const path = NodePath.join(logDir, `${input.index}.log`);
-        read = (options) => readBoardCiLogFile(path, options);
+        read = (options) => readBoardCiLogFile(path, { ...options, poll: deps.poll });
       } else {
         const worktreePath = worktreeOfLogDir(logDir, input.runId);
         const remote = yield* deps.worker(workerId);

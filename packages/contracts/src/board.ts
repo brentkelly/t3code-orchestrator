@@ -1914,8 +1914,8 @@ export const BoardCardCiStep = Schema.Struct({
   status: BoardCiStepStatus,
   startedAt: Schema.NullOr(IsoDateTime),
   finishedAt: Schema.NullOr(IsoDateTime),
-  /** A script's latest progress (T3O-60), its message cut to
-      `BOARD_CI_SHELL_PROGRESS_MESSAGE_MAX`. Kept on a settled step. */
+  /** A running or failed script's latest progress (T3O-60), its message cut
+      to `BOARD_CI_SHELL_PROGRESS_MESSAGE_MAX`. */
   progress: Schema.optionalKey(BoardCiProgress),
   /** A running step has printed nothing since then, for at least
       `BOARD_CI_SILENT_AFTER_MS` (T3O-60). Display only. */
@@ -2135,7 +2135,9 @@ export function boardCardCiSteps(
     status: step.status,
     startedAt: step.startedAt,
     finishedAt: step.finishedAt,
-    ...(step.progress === undefined
+    // Only where the card face can show it: a passed step's bar is spent.
+    ...(step.progress === undefined ||
+    (step.status !== "running" && !isBoardCiStepFailure(step.status))
       ? {}
       : {
           progress: {
