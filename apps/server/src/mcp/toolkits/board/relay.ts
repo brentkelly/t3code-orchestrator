@@ -179,14 +179,14 @@ type AnyBoardHandler = (
  * `handlers` are the board tool handlers, passed in so this module needs no
  * import of them; their services must already be provided.
  */
-export const runRelayedBoardTool = (input: {
-  readonly workerId: EnvironmentId;
-  readonly centralEnvironmentId: EnvironmentId;
-  readonly request: BoardMcpRelayRequest;
-  readonly handlers: Readonly<Record<string, AnyBoardHandler>>;
-  readonly stageCardFiles: BoardRelayInvocation["Service"]["stageCardFiles"];
-}): Effect.Effect<BoardMcpRelayOutcome, never, BoardQueries | ThreadGateway> =>
-  Effect.gen(function* () {
+export const runRelayedBoardTool = Effect.fn("BoardMcpRelay.runRelayedBoardTool")(
+  function* (input: {
+    readonly workerId: EnvironmentId;
+    readonly centralEnvironmentId: EnvironmentId;
+    readonly request: BoardMcpRelayRequest;
+    readonly handlers: Readonly<Record<string, AnyBoardHandler>>;
+    readonly stageCardFiles: BoardRelayInvocation["Service"]["stageCardFiles"];
+  }) {
     const { request, workerId } = input;
     const handler = input.handlers[request.toolName];
     if (handler === undefined || !(request.toolName in BoardToolkit.tools)) {
@@ -271,10 +271,10 @@ export const runRelayedBoardTool = (input: {
     return Option.isSome(encoded)
       ? ({ _tag: "success", value: encoded.value } satisfies BoardMcpRelayOutcome)
       : failure("internal", "The board's answer did not encode.");
-  }).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logWarning("board relay: a relayed call failed", { cause }).pipe(
-        Effect.as(failure("internal", "The board failed to answer this call.")),
-      ),
+  },
+  Effect.catchCause((cause) =>
+    Effect.logWarning("board relay: a relayed call failed", { cause }).pipe(
+      Effect.as(failure("internal", "The board failed to answer this call.")),
     ),
-  );
+  ),
+);

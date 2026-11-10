@@ -113,15 +113,14 @@ const ATTACHMENT_FILE_PATTERN =
   /^(.+)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-[a-z0-9]{1,10})?$/i;
 
 /** Reads one database without ever opening it for writing, through a read-only ATTACH. */
-const readOnly = <A, E>(
-  databasePath: string,
-  read: (sql: SqlClient.SqlClient) => Effect.Effect<A, E>,
-) =>
-  Effect.gen(function* () {
+const readOnly = Effect.fn("importThreads.readOnly")(
+  function* <A, E>(databasePath: string, read: (sql: SqlClient.SqlClient) => Effect.Effect<A, E>) {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ATTACH DATABASE ${`${NodeURL.pathToFileURL(databasePath).href}?mode=ro`} AS src`;
     return yield* read(sql).pipe(Effect.ensuring(sql`DETACH DATABASE src`.pipe(Effect.ignore)));
-  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" })));
+  },
+  Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" })),
+);
 
 const tableExists = (sql: SqlClient.SqlClient, table: string) =>
   sql<{ found: number }>`

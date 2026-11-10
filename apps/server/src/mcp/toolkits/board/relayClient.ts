@@ -95,8 +95,8 @@ export const makeBoardMcpRelayClient = Effect.gen(function* () {
           Effect.flatMap((rpc) => stageCardFilesOnWorker({ rpc, fileSystem, digest, staging })),
         );
 
-  const answer: BoardMcpRelayClientShape["answer"] = (workerId, request) =>
-    Effect.gen(function* () {
+  const answer: BoardMcpRelayClientShape["answer"] = Effect.fn("BoardMcpRelayClient.answer")(
+    function* (workerId, request) {
       // Claimed before the first yield, so a redelivery can never slip in
       // between the store lookup and the claim and run the call a second time.
       // Keyed by worker too: a call id is the worker's own, so another
@@ -140,7 +140,8 @@ export const makeBoardMcpRelayClient = Effect.gen(function* () {
         Effect.forkIn(scope),
       );
       return yield* Deferred.await(done);
-    });
+    },
+  );
 
   yield* runPerOnlineWorker(connections, "MCP relay", (workerId, rpc) =>
     rpc.gateway.subscribeMcpRelay(centralEnvironmentId).pipe(
