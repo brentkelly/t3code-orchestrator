@@ -633,6 +633,7 @@ describe("boardReviewFindingResolution", () => {
 });
 
 const decodeBoardCard = Schema.decodeUnknownSync(BoardCard);
+const decodeReviewSummary = Schema.decodeSync(BoardCardReviewSummary);
 
 describe("replay equals rehydration for a pre-t3o-22 log", () => {
   it("decodes a card payload written before this spec to null overrides", () => {
@@ -1376,7 +1377,7 @@ describe("T3O-51: a ruling binds inside its round", () => {
     });
 
     it("decodes a summary written before T3O-51", () => {
-      const decoded = Schema.decodeSync(BoardCardReviewSummary)({
+      const decoded = decodeReviewSummary({
         roundCurrent: 1,
         roundMax: null,
         outcome: "converged",

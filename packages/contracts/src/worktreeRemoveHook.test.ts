@@ -10,6 +10,9 @@ import { BoardCardWorktreeReclaimedPayload, BoardCardActivityPayload } from "./b
 import { ProjectScript } from "./project.ts";
 import { T3ProjectFile } from "./t3ProjectFile.ts";
 
+const decodeProjectFile = Schema.decodeSync(T3ProjectFile);
+const decodeActivityPayload = Schema.decodeSync(BoardCardActivityPayload);
+
 const legacyCard = {
   id: "card-1",
   key: "T3-1",
@@ -33,7 +36,7 @@ const legacyCard = {
 
 describe("runOnWorktreeRemove", () => {
   it("decodes from t3.json", () => {
-    const file = Schema.decodeSync(T3ProjectFile)({
+    const file = decodeProjectFile({
       scripts: [{ name: "Park caches", command: "./park.sh", runOnWorktreeRemove: true }],
     });
     expect(file.scripts?.[0]?.runOnWorktreeRemove).toBe(true);
@@ -83,7 +86,7 @@ describe("hookWarning on a reclaimed worktree", () => {
   });
 
   it("rides the activity row", () => {
-    const row = Schema.decodeSync(BoardCardActivityPayload)({
+    const row = decodeActivityPayload({
       hookWarning: "Remove script timed out",
     });
     expect(row.hookWarning).toBe("Remove script timed out");

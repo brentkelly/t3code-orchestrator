@@ -111,6 +111,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 const encodeShell = Schema.encodeUnknownSync(BoardCardShell);
 const decodeShell = Schema.decodeUnknownSync(BoardCardShell);
 const encodeSnapshot = Schema.encodeUnknownSync(BoardShellSnapshot);
+const decodeStepState = Schema.decodeUnknownSync(BoardCardStepState);
 
 const utf8Bytes = (value: unknown): number =>
   new TextEncoder().encode(JSON.stringify(value)).length;
@@ -1179,7 +1180,7 @@ describe("BoardCardStepState decoding (t3o-19 D7)", () => {
   };
 
   it("decodes a pre-t3o-19 payload that carries no stageLabel key", () => {
-    const decoded = Schema.decodeUnknownSync(BoardCardStepState)(legacyPayload);
+    const decoded = decodeStepState(legacyPayload);
     expect(decoded.stageLabel).toBe(null);
     expect(decoded.stepLabel).toBe("Building");
   });
@@ -1187,9 +1188,9 @@ describe("BoardCardStepState decoding (t3o-19 D7)", () => {
   it("decodes a pre-t3o-24 payload that carries no baseTipAtRoundStart key (AC7)", () => {
     // Same replay reason: an event written before t3o-24 has no key, and a
     // null already MEANS "no tip recorded — not stale".
-    const decoded = Schema.decodeUnknownSync(BoardCardStepState)(legacyPayload);
+    const decoded = decodeStepState(legacyPayload);
     expect(decoded.baseTipAtRoundStart).toBe(null);
-    const recorded = Schema.decodeUnknownSync(BoardCardStepState)({
+    const recorded = decodeStepState({
       ...legacyPayload,
       baseTipAtRoundStart: "sha-round-start",
     });
@@ -1197,7 +1198,7 @@ describe("BoardCardStepState decoding (t3o-19 D7)", () => {
   });
 
   it("still decodes a post-t3o-19 payload, stepped or unstepped", () => {
-    const unstepped = Schema.decodeUnknownSync(BoardCardStepState)({
+    const unstepped = decodeStepState({
       ...legacyPayload,
       stepLabel: null,
       stageLabel: "Planning",
@@ -1205,7 +1206,7 @@ describe("BoardCardStepState decoding (t3o-19 D7)", () => {
     expect(unstepped.stepLabel).toBe(null);
     expect(unstepped.stageLabel).toBe("Planning");
 
-    const stepped = Schema.decodeUnknownSync(BoardCardStepState)({
+    const stepped = decodeStepState({
       ...legacyPayload,
       stepId: "review@1",
       stepLabel: "Review · round 1",
