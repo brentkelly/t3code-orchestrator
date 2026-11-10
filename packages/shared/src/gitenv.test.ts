@@ -281,8 +281,7 @@ describe("gitenv owner and repo keys", () => {
     expect(gitenvTokenForRepo({ owner: "Zeald", repo: "core.z5" })?.token).toBe(OWNER_TOKEN);
     expect(gitenvTokenForRepo({ owner: "brentkelly", repo: "t3o" })).toBeUndefined();
     expect(
-      gitenvTokenForRepo({ owner: "Zeald", repo: "open-design", cwd: fixture.worktreeDir })
-        ?.entry,
+      gitenvTokenForRepo({ owner: "Zeald", repo: "open-design", cwd: fixture.worktreeDir })?.entry,
     ).toEqual({ kind: "folder", key: fixture.projectRoot });
   });
 
@@ -314,12 +313,12 @@ describe("githubRepoFromUrl", () => {
 describe("originUrlFromGitConfig", () => {
   it("reads only the origin remote's url", () => {
     const text = [
-      "[remote \"upstream\"]",
+      '[remote "upstream"]',
       "\turl = git@github.com:pingdotgg/t3code.git",
-      "[remote \"origin\"]",
+      '[remote "origin"]',
       "\tfetch = +refs/heads/*:refs/remotes/origin/*",
       "\turl = git@github.com:brentkelly/t3o.git",
-      "[branch \"t3o\"]",
+      '[branch "t3o"]',
       "\tremote = origin",
     ].join("\n");
     expect(originUrlFromGitConfig(text)).toBe("git@github.com:brentkelly/t3o.git");
