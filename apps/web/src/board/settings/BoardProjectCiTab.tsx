@@ -230,9 +230,11 @@ export function BoardProjectCiTab(props: {
           <div className="flex min-w-0 flex-1 flex-col gap-px">
             <span className="text-[13.5px] font-medium text-foreground">Stop on failure</span>
             <span className="text-xs text-pretty text-muted-foreground">
-              {stopOnFailure
-                ? "A failed step stops the steps after it. Faster, but a pass may show only the first failure."
-                : "Every step runs even after one fails, so one pass shows every failure. Passes take longer."}
+              {draft !== null
+                ? "Save or discard your step changes before changing this."
+                : stopOnFailure
+                  ? "A failed step stops the steps after it. Faster, but a pass may show only the first failure."
+                  : "Every step runs even after one fails, so one pass shows every failure. Passes take longer."}
             </span>
           </div>
           <span className="text-xs font-medium text-foreground">
@@ -241,7 +243,9 @@ export function BoardProjectCiTab(props: {
           <Switch
             aria-label={`Stop CI on the first failure for ${props.projectTitle}`}
             checked={stopOnFailure}
-            disabled={!canWrite || !ciOn}
+            // It saves straight away and moves the config version, which would
+            // refuse an open steps draft's save as a version mismatch.
+            disabled={!canWrite || !ciOn || draft !== null}
             onCheckedChange={switchStopOnFailure}
           />
         </div>
