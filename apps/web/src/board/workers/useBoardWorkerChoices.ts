@@ -12,7 +12,6 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { useCallback, useMemo } from "react";
 
 import { boardEnvironment } from "../../state/board";
 import { environmentShell } from "../../state/shell";
@@ -46,15 +45,12 @@ export function useBoardWorkerChoices(
   const setupProject = useAtomCommand(boardEnvironment.setupWorkerProject);
   const shown = boardShowsWorkers(workers);
 
-  const project = useMemo(
-    () =>
-      projectId === null
-        ? null
-        : ((Option.getOrNull(shellState.snapshot)?.projects ?? []).find(
-            (candidate) => candidate.id === projectId,
-          ) ?? null),
-    [projectId, shellState.snapshot],
-  );
+  const project =
+    projectId === null
+      ? null
+      : ((Option.getOrNull(shellState.snapshot)?.projects ?? []).find(
+          (candidate) => candidate.id === projectId,
+        ) ?? null);
   const projectRepositoryKey = boardRepositoryGroupingKey(project?.repositoryIdentity);
   const projectName =
     project?.repositoryIdentity?.name ??
@@ -62,7 +58,7 @@ export function useBoardWorkerChoices(
     project?.title ??
     "this project";
 
-  const choices = useMemo(() => {
+  const choices = (() => {
     if (!shown || projectId === null) return [];
     const cards = [...cardsByProject.values()].flatMap((byStage) => Object.values(byStage).flat());
     return boardWorkerChoices({
@@ -73,15 +69,12 @@ export function useBoardWorkerChoices(
       running: boardWorkerRunningCounts(cards, workers),
       concurrency,
     });
-  }, [cardsByProject, concurrency, projectId, projectName, projectRepositoryKey, shown, workers]);
+  })();
 
-  const setUp = useCallback(
-    (workerId: BoardWorkerId) => {
-      if (projectId === null || workerId === "local") return;
-      void setupProject({ environmentId, input: { projectId, workerId } });
-    },
-    [environmentId, projectId, setupProject],
-  );
+  const setUp = (workerId: BoardWorkerId) => {
+    if (projectId === null || workerId === "local") return;
+    void setupProject({ environmentId, input: { projectId, workerId } });
+  };
 
   return { workers, shown, choices, projectName, projectRepositoryKey, setUp };
 }

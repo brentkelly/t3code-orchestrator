@@ -26,6 +26,7 @@ export function useConnectionsAddHostPrefill(open: (host: string) => void): void
     open(address);
     void navigate({ to: "/settings/connections", search: {}, replace: true });
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- router: consumes the addHost search param once and removes it from the URL.
   useEffect(() => {
     if (host !== undefined) openFor(host);
   }, [host]);

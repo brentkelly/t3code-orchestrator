@@ -18,7 +18,6 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { useMemo } from "react";
 
 import {
   mergeEnvironmentSettings,
@@ -93,17 +92,15 @@ export function useBoardEnvironment(): BoardEnvironmentResolution {
   const nominated = useClientSettings(selectBoardEnvironmentId);
   const primary = usePrimaryEnvironmentId();
   const { presentationById } = useEnvironments();
-  return useMemo(() => {
-    const candidates = new Map<EnvironmentId, BoardEnvironmentCandidate>();
-    for (const [environmentId, presentation] of presentationById) {
-      candidates.set(environmentId, {
-        label: presentation.entry.target.label,
-        enabled: presentation.entry.enabled,
-        phase: presentation.connection.phase,
-      });
-    }
-    return resolveBoardEnvironment({ nominated, primary, candidates });
-  }, [nominated, primary, presentationById]);
+  const candidates = new Map<EnvironmentId, BoardEnvironmentCandidate>();
+  for (const [environmentId, presentation] of presentationById) {
+    candidates.set(environmentId, {
+      label: presentation.entry.target.label,
+      enabled: presentation.entry.enabled,
+      phase: presentation.connection.phase,
+    });
+  }
+  return resolveBoardEnvironment({ nominated, primary, candidates });
 }
 
 /** The environment whose board to show, or null when there is none to show. */
@@ -127,11 +124,11 @@ export function useBoardSettings<T = UnifiedSettings>(
   );
   const clientSettings = useClientSettings();
   // Merged apart from the selector, which call sites pass inline, as `useMergedSettings` does.
-  const merged = useMemo(
-    () => mergeEnvironmentSettings(serverSettings ?? DEFAULT_SERVER_SETTINGS, clientSettings),
-    [clientSettings, serverSettings],
+  const merged = mergeEnvironmentSettings(
+    serverSettings ?? DEFAULT_SERVER_SETTINGS,
+    clientSettings,
   );
-  return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
+  return selector ? selector(merged) : (merged as T);
 }
 
 /** Writes settings to the board server (board settings live on the server that hosts the board). */

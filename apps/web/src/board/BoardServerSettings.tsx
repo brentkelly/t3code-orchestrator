@@ -6,7 +6,6 @@
  */
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useMemo } from "react";
 
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
@@ -73,10 +72,7 @@ export function BoardServerSection() {
   const nominated = useClientSettings(selectBoardEnvironmentId);
   const primary = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
-  const options = useMemo(
-    () => boardServerOptions({ primary, nominated, environments }),
-    [environments, nominated, primary],
-  );
+  const options = boardServerOptions({ primary, nominated, environments });
   const value = nominated === null || nominated === primary ? THIS_SERVER : nominated;
   const labelOf = (selected: string | null) =>
     options.find((option) => option.value === selected)?.label ?? "This server";

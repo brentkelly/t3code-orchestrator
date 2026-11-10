@@ -99,7 +99,7 @@ import {
   RotateCcwIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { boardEnvironment } from "../../state/board";
 import { environmentShell } from "../../state/shell";
@@ -375,6 +375,7 @@ function PromptRow(props: {
   const documentRef = useRef<HTMLDivElement | null>(null);
   const [clipped, setClipped] = useState(false);
   const clamped = !editing && !expanded;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the clamped prompt element before paint to show the fade and "See more".
   useLayoutEffect(() => {
     const element = documentRef.current;
     if (element === null || !clamped) {
@@ -382,7 +383,13 @@ function PromptRow(props: {
       return;
     }
     setClipped(element.scrollHeight > element.clientHeight + 1);
-  }, [props.value, props.preamble, props.postamble, clamped]);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- New text in the prompt or its envelope must re-measure the clamp.
+    props.value,
+    props.preamble,
+    props.postamble,
+    clamped,
+  ]);
 
   // The live text: the draft while editing, the stored value otherwise, so
   // "Modified" tracks what is on screen — after a reset the draft equals the
@@ -683,33 +690,22 @@ export function BoardPipelineSection() {
     environmentShell.stateValueAtom(environmentId ?? ("" as EnvironmentId)),
   );
   const shellProjects = Option.getOrNull(shellState.snapshot)?.projects;
-  const projects = useMemo(
-    () =>
-      (shellProjects ?? [])
-        .filter((project) => !isBoardProjectHidden(board, project.id))
-        .map((project) => ({ id: project.id, title: project.title })),
-    [board, shellProjects],
-  );
-  const stageView = useMemo(
-    () => ({ stages, projectStageConfigs, cards: [] }),
-    [projectStageConfigs, stages],
-  );
-  const ciProjects = useMemo(
-    () =>
-      projects.flatMap((project) => {
-        const config = projectStageConfigs?.[project.id];
-        if (config === undefined || config.ciSteps.length === 0) return [];
-        return [
-          {
-            id: project.id,
-            title: project.title,
-            steps: config.ciSteps.length,
-            active: config.stageSwitches[BOARD_SEED_STAGE_IDS.ci] === true,
-          },
-        ];
-      }),
-    [projectStageConfigs, projects],
-  );
+  const projects = (shellProjects ?? [])
+    .filter((project) => !isBoardProjectHidden(board, project.id))
+    .map((project) => ({ id: project.id, title: project.title }));
+  const stageView = { stages, projectStageConfigs, cards: [] };
+  const ciProjects = projects.flatMap((project) => {
+    const config = projectStageConfigs?.[project.id];
+    if (config === undefined || config.ciSteps.length === 0) return [];
+    return [
+      {
+        id: project.id,
+        title: project.title,
+        steps: config.ciSteps.length,
+        active: config.stageSwitches[BOARD_SEED_STAGE_IDS.ci] === true,
+      },
+    ];
+  });
   const canWrite = useEnvironmentScope(
     environmentId ?? ("" as EnvironmentId),
     AuthSettingsWriteScope,
@@ -730,13 +726,8 @@ export function BoardPipelineSection() {
   // it resolves on the worker the card runs on.
   // The card view keeps the same object across a clone's progress ticks, which
   // this page streams and the provider lists don't depend on.
-  const workers = useBoardWorkersCardView(
-    useAtomValue(boardEnvironment.workersAtom(environmentId ?? ("" as EnvironmentId))),
-  );
-  const serverProviders = useMemo(
-    () => [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)],
-    [ownProviders, workers],
-  );
+  const workers = useBoardWorkersCardView(environmentId ?? ("" as EnvironmentId));
+  const serverProviders = [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)];
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
   );
@@ -1246,10 +1237,7 @@ function useBoardSettingsProjectTitles(): ReadonlyMap<string, string> {
     environmentShell.stateValueAtom(environmentId ?? ("" as EnvironmentId)),
   );
   const projects = Option.getOrNull(shellState.snapshot)?.projects;
-  return useMemo(
-    () => new Map((projects ?? []).map((project) => [String(project.id), project.title])),
-    [projects],
-  );
+  return new Map((projects ?? []).map((project) => [String(project.id), project.title]));
 }
 
 /** Removing a stage asks first; cards already in it stay as a retired column

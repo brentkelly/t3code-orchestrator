@@ -11,7 +11,6 @@ import type { OlderSettled, OlderSettledScope } from "@t3tools/client-runtime/st
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
-import { useMemo } from "react";
 
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
@@ -75,11 +74,8 @@ const cardThreadReadsAtom = Atom.family((key: string) => {
 export function useSettledCardThreadFilter(environmentIds: ReadonlyArray<EnvironmentId>) {
   const [hide, setHide] = useHideCardThreads();
   const reads = useAtomValue(cardThreadReadsAtom(JSON.stringify([...environmentIds].sort())));
-  const olderSettled = useMemo(
-    () => (environmentId: EnvironmentId) => reads.get(environmentId) ?? null,
-    [reads],
-  );
-  const isCardThread = useMemo(() => cardThreadMatcher(olderSettled), [olderSettled]);
+  const olderSettled = (environmentId: EnvironmentId) => reads.get(environmentId) ?? null;
+  const isCardThread = cardThreadMatcher(olderSettled);
   return {
     hide,
     setHide,

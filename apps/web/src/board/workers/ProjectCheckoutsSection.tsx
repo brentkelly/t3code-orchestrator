@@ -19,7 +19,7 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { CheckIcon } from "lucide-react";
 import * as Option from "effect/Option";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -79,20 +79,13 @@ export function ProjectCheckoutsSection(props: { readonly environmentId: Environ
   const { environmentId } = props;
   const workers = useBoardWorkers(environmentId);
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
-  const projects = useMemo(
-    () => (Option.getOrNull(shellState.snapshot)?.projects ?? []).map(matrixProject),
-    [shellState.snapshot],
-  );
+  const projects = (Option.getOrNull(shellState.snapshot)?.projects ?? []).map(matrixProject);
   const setups = workers.state.setups;
   // Re-read the clock only when a "Set up just now" cell is due to settle.
-  const justNowDeadlines = useMemo(
-    () =>
-      setups.flatMap((setup) =>
-        setup.phase === "done" && setup.endedAt !== null
-          ? [Date.parse(setup.endedAt) + SETUP_JUST_NOW_MS]
-          : [],
-      ),
-    [setups],
+  const justNowDeadlines = setups.flatMap((setup) =>
+    setup.phase === "done" && setup.endedAt !== null
+      ? [Date.parse(setup.endedAt) + SETUP_JUST_NOW_MS]
+      : [],
   );
   const nowMs = useNowAtDeadlines(justNowDeadlines);
   const [details, setDetails] = useState<{

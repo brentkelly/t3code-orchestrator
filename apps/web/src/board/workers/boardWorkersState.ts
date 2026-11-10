@@ -75,6 +75,7 @@ export function useNowAtDeadlines(deadlines: ReadonlyArray<number>): number {
   // The deadlines `now` was last read for; new ones may belong to state that
   // arrived after that read, so the clock is re-read once for them.
   const readFor = useRef(key);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- one timer that re-reads the clock when the next deadline passes.
   useEffect(() => {
     const deadlinesNow = key
       .split(",")

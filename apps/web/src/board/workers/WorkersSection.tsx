@@ -17,7 +17,7 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { EllipsisIcon, PlusIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   AlertDialog,
@@ -80,10 +80,7 @@ export function WorkersSection(props: {
   const [removing, setRemoving] = useState<BoardWorkerView | null>(null);
   // Last seen is coarse ("2 min ago"): re-read the clock only when an offline
   // worker's label is due to change.
-  const lastSeenDeadlines = useMemo(
-    () => workers.state.workers.flatMap(workerLastSeenDeadlines),
-    [workers.state.workers],
-  );
+  const lastSeenDeadlines = workers.state.workers.flatMap(workerLastSeenDeadlines);
   const nowMs = useNowAtDeadlines(lastSeenDeadlines);
 
   const runDefault = async (workerId: BoardWorkerId) => {
@@ -385,6 +382,7 @@ function RemoveWorkerDialog(props: {
     | undefined
   >(undefined);
   const workerId = worker?.id ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the board server which cards the removal would move while the confirm is open.
   useEffect(() => {
     if (workerId === null) return;
     let live = true;

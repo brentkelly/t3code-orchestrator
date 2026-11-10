@@ -22,7 +22,7 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { CheckIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -106,30 +106,22 @@ function AddWorkerFlow(props: {
   const repairWorker = useAtomCommand(boardEnvironment.repairWorker, { reportFailure: false });
   const mintToken = useAtomCommand(mintWorkerPairingToken, { reportFailure: false });
 
-  const candidateIds = useMemo(
-    () =>
-      new Set(
-        boardWorkerCandidateIds({
-          environmentIds: environments.map((environment) => environment.environmentId),
-          boardEnvironmentId: props.environmentId,
-          workerIds: workers.map((worker) => worker.id),
-        }),
-      ),
-    [environments, props.environmentId, workers],
+  const candidateIds = new Set(
+    boardWorkerCandidateIds({
+      environmentIds: environments.map((environment) => environment.environmentId),
+      boardEnvironmentId: props.environmentId,
+      workerIds: workers.map((worker) => worker.id),
+    }),
   );
-  const candidates = useMemo(
-    () => environments.filter((environment) => candidateIds.has(environment.environmentId)),
-    [candidateIds, environments],
+  const candidates = environments.filter((environment) =>
+    candidateIds.has(environment.environmentId),
   );
   const repairWorkerId = props.mode.kind === "repair" ? props.mode.worker.id : null;
   const repairTarget =
     repairWorkerId === null
       ? null
       : (environments.find((environment) => environment.environmentId === repairWorkerId) ?? null);
-  const scopeSubjects = useMemo(
-    () => (repairTarget === null ? candidates : [...candidates, repairTarget]),
-    [candidates, repairTarget],
-  );
+  const scopeSubjects = repairTarget === null ? candidates : [...candidates, repairTarget];
   const canMint = useEnvironmentsWithScope(scopeSubjects, AuthAccessWriteScope);
   const candidateOf = (environment: EnvironmentPresentation) =>
     boardWorkerCandidate({

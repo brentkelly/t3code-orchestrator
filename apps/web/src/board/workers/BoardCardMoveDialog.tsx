@@ -81,6 +81,7 @@ export function BoardCardMoveDialog(props: {
   const { environmentId } = props;
   const cardId = card.id;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the board server whether the card can move to this worker; the answer arrives later.
   useEffect(() => {
     if (toWorkerId === null) return;
     let live = true;

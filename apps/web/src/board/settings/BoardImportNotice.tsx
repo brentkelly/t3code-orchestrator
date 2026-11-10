@@ -6,7 +6,7 @@
  */
 import { type BoardProjectImportCandidate, type ProjectId } from "@t3tools/contracts";
 import { FileJsonIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { boardEnvironment } from "../../state/board";
@@ -27,26 +27,37 @@ export function useBoardImportCandidates(projectIds: ReadonlyArray<ProjectId>) {
   );
   const [nonce, setNonce] = useState(0);
   const key = projectIds.join("\u0000");
+  const readCandidates = useEffectEvent((forEnvironment: typeof environmentId, refresh: boolean) =>
+    projectIds.length === 0
+      ? null
+      : read({ environmentId: forEnvironment, input: { projectIds, refresh } }),
+  );
+  const applyCandidates = useEffectEvent((value: ReadonlyArray<BoardProjectImportCandidate>) => {
+    setCandidates(value);
+    for (const candidate of value) {
+      setImportWaiting(candidate.projectId, candidate.status === "differs" && !candidate.dismissed);
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads import candidates from the board server; they are not on the live board stream.
   useEffect(() => {
-    if (!canWrite || projectIds.length === 0) return;
+    if (!canWrite) return;
+    const pending = readCandidates(environmentId, nonce > 0);
+    if (pending === null) return;
     let cancelled = false;
-    void read({
-      environmentId,
-      input: { projectIds, refresh: nonce > 0 },
-    }).then((result) => {
+    void pending.then((result) => {
       if (cancelled || result._tag !== "Success") return;
-      setCandidates(result.value);
-      for (const candidate of result.value) {
-        setImportWaiting(
-          candidate.projectId,
-          candidate.status === "differs" && !candidate.dismissed,
-        );
-      }
+      applyCandidates(result.value);
     });
     return () => {
       cancelled = true;
     };
-  }, [canWrite, environmentId, key, nonce]);
+  }, [
+    canWrite,
+    environmentId,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A different set of projects must read its own candidates.
+    key,
+    nonce,
+  ]);
   return { candidates, refresh: () => setNonce((value) => value + 1) };
 }
 
@@ -54,7 +65,7 @@ export function useBoardImportCandidates(projectIds: ReadonlyArray<ProjectId>) {
 export function BoardImportNotices() {
   const { environmentId } = useBoardSettingsContext();
   const projects = useBoardSettingsProjects(environmentId);
-  const ids = useMemo(() => projects.map((project) => project.id), [projects]);
+  const ids = projects.map((project) => project.id);
   const { candidates, refresh } = useBoardImportCandidates(ids);
   const waiting = (candidates ?? []).filter(
     (candidate) => candidate.status === "differs" && !candidate.dismissed,

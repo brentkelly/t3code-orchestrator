@@ -8,7 +8,7 @@ import { AuthSettingsWriteScope, type EnvironmentId, type ProjectId } from "@t3t
 import { useAtomValue } from "@effect/atom-react";
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import * as Option from "effect/Option";
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 
 import { SettingsPageContainer } from "../../components/settings/settingsLayout";
 import { cn } from "../../lib/utils";
@@ -68,22 +68,19 @@ export function BoardSettingsLayout() {
 function BoardSettingsReady(props: { readonly environmentId: EnvironmentId }) {
   const canWrite = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const [importWaiting, setWaiting] = useState<ReadonlySet<string>>(() => new Set());
-  const value = useMemo<BoardSettingsContextValue>(
-    () => ({
-      environmentId: props.environmentId,
-      canWrite,
-      importWaiting,
-      setImportWaiting: (projectId, waiting) =>
-        setWaiting((current) => {
-          if (current.has(projectId) === waiting) return current;
-          const next = new Set(current);
-          if (waiting) next.add(projectId);
-          else next.delete(projectId);
-          return next;
-        }),
-    }),
-    [canWrite, importWaiting, props.environmentId],
-  );
+  const value: BoardSettingsContextValue = {
+    environmentId: props.environmentId,
+    canWrite,
+    importWaiting,
+    setImportWaiting: (projectId, waiting) =>
+      setWaiting((current) => {
+        if (current.has(projectId) === waiting) return current;
+        const next = new Set(current);
+        if (waiting) next.add(projectId);
+        else next.delete(projectId);
+        return next;
+      }),
+  };
   return (
     <BoardSettingsContext.Provider value={value}>
       <BoardSettingsNav environmentId={props.environmentId} importWaiting={importWaiting} />

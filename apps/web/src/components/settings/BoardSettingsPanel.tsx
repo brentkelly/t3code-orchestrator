@@ -26,7 +26,6 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import { EyeIcon, EyeOffIcon, SettingsIcon, WorkflowIcon } from "lucide-react";
-import { useMemo } from "react";
 import * as Option from "effect/Option";
 
 import { projectAccent, projectIconColorOf } from "../../board/projectAccent";
@@ -69,15 +68,12 @@ import {
 function useProviderInstanceIds(): ReadonlyArray<string> {
   const providers = useBoardServerProviders();
   const providerInstances = useBoardSettings((settings) => settings.providerInstances);
-  return useMemo(
-    () => [
-      ...new Set([
-        ...providers.map((provider) => String(provider.instanceId)),
-        ...Object.keys(providerInstances),
-      ]),
-    ],
-    [providers, providerInstances],
-  );
+  return [
+    ...new Set([
+      ...providers.map((provider) => String(provider.instanceId)),
+      ...Object.keys(providerInstances),
+    ]),
+  ];
 }
 
 /** Settings → Board → General (T3O-49): the board server, display, the

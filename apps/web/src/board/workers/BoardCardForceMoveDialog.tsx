@@ -16,7 +16,7 @@ import {
   type BoardWorkersState,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -76,7 +76,7 @@ export function BoardCardForceMoveDialog(props: {
 }) {
   const { card, environmentId, source } = props;
   const move = useAtomCommand(boardEnvironment.cardWorkerMove, { reportFailure: false });
-  const targets = useMemo(() => {
+  const targets = (() => {
     const picked = props.choices.filter(
       (choice) => choice.selectable && choice.workerId !== props.sourceWorkerId,
     );
@@ -94,7 +94,7 @@ export function BoardCardForceMoveDialog(props: {
             cloning: false,
           } satisfies BoardWorkerChoice,
         ];
-  }, [props.choices, props.sourceWorkerId]);
+  })();
   const initial =
     targets.find((choice) => choice.workerId === props.workers.defaultWorkerId)?.workerId ??
     targets[0]?.workerId ??
@@ -118,6 +118,7 @@ export function BoardCardForceMoveDialog(props: {
     (checked !== null && checked.target === target ? checked.phase : { kind: "checking" });
   const setPhase = setAction;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the board server whether the card can be forced onto the target; the answer arrives later.
   useEffect(() => {
     if (!open || target === null) return;
     let live = true;

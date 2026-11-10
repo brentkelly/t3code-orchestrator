@@ -18,7 +18,7 @@
 import { BOARD_ATTENTION_SETTLE_MS } from "@t3tools/contracts";
 import type { BoardCardShell, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 /**
  * When each card's active thread last finished a turn, keyed by card id, for
@@ -84,11 +84,9 @@ export function useBoardAttentionSettle(input: {
   readonly now: number;
 } {
   const { cards, threadOf } = input;
-  const threadIdleSinceByCard = useMemo(
-    () => deriveBoardThreadIdleSince({ cards, threadOf }),
-    [cards, threadOf],
-  );
+  const threadIdleSinceByCard = deriveBoardThreadIdleSince({ cards, threadOf });
   const [now, setNow] = useState(() => Date.now());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- one timer that ticks `now` when the next settle grace expires.
   useEffect(() => {
     const next = nextBoardAttentionSettleAt(threadIdleSinceByCard.values(), now);
     if (next === null) return;

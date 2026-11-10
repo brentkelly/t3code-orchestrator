@@ -20,7 +20,6 @@ import type {
   EnvironmentId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useMemo } from "react";
 
 import { boardEnvironment } from "../state/board";
 import { BoardPlanFinalReviewCard } from "./BoardPlanFinalReviewCard";
@@ -51,18 +50,15 @@ export function BoardSubBoardPlanStrip({
   const detail = useAtomValue(
     boardEnvironment.cardDetailValueAtom({ environmentId, cardId: parentCardId }),
   );
-  const planRows = useMemo(
-    () =>
-      detail === null
-        ? null
-        : deriveBoardPlanRows({
-            plans: detail.plans,
-            children: detail.children,
-            cards,
-            stages,
-          }),
-    [detail, cards, stages],
-  );
+  const planRows =
+    detail === null
+      ? null
+      : deriveBoardPlanRows({
+          plans: detail.plans,
+          children: detail.children,
+          cards,
+          stages,
+        });
   if (detail === null || planRows === null || planRows.rows.length === 0) return null;
   const final = boardPlanFinalReview({
     branch: detail.card.worktree?.branch ?? null,

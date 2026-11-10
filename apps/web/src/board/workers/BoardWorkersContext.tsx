@@ -4,8 +4,15 @@
  * local-only board's cards read one empty summary rather than each
  * subscribing.
  */
-import { EMPTY_BOARD_WORKERS_STATE, type BoardWorkersState } from "@t3tools/contracts";
-import { createContext, useContext, useMemo } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  EMPTY_BOARD_WORKERS_STATE,
+  type BoardWorkersState,
+  type EnvironmentId,
+} from "@t3tools/contracts";
+import { createContext, useContext } from "react";
+
+import { boardEnvironment } from "../../state/board";
 
 export const BoardWorkersContext = createContext<BoardWorkersState>(EMPTY_BOARD_WORKERS_STATE);
 
@@ -28,7 +35,8 @@ function boardWorkersCardView(state: BoardWorkersState): BoardWorkersState {
 }
 
 /** `boardWorkersCardView`, kept the same object until what it holds changes. */
-export function useBoardWorkersCardView(state: BoardWorkersState): BoardWorkersState {
+export function useBoardWorkersCardView(environmentId: EnvironmentId): BoardWorkersState {
+  const state = useAtomValue(boardEnvironment.workersAtom(environmentId));
   const key = JSON.stringify(boardWorkersCardView(state));
-  return useMemo(() => JSON.parse(key) as BoardWorkersState, [key]);
+  return JSON.parse(key) as BoardWorkersState;
 }
