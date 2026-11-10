@@ -1912,10 +1912,11 @@ export function isBoardCiPassSettledPhase(phase: BoardCardCiPhase): boolean {
   return phase === "passed" || phase === "held" || phase === "stopped";
 }
 
-/** Whether a card's CI round is queued, running or being fixed (T3O-68): work
-    in progress, so no "nobody is working on this" chip may show. */
+/** Whether a card's CI script is queued or running (T3O-68): work no thread
+    describes. A `fixing` round is a fix agent's thread, which the thread state
+    covers; its phase outlives a dead agent, so it cannot count here. */
 function isBoardCardCiActive(card: Pick<BoardCardShell, "ci">): boolean {
-  return card.ci != null && !isBoardCiPassSettledPhase(card.ci.phase);
+  return card.ci?.phase === "queued" || card.ci?.phase === "running";
 }
 
 /** The hold reason Stop CI records (T3O-59); clients head such a pass as
@@ -5543,8 +5544,8 @@ export function isBoardCardWorking(
   card: Pick<BoardCardShell, "threadState" | "stepRunning" | "ci">,
 ): boolean {
   if (card.threadState === "waiting") return false;
-  // A CI script running, or a fix agent on its failure (T3O-68), is work no
-  // thread state describes; a dead thread from an earlier stage cannot veto it.
+  // A running CI script (T3O-68) is work no thread state describes; a dead
+  // thread from an earlier stage cannot veto it.
   if (isBoardCardCiRunning(card)) return true;
   // Evidence outranks the claim (t3o-10, D5): the board says a step is running
   // and every thread it could be running on is DEAD, so the dot goes dark. Only
@@ -5555,7 +5556,7 @@ export function isBoardCardWorking(
 }
 
 function isBoardCardCiRunning(card: Pick<BoardCardShell, "ci">): boolean {
-  return card.ci?.phase === "running" || card.ci?.phase === "fixing";
+  return card.ci?.phase === "running";
 }
 
 /** The working dot's tooltip on a card that is working: "CI running" when CI

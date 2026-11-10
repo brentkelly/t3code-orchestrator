@@ -1840,10 +1840,17 @@ describe("cards that need a human (boardCardAttention)", () => {
       steps: [],
     });
     for (const stage of [BOARD_SEED_STAGE_IDS.building, BOARD_SEED_STAGE_IDS.ci]) {
-      for (const phase of ["queued", "running", "fixing"] as const) {
+      for (const phase of ["queued", "running"] as const) {
         expect(attention({ stage, held: true, ci: ci(phase) })).toBeNull();
         expect(attention({ stage, stepAwaiting: "stopped", ci: ci(phase) })).toBeNull();
       }
+      // `fixing` outlives a dead fix agent, so only its thread can veto.
+      expect(
+        attention({ stage, held: true, threadState: "failed", ci: ci("fixing") })?.reason,
+      ).toBe("held");
+      expect(attention({ stage, stepAwaiting: "stopped", ci: ci("fixing") })?.reason).toBe(
+        "stopped",
+      );
       // Once the round settles the chip is back: stopped asks in its own words,
       // a pass leaves the held claim standing.
       expect(attention({ stage, held: true, ci: ci("stopped") })?.reason).toBe("ci-stopped");
@@ -2154,7 +2161,7 @@ describe("children actively working (deriveBoardCardChildRunning)", () => {
     expect(isBoardCardAwaitingPermission(card({ threadState: "working" }))).toBe(false);
   });
 
-  it("T3O-68: a running or fixing CI round lights the dot", () => {
+  it("T3O-68: a running CI script lights the dot", () => {
     const ci = (phase: BoardCardCiPhase): BoardCardCi => ({
       runId: "ci-1",
       entry: 1,
@@ -2164,7 +2171,9 @@ describe("children actively working (deriveBoardCardChildRunning)", () => {
       steps: [],
     });
     expect(isBoardCardWorking(card({ threadState: "stopped", ci: ci("running") }))).toBe(true);
-    expect(isBoardCardWorking(card({ threadState: "stopped", ci: ci("fixing") }))).toBe(true);
+    // A fix agent is a thread: a dead one leaves the dot dark.
+    expect(isBoardCardWorking(card({ threadState: "failed", ci: ci("fixing") }))).toBe(false);
+    expect(isBoardCardWorking(card({ threadState: "working", ci: ci("fixing") }))).toBe(true);
     // A dead thread from the stage before does not veto a live CI script.
     expect(isBoardCardWorking(card({ threadState: "failed", ci: ci("running") }))).toBe(true);
     // Queued does not light the dot, as nowhere else does.

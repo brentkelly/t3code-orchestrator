@@ -124,8 +124,8 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   CI sent back to review wears an amber note and banner — it is held until a fresh review round
   clears it — and "CI skipped by …" is neutral: a human chose it, so there is nothing to claim.
   Nothing on the card face animates; the running step's name shimmers only in the open card view.
-  The working dot is lit while a CI round runs or a fix agent works on it (T3O-68), and no "Needs a
-  human" chip shows until the round settles.
+  The working dot is lit while a CI script runs or a live fix agent works on it (T3O-68), and no
+  "Needs a human" chip shows while a CI script is queued or running.
   T3O-49 adds two CI chips. `Can't run` is amber: the pass is blocked on something outside it (no
   worktree, a worker out of reach, no pull request for a forge step). `Needs you` is violet: CI
   stopped at the round-trip limit and a human decides — retry, send back, or skip. In Settings, a
