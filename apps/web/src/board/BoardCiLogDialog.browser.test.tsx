@@ -1,6 +1,8 @@
 import {
   EMPTY_BOARD_CI_LOG_VIEW,
   applyBoardCiLogItem,
+  utf8ByteLength,
+  type BoardCiLogView,
 } from "@t3tools/client-runtime/state/boardCiLog";
 import { BoardCardId, type BoardCiPass } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -40,16 +42,20 @@ const pass: BoardCiPass = {
 const lines = (from: number, count: number) =>
   Array.from({ length: count }, (_, index) => `✓ test ${from + index}\n`).join("");
 
-const first = applyBoardCiLogItem(EMPTY_BOARD_CI_LOG_VIEW, {
-  _tag: "chunk",
-  offset: 0,
-  text: `${lines(0, 300)}::t3o-progress::{"message":"Running unit tests","done":128,"total":212}\n`,
-});
-const more = applyBoardCiLogItem(first, {
-  _tag: "chunk",
-  offset: first.nextOffset!,
-  text: lines(300, 20),
-});
+const append = (view: BoardCiLogView, text: string, maxBytes?: number) => {
+  const offset = view.nextOffset ?? 0;
+  return applyBoardCiLogItem(
+    view,
+    { _tag: "chunk", offset, end: offset + utf8ByteLength(text), text },
+    maxBytes === undefined ? {} : { maxBytes },
+  );
+};
+
+const first = append(
+  EMPTY_BOARD_CI_LOG_VIEW,
+  `${lines(0, 300)}::t3o-progress::{"message":"Running unit tests","done":128,"total":212}\n`,
+);
+const more = append(first, lines(300, 20));
 
 const viewer = (view: typeof first) => (
   <BoardCiLogDialogView
@@ -95,5 +101,33 @@ describe("BoardCiLogDialog", () => {
     await expect.element(page.getByText("↓ New output · jump to latest")).not.toBeInTheDocument();
     await vi.waitFor(() => expect(atBottom(element)).toBe(true));
     await expect.element(page.getByText("321 lines · scroll up to pause following")).toBeVisible();
+  });
+
+  it("past the size limit, still offers new output and keeps a paused view still", async () => {
+    const full = append(EMPTY_BOARD_CI_LOG_VIEW, lines(0, 400));
+    const capped = append(full, lines(400, 200), full.bytes + 400);
+    expect(capped.lineCount).toBe(full.lineCount);
+    await using screen = await render(viewer(full));
+    const log = page.getByRole("log", { name: "Test log" });
+    await expect.element(log).toBeVisible();
+    const element = log.element() as HTMLElement;
+    const lineTop = (text: string) => {
+      const line = [...element.querySelectorAll("span")].find(
+        (span) => span.textContent === `${text}\n`,
+      )!;
+      return line.getBoundingClientRect().top - element.getBoundingClientRect().top;
+    };
+
+    element.scrollTop = element.scrollHeight / 2;
+    element.dispatchEvent(new Event("scroll"));
+    await expect.element(page.getByRole("button", { name: "Follow" })).toBeVisible();
+    const before = lineTop("✓ test 300");
+
+    // The oldest block is dropped above the view as new output arrives.
+    await screen.rerender(viewer(capped));
+    await expect.element(page.getByText("↓ New output · jump to latest")).toBeVisible();
+    await expect.element(page.getByText("600 lines")).toBeVisible();
+    // Browser scroll anchoring holds it, to within a sub-pixel.
+    expect(Math.abs(lineTop("✓ test 300") - before)).toBeLessThan(1);
   });
 });

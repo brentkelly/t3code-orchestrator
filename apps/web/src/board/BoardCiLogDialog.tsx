@@ -73,33 +73,46 @@ function LogLine({
   );
 }
 
+interface ParsedBlock {
+  readonly start: BoardCiAnsiState;
+  readonly lines: ReadonlyArray<ReadonlyArray<BoardCiAnsiSegment>>;
+  readonly end: BoardCiAnsiState;
+}
+
+/** A block's parse, kept per lines array: only the last block's changes as
+    output arrives, so the rest are parsed once per starting colour. */
+const parsedBlocks = new WeakMap<ReadonlyArray<string>, ParsedBlock>();
+
 /** Each line's segments, a colour running on from one line to the next. */
-function blockSegments(
-  lines: ReadonlyArray<string>,
-): ReadonlyArray<ReadonlyArray<BoardCiAnsiSegment>> {
+function blockSegments(lines: ReadonlyArray<string>, start: BoardCiAnsiState): ParsedBlock {
+  const cached = parsedBlocks.get(lines);
+  if (cached !== undefined && cached.start.fg === start.fg && cached.start.bold === start.bold) {
+    return cached;
+  }
   const result: Array<ReadonlyArray<BoardCiAnsiSegment>> = [];
-  let state: BoardCiAnsiState = BOARD_CI_ANSI_RESET;
+  let state = start;
   for (const line of lines) {
     const parsed = ansiToSegments(line, state);
     state = parsed.state;
     result.push(parsed.segments);
   }
-  return result;
+  const block = { start, lines: result, end: state };
+  parsedBlocks.set(lines, block);
+  return block;
 }
 
-/** One block of lines. Memoized on the block's lines, which an append
-    replaces only in the last block. A colour runs on across its lines. */
+/** One block of lines, memoized on its parse, which an append replaces only
+    in the last block. */
 const LogBlock = memo(function LogBlock({
-  lines,
+  parsed,
   highlightLine,
 }: {
-  readonly lines: ReadonlyArray<string>;
+  readonly parsed: ParsedBlock;
   readonly highlightLine: number | null;
 }) {
-  const parsed = blockSegments(lines);
   return (
     <pre className="m-0 font-mono text-[11.5px]/[1.6] whitespace-pre text-foreground [contain-intrinsic-size:auto_320px] [content-visibility:auto]">
-      {parsed.map((segments, index) => (
+      {parsed.lines.map((segments, index) => (
         <LogLine highlighted={index === highlightLine} key={index} segments={segments} />
       ))}
     </pre>
@@ -248,7 +261,7 @@ export function BoardCiLogDialogView({
 }) {
   const step = pass.steps[stepIndex];
   const [following, setFollowing] = useState(openAt === undefined);
-  const [pausedAtLines, setPausedAtLines] = useState(0);
+  const [pausedAtOffset, setPausedAtOffset] = useState(0);
   // Callback refs: the popup mounts its nodes in a portal after this renders.
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const [content, setContent] = useState<HTMLDivElement | null>(null);
@@ -276,13 +289,16 @@ export function BoardCiLogDialogView({
   }, [highlight, content]);
 
   const lineCount = view?.lineCount ?? 0;
-  const hasNewOutput = !following && lineCount > pausedAtLines;
+  const totalLines = lineCount + (view?.droppedLines ?? 0);
+  const nextOffset = view?.nextOffset ?? 0;
+  // Bytes, not lines: past the size limit the loaded line count stops growing.
+  const hasNewOutput = !following && nextOffset > pausedAtOffset;
   const missing = view?.status === "missing" || failed;
   const stillLive = live && view?.status !== "ended" && !missing;
 
   const pause = () => {
     setFollowing(false);
-    setPausedAtLines(lineCount);
+    setPausedAtOffset(nextOffset);
   };
   const jumpToLatest = () => setFollowing(true);
   const onScroll = () => {
@@ -418,12 +434,25 @@ export function BoardCiLogDialogView({
           ) : null}
         </div>
         <div className="shrink-0 border-t border-border px-4 py-1.5 text-[11px] text-muted-foreground">
-          {lineCount} {lineCount === 1 ? "line" : "lines"}
+          {totalLines} {totalLines === 1 ? "line" : "lines"}
           {stillLive && following ? " · scroll up to pause following" : ""}
         </div>
       </DialogPopup>
     </Dialog>
   );
+}
+
+/** Every block's parse, a colour set in one running on into the next and
+    into the partial line. */
+function parseView(view: BoardCiLogView) {
+  let state = BOARD_CI_ANSI_RESET;
+  const parsed: Array<{ readonly block: BoardCiLogBlock; readonly result: ParsedBlock }> = [];
+  for (const block of view.blocks) {
+    const result = blockSegments(block.lines, state);
+    state = result.end;
+    parsed.push({ block, result });
+  }
+  return { parsed, partial: blockSegments([view.partial], state) };
 }
 
 function LogBlocks({
@@ -433,16 +462,17 @@ function LogBlocks({
   readonly view: BoardCiLogView;
   readonly highlight: { readonly blockId: number; readonly line: number } | null;
 }) {
+  const { parsed, partial } = parseView(view);
   return (
     <>
-      {view.blocks.map((block: BoardCiLogBlock) => (
+      {parsed.map(({ block, result }) => (
         <LogBlock
           highlightLine={highlight?.blockId === block.id ? highlight.line : null}
           key={block.id}
-          lines={block.lines}
+          parsed={result}
         />
       ))}
-      {view.partial.length === 0 ? null : <LogBlock highlightLine={null} lines={[view.partial]} />}
+      {view.partial.length === 0 ? null : <LogBlock highlightLine={null} parsed={partial} />}
     </>
   );
 }
