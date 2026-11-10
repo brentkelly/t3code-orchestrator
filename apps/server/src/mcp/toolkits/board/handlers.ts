@@ -415,7 +415,7 @@ const refuseOwnCard = (
   return Effect.fail(
     new BoardToolError({
       code: "invalid-input",
-      message: `'${card.key}' is the card you are working on. ${consequence}, so it cannot be done from here — ask a human to do it from the app.`,
+      message: `'${card.key}' is the card you are working on. ${consequence}, so it cannot be done from here. Ask a human to do it from the app.`,
     }),
   );
 };
@@ -438,7 +438,7 @@ const refuseOtherWorkersCard = Effect.fn("BoardToolkit.refuseOtherWorkersCard")(
   if (boardCardEffectiveWorkerId(card, board.defaultWorkerId) === relayed.value.workerId) return;
   return yield* new BoardToolError({
     code: "rejected",
-    message: `'${card.key}' runs on another worker, so it cannot be changed from this one — ask a human to do it from the app.`,
+    message: `'${card.key}' runs on another worker, so it cannot be changed from this one. Ask a human to do it from the app.`,
   });
 });
 
@@ -470,7 +470,7 @@ const refuseLiveWork = (
   return Effect.fail(
     new BoardToolError({
       code: "invalid-input",
-      message: `'${card.key}' has work in flight — its ${
+      message: `'${card.key}' has work in flight: its ${
         state.stepLabel ?? state.stageLabel ?? state.stepId
       } step is ${state.status}. Deleting it would delete that thread mid-turn and force-remove its worktree, unpushed commits included. Archive it with board_archive_card instead (reversible, and it leaves a dirty checkout alone), or wait for the step to settle.`,
     }),
@@ -575,7 +575,7 @@ const resolveLabelIds = (
       return Effect.fail(
         new BoardToolError({
           code: "unknown-label",
-          message: `No label named '${name}'. Existing labels: ${catalogue}. Create it with board_manage_labels (action 'create') first — tagging does not create labels.`,
+          message: `No label named '${name}'. Existing labels: ${catalogue}. Create it with board_manage_labels (action 'create') first. Tagging does not create labels.`,
         }),
       );
     }
@@ -681,7 +681,7 @@ const workspaceBasename = (value: string): string => {
     shape unknown labels use, so an agent that guessed wrong is handed the exact
     ids to retry with. */
 const formatProjectList = (projects: ReadonlyArray<BoardProject>): string =>
-  projects.map((project) => `${project.id} — ${project.title}`).join("; ") || "(none)";
+  projects.map((project) => `${project.id} (${project.title})`).join("; ") || "(none)";
 
 /**
  * Resolve the project a card should be created in (t3o: agents guess titles,

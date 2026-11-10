@@ -44,7 +44,7 @@ export class ImportThreadsSourceNewerError extends Schema.TaggedError<ImportThre
   },
 ) {
   override get message(): string {
-    return `Your T3 Code is newer than this T3o build — update T3o first. (${this.sourcePath} has migrations ${this.unknownMigrationIds.join(", ")} that this build does not know.)`;
+    return `Your T3 Code is newer than this T3o build. Update T3o first. (${this.sourcePath} has migrations ${this.unknownMigrationIds.join(", ")} that this build does not know.)`;
   }
 }
 
