@@ -75,6 +75,8 @@ import {
   stampBoardActivityActor,
 } from "./activityActors.ts";
 import { BoardEngine, type BoardEngineShape } from "./BoardEngine.ts";
+import { SourceControlDrivers } from "../sourceControl/builtInDrivers.ts";
+import { boardProjectTokenStatus } from "./projectTokenStatus.ts";
 import {
   make as makeBoardProjectConfigService,
   type BoardProjectConfigServiceShape,
@@ -154,6 +156,11 @@ export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
         projectConfig: yield* makeBoardProjectConfigService,
         mover: yield* BoardCardMover,
         subscriptionContext,
+        // Optional so board-only harnesses need no source control stack; ws.ts always has one.
+        projectTokenStatus: boardProjectTokenStatus(
+          threads,
+          Option.getOrElse(yield* Effect.serviceOption(SourceControlDrivers), () => []),
+        ),
       }),
       // T3O-62: worker management, and the worker side's handshake.
       ...(yield* boardWorkerRpcHandlers(deps.currentSession)),
@@ -175,6 +182,7 @@ function makeBoardRpcHandlers(
     readonly projectConfig: BoardProjectConfigServiceShape;
     readonly mover: BoardCardMoverShape;
     readonly ciLogWorker: BoardCiLogDeps<unknown>["worker"];
+    readonly projectTokenStatus: ReturnType<typeof boardProjectTokenStatus>;
     readonly subscriptionContext: Context.Context<
       BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
     >;
@@ -310,6 +318,10 @@ function makeBoardRpcHandlers(
           return yield* services.projectConfig.exportFile(input.projectId, actor);
         }),
       ),
+
+    /** T3O-58: each project's GitHub token source and check, when Settings asks. */
+    [BOARD_WS_METHODS.projectTokenStatus]: (_input: Record<string, never>) =>
+      authorized(BOARD_WS_METHODS.projectTokenStatus, services.projectTokenStatus),
 
     /** The archive page's cards (t3o-13), read when the page opens. */
     [BOARD_WS_METHODS.getArchivedCards]: (_input: Record<string, never>) =>

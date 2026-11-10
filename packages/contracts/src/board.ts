@@ -10284,7 +10284,44 @@ export const BOARD_WS_METHODS = {
   projectImportCandidates: "board.projectConfig.importCandidates",
   importProjectFile: "board.projectConfig.import",
   exportProjectFile: "board.projectConfig.export",
+  /** T3O-58: where each project's GitHub token comes from, and whether GitHub accepts it. */
+  projectTokenStatus: "board.projectTokenStatus",
 } as const;
+
+// ── Project GitHub tokens (T3O-58) ─────────────────────────────────────
+
+/** Which gitenv line (folder, repo, owner) or ambient source a project's token comes from. */
+export const BoardProjectTokenSource = Schema.Literals([
+  "folder",
+  "repo",
+  "owner",
+  "settings",
+  "app",
+  "env",
+  "gh",
+  "none",
+]);
+export type BoardProjectTokenSource = typeof BoardProjectTokenSource.Type;
+
+export const BoardProjectTokenCheck = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("ok"), login: Schema.String }),
+  Schema.Struct({ status: Schema.Literal("rejected") }),
+  Schema.Struct({ status: Schema.Literal("error"), message: Schema.String }),
+  Schema.Struct({ status: Schema.Literal("no-remote") }),
+]);
+export type BoardProjectTokenCheck = typeof BoardProjectTokenCheck.Type;
+
+/** One project's row. Never carries a token: only its source and the matched gitenv key. */
+export const BoardProjectTokenStatus = Schema.Struct({
+  projectId: ProjectId,
+  title: Schema.String,
+  /** `owner/repo` of the project's GitHub `origin`, or null. */
+  repo: Schema.NullOr(Schema.String),
+  source: BoardProjectTokenSource,
+  entryKey: Schema.NullOr(Schema.String),
+  check: BoardProjectTokenCheck,
+});
+export type BoardProjectTokenStatus = typeof BoardProjectTokenStatus.Type;
 
 // ── Project config RPCs (T3O-49) ───────────────────────────────────────
 
@@ -11176,6 +11213,11 @@ export const BOARD_RPCS = [
     success: BoardProjectExportResult,
     error: Schema.Union([BoardSettingsCommandError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.projectTokenStatus, {
+    payload: Schema.Struct({}),
+    success: Schema.Array(BoardProjectTokenStatus),
+    error: Schema.Union([BoardSnapshotError, EnvironmentAuthorizationError]),
+  }),
   // T3O-62: the central server's `board.workers.*`, and the worker side's
   // `boardWorker.*` the central server calls over its own session.
   ...BOARD_WORKERS_RPCS,
@@ -11233,6 +11275,8 @@ export const BOARD_RPC_SCOPES = {
   [BOARD_WS_METHODS.projectImportCandidates]: AuthSettingsWriteScope,
   [BOARD_WS_METHODS.importProjectFile]: AuthSettingsWriteScope,
   [BOARD_WS_METHODS.exportProjectFile]: AuthSettingsWriteScope,
+  // T3O-58: it spends each project's credential on a GitHub call; a settings diagnostic.
+  [BOARD_WS_METHODS.projectTokenStatus]: AuthSettingsWriteScope,
   // T3O-62: worker management and the worker side's handshake (D19).
   ...BOARD_WORKER_RPC_SCOPES,
   ...BOARD_WORKER_GATEWAY_RPC_SCOPES,

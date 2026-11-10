@@ -1,4 +1,6 @@
 import type {
+  BoardProjectTokenStatus,
+  ProjectId,
   SourceControlAppAccess,
   SourceControlProviderKind,
   SourceControlSignInError,
@@ -65,6 +67,17 @@ export interface SourceControlDriverInstance {
   readonly signIn?: SourceControlSignIn;
   /** Whether the server's account on `host` starred `repository` (`owner/name`). */
   readonly isRepositoryStarred?: (host: string, repository: string) => Effect.Effect<boolean>;
+  // T3o (T3O-58): Settings → Source Control's per-project token source and check; GitHub only.
+  readonly t3oProjectTokens?: (
+    projects: ReadonlyArray<T3oProjectTokenInput>,
+  ) => Effect.Effect<ReadonlyArray<BoardProjectTokenStatus>>;
+}
+
+// T3o (T3O-58)
+export interface T3oProjectTokenInput {
+  readonly projectId: ProjectId;
+  readonly title: string;
+  readonly workspaceRoot: string;
 }
 
 /** What the server gives every driver. A driver builds anything else it needs itself. */

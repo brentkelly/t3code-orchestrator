@@ -539,6 +539,9 @@ export const dismissBoardProjectImport = dispatchSettings(
 export const getBoardProjectConfig = (input: { readonly projectId: ProjectId }) =>
   request(BOARD_WS_METHODS.getProjectConfig, input);
 
+/** T3O-58: each project's GitHub token source and whether GitHub accepts it. */
+export const getBoardProjectTokenStatus = () => request(BOARD_WS_METHODS.projectTokenStatus, {});
+
 export const getBoardProjectImportCandidates = (input: BoardProjectImportCandidatesInput) =>
   request(BOARD_WS_METHODS.projectImportCandidates, input);
 

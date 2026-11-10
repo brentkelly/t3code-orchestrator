@@ -19,6 +19,8 @@ import { readSourceControlHostSettings } from "@t3tools/source-control-core/shar
 import type { ServerSettings } from "@t3tools/contracts";
 
 import * as GitHubClient from "../shared/definition.ts";
+// T3o (T3O-58): gh auth token runs from the project's folder.
+import { t3oGhWorkingDirectory } from "./t3oGitenvCredential.ts";
 
 /**
  * Every gh run on the server shares this. A burst of them (a status poll across many checkouts)
@@ -145,7 +147,7 @@ export const make = Effect.gen(function* () {
       Effect.orDie,
     );
 
-  const fromGh = (host: string, account: string | undefined) =>
+  const fromGh = (host: string, account: string | undefined, cwd: string) =>
     process
       .run({
         operation: "GitHubCredentials.get",
@@ -157,7 +159,7 @@ export const make = Effect.gen(function* () {
           host,
           ...(account === undefined ? [] : ["--user", account]),
         ],
-        cwd: workingDirectory,
+        cwd,
         // Never let gh print the token into a debug log.
         env: { GH_DEBUG: "", GH_PROMPT_DISABLED: "1" },
         timeoutMs: 10_000,
@@ -199,18 +201,23 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
+  // T3o (T3O-58): the key ends with the folder gh runs from, so projects never share an answer.
   const cacheKey = (host: string, account: string | undefined) =>
-    account === undefined ? host : `${host}\u0000${account}`;
+    Effect.map(
+      t3oGhWorkingDirectory(workingDirectory),
+      (cwd) => `${host}\u0000${account ?? ""}\u0000${cwd}`,
+    );
 
   const lookup = Effect.fn("GitHubCredentials.lookup")(function* (key: string) {
-    const [host = key, choice] = key.split("\u0000");
+    const [host = key, account = "", ghCwd = workingDirectory] = key.split("\u0000");
+    const choice = account === "" ? undefined : account;
     const fromEnv = environmentToken(host, environment);
     const token =
       fromEnv ??
-      (yield* fromGh(host, choice).pipe(
+      (yield* fromGh(host, choice, ghCwd).pipe(
         Effect.catchTags({
           GitHubNotSignedInError: (error) =>
-            choice === undefined ? Effect.fail(error) : fromGh(host, undefined),
+            choice === undefined ? Effect.fail(error) : fromGh(host, undefined, ghCwd),
         }),
       ));
     return {
@@ -254,14 +261,15 @@ export const make = Effect.gen(function* () {
       const host = normalizeHost(rawHost);
       const fromSettings = yield* saved(host);
       if (Option.isSome(fromSettings)) return fromSettings.value;
-      return yield* Cache.get(cache, cacheKey(host, (yield* hostChoice(host))?.account));
+      return yield* Cache.get(cache, yield* cacheKey(host, (yield* hostChoice(host))?.account));
     }),
     saved,
     fingerprint: fingerprintOf,
     invalidate: Effect.fn("GitHubCredentials.invalidate")(function (rawHost) {
       const host = normalizeHost(rawHost);
       return hostChoice(host).pipe(
-        Effect.flatMap((choice) => Cache.invalidate(cache, cacheKey(host, choice?.account))),
+        Effect.flatMap((choice) => cacheKey(host, choice?.account)),
+        Effect.flatMap((key) => Cache.invalidate(cache, key)),
       );
     }),
   });
