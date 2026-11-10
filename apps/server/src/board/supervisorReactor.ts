@@ -29,6 +29,7 @@ import {
   type BoardCiForgeChecksReading,
   boardCiAgentStepId,
   composeBoardCiAgentStepPrompt,
+  type BoardCiHeadline,
   type BoardCiStep,
   type BoardCiPassStep,
   DEFAULT_BOARD_CI_MAX_ROUND_TRIPS,
@@ -243,7 +244,8 @@ import {
 import { stageExecutorFor } from "./stageExecutor.ts";
 import { BoardCiRunner, boardCiLogDir } from "./ci/BoardCiRunner.ts";
 import { remoteCiRunner } from "./ci/remoteCiRunner.ts";
-import { boardCiLowDiskReason } from "./ci/diskSpace.ts";
+import { boardCiMachineHoldReason } from "./ci/ciFailureHeadline.ts";
+import { boardCiHostName, boardCiLowDiskReason } from "./ci/diskSpace.ts";
 import { WorkerConnections } from "./workers/WorkerConnections.ts";
 import { BOARD_HUMAN_ACTOR_FALLBACK_NAME, boardActivityActorFor } from "./activityActors.ts";
 import {
@@ -3838,7 +3840,7 @@ const make = Effect.gen(function* () {
     card: BoardCard,
     runId: string,
     detail: string,
-    options: { readonly machine?: boolean } = {},
+    options: { readonly machine?: boolean; readonly headline?: BoardCiHeadline } = {},
   ) {
     if (forgeSteps.get(String(card.id))?.runId === runId) forgeSteps.delete(String(card.id));
     const reason = withCiRetryHint(detail);
@@ -3852,6 +3854,7 @@ const make = Effect.gen(function* () {
         result: "interrupted",
         reason,
         ...(options.machine === true ? { machine: true } : {}),
+        ...(options.headline === undefined ? {} : { headline: options.headline }),
       },
       createdAt: yield* nowIso,
     });
@@ -4480,6 +4483,23 @@ const make = Effect.gen(function* () {
       yield* runCiSegment(card.id, finished.runId, steps, finished.segmentEnd);
       return;
     }
+    // T3O-61: a machine problem is held for a human before any failure is
+    // recorded, so no fix agent starts and no fix or round trip is used.
+    const verdict = finished.outcome.headline;
+    if (verdict?.machine === true) {
+      const board = yield* readBoard;
+      const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+      const where =
+        workerId === BOARD_LOCAL_WORKER_ID
+          ? boardCiHostName()
+          : ((board.workers ?? []).find((worker) => worker.id === workerId)?.label ??
+            String(workerId));
+      yield* holdCiPass(card, finished.runId, boardCiMachineHoldReason(verdict, where), {
+        machine: true,
+        headline: verdict,
+      });
+      return;
+    }
     const recorded = yield* dispatchLanded({
       type: "board.card.record-ci",
       commandId: yield* commandId("ci-finish"),
@@ -4509,6 +4529,7 @@ const make = Effect.gen(function* () {
             exitCode: null,
             tail: "",
             logPath: null,
+            headline: finished.outcome.headline ?? null,
           }
         : {
             runId: finished.runId,
@@ -4519,6 +4540,7 @@ const make = Effect.gen(function* () {
             tail: step.tail,
             logPath: pass?.logDir == null ? null : `${pass.logDir}/${index}.log`,
             result: step.result ?? null,
+            headline: finished.outcome.headline ?? step.headline ?? null,
           };
     yield* continueCi({
       cardId: card.id,

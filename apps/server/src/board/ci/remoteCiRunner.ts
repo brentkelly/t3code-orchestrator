@@ -6,6 +6,8 @@
  */
 import {
   boardCiStepGroups,
+  clampBoardCiHeadline,
+  type BoardCiPassStep,
   type BoardCiStepDefinition,
   type BoardWorkerCiProgress,
   type EnvironmentId,
@@ -19,6 +21,7 @@ import type { WorkerConnectionsShape } from "../workers/WorkerConnections.ts";
 import type { BoardCiRunnerShape, BoardCiRunResult } from "./BoardCiRunner.ts";
 
 type WireCiDone = Extract<BoardWorkerCiProgress, { _tag: "done" }>;
+type WireCiStep = Extract<BoardWorkerCiProgress, { _tag: "step" }>["step"];
 
 /** The worker's end of a pass, as sent over its gateway. */
 export function toWireCiDone(outcome: BoardCiRunResult): WireCiDone {
@@ -35,22 +38,42 @@ export function toWireCiDone(outcome: BoardCiRunResult): WireCiDone {
         result: outcome.result,
         failedIndex: outcome.failedIndex,
         ...(outcome.exitCode === undefined ? {} : { exitCode: outcome.exitCode }),
+        ...(outcome.result === "failed" && outcome.headline !== undefined
+          ? { headline: outcome.headline }
+          : {}),
       };
 }
 
+/** A worker's headline, clamped here (T3O-61): the wire carries loose strings. */
+const fromWireHeadline = (headline: WireCiDone["headline"]) =>
+  headline === undefined ? null : clampBoardCiHeadline(headline);
+
+/** A worker's step report as this board records it. */
+export function fromWireCiStep(step: WireCiStep): BoardCiPassStep {
+  const { headline, ...rest } = step;
+  const clamped = fromWireHeadline(headline);
+  return {
+    ...rest,
+    ...(clamped === null ? {} : { headline: clamped }),
+  };
+}
+
 function fromWireCiDone(done: WireCiDone): BoardCiRunResult {
-  return done.result === "unavailable"
-    ? {
-        result: "unavailable",
-        failedIndex: null,
-        detail: done.detail ?? "CI couldn't run on the card's worker.",
-        ...(done.machine === true ? { machine: true } : {}),
-      }
-    : {
-        result: done.result,
-        failedIndex: done.failedIndex,
-        ...(done.exitCode === undefined ? {} : { exitCode: done.exitCode }),
-      };
+  if (done.result === "unavailable") {
+    return {
+      result: "unavailable",
+      failedIndex: null,
+      detail: done.detail ?? "CI couldn't run on the card's worker.",
+      ...(done.machine === true ? { machine: true } : {}),
+    };
+  }
+  const headline = done.result === "failed" ? fromWireHeadline(done.headline) : null;
+  return {
+    result: done.result,
+    failedIndex: done.failedIndex,
+    ...(done.exitCode === undefined ? {} : { exitCode: done.exitCode }),
+    ...(headline === null ? {} : { headline }),
+  };
 }
 
 /** How long a worker's run may take before the board stops waiting
@@ -96,7 +119,7 @@ export const remoteCiRunner = (
         .pipe(
           Stream.runForEach((progress) =>
             progress._tag === "step"
-              ? emit({ index: progress.index, step: progress.step })
+              ? emit({ index: progress.index, step: fromWireCiStep(progress.step) })
               : Ref.set(result, fromWireCiDone(progress)),
           ),
           Effect.timeoutOption(remoteCiRunBudgetMs(request.steps)),

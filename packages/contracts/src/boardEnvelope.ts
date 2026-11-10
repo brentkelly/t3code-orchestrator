@@ -36,6 +36,7 @@ import type {
 } from "./board.ts";
 import {
   BOARD_REVIEW_STEP_PHASE_LABELS,
+  boardCiHeadlineLead,
   parseReviewStepId,
   BOARD_CI_FIX_PAYLOAD_SHAPE,
   BOARD_CI_AGENT_PAYLOAD_SHAPE,
@@ -858,6 +859,12 @@ export function composeBoardCiFixPrompt(input: {
         readonly line?: number;
       }>;
     } | null;
+    /** What failed and why, as the runner read it (T3O-61). */
+    readonly headline?: {
+      readonly what: string;
+      readonly why: string;
+      readonly logLine: number | null;
+    } | null;
   };
 }): string {
   const { failure } = input;
@@ -869,6 +876,7 @@ export function composeBoardCiFixPrompt(input: {
   return [
     input.prompt,
     "",
+    ...(failure.headline == null ? [] : [`What failed: ${boardCiHeadlineLead(failure.headline)}`]),
     `CI step "${failure.stepName}" failed: \`${failure.command}\` ${ended}. This is fix attempt ${input.attempt} of ${input.maxAttempts}.`,
     ...(failure.logPath === null ? [] : [`The full log is at \`${failure.logPath}\`.`]),
     ...(reported === null

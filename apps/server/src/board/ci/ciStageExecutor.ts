@@ -12,6 +12,7 @@
  */
 import {
   boardCiFixStepId,
+  boardCiHeadlineLead,
   boardModelSelectionOfOverride,
   composeBoardCiFixPrompt,
   decodeBoardCiAgentStepPayload,
@@ -38,6 +39,7 @@ function boardCiFailureFinding(failure: BoardCiFailure): string {
       : `exited with code ${failure.exitCode ?? "unknown"}`;
   const tail = failure.tail.split("\n").slice(-FINDING_TAIL_LINES).join("\n").trim();
   return [
+    ...(failure.headline == null ? [] : [boardCiHeadlineLead(failure.headline)]),
     `CI step "${failure.stepName}" (\`${failure.command}\`) ${ended}.`,
     ...(tail.length === 0 ? [] : ["Last lines of its output:", "```", tail, "```"]),
   ].join("\n");
