@@ -57,6 +57,23 @@ describe("the CI log viewer's model (T3O-60)", () => {
     const view = fold([chunk(50, "tail of a line\nfirst\nsecond\n")], { alignStart: true });
     expect(view.blocks[0]!.lines).toEqual(["first", "second"]);
     expect(view.blocks[0]!.offsets[0]).toBe(50 + "tail of a line\n".length);
+
+    // The cut line's rest may come in a chunk of its own.
+    const split = fold([chunk(50, "tail of "), chunk(58, "a line\nfirst\n")], { alignStart: true });
+    expect(split.blocks[0]!.lines).toEqual(["first"]);
+    expect(split.blocks[0]!.offsets[0]).toBe(65);
+    expect(boardCiLogLineAt(split, 66)).toEqual({ blockId: split.blocks[0]!.id, line: 0 });
+  });
+
+  it("keeps only the last frame of a line redrawn with carriage returns", () => {
+    const view = fold([chunk(0, "a\rb\r\nstep 1/3\rstep 2/3\r"), chunk(27, "step 3/3\rdone\r")]);
+    expect(view.blocks[0]!.lines).toEqual(["b"]);
+    expect(view.partial).toBe("done\r");
+    expect(view.partialOffset).toBe(27 + "step 3/3\r".length);
+    expect(view.bytes).toBe(5 + "done\r".length);
+    const crlf = applyBoardCiLogItem(view, chunk(42, "\n"));
+    expect(crlf.blocks[0]!.lines).toEqual(["b", "done"]);
+    expect(boardCiLogLineAt(crlf, 41)).toEqual({ blockId: crlf.blocks[0]!.id, line: 1 });
   });
 
   it("takes where the next read starts from the file's bytes, not the decoded text", () => {

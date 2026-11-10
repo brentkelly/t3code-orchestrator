@@ -26,6 +26,7 @@ import { AsyncResult } from "effect/reactivity";
 import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { Dialog, DialogPopup, DialogTitle } from "../components/ui/dialog";
+import { toastManager } from "../components/ui/toast";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
@@ -204,11 +205,22 @@ export function BoardCiLogDialog({
         if (AsyncResult.isFailure(next)) {
           setDownloading(false);
           queueMicrotask(() => unsubscribe());
+          toastManager.add({
+            type: "error",
+            title: "Download failed",
+            description: "The log couldn't be read. Try again.",
+          });
           return;
         }
         if (!AsyncResult.isSuccess(next) || next.value.status === "loading") return;
         if (next.value.status === "ended") {
           saveLog(boardCiLogFileName(cardKey, step.name, pass.ordinal), next.value.parts);
+        } else {
+          toastManager.add({
+            type: "error",
+            title: "Download failed",
+            description: next.value.missingReason ?? "The log is no longer available.",
+          });
         }
         setDownloading(false);
         queueMicrotask(() => unsubscribe());

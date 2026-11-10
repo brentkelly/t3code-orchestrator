@@ -28,6 +28,8 @@ export interface BoardCiLogBlock {
   readonly lines: ReadonlyArray<string>;
   /** Each line's byte offset in the log file. */
   readonly offsets: ReadonlyArray<number>;
+  /** The byte just past the block's last line. */
+  readonly end: number;
   readonly bytes: number;
 }
 
@@ -101,16 +103,18 @@ export function applyBoardCiLogItem(
   let offset = item.offset;
   if (options.alignStart === true && view.nextOffset === null && offset > 0) {
     const newline = text.indexOf("\n");
-    if (newline === -1) {
-      return { ...view, status: "live", nextOffset: item.end };
-    }
+    // Still inside the cut line: the next chunk is aligned the same way.
+    if (newline === -1) return { ...view, status: "live" };
     offset += utf8ByteLength(text.slice(0, newline + 1));
     text = text.slice(newline + 1);
   }
   const start = view.nextOffset === null ? offset : view.partialOffset;
   const combined = (view.nextOffset === null ? "" : view.partial) + text;
   const parts = combined.split("\n");
-  const partial = parts.pop()!;
+  // A `\r` redraw keeps only its last frame, so `\r`-only progress stays one
+  // short line. A trailing `\r` may be the first half of a CRLF.
+  const rawPartial = parts.pop()!;
+  const partial = rawPartial.slice(rawPartial.lastIndexOf("\r", rawPartial.length - 2) + 1);
 
   const blocks = [...view.blocks];
   let last = blocks.at(-1);
@@ -124,20 +128,23 @@ export function applyBoardCiLogItem(
   let added = 0;
   for (const part of parts) {
     const size = utf8ByteLength(part) + 1;
-    lines.push(part.endsWith("\r") ? part.slice(0, -1) : part);
+    const line = part.endsWith("\r") ? part.slice(0, -1) : part;
+    lines.push(line.slice(line.lastIndexOf("\r") + 1));
     offsets.push(position);
     position += size;
     blockBytes += size;
     added += size;
     if (lines.length >= BOARD_CI_LOG_BLOCK_LINES) {
-      blocks.push({ id: blockId, lines, offsets, bytes: blockBytes });
+      blocks.push({ id: blockId, lines, offsets, end: position, bytes: blockBytes });
       lines = [];
       offsets = [];
       blockBytes = 0;
       blockId = nextBlockId++;
     }
   }
-  if (lines.length > 0) blocks.push({ id: blockId, lines, offsets, bytes: blockBytes });
+  if (lines.length > 0) {
+    blocks.push({ id: blockId, lines, offsets, end: position, bytes: blockBytes });
+  }
 
   const partialBytes = utf8ByteLength(partial);
   let bytes = view.bytes - utf8ByteLength(view.nextOffset === null ? "" : view.partial) + added;
@@ -180,8 +187,9 @@ export function boardCiLogLineAt(
 ): { readonly blockId: number; readonly line: number } | null {
   for (const block of view.blocks) {
     const last = block.offsets.length - 1;
-    if (last < 0 || offset < block.offsets[0]!) continue;
-    if (offset >= block.offsets[last]! + utf8ByteLength(block.lines[last]!) + 1) continue;
+    if (last < 0 || offset < block.offsets[0]! || offset >= block.end) {
+      continue;
+    }
     let line = 0;
     while (line < last && block.offsets[line + 1]! <= offset) line++;
     return { blockId: block.id, line };

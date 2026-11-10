@@ -358,7 +358,7 @@ it.effect("a failed detail re-read keeps following rather than ending the log", 
             worker: () => Effect.succeed(null),
           },
           readInput as never,
-        ),
+        ).pipe(Stream.orDie),
       );
       assert.strictEqual((yield* log.next)._tag, "chunk");
       yield* Queue.offer(changes, undefined);
