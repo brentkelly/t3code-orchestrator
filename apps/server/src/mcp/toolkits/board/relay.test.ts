@@ -80,6 +80,11 @@ const t0 = "2026-01-01T00:00:00.000Z";
 const PROJECT_ID = ProjectId.make("project-1");
 const CENTRAL_ROOT = "/home/central/repo";
 const CODEX = ProviderInstanceId.make("codex");
+const decodeCardContext = Schema.decodeEffect(
+  BoardToolkit.tools.board_get_card_context.successSchema as unknown as Schema.Codec<
+    Record<string, unknown>
+  >,
+);
 
 /** The central server's database, settings and files. */
 const centralBase = Layer.mergeAll(ServerSettings.layerTest(), BoardRelayStoreLive).pipe(
@@ -453,11 +458,7 @@ describe("the board MCP relay", () => {
           decisions: _decisions,
           ...older
         } = answer.value as Record<string, unknown>;
-        const decoded = yield* Schema.decodeUnknownEffect(
-          BoardToolkit.tools.board_get_card_context.successSchema as unknown as Schema.Codec<
-            Record<string, unknown>
-          >,
-        )(older);
+        const decoded = yield* decodeCardContext(older);
         assert.deepStrictEqual(decoded.ancestors, []);
         assert.isNull(decoded.sourcePlan);
         assert.deepStrictEqual(decoded.decisions, []);
