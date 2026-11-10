@@ -275,6 +275,16 @@ function machineVerdict(facts: BoardCiFailureFacts, input: BoardCiHeadlineInput)
   }
   if (input.exitCode === 127) {
     const command = facts.notFound?.command ?? null;
+    // A path names a file in the worktree, not a tool to install.
+    if (command?.includes("/")) {
+      return {
+        why: `Not found: ${command}`,
+        fact: facts.notFound,
+        source: "machine",
+        machine: true,
+        hint: `Check that ${command} exists and is executable.`,
+      };
+    }
     return {
       why:
         command === null

@@ -333,6 +333,13 @@ describe("boardCiMachineHoldReason", () => {
     );
   });
 
+  it("asks for a missing script file to be checked, not installed", () => {
+    const headline = headlineOf("sh: 1: ./scripts/ci-check.sh: not found\n", { exitCode: 127 });
+    expect(boardCiMachineHoldReason(headline, "linux-box")).toBe(
+      "Machine problem on linux-box: Not found: ./scripts/ci-check.sh. Check that ./scripts/ci-check.sh exists and is executable. Then Retry CI.",
+    );
+  });
+
   it("keeps the fix and Retry CI within the card's 400 chars", () => {
     const headline = { ...headlineOf(LIBNSPR), why: "w".repeat(160), hint: "h".repeat(160) };
     const reason = boardCiMachineHoldReason(headline, "worker ".repeat(20));
