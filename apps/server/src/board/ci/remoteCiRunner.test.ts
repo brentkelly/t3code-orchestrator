@@ -96,46 +96,48 @@ it.effect("a pass the worker could not run arrives as unavailable, with its reas
   }),
 );
 
-it.effect("a later segment's parallel steps, offset, stop-on-failure and result detail cross the wire intact", () =>
-  Effect.gen(function* () {
-    const sent: BoardWorkerRunCiInput[] = [];
-    const reported = {
-      ...step,
-      parallel: true,
-      result: { summary: "1 failed", failures: [{ title: "boom", file: "a.ts", line: 3 }] },
-    };
-    const wire = {
-      get: () =>
-        Effect.succeed({
-          gateway: {
-            runCi: (input: unknown) => {
-              sent.push(Schema.decodeUnknownSync(BoardWorkerRunCiInput)(input));
-              return Stream.fromIterable(
-                [
-                  { _tag: "step", index: 0, step: reported },
-                  { _tag: "done", result: "failed", failedIndex: 0 },
-                ].map((progress) => Schema.decodeUnknownSync(BoardWorkerCiProgress)(progress)),
-              );
+it.effect(
+  "a later segment's parallel steps, offset, stop-on-failure and result detail cross the wire intact",
+  () =>
+    Effect.gen(function* () {
+      const sent: BoardWorkerRunCiInput[] = [];
+      const reported = {
+        ...step,
+        parallel: true,
+        result: { summary: "1 failed", failures: [{ title: "boom", file: "a.ts", line: 3 }] },
+      };
+      const wire = {
+        get: () =>
+          Effect.succeed({
+            gateway: {
+              runCi: (input: unknown) => {
+                sent.push(Schema.decodeUnknownSync(BoardWorkerRunCiInput)(input));
+                return Stream.fromIterable(
+                  [
+                    { _tag: "step", index: 0, step: reported },
+                    { _tag: "done", result: "failed", failedIndex: 0 },
+                  ].map((progress) => Schema.decodeUnknownSync(BoardWorkerCiProgress)(progress)),
+                );
+              },
             },
-          },
-        } as unknown as WorkerRpc),
-    } satisfies Pick<WorkerConnectionsShape, "get">;
-    const seen: BoardCiStepProgress[] = [];
-    yield* remoteCiRunner(wire, worker).run(
-      {
-        ...request,
-        steps: [
-          { name: "Lint", command: "vp lint", timeoutMinutes: 5 },
-          { name: "Test", command: "vp test", timeoutMinutes: 5, parallel: true },
-        ],
-        indexOffset: 2,
-        stopOnFailure: false,
-      },
-      (progress) => Effect.sync(() => seen.push(progress)),
-    );
-    assert.strictEqual(sent[0]?.indexOffset, 2);
-    assert.strictEqual(sent[0]?.stopOnFailure, false);
-    assert.strictEqual(sent[0]?.steps[1]?.parallel, true);
-    assert.deepStrictEqual(seen, [{ index: 0, step: reported }]);
-  }),
+          } as unknown as WorkerRpc),
+      } satisfies Pick<WorkerConnectionsShape, "get">;
+      const seen: BoardCiStepProgress[] = [];
+      yield* remoteCiRunner(wire, worker).run(
+        {
+          ...request,
+          steps: [
+            { name: "Lint", command: "vp lint", timeoutMinutes: 5 },
+            { name: "Test", command: "vp test", timeoutMinutes: 5, parallel: true },
+          ],
+          indexOffset: 2,
+          stopOnFailure: false,
+        },
+        (progress) => Effect.sync(() => seen.push(progress)),
+      );
+      assert.strictEqual(sent[0]?.indexOffset, 2);
+      assert.strictEqual(sent[0]?.stopOnFailure, false);
+      assert.strictEqual(sent[0]?.steps[1]?.parallel, true);
+      assert.deepStrictEqual(seen, [{ index: 0, step: reported }]);
+    }),
 );

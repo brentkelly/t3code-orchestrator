@@ -1,7 +1,8 @@
 /**
- * The card view's CI tab (T3O-44): the current pass's steps with their
- * commands, durations and a failed step's output tail; the fix agent at work;
- * earlier passes, collapsed; how the card last left CI; and Skip CI.
+ * The card view's CI tab (T3O-44/57): the current pass's steps with their
+ * commands, durations and a failed step's output tail; a failed pass's fix as
+ * its last step, one row per issue; earlier passes, collapsed; how the card
+ * last left CI; and Skip CI.
  *
  * Lazy, like the review pane — a card that never reaches CI pays nothing. The
  * only per-second element is the running step's timer, its own component.
@@ -13,15 +14,11 @@ import {
   type BoardCardCiLastOutcome,
   type BoardCiPass,
   type BoardCiPassStep,
+  type BoardStepCompletion,
   type ThreadId,
   type ProjectId,
 } from "@t3tools/contracts";
-import {
-  ChevronDownIcon,
-  ChevronLeftIcon,
-  ChevronsRightIcon,
-  MessageSquareIcon,
-} from "lucide-react";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronsRightIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useNowSecond } from "../hooks/useNowSecond";
@@ -32,10 +29,12 @@ import {
   boardCiPassOutcomeChip,
   boardCiPassSummary,
   boardCiStepBadgeState,
+  boardCiFixRow,
   boardCiTailMeta,
   formatBoardCiDuration,
   formatBoardCiTimer,
   type BoardCiChipTone,
+  type BoardCiFixRow,
 } from "./boardCi";
 import { BOARD_CI_CHIP_CLASS } from "./BoardCardCiFace";
 import { BoardSectionHeading as SectionHeading } from "./BoardCardFields";
@@ -224,18 +223,109 @@ function StepRow({
   );
 }
 
+const ISSUE_STATUS: Record<BoardCiFixRow["issues"][number]["status"], string> = {
+  open: "Open",
+  resolved: "Resolved",
+  "cannot-fix": "Can't fix",
+};
+
+const ISSUE_STATUS_CLASS: Record<BoardCiFixRow["issues"][number]["status"], string> = {
+  open: "text-muted-foreground",
+  resolved: "text-success-foreground",
+  "cannot-fix": "text-attention-foreground",
+};
+
+/** A failed pass's fix, shown as the pass's last step (T3O-57). */
+function FixFailuresRow({
+  row,
+  index,
+  threadId,
+  onOpenThread,
+}: {
+  readonly row: BoardCiFixRow;
+  readonly index: number;
+  readonly threadId: ThreadId | null;
+  readonly onOpenThread?: ((threadId: ThreadId) => void) | undefined;
+}) {
+  return (
+    <div className="border-t border-border" data-ci-fix-row={row.state}>
+      <div
+        className={cn(
+          "flex items-center gap-2.5 px-3 py-[9px]",
+          row.state === "running" && "bg-info/5",
+        )}
+      >
+        <BoardStepBadge index={index + 1} state={row.badge} />
+        <div className="flex min-w-0 flex-1 flex-col gap-px">
+          <span className="text-[12.5px] font-medium text-foreground">Fix failures</span>
+          <span className="truncate text-[11px] text-muted-foreground">
+            {row.headline}
+            {row.fixedSha === null ? "" : ` · pushed ${row.fixedSha.slice(0, 7)}`}
+          </span>
+          {threadId === null || onOpenThread === undefined ? null : (
+            <button
+              className="w-fit text-[11px] text-info-foreground hover:underline"
+              onClick={() => onOpenThread(threadId)}
+              type="button"
+            >
+              Open the fix thread
+            </button>
+          )}
+        </div>
+        <span
+          className={cn(
+            "w-[92px] shrink-0 text-right text-[11.5px] font-medium",
+            row.state === "running"
+              ? "text-info-foreground"
+              : row.badge === "passed"
+                ? "text-success-foreground"
+                : "text-muted-foreground",
+          )}
+        >
+          {row.state === "running" ? "Fixing" : row.state === "not-run" ? "Not run" : "Reported"}
+        </span>
+      </div>
+      <div className="flex flex-col gap-1 border-t border-border py-1.5 pr-3 pl-[42px] text-[11.5px]">
+        {row.issues.map((issue) => (
+          <div className="flex items-start gap-2" key={issue.id}>
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="text-foreground">
+                <span className="text-muted-foreground">{issue.stepName} · </span>
+                {issue.title}
+              </span>
+              {issue.where === null ? null : (
+                <span className="font-mono text-[10.5px] text-muted-foreground">{issue.where}</span>
+              )}
+              {issue.note === null ? null : (
+                <span className="text-muted-foreground">{issue.note}</span>
+              )}
+            </div>
+            <span className={cn("shrink-0 font-medium", ISSUE_STATUS_CLASS[issue.status])}>
+              {ISSUE_STATUS[issue.status]}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PassSteps({
   pass,
   live,
   fixing,
   defaultTailOpen,
   onOpenThread,
+  fixRow,
+  fixThreadId,
 }: {
   readonly pass: BoardCiPass;
   readonly live: boolean;
   readonly fixing: boolean;
   readonly defaultTailOpen: boolean;
   readonly onOpenThread?: ((threadId: ThreadId) => void) | undefined;
+  readonly fixRow?: BoardCiFixRow | null | undefined;
+  readonly fixThreadId?: ThreadId | null | undefined;
 }) {
   // Null follows the default: open on the current pass, closed on earlier ones.
   const [tailOpen, setTailOpen] = useState<Readonly<Record<number, boolean>>>({});
@@ -256,6 +346,14 @@ function PassSteps({
           />
         );
       })}
+      {fixRow == null ? null : (
+        <FixFailuresRow
+          index={pass.steps.length}
+          onOpenThread={onOpenThread}
+          row={fixRow}
+          threadId={fixThreadId ?? null}
+        />
+      )}
     </>
   );
 }
@@ -263,13 +361,27 @@ function PassSteps({
 function EarlierPass({
   pass,
   ci,
+  completions,
 }: {
   readonly pass: BoardCiPass;
   readonly ci: BoardCardCi | null | undefined;
+  readonly completions: ReadonlyArray<BoardStepCompletion>;
 }) {
   const [open, setOpen] = useState(false);
   const chip = boardCiPassOutcomeChip(pass, ci);
-  const summary = boardCiPassSummary(pass);
+  const fixRow = boardCiFixRow({ pass, completions, ci: null });
+  const failedNames = pass.steps
+    .filter((step) => isBoardCiStepFailure(step.status))
+    .map((step) => step.name);
+  const summary = [
+    boardCiPassSummary(pass),
+    failedNames.length > 1 ? failedNames.join(", ") : null,
+    fixRow === null
+      ? null
+      : `fix: ${fixRow.headline}${fixRow.fixedSha === null ? "" : ` · ${fixRow.fixedSha.slice(0, 7)}`}`,
+  ]
+    .filter((part): part is string => part !== null && part.length > 0)
+    .join(" · ");
   return (
     <div className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
       <button
@@ -293,7 +405,13 @@ function EarlierPass({
       </button>
       {open ? (
         <div className="flex flex-col border-t border-border">
-          <PassSteps defaultTailOpen={false} fixing={false} live={false} pass={pass} />
+          <PassSteps
+            defaultTailOpen={false}
+            fixing={false}
+            fixRow={fixRow}
+            live={false}
+            pass={pass}
+          />
         </div>
       ) : null}
     </div>
@@ -315,8 +433,11 @@ export function BoardCardCiPane({
   projectId,
   onRetryCi,
   onSendBack,
+  completions = [],
 }: {
   readonly cardKey: string;
+  /** The card's step completions, for each pass's fix report (T3O-57). */
+  readonly completions?: ReadonlyArray<BoardStepCompletion> | undefined;
   /** T3O-49: Retry CI on a stopped or held pass, and "Send back to review
       anyway" on a stopped one. Human-only. */
   readonly onRetryCi?: (() => void) | undefined;
@@ -344,10 +465,12 @@ export function BoardCardCiPane({
   const live = current !== undefined && ci != null && ci.runId === current.runId && inCi;
   const fixing = live && ci?.phase === "fixing";
   const status = boardCiPaneStatus({ ci: inCi ? ci : null, lastOutcome, lastPass: current });
-  const failedStep = current?.steps.find((step) => isBoardCiStepFailure(step.status));
-  const fixThreadId = current?.fixThreadId ?? activeThreadId;
-  const attempt = ci == null ? 0 : Math.max(1, ci.fixAttempts);
-  const lastAttempt = ci != null && attempt >= ci.maxFixAttempts;
+  const fixThreadId = current?.fixThreadId ?? (fixing ? activeThreadId : null);
+  const currentFixRow =
+    current === undefined
+      ? null
+      : boardCiFixRow({ pass: current, completions, ci: inCi ? (ci ?? null) : null });
+  const currentSummary = current === undefined ? "" : boardCiPassSummary(current);
   const showConfirm = inCi && confirming && onSkipCi !== undefined;
   const usedFixes = lastOutcome?.fixAttemptsUsed ?? 0;
   return (
@@ -357,7 +480,8 @@ export function BoardCardCiPane({
         {current === undefined ? null : (
           <span className="truncate text-[11.5px] text-muted-foreground">
             Pass {current.ordinal}
-            {ci == null ? "" : ` · fix attempts ${ci.fixAttempts} of ${ci.maxFixAttempts}`}
+            {ci == null ? "" : ` · fix ${ci.fixAttempts} of ${ci.maxFixAttempts}`}
+            {ci == null ? "" : ` · stop on failure ${ci.continueOnFailure === true ? "No" : "Yes"}`}
           </span>
         )}
         <span className="flex-1" />
@@ -419,6 +543,12 @@ export function BoardCardCiPane({
                 ? (ci.stopReason ?? "CI stopped for a human.")
                 : "The pass couldn't finish (the runner or the worktree wasn't available). Fix what's in the way, then retry."}
             </span>
+            {ci.phase === "stopped" ? (
+              <span className="text-[11px] text-muted-foreground">
+                {ci.fixAttempts} of {ci.maxFixAttempts} fix{" "}
+                {ci.maxFixAttempts === 1 ? "attempt" : "attempts"} used
+              </span>
+            ) : null}
             <div className="flex flex-wrap items-center gap-2">
               {onRetryCi === undefined ? null : (
                 <button
@@ -450,32 +580,6 @@ export function BoardCardCiPane({
             </div>
           </div>
         ) : null}
-        {fixing ? (
-          <div className="flex shrink-0 items-center gap-3 rounded-xl border border-info/35 bg-info/6 py-[11px] pr-3 pl-3.5">
-            <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-              <span className="text-[12.5px] font-semibold text-foreground">
-                Fix agent is working on {failedStep?.name ?? "the failed step"}
-              </span>
-              <span className="text-[11.5px]/[1.5] text-pretty text-muted-foreground">
-                Attempt {attempt} of {ci?.maxFixAttempts}. When it commits, every step re-runs from
-                the top.
-                {lastAttempt
-                  ? " This is the last attempt; if the step still fails, the card goes back to Code review."
-                  : ""}
-              </span>
-            </div>
-            {fixThreadId === null ? null : (
-              <button
-                className={BUTTON_CLASS}
-                onClick={() => onOpenThread(fixThreadId)}
-                type="button"
-              >
-                <MessageSquareIcon className="size-3" />
-                View thread
-              </button>
-            )}
-          </div>
-        ) : null}
         {current === undefined ? (
           <div className="rounded-xl border border-border bg-card px-3.5 py-3 text-[11.5px] text-muted-foreground">
             {inCi ? "Waiting for the first pass to start." : "CI has not run on this card."}
@@ -490,6 +594,9 @@ export function BoardCardCiPane({
                 const chip = boardCiPassOutcomeChip(current, inCi ? ci : null);
                 return <Chip label={chip.label} tone={chip.tone} />;
               })()}
+              <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+                {currentSummary}
+              </span>
               <span className="flex-1" />
               <span className="text-[11px] text-muted-foreground">
                 {formatRelativeTimeLabel(current.startedAt)}
@@ -500,13 +607,18 @@ export function BoardCardCiPane({
               key={current.runId}
               defaultTailOpen
               fixing={fixing}
+              fixRow={currentFixRow}
+              fixThreadId={fixThreadId}
               live={live}
               onOpenThread={onOpenThread}
               pass={current}
             />
             <div className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
               {current.steps.length} {current.steps.length === 1 ? "step" : "steps"} from the
-              project&apos;s CI settings · run in order, stop at the first failure
+              project&apos;s CI settings · run in order,{" "}
+              {inCi && ci?.continueOnFailure === true
+                ? "every step runs even after a failure"
+                : "stop at the first failure"}
               {current.logDir === null ? "" : ` · full logs in ${current.logDir}`}
             </div>
             {projectId === undefined ? null : (
@@ -526,7 +638,7 @@ export function BoardCardCiPane({
               Earlier passes
             </span>
             {earlier.map((pass) => (
-              <EarlierPass ci={ci} key={pass.runId} pass={pass} />
+              <EarlierPass ci={ci} completions={completions} key={pass.runId} pass={pass} />
             ))}
           </div>
         )}

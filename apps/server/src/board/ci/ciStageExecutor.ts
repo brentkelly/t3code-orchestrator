@@ -43,8 +43,7 @@ function boardCiFailureFinding(failure: BoardCiFailure, tailLines: number): stri
     failure.status === "timed-out"
       ? "timed out"
       : `exited with code ${failure.exitCode ?? "unknown"}`;
-  const tail =
-    tailLines <= 0 ? "" : failure.tail.split("\n").slice(-tailLines).join("\n").trim();
+  const tail = tailLines <= 0 ? "" : failure.tail.split("\n").slice(-tailLines).join("\n").trim();
   return [
     `CI step "${failure.stepName}" (\`${failure.command}\`) ${ended}.`,
     ...(tail.length === 0 ? [] : ["Last lines of its output:", "```", tail, "```"]),
@@ -84,7 +83,10 @@ function cannotFixStop(ci: BoardCardCi | null, verdict: BoardCiFixPayload): Boar
   return {
     kind: "ci-stop",
     stepName,
-    reason: why.length > 0 ? `The fix agent couldn't fix ${what}: ${why}.` : `The fix agent couldn't fix ${what}.`,
+    reason:
+      why.length > 0
+        ? `The fix agent couldn't fix ${what}: ${why}.`
+        : `The fix agent couldn't fix ${what}.`,
   };
 }
 

@@ -3547,7 +3547,11 @@ const make = Effect.gen(function* () {
         // one with any failed step fails, whatever the setting.
         const read = yield* ciPassFailures(card.id, runId);
         if (read === null) {
-          yield* holdCiPass(card, runId, "CI lost track of this pass's steps. Retry CI, or Skip CI.");
+          yield* holdCiPass(
+            card,
+            runId,
+            "CI lost track of this pass's steps. Retry CI, or Skip CI.",
+          );
           return;
         }
         if (

@@ -1134,8 +1134,8 @@ function AutoMergeBanner({ info }: { readonly info: BoardAutoMergeBanner }) {
   );
 }
 
-/** A card CI sent back to review (T3O-44): why, the fixes it used, and the
-    door to the run. Amber, like every hold the board did not resolve. */
+/** A card sent back to review from CI (T3O-44; by a human since T3O-57):
+    why, the fixes it used, and the door to the run. Amber, like every hold the board did not resolve. */
 function BoardCiSentBackBanner({
   banner,
   onViewRun,
@@ -3283,6 +3283,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onRetryCi={props.onRetryCi}
                 onSendBack={props.onCiSendBack}
                 passes={props.detail.ciPasses}
+                completions={props.detail.stepCompletions}
                 skipPending={props.skipCiPending}
                 skipToLabel={(() => {
                   const next = boardCiAwareNextStageId(

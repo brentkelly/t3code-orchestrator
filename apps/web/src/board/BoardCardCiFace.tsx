@@ -1,7 +1,8 @@
 /**
- * The card face's CI rows (T3O-44): one segment per step, the phase chip, the
- * passed count and the step in flight — or, once the card has left CI other
- * than by passing, the line saying so. Nothing here animates; the elapsed
+ * The card face's CI rows (T3O-44/57): one segment per step and, once a step
+ * failed, one for the fix; the phase chip, the passed count and the step in
+ * flight — or, once the card has left CI other than by passing, the line
+ * saying so. Nothing here animates; the elapsed
  * minutes repaint on the shared minute tick.
  */
 import type { BoardCardCi, BoardCardCiLastOutcome } from "@t3tools/contracts";
@@ -13,6 +14,7 @@ import {
   boardCiFace,
   boardCiLastOutcomeFace,
   type BoardCiChipTone,
+  type BoardCiFixSegmentState,
   type BoardStepBadgeState,
 } from "./boardCi";
 import { BoardHint } from "./BoardHint";
@@ -24,6 +26,18 @@ const SEGMENT_CLASS: Record<BoardStepBadgeState, string> = {
   failed: "bg-warning",
   cancelled: "bg-muted-foreground/40",
   pending: "shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--foreground)_14%,transparent)]",
+};
+
+const FIX_SEGMENT_CLASS: Record<BoardCiFixSegmentState, string> = {
+  pending: SEGMENT_CLASS.pending,
+  fixing: "bg-info",
+  stopped: "bg-attention",
+};
+
+const FIX_SEGMENT_LABEL: Record<BoardCiFixSegmentState, string> = {
+  pending: "Fix · after the pass",
+  fixing: "Fix · running",
+  stopped: "Fix · needs you",
 };
 
 export const BOARD_CI_CHIP_CLASS: Record<BoardCiChipTone, string> = {
@@ -63,6 +77,17 @@ function BoardCardCiProgress({ ci }: { readonly ci: BoardCardCi }) {
               role="img"
             />
           ))}
+          {face.fixSegment === null ? null : (
+            <span
+              aria-label={FIX_SEGMENT_LABEL[face.fixSegment]}
+              className={cn(
+                "ml-[2px] h-[5px] w-3 shrink-0 rounded-[2px]",
+                FIX_SEGMENT_CLASS[face.fixSegment],
+              )}
+              data-ci-fix-segment={face.fixSegment}
+              role="img"
+            />
+          )}
         </div>
         <div className="flex min-w-0 items-center gap-[7px]">
           <span className="shrink-0 font-mono text-[10.5px] font-medium text-foreground">
@@ -104,7 +129,7 @@ export function BoardCardCiFace({
       <div className="flex items-start gap-[7px] rounded-[7px] bg-warning/8 px-2 py-[7px]">
         <Undo2Icon className="mt-px size-3 shrink-0 text-warning-foreground" />
         <div className="flex min-w-0 flex-col gap-px">
-          <span className="text-[10.5px] font-medium text-foreground">Sent back by CI</span>
+          <span className="text-[10.5px] font-medium text-foreground">Sent back from CI</span>
           <span className="text-[10.5px]/[1.4] text-muted-foreground">{outcome.line}</span>
         </div>
       </div>

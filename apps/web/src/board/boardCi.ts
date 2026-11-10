@@ -8,8 +8,14 @@
  */
 import {
   BOARD_CI_TAIL_LINES,
+  boardCiFixIssueOutcomes,
+  boardCiFixIssues,
+  boardCiFixStepId,
+  decodeBoardCiFixPayload,
   isBoardCiStepFailure,
+  type BoardCiFixIssueStatus,
   type BoardCardCi,
+  type BoardStepCompletion,
   type BoardCardCiLastOutcome,
   type BoardCiPass,
   type BoardCiPassOutcome,
@@ -60,9 +66,15 @@ export function boardCiSegments(ci: BoardCardCi): ReadonlyArray<BoardCiSegment> 
 
 export type BoardCiChipTone = "info" | "success" | "neutral" | "warning" | "attention";
 
+/** The fix segment after the last step (T3O-57): outlined while a failed
+    pass still runs, blue while fixing, violet once stopped for a human. */
+export type BoardCiFixSegmentState = "pending" | "fixing" | "stopped";
+
 export interface BoardCiFace {
   readonly chip: { readonly label: string; readonly tone: BoardCiChipTone };
   readonly segments: ReadonlyArray<BoardCiSegment>;
+  /** Shown once any step failed, or while fixing or stopped; null otherwise. */
+  readonly fixSegment: BoardCiFixSegmentState | null;
   /** Steps passed over steps in the pass, `2/3`. */
   readonly count: string;
   readonly detail: string;
@@ -70,6 +82,17 @@ export interface BoardCiFace {
 }
 
 const failWord = (status: BoardCiStepStatus) => (status === "timed-out" ? "timed out" : "failed");
+
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+export function boardCiFixSegment(ci: BoardCardCi): BoardCiFixSegmentState | null {
+  if (ci.phase === "fixing") return "fixing";
+  if (ci.phase === "stopped") return "stopped";
+  if (ci.phase === "running" && ci.steps.some((step) => isBoardCiStepFailure(step.status))) {
+    return "pending";
+  }
+  return null;
+}
 
 /** The attempt a running fix is on. The shell counts attempts begun. */
 function fixAttemptNumber(ci: BoardCardCi): number {
@@ -82,7 +105,9 @@ function fixAttemptNumber(ci: BoardCardCi): number {
  */
 export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
   const segments = boardCiSegments(ci);
+  const fixSegment = boardCiFixSegment(ci);
   const total = ci.steps.length;
+  const failedCount = ci.steps.filter((step) => isBoardCiStepFailure(step.status)).length;
   const passed = ci.steps.filter((step) => step.status === "passed").length;
   const running = ci.steps.find((step) => step.status === "running");
   const failed = ci.steps.find((step) => isBoardCiStepFailure(step.status));
@@ -92,6 +117,7 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
       return {
         chip: { label: "Queued", tone: "neutral" },
         segments,
+        fixSegment,
         count,
         detail: "Waiting for a CI slot",
         tooltip: "CI starts as soon as a slot is free",
@@ -100,6 +126,7 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
       return {
         chip: { label: "Passed", tone: "success" },
         segments,
+        fixSegment,
         count,
         detail: "Every step passed",
         tooltip: "CI passed; the card moves on",
@@ -108,15 +135,18 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
       return {
         chip: { label: "Can't run", tone: "warning" },
         segments,
+        fixSegment,
         count,
         detail: "CI couldn't finish this pass",
         tooltip: "Retry CI to run it again, or Skip CI",
       };
-    // T3O-49: the round-trip limit, or a conflict CI couldn't resolve.
+    // T3O-49/57: fix attempts used up, a fix the agent couldn't make, or a
+    // conflict CI couldn't resolve.
     case "stopped":
       return {
         chip: { label: "Needs you", tone: "attention" },
         segments,
+        fixSegment,
         count,
         detail: ci.stopReason ?? "CI stopped for a human",
         tooltip: "Retry CI, send the card back to review anyway, or Skip CI",
@@ -126,13 +156,16 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
       return {
         chip: { label: "Fixing", tone: "info" },
         segments,
+        fixSegment,
         count,
         detail:
-          failed === undefined
-            ? `Check failed · ${attempt}`
-            : `${failed.name} ${failWord(failed.status)} · ${attempt}`,
+          ci.fixIssues !== undefined
+            ? `Fix ${fixAttemptNumber(ci)} of ${ci.maxFixAttempts} · ${plural(ci.fixIssues, "issue", "issues")}`
+            : failed === undefined
+              ? `Check failed · ${attempt}`
+              : `${failed.name} ${failWord(failed.status)} · ${attempt}`,
         tooltip:
-          "A fix agent is working on the failed step. Every step re-runs from the top after the fix.",
+          "A fix agent is working on every failure. Every step re-runs from the top after the fix.",
       };
     }
     case "running": {
@@ -140,6 +173,7 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
         return {
           chip: { label: "Running", tone: "info" },
           segments,
+          fixSegment,
           count,
           detail: failed === undefined ? "Starting" : `${failed.name} ${failWord(failed.status)}`,
           tooltip: `CI over ${total} ${total === 1 ? "step" : "steps"}`,
@@ -150,11 +184,17 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
         ? 0
         : Math.max(0, Math.floor((nowMs - startedMs) / 60_000));
       const index = ci.steps.indexOf(running);
+      const elapsed = minutes < 1 ? "under 1m" : `${minutes}m`;
       return {
         chip: { label: "Running", tone: "info" },
         segments,
+        fixSegment,
         count,
-        detail: `${running.name} · ${minutes < 1 ? "under 1m" : `${minutes}m`}`,
+        // T3O-57: with Stop on failure off, failures so far lead the line.
+        detail:
+          failedCount > 0
+            ? `${failedCount} failed · running ${running.name} · ${elapsed}`
+            : `${running.name} · ${elapsed}`,
         tooltip: `Step ${index + 1} of ${total} running`,
       };
     }
@@ -190,8 +230,7 @@ export function boardCiLastOutcomeFace(input: {
   return {
     kind: "sent-back",
     line: sentBackLine(outcome),
-    tooltip:
-      "CI sent this card back to Code review. The failure went with it as a must-fix finding.",
+    tooltip: "Sent back to Code review from CI. The failure went with it as a must-fix finding.",
   };
 }
 
@@ -239,9 +278,12 @@ export function boardCiPassOutcomeChip(
   return { label: "Not finished", tone: "neutral" };
 }
 
-/** The collapsed pass header's one-liner: the failing step, or the skip. */
+/** The collapsed pass header's one-liner: the failing step, how many failed
+    when more than one did (T3O-57), or the skip. */
 export function boardCiPassSummary(pass: Pick<BoardCiPass, "outcome" | "steps">): string {
-  const failed = pass.steps.find((step) => isBoardCiStepFailure(step.status));
+  const failures = pass.steps.filter((step) => isBoardCiStepFailure(step.status));
+  if (failures.length > 1) return `${failures.length} of ${pass.steps.length} steps failed`;
+  const failed = failures[0];
   if (failed !== undefined) return `${failed.name} ${failWord(failed.status)}`;
   if (pass.outcome === "skipped") return "Skipped by a human";
   return "";
@@ -309,4 +351,77 @@ export function boardCiTailMeta(tail: string): string {
   return `Output tail · last ${BOARD_CI_TAIL_LINES} lines${
     lines < BOARD_CI_TAIL_LINES ? ` (${lines} captured)` : ""
   }`;
+}
+
+/**
+ * A failed pass's "Fix failures" row (T3O-57): the fix as the pass's last
+ * step, with one row per issue. Pass N of an entry is followed by fix N, so
+ * the fix's completion is found by `boardCiFixStepId(entry, ordinal)`.
+ * Outcomes show once the fix has reported; there is no live progress.
+ */
+export interface BoardCiFixRow {
+  readonly state: "running" | "reported" | "not-run";
+  readonly badge: BoardStepBadgeState;
+  readonly headline: string;
+  readonly issues: ReadonlyArray<{
+    readonly id: string;
+    readonly stepName: string;
+    readonly title: string;
+    readonly where: string | null;
+    readonly status: BoardCiFixIssueStatus;
+    readonly note: string | null;
+  }>;
+  readonly fixedSha: string | null;
+}
+
+export function boardCiFixRow(input: {
+  readonly pass: Pick<BoardCiPass, "runId" | "entry" | "ordinal" | "steps">;
+  readonly completions: ReadonlyArray<Pick<BoardStepCompletion, "stepId" | "payload">>;
+  readonly ci: Pick<BoardCardCi, "runId" | "phase" | "fixAttempts" | "maxFixAttempts"> | null;
+}): BoardCiFixRow | null {
+  const issues = boardCiFixIssues(input.pass.steps);
+  if (issues.length === 0) return null;
+  const stepId = boardCiFixStepId(input.pass.entry, input.pass.ordinal);
+  const completion = input.completions.findLast((candidate) => candidate.stepId === stepId);
+  const fixingNow =
+    input.ci !== null && input.ci.runId === input.pass.runId && input.ci.phase === "fixing";
+  const payload = completion === undefined ? null : decodeBoardCiFixPayload(completion.payload);
+  const outcomes = boardCiFixIssueOutcomes(issues, payload).map((outcome) => ({
+    id: outcome.issue.id,
+    stepName: outcome.issue.stepName,
+    title: outcome.issue.title,
+    where:
+      outcome.issue.file === undefined
+        ? null
+        : `${outcome.issue.file}${outcome.issue.line === undefined ? "" : `:${outcome.issue.line}`}`,
+    status: outcome.status,
+    note: outcome.note,
+  }));
+  const count = plural(issues.length, "issue", "issues");
+  if (completion === undefined && fixingNow && input.ci !== null) {
+    return {
+      state: "running",
+      badge: "fixing",
+      headline: `Fix ${Math.max(1, input.ci.fixAttempts)} of ${input.ci.maxFixAttempts} · ${count}`,
+      issues: outcomes,
+      fixedSha: null,
+    };
+  }
+  if (completion === undefined) {
+    return {
+      state: "not-run",
+      badge: "pending",
+      headline: "Not run",
+      issues: outcomes,
+      fixedSha: null,
+    };
+  }
+  const resolved = outcomes.filter((outcome) => outcome.status === "resolved").length;
+  return {
+    state: "reported",
+    badge: resolved === outcomes.length ? "passed" : "failed",
+    headline: `${resolved} of ${outcomes.length} resolved`,
+    issues: outcomes,
+    fixedSha: payload?.fixedSha ?? null,
+  };
 }
