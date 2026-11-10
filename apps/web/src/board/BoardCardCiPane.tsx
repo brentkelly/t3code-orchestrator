@@ -14,6 +14,7 @@ import {
   type EnvironmentId,
   type BoardCardCi,
   type BoardCardCiLastOutcome,
+  type BoardCiHeadline,
   type BoardCiPass,
   type BoardCiPassStep,
   type ThreadId,
@@ -34,6 +35,7 @@ import { useNowSecond } from "../hooks/useNowSecond";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import {
+  boardCiPaneHeadline,
   boardCiPaneStatus,
   boardCiPassOutcomeChip,
   boardCiPassSummary,
@@ -70,6 +72,40 @@ function Chip({ label, tone }: { readonly label: string; readonly tone: BoardCiC
     >
       {label}
     </span>
+  );
+}
+
+/** What failed and why (T3O-61), at the top of a failed, fixing or held
+    pass, with the line it came from one click away. */
+function HeadlineBox({
+  headline,
+  onShowInLog,
+}: {
+  readonly headline: BoardCiHeadline;
+  readonly onShowInLog: (() => void) | undefined;
+}) {
+  return (
+    <div className="flex shrink-0 flex-col gap-1 rounded-xl border border-warning/40 bg-warning/5 px-3.5 py-3">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="min-w-0 truncate text-[12.5px] font-semibold text-foreground">
+          {headline.what}
+        </span>
+        {headline.machine ? <Chip label="Machine problem" tone="warning" /> : null}
+        <span className="flex-1" />
+        {onShowInLog === undefined ? null : (
+          <button
+            className="shrink-0 text-[11.5px] text-muted-foreground hover:text-foreground"
+            onClick={onShowInLog}
+            type="button"
+          >
+            Show in log
+          </button>
+        )}
+      </div>
+      <span className="text-[11.5px]/[1.55] text-pretty break-words text-muted-foreground">
+        {headline.why}
+      </span>
+    </div>
   );
 }
 
@@ -474,6 +510,9 @@ export function BoardCardCiPane({
   const lastAttempt = ci != null && attempt >= ci.maxFixAttempts;
   const showConfirm = inCi && confirming && onSkipCi !== undefined;
   const usedFixes = lastOutcome?.fixAttemptsUsed ?? 0;
+  const paneHeadline = boardCiPaneHeadline({ pass: current, ci, live });
+  const headlineOffset = paneHeadline?.headline.logOffset ?? null;
+  const headlineIndex = paneHeadline?.index ?? null;
   return (
     <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
       {logTarget === null ? null : (
@@ -538,6 +577,25 @@ export function BoardCardCiPane({
         </button>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pt-3.5 pb-5">
+        {paneHeadline === null ? null : (
+          <HeadlineBox
+            headline={paneHeadline.headline}
+            onShowInLog={
+              current === undefined ||
+              current.logDir === null ||
+              headlineOffset === null ||
+              headlineIndex === null
+                ? undefined
+                : () =>
+                    setLogTarget({
+                      pass: current,
+                      index: headlineIndex,
+                      live: false,
+                      openAt: { offset: headlineOffset },
+                    })
+            }
+          />
+        )}
         {!inCi && lastOutcome != null ? (
           <div className="flex shrink-0 flex-col gap-[5px] rounded-xl border border-border bg-card px-3.5 py-3">
             <span className="text-[12.5px] font-semibold text-foreground">

@@ -13,6 +13,7 @@ import {
   type BoardCardCi,
   type BoardCardCiLastOutcome,
   type BoardCiPass,
+  type BoardCiHeadline,
   type BoardCiPassOutcome,
   type BoardCiProgress,
   type BoardCiStepStatus,
@@ -68,7 +69,14 @@ export interface BoardCiFace {
   /** Steps passed over steps in the pass, `2/3`. */
   readonly count: string;
   readonly detail: string;
+  /** A held pass's detail is amber (T3O-61): it says what is blocking it. */
+  readonly detailTone?: "warning";
   readonly tooltip: string;
+}
+
+/** What failed and why, as one line (T3O-61). */
+export function boardCiHeadlineText(headline: { readonly what: string; readonly why: string }) {
+  return `${headline.what}: ${headline.why}`;
 }
 
 const failWord = (status: BoardCiStepStatus) => (status === "timed-out" ? "timed out" : "failed");
@@ -119,8 +127,15 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
         chip: { label: boardCiHeldLabel(ci), tone: "warning" },
         segments,
         count,
-        detail: ci.stopReason ?? "CI couldn't finish this pass",
-        tooltip: "Retry CI to run it again, or Skip CI",
+        detail:
+          ci.headline === undefined
+            ? (ci.stopReason ?? "CI couldn't finish this pass")
+            : boardCiHeadlineText(ci.headline),
+        detailTone: "warning",
+        tooltip:
+          ci.headline !== undefined && ci.stopReason !== undefined
+            ? ci.stopReason
+            : "Retry CI to run it again, or Skip CI",
       };
     // T3O-49: the round-trip limit, or a conflict CI couldn't resolve.
     case "stopped":
@@ -138,9 +153,11 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
         segments,
         count,
         detail:
-          failed === undefined
-            ? `Check failed · ${attempt}`
-            : `${failed.name} ${failWord(failed.status)} · ${attempt}`,
+          ci.headline !== undefined
+            ? `${attempt} · ${boardCiHeadlineText(ci.headline)}`
+            : failed === undefined
+              ? `Check failed · ${attempt}`
+              : `${failed.name} ${failWord(failed.status)} · ${attempt}`,
         tooltip:
           "A fix agent is working on the failed step. Every step re-runs from the top after the fix.",
       };
@@ -151,7 +168,12 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
           chip: { label: "Running", tone: "info" },
           segments,
           count,
-          detail: failed === undefined ? "Starting" : `${failed.name} ${failWord(failed.status)}`,
+          detail:
+            failed === undefined
+              ? "Starting"
+              : ci.headline !== undefined
+                ? boardCiHeadlineText(ci.headline)
+                : `${failed.name} ${failWord(failed.status)}`,
           tooltip: `CI over ${total} ${total === 1 ? "step" : "steps"}`,
         };
       }
@@ -384,4 +406,22 @@ export function boardCiLogFileName(cardKey: string, stepName: string, ordinal: n
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return `${cardKey}-${step.length === 0 ? "step" : step}-pass${ordinal}.log`;
+}
+
+/** The CI pane's headline (T3O-61): the pass's first failing step that says
+    what failed and why, with its index for "Show in log". A live pass held
+    before its step's row landed falls back to the card's headline. */
+export function boardCiPaneHeadline(input: {
+  readonly pass: BoardCiPass | undefined;
+  readonly ci: BoardCardCi | null | undefined;
+  readonly live: boolean;
+}): { readonly headline: BoardCiHeadline; readonly index: number | null } | null {
+  const steps = input.pass?.steps ?? [];
+  const index = steps.findIndex(
+    (step) => isBoardCiStepFailure(step.status) && step.headline !== undefined,
+  );
+  const step = index === -1 ? undefined : steps[index];
+  if (step?.headline !== undefined) return { headline: step.headline, index };
+  const fallback = input.live ? input.ci?.headline : undefined;
+  return fallback === undefined ? null : { headline: fallback, index: null };
 }

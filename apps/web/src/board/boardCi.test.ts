@@ -2,12 +2,15 @@ import {
   BOARD_CI_STOPPED_BY_YOU_REASON,
   type BoardCardCi,
   type BoardCardCiStep,
+  type BoardCiPass,
+  type BoardCiPassStep,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardCiFace,
   boardCiLastOutcomeFace,
+  boardCiPaneHeadline,
   boardCiPaneStatus,
   boardCiPassOutcomeChip,
   boardCiSegments,
@@ -150,6 +153,37 @@ describe("boardCiFace", () => {
     expect(stoppedByYou.chip).toEqual({ label: "Stopped", tone: "warning" });
   });
 
+  it("T3O-61: a failed, fixing or held pass says what failed and why; held is amber", () => {
+    const headline = {
+      what: "panel → lint",
+      why: "No files matching the pattern",
+      machine: false,
+      logLine: 4,
+      logOffset: 80,
+      source: "pattern" as const,
+    };
+    const steps = [step("panel", "failed")];
+    const failed = boardCiFace(ci({ phase: "running", headline, steps }), NOW_MS);
+    expect(failed.detail).toBe("panel → lint: No files matching the pattern");
+    expect(failed.detailTone).toBeUndefined();
+    const fixing = boardCiFace(ci({ phase: "fixing", fixAttempts: 1, headline, steps }), NOW_MS);
+    expect(fixing.detail).toBe("fix 1 of 2 · panel → lint: No files matching the pattern");
+    const held = boardCiFace(
+      ci({
+        phase: "held",
+        machine: true,
+        stopReason: "Machine problem on box: Missing system library: libnspr4.so. Then Retry CI.",
+        headline: { ...headline, what: "panel", why: "Missing system library: libnspr4.so" },
+        steps,
+      }),
+      NOW_MS,
+    );
+    expect(held.chip).toEqual({ label: "Machine problem", tone: "warning" });
+    expect(held.detail).toBe("panel: Missing system library: libnspr4.so");
+    expect(held.detailTone).toBe("warning");
+    expect(held.tooltip).toContain("Then Retry CI.");
+  });
+
   it("is a neutral Queued chip while waiting for a slot", () => {
     const face = boardCiFace(ci({ phase: "queued", steps: [step("Check", "pending")] }), NOW_MS);
     expect(face.chip).toEqual({ label: "Queued", tone: "neutral" });
@@ -264,5 +298,49 @@ describe("formatting", () => {
     expect(boardCiLogFileName("T3-185", "Unit tests (web)", 2)).toBe(
       "T3-185-unit-tests-web-pass2.log",
     );
+  });
+});
+
+describe("boardCiPaneHeadline", () => {
+  const headline = {
+    what: "panel",
+    why: "Missing system library: libnspr4.so",
+    machine: true,
+    logLine: 3,
+    logOffset: 90,
+    source: "machine" as const,
+  };
+  const passStep = (status: BoardCiPassStep["status"], extra: Partial<BoardCiPassStep> = {}) =>
+    ({
+      name: "panel",
+      command: "./ci.sh",
+      timeoutMinutes: 30,
+      status,
+      startedAt: null,
+      finishedAt: null,
+      exitCode: null,
+      tail: "",
+      ...extra,
+    }) satisfies BoardCiPassStep;
+  const pass = (steps: ReadonlyArray<BoardCiPassStep>) => ({ steps }) as unknown as BoardCiPass;
+
+  it("heads with the first failing step that has one, by its index", () => {
+    expect(
+      boardCiPaneHeadline({
+        pass: pass([passStep("passed"), passStep("failed", { headline })]),
+        ci: null,
+        live: false,
+      }),
+    ).toEqual({ headline, index: 1 });
+  });
+
+  it("falls back to the card's headline only on the live pass", () => {
+    const card = ci({ phase: "held", headline });
+    const steps = pass([passStep("cancelled")]);
+    expect(boardCiPaneHeadline({ pass: steps, ci: card, live: true })).toEqual({
+      headline,
+      index: null,
+    });
+    expect(boardCiPaneHeadline({ pass: steps, ci: card, live: false })).toBeNull();
   });
 });
