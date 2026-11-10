@@ -8,6 +8,7 @@
  */
 import { Link } from "@tanstack/react-router";
 import {
+  BOARD_CI_STOPPED_BY_YOU_REASON,
   isBoardCiStepFailure,
   type BoardCardCi,
   type BoardCardCiLastOutcome,
@@ -314,12 +315,15 @@ export function BoardCardCiPane({
   onBackToThread,
   projectId,
   onRetryCi,
+  onStopCi,
   onSendBack,
 }: {
   readonly cardKey: string;
   /** T3O-49: Retry CI on a stopped or held pass, and "Send back to review
       anyway" on a stopped one. Human-only. */
   readonly onRetryCi?: (() => void) | undefined;
+  /** T3O-59: Stop CI on a queued, running or fixing pass. Human-only. */
+  readonly onStopCi?: (() => void) | undefined;
   readonly onSendBack?: (() => void) | undefined;
   /** T3O-49: the card's project, for the "CI settings" link. */
   readonly projectId?: ProjectId | undefined;
@@ -371,6 +375,18 @@ export function BoardCardCiPane({
             {status.label}
           </span>
         )}
+        {inCi &&
+        onStopCi !== undefined &&
+        ci != null &&
+        (ci.phase === "queued" || ci.phase === "running" || ci.phase === "fixing") ? (
+          <button
+            className="inline-flex h-6 shrink-0 items-center rounded-[7px] border border-input bg-popover px-2.5 text-[11.5px] font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
+            onClick={onStopCi}
+            type="button"
+          >
+            Stop CI
+          </button>
+        ) : null}
         <button
           className="inline-flex h-6 shrink-0 items-center gap-1 rounded-[7px] border border-input bg-popover pr-2.5 pl-1.5 text-[11.5px] font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
           onClick={onBackToThread}
@@ -412,12 +428,19 @@ export function BoardCardCiPane({
             )}
           >
             <span className="text-[12.5px] font-semibold text-foreground">
-              {ci.phase === "stopped" ? "Stopped for you" : "CI can't run this pass"}
+              {ci.phase === "stopped"
+                ? "Stopped for you"
+                : ci.machine === true
+                  ? "Machine problem"
+                  : ci.stopReason === BOARD_CI_STOPPED_BY_YOU_REASON
+                    ? "CI stopped"
+                    : "CI can't run this pass"}
             </span>
             <span className="text-[11.5px]/[1.55] text-pretty text-muted-foreground">
               {ci.phase === "stopped"
                 ? (ci.stopReason ?? "CI stopped for a human.")
-                : "The pass couldn't finish (the runner or the worktree wasn't available). Fix what's in the way, then retry."}
+                : (ci.stopReason ??
+                  "The pass couldn't finish (the runner or the worktree wasn't available). Fix what's in the way, then retry.")}
             </span>
             <div className="flex flex-wrap items-center gap-2">
               {onRetryCi === undefined ? null : (

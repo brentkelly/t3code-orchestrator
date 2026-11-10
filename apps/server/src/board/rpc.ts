@@ -33,6 +33,7 @@ import {
   type BoardCardDetailStreamItem,
   type BoardCardId,
   type BoardCardPullRequestActionInput,
+  type BoardCiActionInput,
   type BoardRequestReviewRoundInput,
   type BoardCardWorkerMoveAnswer,
   type BoardCardWorkerMoveRequest,
@@ -400,10 +401,13 @@ function makeBoardRpcHandlers(
         deps.boardSupervisor.skipCi(input.cardId, services.stampActor),
       ),
 
-    /** Retry CI and "Send back to review anyway" (T3O-49): human-only, like
-        Skip CI; no agent tool reaches them. */
-    [BOARD_WS_METHODS.retryCi]: (input: BoardCardPullRequestActionInput) =>
-      authorized(BOARD_WS_METHODS.retryCi, deps.boardSupervisor.retryCi(input.cardId)),
+    /** Retry CI, Stop CI (T3O-59) and "Send back to review anyway" (T3O-49):
+        human-only, like Skip CI; no agent tool reaches them. */
+    [BOARD_WS_METHODS.retryCi]: (input: BoardCiActionInput) =>
+      authorized(
+        BOARD_WS_METHODS.retryCi,
+        deps.boardSupervisor.retryCi(input.cardId, input.action ?? "retry"),
+      ),
     [BOARD_WS_METHODS.ciSendBack]: (input: BoardCardPullRequestActionInput) =>
       authorized(BOARD_WS_METHODS.ciSendBack, deps.boardSupervisor.ciSendBack(input.cardId)),
 

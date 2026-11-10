@@ -17,6 +17,7 @@
  * server will restart mid-step.
  */
 import {
+  BOARD_CI_STOPPED_BY_YOU_REASON,
   BOARD_LOCAL_WORKER_ID,
   BOARD_SEED_STAGE_IDS,
   DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS,
@@ -34,6 +35,8 @@ import {
   isBoardCiStepFailure,
   type BoardCiActionResult,
   isBoardCiPassSettledPhase,
+  parseBoardCiAgentStepId,
+  parseBoardCiFixStepId,
   boardCiScriptDefinitions,
   isBoardCiStageExecution,
   type BoardSkipCiResult,
@@ -240,6 +243,7 @@ import {
 import { stageExecutorFor } from "./stageExecutor.ts";
 import { BoardCiRunner, boardCiLogDir } from "./ci/BoardCiRunner.ts";
 import { remoteCiRunner } from "./ci/remoteCiRunner.ts";
+import { boardCiLowDiskReason } from "./ci/diskSpace.ts";
 import { WorkerConnections } from "./workers/WorkerConnections.ts";
 import { BOARD_HUMAN_ACTOR_FALLBACK_NAME, boardActivityActorFor } from "./activityActors.ts";
 import {
@@ -479,7 +483,11 @@ export interface SupervisorReactorShape {
   ) => Effect.Effect<BoardRequestReviewRoundResult>;
   /** Retry CI and "Send back to review anyway" (T3O-49): a human's way out
       of a stopped or held CI pass. */
-  readonly retryCi: (cardId: BoardCardId) => Effect.Effect<BoardCiActionResult>;
+  /** Retry CI, or Stop CI (T3O-59) with `action: "stop"`. */
+  readonly retryCi: (
+    cardId: BoardCardId,
+    action?: "retry" | "stop",
+  ) => Effect.Effect<BoardCiActionResult>;
   readonly ciSendBack: (cardId: BoardCardId) => Effect.Effect<BoardCiActionResult>;
 }
 
@@ -3412,6 +3420,10 @@ const make = Effect.gen(function* () {
     }
   });
 
+  /** A held pass's reason ends by saying what to do, once. */
+  const withCiRetryHint = (detail: string) =>
+    detail.includes("Retry CI") ? detail : `${detail} Retry CI, or Skip CI.`;
+
   /** Hold a card in CI with a reason on its rail: a human can Skip CI. */
   const holdInCi = Effect.fn("board-supervisor-holdInCi")(function* (
     card: BoardCard,
@@ -3446,10 +3458,16 @@ const make = Effect.gen(function* () {
       yield* leaveCiSwitchedOff(card);
       return;
     }
+    // A Retry or recovery can land here with a live pass: hold that pass with
+    // the real reason, or the sweep later holds it as one that stopped silently.
+    const holdBeforeStart = (held: BoardCard, why: string, action?: string) =>
+      held.ci !== null && isCiPassLive(held, held.ci.runId)
+        ? holdCiPass(held, held.ci.runId, why).pipe(Effect.asVoid)
+        : holdInCi(held, action === undefined ? why : `${why} ${action}`);
     const steps = projectConfig.ci.steps;
     if (steps.length === 0) {
       // T3O-49: emptying the step list doesn't turn CI off; the card waits.
-      yield* holdInCi(card, "This project's CI has no steps. Add one, or skip CI.");
+      yield* holdBeforeStart(card, "This project's CI has no steps.", "Add one, or skip CI.");
       return;
     }
     const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
@@ -3461,12 +3479,16 @@ const make = Effect.gen(function* () {
           ? remoteCiRunner(workerConnections.value, workerId)
           : null;
     if (runner === null) {
-      yield* holdInCi(card, "CI can't reach the card's worker. Restart the stage, or Skip CI.");
+      yield* holdBeforeStart(
+        card,
+        "CI can't reach the card's worker.",
+        "Restart the stage, or Skip CI.",
+      );
       return;
     }
     const worktree = yield* ensureWorktree(card);
     if (worktree.kind !== "ready") {
-      yield* holdInCi(card, "CI is waiting for the card's worktree, which is not ready.");
+      yield* holdBeforeStart(card, "CI is waiting for the card's worktree, which is not ready.");
       return;
     }
     const detail = yield* boardQueries
@@ -3534,8 +3556,7 @@ const make = Effect.gen(function* () {
     ) {
       const board = yield* readBoard;
       const card = board.cards.find((candidate) => candidate.id === cardId);
-      if (card === undefined || card.archivedAt !== null) return;
-      if (card.stage !== BOARD_SEED_STAGE_IDS.ci || card.ci?.runId !== runId) return;
+      if (card === undefined || !isCiPassLive(card, runId)) return;
       const segment = boardCiNextSegment(steps, from);
       if (segment.kind === "done") {
         const recorded = yield* dispatchLanded({
@@ -3545,7 +3566,8 @@ const make = Effect.gen(function* () {
           action: { kind: "finish-pass", runId, result: "passed" },
           createdAt: yield* nowIso,
         });
-        if (recorded) yield* advanceFromCi(card);
+        if (!recorded) ciLostResults.set(runId, { exitCode: 0 });
+        else if (yield* ciPassRecordedAs(card.id, runId, "passed")) yield* advanceFromCi(card);
         return;
       }
       if (segment.kind !== "scripts") {
@@ -3574,6 +3596,19 @@ const make = Effect.gen(function* () {
         return;
       }
       const settings = yield* boardSettings;
+      // T3O-59: the board's own disk (its database) needs room to record the
+      // pass; a worker's worktree disk is the runner's to check.
+      if (Option.isSome(serverConfig)) {
+        const lowDisk = yield* boardCiLowDiskReason(serverConfig.value.stateDir);
+        if (lowDisk !== null) {
+          yield* holdCiPass(card, runId, lowDisk, { machine: true });
+          return;
+        }
+      }
+      // Retry and Stop run on their own fibers: the pass may have been
+      // replaced or held while the worktree was readied.
+      const fresh = yield* readCard(cardId);
+      if (fresh === null || !isCiPassLive(fresh, runId)) return;
       yield* ciPasses.start({
         cardId: card.id,
         runId,
@@ -3588,6 +3623,12 @@ const make = Effect.gen(function* () {
         ),
         ...(runner === undefined ? {} : { runner }),
       });
+      // A hold that landed since the re-read cancelled nothing of this
+      // segment, so it is this segment's to drop.
+      const after = yield* readCard(cardId);
+      if (after === null || !isCiPassLive(after, runId)) {
+        if ((yield* cancelCiRun(cardId, runId)) !== null) yield* schedule();
+      }
     },
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: CI segment failed", { cause: Cause.pretty(cause) }),
@@ -3792,22 +3833,150 @@ const make = Effect.gen(function* () {
   );
 
   /** Settle a live pass as interrupted and hold the card for a human, with
-      why, so Retry CI can start it again. */
+      why, so Retry CI can start it again. Returns whether the hold landed. */
   const holdCiPass = Effect.fn("board-supervisor-holdCiPass")(function* (
     card: BoardCard,
     runId: string,
     detail: string,
+    options: { readonly machine?: boolean } = {},
   ) {
-    forgeSteps.delete(String(card.id));
-    yield* dispatch({
+    if (forgeSteps.get(String(card.id))?.runId === runId) forgeSteps.delete(String(card.id));
+    const reason = withCiRetryHint(detail);
+    const held = yield* dispatchLanded({
       type: "board.card.record-ci",
       commandId: yield* commandId("ci-pass-held"),
       cardId: card.id,
-      action: { kind: "finish-pass", runId, result: "interrupted" },
+      action: {
+        kind: "finish-pass",
+        runId,
+        result: "interrupted",
+        reason,
+        ...(options.machine === true ? { machine: true } : {}),
+      },
       createdAt: yield* nowIso,
     });
-    yield* holdInCi(card, detail);
+    if (!held) return false;
+    // A segment started after a Stop's cancel but before its hold landed
+    // would otherwise run on the held pass with nothing to stop it.
+    if ((yield* cancelCiRun(card.id, runId)) !== null) yield* schedule();
+    ciLostResults.delete(runId);
+    ciSuspectPasses.delete(String(card.id));
+    // A pass replaced or settled meanwhile is left alone by the record, so
+    // only a hold that took is noted on the rail.
+    const after = (yield* readBoard).cards.find((candidate) => candidate.id === card.id);
+    if (after?.ci?.runId !== runId || after.ci.phase !== "held") return false;
+    yield* holdInCi(card, reason);
+    return true;
   });
+
+  /** Cancel the card's pass fiber only if it is still `runId`'s. */
+  const cancelCiRun = (cardId: BoardCardId, runId: string) =>
+    Effect.suspend(() =>
+      ciPasses.current(cardId) === runId ? ciPasses.cancel(cardId) : Effect.succeed(null),
+    );
+
+  /** Whether `runId` is the card's pass and still under way: in CI, live,
+      and not yet passed, held or stopped (T3O-59). */
+  const isCiPassLive = (card: BoardCard, runId: string) =>
+    card.archivedAt === null &&
+    card.stage === BOARD_SEED_STAGE_IDS.ci &&
+    card.ci?.runId === runId &&
+    !isBoardCiPassSettledPhase(card.ci.phase);
+
+  /** Whether the result just recorded for `runId` took: a Stop or hold that
+      landed between the liveness read and the record leaves the card's pass
+      settled, and nothing may move it on (T3O-59). */
+  const ciPassRecordedAs = (cardId: BoardCardId, runId: string, result: "passed" | "failed") =>
+    readCard(cardId).pipe(
+      Effect.map((card) =>
+        result === "passed"
+          ? card !== null &&
+            card.archivedAt === null &&
+            card.stage === BOARD_SEED_STAGE_IDS.ci &&
+            card.ci?.runId === runId &&
+            card.ci.phase === "passed"
+          : card !== null && isCiPassLive(card, runId),
+      ),
+    );
+
+  /**
+   * Results whose record didn't land (T3O-59), by run id: in memory only, to
+   * word the hold the sweep makes. Nothing re-sends them — a resend that
+   * keeps failing is its own wedge.
+   */
+  const ciLostResults = new Map<string, { readonly exitCode: number | null }>();
+
+  /** Cards the last sweep found with a pass nothing is running, by card, with
+      the run it saw. A second sighting of the same run holds it (T3O-59). */
+  const ciSuspectPasses = new Map<string, string>();
+
+  /**
+   * A pass with nothing behind it (T3O-59): live in CI at `running` or
+   * `queued`, with no pass fiber (running, finishing or queued), no CI agent
+   * step of this run or fix step still going, and no forge step polling.
+   * Terminal step states stay on the card, so only live ones count.
+   */
+  const isCiPassOrphaned = (board: BoardState, card: BoardCard): boolean => {
+    const ci = card.ci;
+    if (ci === null || card.archivedAt !== null || card.stage !== BOARD_SEED_STAGE_IDS.ci) {
+      return false;
+    }
+    if (ci.phase !== "running" && ci.phase !== "queued") return false;
+    if (ciPasses.current(card.id) !== null) return false;
+    if (forgeSteps.get(String(card.id))?.runId === ci.runId) return false;
+    const state = boardCardStepState(board, card.id);
+    if (state !== null && !isBoardTerminalStepStatus(state.status)) {
+      if (parseBoardCiFixStepId(state.stepId) !== null) return false;
+      if (parseBoardCiAgentStepId(state.stepId)?.runId === ci.runId) return false;
+    }
+    return true;
+  };
+
+  /** The hold's words for an orphaned pass: what's known of how it ended. */
+  const ciOrphanReason = (runId: string): string => {
+    const lost = ciLostResults.get(runId);
+    if (lost === undefined) return "The CI run stopped without reporting a result. Retry CI.";
+    const code = lost.exitCode === null ? "" : ` (exit code ${lost.exitCode})`;
+    return `The CI script ended${code} but its result couldn't be saved. Retry CI.`;
+  };
+
+  /** Hold every pass that has had nothing behind it on two sweeps in a row
+      (T3O-59). One sighting isn't enough: a worktree being readied, an agent
+      step settling before the next segment, or a queued result look the same
+      for a moment. A hold that doesn't land is tried on the next sweep. */
+  const sweepOrphanedCiPasses = Effect.gen(function* () {
+    const board = yield* readBoard;
+    const seen = new Set<string>();
+    for (const card of board.cards) {
+      if (!isCiPassOrphaned(board, card)) continue;
+      const runId = card.ci!.runId;
+      seen.add(String(card.id));
+      if (ciSuspectPasses.get(String(card.id)) !== runId) {
+        ciSuspectPasses.set(String(card.id), runId);
+        continue;
+      }
+      yield* holdCiPass(card, runId, ciOrphanReason(runId));
+    }
+    for (const cardId of ciSuspectPasses.keys()) {
+      if (!seen.has(cardId)) ciSuspectPasses.delete(cardId);
+    }
+    // A lost result whose pass was retried, skipped or moved on never gets
+    // its hold, so it's dropped here.
+    const unsettled = new Set(
+      board.cards.flatMap((card) =>
+        card.ci === null || isBoardCiPassSettledPhase(card.ci.phase) ? [] : [card.ci.runId],
+      ),
+    );
+    for (const runId of ciLostResults.keys()) {
+      if (!unsettled.has(runId)) ciLostResults.delete(runId);
+    }
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: CI orphan sweep failed", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+  );
 
   /**
    * Read one card's forge checks and act on them (T3O-49). Before the first
@@ -3824,12 +3993,7 @@ const make = Effect.gen(function* () {
       const entry = forgeSteps.get(String(cardId));
       if (entry === undefined) return;
       const card = yield* readCard(cardId);
-      if (
-        card === null ||
-        card.archivedAt !== null ||
-        card.stage !== BOARD_SEED_STAGE_IDS.ci ||
-        card.ci?.runId !== entry.runId
-      ) {
+      if (card === null || !isCiPassLive(card, entry.runId)) {
         forgeSteps.delete(String(cardId));
         return;
       }
@@ -4022,7 +4186,7 @@ const make = Effect.gen(function* () {
       plan: Extract<BoardStagePlan, { kind: "ci-agent-done" }>,
       threadId: ThreadId | null,
     ) {
-      if (card.ci?.runId !== plan.runId) return;
+      if (!isCiPassLive(card, plan.runId)) return;
       const { rows, steps } = yield* ciPassSnapshot(card.id, plan.runId);
       const row = ciStepRow(card, rows, plan.index);
       if (row === undefined || steps === null) return;
@@ -4238,7 +4402,7 @@ const make = Effect.gen(function* () {
         });
         if (!began) return;
         const board = yield* readBoard;
-        yield* dispatch({
+        const selected = yield* dispatchLanded({
           type: "board.card.select-step",
           commandId: yield* commandId("select-step"),
           cardId: card.id,
@@ -4258,6 +4422,7 @@ const make = Effect.gen(function* () {
           baseTipAtRoundStart: yield* baseTipForPlan(card, false),
           createdAt: yield* nowIso,
         });
+        if (!selected) return;
         yield* provisionPlacedBuildStep(card.id);
         yield* schedule();
         return;
@@ -4268,17 +4433,34 @@ const make = Effect.gen(function* () {
   });
 
   /** A pass's fiber finished: record it, then move on or fix. */
-  const handleCiPassFinished = Effect.fn("board-supervisor-handleCiPassFinished")(function* (
+  const handleCiPassFinished = (finished: BoardCiPassFinished) =>
+    // T3O-59: handled once, by the launch's token; a duplicate report, or one
+    // from a launch cancelled since, finds nothing to claim. The entry stays
+    // until this is done, so the sweep never mistakes it for a dead pass.
+    Effect.suspend(() =>
+      ciPasses.claim(finished.cardId, finished.token)
+        ? handleClaimedCiPass(finished).pipe(
+            Effect.ensuring(Effect.sync(() => ciPasses.settle(finished.cardId, finished.token))),
+          )
+        : Effect.void,
+    );
+
+  const handleClaimedCiPass = Effect.fn("board-supervisor-handleClaimedCiPass")(function* (
     finished: BoardCiPassFinished,
   ) {
     // The slot it held is free for the next queued pass or step.
     yield* schedule();
     const card = yield* readCard(finished.cardId);
-    if (card === null || card.archivedAt !== null) return;
-    // A pass the card has since left or replaced reports nothing more.
-    if (card.stage !== BOARD_SEED_STAGE_IDS.ci || card.ci?.runId !== finished.runId) return;
+    // A pass the card has since left, replaced, held or stopped reports
+    // nothing more.
+    if (card === null || !isCiPassLive(card, finished.runId) || card.ci === null) return;
     if (finished.outcome.result === "unavailable") {
-      yield* holdCiPass(card, finished.runId, `${finished.outcome.detail} Retry CI, or Skip CI.`);
+      yield* holdCiPass(
+        card,
+        finished.runId,
+        finished.outcome.detail,
+        finished.outcome.machine === true ? { machine: true } : {},
+      );
       return;
     }
     const passed = finished.outcome.result === "passed";
@@ -4305,7 +4487,12 @@ const make = Effect.gen(function* () {
       action: { kind: "finish-pass", runId: finished.runId, result: "failed" },
       createdAt: yield* nowIso,
     });
-    if (!recorded) return;
+    if (!recorded) {
+      // The sweep holds the pass; this is how it says what happened.
+      ciLostResults.set(finished.runId, { exitCode: finished.outcome.exitCode ?? null });
+      return;
+    }
+    if (!(yield* ciPassRecordedAs(card.id, finished.runId, "failed"))) return;
     const detail = yield* boardQueries
       .boardCardDetail(card.id)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
@@ -4420,12 +4607,74 @@ const make = Effect.gen(function* () {
     if (card === undefined || card.archivedAt !== null) return { outcome: "unknown-card" } as const;
     if (card.stage !== BOARD_SEED_STAGE_IDS.ci) return { outcome: "not-in-ci" } as const;
     if (!isBoardCiSwitchedOn(board, card.projectId)) return { outcome: "ci-off" } as const;
-    if (card.ci !== null && !isBoardCiPassSettledPhase(card.ci.phase)) {
+    // T3O-59: a pass with nothing behind it can be retried before the sweep
+    // holds it; the new pass settles its row as interrupted.
+    if (
+      card.ci !== null &&
+      !isBoardCiPassSettledPhase(card.ci.phase) &&
+      !isCiPassOrphaned(board, card)
+    ) {
       return { outcome: "running" } as const;
     }
     yield* startCiPass(card.id, { fixThreadId: null, fresh: card.ci?.phase === "stopped" });
     return { outcome: "retried" } as const;
   });
+
+  /**
+   * Stop CI (T3O-59): a human's stop of a queued, running or fixing pass. Its
+   * fiber is cancelled, a CI agent or fix step is abandoned and its turn
+   * interrupted, a forge step stops polling, and the pass is held. Retry CI
+   * runs it again.
+   */
+  const stopCi = Effect.fn("board-supervisor-stopCi")(function* (cardId: BoardCardId) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined || card.archivedAt !== null) return { outcome: "unknown-card" } as const;
+    if (card.stage !== BOARD_SEED_STAGE_IDS.ci) return { outcome: "not-in-ci" } as const;
+    if (card.ci === null || isBoardCiPassSettledPhase(card.ci.phase)) {
+      return { outcome: "not-running" } as const;
+    }
+    const runId = card.ci.runId;
+    const cancelled = yield* ciPasses.cancel(card.id);
+    const state = boardCardStepState(board, card.id);
+    if (
+      state !== null &&
+      !isBoardTerminalStepStatus(state.status) &&
+      (parseBoardCiFixStepId(state.stepId) !== null ||
+        parseBoardCiAgentStepId(state.stepId)?.runId === runId)
+    ) {
+      yield* settleStep({ card, state, outcome: "abandoned" });
+      if (state.status !== "stalled" && state.status !== "paused" && state.threadId !== null) {
+        yield* interruptOrphan(state.threadId);
+        // Named so its interrupt is not read as a human Stop of the step.
+        abandonedThreads.add(String(state.threadId));
+      }
+    }
+    forgeSteps.delete(String(card.id));
+    const held = yield* holdCiPass(card, runId, BOARD_CI_STOPPED_BY_YOU_REASON);
+    if (cancelled !== null || state !== null) yield* schedule();
+    if (held) return { outcome: "stopped" } as const;
+    // The pass finished or was replaced before the stop's record landed.
+    const after = (yield* readBoard).cards.find((candidate) => candidate.id === cardId);
+    return after?.ci?.runId === runId && !isBoardCiPassSettledPhase(after.ci.phase)
+      ? ({ outcome: "failed" } as const)
+      : ({ outcome: "not-running" } as const);
+  });
+
+  /** A CI action's answer, with a fault answered as `failed`. */
+  const answerCiAction = <E>(
+    action: "retry" | "stop",
+    cardId: BoardCardId,
+    effect: Effect.Effect<BoardCiActionResult, E>,
+  ): Effect.Effect<BoardCiActionResult> =>
+    effect.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning(`board supervisor: ${action} CI failed`, {
+          cardId,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as({ outcome: "failed" } as const)),
+      ),
+    );
 
   /** "Send back to review anyway" (T3O-49), from a stopped card. */
   const ciSendBack = Effect.fn("board-supervisor-ciSendBack")(function* (cardId: BoardCardId) {
@@ -11644,6 +11893,8 @@ const make = Effect.gen(function* () {
           Effect.andThen(sweepAutoMergeHolds),
           // T3O-49: forge-check CI steps poll on the same cadence.
           Effect.andThen(sweepCiForgeSteps),
+          // T3O-59: a pass with nothing behind it is held on the second tick.
+          Effect.andThen(sweepOrphanedCiPasses),
           Effect.andThen(sweepAutoArchives),
         );
     }
@@ -11785,7 +12036,10 @@ const make = Effect.gen(function* () {
     start,
     reconcile,
     // T3O-49: forge-check CI steps poll on the sweep too.
-    sweep: sweepTimeouts.pipe(Effect.andThen(sweepCiForgeSteps)),
+    sweep: sweepTimeouts.pipe(
+      Effect.andThen(sweepCiForgeSteps),
+      Effect.andThen(sweepOrphanedCiPasses),
+    ),
     fireSchedules: sweepSchedules,
     fireAutoArchives: sweepAutoArchives,
     startArmed: sweepArmedCards,
@@ -11805,15 +12059,10 @@ const make = Effect.gen(function* () {
         Effect.andThen(Effect.suspend(() => (ciPasses.busy() ? drainCi() : Effect.void))),
       );
     }),
-    retryCi: (cardId) =>
-      retryCi(cardId).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("board supervisor: retry CI failed", {
-            cardId,
-            cause: Cause.pretty(cause),
-          }).pipe(Effect.as({ outcome: "failed" } as const)),
-        ),
-      ),
+    retryCi: (cardId, action = "retry") =>
+      action === "stop"
+        ? answerCiAction("stop", cardId, stopCi(cardId))
+        : answerCiAction("retry", cardId, retryCi(cardId)),
     ciSendBack: (cardId) =>
       ciSendBack(cardId).pipe(
         Effect.catchCause((cause) =>

@@ -65,13 +65,26 @@ The card's **CI** tab shows each step, how long it took, a failed step's output 
 failures, an agent step's thread, a forge step's checks, the fix agent at work, and earlier passes.
 Full logs stay in the worktree's `.t3/ci/<runId>/` folder, which the board keeps out of git.
 
-## Can't run, Skip CI and turning CI off
+## Can't run, Stop CI, Skip CI and turning CI off
 
-When a pass can't run (no worktree, a worker out of reach, no pull request for a forge step), the card
-shows **Can't run**; fix what's in the way and press **Retry CI**, or **Skip CI…**, which moves the
-card to Ready for merge without a passing run and records the skip under your name.
+When a pass can't run, the card shows **Can't run** with the reason: no worktree, a worker out of
+reach or whose connection closed mid-run, no pull request for a forge step, or a CI script that
+stopped without its result being saved. The board notices a pass with nothing left running within
+about a minute, so a crashed or killed script never leaves a card stuck on running. Fix what's in the
+way and press **Retry CI**, or **Skip CI…**, which moves the card to Ready for merge without a
+passing run and records the skip under your name.
 
-Retry CI, Send back to review anyway and Skip CI are for people only; agents can't press them.
+Before a pass runs, the board checks that the disk holding the card's worktree, and the disk holding
+the T3 Code data on the server running the board, each have at least 2 GiB free. If not, the card
+shows **Machine problem** with the free space on that machine, and no fix agent starts: free some
+space, then press **Retry CI**.
+
+**Stop CI**, in the CI tab's header while a pass is queued, running or being fixed, stops it: running
+steps and any CI agent are stopped, and the card waits with "Stopped by you" until you press Retry
+CI.
+
+Retry CI, Stop CI, Send back to review anyway and Skip CI are for people only; agents can't press
+them.
 
 Turning **Run CI for this project** off asks first when cards are in CI: they move on to Ready for
 merge with auto-merge off. Removing every step does not turn CI off: cards already in CI wait until

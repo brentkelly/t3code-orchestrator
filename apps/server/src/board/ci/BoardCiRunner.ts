@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalTimersInEffect:off
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalTimersInEffect:off globalDate:off
 /**
  * Runs a CI pass's steps in a card's worktree (T3O-44/49).
  *
@@ -32,6 +32,11 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+
+import { boardCiLowDiskReason } from "./diskSpace.ts";
 
 export interface BoardCiRunRequest {
   readonly runId: string;
@@ -42,6 +47,9 @@ export interface BoardCiRunRequest {
   /** The pass index of `steps[0]`, so a later segment's logs don't overwrite
       an earlier one's (T3O-49). */
   readonly indexOffset?: number;
+  /** Each complete output line of a step, by its pass index (T3O-59), in
+      order, delivered before the step settles. */
+  readonly onLine?: (index: number, line: BoardCiLine) => Effect.Effect<void>;
 }
 
 export interface BoardCiStepProgress {
@@ -54,10 +62,19 @@ export type BoardCiRunResult =
       readonly result: "passed" | "failed";
       /** The step that failed or timed out, or null on a pass. */
       readonly failedIndex: number | null;
+      /** The failed step's exit code (T3O-59), so a result that can't be
+          saved can still say how the script ended. */
+      readonly exitCode?: number | null;
     }
   /** The pass could not run at all (a placed worker out of reach): not a CI
       failure, so no fix agent is started. */
-  | { readonly result: "unavailable"; readonly failedIndex: null; readonly detail: string };
+  | {
+      readonly result: "unavailable";
+      readonly failedIndex: null;
+      readonly detail: string;
+      /** The machine, not the code, stopped it: a full disk (T3O-59). */
+      readonly machine?: boolean;
+    };
 
 export interface BoardCiRunnerShape {
   readonly run: (
@@ -192,17 +209,97 @@ const killGroup = (child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals)
   }
 };
 
+/** One output line of a step (T3O-59): numbered from 1, with the byte offset
+    of its start in the step's `<n>.log`. */
+export interface BoardCiLine {
+  readonly line: string;
+  readonly lineNo: number;
+  readonly byteOffset: number;
+}
+
+/** Most characters a line keeps; its bytes are still counted in full. */
+const BOARD_CI_LINE_MAX_CHARS = 64 * 1024;
+
+/**
+ * Splits a step's output into lines on `\n` only (a `\r\n`'s `\r` is dropped
+ * from the text, a bare `\r` stays), tracking each line's byte offset so it
+ * matches the step's log file, and when output last arrived.
+ */
+export class BoardCiLineReader {
+  private partial = "";
+  private partialBytes = 0;
+  private nextLineNo = 1;
+  private offset = 0;
+  lastOutputAt: number | null = null;
+
+  push(chunk: string, nowMs: number = Date.now()): ReadonlyArray<BoardCiLine> {
+    if (chunk.length === 0) return [];
+    this.lastOutputAt = nowMs;
+    const lines: BoardCiLine[] = [];
+    let start = 0;
+    for (;;) {
+      const newline = chunk.indexOf("\n", start);
+      const segment = chunk.slice(start, newline === -1 ? undefined : newline);
+      this.partialBytes += Buffer.byteLength(segment, "utf8");
+      if (this.partial.length < BOARD_CI_LINE_MAX_CHARS) {
+        this.partial += segment.slice(0, BOARD_CI_LINE_MAX_CHARS - this.partial.length);
+      }
+      if (newline === -1) break;
+      lines.push(this.take(1));
+      start = newline + 1;
+    }
+    return lines;
+  }
+
+  /** The last line, when the output didn't end with a newline. */
+  flush(): ReadonlyArray<BoardCiLine> {
+    return this.partialBytes === 0 ? [] : [this.take(0)];
+  }
+
+  private take(terminatorBytes: number): BoardCiLine {
+    const line: BoardCiLine = {
+      line: this.partial.endsWith("\r") ? this.partial.slice(0, -1) : this.partial,
+      lineNo: this.nextLineNo,
+      byteOffset: this.offset,
+    };
+    this.nextLineNo += 1;
+    this.offset += this.partialBytes + terminatorBytes;
+    this.partial = "";
+    this.partialBytes = 0;
+    return line;
+  }
+}
+
+/** How a step is stopped; tests shorten the waits and stub the kill. */
+export interface BoardCiStepTiming {
+  readonly killGraceMs: number;
+  readonly exitDrainMs: number;
+  readonly killGroup: (child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals) => boolean;
+}
+
+const DEFAULT_STEP_TIMING: BoardCiStepTiming = {
+  killGraceMs: KILL_GRACE_MS,
+  exitDrainMs: EXIT_DRAIN_MS,
+  killGroup,
+};
+
 /** Run one step to completion, killing its process group on timeout or when
-    the surrounding fiber is interrupted. */
-const runStep = (input: {
+    the surrounding fiber is interrupted. Every way out is bounded (T3O-59): a
+    step past its time limit settles `timed-out` a grace after its kill even if
+    the child never exits, and a log that won't flush is not waited on. */
+export const runBoardCiStep = (input: {
   readonly command: string;
   readonly cwd: string;
   readonly timeoutMs: number;
   readonly tail: BoardCiTail;
   readonly logPath: string;
   readonly resultPath: string;
+  /** Every chunk of output, as it arrives. Must not block. */
+  readonly onOutput?: (text: string) => void;
+  readonly timing?: BoardCiStepTiming;
 }): Effect.Effect<StepExit> =>
   Effect.callback<StepExit>((resume) => {
+    const timing = input.timing ?? DEFAULT_STEP_TIMING;
     const log = NodeFS.createWriteStream(input.logPath, { flags: "w" });
     let logBroken = false;
     // Without a listener a write error (ENOSPC, EACCES) is an uncaught
@@ -215,6 +312,8 @@ const runStep = (input: {
     let settled = false;
     let timedOut = false;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
+    let hardTimer: ReturnType<typeof setTimeout> | null = null;
+    let drainTimer: ReturnType<typeof setTimeout> | null = null;
     const child = NodeChildProcess.spawn(input.command, {
       cwd: input.cwd,
       shell: true,
@@ -227,40 +326,57 @@ const runStep = (input: {
     child.stderr?.setEncoding("utf8");
     const onData = (text: string) => {
       input.tail.push(text);
+      input.onOutput?.(text);
       if (!logBroken) log.write(text);
     };
     child.stdout?.on("data", onData);
     child.stderr?.on("data", onData);
-    // Resolves only once the log is flushed (or has failed), so a reader of
-    // the step's log after it settles sees all of it.
-    const finish = (exit: StepExit) => {
+    const destroyPipes = () => {
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+    };
+    const clearTimers = () => {
+      clearTimeout(timer);
+      if (hardTimer !== null) clearTimeout(hardTimer);
+      if (drainTimer !== null) clearTimeout(drainTimer);
+    };
+    // Normally resolves once the log is flushed (or has failed), so a reader
+    // of the step's log after it settles sees all of it; never waits longer
+    // than the drain bound, and not at all on the hard-settle path.
+    const finish = (exit: StepExit, waitForLog: boolean) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimers();
       let resumed = false;
       const done = () => {
         if (resumed) return;
         resumed = true;
         resume(Effect.succeed(exit));
       };
-      if (logBroken || log.destroyed) return done();
-      log.once("error", done);
-      log.end(done);
+      if (!waitForLog || logBroken || log.destroyed) {
+        if (!log.destroyed) log.end();
+        return done();
+      }
+      const bound = setTimeout(done, timing.exitDrainMs);
+      const flushed = () => {
+        clearTimeout(bound);
+        done();
+      };
+      log.once("error", flushed);
+      log.end(flushed);
     };
     // Not unref()'d: on shutdown the SIGKILL must still land, or a step that
     // ignores TERM outlives the server and overlaps the recovered pass.
     // An empty group arms no SIGKILL: its pgid could be reused by then.
     const terminate = () => {
-      if (!killGroup(child, "SIGTERM")) return;
+      if (!timing.killGroup(child, "SIGTERM")) return;
       if (killTimer === null) {
-        killTimer = setTimeout(() => killGroup(child, "SIGKILL"), KILL_GRACE_MS);
+        killTimer = setTimeout(() => timing.killGroup(child, "SIGKILL"), timing.killGraceMs);
       }
     };
-    let drainTimer: ReturnType<typeof setTimeout> | null = null;
     const settleExit = (code: number | null) => {
-      if (drainTimer !== null) clearTimeout(drainTimer);
-      if (timedOut) finish({ status: "timed-out", exitCode: code });
-      else finish({ status: code === 0 ? "passed" : "failed", exitCode: code });
+      if (timedOut) finish({ status: "timed-out", exitCode: code }, true);
+      else finish({ status: code === 0 ? "passed" : "failed", exitCode: code }, true);
     };
     const timer = setTimeout(() => {
       timedOut = true;
@@ -268,34 +384,68 @@ const runStep = (input: {
         `\n[board] Step timed out after ${Math.round(input.timeoutMs / 60_000)} min; killed.\n`,
       );
       terminate();
+      // A child that never reports its exit (stuck in the kernel, or a kill
+      // that can't land) must not hold the pass for ever.
+      hardTimer = setTimeout(() => {
+        destroyPipes();
+        finish({ status: "timed-out", exitCode: null }, false);
+      }, timing.killGraceMs + timing.exitDrainMs);
     }, input.timeoutMs);
     child.on("error", (error) => {
       input.tail.push(`\n[board] Could not run the step: ${error.message}\n`);
-      finish({ status: "failed", exitCode: null });
+      finish({ status: "failed", exitCode: null }, true);
     });
     child.on("exit", (code) => {
-      if (settled) return;
+      if (settled || drainTimer !== null) return;
       // What the step left running in its group is stopped with it.
       terminate();
       drainTimer = setTimeout(() => {
-        child.stdout?.destroy();
-        child.stderr?.destroy();
+        destroyPipes();
         settleExit(code);
-      }, EXIT_DRAIN_MS);
+      }, timing.exitDrainMs);
     });
     child.on("close", (code) => settleExit(code));
     return Effect.sync(() => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
-      // Interrupted: kill now, and make sure nothing survives the grace.
+      clearTimers();
+      // Interrupted: kill now, and make sure nothing survives the grace. The
+      // pipes stay open: a shell that can't report its killed child dies of
+      // SIGPIPE before its TERM trap runs.
       terminate();
-      if (drainTimer !== null) clearTimeout(drainTimer);
       log.end();
     });
   });
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+/** Run a step with its output split into lines for `onLine` (T3O-59). Node's
+    callbacks only push onto a queue; a fiber scoped to the step delivers the
+    lines, and the last of them lands before the step's result. */
+const withStepLines = <A>(
+  index: number,
+  onLine: BoardCiRunRequest["onLine"],
+  run: (onOutput: ((text: string) => void) | undefined) => Effect.Effect<A>,
+): Effect.Effect<A> => {
+  if (onLine === undefined) return run(undefined);
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const reader = new BoardCiLineReader();
+      const lines = yield* Queue.unbounded<BoardCiLine, Cause.Done>();
+      const delivery = yield* Stream.fromQueue(lines).pipe(
+        Stream.runForEach((line) => onLine(index, line)),
+        Effect.forkScoped,
+      );
+      const result = yield* run((text) => {
+        for (const line of reader.push(text)) Queue.offerUnsafe(lines, line);
+      });
+      for (const line of reader.flush()) Queue.offerUnsafe(lines, line);
+      Queue.endUnsafe(lines);
+      yield* Fiber.join(delivery);
+      return result;
+    }),
+  );
+};
 
 /** The step's `$T3O_CI_RESULT` file, if it wrote one. A malformed file is a
     line in the tail, never a failure. */
@@ -347,6 +497,11 @@ const trackedChanges = (cwd: string): Effect.Effect<string | null> =>
 
 export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunner.run")(
   function* (request, emit) {
+    // T3O-59: a full disk is the machine's problem, said before any step runs.
+    const lowDisk = yield* boardCiLowDiskReason(request.cwd);
+    if (lowDisk !== null) {
+      return { result: "unavailable", failedIndex: null, detail: lowDisk, machine: true } as const;
+    }
     yield* ensureCiLogsExcluded(request.cwd);
     const logDirError = yield* Effect.try({
       try: () => NodeFS.mkdirSync(request.logDir, { recursive: true }),
@@ -396,14 +551,17 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
             });
             const fileIndex = index + (request.indexOffset ?? 0);
             const resultPath = NodePath.join(request.logDir, `${fileIndex}.result.json`);
-            const exit = yield* runStep({
-              command: definition.command,
-              cwd: request.cwd,
-              timeoutMs: definition.timeoutMinutes * 60_000,
-              tail,
-              logPath: NodePath.join(request.logDir, `${fileIndex}.log`),
-              resultPath,
-            });
+            const exit = yield* withStepLines(fileIndex, request.onLine, (onOutput) =>
+              runBoardCiStep({
+                command: definition.command,
+                cwd: request.cwd,
+                timeoutMs: definition.timeoutMinutes * 60_000,
+                tail,
+                logPath: NodePath.join(request.logDir, `${fileIndex}.log`),
+                resultPath,
+                ...(onOutput === undefined ? {} : { onOutput }),
+              }),
+            );
             const result = readStepResult(resultPath, tail);
             return { index, base, startedAt, exit, tail, result };
           }),
@@ -418,6 +576,7 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
         .join("\n");
       const finishedAt = yield* nowIso;
       let failedIndex: number | null = null;
+      let exitCode: number | null = null;
       for (const step of settled) {
         const status =
           step.exit.status === "passed" && dirty.length > 0 ? "failed" : step.exit.status;
@@ -438,9 +597,12 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
             ...(step.result === null ? {} : { result: step.result }),
           },
         });
-        if (status !== "passed" && failedIndex === null) failedIndex = step.index;
+        if (status !== "passed" && failedIndex === null) {
+          failedIndex = step.index;
+          exitCode = step.exit.exitCode;
+        }
       }
-      if (failedIndex !== null) return { result: "failed", failedIndex } as const;
+      if (failedIndex !== null) return { result: "failed", failedIndex, exitCode } as const;
     }
     return { result: "passed", failedIndex: null } as const;
   },

@@ -21,6 +21,9 @@ export type BoardCiRecordResult =
   | { readonly ok: true; readonly payload: Omit<BoardCardCiRecordedPayload, "cardId" | "action"> }
   | { readonly ok: false; readonly refusal: string };
 
+/** A held pass's reason rides every card shell, so it stays short. */
+const BOARD_CI_HOLD_REASON_CHARS = 400;
+
 const refuse = (refusal: string): BoardCiRecordResult => ({ ok: false, refusal });
 
 export function decideBoardCiRecord(
@@ -49,6 +52,13 @@ export function decideBoardCiRecord(
         return refuse(`Card '${card.key}' is not in CI, so no CI pass can start.`);
       }
       if (action.steps.length === 0) return refuse("A CI pass needs at least one step.");
+      // T3O-59: a fix's re-run only follows a pass still being fixed; one a
+      // human stopped or restarted meanwhile stays as they left it.
+      if (action.fixThreadId !== null && current?.phase !== "fixing") {
+        return refuse(
+          `Card '${card.key}' is no longer being fixed, so its fix's re-run can't start.`,
+        );
+      }
       const settled: BoardCiPassSettle[] = [];
       let activity: BoardCardCiRecordedPayload["activity"] = null;
       if (current !== null && current.runId !== action.runId) {
@@ -104,9 +114,13 @@ export function decideBoardCiRecord(
     }
 
     case "step": {
-      if (current === null || current.runId !== action.runId) {
-        // A late report from a pass already superseded: its row still takes
-        // the step, the card does not.
+      if (
+        current === null ||
+        current.runId !== action.runId ||
+        isBoardCiPassSettledPhase(current.phase)
+      ) {
+        // A late report from a pass already superseded, held or stopped
+        // (T3O-59): its row still takes the step, the card does not.
         return done({ ci: current, ciLastOutcome: card.ciLastOutcome });
       }
       if (action.index >= current.steps.length) {
@@ -127,8 +141,19 @@ export function decideBoardCiRecord(
 
     case "finish-pass": {
       const live = current !== null && current.runId === action.runId;
+      // T3O-59: Stop CI and Retry run beside the serial worker, so a finish can
+      // arrive for a pass already settled or replaced. Its row settles; the
+      // card's pass is left alone.
+      const settledAlready = live && isBoardCiPassSettledPhase(current.phase);
+      const inCi = card.stage === BOARD_SEED_STAGE_IDS.ci && card.archivedAt === null;
       if (action.result === "passed") {
         if (!live) return refuse(`Pass ${action.runId} is not this card's current CI pass.`);
+        if (settledAlready) {
+          return done(
+            { ci: current, ciLastOutcome: card.ciLastOutcome },
+            { settled: [{ runId: action.runId, outcome: "passed", finishedAt: at }] },
+          );
+        }
         return done(
           { ci: { ...current, phase: "passed" }, ciLastOutcome: null },
           {
@@ -147,8 +172,14 @@ export function decideBoardCiRecord(
       // was archived): the row is settled. A card still live in CI is held,
       // its unfinished steps cancelled, until a human restarts or skips it.
       const outcome = action.result;
+      if (inCi && (!live || settledAlready)) {
+        return done(
+          { ci: current, ciLastOutcome: card.ciLastOutcome },
+          { settled: [{ runId: action.runId, outcome, finishedAt: at }] },
+        );
+      }
       const held =
-        live && card.stage === BOARD_SEED_STAGE_IDS.ci && card.archivedAt === null
+        live && inCi
           ? {
               ...current,
               phase: "held" as const,
@@ -157,6 +188,10 @@ export function decideBoardCiRecord(
                   ? { ...step, status: "cancelled" as const }
                   : step,
               ),
+              ...(action.reason === undefined
+                ? {}
+                : { stopReason: action.reason.slice(0, BOARD_CI_HOLD_REASON_CHARS).trimEnd() }),
+              ...(action.machine === true ? { machine: true as const } : {}),
             }
           : null;
       return done(
@@ -168,6 +203,10 @@ export function decideBoardCiRecord(
     case "begin-fix": {
       if (current === null || current.runId !== action.runId) {
         return refuse(`Pass ${action.runId} is not this card's current CI pass.`);
+      }
+      // T3O-59: a late failure of a pass already held or stopped starts no fix.
+      if (current.phase !== "running") {
+        return refuse(`Pass ${action.runId} is ${current.phase}, so no fix can start on it.`);
       }
       if (current.fixAttempts >= current.maxFixAttempts) {
         return refuse(`Card '${card.key}' has used all ${current.maxFixAttempts} CI fixes.`);
