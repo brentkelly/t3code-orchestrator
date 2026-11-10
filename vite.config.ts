@@ -686,9 +686,8 @@ export default defineConfig({
         },
       },
       {
-        // T3o: last, so it wins. Board UI predates upstream's token, React Compiler and copy
-        // rules; they stay off for fork-owned web files only until T3O-67 moves it onto
-        // them. Upstream files keep the full rule set (T3O-54, T3O-74).
+        // T3o: the board's design-system restyle is pending under T3O-67; these four
+        // shadcn rules stay off for fork-owned web files until it lands.
         files: [
           "apps/web/src/board/**",
           "apps/web/src/components/settings/Board*.{ts,tsx}",
@@ -700,40 +699,6 @@ export default defineConfig({
           "shadcn/no-restyle": "off",
           "shadcn/no-raw-colors": "off",
           "shadcn/require-static-classes": "off",
-          "t3code/no-low-value-comments": "off",
-          "t3code/no-manual-memo": "off",
-          "t3code/no-em-dash-copy": "off",
-          // T3o (T3O-79): replaced react-effect-budget upstream in v0.1.6.
-          "t3code/no-unreasoned-state-sync": "off",
-          "react/purity": "off",
-          "react/refs": "off",
-          "react/set-state-in-effect": "off",
-          "react/exhaustive-effect-dependencies": "off",
-          "react/memo-dependencies": "off",
-          "react/no-array-index-key": "off",
-        },
-      },
-      {
-        // T3o: the same deferral for fork-owned server, package and script files, which
-        // predate upstream's comment, copy and Effect.fn rules (T3O-74; cleanup is T3O-67).
-        files: [
-          "apps/server/src/board/**",
-          "apps/server/src/mcp/toolkits/board/**",
-          "apps/server/src/t3o/**",
-          "packages/contracts/src/board*.ts",
-          "packages/contracts/src/commandOrigin*.ts",
-          "packages/contracts/src/worktreeRemoveHook*.ts",
-          "packages/client-runtime/src/**/board*.ts",
-          "packages/shared/src/boardThreadState*.ts",
-          "packages/shared/src/gitenv*.ts",
-          "scripts/kill-dev.ts",
-          "scripts/t3o-*.mjs",
-        ],
-        rules: {
-          "t3code/no-low-value-comments": "off",
-          "t3code/no-em-dash-copy": "off",
-          "t3code/prefer-effect-fn": "off",
-          "t3code/no-inline-schema-compile": "off",
         },
       },
     ],

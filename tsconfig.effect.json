@@ -127,34 +127,6 @@
               "packages/provider-testing/**/*"
             ],
             "options": { "diagnosticSeverity": { "effectFnOpportunity": "off" } }
-          },
-          // T3o: fork-owned server code predates upstream's v0.1.3 Effect style diagnostics;
-          // they stay off there until T3O-67 moves it onto them (T3O-74).
-          {
-            "include": ["**/board/**/*.ts", "**/t3o/**/*.ts"],
-            "options": {
-              "diagnosticSeverity": {
-                "effectFnOpportunity": "off",
-                "flatMapConditionalToFilterOrFail": "off",
-                "catchConditionalRefailToCatchIf": "off",
-                "raceFirstWithSleepToTimeout": "off",
-                "catchToIgnore": "off",
-                "unnecessaryEffectGen": "off",
-                "allOfMapToForEach": "off",
-                "catchToOrElseSucceed": "off",
-                "unnecessaryFailYieldableError": "off",
-                "preferSucceedSomeOrNone": "off",
-                "effectSucceedWithVoid": "off",
-                "provideLayerSucceedToProvideService": "off",
-                "flatMapIgnoredParamToAndThen": "off",
-                "mapSomeToAsSome": "off",
-                "unnecessaryPipeChain": "off",
-                "redundantMapError": "off",
-                "optionMatchToFromOption": "off",
-                "catchUnfailableEffect": "off",
-                "preferTypedSchemaDecoder": "off"
-              }
-            }
           }
         ]
       }
