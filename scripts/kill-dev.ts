@@ -258,24 +258,20 @@ const collectOutput = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<s
  * missing `lsof`, or an exit code that only means "nothing matched", both leave
  * us with the same answer as an empty listing.
  */
-function readCommandOutput(
-  executable: string,
-  args: ReadonlyArray<string>,
-): Effect.Effect<string, never, ChildProcessSpawner.ChildProcessSpawner> {
-  return Effect.gen(function* () {
+const readCommandOutput = Effect.fn("KillDev.readCommandOutput")(
+  function* (executable: string, args: ReadonlyArray<string>) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(ChildProcess.make(executable, args));
     const [stdout] = yield* Effect.all([collectOutput(child.stdout), child.exitCode], {
       concurrency: "unbounded",
     });
     return stdout;
-  }).pipe(
-    Effect.scoped,
-    Effect.timeoutOption(Duration.seconds(10)),
-    Effect.map(Option.getOrElse(() => "")),
-    Effect.catchCause(() => Effect.succeed("")),
-  );
-}
+  },
+  Effect.scoped,
+  Effect.timeoutOption(Duration.seconds(10)),
+  Effect.map(Option.getOrElse(() => "")),
+  Effect.catchCause(() => Effect.succeed("")),
+);
 
 function readListenerPids(
   port: number,
@@ -327,38 +323,35 @@ const isAlive = (pid: number): Effect.Effect<boolean> =>
     }
   });
 
-function terminate(
+const terminate = Effect.fn("KillDev.terminate")(function* (
   pids: ReadonlyArray<number>,
   platform: string,
-): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner> {
-  return Effect.gen(function* () {
-    if (platform === "win32") {
-      yield* Effect.forEach(
-        pids,
-        (pid) => readCommandOutput("taskkill", ["/PID", String(pid), "/T", "/F"]),
-        { discard: true },
-      );
-      return;
-    }
+) {
+  if (platform === "win32") {
+    yield* Effect.forEach(
+      pids,
+      (pid) => readCommandOutput("taskkill", ["/PID", String(pid), "/T", "/F"]),
+      { discard: true },
+    );
+    return;
+  }
 
-    yield* Effect.forEach(pids, (pid) => signal(pid, "SIGTERM"), { discard: true });
+  yield* Effect.forEach(pids, (pid) => signal(pid, "SIGTERM"), { discard: true });
 
-    const deadline =
-      Duration.toMillis(TERMINATE_GRACE) / Duration.toMillis(TERMINATE_POLL_INTERVAL);
-    let survivors = pids;
-    for (let attempt = 0; attempt < deadline && survivors.length > 0; attempt += 1) {
-      yield* Effect.sleep(TERMINATE_POLL_INTERVAL);
-      survivors = yield* Effect.filter(survivors, isAlive);
-    }
+  const deadline = Duration.toMillis(TERMINATE_GRACE) / Duration.toMillis(TERMINATE_POLL_INTERVAL);
+  let survivors = pids;
+  for (let attempt = 0; attempt < deadline && survivors.length > 0; attempt += 1) {
+    yield* Effect.sleep(TERMINATE_POLL_INTERVAL);
+    survivors = yield* Effect.filter(survivors, isAlive);
+  }
 
-    if (survivors.length > 0) {
-      yield* Effect.logInfo(
-        `[kill] SIGKILL after ${Duration.format(TERMINATE_GRACE)}: ${survivors.join(", ")}`,
-      );
-      yield* Effect.forEach(survivors, (pid) => signal(pid, "SIGKILL"), { discard: true });
-    }
-  });
-}
+  if (survivors.length > 0) {
+    yield* Effect.logInfo(
+      `[kill] SIGKILL after ${Duration.format(TERMINATE_GRACE)}: ${survivors.join(", ")}`,
+    );
+    yield* Effect.forEach(survivors, (pid) => signal(pid, "SIGKILL"), { discard: true });
+  }
+});
 
 export const runKillDev = Effect.fn("runKillDev")(function* (input: {
   readonly ports: ReadonlyArray<number>;
