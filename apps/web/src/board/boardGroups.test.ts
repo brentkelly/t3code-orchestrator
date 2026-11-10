@@ -97,7 +97,7 @@ describe("boardGroupCardVm", () => {
 
   it("draws one pip per active child, deferred ones excluded, sorted by state", () => {
     expect(vm.pips.map((pip) => pip.state)).toEqual(["done", "running", "waiting", "blocked"]);
-    expect(vm.pips[2]!.tooltip).toBe("C-1 · Card c-1 — needs you");
+    expect(vm.pips[2]!.tooltip).toBe("C-1 · Card c-1 (needs you)");
   });
 
   it("orders pips done, running, needs you, blocked, not started, keeping child order within a state", () => {

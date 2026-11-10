@@ -207,7 +207,7 @@ export function boardWorkerChoices(input: {
   return [local, ...rows];
 }
 
-/** The closed Worker field: "Follow default — This server", or the pin. */
+/** The closed Worker field: "Follow default (This server)", or the pin. */
 export function boardWorkerFieldLabel(
   pinnedWorkerId: BoardWorkerId | null,
   state: BoardWorkersState,

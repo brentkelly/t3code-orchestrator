@@ -722,7 +722,7 @@ export function BoardCardCreateDialog({
                 <BoardWorkerPicker
                   choices={workerField.choices}
                   className="h-8 w-full"
-                  followLabel={`Follow default (${boardWorkerLabel(workerField.workers.defaultWorkerId, workerField.workers)}`}
+                  followLabel={`Follow default (${boardWorkerLabel(workerField.workers.defaultWorkerId, workerField.workers)})`}
                   onSelect={setPinnedWorkerId}
                   onSetUp={workerField.setUp}
                   pinnedWorkerId={pinnedWorkerId}

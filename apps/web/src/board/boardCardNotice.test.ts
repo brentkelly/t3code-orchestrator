@@ -261,7 +261,7 @@ describe("the worktree-kept notice (T3O-52)", () => {
     workerLabel: "gpu-rig",
     label: "Move this card",
     tooltip: "gpu-rig was removed from the board. Move this card to keep going.",
-    panelTitle: "Worker removed — move this card",
+    panelTitle: "Worker removed: move this card",
     panelBody: "…",
   };
   const offline: BoardCardWorkerTrouble = {

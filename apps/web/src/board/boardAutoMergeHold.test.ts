@@ -37,7 +37,8 @@ describe("boardAutoMergePill (T3O-38, D12/D13)", () => {
     expect(boardAutoMergePill({ heldSince: HELD, gaveUp: false, done: false, nowMs: NOW })).toEqual(
       {
         label: "Merge held · 12m",
-        tooltip: "The forge refused the merge. The board is retrying — nothing is needed from you.",
+        tooltip:
+          "The forge refused the merge. The board is retrying, so nothing is needed from you.",
         icon: "clock",
       },
     );

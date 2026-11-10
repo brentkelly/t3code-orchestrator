@@ -334,7 +334,7 @@ describe("BoardCardReviewPane", () => {
         onBackToThread={noop}
       />,
     );
-    expect(html).toContain("Not running — card is off the review stage");
+    expect(html).toContain("Not running: card is off the review stage");
     expect(html).not.toContain("running now");
     expect(html).not.toContain("waiting to run");
   });
