@@ -211,7 +211,7 @@ export function BoardCardModelsPopover({
         })}
         {stepRunning ? (
           <p className="mt-2.5 text-[11px] text-muted-foreground">
-            A step is running. It keeps the model it started with — this applies to the next run.
+            A step is running. It keeps the model it started with. This applies to the next run.
           </p>
         ) : null}
       </PopoverPopup>

@@ -92,7 +92,7 @@ export function BoardCardPlanPane({
                     // when navigation is wired (t3o-25): it opens the child
                     // inside this card's sub-board.
                     <BoardHint
-                      label={`${child.key} — ${child.title}${onOpenChild === undefined ? "" : " (open in the sub-board)"}`}
+                      label={`${child.key}: ${child.title}${onOpenChild === undefined ? "" : " (open in the sub-board)"}`}
                     >
                       <button
                         className={

@@ -2889,7 +2889,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           {props.parentCard != null ? (
             // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
             // back into the sub-board it lives on, with this sheet still open.
-            <BoardHint label={`Part of ${props.parentCard.key}'s sub-board — open it`}>
+            <BoardHint label={`Part of ${props.parentCard.key}'s sub-board: open it`}>
               <button
                 className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
                 disabled={props.onOpenParentSubBoard === undefined}

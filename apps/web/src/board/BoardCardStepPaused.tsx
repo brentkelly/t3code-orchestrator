@@ -49,7 +49,7 @@ export function BoardCardStepPaused(props: {
           </span>
           <span className="break-words text-[12px] leading-[1.5] text-muted-foreground">
             You stopped this, so nothing is running and the board is leaving it alone. Resuming puts
-            it back in the queue — it carries on in the same thread as soon as an agent slot is
+            it back in the queue, and it carries on in the same thread as soon as an agent slot is
             free.
           </span>
         </div>

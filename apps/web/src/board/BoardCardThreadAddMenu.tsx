@@ -130,7 +130,7 @@ export function BoardCardThreadAddMenuBody({
           hint={stageRestart.disabledReason ?? undefined}
           icon={<RotateCwIcon className="size-3.5" />}
           onClick={onRestartStage}
-          title={`New thread — restart ${boardStageLabelMidSentence(stageRestart.label)}`}
+          title={`New thread: restart ${boardStageLabelMidSentence(stageRestart.label)}`}
         />
       ) : null}
       <MenuRow

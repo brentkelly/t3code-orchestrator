@@ -446,8 +446,8 @@ export function BoardCardThreadPane({
               {selected?.tombstoned === true
                 ? "The link stays so the card's history reads honestly. Start another thread to keep working."
                 : stageRestart !== null
-                  ? "Moving a card into this stage starts one by itself. Start another here, or adopt an existing thread — either way the brief, labels and dependencies travel with the card."
-                  : "Start a thread here, or adopt an existing one — the brief, labels and dependencies travel with the card."}
+                  ? "Moving a card into this stage starts one by itself. Start another here, or adopt an existing thread. Either way the brief, labels and dependencies travel with the card."
+                  : "Start a thread here, or adopt an existing one. The brief, labels and dependencies travel with the card."}
             </div>
             <div className="pt-0.5">
               <BoardCardThreadAddMenu

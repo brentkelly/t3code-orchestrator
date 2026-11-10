@@ -308,7 +308,7 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
                 // merge-stage card that never built one has none. The pane
                 // explains either way, so the tooltip points there and lets it
                 // say which of the two this card is.
-                tooltip: "Ready to merge, but this card has no pull request — open it to see why",
+                tooltip: "Ready to merge, but this card has no pull request. Open it to see why",
                 tint: "text-warning-foreground",
               }
             : notice.kind === "worker-move"
@@ -936,7 +936,7 @@ export function DraggableBoardCard({
       draggable
       role="button"
       tabIndex={0}
-      aria-label={`${card.key} — ${card.title}`}
+      aria-label={`${card.key}: ${card.title}`}
       className={cn(
         "cursor-grab rounded-xl focus-visible:outline-2 focus-visible:outline-ring",
         dragging && "opacity-40",

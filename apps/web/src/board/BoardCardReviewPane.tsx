@@ -211,13 +211,13 @@ function phaseNote(
     if (status === "running") return "A fresh thread is reading the diff with no history of it.";
     if (status === "done") {
       if (round.reviewMalformed) return "Recorded a payload nothing can read.";
-      if (findings.length === 0) return "No findings — nothing blocks.";
+      if (findings.length === 0) return "No findings. Nothing blocks.";
       return `${findings.length} ${findings.length === 1 ? "issue" : "issues"} recorded, ${blocking} blocking.`;
     }
     return "Not started.";
   }
   if (phase === "triage") {
-    if (status === "skipped") return "Nothing to triage — the review came back clean.";
+    if (status === "skipped") return "Nothing to triage: the review came back clean.";
     // The triage note reports what TRIAGE did — the raw dispositions — not the
     // adjudication-folded resolutions, which would erase a disputed call here.
     const fixed = findings.filter((f) => f.disposition === "fixed").length;
@@ -251,7 +251,7 @@ function phaseNote(
       ...(disputed > 0 ? [`${disputed} still disputed`] : []),
       ...(escalated > 0 ? [`${escalated} escalated to you`] : []),
     ];
-    return `${parts.join(", ")} — the loop holds for your call.`;
+    return `${parts.join(", ")}. The loop holds for your call.`;
   }
   if (status === "skipped") return "Only runs when a finding blocks the round.";
   if (status === "running") return "An independent adjudicator is checking the fixes.";
@@ -265,7 +265,7 @@ function phaseNote(
     const escalated = findings.filter((f) => f.verdict === "escalated").length;
     const escalatedNote = escalated > 0 ? ` ${escalated} escalated to you.` : "";
     return overruled > 0
-      ? `${overruled} ${overruled === 1 ? "response" : "responses"} overruled — re-triage takes ${overruled === 1 ? "it" : "them"} in this round.${escalatedNote}`
+      ? `${overruled} ${overruled === 1 ? "response" : "responses"} overruled. Re-triage takes ${overruled === 1 ? "it" : "them"} in this round.${escalatedNote}`
       : escalated > 0
         ? escalatedNote.trim()
         : counts.disputed > 0
@@ -494,7 +494,7 @@ function statusPill(
       // off mid-loop.
       if (offStage) {
         return {
-          label: started ? "Not running — card is off the review stage" : "Not started yet",
+          label: started ? "Not running: card is off the review stage" : "Not started yet",
           spinning: false,
           className: "bg-muted text-muted-foreground",
         };
@@ -531,15 +531,15 @@ function statusPill(
       return {
         label:
           loop.convergedBy === "adjudicator"
-            ? "Loop settled — adjudicator ruled nothing new"
-            : "Loop settled — nothing blocking",
+            ? "Loop settled: adjudicator ruled nothing new"
+            : "Loop settled: nothing blocking",
         spinning: false,
         className: "bg-success/14 text-success-foreground",
       };
     case "stuck":
       // Violet: a human's ruling is what the loop waits on.
       return {
-        label: `Stuck on round ${loop.currentRound} — needs your call`,
+        label: `Stuck on round ${loop.currentRound}: needs your call`,
         spinning: false,
         className: "bg-attention/12 text-attention-foreground",
       };
@@ -558,7 +558,7 @@ function statusPill(
       };
     case "stopped":
       return {
-        label: "Stopped after this round — holding for you",
+        label: "Stopped after this round, holding for you",
         spinning: false,
         className: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
       };
@@ -998,8 +998,8 @@ function PlannedRoundSettings({
       />
       <p className="text-[11px] text-muted-foreground">
         {model === null
-          ? `Same as ${previousRound < 1 ? "the review stage's configured model" : `round ${previousRound}`}. Only round ${round}'s review runs on this — triage and adjudication keep their configured models.`
-          : `Only round ${round}'s review runs on this — triage and adjudication keep their configured models.`}
+          ? `Same as ${previousRound < 1 ? "the review stage's configured model" : `round ${previousRound}`}. Only round ${round}'s review runs on this. Triage and adjudication keep their configured models.`
+          : `Only round ${round}'s review runs on this. Triage and adjudication keep their configured models.`}
       </p>
     </div>
   );
@@ -1184,7 +1184,7 @@ export function BoardCardReviewPane({
                       ? `Show round ${n}`
                       : plannable(n)
                         ? `Set the review model for round ${n}`
-                        : `Round ${n} is already in flight — its model was frozen when the step was dispatched`
+                        : `Round ${n} is already in flight. Its model was frozen when the step was dispatched`
                   }
                 >
                   <button

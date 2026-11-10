@@ -71,9 +71,9 @@ export function BoardCardProjectConfirmDialog({
                 card-number floor. Hedged here so a rare off-by-one reads as the
                 estimate it always was rather than a broken promise. */}
             <span className="block">
-              Reissued as <code className="font-mono text-foreground">{nextKey}</code> — the next
+              Reissued as <code className="font-mono text-foreground">{nextKey}</code>, the next
               free number in {projectName}. The{" "}
-              <code className="font-mono text-foreground">{cardKey}</code> key is retired — moving
+              <code className="font-mono text-foreground">{cardKey}</code> key is retired: moving
               the card back gives it a third key, not this one.
             </span>
             {/* Named by description rather than by branch: only the CURRENT
@@ -99,8 +99,8 @@ export function BoardCardProjectConfirmDialog({
                 {retainedThreads === 1
                   ? "One other thread on this card stays"
                   : `${retainedThreads} other threads on this card stay`}{" "}
-                in {currentProjectName} — a thread cannot move between projects, so anything you
-                send there still runs against that repository.
+                in {currentProjectName}. A thread cannot move between projects, so anything you send
+                there still runs against that repository.
               </span>
             ) : null}
           </AlertDialogDescription>

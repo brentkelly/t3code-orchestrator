@@ -52,11 +52,11 @@ export interface BoardProjectOption {
 export function boardCardProjectLockHint(lock: BoardCardProjectLock): string {
   switch (lock.kind) {
     case "built":
-      return "Pinned — the build has a worktree on this project";
+      return "Pinned: the build has a worktree on this project";
     case "child":
-      return "Pinned — lands on a group's integration branch in this project";
+      return "Pinned: lands on a group's integration branch in this project";
     case "parent":
-      return "Pinned — its own integration branch lives in this project";
+      return "Pinned: its own integration branch lives in this project";
   }
 }
 

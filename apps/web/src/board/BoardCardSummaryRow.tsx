@@ -176,10 +176,10 @@ export function BoardCardReviewBlock({
           label={`${rounds}${
             held
               ? round.outcome === "stopped"
-                ? " — stopped, no convergence"
+                ? " (stopped, no convergence)"
                 : round.outcome === "stuck"
-                  ? " — stuck, needs your call"
-                  : " — no convergence"
+                  ? " (stuck, needs your call)"
+                  : " (no convergence)"
               : ""
           }`}
         >
@@ -187,10 +187,10 @@ export function BoardCardReviewBlock({
             aria-label={`${rounds}${
               held
                 ? round.outcome === "stopped"
-                  ? " — stopped, no convergence"
+                  ? " (stopped, no convergence)"
                   : round.outcome === "stuck"
-                    ? " — stuck, needs your call"
-                    : " — no convergence"
+                    ? " (stuck, needs your call)"
+                    : " (no convergence)"
                 : ""
             }`}
             className="flex items-center"

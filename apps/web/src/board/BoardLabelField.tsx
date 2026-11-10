@@ -298,7 +298,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
 
             {model.matches.length === 0 && !model.canCreate ? (
               <div className="px-2 py-2 text-[12.5px] text-muted-foreground">
-                No labels yet — type a name to create one.
+                No labels yet. Type a name to create one.
               </div>
             ) : null}
 

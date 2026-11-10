@@ -616,7 +616,7 @@ export function BoardCardCreateDialog({
             stage auto-executes, since creating there starts an agent. */}
         {resolveBoardStageExecution(boardSettings, stage, projectExecutionConfig).autoExecute ? (
           <p className="mx-4 mt-2 rounded-md bg-warning/10 px-2.5 py-1.5 text-[12px] text-warning-foreground">
-            {boardStageLabel(stages, stage)} runs automatically — creating here starts an agent.
+            {boardStageLabel(stages, stage)} runs automatically: creating here starts an agent.
           </p>
         ) : null}
 
@@ -755,7 +755,7 @@ export function BoardCardCreateDialog({
                 <BoardWorkerPicker
                   choices={workerField.choices}
                   className="h-8 w-full"
-                  followLabel={`Follow default — ${boardWorkerLabel(workerField.workers.defaultWorkerId, workerField.workers)}`}
+                  followLabel={`Follow default (${boardWorkerLabel(workerField.workers.defaultWorkerId, workerField.workers)}`}
                   onSelect={setPinnedWorkerId}
                   onSetUp={workerField.setUp}
                   pinnedWorkerId={pinnedWorkerId}

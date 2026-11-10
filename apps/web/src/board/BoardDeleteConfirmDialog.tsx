@@ -56,7 +56,7 @@ function describeDeletion(input: {
       ? "its worktree and branches, including any commits that were never merged"
       : input.branch === null
         ? null
-        : `its worktree, and the local and remote ${input.branch} branches — including any commits that were never merged`;
+        : `its worktree, and the local and remote ${input.branch} branches, including any commits that were never merged`;
   const also = [threads, disk].filter((part) => part !== null);
   const tail = also.length === 0 ? "" : `, along with ${also.join(" and ")}`;
   return `This cannot be undone. The card, its brief, its plans and its history go for good${tail}. Archiving instead keeps all of it and is reversible.`;
