@@ -19,6 +19,7 @@ import {
   boardSplitProposedNote,
   boardCardChildRunningLabel,
   isBoardCardWorking,
+  boardCardWorkingLabel,
   isBoardReviewLoopHeld,
 } from "@t3tools/contracts";
 import type {
@@ -481,7 +482,7 @@ export function BoardCardContent({
   const inCi = card.stage === BOARD_SEED_STAGE_IDS.ci;
   const workingLabel =
     isBoardCardWorking(card) && !isGroup
-      ? "Thread running"
+      ? boardCardWorkingLabel(card)
       : childRunning !== undefined && childRunning > 0
         ? boardCardChildRunningLabel(childRunning)
         : null;

@@ -318,14 +318,25 @@ describe("formatting", () => {
     expect(boardCiTailMeta("a\nb\n")).toBe("Output tail · last 200 lines (2 captured)");
   });
 
-  it("reads a step's time against its limit, its silence, progress and log file name (T3O-60)", () => {
+  it("reads a step's nearing limit, its silence, progress and log file name (T3O-60)", () => {
     const startedAt = "2026-01-01T00:00:00.000Z";
-    expect(boardCiStepLimit({ startedAt, timeoutMinutes: 60 }, NOW_MS)).toEqual({
-      elapsed: 10,
-      limit: 60,
-      over: false,
-    });
-    expect(boardCiStepLimit({ startedAt, timeoutMinutes: 5 }, NOW_MS).over).toBe(true);
+    // T3O-68: the limit shows only once it matters, from 85% of it.
+    const minutesAgo = (minutes: number) => new Date(NOW_MS - minutes * 60_000).toISOString();
+    expect(boardCiStepLimit({ startedAt, timeoutMinutes: 60 }, NOW_MS)).toBeNull();
+    expect(
+      boardCiStepLimit({ startedAt: minutesAgo(50.9), timeoutMinutes: 60 }, NOW_MS),
+    ).toBeNull();
+    expect(boardCiStepLimit({ startedAt: minutesAgo(51), timeoutMinutes: 60 }, NOW_MS)).toBe(
+      "Stops at 60 min",
+    );
+    expect(boardCiStepLimit({ startedAt: minutesAgo(60), timeoutMinutes: 60 }, NOW_MS)).toBe(
+      "Stops at 60 min",
+    );
+    expect(boardCiStepLimit({ startedAt: minutesAgo(60.1), timeoutMinutes: 60 }, NOW_MS)).toBe(
+      "Over its 60 min limit",
+    );
+    expect(boardCiStepLimit({ startedAt, timeoutMinutes: 5 }, NOW_MS)).toBe("Over its 5 min limit");
+    expect(boardCiStepLimit({ startedAt: null, timeoutMinutes: 5 }, NOW_MS)).toBeNull();
     expect(boardCiSilenceLabel("2026-01-01T00:02:00.000Z", NOW_MS)).toBe("No output for 8 min");
     expect(boardCiSilenceLabel(undefined, NOW_MS)).toBeNull();
     expect(boardCiProgressFraction({ done: 53, total: 212 })).toBe(0.25);
