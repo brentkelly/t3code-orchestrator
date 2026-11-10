@@ -102,7 +102,7 @@ export const BOARD_AUTO_PLAN_OFF_INSTRUCTION =
 export const BOARD_ENVELOPE_PLAN_DELIVERABLE = [
   BOARD_ENVELOPE_DECISION_LOG,
   "When the plan is agreed, record it with board_propose_plans, as ONE plan.",
-  "Two or more plans is not a longer plan — it splits this card into that many child cards, each with its own branch, build and code review, and holds the card behind a human approval gate until someone approves it.",
+  "Two or more plans is not a longer plan: it splits this card into that many child cards, each with its own branch, build and code review, and holds the card behind a human approval gate until someone approves it.",
   "Split only when this card is a large feature whose parts are worth building and reviewing one at a time, or whose parts could be built concurrently for a real speed-up; then pass splitRationale saying why.",
   "A bug fix, a contained change, or work that is merely long is one plan with several sections.",
   "In a split, mark each plan planned: true when it is a full implementation plan, or planned: false when it is a brief that still needs planning, and pass recommendedAutoBuild and recommendedMergeTarget: every child fully planned → auto-build on with its own branch; an epic breakdown → auto-build off, inherit; already inside a group with its own branch → prefer inherit.",
@@ -115,7 +115,7 @@ export const BOARD_ENVELOPE_PLAN_DELIVERABLE = [
 export const BOARD_ENVELOPE_BUILD_DELIVERABLE = [
   `Complete a succeeded build with a JSON payload ${BOARD_BUILD_SUMMARY_PAYLOAD_SHAPE}, and put the same \`lead\` sentence in \`summary\`.`,
   "`lead` is one sentence covering what was built, the branch, the commit count and whether it is pushed.",
-  "`notes` holds every plan change, unfinished item and shortcut — `kind` is plan_change, not_done or shortcut, with optional `detail` — and these never go in `areas`.",
+  "`notes` holds every plan change, unfinished item and shortcut (`kind` is plan_change, not_done or shortcut, with optional `detail`), and these never go in `areas`.",
   "`checks` lists every check or test suite you ran or deliberately skipped, with `status` pass, not_run, fail_preexisting or fail; use fail_preexisting only for a failure this card did not cause, and say why in `detail`.",
   "`areas` groups what was built under names like Data, API, Site core, Panel or Docs, each item one short line.",
   "Wrap code identifiers in backticks. If you cannot produce the payload, complete with outcome failed instead.",
@@ -242,7 +242,7 @@ function boardBaseBranchLines(input: {
       ? " You are reading the project workspace root, which may have a different branch checked out, so plan against that base rather than whatever is checked out here."
       : "";
   return [
-    `This card's base branch is \`${input.baseBranch}\` — its work branches off and merges back into that.${caveat}`,
+    `This card's base branch is \`${input.baseBranch}\`. Its work branches off and merges back into that.${caveat}`,
   ];
 }
 
@@ -476,7 +476,7 @@ function boardReviewDismissalsBlock(input: {
   if (input.dismissals.length === 0) return "";
   const lines = input.dismissals.map(
     (d) =>
-      `${boardReviewFindingLine({ id: d.findingId, severity: d.severity, title: d.title, file: d.file, line: d.line })} — dismissed by a human in round ${d.round}`,
+      `${boardReviewFindingLine({ id: d.findingId, severity: d.severity, title: d.title, file: d.file, line: d.line })}: dismissed by a human in round ${d.round}`,
   );
   const rule =
     input.phase === "review"
@@ -521,7 +521,7 @@ export function boardReviewPhaseProtocol(input: {
     case "review":
       return [
         "To finish this phase, complete with a succeeded outcome and a JSON payload { reviewedSha, findings: [{ id, severity, file, line, title, detail }] }, where `severity` is `critical`, `improvement` or `nitpick`.",
-        "Critical and improvement findings are blocking; nitpicks never are. Whether the loop runs another round is decided by the system from the severities you record, never by you — report what you found and stop.",
+        "Critical and improvement findings are blocking; nitpicks never are. Whether the loop runs another round is decided by the system from the severities you record, never by you. Report what you found and stop.",
         "If you cannot produce a valid findings payload, complete with outcome failed instead. Never complete succeeded with an empty or malformed payload.",
       ].join(" ");
     case "triage":
@@ -556,7 +556,7 @@ const BOARD_REVIEW_TRIAGE_NEVER_ASKS =
 /** The adjudicator's escalation rule (T3O-55): the only way a review finding
     reaches a human. */
 const BOARD_REVIEW_ADJUDICATOR_ESCALATION =
-  "Rule on every finding yourself. The `escalated` verdict hands a finding to a human and stops the loop; it does not send the finding back to triage. Use it only on a rejected blocking finding, and only when there is a genuine reason you cannot decide — a product or scope call the card's brief does not settle, or a risk only the owner can accept. Uncertainty or difficulty is not a reason: weigh the evidence and rule. Its note must say why a human is needed. Judge a scope or product rejection against the card's brief, not the code. Escalation is the only way to reach a human: never ask a question, raise a user-input request, or complete blocked.";
+  "Rule on every finding yourself. The `escalated` verdict hands a finding to a human and stops the loop; it does not send the finding back to triage. Use it only on a rejected blocking finding, and only when there is a genuine reason you cannot decide: a product or scope call the card's brief does not settle, or a risk only the owner can accept. Uncertainty or difficulty is not a reason: weigh the evidence and rule. Its note must say why a human is needed. Judge a scope or product rejection against the card's brief, not the code. Escalation is the only way to reach a human: never ask a question, raise a user-input request, or complete blocked.";
 
 /**
  * Compose a follow-up pass's prompt (T3O-51): re-triage or re-adjudicate,
@@ -580,17 +580,17 @@ export function composeBoardReviewFollowUpPrompt(input: {
     if (f.finding.carried) lines.push("  A human ordered this fixed.");
     if (f.triageAction !== null) {
       lines.push(
-        `  Triage: ${f.triageAction}${f.triageNote.trim() === "" ? "" : ` — ${f.triageNote.trim()}`}`,
+        `  Triage: ${f.triageAction}${f.triageNote.trim() === "" ? "" : `: ${f.triageNote.trim()}`}`,
       );
     }
     if (f.rulingVerdict !== null) {
       lines.push(
-        `  Ruling: ${f.rulingVerdict}${f.rulingNote.trim() === "" ? "" : ` — ${f.rulingNote.trim()}`}`,
+        `  Ruling: ${f.rulingVerdict}${f.rulingNote.trim() === "" ? "" : `: ${f.rulingNote.trim()}`}`,
       );
     }
     if (f.retriageAction !== null) {
       lines.push(
-        `  Re-triage: ${f.retriageAction}${f.retriageNote.trim() === "" ? "" : ` — ${f.retriageNote.trim()}`}`,
+        `  Re-triage: ${f.retriageAction}${f.retriageNote.trim() === "" ? "" : `: ${f.retriageNote.trim()}`}`,
       );
     }
     return lines.join("\n");
@@ -627,7 +627,7 @@ export function composeBoardReviewFollowUpPrompt(input: {
     Written per forge, because the agent — not the board — opens the pull
     request. */
 const boardDraftPullRequestHow = (sayWhere: string) =>
-  `\`gh pr create --draft\` on GitHub, \`glab mr create --draft\` on GitLab, and on Forgejo or Gitea a title that starts with \`WIP: \`. If the pull request already exists, leave its draft state alone. If the forge refuses a draft (some plans do not offer them), open a normal pull request instead and ${sayWhere}. Never mark the pull request ready for review yourself — the board does that once the review converges.`;
+  `\`gh pr create --draft\` on GitHub, \`glab mr create --draft\` on GitLab, and on Forgejo or Gitea a title that starts with \`WIP: \`. If the pull request already exists, leave its draft state alone. If the forge refuses a draft (some plans do not offer them), open a normal pull request instead and ${sayWhere}. Never mark the pull request ready for review yourself. The board does that once the review converges.`;
 
 /** The review phase's open-as-draft instruction (T3O-12). It outranks any
     skill's own default (such as /pullrequest opening a ready one). */
@@ -641,7 +641,7 @@ export const BOARD_DRAFT_PULL_REQUEST_BUILD = `If you open this card's pull requ
 /** The line every later loop step carries while drafts are on (T3O-12): the
     fix commits the loop pushes must not start the repository's full CI. */
 export const BOARD_DRAFT_PULL_REQUEST_KEEP =
-  "If the pull request is a draft, leave it as a draft — the board marks it ready. If it is not a draft, do not convert it to one.";
+  "If the pull request is a draft, leave it as a draft; the board marks it ready. If it is not a draft, do not convert it to one.";
 
 /** The draft text a review-loop step carries, or null when drafts are off.
     Only the review phase opens a pull request, so only it gets the open-as-
@@ -744,7 +744,7 @@ export function composeBoardSyncPhasePrompt(input: {
       draftPullRequests: input.draftPullRequests === true,
       phase: "sync",
     }),
-    "To finish this step, complete with a succeeded outcome and a JSON payload { rebasedSha } naming the commit the rebased branch now points at. One review round then runs on the rebased diff before the card can merge — never skip the rebase or complete succeeded without having pushed it.",
+    "To finish this step, complete with a succeeded outcome and a JSON payload { rebasedSha } naming the commit the rebased branch now points at. One review round then runs on the rebased diff before the card can merge. Never skip the rebase or complete succeeded without having pushed it.",
   ]
     .filter((part): part is string => part !== null)
     .join("\n\n");
@@ -764,7 +764,7 @@ export function composeBoardSyncPhasePrompt(input: {
  * skipping this visible rather than silent.
  */
 function boardSyncPhasePullRequestRetarget(retargetedTo: string): string {
-  return `If this card's branch already has an OPEN pull request, retarget it at \`${retargetedTo}\` as well, once the rebase has landed — \`gh pr edit --base ${retargetedTo}\` on GitHub, or the equivalent for this repository's forge. Its base still names the branch it was opened against, and nothing else moves it. The board refuses to merge a pull request whose base disagrees with the branch the card was rebased onto, so a pull request left pointing at the old base strands the card at Ready for merge.`;
+  return `If this card's branch already has an OPEN pull request, retarget it at \`${retargetedTo}\` as well, once the rebase has landed: \`gh pr edit --base ${retargetedTo}\` on GitHub, or the equivalent for this repository's forge. Its base still names the branch it was opened against, and nothing else moves it. The board refuses to merge a pull request whose base disagrees with the branch the card was rebased onto, so a pull request left pointing at the old base strands the card at Ready for merge.`;
 }
 
 /** The rebase MECHANICS half of `DEFAULT_BOARD_SYNC_PHASE_PROMPT` — fetch,
@@ -950,7 +950,7 @@ export function composeBoardCiFixPrompt(input: {
     `The issues to fix (${issues.length}):`,
     ...issues.map(
       (issue, index) =>
-        `${index + 1}. [${issue.id}] ${issue.stepName}: ${issue.title}${where(issue)}${issue.detail === undefined ? "" : ` — ${clipIssueDetail(issue.detail)}`}`,
+        `${index + 1}. [${issue.id}] ${issue.stepName}: ${issue.title}${where(issue)}${issue.detail === undefined ? "" : `: ${clipIssueDetail(issue.detail)}`}`,
     ),
     ...blocks,
     "",

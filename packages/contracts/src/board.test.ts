@@ -47,7 +47,7 @@ import {
   BoardCardShell,
   BoardStageExecutionReview,
   DEFAULT_BOARD_REVIEW_PHASE_PROMPT,
-  LEGACY_BOARD_REVIEW_PHASE_PROMPT,
+  RETIRED_BOARD_REVIEW_PHASE_PROMPTS,
   BoardLabelId,
   BoardLabelName,
   boardAppendOrderKey,
@@ -1651,14 +1651,14 @@ describe("cards that need a human (boardCardAttention)", () => {
       { stalled: true, stalledReason: "usage-limit", retryAt },
       { now: Date.parse(retryAt) - 60_000 },
     );
-    expect(chip?.label).toMatch(/^Usage limit — resuming by /);
+    expect(chip?.label).toMatch(/^Usage limit: resuming by /);
   });
 
   it("says a card whose branch could not be prepared cannot start (T3O-15)", () => {
     // Without its own words this read "Stalled — recovery gave up", which is
     // false: no agent ever ran, so there was nothing to recover.
     const chip = attention({ stalled: true, stalledReason: "no-worktree" });
-    expect(chip?.label).toBe("Can't start — needs a human");
+    expect(chip?.label).toBe("Can't start: needs a human");
     expect(chip?.detail).toContain("Continue");
   });
 
@@ -2043,7 +2043,7 @@ describe("cards that need a human (boardCardAttention)", () => {
     });
     expect(stuck?.reason).toBe("review-stuck");
     expect(stuck?.tone).toBe("attention");
-    expect(stuck?.detail).toBe("Review is stuck on round 3 — needs your call");
+    expect(stuck?.detail).toBe("Review is stuck on round 3, needs your call");
     expect(attention({ stage: BOARD_SEED_STAGE_IDS.merge, reviewOutcome: "stuck" })).toBeNull();
     // Advanced is neither a pass nor a call for a human, in any stage.
     for (const stage of [BOARD_SEED_STAGE_IDS.review, BOARD_SEED_STAGE_IDS.merge]) {
@@ -3205,14 +3205,18 @@ describe("boardCardAutoArchiveDue (T3O-77)", () => {
   });
 });
 
-describe("review phase prompt saved before T3O-51", () => {
+describe("review phase prompt saved as an old default", () => {
   const decodeReview = Schema.decodeUnknownSync(BoardStageExecutionReview);
   const reviewPrompt = (prompt: string) =>
     decodeReview({ kind: "review", phases: { review: { prompt } } }).phases.review.prompt;
 
-  it("upgrades the old default verbatim and keeps an edited prompt", () => {
-    expect(reviewPrompt(LEGACY_BOARD_REVIEW_PHASE_PROMPT)).toBe(DEFAULT_BOARD_REVIEW_PHASE_PROMPT);
-    const edited = `${LEGACY_BOARD_REVIEW_PHASE_PROMPT} Also check the docs.`;
+  it("upgrades every retired default verbatim and keeps an edited prompt", () => {
+    expect(RETIRED_BOARD_REVIEW_PHASE_PROMPTS.length).toBe(2);
+    for (const retired of RETIRED_BOARD_REVIEW_PHASE_PROMPTS) {
+      expect(reviewPrompt(retired)).toBe(DEFAULT_BOARD_REVIEW_PHASE_PROMPT);
+    }
+    expect(RETIRED_BOARD_REVIEW_PHASE_PROMPTS).not.toContain(DEFAULT_BOARD_REVIEW_PHASE_PROMPT);
+    const edited = `${RETIRED_BOARD_REVIEW_PHASE_PROMPTS[0]} Also check the docs.`;
     expect(reviewPrompt(edited)).toBe(edited);
   });
 });

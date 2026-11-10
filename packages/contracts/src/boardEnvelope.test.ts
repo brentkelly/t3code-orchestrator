@@ -527,7 +527,7 @@ describe("review phase envelope", () => {
     });
     expect(retriage).toContain("Re-triage step, round 1");
     expect(retriage).toContain("`f1`");
-    expect(retriage).toContain("Ruling: rejection-unjustified — it is a bug");
+    expect(retriage).toContain("Ruling: rejection-unjustified: it is a bug");
     expect(retriage).not.toContain('"escalated"');
     expect(retriage).toContain("Triage never stops for a human");
     expect(retriage).not.toContain(BOARD_ENVELOPE_QUESTION_MECHANISM);
@@ -934,7 +934,7 @@ describe("the CI fix prompt (T3O-57)", () => {
       })),
     });
     expect(prompt.length).toBeLessThan(20_000);
-    expect(prompt).toContain("30. [s0.29] Test: case 29 — 29:x");
+    expect(prompt).toContain("30. [s0.29] Test: case 29: 29:x");
   });
 
   it("says earlier failures may cause later ones only when there is more than one", () => {
