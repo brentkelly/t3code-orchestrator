@@ -20,7 +20,7 @@ import { subscribeDynamic } from "../rpc/client.ts";
 /** Lines per rendered block. */
 export const BOARD_CI_LOG_BLOCK_LINES = 200;
 /** About how much of a log the viewer keeps. */
-export const BOARD_CI_LOG_VIEW_BYTES = 2 * 1024 * 1024;
+const BOARD_CI_LOG_VIEW_BYTES = 2 * 1024 * 1024;
 
 export interface BoardCiLogBlock {
   /** Stable across appends, for React keys. */

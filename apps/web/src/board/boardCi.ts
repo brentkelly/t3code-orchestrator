@@ -335,7 +335,7 @@ export function boardCiTailMeta(tail: string): string {
 }
 
 /** Whole minutes since `startedAt`, never negative. */
-export function boardCiElapsedMinutes(startedAt: string | null, nowMs: number): number {
+function boardCiElapsedMinutes(startedAt: string | null, nowMs: number): number {
   const startedMs = startedAt === null ? Number.NaN : Date.parse(startedAt);
   return Number.isNaN(startedMs) ? 0 : Math.max(0, Math.floor((nowMs - startedMs) / 60_000));
 }

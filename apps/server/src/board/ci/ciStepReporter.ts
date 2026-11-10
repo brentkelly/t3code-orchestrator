@@ -17,7 +17,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 /** The least time between two progress reports of one step. */
-export const BOARD_CI_PROGRESS_REPORT_MS = 10_000;
+const BOARD_CI_PROGRESS_REPORT_MS = 10_000;
 /** How often a running step's reporter wakes to flush or check for silence. */
 const TICK_MS = 1_000;
 

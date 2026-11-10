@@ -35,7 +35,7 @@ import { boardCiLogDir } from "./BoardCiRunner.ts";
 /** How much of a log a read without an offset starts with. */
 export const BOARD_CI_LOG_TAIL_BYTES = 256 * 1024;
 /** How often a followed log is checked for growth. */
-export const BOARD_CI_LOG_POLL_MS = 500;
+const BOARD_CI_LOG_POLL_MS = 500;
 
 const NEWLINE = 0x0a;
 
@@ -203,7 +203,7 @@ const chunkEnd = (item: Extract<BoardCiLogItem, { _tag: "chunk" }>) =>
  * Follow a log until `settled` completes, then read what's left and end.
  * Without `follow`, a single read to the end.
  */
-export const followBoardCiLogUntil = (input: {
+const followBoardCiLogUntil = (input: {
   readonly read: (options: {
     readonly fromOffset?: number | undefined;
     readonly follow: boolean;
