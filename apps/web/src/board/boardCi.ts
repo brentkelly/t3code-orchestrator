@@ -85,7 +85,7 @@ const failWord = (status: BoardCiStepStatus) => (status === "timed-out" ? "timed
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
-export function boardCiFixSegment(ci: BoardCardCi): BoardCiFixSegmentState | null {
+function boardCiFixSegment(ci: BoardCardCi): BoardCiFixSegmentState | null {
   if (ci.phase === "fixing") return "fixing";
   if (ci.phase === "stopped") return "stopped";
   if (ci.phase === "running" && ci.steps.some((step) => isBoardCiStepFailure(step.status))) {

@@ -13480,7 +13480,7 @@ export const DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS = 3;
 /** CI failure round trips allowed before the card stops for a human (T3O-49).
     Unused since T3O-57, when CI stopped sending cards back by itself; kept so
     stored settings still decode. */
-export const DEFAULT_BOARD_CI_MAX_ROUND_TRIPS = 3;
+const DEFAULT_BOARD_CI_MAX_ROUND_TRIPS = 3;
 export const BoardCiMaxRoundTrips = NonNegativeInt.check(Schema.isLessThanOrEqualTo(10));
 
 /**
