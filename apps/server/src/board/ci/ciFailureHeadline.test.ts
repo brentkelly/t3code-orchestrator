@@ -225,6 +225,28 @@ describe("boardCiFailureHeadline", () => {
       source: "machine",
     },
     {
+      name: "a long log: a recovered library warning in the end window, then an AssertionError",
+      log: `${passing(600)}${LIBNSPR}${passing(10)}  1) adds:\n     AssertionError [ERR_ASSERTION]: expected 2 to be 3\n  1 failing\n`,
+      why: "AssertionError [ERR_ASSERTION]: expected 2 to be 3",
+      machine: false,
+      source: "pattern",
+    },
+    {
+      name: "a long Playwright log: the end-window library holds despite the failed spec",
+      log: `${passing(600)}    Error: browserType.launch: Target page, context or browser has been closed\n${LIBNSPR}  1 failed\n`,
+      input: { result: result([{ title: "a.spec.ts", detail: "browserType.launch failed" }]) },
+      why: "Missing system library: libnspr4.so",
+      machine: true,
+      source: "machine",
+    },
+    {
+      name: "a short log: a missing library, then the runner's FAIL verdict",
+      log: `${passing(3)}${LIBNSPR}  FAIL src/browser.test.ts\n`,
+      why: "Missing system library: libnspr4.so",
+      machine: true,
+      source: "machine",
+    },
+    {
       name: "a missing library at the end of a long log counts",
       log: `${passing(600)}${LIBNSPR}  FAIL src/browser.test.ts\n`,
       why: "Missing system library: libnspr4.so",

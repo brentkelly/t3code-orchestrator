@@ -53,17 +53,20 @@ const FATAL_ANYWHERE = [
   /Cannot find module/,
   /ENOENT.*package\.json|package\.json.*ENOENT/,
 ];
+const FAIL_VERDICT = /^\s*FAIL\b/;
 const GENERIC = [
   /\berror:/,
   /\bError:/,
   /\b[A-Z]\w*Error\b(?: \[[A-Z_]+\])?:/,
   /^\s*ERROR\b/,
-  /^\s*FAIL\b/,
+  FAIL_VERDICT,
   /ERR!/,
   /panicked at/,
   /Traceback/,
   /exit status/,
 ];
+/** Lines that explain a failure; a runner's FAIL verdict only reports one. */
+const EXPLAINING = GENERIC.filter((pattern) => pattern !== FAIL_VERDICT);
 
 interface Fact {
   readonly text: string;
@@ -149,7 +152,8 @@ export class BoardCiFailureFacts {
   }
 
   /** The first new error after `library`: one that neither repeats an error
-      printed before it (a retried launch) nor names the library itself. */
+      printed before it (a retried launch) nor names the library itself, nor
+      is a FAIL verdict the missing library itself causes. */
   firstNewErrorAfter(library: Fact, lib: string | null): Fact | null {
     const seen = new Set(
       this.window
@@ -160,7 +164,7 @@ export class BoardCiFailureFacts {
       this.window.find(
         (fact) =>
           fact.lineNo > library.lineNo &&
-          GENERIC.some((pattern) => pattern.test(fact.text)) &&
+          EXPLAINING.some((pattern) => pattern.test(fact.text)) &&
           !seen.has(fact.text) &&
           (lib === null || !fact.text.includes(lib)),
       ) ?? null
@@ -243,8 +247,8 @@ function machineVerdict(facts: BoardCiFailureFacts, input: BoardCiHeadlineInput)
       hint: "Make the filesystem writable.",
     };
   }
-  // Optional native modules print a missing library and recover, so it only
-  // counts in the end window, or when nothing later or reported explains it.
+  // Optional native modules print a missing library and recover, so it never
+  // counts with a later error; outside the end window, nor with a code failure.
   // The last one in the window: a retried browser launch prints it again.
   const library = facts.lastInWindow([SHARED_LIBRARY]) ?? facts.library;
   if (library !== null) {
@@ -254,7 +258,9 @@ function machineVerdict(facts: BoardCiFailureFacts, input: BoardCiHeadlineInput)
     const laterError = facts.firstNewErrorAfter(library, lib);
     const codeFailureReported =
       input.result?.failures.some((failure) => failure.machine !== true) ?? false;
-    if (inWindow || (laterError === null && !codeFailureReported)) {
+    // A test runner reports a browser that never launched as a failed test,
+    // so the result file can't overrule the end window; a later error can.
+    if (laterError === null && (inWindow || !codeFailureReported)) {
       return {
         why: `Missing system library: ${lib ?? library.text}`,
         fact: library,
