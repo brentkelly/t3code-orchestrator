@@ -775,7 +775,8 @@ integration is `T3O-63`.
 - **Workflows.** No new files. The five that changed (`ci.yml`, `desktop-macos-preview.yml`,
   `pr-vouch.yml`, `release.yml`, `release-desktop.yml`) are already off or `workflow_call`-only.
 - **Known failures, not this sync's.** `threadGatewayBoundary.test.ts` flags
-  `boardCardThreadFilter.ts` on `t3o` already, and `BoardTopBar.test.ts` fails there too. On this
+  `boardCardThreadFilter.ts` on `t3o` already, `BoardTopBar.test.ts` fails there too, and
+  `reactCompilerCoverage.test.ts` bails out on five board components (refs read in render). On this
   box, `GitHubRest.test.ts` fails with a `GH_TOKEN` in the environment, `GitVcsDriver.test.ts`
   under a global `url.insteadOf`, and desktop's `browser-secret-native.test.mjs` without
   `pkg-config`.
