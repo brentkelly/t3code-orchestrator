@@ -3429,6 +3429,8 @@ export const BoardProjectStageConfigShell = Schema.Struct({
   stageSwitches: Schema.Record(Schema.String, Schema.Boolean),
   overrides: Schema.Record(Schema.String, BoardStageExecutionPatchRef),
   ciSteps: Schema.Array(BoardCiStepShape),
+  /** Stop on failure is No (T3O-57); absent is Yes. */
+  ciStopOnFailure: Schema.optionalKey(Schema.Literal(false)),
   warnings: Schema.Array(Schema.String),
   version: Schema.String,
 });
@@ -3451,6 +3453,7 @@ export function boardProjectStageConfigShell(
       kind: step.kind,
       parallel: step.parallel,
     })),
+    ...(boardCiStopsOnFailure(config.ci) ? {} : { ciStopOnFailure: false as const }),
     warnings: config.warnings,
     version: config.version,
   };

@@ -316,6 +316,40 @@ describe("export", () => {
     expect(back.createStages).toEqual([]);
     expect(boardProjectDeltasEqual(back.delta, config)).toBe(true);
   });
+
+  it("round-trips Stop on failure: absent is Yes, and only No is written (T3O-57)", () => {
+    const steps = [{ id: "lint", name: "Lint", command: "vp lint" }];
+    const yes = withFile({ ci: { steps } });
+    const yesConfig = yes.projectStageConfigs[projectA]!;
+    expect(yesConfig.ci).not.toHaveProperty("stopOnFailure");
+    expect(buildT3oProjectFile({ board: yes, config: yesConfig }).ci).not.toHaveProperty(
+      "stopOnFailure",
+    );
+    // An explicit Yes stores nothing, so the config's version is unchanged.
+    const explicitYes = withFile({ ci: { steps, stopOnFailure: true } });
+    expect(explicitYes.projectStageConfigs[projectA]!.version).toBe(yesConfig.version);
+
+    const no = withFile({ ci: { steps, stopOnFailure: false } });
+    const noConfig = no.projectStageConfigs[projectA]!;
+    expect(noConfig.ci.stopOnFailure).toBe(false);
+    expect(noConfig.version).not.toBe(yesConfig.version);
+    const file = buildT3oProjectFile({ board: no, config: noConfig });
+    expect(file.ci).toMatchObject({ stopOnFailure: false });
+    const back = resolve(JSON.parse(JSON.stringify(file)), no);
+    expect(back.delta.ci.stopOnFailure).toBe(false);
+    expect(boardProjectDeltasEqual(back.delta, noConfig)).toBe(true);
+    expect(boardProjectDeltasEqual(back.delta, yesConfig)).toBe(false);
+
+    const bad = resolve({ ci: { steps, stopOnFailure: "no" } });
+    expect(bad.delta.ci).not.toHaveProperty("stopOnFailure");
+    expect(bad.delta.warnings).toContain("ci.stopOnFailure: expected true or false; ignored.");
+  });
+
+  it("warns about a project file's maxRoundTrips, which no longer exists (T3O-57)", () => {
+    const resolved = resolve({ stages: { settings: { ci: { maxRoundTrips: 2 } } } });
+    expect(resolved.delta.overrides).not.toHaveProperty("ci");
+    expect(resolved.delta.warnings.join("\n")).toContain("maxRoundTrips");
+  });
 });
 
 describe("legacy configs", () => {

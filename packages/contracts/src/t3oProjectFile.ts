@@ -14,6 +14,7 @@ import {
   boardLegacyCiStepId,
   boardNewStageOrderKey,
   boardOrderKeyBetween,
+  boardCiStopsOnFailure,
   boardStageById,
   boardStageDefaultForProjects,
   boardStageExecutionKind,
@@ -283,8 +284,15 @@ export function resolveT3oProjectFile(input: {
   const stageSwitches: Record<string, boolean> = {};
   const overrides: Record<string, BoardStageExecutionPatch> = {};
   let steps: BoardCiStep[] = [];
+  // T3O-57: stored only as false; absent is Yes.
+  let stopOnFailure = true;
   const result = (createStages: ReadonlyArray<BoardStageDefinition> = []) => ({
-    delta: { stageSwitches, overrides, ci: { steps }, warnings },
+    delta: {
+      stageSwitches,
+      overrides,
+      ci: stopOnFailure ? { steps } : { steps, stopOnFailure: false },
+      warnings,
+    },
     createStages,
   });
   if (input.raw === null || input.raw === undefined) return result();
@@ -451,11 +459,17 @@ export function resolveT3oProjectFile(input: {
       warnings.push("ci: expected an object; ignored.");
     } else {
       for (const key of Object.keys(ciBlock)) {
-        if (key !== "enabled" && key !== "steps") warnings.push(`ci.${key}: unknown key; ignored.`);
+        if (key !== "enabled" && key !== "steps" && key !== "stopOnFailure") {
+          warnings.push(`ci.${key}: unknown key; ignored.`);
+        }
       }
       if (ciBlock.steps !== undefined)
         steps = decodeCiSteps(ciBlock.steps, "ci.steps", false, warnings);
       ciEnabled = ciBlock.enabled;
+      if (ciBlock.stopOnFailure !== undefined) {
+        if (typeof ciBlock.stopOnFailure === "boolean") stopOnFailure = ciBlock.stopOnFailure;
+        else warnings.push("ci.stopOnFailure: expected true or false; ignored.");
+      }
     }
   } else if (legacyCi !== null) {
     const legacy = legacyCi as { readonly steps: unknown; readonly enabled: unknown };
@@ -578,9 +592,11 @@ export function buildT3oProjectFile(input: {
   if (Object.keys(settings).length > 0) stages.settings = settings;
   const file: Record<string, unknown> = { version: T3O_PROJECT_FILE_VERSION };
   if (Object.keys(stages).length > 0) file.stages = stages;
-  if (input.config.ci.steps.length > 0 || ciOn !== undefined) {
+  const stopOnFailure = boardCiStopsOnFailure(input.config.ci);
+  if (input.config.ci.steps.length > 0 || ciOn !== undefined || !stopOnFailure) {
     file.ci = {
       ...(ciOn === undefined ? {} : { enabled: ciOn }),
+      ...(stopOnFailure ? {} : { stopOnFailure: false }),
       steps: input.config.ci.steps,
     };
   }

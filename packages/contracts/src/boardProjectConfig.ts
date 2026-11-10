@@ -3,6 +3,7 @@
 // service, the decider and the web read one answer.
 import {
   BOARD_STAGE_EXECUTION_PATCH_KEYS,
+  boardCiStopsOnFailure,
   boardStageById,
   boardStageDefaultForProjects,
   boardStageExecutionKind,
@@ -133,11 +134,13 @@ export function boardProjectDeltasEqual(
       stageSwitches: left.stageSwitches,
       overrides: left.overrides,
       steps: withoutStepIds(left.ci.steps),
+      stopOnFailure: boardCiStopsOnFailure(left.ci),
     }) ===
     canonicalJson({
       stageSwitches: right.stageSwitches,
       overrides: right.overrides,
       steps: withoutStepIds(right.ci.steps),
+      stopOnFailure: boardCiStopsOnFailure(right.ci),
     })
   );
 }

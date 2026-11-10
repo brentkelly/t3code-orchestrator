@@ -1,7 +1,7 @@
 /**
- * The Continuous integration stage's contracts (T3O-44): the seed stage and
+ * The Continuous integration stage's contracts (T3O-44/57): the seed stage and
  * seed-only detection, when CI is active for a project, how the CI member
- * resolves, and the human move rules around CI.
+ * resolves, the human move rules around CI, and a failed pass's fix issues.
  */
 import { describe, expect, it } from "vite-plus/test";
 
@@ -9,12 +9,17 @@ import {
   BOARD_SEED_STAGES,
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
+  BOARD_CI_MAX_FIX_ISSUES,
   DEFAULT_BOARD_CI_FIX_PROMPT,
   DEFAULT_BOARD_SETTINGS,
   EMPTY_BOARD_STATE,
   ProjectId,
   areBoardStagesAdjacent,
   boardCardMoveRefusal,
+  boardCiFixIssueOutcomes,
+  boardCiFixIssues,
+  boardProjectConfigDifferenceCount,
+  decodeBoardCiFixPayload,
   boardNextStageId,
   boardProjectStagesInOrder,
   boardStagesAreSeedOnly,
@@ -188,13 +193,12 @@ describe("CI activeness", () => {
 });
 
 describe("CI member resolution", () => {
-  it("defaults to no steps, two fixes and the compiled-in prompt, in build mode and unattended", () => {
+  it("defaults to no steps, three fixes and the compiled-in prompt, in build mode and unattended", () => {
     const exec = resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, ci);
     expect(isBoardCiStageExecution(exec)).toBe(true);
     if (!isBoardCiStageExecution(exec)) return;
     expect(exec).toMatchObject({
-      maxFixAttempts: 2,
-      maxRoundTrips: 3,
+      maxFixAttempts: 3,
       prompt: DEFAULT_BOARD_CI_FIX_PROMPT,
       mode: "build",
       humanInLoop: false,
@@ -294,5 +298,106 @@ describe("a CI send-back in the next review round", () => {
     expect(compose("review")).toContain("report it as a critical finding");
     expect(compose("triage")).toContain("vp test exited with code 1.");
     expect(compose("adjudicate")).not.toContain("CI sent this card back");
+  });
+});
+
+describe("CI fix issues (T3O-57)", () => {
+  const step = (
+    name: string,
+    status: "passed" | "failed" | "timed-out",
+    failures: ReadonlyArray<{ title: string; file?: string; line?: number }> = [],
+  ) => ({
+    name,
+    status,
+    ...(failures.length === 0 ? {} : { result: { summary: null, failures } }),
+  });
+
+  it("makes one issue per reported failure, or one for a step that reported none", () => {
+    const issues = boardCiFixIssues([
+      step("Build", "passed"),
+      step("Lint", "failed", [
+        { title: "unused import", file: "src/a.ts", line: 3 },
+        { title: "no-explicit-any" },
+      ]),
+      step("Test", "failed"),
+      step("Browser", "timed-out"),
+    ]);
+    expect(issues).toEqual([
+      {
+        id: "s1-1",
+        stepIndex: 1,
+        stepName: "Lint",
+        title: "unused import",
+        file: "src/a.ts",
+        line: 3,
+      },
+      { id: "s1-2", stepIndex: 1, stepName: "Lint", title: "no-explicit-any" },
+      { id: "s2", stepIndex: 2, stepName: "Test", title: "Test failed" },
+      { id: "s3", stepIndex: 3, stepName: "Browser", title: "Browser timed out" },
+    ]);
+  });
+
+  it("caps the list, rolling the rest into a last issue", () => {
+    const many = Array.from({ length: 25 }, (_, n) => ({ title: `problem ${n}` }));
+    const issues = boardCiFixIssues([step("Lint", "failed", many), step("Test", "failed", many)]);
+    expect(issues).toHaveLength(BOARD_CI_MAX_FIX_ISSUES);
+    expect(issues.at(-2)?.id).toBe("s1-4");
+    expect(issues.at(-1)).toMatchObject({ id: "more", title: "and 21 more in Test" });
+  });
+
+  it("reads each issue's outcome from the fix report, leniently", () => {
+    const issues = boardCiFixIssues([step("Lint", "failed"), step("Test", "failed")]);
+    const statuses = (payload: unknown) =>
+      boardCiFixIssueOutcomes(
+        issues,
+        payload === null ? null : decodeBoardCiFixPayload(JSON.stringify(payload)),
+      ).map((outcome) => [outcome.issue.id, outcome.status, outcome.note]);
+    expect(statuses(null)).toEqual([
+      ["s0", "open", null],
+      ["s1", "open", null],
+    ]);
+    // Left out under `fixed` reads resolved; under `cannot-fix`, open.
+    expect(statuses({ verdict: "fixed" })).toEqual([
+      ["s0", "resolved", null],
+      ["s1", "resolved", null],
+    ]);
+    expect(
+      statuses({
+        verdict: "cannot-fix",
+        finding: "Needs Postgres.",
+        issues: [{ id: "s1", status: "cannot-fix", note: "needs Postgres" }],
+      }),
+    ).toEqual([
+      ["s0", "open", null],
+      ["s1", "cannot-fix", "needs Postgres"],
+    ]);
+  });
+
+  it("decodes cannot-fix, the older return-to-review, and a report with no issues", () => {
+    expect(
+      decodeBoardCiFixPayload(JSON.stringify({ verdict: "cannot-fix", finding: "x" })),
+    ).toMatchObject({ verdict: "cannot-fix", finding: "x" });
+    expect(
+      decodeBoardCiFixPayload(JSON.stringify({ verdict: "return-to-review", finding: "x" })),
+    ).toMatchObject({ verdict: "return-to-review" });
+    expect(decodeBoardCiFixPayload(JSON.stringify({ verdict: "fixed", fixedSha: "abc" }))).toEqual({
+      verdict: "fixed",
+      finding: "",
+      fixedSha: "abc",
+    });
+    expect(decodeBoardCiFixPayload(JSON.stringify({ verdict: "maybe" }))).toBeNull();
+  });
+
+  it("counts Stop on failure = No as a difference from global", () => {
+    expect(
+      boardProjectConfigDifferenceCount({ stageSwitches: {}, overrides: {}, ci: { steps: [] } }),
+    ).toBe(0);
+    expect(
+      boardProjectConfigDifferenceCount({
+        stageSwitches: {},
+        overrides: {},
+        ci: { steps: [], stopOnFailure: false },
+      }),
+    ).toBe(1);
   });
 });
