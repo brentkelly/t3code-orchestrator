@@ -1,17 +1,8 @@
 /**
- * The CI passes the board is running (T3O-44): one background fiber per card,
- * each holding a concurrency slot against the board and worker limits (never a
- * provider's), queued when no slot is free.
- *
- * Owned by the supervisor reactor, which decides what a pass's result means;
- * this only runs passes and reports. Progress is recorded straight from the
- * pass's fiber (each record is one decider command); the end of a pass goes
- * back through the reactor's serial worker via `onFinished`.
- *
- * T3O-59: a pass's entry outlives its fiber. When the fiber ends it is marked
- * `finishing` and stays until the reactor claims its result by the launch's
- * token and settles it, so the card never looks idle while a result is still
- * on its way, and a duplicate report can't be handled twice.
+ * The CI passes the board is running: one fiber per card, each holding a slot
+ * against board and worker limits. A pass's entry outlives its fiber, as
+ * `finishing`, until the reactor claims its result by token, so the card never
+ * looks idle mid-result and a duplicate report can't be handled twice.
  */
 import {
   ProviderInstanceId,
@@ -42,10 +33,10 @@ export interface BoardCiPassRequest {
   readonly worktreePath: string;
   readonly workerId: BoardWorkerId;
   readonly steps: ReadonlyArray<BoardCiStepDefinition>;
-  /** The pass index of `steps[0]` (T3O-49): a pass runs its script groups
+  /** The pass index of `steps[0]`: a pass runs its script groups
       in segments between agent and forge steps. */
   readonly indexOffset?: number;
-  /** False runs every step even after a failure (T3O-57). Absent is true. */
+  /** False runs every step even after a failure. Absent is true. */
   readonly stopOnFailure?: boolean;
   readonly limits: BoardConcurrencyLimit;
   /** Where the steps run; this server's runner when absent. */
@@ -176,11 +167,9 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
             return releaseSlot(entry);
           }),
         ),
-        // A defect in the run still reports, as a pass that could not run,
-        // so the card never sits in CI "running" with no fiber behind it.
-        // So does an interrupt nobody asked for: a worker connection that
-        // renews, restarts or goes away interrupts the stream. Only
-        // `cancel`, which drops the entry first, ends a pass silently.
+        // A defect, or an interrupt nobody asked for (a worker connection that went
+        // away), still reports, so the card never sits in CI "running" with no fiber.
+        // Only `cancel`, which drops the entry first, ends a pass silently.
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? owns(request.cardId, token)

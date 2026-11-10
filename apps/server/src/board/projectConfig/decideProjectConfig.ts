@@ -1,11 +1,6 @@
 /**
- * T3o: deciding stage defaults and per-project config commands (T3O-49).
- *
- * Every project command emits `board.project-stage-config-set` with the
- * project's whole new delta, so the projector, the SQL projection and the
- * client reducer all apply one shape. The config service normalizes
- * overrides against global settings before dispatch; this decider checks
- * the version, validates, recomputes the version and stamps `lastChangedBy`.
+ * Every project command emits `board.project-stage-config-set` with the whole
+ * new delta, so projector, SQL projection and client reducer apply one shape.
  */
 import {
   BOARD_CI_RUNNABLE_STEP_KINDS,

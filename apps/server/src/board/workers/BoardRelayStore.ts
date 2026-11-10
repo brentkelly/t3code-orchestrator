@@ -1,12 +1,7 @@
 /**
- * T3o (T3O-63): the small durable state the remote gateway and the MCP relay
- * keep, in the tables of migration 047.
- *
- * - Worker side: which threads a central server spawned here
- *   (`board_relayed_threads`), so their board tool calls go to that board.
- * - Central side: how far through each worker's signals the board has read
- *   (`board_worker_cursors`), and each relayed call's answer by call id
- *   (`board_mcp_relay_calls`), so a redelivered call is answered, not re-run.
+ * Durable relay state: which threads a central server spawned on this worker, how
+ * far the board has read each worker's signals, and each relayed call's answer by
+ * call id, so a redelivered call is answered rather than re-run.
  */
 import { BoardMcpRelayOutcome, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";

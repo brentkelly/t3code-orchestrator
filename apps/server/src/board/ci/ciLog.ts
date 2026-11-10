@@ -1,17 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Reading a CI step's log, `<logDir>/<index>.log` (T3O-60), for the card's
- * log viewer and its Download.
- *
- * `readBoardCiLogFile` reads one file, here or on a worker, in chunks of at
- * most 1 MiB, and with `follow` polls for growth until whoever reads it stops.
- * Text is cut on UTF-8 character boundaries, so every chunk's `offset` is the
- * exact byte offset of its first character.
- *
- * `readBoardCiLog` is the central server's read for a client: it finds the
- * log from the pass row and the card's worker (the client never names a
- * path), follows it while the step runs, and once the step settles, the pass
- * finishes or the card moves to another pass, reads the flushed rest and ends.
+ * A CI step's log, `<logDir>/<index>.log`. Chunks are at most 1 MiB and cut on
+ * UTF-8 boundaries, so each `offset` is the exact byte offset of its first
+ * character. The client never names a path: the server finds it from the pass.
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";

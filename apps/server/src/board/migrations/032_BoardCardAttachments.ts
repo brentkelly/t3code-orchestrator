@@ -1,12 +1,6 @@
-// T3o-32: a card's brief attachments (K5). One row per file; the bytes live
-// in board-owned storage under `<stateDir>/board/attachments/<card_id>/<name>`
-// (K1), and this table is the read-model mirror of `BoardCard.attachments`,
-// rewritten wholesale from each attach/detach event exactly like
-// `board_card_thread_links`. Keyed on (card_id, attachment_id): ids are
-// minted per claim and the decider refuses an id any card already holds, so
-// a row can never be relocated between cards by an upsert. The composite
-// key's leading column already serves the shell's COUNT and the detail's
-// per-card list, so there is no separate index.
+// Read-model mirror of `BoardCard.attachments`, rewritten wholesale per event.
+// The decider refuses an id another card holds, so an upsert never moves a row
+// between cards. The key's leading column serves the per-card reads.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

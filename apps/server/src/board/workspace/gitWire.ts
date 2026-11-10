@@ -1,11 +1,7 @@
 /**
- * T3o (T3O-64, D21): the wire of `boardWorker.git.call`, both ends.
- *
- * Every named git and forge operation travels as that one RPC (see
- * `BOARD_WORKER_GIT_CALL_RPCS`), so each end codes the operation's payload and
- * answer with the operation's own schemas from `BOARD_WORKER_GIT_RPCS`. That
- * keeps the worker's decode of each payload — the branch-name rules a worker
- * relies on before git ever sees an argument — exactly where it was.
+ * Both ends of `boardWorker.git.call`. Each end codes the payload and answer with
+ * the operation's own schemas from `BOARD_WORKER_GIT_RPCS`, so the worker still
+ * decodes (and checks branch names) before git sees an argument.
  */
 import {
   BOARD_WORKER_GIT_RPCS,

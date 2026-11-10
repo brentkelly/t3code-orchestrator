@@ -1,18 +1,7 @@
 /**
- * T3o (T3O-64, D21): the named board git and forge operations, run on THIS
- * server.
- *
- * The central server's own cards run here, and so does every
- * `boardWorker.git.*` call a central server makes of this server as its
- * worker (`workerGitRpc.ts`): one implementation, so a card behaves the same
- * wherever it is placed.
- *
- * Each operation resolves its project id to this server's checkout. The
- * bodies are the board's git code as it was — moved here from the supervisor
- * reactor, `worktree.ts` and the leaf helpers — with two changes for more than
- * one worker: on a board that has workers, `measureBaseTip` fetches and reads
- * the remote base, and `ensureLocalBaseBranch` fetches a base this checkout
- * has never seen.
+ * The named board git and forge operations, run on this server: for its own
+ * cards and for every `boardWorker.git.*` call a central server makes of it, so a
+ * card behaves the same wherever it is placed.
  */
 import {
   BOARD_UNPUSHED_COMMITS_MAX,
@@ -62,22 +51,16 @@ export interface LocalBoardWorkspaceDeps {
 }
 
 /**
- * Whose board a checkout under this server's worktrees directory belongs to.
- * `self` is this server's own board; `central` is the central server that
- * dialed this one as its worker (`workerGitRpc.ts`). A server can be both, on
- * the same repository, so each orphan sweep must see only its own board's
- * checkouts — the other board's cards are unknown to it, and every one of its
- * clean, pushed checkouts would look like an orphan.
+ * Whose board a checkout here belongs to: `self` or the `central` server that
+ * dialed this one. A server can be both on one repository, so each orphan sweep
+ * must see only its own board's checkouts.
  */
 export type BoardWorktreeOwner = "self" | "central";
 
-/** The marker a central board's checkout carries, in its private git dir
-    (`.git/worktrees/<name>/`): out of the working tree, so it never dirties
-    status, and removed with the worktree. A checkout without one is this
-    server's own board's, as every checkout before the marker was. It names no
-    central server: a worker serves one board (D19), and the central's session
-    on it changes on every re-pair, so tying the marker to it would orphan
-    every checkout a re-paired board had made. */
+/** Kept in the private git dir, so it never dirties status and goes with the
+    worktree. No marker means this server's own board. It names no central
+    server: a worker serves one board (D19), and naming the session would orphan
+    every checkout on a re-pair. */
 const CENTRAL_OWNER_MARKER = "t3o-board-owner";
 
 /** How long a staleness check waits on the remote before reading what it has. */
@@ -118,11 +101,9 @@ const worktreePrivateGitDir = (git: LocalBoardWorkspaceDeps["git"], worktreePath
     );
 
 /**
- * Which board the checkout belongs to, or null when that cannot be read.
- * Unknown is never guessed as either: both orphan sweeps skip it, a provision
- * will not adopt it, and the worker refuses a central server's write to it
- * (`workerGitRpc.ts`), so a failed read can't hand one board's checkout to the
- * other.
+ * Which board the checkout belongs to, or null when unreadable. Unknown is never
+ * guessed: sweeps skip it, provisioning won't adopt it, and the worker refuses a
+ * central server's write to it.
  */
 export const boardWorktreeOwner = (
   deps: Pick<LocalBoardWorkspaceDeps, "git" | "fileSystem" | "path">,
@@ -199,12 +180,9 @@ export function makeLocalBoardWorkspace(
         Effect.catchCause(() => Effect.succeed(false)),
       );
 
-  // The checkout's DEFAULT branch — not whatever it happens to have checked
-  // out. origin/HEAD names it when a remote exists; a purely local repo falls
-  // back to the current branch, with a detached HEAD (`rev-parse` answers the
-  // literal string 'HEAD') treated as a resolution failure rather than a
-  // branch. `defaultBranch === ""` is the failure signal, `detachedHead` and
-  // `unbornBranch` (a repository with no commits) disambiguate the message.
+  // The checkout's default branch: origin/HEAD, else the current branch. A
+  // detached HEAD (`rev-parse` answers 'HEAD') is a failure, `defaultBranch === ""`;
+  // `detachedHead` and `unbornBranch` only shape the message.
   const resolveDefaultBranch: BoardWorkspace["resolveDefaultBranch"] = Effect.fn(
     "LocalBoardWorkspace.resolveDefaultBranch",
   )(function* ({ projectId }) {
@@ -224,7 +202,7 @@ export function makeLocalBoardWorkspace(
         : currentBranch === "HEAD"
           ? ""
           : currentBranch;
-    // A repository with no commits yet (T3O-15): HEAD names a branch that does
+    // A repository with no commits yet: HEAD names a branch that does
     // not exist, so `rev-parse` answers nothing while `symbolic-ref` still does.
     // Only read on failure — it shapes the message, not the resolution.
     const unbornBranch =
@@ -254,16 +232,10 @@ export function makeLocalBoardWorkspace(
     );
 
   /**
-   * Make sure `base` names a LOCAL branch (T3O-5, D7), creating it from
-   * `<remote>/<base>` when it exists only on the remote. Answers whether the
-   * caller may go on to cut from it.
-   *
-   * Every reader of a recorded base re-qualifies it as a local ref, and each
-   * fails silently on a remote-qualified one, so the base is materialised once
-   * here. A base this checkout has never fetched — a split parent's
-   * integration branch cut and pushed on another worker (D12) — is fetched
-   * first. Idempotent: a base that already exists locally is the desired
-   * state, and a raced creation is re-checked rather than treated as fatal.
+   * Make sure `base` names a local branch (D7), fetching and creating it from
+   * `<remote>/<base>` when needed: every reader re-qualifies a recorded base as a
+   * local ref and fails silently on a remote one. Idempotent; a raced creation is
+   * re-checked, not fatal.
    */
   const ensureLocalBaseBranch: BoardWorkspace["ensureLocalBaseBranch"] = Effect.fn(
     "LocalBoardWorkspace.ensureLocalBaseBranch",
@@ -314,14 +286,9 @@ export function makeLocalBoardWorkspace(
   });
 
   /**
-   * Refuse to reuse a checkout of `branch` that belongs to the other board on
-   * this server (or whose owner cannot be read): both boards cut `board/<key>`
-   * branches, and adopting the other's checkout would hand it to this board's
-   * reclaim.
-   *
-   * A registration whose folder is gone has no owner to read and holds no
-   * work, so it is dropped instead: provisioning then attaches a fresh
-   * checkout to the branch, rather than refusing every retry.
+   * Refuse to reuse a checkout of `branch` owned by the other board here (or of
+   * unknown owner): adopting it would hand it to this board's reclaim. A
+   * registration whose folder is gone holds no work and is dropped instead.
    */
   const refuseForeignCheckout = Effect.fn("LocalBoardWorkspace.refuseForeignCheckout")(function* (
     cwd: string,
@@ -369,7 +336,7 @@ export function makeLocalBoardWorkspace(
     );
 
   /**
-   * Provision a card's worktree from its branch on the REMOTE (T3O-65's move):
+   * Provision a card's worktree from its branch on the REMOTE:
    * the branch is fetched and its local copy created from, or fast-forwarded
    * to, the remote one, so the worktree carries exactly what was pushed.
    * Nothing is copied worker to worker (D21).
@@ -414,13 +381,10 @@ export function makeLocalBoardWorkspace(
         `refs/remotes/${remoteName}/${branch}`,
       ]);
       if (local !== "" && local !== remoteTip) {
-        // A local copy left behind by an earlier placement here (A→B→A keeps
-        // the branch ref on retire) is stale: what was pushed since, possibly
-        // rebased, replaces it. It counts as pushed when every commit it holds
-        // is in some tip the remote-tracking ref has had: its reflog keeps the
-        // pre-rewrite tip even after a fetch (this move's own check, or any
-        // plain fetch here) has moved the ref on. Commits only this copy
-        // holds are never lost.
+        // A local copy left by an earlier placement here is stale and replaced. It
+        // counts as pushed when every commit it holds is in some tip the remote-tracking
+        // ref's reflog has had, which survives a rewrite and a later fetch. Commits only
+        // this copy holds are never lost.
         const seenTips = (yield* gitRef("boardCardWorktree.fromRemote.reflog", cwd, [
           "reflog",
           "show",
@@ -468,7 +432,7 @@ export function makeLocalBoardWorkspace(
     withGit(pinBoardWorktreeGhDefault(worktreePath));
 
   /** The latest commit time (strict ISO 8601) of a commit unique to the
-      card's OWN branch, or null on any error or no such commit (t3o-10, D4).
+      card's OWN branch, or null on any error or no such commit (D4).
       Scoped with `--not <base>` so a base sync fast-forwarding a sibling's
       merge into the branch is not read as this agent's heartbeat. */
   const branchHeartbeat: BoardWorkspace["branchHeartbeat"] = ({ worktreePath, baseRefName }) =>
@@ -497,24 +461,10 @@ export function makeLocalBoardWorkspace(
     owner === "central" ? Effect.succeed(true) : (deps.boardHasWorkers ?? Effect.succeed(false));
 
   /**
-   * The base branch's tip (t3o-24, D1; D21), measured in the project root,
-   * never the card's worktree, whose HEAD is the card's branch. Null is the
-   * honest failure signal: staleness is measured, never assumed.
-   *
-   * On a board with workers it is the tip as the REMOTE has it: the base is
-   * fetched first, so a merge landed from another worker counts as movement
-   * here without anything pulling it locally. A checkout with no remote, or a
-   * base the remote does not have, reads its local branch. A board with no
-   * workers reads its local branch with no fetch, as it always did: its own
-   * merges reach the local base through `pullMergedBaseBranch`, and
-   * every tip it recorded before workers existed is a local one, so reading
-   * the remote would see a base that is merely behind as movement.
-   *
-   * Never cached: it answers the merge gate, where a sibling's merge a moment
-   * ago is exactly what it must see. The reactor only asks for a sub-board
-   * child or a retargeted card, at a stage plan or a merge crossing, so the
-   * fetch is bounded by `BASE_TIP_FETCH_TIMEOUT_MS` rather than deduplicated;
-   * a fetch that times out reads the last-fetched remote ref.
+   * The base branch's tip, in the project root (never the card's worktree); null
+   * when unknown. With workers it is the remote's, fetched first, so another
+   * worker's merge counts; without, the local branch, since its recorded tips are
+   * local. Never cached: the merge gate must see a sibling's merge a moment ago.
    */
   const measureBaseTip: BoardWorkspace["measureBaseTip"] = Effect.fn(
     "LocalBoardWorkspace.measureBaseTip",
@@ -565,7 +515,7 @@ export function makeLocalBoardWorkspace(
         `refs/heads/${branch}`,
       ]).pipe(Effect.map((sha) => sha !== ""));
     if (!(yield* exists())) {
-      // Cut from the REMOTE tip of the level above (T3O-28): on a nested
+      // Cut from the REMOTE tip of the level above: on a nested
       // group that is the outer integration branch, which another worker's
       // merges may have moved without this checkout seeing it.
       const remoteName = yield* primaryRemote(cwd);
@@ -775,12 +725,9 @@ export function makeLocalBoardWorkspace(
   };
 
   /**
-   * The `board/*` worktrees of the project registered under THIS server's
-   * worktrees directory (T3O-52, D4) — the orphan sweep's candidates. Another
-   * T3 environment on the same repository has its own board, and its
-   * checkouts are none of ours; nor, on a worker, are the checkouts of the
-   * other board sharing this directory (`BoardWorktreeOwner`). The first block
-   * is the repository's own checkout, and a prunable one is already gone.
+   * The orphan sweep's candidates: the project's `board/*` worktrees under this
+   * server's worktrees directory, never another environment's or the other
+   * board's here. The first block is the checkout itself.
    */
   const listBoardWorktrees: BoardWorkspace["listBoardWorktrees"] = Effect.fn(
     "LocalBoardWorkspace.listBoardWorktrees",
@@ -836,7 +783,7 @@ export function makeLocalBoardWorkspace(
 
   /** The branch's tip on the remote, freshly fetched; null when the remote
       does not have it, or there is no remote. A remote that can't be asked
-      fails instead (T3O-66): "not there" offers a restart from base, which
+      fails instead: "not there" offers a restart from base, which
       forgets pushed work, so it must not be guessed from a network error. */
   const remoteBranchTip: BoardWorkspace["remoteBranchTip"] = Effect.fn(
     "LocalBoardWorkspace.remoteBranchTip",

@@ -1,14 +1,5 @@
-// T3o: board label catalogue (t3o-06a). The user-managed vocabulary that
-// replaces the closed card-type union. Numbered from 900_ upward so it can
-// never collide with an upstream migration id. Seeding and card conversion are
-// the separate data migration 906_ (a table create and a data backfill are
-// kept apart, mirroring 900/903).
-//
-// No secondary index: the case-insensitive name-uniqueness check is a decision
-// gate, so it runs against the in-memory read model in the decider (D8), never
-// as a SQL lookup — the whole catalogue is already resident. A `lower(name)`
-// SQL index would be unused AND its collation could disagree with the decider's
-// JS `toLowerCase`, so it is deliberately omitted (no-speculative-inventory).
+// No `lower(name)` index: name uniqueness is checked in the decider against the
+// resident catalogue, and a SQL collation could disagree with JS `toLowerCase`.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

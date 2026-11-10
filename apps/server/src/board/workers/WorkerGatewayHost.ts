@@ -1,18 +1,8 @@
 /**
- * T3o (T3O-63): what a worker answers when a central server drives its
- * threads. Every `boardWorker.gateway.*` call lands here, and the in-process
- * test transport calls the same methods, so a suite exercises exactly what a
- * real worker runs.
- *
- * It serves THIS server's own threads (`LocalThreadGateway`), never the
- * board router: a worker that is itself a central board must not hand its
- * own workers' threads to another board.
- *
- * A thread spawned here is recorded as relayed to the board that spawned it,
- * so its agent's board tools forward there (`McpRelayHost`), and forgotten
- * once it is deleted. The relay's calls and the spawn take the caller's
- * session, because a board is only the environment id its session claims:
- * the relay binds each board to one session (`McpRelayHost.claim`).
+ * What a worker answers when a central server drives its threads. It serves this
+ * server's own threads, never the board router: a worker that is itself a board
+ * must not hand its own workers' threads on. Spawn and relay calls take the
+ * caller's session, since a board is only the environment id its session claims.
  */
 import {
   BoardWorkerGatewayError,
@@ -240,7 +230,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     mcpRelayRespond: (response, caller) =>
       relay.respond(response, caller).pipe(Effect.mapError(refused("mcpRelayRespond"))),
     stageAttachments,
-    // T3O-44 (D21): the card's CI steps, run here where its worktree is.
+    // The card's CI steps, run here where its worktree is.
     runCi: (input) =>
       Stream.callback<BoardWorkerCiProgress>((queue) =>
         ciRunner
@@ -261,7 +251,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
             Effect.andThen(Queue.end(queue)),
           ),
       ),
-    // T3O-60: a step's log, followed until the central server closes it.
+    // A step's log, followed until the central server closes it.
     readCiLog: (input) =>
       isSafeBoardCiLogTarget(input.runId, input.index)
         ? readBoardCiLogFile(

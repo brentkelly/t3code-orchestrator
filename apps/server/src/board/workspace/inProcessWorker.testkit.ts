@@ -1,14 +1,8 @@
 /**
- * T3o (T3O-64): an in-process worker for the workspace suites.
- *
- * `inProcessWorkerGit` answers `WorkerRpc["git"]` by running the worker's
- * real `boardWorker.git.call` handler against a `BoardWorkspacesShape` of the
- * test's choosing, and round-trips every payload, answer and error through the
- * RPC's own schemas — so a remote workspace under test sees exactly what
- * would have crossed the wire. A refusal arrives as the transport delivers
- * one: a `WorkerRpcError` carrying the worker's error as its `cause`.
- *
- * `reachable` is the switch a suite flips to take the worker offline.
+ * An in-process worker: `WorkerRpc["git"]` runs the real `boardWorker.git.call`
+ * handler, round-tripping every payload, answer and error through the RPC's
+ * schemas. A refusal arrives as a `WorkerRpcError` with the worker's error as
+ * its `cause`; `reachable` takes the worker offline.
  */
 import {
   AuthOrchestrationReadScope,

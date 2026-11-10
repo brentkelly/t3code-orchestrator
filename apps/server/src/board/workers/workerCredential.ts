@@ -1,19 +1,8 @@
 /**
- * T3o (T3O-62, D19): how the central server gets its own session on a worker.
- *
- * Plain HTTP against the worker's upstream auth endpoints, in the order that
- * keeps a one-time pairing token unspent until it is known to be wanted:
- *
- * 1. `resolveWorkerTarget` — the worker's HTTP origin and the one-time token,
- *    from a minted token plus URL or from a pasted `t3 pair` link;
- * 2. `fetchWorkerDescriptor` — `/.well-known/t3/environment`, unauthenticated,
- *    so the caller can refuse the board server itself, a different server, or
- *    an existing worker BEFORE spending the token;
- * 3. `exchangeWorkerCredential` — `/oauth/token`, which spends it for a bearer
- *    session labelled `T3o board (<central name>)`.
- *
- * Every failure is a `BoardWorkerAddError` naming the prototype's error state.
- * Requests go through `HttpClient`; tests point them at a local server.
+ * How the central server gets its own session on a worker. The descriptor is
+ * fetched unauthenticated BEFORE the one-time pairing token is exchanged, so the
+ * board itself, a different server, or an existing worker is refused without
+ * spending it.
  */
 import {
   AuthAccessTokenType,

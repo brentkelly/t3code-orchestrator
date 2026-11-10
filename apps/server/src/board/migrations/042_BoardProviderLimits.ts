@@ -1,22 +1,6 @@
-// T3o: the provider-cooldown table (T3O-22, D1/D2).
-//
-// One row per provider INSTANCE, not per card. A usage limit belongs to a
-// provider account: the two cards that motivated this spec hit one in the same
-// instant because they share a subscription, and parking only the card that
-// noticed leaves every other card on that account to march into the same wall
-// seconds later.
-//
-// Persisted rather than held in memory because the damage happens at BOOT. The
-// observed burn began at a server restart's reconcile pass; an in-memory
-// cooldown would be lost on restart and every parked card re-nudged the moment
-// the server came back — the same bug, reintroduced by its own fix.
-//
-// A fresh CREATE TABLE, so it is guarded by IF NOT EXISTS and nothing else: this
-// lineage is board-owned and numbered from 001 against `t3o_sql_migrations`,
-// never upstream's ledger. SCHEMA-QUALIFIED (`boards.`), like every other board
-// CREATE TABLE: an unqualified CREATE always lands in `main`, and one board
-// table left behind there is enough to make the t3o-26 relocation refuse to run
-// — it would read as two divergent copies of the board and halt the boot.
+// Schema-qualified (`boards.`) like every board CREATE: an unqualified one lands
+// in `main`, and a board table left there makes the board relocation refuse to
+// run.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

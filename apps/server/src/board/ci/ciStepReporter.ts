@@ -1,9 +1,7 @@
 /**
- * A running CI step's live reports (T3O-60): its latest `::t3o-progress::`
- * line and whether it has gone quiet. Each report re-records the running step
- * row, so they are throttled: progress at most once every 10 s, and only when
- * the fraction (to 1 %) or the message changed. Going silent, or speaking
- * again after, reports at once.
+ * A running CI step's `::t3o-progress::` line and silence. Each report
+ * re-records the step row, so progress is throttled to once every 10 s and only
+ * on a changed fraction (to 1 %) or message; silence and its end report at once.
  */
 import {
   BOARD_CI_SILENT_AFTER_MS,

@@ -1,31 +1,8 @@
 /**
- * T3o (T3O-65, D20/D21): moving a card to another worker — the way back out of
- * a placement.
- *
- * A card with no worktree just re-pins (`board.card.pin-worker`). A card with
- * one is MOVED, and the git remote is the only thing that crosses: nothing is
- * copied worker to worker. So a move is refused while a step runs, and refused
- * while the source worktree holds anything the remote lacks; otherwise the old
- * worktree is retired and a new one provisioned on the target from the pushed
- * branch. Each step lands on the card as it happens (`board.card.move-worker`),
- * which is what the card's Moving / Move failed notices and its activity rail
- * read. The branch must be on the remote before anything is retired, and the
- * source is probed for unpushed work once more right before it is. Retiring
- * runs before the move answers, and a retire that fails leaves the card on its
- * source with its worktree intact. A failed provision does not restore the
- * retired worktree — its branch is on the remote — and Retry or another worker
- * start the move again; if the branch has gone from the remote since, the
- * retry offers to start over from the base instead.
- *
- * A FORCE-move (T3O-66, D22) is the way off a worker the board can't reach —
- * offline, or removed — where nothing can be checked or retired. It continues
- * from the branch on the remote, the old worktree left where it is and
- * recorded as abandoned; a step that still reads as running there is stalled
- * by the supervisor and continues on the new worker. With no branch on the
- * remote the card can only start Build over from its base, which the human
- * confirms a second time.
- *
- * Moves are human acts (D18): only the RPCs call this.
+ * Moving a card to another worker. Only the git remote crosses, so a move is
+ * refused while a step runs or the source holds unpushed work, and the branch must
+ * be on the remote before the source worktree is retired. A force-move (D22)
+ * continues from the remote branch without touching an unreachable source.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
@@ -210,7 +187,7 @@ const makeBoardCardMover = Effect.gen(function* () {
     } as const;
   });
 
-  /** A force-move's check (T3O-66): nothing on the source can be read, so the
+  /** A force-move's check: nothing on the source can be read, so the
       remote branch on the target is all there is to continue from. */
   const checkForced = Effect.fn("BoardCardMover.checkForced")(function* (
     card: BoardCard,
@@ -514,13 +491,9 @@ const makeBoardCardMover = Effect.gen(function* () {
     );
 
   /**
-   * Restart a force-moved card from its base (T3O-66, prototype 5.6): there is
-   * nothing on the remote to continue from. A card past Build goes back to it
-   * first — while it still holds its old placement, so nothing starts on the
-   * old branch — then its branch is forgotten and the move ends on the target,
-   * where Build cuts a fresh one from the base. A card not yet at Build keeps
-   * its stage and cuts the branch when it gets there. Whether it restarted:
-   * a refused stage move fails the move instead.
+   * Restart a force-moved card from its base, with nothing on the remote to
+   * continue from. A card past Build goes back to it while it still holds its old
+   * placement, so nothing starts on the old branch, then its branch is forgotten.
    */
   const restartFromBase = Effect.fn("BoardCardMover.restartFromBase")(function* (
     cardId: BoardCardId,
@@ -701,14 +674,10 @@ const makeBoardCardMover = Effect.gen(function* () {
       );
   });
 
-  // A move runs in this process's memory, so one still `moving` when the
-  // mover is built was cut off by a restart and nothing will ever finish it.
-  // Close it here, before any RPC can start a new one: a card still holding
-  // its worktree just stays where it was, and one already retired gets Move
-  // failed with Retry, its branch safe on the remote. One gap remains: a
-  // restart after `retireWorktree` succeeded but before `retired` was
-  // recorded leaves the card holding a path that no longer exists; nothing
-  // here probes for that.
+  // A move lives in memory, so one still `moving` now was cut off by a restart.
+  // Close it before any RPC can start another. Known gap: a restart between
+  // `retireWorktree` succeeding and `retired` being recorded leaves the card
+  // holding a path that no longer exists.
   for (const card of (yield* readBoard).cards) {
     if (card.workerMove?.status !== "moving") continue;
     yield* record(

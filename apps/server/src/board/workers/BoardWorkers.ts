@@ -1,20 +1,7 @@
 /**
- * T3o (T3O-62, D19/D20): the central server's worker management, as a service
- * so the RPC handlers, and later MCP tools and agents, all call the same
- * methods.
- *
- * - `add` / `repair`: refuse the wrong server before spending the one-time
- *   token, exchange it for the board's own session, prove the worker speaks
- *   the board-worker protocol, store the token, then record the worker.
- * - `removePreview` / `remove` (T3O-66, D22): which cards removal affects, for
- *   the confirm dialog; then forget the worker — its cards fall back to the
- *   default or hold, decided with the removal itself — stop the steps running
- *   there if it answers, and give the board's session back. Nothing on the
- *   worker is deleted.
- * - `setDefault`: only to an online worker, or back to `local`.
- * - `setupProject`: clone a board project's remote onto a worker, following
- *   the worker's own clone progress so it survives anyone leaving the page.
- * - `state` / `states`: the `BoardWorkersState` every board client holds.
+ * The central server's worker management, as a service so RPC handlers, MCP tools
+ * and agents share one path. `add`/`repair` refuse the wrong server before
+ * spending the one-time token. `remove` deletes nothing on the worker.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
@@ -466,11 +453,9 @@ export const makeBoardWorkers = Effect.gen(function* () {
           describe(target.httpBaseUrl).pipe(Effect.map((descriptor) => ({ target, descriptor }))),
         ),
       );
-    // A minted token works at any of the worker's addresses, and the URL
-    // beside it is the one the CLIENT reaches it on. The board keeps dialing
-    // the address it already uses, and moves only when that one has stopped
-    // answering, or another server now answers there (the worker moved). A
-    // pasted link names its own address.
+    // A minted token's URL is the one the CLIENT reaches the worker on, so the
+    // board keeps its own address unless that stopped answering or another
+    // server answers there. A pasted link names its own address.
     const { target, descriptor } =
       input.credential.kind === "pairing-token" &&
       input.url !== undefined &&
@@ -531,11 +516,9 @@ export const makeBoardWorkers = Effect.gen(function* () {
       );
     yield* connections.record(worker.id, probed.hello, probed.snapshot);
     yield* syncConnections;
-    // Re-pairing a worker whose old session still works (it moved, say)
-    // must not leave that session behind where the board can't revoke it.
-    // It is given back where the worker answers now: the old address may
-    // be dead, or another server's. A session left live keeps the worker's
-    // relay claimed for the board, refusing the new one.
+    // A re-pair gives the old session back where the worker answers now (the
+    // old address may be dead or another server's). Left live, it keeps the
+    // worker's relay claimed and refuses the new session.
     if (Option.isSome(previousToken)) {
       yield* releaseSession(target.httpBaseUrl, previousToken.value);
     }
@@ -816,11 +799,9 @@ export const makeBoardWorkers = Effect.gen(function* () {
         input.folder ?? cloneDestination(worker.snapshot?.projectsFolder ?? "~", remoteUrl);
       const startedAt = yield* nowIso;
       const prior = (yield* SubscriptionRef.get(setups)).get(key);
-      // The id the worker knows this clone by is fixed before going over the
-      // network and kept through any failure, so a later Set up can find a
-      // clone the worker accepted after this call stopped waiting. A clone
-      // into a folder that already existed is never reused: retrying it would
-      // clear that folder.
+      // The clone's id is fixed before the network call and kept through failure,
+      // so a later Set up finds a clone the worker accepted after we stopped
+      // waiting. Never reused for a folder that already existed: a retry would clear it.
       const reusedId =
         prior?.phase === "failed" &&
         prior.destinationPath === destinationPath &&

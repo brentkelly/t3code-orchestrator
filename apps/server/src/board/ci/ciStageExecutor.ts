@@ -1,17 +1,8 @@
 /**
- * The CI stage's executor (T3O-44/57). Pure, like every executor: it decides
- * what follows CI entry, a failed pass, or a fix agent's report. CI never
- * sends a card back to review by itself: it fixes, re-runs, and stops for a
- * human when it can't get further.
- *
- * - Entry, or a restart: run every step from the top (`ci-pass`).
- * - A failed pass with fixes left this entry: one fix agent step in the
- *   card's worktree, told every failure the pass reported.
- * - A failed pass with no fixes left: stop for a human (`ci-stop`).
- * - A fix agent's `fixed`: every step again, from the top, so a pass always
- *   means the whole list passed on one commit.
- * - A fix agent's `cannot-fix` (or the older `return-to-review`), or no
- *   readable verdict: stop for a human, with why.
+ * The CI stage's executor. CI never sends a card back to review by itself: a
+ * failed pass gets a fix agent while fixes are left, else stops for a human; a
+ * `fixed` re-runs every step from the top, so a pass means the whole list
+ * passed on one commit.
  */
 import {
   BOARD_CI_SHELL_FINDING_MAX,
@@ -53,7 +44,7 @@ function boardCiFailureFinding(failure: BoardCiFailure, tailLines: number): stri
 }
 
 /**
- * A human's "Send back to review anyway" finding (T3O-57): a line naming
+ * A human's "Send back to review anyway" finding: a line naming
  * every failed step, then each failure with as much of its tail as lets the
  * whole fit `BOARD_CI_SHELL_FINDING_MAX`.
  */

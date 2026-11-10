@@ -1,5 +1,5 @@
 /**
- * A CI pass on a placed worker (T3O-44, D21): the worker runs the steps in the
+ * A CI pass on a placed worker (D21): the worker runs the steps in the
  * card's worktree there and streams each step's progress back over its
  * gateway (`boardWorker.gateway.runCi`). Interrupting the pass closes the
  * stream, which interrupts the worker's run and kills its process group.
@@ -45,7 +45,7 @@ export function toWireCiDone(outcome: BoardCiRunResult): WireCiDone {
       };
 }
 
-/** A worker's headline, clamped here (T3O-61): the wire carries loose strings. */
+/** A worker's headline, clamped here: the wire carries loose strings. */
 const fromWireHeadline = (headline: WireCiDone["headline"]) =>
   headline === undefined ? null : clampBoardCiHeadline(headline);
 
@@ -79,8 +79,8 @@ function fromWireCiDone(done: WireCiDone): BoardCiRunResult {
   };
 }
 
-/** How long a worker's run may take before the board stops waiting
-    (T3O-59): each group's longest step limit, summed, plus 10 minutes. */
+/** How long a worker's run may take before the board stops waiting: each
+    group's longest step limit, summed, plus 10 minutes. */
 export function remoteCiRunBudgetMs(steps: ReadonlyArray<BoardCiStepDefinition>): number {
   const indexed = steps.map((definition) => ({
     definition,

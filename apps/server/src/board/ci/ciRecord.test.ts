@@ -1,5 +1,5 @@
 /**
- * T3O-59 — the CI record decider: a held pass keeps why (and whether the
+ * The CI record decider: a held pass keeps why (and whether the
  * machine was to blame), and a late report from a held or stopped pass can't
  * move the card's steps or start a fix.
  */

@@ -1,26 +1,6 @@
-// T3o: threads on workers, and the relay that serves them (T3O-63, D3/D9).
-//
-// `board_card_thread_links.worker_id` — the worker a linked thread lives on,
-// its environment id. NULL means `local`, the central server itself, which is
-// every link written before workers existed: it must match the absent
-// `BoardCardThreadLink.workerId`, so replay equals rehydration. Altered
-// unqualified like 043: the column joins whichever copy of the table exists.
-//
-// The other three are fresh tables, schema-qualified like every board CREATE
-// (see 042):
-//
-//   board_relayed_threads — WORKER side. The threads a central server spawned
-//     here, and which board they belong to. A board tool call from one of them
-//     is relayed to that board instead of running against this server's own.
-//     Persisted, so a relayed thread still forwards after a restart.
-//
-//   board_worker_cursors — CENTRAL side. How far through each worker's thread
-//     signals the board has read, so a reconnect resumes where it left off and
-//     delivers what it missed exactly once. Todo signals ride the same feed.
-//
-//   board_mcp_relay_calls — CENTRAL side. Each relayed call's answer, by its
-//     call id. A dropped connection can deliver a call twice; the second
-//     delivery gets the first answer instead of running again.
+// A NULL `worker_id` means `local`, matching an absent
+// `BoardCardThreadLink.workerId`. `board_mcp_relay_calls` stores each relayed
+// call's answer so a redelivered call gets it instead of running twice.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

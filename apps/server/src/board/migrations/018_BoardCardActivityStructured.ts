@@ -1,17 +1,6 @@
-// T3o: the card Activity rail becomes a structured, actor-attributed projection
-// of the board's own event log (t3o-18, D10/D11/D12).
-//
-// `board_card_activity` (migration 008) held free prose written by two agent
-// tools — `board_report_progress` and `board_request_input` — both deleted by
-// t3o-18 D13. Its only two kinds (`progress`, `input-requested`) go with them,
-// and nothing ever rendered a row, so there is nothing to preserve: the table is
-// recreated rather than altered, which is also the only clean way to drop the
-// NOT NULL on the old `body` column in SQLite.
-//
-// Rows are now a KIND + a small typed JSON payload + an ACTOR. The server never
-// writes English; the client renders the sentence and its links. Otherwise the
-// log is unqueryable, unrelabelable, and "who approved it" ends up buried in
-// prose.
+// Recreated rather than altered: SQLite can't drop the old `body` NOT NULL, and
+// no old row was ever rendered. Rows are kind + typed JSON payload + actor; the
+// client renders the sentence.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

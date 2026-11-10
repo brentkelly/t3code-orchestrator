@@ -1,11 +1,7 @@
 /**
- * T3o: the service behind every project config RPC (T3O-49), built per
- * connection by `boardRpcHandlers`.
- *
- * It reads global settings, normalizes a delta against them (the decider has
- * no settings, and replay must not depend on today's), stamps the human
- * actor, and dispatches. Import and export read and write the committed
- * `t3o.json` through `BoardProjectFile`.
+ * The service behind every project config RPC. It normalizes a delta against
+ * global settings before dispatch, since the decider has none and replay must
+ * not depend on today's.
  */
 import {
   BOARD_CONFIG_VERSION_MISMATCH,

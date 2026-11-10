@@ -1,17 +1,8 @@
 /**
- * T3o (T3O-63, D9/D19): the board's gateway onto ONE worker's threads.
- *
- * A thin proxy over the worker's own gateway (`boardWorker.gateway.*`). The
- * only translation is the project: a board project is a central-server
- * project, and on a worker it is the checkout whose repository grouping key
- * matches (D20). Thread ids are the same on both sides.
- *
- * A worker the board cannot reach right now fails every call with a
- * `WorkerUnavailable` cause, except `threadState`, which answers `unknown`:
- * a thread the board cannot see is not a thread that is gone (D22).
- *
- * Signals and the todo log are not here: the `WorkerSignalFeed` follows every
- * worker's at once, with its cursor, and the router merges it.
+ * The board's gateway onto one worker's threads. Board projects map to the
+ * worker checkout with the same repository grouping key (D20); thread ids match.
+ * An unreachable worker fails every call except `threadState`, which answers
+ * `unknown`: a thread the board cannot see is not a thread that is gone (D22).
  */
 import {
   boardRepositoryGroupingKey,

@@ -1,9 +1,5 @@
-// T3o: agent write-path plan store (t3o-08, D8). Plan bodies (markdown) live
-// ONLY here; the read model holds plan metadata (title, summary, dependsOn,
-// ordinal, locked) that the approve gate / write guard / parent auto-advance
-// branch on. board_propose_plans replaces a card's rows wholesale; board_
-// write_plan updates one body. `depends_on` is a JSON array of plan ids;
-// `locked` is 0/1 (SQLite has no boolean).
+// Plan bodies live only here; the read model holds plan metadata.
+// `depends_on` is a JSON array of plan ids; `locked` is 0/1.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

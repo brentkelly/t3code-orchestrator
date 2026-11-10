@@ -1,13 +1,4 @@
-// T3o: plan review (T3O-39).
-//
-//   board_cards.plan_review — JSON `{ enabled, rounds }`, the card's own plan
-//     review setting. NULL follows the planning stage's Settings default,
-//     matching the absent `BoardCard.planReview` key on older payloads.
-//   board_card_step_state.plan_review_started_at / plan_review_rounds — when
-//     this stage entry's plan review started and the rounds it locked. NULL on
-//     every older row, which is "no review started".
-//
-// Additive and guarded, so re-running is a no-op.
+// A NULL `plan_review` follows the planning stage's default. Additive and guarded.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

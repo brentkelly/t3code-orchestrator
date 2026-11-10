@@ -1,19 +1,5 @@
-// T3o: per-card, per-stage model overrides on board_cards (t3o-29).
-//
-// One column, additive and guarded exactly like 025's `review_overrides`, and
-// defaulting to NULL:
-//
-//   model_overrides — the JSON-encoded BoardCardModelOverrides (D1): a map from
-//     stage id to the model, reasoning options and access level THIS card's run
-//     of that stage uses. NULL for a card that never set one, which MUST match
-//     the decoding default on BoardCard.modelOverrides (contracts board.ts), so
-//     a from-empty replay of a log written before this spec decodes each card's
-//     overrides to null and a pre-existing row rehydrates to null — replay
-//     equals rehydration.
-//
-// Keyed by stage id rather than by role even though the popover offers only the
-// build and review rows: two rows is a judgement about the UI, and keying the
-// COLUMN by role would put that judgement somewhere only a migration could undo.
+// The NULL default MUST match the decoding default on BoardCard.modelOverrides.
+// Keyed by stage id, not role, so a UI choice of rows isn't baked into storage.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

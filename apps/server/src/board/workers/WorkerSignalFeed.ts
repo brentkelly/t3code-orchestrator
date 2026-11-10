@@ -1,19 +1,8 @@
 /**
- * T3o (T3O-63): every worker's thread signals, on the central server.
- *
- * For each worker with a live connection the feed holds the worker's signal
- * stream open from where the board last got to, and on each batch:
- *
- * - applies its todo signals to the board's todo cache and moves the worker's
- *   cursor, in one transaction, so a crash re-reads at worst and never
- *   applies an older todo list over a newer one;
- * - publishes its signals, tagged with the worker, for the router's
- *   `observe`.
- *
- * A dropped connection resumes from the cursor when the worker is back, so
- * what happened meanwhile arrives once — not lost, not doubled. A worker the
- * board has never read starts at its log's head: a thread placed there was
- * spawned after this point.
+ * Every worker's thread signals on the central server. Todo signals and the
+ * worker's cursor commit in one transaction, so a crash re-reads at worst and never
+ * applies an older todo list over a newer one. A worker never read before starts
+ * at its log's head.
  */
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";

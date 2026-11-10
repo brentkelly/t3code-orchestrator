@@ -1,24 +1,8 @@
 /**
- * T3o (T3O-63, D3): the worker's half of the MCP relay.
- *
- * A board tool called by a thread a central server placed here is not run
- * against this server's own board. It is handed to that central server over
- * the relay stream it holds open (`boardWorker.subscribeMcpRelay`) and the
- * agent waits for the answer (`boardWorker.mcpRelayRespond`). The worker never
- * dials out.
- *
- * A call survives a dropped stream: it is sent again, under the same call id,
- * to the next stream the central server opens, and the central server answers
- * a repeated call id once. With no central server connected, or no answer in
- * `BOARD_MCP_RELAY_TIMEOUT_MS`, the agent gets a retryable "board unreachable";
- * its retry of the same call, from the same session, rejoins the timed-out
- * call rather than running it a second time.
- *
- * A board's environment id is only what its session claims, so the first
- * session to claim one (by spawning a thread for it, or opening its relay
- * stream) holds it until that session is revoked or expires: no other session
- * can then read that board's calls, answer them, or point threads at it. A
- * call is answered only by a session it was delivered to.
+ * The worker's half of the MCP relay: a placed thread's board tool calls go to
+ * its central server over the stream that server holds open; the worker never dials out.
+ * A call id is answered once across dropped streams and timed-out retries, and
+ * the first session to claim a board holds it until revoked or expired.
  */
 import {
   BOARD_MCP_RELAY_TIMEOUT_MS,
@@ -142,12 +126,9 @@ export const makeMcpRelayHost = Effect.fn("McpRelayHost.make")(function* (
     },
   );
 
-  // By call id, each timed-out call. It stays pending, so it is still
-  // redelivered and its answer still lands; an agent retrying the very same
-  // call joins it instead of running it again under a new id. An agent that
-  // never retries leaves it for `RETRY_GRACE_TIMEOUTS` timeouts: well past
-  // the "retry in a minute" the agent is told, so a retry that follows that
-  // advice, however slowly, still joins it.
+  // Timed-out calls stay pending, so they are still redelivered; an agent
+  // retrying the same call joins it rather than running it again. Kept for
+  // `RETRY_GRACE_TIMEOUTS` timeouts, well past the "retry in a minute" the agent is told.
   const timedOut = new Map<string, TimedOut>();
   const fingerprintOf = (central: EnvironmentId, call: McpRelayCall) =>
     JSON.stringify([central, call.providerSessionId, call.toolName, call.params]);

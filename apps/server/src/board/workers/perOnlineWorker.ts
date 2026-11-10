@@ -1,14 +1,7 @@
 /**
- * T3o (T3O-63): run something against every registered worker's live link,
- * again on each new link.
- *
- * The signal feed and the MCP relay both hold a stream open on each worker
- * for as long as its connection lasts, and open it again when the connection
- * manager redials. This is that loop, once: a fiber per registered worker
- * that waits for a link, runs, and runs again — at once on a new link, after
- * a backoff on the same one, so a transient failure on a healthy link does
- * not stop the feed until the next redial. A worker removed from the
- * registry has its fiber stopped.
+ * Run something against every registered worker's live link: at once on a new
+ * link, after a backoff on the same one, so a transient failure on a healthy link
+ * does not stop it until the next redial.
  */
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";

@@ -1,21 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalTimersInEffect:off globalDate:off
 /**
- * Runs a CI pass's steps in a card's worktree (T3O-44/49).
- *
- * Each step is a shell command run with the worktree as its cwd, stdout and
- * stderr merged into one log. Steps run in groups (a step marked `parallel`
- * joins the one before it); groups run in order. With stop on failure (the
- * default) a failure stops later groups once its own group finishes; without
- * it every group runs and the pass fails at the end (T3O-57). The exit code
- * alone decides a step; a
- * result file at `$T3O_CI_RESULT` adds detail. A group that leaves tracked
- * changes in the worktree fails. Every step change is reported through
- * `emit`, with the last `BOARD_CI_TAIL_LINES` lines of output; the full log
- * goes to `<logDir>/<index>.log`.
- *
- * Each step runs in its own process group, so a timeout or an interrupted
- * pass (Skip CI, the card leaving CI) kills the whole tree, not just the
- * shell.
+ * Runs a CI pass's steps in a card's worktree. A `parallel` step joins the group
+ * before it; the exit code alone decides a step, and a group that leaves tracked
+ * changes fails. Each step runs in its own process group, so a timeout or an
+ * interrupted pass kills the whole tree, not just the shell.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeChildProcess from "node:child_process";
@@ -61,11 +49,11 @@ export interface BoardCiRunRequest {
   /** Where each step's full log is written; created if missing. */
   readonly logDir: string;
   /** The pass index of `steps[0]`, so a later segment's logs don't overwrite
-      an earlier one's (T3O-49). */
+      an earlier one's. */
   readonly indexOffset?: number;
-  /** False runs every group even after a failure (T3O-57). Absent is true. */
+  /** False runs every group even after a failure. Absent is true. */
   readonly stopOnFailure?: boolean;
-  /** Each complete output line of a step, by its pass index (T3O-59), in
+  /** Each complete output line of a step, by its pass index, in
       order, delivered before the step settles. */
   readonly onLine?: (index: number, line: BoardCiLine) => Effect.Effect<void>;
 }
@@ -83,10 +71,10 @@ export type BoardCiRunResult =
       readonly failedIndex: number | null;
       /** Every step of the request ran, rather than stopping at a failure. */
       readonly ranAll: boolean;
-      /** The failed step's exit code (T3O-59), so a result that can't be
+      /** The failed step's exit code, so a result that can't be
           saved can still say how the script ended. */
       readonly exitCode?: number | null;
-      /** The failed step's headline (T3O-61), so whether it is a machine
+      /** The failed step's headline, so whether it is a machine
           problem never waits on the step's own record landing. */
       readonly headline?: BoardCiHeadline;
     }
@@ -96,7 +84,7 @@ export type BoardCiRunResult =
       readonly result: "unavailable";
       readonly failedIndex: null;
       readonly detail: string;
-      /** The machine, not the code, stopped it: a full disk (T3O-59). */
+      /** The machine, not the code, stopped it: a full disk. */
       readonly machine?: boolean;
     };
 
@@ -228,7 +216,7 @@ export class BoardCiTail {
 interface StepExit {
   readonly status: "passed" | "failed" | "timed-out";
   readonly exitCode: number | null;
-  /** The signal that ended the shell, when one did (T3O-61). */
+  /** The signal that ended the shell, when one did. */
   readonly signal?: string | null;
 }
 
@@ -243,7 +231,7 @@ const killGroup = (child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals)
   }
 };
 
-/** One output line of a step (T3O-59): numbered from 1, with the byte offset
+/** One output line of a step: numbered from 1, with the byte offset
     of its start in the step's `<n>.log`. */
 export interface BoardCiLine {
   readonly line: string;
@@ -318,7 +306,7 @@ const DEFAULT_STEP_TIMING: BoardCiStepTiming = {
 };
 
 /** Run one step to completion, killing its process group on timeout or when
-    the surrounding fiber is interrupted. Every way out is bounded (T3O-59): a
+    the surrounding fiber is interrupted. Every way out is bounded: a
     step past its time limit settles `timed-out` a grace after its kill even if
     the child never exits, and a log that won't flush is not waited on. */
 export const runBoardCiStep = (input: BoardCiStepInput): Effect.Effect<StepExit> =>
@@ -461,8 +449,8 @@ const runStepWithEnv = (
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-/** Run a step with its output split into lines for its reporter (T3O-60),
-    `onLine` (T3O-59) and its failure facts (T3O-61). Node's callbacks only
+/** Run a step with its output split into lines for its reporter,
+    `onLine` and its failure facts. Node's callbacks only
     push onto a queue; a fiber scoped to the step delivers them, and the last
     line lands before the step's result. */
 const withStepLines = <A>(
@@ -505,7 +493,7 @@ const withStepLines = <A>(
   );
 
 /** The step's `$T3O_CI_RESULT` file, if it wrote one. A malformed file is a
-    line in the tail, never a failure; an empty one is noted (T3O-61). */
+    line in the tail, never a failure; an empty one is noted. */
 const readStepResult = (
   resultPath: string,
   tail: BoardCiTail,
@@ -567,7 +555,7 @@ const freeBytesNow = Effect.fn("BoardCiRunner.freeBytesNow")(
 
 export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunner.run")(
   function* (request, emit) {
-    // T3O-59: a full disk is the machine's problem, said before any step runs.
+    // A full disk is the machine's problem, said before any step runs.
     const lowDisk = yield* boardCiLowDiskReason(request.cwd);
     if (lowDisk !== null) {
       return { result: "unavailable", failedIndex: null, detail: lowDisk, machine: true } as const;
@@ -614,7 +602,7 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
               timeoutMinutes: definition.timeoutMinutes,
               ...(definition.parallel === true ? { parallel: true } : {}),
             };
-            // T3O-60: every running report has an empty tail; the output
+            // Every running report has an empty tail; the output
             // itself is read from the step's log.
             const running = (live: BoardCiStepLive) =>
               emit({
@@ -657,7 +645,7 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
               }),
             );
             const { result, empty } = readStepResult(resultPath, tail);
-            // T3O-61: a failed step says what failed and why, read here, on
+            // A failed step says what failed and why, read here, on
             // the machine it ran on.
             const headline =
               exit.status === "passed"
@@ -708,7 +696,7 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
             exitCode: step.exit.exitCode,
             tail: step.tail.text(),
             ...(step.result === null ? {} : { result: step.result }),
-            // T3O-60: a settled step keeps where its progress got to.
+            // A settled step keeps where its progress got to.
             ...(step.progress === undefined ? {} : { progress: step.progress }),
             ...(headline === null ? {} : { headline }),
           },

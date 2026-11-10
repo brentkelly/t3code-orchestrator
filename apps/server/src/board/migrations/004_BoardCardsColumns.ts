@@ -1,12 +1,6 @@
-// T3o: grow board_cards from its walking-skeleton (t3o-02) shape to the full
-// t3o-03 card aggregate. 900_BoardCards has been applied to real databases,
-// so it must never be edited — a machine that already ran it would silently
-// skip the change; the full shape arrives here as guarded ALTERs instead.
-//
-// The column defaults are what pre-t3o-03 rows rehydrate with and MUST match
-// the decoding defaults on BoardCardCreatedPayload (the LEGACY_BOARD_CARD_*
-// constants in contracts board.ts), or a from-empty replay of an old event
-// log would diverge from table rehydration.
+// Applied migrations are never edited, so the card columns arrive as guarded ALTERs.
+// Column defaults MUST match the LEGACY_BOARD_CARD_* decoding defaults in
+// contracts board.ts, or a from-empty replay diverges from table rehydration.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

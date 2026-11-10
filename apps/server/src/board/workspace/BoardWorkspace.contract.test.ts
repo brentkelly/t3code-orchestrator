@@ -1,15 +1,8 @@
 /**
- * T3o (T3O-64, D21): every named board git and forge operation answers the
- * same through `LocalBoardWorkspace` and through `RemoteBoardWorkspace` — the
- * remote one reaching an in-process worker over the real `boardWorker.git.*`
- * handlers, with every payload, answer and error round-tripped through the
- * wire schemas.
- *
- * Each implementation runs one scenario against its own fresh set of real git
- * repositories — a bare remote, the project checkout, and a second clone that
- * pushes as another worker would. Commit dates and identities are fixed, so
- * the two sets hold identical commits, and the two transcripts must match once
- * their temp roots are taken out.
+ * Every named operation answers the same locally and through a remote workspace
+ * over the real wire handlers. Each runs on fresh, identical git repositories
+ * (fixed dates and identities), so the transcripts must match once temp roots
+ * are taken out.
  */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";

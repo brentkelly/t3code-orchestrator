@@ -1,26 +1,8 @@
 /**
- * T3o (T3O-62, D19/D22): the central server's live connection to each worker.
- *
- * One fiber per registered worker dials it with the board's own bearer token,
- * runs the `boardWorker.hello` handshake, reads the worker's providers and
- * checkouts, and then holds the connection until it drops — and dials again,
- * with backoff. Every change is published, so the board subscription can send
- * clients the new `workers` state.
- *
- * Status rules:
- * - a dial or handshake that fails on the network: `offline`, retried;
- * - a handshake below `BOARD_WORKER_PROTOCOL_FLOOR`, or a server with no
- *   `boardWorker.hello` at all: `incompatible`, retried (it may be upgraded);
- * - a 401/403, a missing token, or a different server answering at the URL:
- *   `unauthorized`, NOT retried — only a re-pair (`restart`) recovers it.
- *
- * Upstream sessions expire after a fixed lifetime and are never refreshed, so
- * the loop renews the board's session `SESSION_RENEW_AHEAD` before it expires:
- * `boardWorker.renew`, store the successor, `release` the old one, and redial
- * quietly — the worker stays online throughout.
- *
- * Later plans build on `get` (a typed client, or `WorkerUnavailable`) and on
- * `changes`.
+ * The central server's live connection to each worker: dial, handshake, hold,
+ * redial with backoff. Network failures go `offline` and below-floor protocols go
+ * `incompatible`, both retried; a 401/403, missing token or different server goes
+ * `unauthorized`, which only a re-pair recovers.
  */
 import {
   BOARD_WORKER_PROTOCOL_FLOOR,

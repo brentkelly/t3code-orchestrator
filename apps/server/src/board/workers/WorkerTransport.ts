@@ -1,16 +1,8 @@
 /**
- * T3o (T3O-62, D19): the central server's line to one worker.
- *
- * `WorkerRpc` is the narrow, typed slice of a worker's WebSocket RPC the
- * board uses. Later plans grow it (the remote thread gateway, the MCP relay,
- * the named git operations); it never becomes the whole `WsRpcGroup` client,
- * so a test transport can fake exactly what the board relies on.
- *
- * `WorkerTransport.connect` dials with the board's bearer token: a WebSocket
- * ticket from `/api/auth/websocket-ticket`, then `/ws`. It resolves once the
- * socket is open and hands back a `WorkerLink` whose `closed` completes when
- * the socket drops. Reconnecting is the connection manager's job, so the
- * socket itself never retries.
+ * The central server's line to one worker. `WorkerRpc` stays a narrow typed slice
+ * of the worker's RPC, never the whole `WsRpcGroup` client, so a test transport
+ * fakes exactly what the board relies on. The socket never retries: reconnecting
+ * is `WorkerConnections`' job.
  */
 import {
   BOARD_WORKER_GATEWAY_WS_METHODS,
@@ -83,9 +75,9 @@ export interface WorkerRpc {
   /** Every tracked clone on the worker, once now and again on each change. */
   readonly projectClones: Stream.Stream<ProjectCloneListEvent, WorkerRpcError>;
   /** The worker's own threads, its signals, the MCP relay and attachment
-      staging (T3O-63). */
+      staging. */
   readonly gateway: WorkerGatewayRpc;
-  /** One named board git or forge operation, run on the worker (T3O-64, D21).
+  /** One named board git or forge operation, run on the worker (D21).
       A refusal carries the worker's `BoardWorkerGitError` as its `cause`. */
   readonly git: <Method extends BoardWorkerGitMethod>(
     method: Method,
@@ -288,7 +280,7 @@ const connectWorker = Effect.fn("WorkerTransport.connect")(function* ({
   return { rpc, closed: Deferred.await(disconnected) };
 });
 
-/** The gateway half of a live worker client (T3O-63). */
+/** The gateway half of a live worker client. */
 const makeLiveGatewayRpc = (
   client: RpcClient.FromGroup<typeof WsRpcGroup, RpcClientError.RpcClientError>,
 ): WorkerGatewayRpc => {

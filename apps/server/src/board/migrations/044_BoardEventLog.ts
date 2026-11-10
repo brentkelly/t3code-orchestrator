@@ -1,34 +1,11 @@
-// T3O-56: the board's own event log, command receipts and watermarks.
-//
-// Board commands used to ride upstream's orchestration engine, so their events
-// sat in `main.orchestration_events` and their receipts in
-// `main.orchestration_command_receipts`. The board now has its own engine
-// (`BoardEngine.ts`); this creates the tables it writes, in `boards.sqlite`, and
-// copies the history across.
-//
-// - `board_events` has upstream's event DDL with its OWN `AUTOINCREMENT`
-//   sequence. The two logs share no sequence space and define no interleaving.
-// - History is copied in sequence order and renumbered 1..N. The source rows are
-//   LEFT in `main`: v1 replay tolerates them, v2 ignores v1-version rows, and
-//   leaving them keeps a rollback to an older build possible.
-// - Receipts carry a result sequence, which is renumbered into the board's
-//   space: an accepted receipt points at its own last event, a rejected one at
-//   the board head when it was refused.
-// - The old `projection.board-cards` watermark counted MAIN sequences. It splits
-//   in two: the board log projector's watermark in board sequences, and the
-//   cursor of the read-only tail of upstream's thread events (todo cache), which
-//   stays in main sequences. The legacy row itself is LEFT in place, for the
-//   same rollback reason as the source rows: an older build that lost it would
-//   replay every board event in `main` from 0 over tables that already hold
-//   newer work.
-//
-// Re-runnable: every insert skips rows already present, so a second run is a
-// no-op. The migrator runs it once; idempotence is what makes a torn first run
-// safe to retry.
+// Copies board events into the board's own log, renumbered 1..N, and receipts
+// into its sequence space. Source rows and the legacy watermark stay in `main` so
+// an older build can still roll back. Every insert skips existing rows, so a torn
+// first run is safe to retry.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-/** The pre-T3O-56 board projector's watermark, in MAIN sequences. */
+/** The legacy board projector's watermark, in MAIN sequences. */
 const LEGACY_BOARD_PROJECTOR = "projection.board-cards";
 /** Kept in step with `BOARD_EVENTS_PROJECTOR` in `BoardEngine.ts`. */
 const BOARD_EVENTS_PROJECTOR = "projection.board-events";

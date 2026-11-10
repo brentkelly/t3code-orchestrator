@@ -1,5 +1,5 @@
 /**
- * A CI pass on a placed worker (T3O-44, D21): progress streamed from the
+ * A CI pass on a placed worker (D21): progress streamed from the
  * worker's gateway is reported as the local runner reports it, and a worker
  * out of reach is "unavailable" rather than a CI failure.
  */

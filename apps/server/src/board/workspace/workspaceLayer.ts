@@ -1,11 +1,6 @@
 /**
- * T3o (T3O-64, D21): `BoardWorkspaces`, the one answer to "where does this
- * card's git run".
- *
- * Built from the local workspace and a placement (T3O-65): a card runs where
- * it holds its worktree, else on its pin, else on the default worker, and its
- * project maps to that worker's checkout of the same repository. A board with
- * no workers places every card here, exactly as it always did.
+ * `BoardWorkspaces`: a card runs where it holds its worktree, else its pin, else
+ * the default worker, on that worker's checkout of the same repository.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
@@ -98,13 +93,10 @@ export function makeBoardWorkspaces(
   };
 
   /**
-   * Whether `path` is one of the project's worktrees on this server: a
-   * checkout the project's repository has registered, or — a checkout already
-   * gone from disk and from git, which a reclaim or forced removal may still
-   * name on retry — a missing path under the worktrees directory. A folder
-   * that exists there but is not the project's (another project's checkout,
-   * the per-repository container) is refused. With `owner`, a registered
-   * checkout still on disk must carry that board's marker too.
+   * A registered checkout of the project, or a missing path under the worktrees
+   * directory (a reclaim retry may still name it); an existing folder that isn't
+   * the project's is refused. With `owner`, a registered checkout on disk must
+   * carry that board's marker.
    */
   const ownsWorktreePath: BoardWorkspacesShape["ownsWorktreePath"] = Effect.fn(
     "BoardWorkspaces.ownsWorktreePath",
@@ -237,7 +229,7 @@ export const localBoardWorkspaceDeps = Effect.gen(function* () {
 });
 
 /**
- * Each card's workspace where the board places it (T3O-65, D20). A worker with
+ * Each card's workspace where the board places it (D20). A worker with
  * no checkout of the card's project yields a workspace whose `checkoutPath` is
  * null, which every caller already reads as "no checkout there".
  */

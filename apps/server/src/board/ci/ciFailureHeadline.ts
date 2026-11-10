@@ -1,21 +1,8 @@
 /**
- * What a failed CI step says failed and why (T3O-61). Pure: the runner feeds
- * every output line of a step to `BoardCiFailureFacts` as it runs, and once a
- * step has failed or timed out asks it for the headline, with the step's exit
- * and result file. Only the failed step's own log is read.
- *
- * The order the reason is picked in, first match wins:
- * 1. The script's `::t3o-failure::` line, or a result-file failure it flagged
- *    `machine: true` (a script's flag always wins over a pattern).
- * 2. A strong machine pattern: a missing shared library, no space left, a
- *    read-only filesystem.
- * 3. A weak machine pattern the exit agrees with: exit 127, "Killed" or "Out
- *    of memory" with 137 or SIGKILL and no timeout, a bare ENOSPC on a disk that is low now.
- * 4. The result file's first failure.
- * 5. A tool that stopped the step outright ("No files matching the pattern").
- * 6. The first anchored error line in the end window (the last 500 lines).
- * 7. The last meaningful line.
- * 8. The exit code, or the time limit.
+ * What a failed CI step says failed and why, from its own log. First match wins:
+ * the script's `::t3o-failure::` or a `machine: true` result failure; a strong
+ * machine pattern; a weak one the exit agrees with; the result file; a tool that
+ * stopped the step; an anchored error line; the last meaningful line; the exit.
  */
 import {
   clampBoardCiHeadline,

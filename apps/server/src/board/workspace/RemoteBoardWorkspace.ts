@@ -1,19 +1,8 @@
 /**
- * T3o (T3O-64, D21): a worker's named board git and forge operations, run on
- * that worker over the connection the central server holds to it.
- *
- * Each operation is one `boardWorker.git.*` call, answered by the worker's own
- * `LocalBoardWorkspace`. Failures keep the line `BoardWorkspace` draws:
- *
- * - the worker refused or the operation failed there: its `BoardWorkerGitError`,
- *   as is;
- * - the worker has no such call (an older T3o): a `BoardWorkerGitError` saying
- *   so, since waiting will not change it;
- * - the worker is not online, or the connection dropped mid-call:
- *   `WorkerUnavailable`;
- * - anything else (a call or answer that will not decode): a
- *   `BoardWorkerGitError`, so a fault that repeats is never retried as an
- *   outage.
+ * A worker's board git operations over the central server's connection (D21).
+ * The worker refusing, or not having the call, is a `BoardWorkerGitError`; the
+ * worker offline or dropping mid-call is `WorkerUnavailable`; anything that won't
+ * decode is a `BoardWorkerGitError`, so a repeating fault is never retried.
  */
 import {
   BOARD_WORKER_GIT_WS_METHODS,
