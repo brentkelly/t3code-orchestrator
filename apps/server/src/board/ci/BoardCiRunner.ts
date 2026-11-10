@@ -36,6 +36,11 @@ import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
+import {
+  makeBoardCiStepReporter,
+  type BoardCiStepLive,
+  type BoardCiStepReporter,
+} from "./ciStepReporter.ts";
 import { boardCiLowDiskReason } from "./diskSpace.ts";
 
 export interface BoardCiRunRequest {
@@ -419,33 +424,41 @@ export const runBoardCiStep = (input: {
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-/** Run a step with its output split into lines for `onLine` (T3O-59). Node's
-    callbacks only push onto a queue; a fiber scoped to the step delivers the
-    lines, and the last of them lands before the step's result. */
+/** Run a step with its output split into lines for its reporter (T3O-60)
+    and `onLine` (T3O-59). Node's callbacks only push onto a queue; a fiber
+    scoped to the step delivers them, and the last line lands before the
+    step's result. */
 const withStepLines = <A>(
   index: number,
   onLine: BoardCiRunRequest["onLine"],
-  run: (onOutput: ((text: string) => void) | undefined) => Effect.Effect<A>,
-): Effect.Effect<A> => {
-  if (onLine === undefined) return run(undefined);
-  return Effect.scoped(
+  reporter: BoardCiStepReporter,
+  run: (onOutput: (text: string) => void) => Effect.Effect<A>,
+): Effect.Effect<A> =>
+  Effect.scoped(
     Effect.gen(function* () {
       const reader = new BoardCiLineReader();
-      const lines = yield* Queue.unbounded<BoardCiLine, Cause.Done>();
-      const delivery = yield* Stream.fromQueue(lines).pipe(
-        Stream.runForEach((line) => onLine(index, line)),
+      // `null` marks a chunk of output, ahead of the lines it completes.
+      const events = yield* Queue.unbounded<BoardCiLine | null, Cause.Done>();
+      const delivery = yield* Stream.fromQueue(events).pipe(
+        Stream.runForEach((event) =>
+          event === null
+            ? reporter.output
+            : onLine === undefined
+              ? reporter.line(event.line)
+              : Effect.andThen(reporter.line(event.line), onLine(index, event)),
+        ),
         Effect.forkScoped,
       );
       const result = yield* run((text) => {
-        for (const line of reader.push(text)) Queue.offerUnsafe(lines, line);
+        Queue.offerUnsafe(events, null);
+        for (const line of reader.push(text)) Queue.offerUnsafe(events, line);
       });
-      for (const line of reader.flush()) Queue.offerUnsafe(lines, line);
-      Queue.endUnsafe(lines);
+      for (const line of reader.flush()) Queue.offerUnsafe(events, line);
+      Queue.endUnsafe(events);
       yield* Fiber.join(delivery);
       return result;
     }),
   );
-};
 
 /** The step's `$T3O_CI_RESULT` file, if it wrote one. A malformed file is a
     line in the tail, never a failure. */
@@ -538,32 +551,44 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
               timeoutMinutes: definition.timeoutMinutes,
               ...(definition.parallel === true ? { parallel: true } : {}),
             };
-            yield* emit({
-              index,
-              step: {
-                ...base,
-                status: "running",
-                startedAt,
-                finishedAt: null,
-                exitCode: null,
-                tail: "",
-              },
-            });
+            // T3O-60: every running report has an empty tail; the output
+            // itself is read from the step's log.
+            const running = (live: BoardCiStepLive) =>
+              emit({
+                index,
+                step: {
+                  ...base,
+                  status: "running",
+                  startedAt,
+                  finishedAt: null,
+                  exitCode: null,
+                  tail: "",
+                  ...live,
+                },
+              });
+            yield* running({});
             const fileIndex = index + (request.indexOffset ?? 0);
             const resultPath = NodePath.join(request.logDir, `${fileIndex}.result.json`);
-            const exit = yield* withStepLines(fileIndex, request.onLine, (onOutput) =>
-              runBoardCiStep({
-                command: definition.command,
-                cwd: request.cwd,
-                timeoutMs: definition.timeoutMinutes * 60_000,
-                tail,
-                logPath: NodePath.join(request.logDir, `${fileIndex}.log`),
-                resultPath,
-                ...(onOutput === undefined ? {} : { onOutput }),
+            // The reporter's scope ends with the step, before its settled row.
+            const { exit, progress } = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const reporter = yield* makeBoardCiStepReporter(running);
+                const exit = yield* withStepLines(fileIndex, request.onLine, reporter, (onOutput) =>
+                  runBoardCiStep({
+                    command: definition.command,
+                    cwd: request.cwd,
+                    timeoutMs: definition.timeoutMinutes * 60_000,
+                    tail,
+                    logPath: NodePath.join(request.logDir, `${fileIndex}.log`),
+                    resultPath,
+                    onOutput,
+                  }),
+                );
+                return { exit, progress: reporter.progress() };
               }),
             );
             const result = readStepResult(resultPath, tail);
-            return { index, base, startedAt, exit, tail, result };
+            return { index, base, startedAt, exit, tail, result, progress };
           }),
         { concurrency: "unbounded" },
       );
@@ -595,6 +620,8 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
             exitCode: step.exit.exitCode,
             tail: step.tail.text(),
             ...(step.result === null ? {} : { result: step.result }),
+            // T3O-60: a settled step keeps where its progress got to.
+            ...(step.progress === undefined ? {} : { progress: step.progress }),
           },
         });
         if (status !== "passed" && failedIndex === null) {

@@ -72,6 +72,7 @@ import {
 import {
   BOARD_WORKER_GATEWAY_RPC_SCOPES,
   BOARD_WORKER_GATEWAY_RPCS,
+  BoardCiLogItem,
 } from "./boardWorkerGateway.ts";
 import {
   BOARD_WORKER_GIT_CALL_RPC_SCOPES,
@@ -1887,6 +1888,22 @@ export function isBoardCiStepFailure(status: BoardCiStepStatus): boolean {
     log stays in the worktree's `.t3/ci/<runId>/`, excluded from git. */
 export const BOARD_CI_TAIL_LINES = 200;
 
+/** The latest `::t3o-progress::` line a script step printed (T3O-60), with
+    when it was read. Any field the line left out is null. */
+export const BoardCiProgress = Schema.Struct({
+  message: Schema.NullOr(Schema.String),
+  done: Schema.NullOr(NonNegativeInt),
+  total: Schema.NullOr(NonNegativeInt),
+  at: IsoDateTime,
+});
+export type BoardCiProgress = typeof BoardCiProgress.Type;
+
+/** How much of a progress message the card shell carries. */
+export const BOARD_CI_SHELL_PROGRESS_MESSAGE_MAX = 80;
+
+/** How long a running step may print nothing before it's flagged silent. */
+export const BOARD_CI_SILENT_AFTER_MS = 10 * 60_000;
+
 /** A CI step's compact state on the card shell: no command, no output. */
 export const BoardCardCiStep = Schema.Struct({
   name: TrimmedNonEmptyString,
@@ -1897,6 +1914,12 @@ export const BoardCardCiStep = Schema.Struct({
   status: BoardCiStepStatus,
   startedAt: Schema.NullOr(IsoDateTime),
   finishedAt: Schema.NullOr(IsoDateTime),
+  /** A script's latest progress (T3O-60), its message cut to
+      `BOARD_CI_SHELL_PROGRESS_MESSAGE_MAX`. Kept on a settled step. */
+  progress: Schema.optionalKey(BoardCiProgress),
+  /** A running step has printed nothing since then, for at least
+      `BOARD_CI_SILENT_AFTER_MS` (T3O-60). Display only. */
+  silentSince: Schema.optionalKey(IsoDateTime),
 });
 export type BoardCardCiStep = typeof BoardCardCiStep.Type;
 
@@ -1999,6 +2022,11 @@ export const BoardCiPassStep = Schema.Struct({
   checks: Schema.optionalKey(BoardCiForgeChecksReading),
   /** A line the board adds: why a step is waiting, or how it passed. */
   note: Schema.optionalKey(Schema.String),
+  /** A script's latest `::t3o-progress::` line (T3O-60); a settled step
+      keeps its last one. */
+  progress: Schema.optionalKey(BoardCiProgress),
+  /** A running step has printed nothing since then (T3O-60). */
+  silentSince: Schema.optionalKey(IsoDateTime),
 });
 export type BoardCiPassStep = typeof BoardCiPassStep.Type;
 
@@ -2084,7 +2112,17 @@ export function boardCiShellFinding(finding: string): string {
 /** The compact shell steps of a pass. */
 export function boardCardCiSteps(
   steps: ReadonlyArray<
-    Pick<BoardCiPassStep, "name" | "status" | "startedAt" | "finishedAt" | "kind" | "parallel">
+    Pick<
+      BoardCiPassStep,
+      | "name"
+      | "status"
+      | "startedAt"
+      | "finishedAt"
+      | "kind"
+      | "parallel"
+      | "progress"
+      | "silentSince"
+    >
   >,
 ): ReadonlyArray<BoardCardCiStep> {
   return steps.map((step) => ({
@@ -2097,6 +2135,19 @@ export function boardCardCiSteps(
     status: step.status,
     startedAt: step.startedAt,
     finishedAt: step.finishedAt,
+    ...(step.progress === undefined
+      ? {}
+      : {
+          progress: {
+            ...step.progress,
+            message:
+              step.progress.message === null ||
+              step.progress.message.length <= BOARD_CI_SHELL_PROGRESS_MESSAGE_MAX
+                ? step.progress.message
+                : `${step.progress.message.slice(0, BOARD_CI_SHELL_PROGRESS_MESSAGE_MAX - 1).trimEnd()}…`,
+          },
+        }),
+    ...(step.silentSince === undefined ? {} : { silentSince: step.silentSince }),
   }));
 }
 
@@ -10080,6 +10131,10 @@ export const BOARD_WS_METHODS = {
       One method rather than three: the server's RPC group sits at the edge of
       TypeScript's instantiation depth, and each method adds to it. */
   cardWorkerMove: "board.cardWorkerMove",
+  /** One CI step's log, from an offset, optionally followed while the step
+      runs (T3O-60). The server resolves the file from the pass and the
+      card's worker; the client never names a path. */
+  readCiLog: "board.readCiLog",
   /** Claim a pending upload into the card's folder and record it on the brief
       (t3o-32, K2). An RPC, not a client command: the copy is a filesystem
       side effect that must land before the record does. */
@@ -10209,7 +10264,19 @@ export const BOARD_CONFIG_VERSION_MISMATCH = "Changed elsewhere, reload.";
  */
 export type BoardSubscriptionRpcTag =
   | (typeof BOARD_WS_METHODS)["subscribeBoard"]
-  | (typeof BOARD_WS_METHODS)["subscribeCard"];
+  | (typeof BOARD_WS_METHODS)["subscribeCard"]
+  | (typeof BOARD_WS_METHODS)["readCiLog"];
+
+/** `board.readCiLog`'s request (T3O-60). With no `fromOffset` the read starts
+    at the last 256 KiB, from a line start. */
+export const BoardReadCiLogInput = Schema.Struct({
+  cardId: BoardCardId,
+  runId: TrimmedNonEmptyString,
+  index: NonNegativeInt,
+  fromOffset: Schema.optionalKey(NonNegativeInt),
+  follow: Schema.optionalKey(Schema.Boolean),
+});
+export type BoardReadCiLogInput = typeof BoardReadCiLogInput.Type;
 
 /** Both PR actions take just the card — the environment is implicit in the
     connection, exactly as it is for `board.subscribeCard`. */
@@ -10920,6 +10987,12 @@ export const BOARD_RPCS = [
     success: BoardCardWorkerMoveAnswer,
     error: EnvironmentAuthorizationError,
   }),
+  Rpc.make(BOARD_WS_METHODS.readCiLog, {
+    payload: BoardReadCiLogInput,
+    success: BoardCiLogItem,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+    stream: true,
+  }),
   Rpc.make(BOARD_WS_METHODS.submitCardForMerge, {
     payload: BoardCardPullRequestActionInput,
     success: BoardSubmitCardForMergeResult,
@@ -11017,6 +11090,8 @@ export const BOARD_RPC_SCOPES = {
   // T3O-65: the move reads the source worker's git and then changes where the
   // card runs; asking the agent to push sends a turn. A board write.
   [BOARD_WS_METHODS.cardWorkerMove]: AuthOrchestrationOperateScope,
+  // T3O-60: reading a step's log is a card read.
+  [BOARD_WS_METHODS.readCiLog]: AuthOrchestrationReadScope,
   // Attaching writes a file and a board event; detaching deletes one. Both
   // are the same mutation tier as every other board write.
   [BOARD_WS_METHODS.attachCardFile]: AuthOrchestrationOperateScope,

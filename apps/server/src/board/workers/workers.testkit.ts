@@ -113,6 +113,7 @@ export const unsupportedGateway: WorkerGatewayRpc = (() => {
     mcpRelayRespond: fail,
     stageAttachments: fail,
     runCi: failStream,
+    readCiLog: failStream,
   };
 })();
 
@@ -168,6 +169,7 @@ const linkedGateway = (
     mcpRelayRespond: (response) => guard(gateway.mcpRelayRespond(response)),
     stageAttachments: (input) => guard(gateway.stageAttachments(input)),
     runCi: (input) => live(gateway.runCi(input)),
+    readCiLog: (input) => live(gateway.readCiLog(input)),
   };
 };
 
