@@ -162,9 +162,12 @@ export const requestBoardReviewRound = (input: { readonly cardId: BoardCardId })
 export const skipBoardCardCi = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.skipCi, input);
 
-/** Retry CI and "Send back to review anyway" (T3O-49). */
-export const retryBoardCardCi = (input: { readonly cardId: BoardCardId }) =>
-  request(BOARD_WS_METHODS.retryCi, input);
+/** Retry CI and "Send back to review anyway" (T3O-49); Retry carries
+    `action: "stop"` for Stop CI (T3O-59). */
+export const retryBoardCardCi = (input: {
+  readonly cardId: BoardCardId;
+  readonly action?: "retry" | "stop";
+}) => request(BOARD_WS_METHODS.retryCi, input);
 
 export const sendBackBoardCardCi = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.ciSendBack, input);

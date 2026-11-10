@@ -1,13 +1,24 @@
-import type { BoardCardCi, BoardCardCiStep } from "@t3tools/contracts";
+import {
+  BOARD_CI_STOPPED_BY_YOU_REASON,
+  type BoardCardCi,
+  type BoardCardCiStep,
+  type BoardCiPass,
+  type BoardCiPassStep,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardCiFace,
   boardCiLastOutcomeFace,
+  boardCiPaneHeadline,
   boardCiPaneStatus,
   boardCiPassOutcomeChip,
   boardCiSegments,
   boardCiSentBackBanner,
+  boardCiLogFileName,
+  boardCiProgressFraction,
+  boardCiSilenceLabel,
+  boardCiStepLimit,
   boardCiTailMeta,
   formatBoardCiDuration,
   formatBoardCiTimer,
@@ -67,6 +78,23 @@ describe("boardCiFace", () => {
     expect(face.detail).toBe("Lint · 3m");
   });
 
+  it("shows a running script's progress instead of its timer (T3O-60)", () => {
+    const progress = { message: "Running unit tests", at: "2026-01-01T00:09:00.000Z" };
+    const running = (extra: Partial<BoardCardCiStep>) =>
+      boardCiFace(
+        ci({ steps: [{ ...step("Test", "running", "2026-01-01T00:06:30.000Z"), ...extra }] }),
+        NOW_MS,
+      ).detail;
+    expect(running({ progress: { ...progress, done: 128, total: 212 } })).toBe("Test · 128 / 212");
+    expect(running({ progress: { ...progress, done: null, total: null } })).toBe(
+      "Test · Running unit tests",
+    );
+    // A line with nothing showable falls back to the timer.
+    expect(running({ progress: { ...progress, message: null, done: null, total: null } })).toBe(
+      "Test · 3m",
+    );
+  });
+
   it("says under a minute for a step that just started", () => {
     const face = boardCiFace(
       ci({ steps: [step("Lint", "running", "2026-01-01T00:09:30.000Z")] }),
@@ -101,6 +129,64 @@ describe("boardCiFace", () => {
     expect(stopped.detail).toBe("CI failed at Test after 3 round trips to review.");
     const held = boardCiFace(ci({ phase: "held", steps: [step("Test", "cancelled")] }), NOW_MS);
     expect(held.chip).toEqual({ label: "Can't run", tone: "warning" });
+    expect(held.detail).toBe("CI couldn't finish this pass");
+    // T3O-59: a held pass says why, and a machine problem says so.
+    const machine = boardCiFace(
+      ci({
+        phase: "held",
+        stopReason: "Disk nearly full on z5: 0.4 GiB free. Retry CI, or Skip CI.",
+        machine: true,
+        steps: [step("Test", "cancelled")],
+      }),
+      NOW_MS,
+    );
+    expect(machine.chip).toEqual({ label: "Machine problem", tone: "warning" });
+    expect(machine.detail).toBe("Disk nearly full on z5: 0.4 GiB free. Retry CI, or Skip CI.");
+    const stoppedByYou = boardCiFace(
+      ci({
+        phase: "held",
+        stopReason: BOARD_CI_STOPPED_BY_YOU_REASON,
+        steps: [step("Test", "cancelled")],
+      }),
+      NOW_MS,
+    );
+    expect(stoppedByYou.chip).toEqual({ label: "Stopped", tone: "warning" });
+  });
+
+  it("T3O-61: a failed, fixing or held pass says what failed and why; held is amber", () => {
+    const headline = {
+      what: "panel → lint",
+      why: "No files matching the pattern",
+      machine: false,
+      logLine: 4,
+      logOffset: 80,
+      source: "pattern" as const,
+    };
+    const steps = [step("panel", "failed")];
+    const failed = boardCiFace(ci({ phase: "running", headline, steps }), NOW_MS);
+    expect(failed.detail).toBe("panel → lint: No files matching the pattern");
+    expect(failed.detailTone).toBeUndefined();
+    const fixing = boardCiFace(ci({ phase: "fixing", fixAttempts: 1, headline, steps }), NOW_MS);
+    expect(fixing.detail).toBe("fix 1 of 2 · panel → lint: No files matching the pattern");
+    const held = boardCiFace(
+      ci({
+        phase: "held",
+        machine: true,
+        stopReason: "Machine problem on box: Missing system library: libnspr4.so. Then Retry CI.",
+        headline: { ...headline, what: "panel", why: "Missing system library: libnspr4.so" },
+        steps,
+      }),
+      NOW_MS,
+    );
+    expect(held.chip).toEqual({ label: "Machine problem", tone: "warning" });
+    expect(held.detail).toBe("panel: Missing system library: libnspr4.so");
+    expect(held.detailTone).toBe("warning");
+    expect(held.tooltip).toContain("Then Retry CI.");
+    const heldForAnotherReason = boardCiFace(
+      ci({ phase: "held", stopReason: "The CI result was lost.", headline, steps }),
+      NOW_MS,
+    );
+    expect(heldForAnotherReason.detail).toBe("The CI result was lost.");
   });
 
   it("is a neutral Queued chip while waiting for a slot", () => {
@@ -199,5 +285,67 @@ describe("formatting", () => {
     expect(formatBoardCiTimer(14_900)).toBe("0:14");
     expect(formatBoardCiTimer(72_000)).toBe("1:12");
     expect(boardCiTailMeta("a\nb\n")).toBe("Output tail · last 200 lines (2 captured)");
+  });
+
+  it("reads a step's time against its limit, its silence, progress and log file name (T3O-60)", () => {
+    const startedAt = "2026-01-01T00:00:00.000Z";
+    expect(boardCiStepLimit({ startedAt, timeoutMinutes: 60 }, NOW_MS)).toEqual({
+      elapsed: 10,
+      limit: 60,
+      over: false,
+    });
+    expect(boardCiStepLimit({ startedAt, timeoutMinutes: 5 }, NOW_MS).over).toBe(true);
+    expect(boardCiSilenceLabel("2026-01-01T00:02:00.000Z", NOW_MS)).toBe("No output for 8 min");
+    expect(boardCiSilenceLabel(undefined, NOW_MS)).toBeNull();
+    expect(boardCiProgressFraction({ done: 53, total: 212 })).toBe(0.25);
+    expect(boardCiProgressFraction({ done: 300, total: 212 })).toBe(1);
+    expect(boardCiProgressFraction({ done: 3, total: 0 })).toBeNull();
+    expect(boardCiLogFileName("T3-185", "Unit tests (web)", 2)).toBe(
+      "T3-185-unit-tests-web-pass2.log",
+    );
+  });
+});
+
+describe("boardCiPaneHeadline", () => {
+  const headline = {
+    what: "panel",
+    why: "Missing system library: libnspr4.so",
+    machine: true,
+    logLine: 3,
+    logOffset: 90,
+    source: "machine" as const,
+  };
+  const passStep = (status: BoardCiPassStep["status"], extra: Partial<BoardCiPassStep> = {}) =>
+    ({
+      name: "panel",
+      command: "./ci.sh",
+      timeoutMinutes: 30,
+      status,
+      startedAt: null,
+      finishedAt: null,
+      exitCode: null,
+      tail: "",
+      ...extra,
+    }) satisfies BoardCiPassStep;
+  const pass = (steps: ReadonlyArray<BoardCiPassStep>) => ({ steps }) as unknown as BoardCiPass;
+
+  it("heads with the first failing step that has one, by its index", () => {
+    expect(
+      boardCiPaneHeadline({
+        pass: pass([passStep("passed"), passStep("failed", { headline })]),
+        ci: null,
+        live: false,
+      }),
+    ).toEqual({ headline, index: 1 });
+  });
+
+  it("falls back to the card's headline only on the live pass", () => {
+    const card = ci({ phase: "held", headline });
+    const steps = pass([passStep("cancelled")]);
+    expect(boardCiPaneHeadline({ pass: steps, ci: card, live: true })).toEqual({
+      headline,
+      index: null,
+    });
+    expect(boardCiPaneHeadline({ pass: steps, ci: card, live: false })).toBeNull();
   });
 });

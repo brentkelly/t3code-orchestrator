@@ -72,6 +72,7 @@ import {
 import {
   BOARD_WORKER_GATEWAY_RPC_SCOPES,
   BOARD_WORKER_GATEWAY_RPCS,
+  BoardCiLogItem,
 } from "./boardWorkerGateway.ts";
 import {
   BOARD_WORKER_GIT_CALL_RPC_SCOPES,
@@ -1712,6 +1713,9 @@ export const BoardCiFailureDetail = Schema.Struct({
   detail: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_000))),
   file: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(500))),
   line: Schema.optionalKey(PositiveInt),
+  /** The script says this failure is the machine's, not the code's (T3O-61):
+      true holds the card with no fix agent, false rules a machine hold out. */
+  machine: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardCiFailureDetail = typeof BoardCiFailureDetail.Type;
 
@@ -1727,7 +1731,7 @@ const decodeFailureDetail = Schema.decodeUnknownOption(BoardCiFailureDetail);
 
 /**
  * Parse a script's `$T3O_CI_RESULT` file: `{ summary?, failures?: [{ title,
- * detail?, file?, line? }] }`. Invalid failures are dropped and at most
+ * detail?, file?, line?, machine? }] }`. Invalid failures are dropped and at most
  * `BOARD_CI_MAX_FAILURES` kept; a file that isn't that shape is a warning.
  */
 export function parseBoardCiResultFile(text: string): {
@@ -1758,7 +1762,7 @@ export function parseBoardCiResultFile(text: string): {
     result: { summary, failures: failures.slice(0, BOARD_CI_MAX_FAILURES) },
     warning:
       dropped > 0
-        ? `${dropped} of the step's reported failures weren't { title, detail?, file?, line? }; ignored.`
+        ? `${dropped} of the step's reported failures weren't { title, detail?, file?, line?, machine? }; ignored.`
         : null,
   };
 }
@@ -1810,6 +1814,40 @@ export function parseBoardCiProgressLine(line: string): {
       message: typeof record.message === "string" ? record.message.slice(0, 200) : null,
       done: count(record.done),
       total: count(record.total),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** The marker a script prints to say why it failed (T3O-61). */
+const BOARD_CI_FAILURE_MARKER = "::t3o-failure::";
+
+/** Longest sub-step name and reason a `::t3o-failure::` line keeps. */
+const BOARD_CI_FAILURE_STEP_MAX = 80;
+const BOARD_CI_FAILURE_REASON_MAX = 300;
+
+/** Parse one `::t3o-failure::{step?, reason, machine?}` output line, or null
+    when the line is not one, its JSON is unreadable or it has no reason. */
+export function parseBoardCiFailureLine(line: string): {
+  readonly step: string | null;
+  readonly reason: string;
+  readonly machine: boolean | null;
+} | null {
+  const at = line.indexOf(BOARD_CI_FAILURE_MARKER);
+  if (at < 0) return null;
+  try {
+    const raw = JSON.parse(line.slice(at + BOARD_CI_FAILURE_MARKER.length)) as unknown;
+    if (typeof raw !== "object" || raw === null) return null;
+    const record = raw as Record<string, unknown>;
+    const text = (value: unknown, max: number) =>
+      typeof value === "string" && value.trim().length > 0 ? value.trim().slice(0, max) : null;
+    const reason = text(record.reason, BOARD_CI_FAILURE_REASON_MAX);
+    if (reason === null) return null;
+    return {
+      step: text(record.step, BOARD_CI_FAILURE_STEP_MAX),
+      reason,
+      machine: typeof record.machine === "boolean" ? record.machine : null,
     };
   } catch {
     return null;
@@ -1874,6 +1912,10 @@ export function isBoardCiPassSettledPhase(phase: BoardCardCiPhase): boolean {
   return phase === "passed" || phase === "held" || phase === "stopped";
 }
 
+/** The hold reason Stop CI records (T3O-59); clients head such a pass as
+    stopped rather than as one CI couldn't run. */
+export const BOARD_CI_STOPPED_BY_YOU_REASON = "Stopped by you. Retry CI to run it again.";
+
 /** A step status that ends its pass as a failure. */
 export function isBoardCiStepFailure(status: BoardCiStepStatus): boolean {
   return status === "failed" || status === "timed-out";
@@ -1882,6 +1924,103 @@ export function isBoardCiStepFailure(status: BoardCiStepStatus): boolean {
 /** How many output lines a step keeps for the card and the fix agent. The full
     log stays in the worktree's `.t3/ci/<runId>/`, excluded from git. */
 export const BOARD_CI_TAIL_LINES = 200;
+
+/** The latest `::t3o-progress::` line a script step printed (T3O-60), with
+    when it was read. Any field the line left out is null. */
+export const BoardCiProgress = Schema.Struct({
+  message: Schema.NullOr(Schema.String),
+  done: Schema.NullOr(NonNegativeInt),
+  total: Schema.NullOr(NonNegativeInt),
+  at: IsoDateTime,
+});
+export type BoardCiProgress = typeof BoardCiProgress.Type;
+
+/** Most characters a CI headline's `what` and `why` keep (T3O-61). */
+const BOARD_CI_HEADLINE_WHAT_MAX = 80;
+const BOARD_CI_HEADLINE_WHY_MAX = 160;
+
+const BOARD_CI_HEADLINE_SOURCES = [
+  "failure-line",
+  "result-file",
+  "machine",
+  "pattern",
+  "last-line",
+  "exit",
+  "board",
+] as const;
+
+/**
+ * What a failed step says failed and why (T3O-61), picked by the runner from
+ * the step's own log and result file: `what` is the step (or `step → sub-step`),
+ * `why` the first real error, and where in `<n>.log` it came from. `machine`
+ * holds the card for a human instead of starting a fix agent; `hint` says what
+ * to fix on the machine.
+ */
+export const BoardCiHeadline = Schema.Struct({
+  what: TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_CI_HEADLINE_WHAT_MAX)),
+  why: TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_CI_HEADLINE_WHY_MAX)),
+  machine: Schema.Boolean,
+  /** The 1-based line of `<n>.log` the reason came from, and its byte offset. */
+  logLine: Schema.NullOr(PositiveInt),
+  logOffset: Schema.NullOr(NonNegativeInt),
+  source: Schema.Literals(BOARD_CI_HEADLINE_SOURCES),
+  hint: Schema.optionalKey(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_CI_HEADLINE_WHY_MAX)),
+  ),
+});
+export type BoardCiHeadline = typeof BoardCiHeadline.Type;
+
+const clipHeadlineText = (value: unknown, max: number): string | null => {
+  if (typeof value !== "string") return null;
+  const text = value.replace(/\s+/g, " ").trim();
+  if (text.length === 0) return null;
+  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
+};
+
+const headlineCount = (value: unknown, min: number): number | null =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= min ? value : null;
+
+/** A headline from loose input (a worker's wire, or the classifier), clamped
+    to `BoardCiHeadline`'s limits, or null when it has no what or why. */
+export function clampBoardCiHeadline(raw: {
+  readonly what: unknown;
+  readonly why: unknown;
+  readonly machine: unknown;
+  readonly logLine: unknown;
+  readonly logOffset: unknown;
+  readonly source: unknown;
+  readonly hint?: unknown;
+}): BoardCiHeadline | null {
+  const what = clipHeadlineText(raw.what, BOARD_CI_HEADLINE_WHAT_MAX);
+  const why = clipHeadlineText(raw.why, BOARD_CI_HEADLINE_WHY_MAX);
+  if (what === null || why === null) return null;
+  const hint = clipHeadlineText(raw.hint, BOARD_CI_HEADLINE_WHY_MAX);
+  const source = (BOARD_CI_HEADLINE_SOURCES as ReadonlyArray<unknown>).includes(raw.source)
+    ? (raw.source as BoardCiHeadline["source"])
+    : "pattern";
+  return {
+    what,
+    why,
+    machine: raw.machine === true,
+    logLine: headlineCount(raw.logLine, 1),
+    logOffset: headlineCount(raw.logOffset, 0),
+    source,
+    ...(hint === null ? {} : { hint }),
+  };
+}
+
+/** How a headline leads a fix prompt or a send-back finding (T3O-61). */
+export function boardCiHeadlineLead(
+  headline: Pick<BoardCiHeadline, "what" | "why" | "logLine">,
+): string {
+  return `${headline.what}: ${headline.why}${headline.logLine === null ? "" : ` (log line ${headline.logLine})`}`;
+}
+
+/** How much of a progress message the card shell carries. */
+export const BOARD_CI_SHELL_PROGRESS_MESSAGE_MAX = 80;
+
+/** How long a running step may print nothing before it's flagged silent. */
+export const BOARD_CI_SILENT_AFTER_MS = 10 * 60_000;
 
 /** A CI step's compact state on the card shell: no command, no output. */
 export const BoardCardCiStep = Schema.Struct({
@@ -1893,6 +2032,12 @@ export const BoardCardCiStep = Schema.Struct({
   status: BoardCiStepStatus,
   startedAt: Schema.NullOr(IsoDateTime),
   finishedAt: Schema.NullOr(IsoDateTime),
+  /** A running or failed script's latest progress (T3O-60), its message cut
+      to `BOARD_CI_SHELL_PROGRESS_MESSAGE_MAX`. */
+  progress: Schema.optionalKey(BoardCiProgress),
+  /** A running step has printed nothing since then, for at least
+      `BOARD_CI_SILENT_AFTER_MS` (T3O-60). Display only. */
+  silentSince: Schema.optionalKey(IsoDateTime),
 });
 export type BoardCardCiStep = typeof BoardCardCiStep.Type;
 
@@ -1928,8 +2073,15 @@ export const BoardCardCi = Schema.Struct({
   /** CI failure round trips this card has made without a human (T3O-49);
       absent is none. */
   roundTrips: Schema.optionalKey(NonNegativeInt),
-  /** Why CI stopped, while `phase` is `stopped`. */
+  /** Why CI stopped or was held, while `phase` is `stopped` or `held`
+      (T3O-59 widened it to held). The key keeps its old name. */
   stopReason: Schema.optionalKey(TrimmedNonEmptyString),
+  /** A held pass was held for a problem with the machine, not the code
+      (T3O-59): a full disk, say. Drives the "Machine problem" label. */
+  machine: Schema.optionalKey(Schema.Literal(true)),
+  /** What the pass's first failing step says failed and why (T3O-61), for
+      the card face; cleared when the next pass starts. */
+  headline: Schema.optionalKey(BoardCiHeadline),
 });
 export type BoardCardCi = typeof BoardCardCi.Type;
 
@@ -1991,6 +2143,13 @@ export const BoardCiPassStep = Schema.Struct({
   checks: Schema.optionalKey(BoardCiForgeChecksReading),
   /** A line the board adds: why a step is waiting, or how it passed. */
   note: Schema.optionalKey(Schema.String),
+  /** A script's latest `::t3o-progress::` line (T3O-60); a settled step
+      keeps its last one. */
+  progress: Schema.optionalKey(BoardCiProgress),
+  /** A running step has printed nothing since then (T3O-60). */
+  silentSince: Schema.optionalKey(IsoDateTime),
+  /** A failed or timed-out step's headline: what failed and why (T3O-61). */
+  headline: Schema.optionalKey(BoardCiHeadline),
 });
 export type BoardCiPassStep = typeof BoardCiPassStep.Type;
 
@@ -2076,7 +2235,17 @@ export function boardCiShellFinding(finding: string): string {
 /** The compact shell steps of a pass. */
 export function boardCardCiSteps(
   steps: ReadonlyArray<
-    Pick<BoardCiPassStep, "name" | "status" | "startedAt" | "finishedAt" | "kind" | "parallel">
+    Pick<
+      BoardCiPassStep,
+      | "name"
+      | "status"
+      | "startedAt"
+      | "finishedAt"
+      | "kind"
+      | "parallel"
+      | "progress"
+      | "silentSince"
+    >
   >,
 ): ReadonlyArray<BoardCardCiStep> {
   return steps.map((step) => ({
@@ -2089,6 +2258,21 @@ export function boardCardCiSteps(
     status: step.status,
     startedAt: step.startedAt,
     finishedAt: step.finishedAt,
+    // Only where the card face can show it: a passed step's bar is spent.
+    ...(step.progress === undefined ||
+    (step.status !== "running" && !isBoardCiStepFailure(step.status))
+      ? {}
+      : {
+          progress: {
+            ...step.progress,
+            message:
+              step.progress.message === null ||
+              step.progress.message.length <= BOARD_CI_SHELL_PROGRESS_MESSAGE_MAX
+                ? step.progress.message
+                : `${step.progress.message.slice(0, BOARD_CI_SHELL_PROGRESS_MESSAGE_MAX - 1).trimEnd()}…`,
+          },
+        }),
+    ...(step.silentSince === undefined ? {} : { silentSince: step.silentSince }),
   }));
 }
 
@@ -6775,6 +6959,13 @@ export const BoardCardCiAction = Schema.Union([
     kind: Schema.Literal("finish-pass"),
     runId: TrimmedNonEmptyString,
     result: Schema.Literals(["passed", "failed", "interrupted", "cancelled"]),
+    /** Why a held pass was held (T3O-59); the card shows it. */
+    reason: Schema.optionalKey(TrimmedNonEmptyString),
+    /** The hold is a machine problem, not the code's (T3O-59). */
+    machine: Schema.optionalKey(Schema.Literal(true)),
+    /** The failing step's headline (T3O-61), for a pass held before its
+        step's own record landed. */
+    headline: Schema.optionalKey(BoardCiHeadline),
   }),
   Schema.Struct({ kind: Schema.Literal("begin-fix"), runId: TrimmedNonEmptyString }),
   Schema.Struct({
@@ -10068,6 +10259,10 @@ export const BOARD_WS_METHODS = {
       One method rather than three: the server's RPC group sits at the edge of
       TypeScript's instantiation depth, and each method adds to it. */
   cardWorkerMove: "board.cardWorkerMove",
+  /** One CI step's log, from an offset, optionally followed while the step
+      runs (T3O-60). The server resolves the file from the pass and the
+      card's worker; the client never names a path. */
+  readCiLog: "board.readCiLog",
   /** Claim a pending upload into the card's folder and record it on the brief
       (t3o-32, K2). An RPC, not a client command: the copy is a filesystem
       side effect that must land before the record does. */
@@ -10234,7 +10429,19 @@ export const BOARD_CONFIG_VERSION_MISMATCH = "Changed elsewhere, reload.";
  */
 export type BoardSubscriptionRpcTag =
   | (typeof BOARD_WS_METHODS)["subscribeBoard"]
-  | (typeof BOARD_WS_METHODS)["subscribeCard"];
+  | (typeof BOARD_WS_METHODS)["subscribeCard"]
+  | (typeof BOARD_WS_METHODS)["readCiLog"];
+
+/** `board.readCiLog`'s request (T3O-60). With no `fromOffset` the read starts
+    at the last 256 KiB, from a line start. */
+export const BoardReadCiLogInput = Schema.Struct({
+  cardId: BoardCardId,
+  runId: TrimmedNonEmptyString,
+  index: NonNegativeInt,
+  fromOffset: Schema.optionalKey(NonNegativeInt),
+  follow: Schema.optionalKey(Schema.Boolean),
+});
+export type BoardReadCiLogInput = typeof BoardReadCiLogInput.Type;
 
 /** Both PR actions take just the card — the environment is implicit in the
     connection, exactly as it is for `board.subscribeCard`. */
@@ -10242,6 +10449,15 @@ export const BoardCardPullRequestActionInput = Schema.Struct({
   cardId: BoardCardId,
 });
 export type BoardCardPullRequestActionInput = typeof BoardCardPullRequestActionInput.Type;
+
+/** Retry CI, or Stop CI (T3O-59). One method with an action rather than a new
+    one: the board RPC group sits at TypeScript's instantiation-depth limit.
+    An old client's `{ cardId }` still decodes, as a retry. */
+export const BoardCiActionInput = Schema.Struct({
+  cardId: BoardCardId,
+  action: Schema.optionalKey(Schema.Literals(["retry", "stop"])),
+});
+export type BoardCiActionInput = typeof BoardCiActionInput.Type;
 
 /**
  * T3o (T3O-48): the refresh takes its OWN input, rather than widening the
@@ -10453,6 +10669,10 @@ export type BoardSkipCiResult = typeof BoardSkipCiResult.Type;
 export const BoardCiActionResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("retried") }),
   Schema.Struct({ outcome: Schema.Literal("sent-back") }),
+  /** Stop CI (T3O-59): the pass is held, and Retry CI runs it again. */
+  Schema.Struct({ outcome: Schema.Literal("stopped") }),
+  /** Stop CI on a pass that has already settled: nothing to stop. */
+  Schema.Struct({ outcome: Schema.Literal("not-running") }),
   /** The card is not in the CI stage — a stale client. */
   Schema.Struct({ outcome: Schema.Literal("not-in-ci") }),
   /** A pass is still running or a fix agent works on it. */
@@ -10932,6 +11152,12 @@ export const BOARD_RPCS = [
     success: BoardCardWorkerMoveAnswer,
     error: EnvironmentAuthorizationError,
   }),
+  Rpc.make(BOARD_WS_METHODS.readCiLog, {
+    payload: BoardReadCiLogInput,
+    success: BoardCiLogItem,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+    stream: true,
+  }),
   Rpc.make(BOARD_WS_METHODS.submitCardForMerge, {
     payload: BoardCardPullRequestActionInput,
     success: BoardSubmitCardForMergeResult,
@@ -10953,7 +11179,7 @@ export const BOARD_RPCS = [
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
   Rpc.make(BOARD_WS_METHODS.retryCi, {
-    payload: BoardCardPullRequestActionInput,
+    payload: BoardCiActionInput,
     success: BoardCiActionResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
@@ -11034,6 +11260,8 @@ export const BOARD_RPC_SCOPES = {
   // T3O-65: the move reads the source worker's git and then changes where the
   // card runs; asking the agent to push sends a turn. A board write.
   [BOARD_WS_METHODS.cardWorkerMove]: AuthOrchestrationOperateScope,
+  // T3O-60: reading a step's log is a card read.
+  [BOARD_WS_METHODS.readCiLog]: AuthOrchestrationReadScope,
   // Attaching writes a file and a board event; detaching deletes one. Both
   // are the same mutation tier as every other board write.
   [BOARD_WS_METHODS.attachCardFile]: AuthOrchestrationOperateScope,

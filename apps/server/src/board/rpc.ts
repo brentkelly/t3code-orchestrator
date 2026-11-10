@@ -33,6 +33,8 @@ import {
   type BoardCardDetailStreamItem,
   type BoardCardId,
   type BoardCardPullRequestActionInput,
+  type BoardCiActionInput,
+  type BoardReadCiLogInput,
   type BoardRequestReviewRoundInput,
   type BoardCardWorkerMoveAnswer,
   type BoardCardWorkerMoveRequest,
@@ -87,6 +89,8 @@ import { ThreadGateway, type ThreadGatewayShape } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
 import type { SupervisorReactorShape } from "./supervisorReactor.ts";
 import { BoardCardMover, type BoardCardMoverShape } from "./workers/BoardCardMove.ts";
+import { readBoardCiLog, type BoardCiLogDeps } from "./ci/ciLog.ts";
+import { WorkerConnections } from "./workers/WorkerConnections.ts";
 import { BoardWorkers } from "./workers/BoardWorkers.ts";
 import { workerGatewayRpcHandlers } from "./workers/workerGatewayRpc.ts";
 import { boardWorkerRpcHandlers } from "./workers/workerRpc.ts";
@@ -135,8 +139,16 @@ export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
     const subscriptionContext = yield* Effect.context<
       BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
     >();
+    const workerConnections = yield* Effect.serviceOption(WorkerConnections);
     return {
       ...makeBoardRpcHandlers(deps, {
+        ciLogWorker: (workerId) =>
+          Option.isNone(workerConnections)
+            ? Effect.succeed(null)
+            : workerConnections.value.get(workerId).pipe(
+                Effect.map((rpc) => rpc.gateway.readCiLog),
+                Effect.catch(() => Effect.succeed(null)),
+              ),
         boardEngine,
         boardQueries,
         stampActor,
@@ -169,6 +181,7 @@ function makeBoardRpcHandlers(
     readonly projectActorName: (projectId: ProjectId) => Effect.Effect<string>;
     readonly projectConfig: BoardProjectConfigServiceShape;
     readonly mover: BoardCardMoverShape;
+    readonly ciLogWorker: BoardCiLogDeps<unknown>["worker"];
     readonly projectTokenStatus: ReturnType<typeof boardProjectTokenStatus>;
     readonly subscriptionContext: Context.Context<
       BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
@@ -413,10 +426,13 @@ function makeBoardRpcHandlers(
         deps.boardSupervisor.skipCi(input.cardId, services.stampActor),
       ),
 
-    /** Retry CI and "Send back to review anyway" (T3O-49): human-only, like
-        Skip CI; no agent tool reaches them. */
-    [BOARD_WS_METHODS.retryCi]: (input: BoardCardPullRequestActionInput) =>
-      authorized(BOARD_WS_METHODS.retryCi, deps.boardSupervisor.retryCi(input.cardId)),
+    /** Retry CI, Stop CI (T3O-59) and "Send back to review anyway" (T3O-49):
+        human-only, like Skip CI; no agent tool reaches them. */
+    [BOARD_WS_METHODS.retryCi]: (input: BoardCiActionInput) =>
+      authorized(
+        BOARD_WS_METHODS.retryCi,
+        deps.boardSupervisor.retryCi(input.cardId, input.action ?? "retry"),
+      ),
     [BOARD_WS_METHODS.ciSendBack]: (input: BoardCardPullRequestActionInput) =>
       authorized(BOARD_WS_METHODS.ciSendBack, deps.boardSupervisor.ciSendBack(input.cardId)),
 
@@ -605,6 +621,24 @@ function makeBoardRpcHandlers(
             name: attachment.name,
           });
         }).pipe(Effect.mapError(toAttachmentError)),
+      ),
+
+    /** One CI step's log, followed while it runs (T3O-60): `ci/ciLog.ts`. */
+    [BOARD_WS_METHODS.readCiLog]: (input: BoardReadCiLogInput) =>
+      Stream.unwrap(
+        authorized(
+          BOARD_WS_METHODS.readCiLog,
+          Effect.succeed(
+            readBoardCiLog(
+              {
+                readDetail,
+                subscribeChanges: boardEngine.subscribeBoardEvents,
+                worker: services.ciLogWorker,
+              },
+              input,
+            ),
+          ),
+        ),
       ),
 
     /**

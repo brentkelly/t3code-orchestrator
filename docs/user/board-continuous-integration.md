@@ -32,9 +32,15 @@ Scripts run in the card's worktree as they are, so install what they need in the
 Only the exit code is required. A script can also:
 
 - print progress lines, which stay in the step's log:
-  `echo '::t3o-progress::{"message":"Running unit tests","done":128,"total":212}'`
+  `echo '::t3o-progress::{"message":"Running unit tests","done":128,"total":212}'`. The step shows
+  the latest message, count and bar, and the card shows the count instead of a timer. Any field can
+  be left out.
+- print a failure line saying what failed and why, which becomes the step's headline:
+  `echo '::t3o-failure::{"step":"lint","reason":"No files matched src/**"}'`. `step` (the sub-step)
+  and `machine` are optional; the first failure line a step prints is the one used.
 - write a result file at `$T3O_CI_RESULT` before it exits, with a summary and failures the CI tab
-  and the fix agent show:
+  and the fix agent show. Mark a failure `"machine": true` when the machine, not the code, is to
+  blame (a missing browser library, say):
 
 ```sh
 cat > "$T3O_CI_RESULT" <<'JSON'
@@ -48,9 +54,25 @@ The result file adds detail only; it never turns a failing exit code into a pass
 
 ## When a step fails
 
-A fix agent looks at the failure. If it is small and mechanical, it fixes it on the card's branch and
-every step runs again from the top. Otherwise the card goes back to Code review with the failure as a
-must-fix finding for a fresh round.
+A failed step gets a headline at the top of the CI tab and on the card: what failed (the step, or
+"step → sub-step") and why, with **Show in log** opening the log at that line. The reason is, in
+order: the script's `::t3o-failure::` line or a result-file failure marked `machine`, a machine
+problem in the output, the result file's first failure, a tool that stopped outright (such as "No
+files matching the pattern" or "Cannot find module"), the first error line near the end of the
+output, the last line of output, and finally the exit code or time limit. Only the failed step's own
+output is read.
+
+**Machine problems** are held for you instead of being handed to a fix agent: a missing system
+library, no space left on the disk, a read-only filesystem, a command that isn't installed (exit
+127), and a step the system killed: "Killed" or "Out of memory" in its output, exit 137 or SIGKILL,
+and no time limit reached. The card shows **Machine problem** in amber, naming the machine and what
+to fix there. No fix attempt or round trip is used:
+fix the machine, then press **Retry CI**. A script's own `machine` flag always wins: `false` keeps a
+failure with the code even when its output looks like a machine problem.
+
+Any other failure goes to a fix agent, which is told what failed and why first. If it is small and
+mechanical, it fixes it on the card's branch and every step runs again from the top. Otherwise the
+card goes back to Code review with the failure as a must-fix finding for a fresh round.
 
 **Fix attempts** caps the fix agents one visit to CI may start (2 by default). **Max round trips**
 caps how many times CI may send a card back to review (3 by default). Past it, CI stops and the card
@@ -63,15 +85,41 @@ each project can override them on its **CI** tab, under **Fix agent**.
 
 The card's **CI** tab shows each step, how long it took, a failed step's output and reported
 failures, an agent step's thread, a forge step's checks, the fix agent at work, and earlier passes.
-Full logs stay in the worktree's `.t3/ci/<runId>/` folder, which the board keeps out of git.
 
-## Can't run, Skip CI and turning CI off
+- A running script shows its time against its limit, such as "Running 12 / 60 min", and its progress
+  if it prints any. The card catches up about every 10 seconds, and a failed step keeps the last
+  progress it reported, so you can see where it stopped.
+- A running script that has printed nothing for 10 minutes shows "No output for N min". It's only a
+  warning: the step keeps running until it finishes or reaches its limit.
+- **View live log** on a running script, or **View log** on a finished one in any pass, opens its
+  output. A running step's log follows new output; scroll up to pause, and **jump to latest** to
+  follow again. Colours are kept. **Copy** copies what's shown, and **Download** saves the whole
+  log. The viewer holds the last 2 MB or so of a long log; Download always has all of it. This
+  works the same for a card on a worker.
+- Each pass's log folder, `.t3/ci/<runId>/` in the card's worktree, is shown under the pass with a
+  copy button, for opening in a terminal. The board keeps it out of git. When the worktree is
+  removed, its logs go with it, and the viewer says the log is no longer available.
 
-When a pass can't run (no worktree, a worker out of reach, no pull request for a forge step), the card
-shows **Can't run**; fix what's in the way and press **Retry CI**, or **Skip CI…**, which moves the
-card to Ready for merge without a passing run and records the skip under your name.
+## Can't run, Stop CI, Skip CI and turning CI off
 
-Retry CI, Send back to review anyway and Skip CI are for people only; agents can't press them.
+When a pass can't run, the card shows **Can't run** with the reason: no worktree, a worker out of
+reach or whose connection closed mid-run, no pull request for a forge step, or a CI script that
+stopped without its result being saved. The board notices a pass with nothing left running within
+about a minute, so a crashed or killed script never leaves a card stuck on running. Fix what's in the
+way and press **Retry CI**, or **Skip CI…**, which moves the card to Ready for merge without a
+passing run and records the skip under your name.
+
+Before a pass runs, the board checks that the disk holding the card's worktree, and the disk holding
+the T3 Code data on the server running the board, each have at least 2 GiB free. If not, the card
+shows **Machine problem** with the free space on that machine, and no fix agent starts: free some
+space, then press **Retry CI**.
+
+**Stop CI**, in the CI tab's header while a pass is queued, running or being fixed, stops it: running
+steps and any CI agent are stopped, and the card waits with "Stopped by you" until you press Retry
+CI.
+
+Retry CI, Stop CI, Send back to review anyway and Skip CI are for people only; agents can't press
+them.
 
 Turning **Run CI for this project** off asks first when cards are in CI: they move on to Ready for
 merge with auto-merge off. Removing every step does not turn CI off: cards already in CI wait until

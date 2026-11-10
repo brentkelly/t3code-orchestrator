@@ -161,8 +161,14 @@ import {
   createEnvironmentCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
   environmentRpcKey,
 } from "./runtime.ts";
+import {
+  boardCiLogDownloadStream,
+  boardCiLogViewStream,
+  type BoardCiLogRequest,
+} from "./boardCiLog.ts";
 import { pinOrderKeyBetween, planPinnedReorder } from "./threadSort.ts";
 
 export * from "./boardReducer.ts";
@@ -740,8 +746,26 @@ export function createBoardEnvironmentAtoms<R, ER>(
       }),
     );
 
+  /** One CI step's log in the viewer (T3O-60). Closing the viewer stops the
+      read almost at once: a followed log polls on the server. */
+  const ciLogAtom = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-board-ci-log",
+    idleTtlMs: 1_000,
+    subscribe: (request: BoardCiLogRequest) => boardCiLogViewStream(request),
+  });
+
+  /** The whole of one CI step's log, for Download. */
+  const ciLogDownloadAtom = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-board-ci-log-download",
+    idleTtlMs: 0,
+    subscribe: (request: Pick<BoardCiLogRequest, "cardId" | "runId" | "index">) =>
+      boardCiLogDownloadStream(request),
+  });
+
   return {
     boardAtom,
+    ciLogAtom,
+    ciLogDownloadAtom,
     cardsByProjectAtom,
     cardThreadsByCardAtom,
     archivedCardsAtom,
@@ -800,6 +824,12 @@ export function createBoardEnvironmentAtoms<R, ER>(
     retryCi: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:retry-ci",
       execute: (input: { readonly cardId: BoardCardId }) => retryBoardCardCi(input),
+    }),
+    /** Stop CI (T3O-59): hold the card's pass; Retry CI runs it again. */
+    stopCi: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:stop-ci",
+      execute: (input: { readonly cardId: BoardCardId }) =>
+        retryBoardCardCi({ cardId: input.cardId, action: "stop" }),
     }),
     sendBackCi: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:send-back-ci",

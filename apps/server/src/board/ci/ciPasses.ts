@@ -7,6 +7,11 @@
  * this only runs passes and reports. Progress is recorded straight from the
  * pass's fiber (each record is one decider command); the end of a pass goes
  * back through the reactor's serial worker via `onFinished`.
+ *
+ * T3O-59: a pass's entry outlives its fiber. When the fiber ends it is marked
+ * `finishing` and stays until the reactor claims its result by the launch's
+ * token and settles it, so the card never looks idle while a result is still
+ * on its way, and a duplicate report can't be handled twice.
  */
 import {
   ProviderInstanceId,
@@ -48,6 +53,8 @@ export interface BoardCiPassRequest {
 export interface BoardCiPassFinished {
   readonly cardId: BoardCardId;
   readonly runId: string;
+  /** The launch this result is from: segments of a pass share its run id. */
+  readonly token: number;
   /** `failedIndex` is a pass index (the segment's offset applied). */
   readonly outcome: BoardCiRunResult;
   /** The pass index after the segment's last step. */
@@ -69,26 +76,49 @@ export interface BoardCiPasses {
   readonly start: (request: BoardCiPassRequest) => Effect.Effect<boolean>;
   /** Start every queued pass that has a free slot, oldest first. */
   readonly admitQueued: Effect.Effect<void>;
-  /** Stop the card's pass, running or queued, recording nothing; returns the
-      run id it stopped, or null. */
+  /** Stop the card's pass, running, finishing or queued, recording nothing;
+      returns the run id it stopped, or null. The fiber is interrupted on a
+      fiber of its own, so this never waits on it. */
   readonly cancel: (cardId: BoardCardId) => Effect.Effect<string | null>;
-  /** The card's pass in flight or queued. */
+  /** The card's pass in flight, finishing or queued. */
   readonly current: (cardId: BoardCardId) => string | null;
+  /** Take the result of launch `token` for handling: true only once, and
+      only while that launch's entry is finishing. */
+  readonly claim: (cardId: BoardCardId, token: number) => boolean;
+  /** Drop launch `token`'s entry, unless a newer launch has replaced it. */
+  readonly settle: (cardId: BoardCardId, token: number) => void;
   /** Resolves once no pass fiber is running (tests drain on it). */
   readonly awaitIdle: Effect.Effect<void>;
-  /** Whether any pass is running now. */
+  /** Whether any pass fiber is running now. */
   readonly busy: () => boolean;
+}
+
+interface RunningPass {
+  readonly runId: string;
+  readonly token: number;
+  readonly fiber: Fiber.Fiber<void>;
+  readonly key: BoardSlotKey;
+  state: "running" | "finishing" | "claimed";
+  slotHeld: boolean;
 }
 
 export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
   deps: BoardCiPassesDeps,
 ) {
   const fibers = yield* FiberSet.make<void, never>();
-  const running = new Map<
-    string,
-    { readonly runId: string; readonly fiber: Fiber.Fiber<void>; readonly key: BoardSlotKey }
-  >();
+  const running = new Map<string, RunningPass>();
   const queued = new Map<string, BoardCiPassRequest>();
+  let nextToken = 0;
+
+  const releaseSlot = (entry: RunningPass) =>
+    Effect.suspend(() => {
+      if (!entry.slotHeld) return Effect.void;
+      entry.slotHeld = false;
+      return deps.slots.release(entry.key);
+    });
+
+  /** This launch still owns the card's entry: nothing cancelled it. */
+  const owns = (cardId: BoardCardId, token: number) => running.get(String(cardId))?.token === token;
 
   const slotKey = (request: BoardCiPassRequest): BoardSlotKey => ({
     workerId: request.workerId,
@@ -117,6 +147,8 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
   const launch = (request: BoardCiPassRequest) =>
     Effect.gen(function* () {
       const key = slotKey(request);
+      nextToken += 1;
+      const token = nextToken;
       const pass = (request.runner ?? deps.runner)
         .run(
           {
@@ -129,18 +161,30 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
           (progress) => record(request, progress.index, progress.step),
         )
         .pipe(
+          // The slot is free once the run ends; the entry stays, finishing,
+          // until the reactor has handled the result.
           Effect.ensuring(
             Effect.suspend(() => {
               const entry = running.get(String(request.cardId));
-              if (entry?.runId === request.runId) running.delete(String(request.cardId));
-              return deps.slots.release(key);
+              if (entry?.token !== token) return Effect.void;
+              entry.state = "finishing";
+              return releaseSlot(entry);
             }),
           ),
           // A defect in the run still reports, as a pass that could not run,
           // so the card never sits in CI "running" with no fiber behind it.
+          // So does an interrupt nobody asked for: a worker connection that
+          // renews, restarts or goes away interrupts the stream. Only
+          // `cancel`, which drops the entry first, ends a pass silently.
           Effect.catchCause((cause) =>
             Cause.hasInterruptsOnly(cause)
-              ? Effect.failCause(cause)
+              ? owns(request.cardId, token)
+                ? Effect.succeed<BoardCiRunResult>({
+                    result: "unavailable",
+                    failedIndex: null,
+                    detail: "The worker connection closed mid-run. Retry CI.",
+                  })
+                : Effect.failCause(cause)
               : Effect.logWarning("board CI pass failed", {
                   cardId: request.cardId,
                   cause: Cause.pretty(cause),
@@ -156,6 +200,7 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
             deps.onFinished({
               cardId: request.cardId,
               runId: request.runId,
+              token,
               outcome:
                 outcome.failedIndex === null
                   ? outcome
@@ -173,7 +218,14 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
           ),
         );
       const fiber = yield* FiberSet.run(fibers, pass, { startImmediately: false });
-      running.set(String(request.cardId), { runId: request.runId, fiber, key });
+      running.set(String(request.cardId), {
+        runId: request.runId,
+        token,
+        fiber,
+        key,
+        state: "running",
+        slotHeld: true,
+      });
     });
 
   const tryStart = (request: BoardCiPassRequest) =>
@@ -214,9 +266,24 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
       const entry = running.get(String(cardId));
       if (entry === undefined) return null;
       running.delete(String(cardId));
-      yield* Fiber.interrupt(entry.fiber);
+      // The slot is free now, so whatever the caller schedules next sees it.
+      yield* releaseSlot(entry);
+      if (entry.state === "running") {
+        yield* FiberSet.run(fibers, Fiber.interrupt(entry.fiber).pipe(Effect.asVoid));
+      }
       return entry.runId;
     });
+
+  const claim: BoardCiPasses["claim"] = (cardId, token) => {
+    const entry = running.get(String(cardId));
+    if (entry?.token !== token || entry.state !== "finishing") return false;
+    entry.state = "claimed";
+    return true;
+  };
+
+  const settle: BoardCiPasses["settle"] = (cardId, token) => {
+    if (owns(cardId, token)) running.delete(String(cardId));
+  };
 
   return {
     start,
@@ -224,7 +291,9 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
     cancel,
     current: (cardId) =>
       running.get(String(cardId))?.runId ?? queued.get(String(cardId))?.runId ?? null,
+    claim,
+    settle,
     awaitIdle: FiberSet.awaitEmpty(fibers),
-    busy: () => running.size > 0,
+    busy: () => [...running.values()].some((entry) => entry.state === "running"),
   } satisfies BoardCiPasses;
 });

@@ -15,6 +15,8 @@ import {
   BOARD_CI_MAX_STEPS,
   BOARD_CI_SHELL_FINDING_MAX,
   BOARD_CI_SHELL_STEP_NAME_MAX,
+  BOARD_CI_SHELL_PROGRESS_MESSAGE_MAX,
+  boardCardCiSteps,
   BOARD_THREAD_TODO_CURRENT_MAX_BYTES,
   BOARD_THREAD_TODO_ITEMS_MAX,
   boardThreadTodosComplete,
@@ -298,6 +300,34 @@ describe("BoardCardShell payload discipline", () => {
     expect(JSON.stringify(encodeShell(inCi))).not.toContain(
       "x".repeat(BOARD_CI_SHELL_STEP_NAME_MAX + 1),
     );
+  });
+
+  it("a CI step's progress rides the shell capped, and only while it can show (T3O-60)", () => {
+    const progress = {
+      message: "m".repeat(500),
+      done: 3,
+      total: 9,
+      at: "2026-01-01T00:00:00.000Z",
+    };
+    const step = (status: "running" | "failed" | "passed") => ({
+      name: "Test",
+      status,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      finishedAt: null,
+      progress,
+      silentSince: "2026-01-01T00:00:00.000Z",
+    });
+    const [running, failed, passed] = boardCardCiSteps([
+      step("running"),
+      step("failed"),
+      step("passed"),
+    ]);
+    expect(running!.progress?.message).toHaveLength(BOARD_CI_SHELL_PROGRESS_MESSAGE_MAX);
+    expect(running!.progress?.message?.endsWith("…")).toBe(true);
+    expect(running!.progress).toMatchObject({ done: 3, total: 9 });
+    expect(running!.silentSince).toBe("2026-01-01T00:00:00.000Z");
+    expect(failed!.progress?.done).toBe(3);
+    expect(passed!.progress).toBeUndefined();
   });
 
   it("a CI send-back's finding rides the shell capped (T3O-44)", () => {
