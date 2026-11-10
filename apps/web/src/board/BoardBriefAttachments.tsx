@@ -24,7 +24,6 @@ import type {
 } from "@t3tools/contracts";
 import { FileIcon, PaperclipIcon, XIcon } from "lucide-react";
 import {
-  useCallback,
   useEffect,
   useRef,
   useState,
@@ -34,6 +33,7 @@ import {
 } from "react";
 
 import { useAssetUrlState } from "../assets/assetUrls";
+import { useStableCallback } from "../hooks/useStableCallback";
 import { cn, randomUUID } from "../lib/utils";
 import { usePreparedConnection } from "../state/session";
 import { BoardHint } from "./BoardHint";
@@ -90,11 +90,6 @@ export function useBoardBriefAttachments(input: {
   const [dropZone, setDropZone] = useState<BoardDropZone>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const runtimes = useRef(new Map<string, StagedRuntime>());
-  // The latest rows, readable from callbacks without capturing a render: the
-  // release side effects below must run once, outside React's updater, which
-  // may be invoked more than once.
-  const stagedRef = useRef(staged);
-  stagedRef.current = staged;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { environmentId, limits, onUploaded } = input;
   // Keeps the prepared-connection atom mounted while an attach surface is
@@ -104,168 +99,152 @@ export function useBoardBriefAttachments(input: {
   usePreparedConnection(environmentId);
   const capacityLeft = Math.max(0, input.maxAttachments - input.persistedCount - staged.length);
 
-  const update = useCallback((id: string, patch: Partial<BoardStagedAttachment>) => {
+  const update = (id: string, patch: Partial<BoardStagedAttachment>) => {
     setStaged((rows) => rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
-  }, []);
+  };
 
   /** Drop a row the card has taken over: its `blob:` preview is released
       here, since the persisted thumbnail loads through a signed URL. */
-  const dropConsumed = useCallback((id: string) => {
-    const row = stagedRef.current.find((candidate) => candidate.id === id);
+  const dropConsumed = useStableCallback((id: string) => {
+    const row = staged.find((candidate) => candidate.id === id);
     if (row?.previewUrl) URL.revokeObjectURL(row.previewUrl);
     runtimes.current.delete(id);
     setStaged((rows) => rows.filter((candidate) => candidate.id !== id));
-  }, []);
+  });
 
-  const run = useCallback(
-    async (id: string, file: File, type: BoardCardAttachment["type"]) => {
-      const runtime: StagedRuntime = { abort: null, cancelled: false };
-      runtimes.current.set(id, runtime);
-      update(id, { status: "uploading", progress: 0, error: null });
-      const outcome = await uploadBoardAttachment({
-        environmentId,
-        file,
-        type,
-        onProgress: (progress) => update(id, { progress }),
-        onAbortable: (abort) => {
-          runtime.abort = abort;
+  const run = async (id: string, file: File, type: BoardCardAttachment["type"]) => {
+    const runtime: StagedRuntime = { abort: null, cancelled: false };
+    runtimes.current.set(id, runtime);
+    update(id, { status: "uploading", progress: 0, error: null });
+    const outcome = await uploadBoardAttachment({
+      environmentId,
+      file,
+      type,
+      onProgress: (progress) => update(id, { progress }),
+      onAbortable: (abort) => {
+        runtime.abort = abort;
+      },
+      isCancelled: () => runtime.cancelled,
+    });
+    runtime.abort = null;
+    if (runtime.cancelled || outcome.status === "cancelled") return;
+    if (outcome.status === "failed") {
+      update(id, { status: "failed", error: outcome.reason });
+      return;
+    }
+    update(id, {
+      status: "attaching",
+      progress: 1,
+      upload: outcome.upload,
+      uploadedAt: Date.now(),
+    });
+    const verdict = await onUploaded(outcome.upload);
+    if (runtime.cancelled) return;
+    if (verdict === "consumed") {
+      dropConsumed(id);
+      return;
+    }
+    if (verdict === "keep") {
+      update(id, { status: "uploaded" });
+      return;
+    }
+    update(id, { status: "failed", error: verdict });
+  };
+
+  const addFiles = (files: ReadonlyArray<File>) => {
+    if (files.length === 0) return;
+    if (!limits.enabled) {
+      setNotice(
+        limits.known
+          ? "This server does not accept attachments."
+          : "Waiting for the server before files can be attached.",
+      );
+      return;
+    }
+    const admitted = files.slice(0, capacityLeft);
+    if (admitted.length < files.length) {
+      setNotice(`A card can hold ${input.maxAttachments} attachments.`);
+    } else {
+      setNotice(null);
+    }
+    for (const file of admitted) {
+      const id = randomUUID();
+      const isImage = file.type.toLowerCase().startsWith("image/");
+      const previewUrl = isImage ? URL.createObjectURL(file) : null;
+      setStaged((rows) => [
+        ...rows,
+        {
+          id,
+          name: file.name.length > 0 ? file.name : isImage ? "image.png" : "file",
+          type: isImage ? "image" : "file",
+          mimeType: file.type.toLowerCase() || "application/octet-stream",
+          sizeBytes: file.size,
+          file,
+          previewUrl,
+          status: "preparing",
+          progress: 0,
+          error: null,
+          upload: null,
+          uploadedAt: null,
         },
-        isCancelled: () => runtime.cancelled,
-      });
-      runtime.abort = null;
-      if (runtime.cancelled || outcome.status === "cancelled") return;
-      if (outcome.status === "failed") {
-        update(id, { status: "failed", error: outcome.reason });
-        return;
-      }
-      update(id, {
-        status: "attaching",
-        progress: 1,
-        upload: outcome.upload,
-        uploadedAt: Date.now(),
-      });
-      const verdict = await onUploaded(outcome.upload);
-      if (runtime.cancelled) return;
-      if (verdict === "consumed") {
-        dropConsumed(id);
-        return;
-      }
-      if (verdict === "keep") {
-        update(id, { status: "uploaded" });
-        return;
-      }
-      update(id, { status: "failed", error: verdict });
-    },
-    [dropConsumed, environmentId, onUploaded, update],
-  );
-
-  const addFiles = useCallback(
-    (files: ReadonlyArray<File>) => {
-      if (files.length === 0) return;
-      if (!limits.enabled) {
-        setNotice(
-          limits.known
-            ? "This server does not accept attachments."
-            : "Waiting for the server before files can be attached.",
-        );
-        return;
-      }
-      const admitted = files.slice(0, capacityLeft);
-      if (admitted.length < files.length) {
-        setNotice(`A card can hold ${input.maxAttachments} attachments.`);
-      } else {
-        setNotice(null);
-      }
-      for (const file of admitted) {
-        const id = randomUUID();
-        const isImage = file.type.toLowerCase().startsWith("image/");
-        const previewUrl = isImage ? URL.createObjectURL(file) : null;
-        setStaged((rows) => [
-          ...rows,
-          {
-            id,
-            name: file.name.length > 0 ? file.name : isImage ? "image.png" : "file",
-            type: isImage ? "image" : "file",
-            mimeType: file.type.toLowerCase() || "application/octet-stream",
-            sizeBytes: file.size,
-            file,
-            previewUrl,
-            status: "preparing",
-            progress: 0,
-            error: null,
-            upload: null,
-            uploadedAt: null,
-          },
-        ]);
-        void prepareBoardAttachmentFile(file, limits).then((prepared) => {
-          if (!prepared.ok) {
-            update(id, { status: "failed", error: prepared.reason });
-            return;
-          }
-          update(id, {
-            file: prepared.file,
-            type: prepared.type,
-            mimeType: prepared.file.type.toLowerCase() || "application/octet-stream",
-            sizeBytes: prepared.file.size,
-          });
-          void run(id, prepared.file, prepared.type);
+      ]);
+      void prepareBoardAttachmentFile(file, limits).then((prepared) => {
+        if (!prepared.ok) {
+          update(id, { status: "failed", error: prepared.reason });
+          return;
+        }
+        update(id, {
+          file: prepared.file,
+          type: prepared.type,
+          mimeType: prepared.file.type.toLowerCase() || "application/octet-stream",
+          sizeBytes: prepared.file.size,
         });
-      }
-    },
-    [capacityLeft, input.maxAttachments, limits, run, update],
-  );
+        void run(id, prepared.file, prepared.type);
+      });
+    }
+  };
 
-  const removeStaged = useCallback(
-    (id: string) => {
-      const runtime = runtimes.current.get(id);
-      if (runtime) {
-        runtime.cancelled = true;
-        runtime.abort?.();
-        runtimes.current.delete(id);
-      }
-      const row = stagedRef.current.find((candidate) => candidate.id === id);
-      if (row?.previewUrl) URL.revokeObjectURL(row.previewUrl);
-      if (row?.upload && row.status !== "attaching") {
-        releaseBoardPendingUpload(environmentId, row.upload.pendingAttachmentId);
-      }
-      setStaged((rows) => rows.filter((candidate) => candidate.id !== id));
-    },
-    [environmentId],
-  );
+  const removeStaged = useStableCallback((id: string) => {
+    const runtime = runtimes.current.get(id);
+    if (runtime) {
+      runtime.cancelled = true;
+      runtime.abort?.();
+      runtimes.current.delete(id);
+    }
+    const row = staged.find((candidate) => candidate.id === id);
+    if (row?.previewUrl) URL.revokeObjectURL(row.previewUrl);
+    if (row?.upload && row.status !== "attaching") {
+      releaseBoardPendingUpload(environmentId, row.upload.pendingAttachmentId);
+    }
+    setStaged((rows) => rows.filter((candidate) => candidate.id !== id));
+  });
 
-  const retry = useCallback(
-    (id: string) => {
-      const row = staged.find((candidate) => candidate.id === id);
-      if (row === undefined || row.file === null) return;
-      // An upload that landed but failed to attach only needs the attach.
-      if (row.upload !== null) {
-        update(id, { status: "attaching", error: null });
-        const upload = row.upload;
-        void onUploaded(upload).then((verdict) => {
-          if (verdict === "consumed") {
-            dropConsumed(id);
-          } else if (verdict === "keep") {
-            update(id, { status: "uploaded" });
-          } else {
-            update(id, { status: "failed", error: verdict });
-          }
-        });
-        return;
-      }
-      void run(id, row.file, row.type);
-    },
-    [dropConsumed, onUploaded, run, staged, update],
-  );
+  const retry = (id: string) => {
+    const row = staged.find((candidate) => candidate.id === id);
+    if (row === undefined || row.file === null) return;
+    // An upload that landed but failed to attach only needs the attach.
+    if (row.upload !== null) {
+      update(id, { status: "attaching", error: null });
+      const upload = row.upload;
+      void onUploaded(upload).then((verdict) => {
+        if (verdict === "consumed") {
+          dropConsumed(id);
+        } else if (verdict === "keep") {
+          update(id, { status: "uploaded" });
+        } else {
+          update(id, { status: "failed", error: verdict });
+        }
+      });
+      return;
+    }
+    void run(id, row.file, row.type);
+  };
 
-  // Object URLs are process-wide; release whatever is still local on unmount.
-  // Read through the ref: the closure below is created on the first render,
-  // when the list is always empty.
-  useEffect(
-    () => () => {
-      for (const row of stagedRef.current) if (row.previewUrl) URL.revokeObjectURL(row.previewUrl);
-    },
-    [],
-  );
+  const revokePreviews = useStableCallback(() => {
+    for (const row of staged) if (row.previewUrl) URL.revokeObjectURL(row.previewUrl);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- object URLs are process-wide; revokes the staged blob: previews on unmount
+  useEffect(() => () => revokePreviews(), [revokePreviews]);
 
   const dragOver = (zone: Exclude<BoardDropZone, null>) => (event: DragEvent) => {
     if (!Array.from(event.dataTransfer.types).includes("Files")) return;
@@ -299,34 +278,31 @@ export function useBoardBriefAttachments(input: {
       Discard draft, Start fresh and the dialog's reset. `release: false` is
       for a create that has just claimed those uploads onto the card: the ids
       are the card's now, and releasing them would delete its files. */
-  const clear = useCallback(
-    (options?: { readonly release?: boolean }) => {
-      const release = options?.release ?? true;
-      for (const row of stagedRef.current) {
-        const runtime = runtimes.current.get(row.id);
-        if (runtime) {
-          runtime.cancelled = true;
-          runtime.abort?.();
-        }
-        if (row.previewUrl) URL.revokeObjectURL(row.previewUrl);
-        if (release && row.upload) {
-          releaseBoardPendingUpload(environmentId, row.upload.pendingAttachmentId);
-        }
+  const clear = useStableCallback((options?: { readonly release?: boolean }) => {
+    const release = options?.release ?? true;
+    for (const row of staged) {
+      const runtime = runtimes.current.get(row.id);
+      if (runtime) {
+        runtime.cancelled = true;
+        runtime.abort?.();
       }
-      runtimes.current.clear();
-      setStaged([]);
-      setNotice(null);
-    },
-    [environmentId],
-  );
+      if (row.previewUrl) URL.revokeObjectURL(row.previewUrl);
+      if (release && row.upload) {
+        releaseBoardPendingUpload(environmentId, row.upload.pendingAttachmentId);
+      }
+    }
+    runtimes.current.clear();
+    setStaged([]);
+    setNotice(null);
+  });
 
   /** Seed rows from a restored draft's references (T3O-26). A no-op when
       rows are already staged: those are this session's, and still hold their
       real bytes, live previews and in-flight uploads. */
-  const hydrate = useCallback((attachments: ReadonlyArray<BoardCardDraftAttachment>) => {
+  const hydrate = useStableCallback((attachments: ReadonlyArray<BoardCardDraftAttachment>) => {
     if (attachments.length === 0) return;
     setStaged((rows) => (rows.length > 0 ? rows : stagedRowsFromUploads(attachments)));
-  }, []);
+  });
 
   /** True while any row is still moving: the dialog blocks Create on it. */
   const busy = staged.some(

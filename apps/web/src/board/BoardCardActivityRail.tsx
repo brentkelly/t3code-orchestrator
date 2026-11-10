@@ -57,7 +57,7 @@ import {
   Undo2Icon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -691,7 +691,7 @@ export function BoardCardActivityRail({
   /** Project titles by id (T3O-33), for the one row that names a project. */
   readonly projectNames?: ReadonlyMap<string, string> | undefined;
 }) {
-  const groups = useMemo(() => groupBoardActivity(entries), [entries]);
+  const groups = groupBoardActivity(entries);
   const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(() => new Set());
 
   if (entries.length === 0) return null;

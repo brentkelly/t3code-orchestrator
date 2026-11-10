@@ -108,8 +108,8 @@ function BoardGroupBlock({
     <div className="flex flex-col gap-1.5">
       {group.pips.length > 0 ? (
         <div className="flex items-center gap-[3px]" data-board-group-pips>
-          {group.pips.map((pip, index) => (
-            <BoardHint key={index} label={pip.tooltip}>
+          {group.pips.map((pip) => (
+            <BoardHint key={pip.tooltip} label={pip.tooltip}>
               <span
                 aria-label={pip.tooltip}
                 className={cn("h-1 min-w-1 flex-1 rounded-[2px]", PIP_CLASS[pip.state])}
@@ -549,6 +549,7 @@ export function BoardCardContent({
     heldSince: card.autoMergeHeldSince,
     gaveUp: card.autoMergeGaveUp,
     done: summary.muted,
+    // oxlint-disable-next-line react/purity -- the pill samples the clock whenever the card re-renders on a board push.
     nowMs: Date.now(),
   });
   // ONE notice for the whole header (T3O-45). Every one of these used to render
@@ -578,6 +579,7 @@ export function BoardCardContent({
     scheduledStartAt: card.scheduledStartAt ?? null,
     done: summary.muted,
     parked: card.stepAwaiting !== null || card.stalled,
+    // oxlint-disable-next-line react/purity -- the pill samples the clock whenever the card re-renders on a board push.
     nowMs: Date.now(),
   });
   // The card's Auto-build (T3O-38). Yields the single right-hand slot to a

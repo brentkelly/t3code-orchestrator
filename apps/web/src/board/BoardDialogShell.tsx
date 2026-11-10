@@ -249,7 +249,7 @@ export function BoardDialogShell(props: BoardDialogShellProps) {
               </div>
               <ul className="flex list-disc flex-col gap-0.5 pl-4 text-[12.5px] text-foreground">
                 {props.losses.items.map((item, index) => (
-                  // The losses are a fixed, ordered list built per render.
+                  // oxlint-disable-next-line react/no-array-index-key -- the losses are a fixed, ordered list built per render
                   <li key={index}>{item}</li>
                 ))}
               </ul>

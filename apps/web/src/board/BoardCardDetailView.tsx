@@ -114,16 +114,9 @@ import {
   XIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
-import {
-  Fragment,
-  Suspense,
-  lazy,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useNowSecond } from "../hooks/useNowSecond";
+import { useStableCallback } from "../hooks/useStableCallback";
+import { Fragment, Suspense, lazy, useEffect, useState, type ReactNode } from "react";
 
 import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./BoardCardNavRails";
 import { useBoardUiStore } from "./boardUiStore";
@@ -1076,12 +1069,7 @@ function ConflictBanner({
  * board pill does not.
  */
 function AutoMergeCountdown({ retryAt }: { readonly retryAt: string }) {
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNowMs(Date.now()), 1_000);
-    return () => clearInterval(timer);
-  }, []);
-  const label = boardAutoMergeCountdown(retryAt, nowMs);
+  const label = boardAutoMergeCountdown(retryAt, useNowSecond());
   if (label === null) return null;
   return (
     <>
@@ -1250,23 +1238,15 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
   const [pendingRounds, setPendingRounds] = useState<number | null>(null);
   // The settled commit is built from the view as it is when the timer fires:
   // a review stopped elsewhere in the meantime must not be turned back on.
-  const latest = useRef({ view, onSet });
-  useEffect(() => {
-    latest.current = { view, onSet };
+  const commitRounds = useStableCallback((next: number) => {
+    setPendingRounds(null);
+    if (view == null || onSet === undefined || !view.enabled || !view.inProgress) return;
+    onSet(nextBoardCardPlanReview(view, { rounds: next }));
   });
   const [roundsCommit] = useState(
-    () =>
-      new Debouncer(
-        (next: number) => {
-          setPendingRounds(null);
-          const { view: now, onSet: set } = latest.current;
-          if (now == null || set === undefined || !now.enabled || !now.inProgress) return;
-          set(nextBoardCardPlanReview(now, { rounds: next }));
-        },
-        { wait: PLAN_REVIEW_ROUNDS_SETTLE_MS },
-      ),
+    () => new Debouncer(commitRounds, { wait: PLAN_REVIEW_ROUNDS_SETTLE_MS }),
   );
-  // A rounds change still settling when the panel closes is landed, not dropped.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- lands a rounds change still settling in the debouncer when the panel unmounts
   useEffect(() => () => roundsCommit.flush(), [roundsCommit]);
   if (view == null || onSet === undefined) return null;
   const rounds = pendingRounds ?? view.rounds;
@@ -2660,6 +2640,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           maxAttempts: BOARD_AUTO_MERGE_MAX_ATTEMPTS,
           heldSince: hold.heldSince,
           retryAt: hold.retryAt,
+          // oxlint-disable-next-line react/purity -- the banner is minute-grained and samples the clock when the card re-renders; the countdown owns the per-second tick.
           nowMs: Date.now(),
         });
   const wide = boardCardDetailIsWide(props.stages, card.stage, props.paneChoice);
@@ -2759,18 +2740,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // reads to decide whether the split is right, and the Approve split gate
   // lives on it. After, the markdown is each child's brief, one drill-in away.
   const isSplitParent = liveChildCount > 0;
-  const planRows = useMemo(
-    () =>
-      isSplitParent
-        ? deriveBoardPlanRows({
-            plans: props.detail.plans,
-            children: props.detail.children,
-            cards: props.childShells ?? [],
-            stages: props.stages,
-          })
-        : null,
-    [isSplitParent, props.detail.plans, props.detail.children, props.childShells, props.stages],
-  );
+  const planRows = isSplitParent
+    ? deriveBoardPlanRows({
+        plans: props.detail.plans,
+        children: props.detail.children,
+        cards: props.childShells ?? [],
+        stages: props.stages,
+      })
+    : null;
   const group = props.group ?? null;
   const groupUsesCardActions =
     group !== null &&
@@ -2863,28 +2840,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // wasted on any other pane.
   const summaryShown = activePane === "summary";
   const reviewMaxRounds = props.reviewMaxRounds;
-  const workSummary = useMemo(
-    () =>
-      summaryShown
-        ? deriveBoardCardWorkSummary({
-            detail: props.detail,
-            stages: props.stages,
-            planRows,
-            reviewLive,
-            reviewStalled,
-            ...(reviewMaxRounds === undefined ? {} : { maxRounds: reviewMaxRounds }),
-          })
-        : null,
-    [
-      summaryShown,
-      props.detail,
-      props.stages,
-      planRows,
-      reviewLive,
-      reviewStalled,
-      reviewMaxRounds,
-    ],
-  );
+  const workSummary = summaryShown
+    ? deriveBoardCardWorkSummary({
+        detail: props.detail,
+        stages: props.stages,
+        planRows,
+        reviewLive,
+        reviewStalled,
+        ...(reviewMaxRounds === undefined ? {} : { maxRounds: reviewMaxRounds }),
+      })
+    : null;
 
   // The decision log (T3O-32). Null open state means "the default rule".
   const [logOpen, setLogOpen] = useState<boolean | null>(null);

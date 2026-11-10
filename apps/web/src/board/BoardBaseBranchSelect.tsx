@@ -17,7 +17,7 @@
  */
 import type { EnvironmentId } from "@t3tools/contracts";
 import { CheckIcon, ChevronDownIcon, GitBranchIcon, SearchIcon } from "lucide-react";
-import { useCallback, useDeferredValue, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useRef, useState } from "react";
 
 import { Button } from "../components/ui/button";
 import {
@@ -72,12 +72,9 @@ export function BoardBaseBranchSelect({
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query).trim();
 
-  const target = useMemo(
-    () => ({ environmentId, cwd: workspaceRoot, query: deferredQuery }),
-    [deferredQuery, environmentId, workspaceRoot],
-  );
+  const target = { environmentId, cwd: workspaceRoot, query: deferredQuery };
   const branchState = usePaginatedBranches(target);
-  const options = useMemo(() => boardBaseBranchOptions(branchState.refs), [branchState.refs]);
+  const options = boardBaseBranchOptions(branchState.refs);
   const selectedName = boardBaseBranchSelectedName({ baseBranch, options });
   // The label falls back to the card's pin so a branch that has since been
   // deleted still reads as what the card is actually set to, rather than
@@ -87,29 +84,26 @@ export function BoardBaseBranchSelect({
   const hasNextPage = branchState.data?.nextCursor != null;
   const scrollElementRef = useRef<HTMLElement | null>(null);
   const previousScrollTopRef = useRef<number | null>(null);
-  const maybeFetchNextPage = useCallback(
-    (event: { readonly currentTarget: HTMLDivElement }) => {
-      const element = event.currentTarget;
-      scrollElementRef.current = element;
-      const previousScrollTop = previousScrollTopRef.current;
-      previousScrollTopRef.current = element.scrollTop;
-      if (!open || !hasNextPage || branchState.isFetchingNextPage) return;
-      if (
-        !shouldLoadNextBranchPageAfterScroll({
-          previousScrollTop,
-          scrollTop: element.scrollTop,
-          scrollHeight: element.scrollHeight,
-          clientHeight: element.clientHeight,
-        })
-      ) {
-        return;
-      }
-      branchState.loadNext();
-    },
-    [branchState, hasNextPage, open],
-  );
+  const maybeFetchNextPage = (event: { readonly currentTarget: HTMLDivElement }) => {
+    const element = event.currentTarget;
+    scrollElementRef.current = element;
+    const previousScrollTop = previousScrollTopRef.current;
+    previousScrollTopRef.current = element.scrollTop;
+    if (!open || !hasNextPage || branchState.isFetchingNextPage) return;
+    if (
+      !shouldLoadNextBranchPageAfterScroll({
+        previousScrollTop,
+        scrollTop: element.scrollTop,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+      })
+    ) {
+      return;
+    }
+    branchState.loadNext();
+  };
 
-  const itemValues = useMemo(() => options.map((option) => option.localName), [options]);
+  const itemValues = options.map((option) => option.localName);
 
   return (
     <Combobox

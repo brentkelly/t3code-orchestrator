@@ -10,7 +10,7 @@
  */
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { Columns3Icon, ListTreeIcon, MessageSquareIcon } from "lucide-react";
-import { useCallback, useEffect } from "react";
+import { useEffect } from "react";
 
 import { cn } from "../lib/utils";
 import { isModeTabDestination, useBoardUiStore, type WorkspaceMode } from "./boardUiStore";
@@ -121,18 +121,15 @@ export function BoardModeTabs({
   const lastLocationByMode = useBoardUiStore((state) => state.lastLocationByMode);
   const sidebarHostsModeTabs = useBoardUiStore((state) => state.sidebarHostsModeTabs);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the router's committed location per mode so switching back returns to it
   useEffect(() => {
     recordModeLocation(mode, locationHref);
   }, [locationHref, mode, recordModeLocation]);
 
-  const switchTo = useCallback(
-    (target: WorkspaceMode) => navigateToMode(router, mode, target, lastLocationByMode),
-    [lastLocationByMode, mode, router],
-  );
-  const hrefFor = useCallback(
-    (target: WorkspaceMode) => modeTabHref(router.history, target, lastLocationByMode),
-    [lastLocationByMode, router],
-  );
+  const switchTo = (target: WorkspaceMode) =>
+    navigateToMode(router, mode, target, lastLocationByMode);
+  const hrefFor = (target: WorkspaceMode) =>
+    modeTabHref(router.history, target, lastLocationByMode);
 
   // After the hooks, never before: the hidden copy must keep recording the
   // last threads location, or the moment the sidebar takes over there is

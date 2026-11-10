@@ -70,6 +70,7 @@ function BoardCardCiProgress({ ci }: { readonly ci: BoardCardCi }) {
         <div className="flex gap-[3px]">
           {face.segments.map((segment, index) => (
             <span
+              // oxlint-disable-next-line react/no-array-index-key -- a segment is its step's position in the pipeline; step names can repeat
               key={`${index}:${segment.name}`}
               aria-label={segment.tooltip}
               className={cn("h-[5px] flex-1 rounded-[2px]", SEGMENT_CLASS[segment.state])}

@@ -38,7 +38,7 @@ import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime"
 import { useAtomValue } from "@effect/atom-react";
 import { LayersIcon } from "lucide-react";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { Dialog, DialogFooter, DialogPopup, DialogTitle } from "../components/ui/dialog";
@@ -153,17 +153,14 @@ export function BoardCardCreateDialog({
   const deleteLabel = useAtomCommand(boardEnvironment.deleteLabel);
   const undeleteLabel = useAtomCommand(boardEnvironment.undeleteLabel);
 
-  const snapshot = useMemo(() => Option.getOrNull(shellState.snapshot), [shellState.snapshot]);
+  const snapshot = Option.getOrNull(shellState.snapshot);
   const board = useAtomValue(environmentBoard.snapshotValueAtom(environmentId));
   const allCards = board?.cards ?? EMPTY_CARDS;
   const isChild = subBoardParentId !== null;
-  const parentShell = useMemo(
-    () =>
-      subBoardParentId === null
-        ? null
-        : (allCards.find((card) => card.cardId === subBoardParentId) ?? null),
-    [allCards, subBoardParentId],
-  );
+  const parentShell =
+    subBoardParentId === null
+      ? null
+      : (allCards.find((card) => card.cardId === subBoardParentId) ?? null);
 
   // Brief attachments (t3o-32, K6): staged as pending uploads while the user
   // types, claimed onto the card right after `board.card.create` returns.
@@ -182,16 +179,13 @@ export function BoardCardCreateDialog({
 
   const initialProjectId = defaultProjectId ?? projects[0]?.id ?? null;
   const [projectId, setProjectId] = useState<ProjectId | null>(initialProjectId);
-  const stages = useMemo(
-    () =>
-      projectId === null
-        ? allStages
-        : boardCardPipelineStages(
-            { stages: allStages, projectStageConfigs },
-            { stage: "", projectId },
-          ),
-    [allStages, projectId, projectStageConfigs],
-  );
+  const stages =
+    projectId === null
+      ? allStages
+      : boardCardPipelineStages(
+          { stages: allStages, projectStageConfigs },
+          { stage: "", projectId },
+        );
   const projectExecutionConfig =
     projectId === null ? null : (projectStageConfigs[projectId] ?? null);
   // The card's base branch (T3O-5, D13): null follows the chosen project's
@@ -216,37 +210,33 @@ export function BoardCardCreateDialog({
   // and the decider has never enforced a same-project rule, so a card that
   // changes project inherits cross-project edges — a state the picker should be
   // able to create too. Foreign options carry their project's dot.
-  const dependencyOptions = useMemo(() => {
-    const projectTitleById = new Map(
-      projects.map((project) => [String(project.id), project.title]),
-    );
-    // Every project, hidden ones included, so a foreign card keeps its colour.
-    const projectById = new Map(
-      (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
-    );
-    // Dependencies cross groups (T3O-27); only the new card's own ancestry is
-    // refused, so its group and that group's ancestors are not offered.
-    const ancestors = boardShellAncestorIds(allCards, subBoardParentId ?? null);
-    return allCards
-      .filter(
-        (card) =>
-          !dependsOn.includes(card.cardId as BoardCardId) && !ancestors.has(String(card.cardId)),
-      )
-      .map((card) => ({
-        id: card.cardId,
-        key: card.key,
-        title: card.title,
-        ...(card.projectId === projectId
-          ? {}
-          : {
-              project: {
-                id: card.projectId,
-                title: projectTitleById.get(String(card.projectId)) ?? "Another project",
-                accent: projectIconColorOf(projectById.get(String(card.projectId))),
-              },
-            }),
-      }));
-  }, [allCards, dependsOn, projectId, projects, snapshot, subBoardParentId]);
+  const projectTitleById = new Map(projects.map((project) => [String(project.id), project.title]));
+  // Every project, hidden ones included, so a foreign card keeps its colour.
+  const projectById = new Map(
+    (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
+  );
+  // Dependencies cross groups (T3O-27); only the new card's own ancestry is
+  // refused, so its group and that group's ancestors are not offered.
+  const ancestors = boardShellAncestorIds(allCards, subBoardParentId ?? null);
+  const dependencyOptions = allCards
+    .filter(
+      (card) =>
+        !dependsOn.includes(card.cardId as BoardCardId) && !ancestors.has(String(card.cardId)),
+    )
+    .map((card) => ({
+      id: card.cardId,
+      key: card.key,
+      title: card.title,
+      ...(card.projectId === projectId
+        ? {}
+        : {
+            project: {
+              id: card.projectId,
+              title: projectTitleById.get(String(card.projectId)) ?? "Another project",
+              accent: projectIconColorOf(projectById.get(String(card.projectId))),
+            },
+          }),
+    }));
 
   /** The chosen dependencies as the card modal's rows — same shape, same
       renderer, so an unresolvable id reads the same in both sheets. */
@@ -273,7 +263,7 @@ export function BoardCardCreateDialog({
   const selectedProject = projects.find((project) => project.id === projectId);
 
   // Every stage, top-level or sub-board (D10, T3O-53).
-  const stageOptions = useMemo(() => boardStagesInOrder(stageStateOf(stages)), [stages]);
+  const stageOptions = boardStagesInOrder(stageStateOf(stages));
 
   // ── Draft persistence (T3O-26) ──────────────────────────────────────
   // One draft per board scope, autosaved while the dialog is open and offered
@@ -299,7 +289,7 @@ export function BoardCardCreateDialog({
   const hydrateBriefAttachments = briefAttachments.hydrate;
 
   /** Every field back to what the dialog opens with. */
-  const resetFields = useCallback(() => {
+  const resetFields = () => {
     setProjectId(defaultProjectId ?? projects[0]?.id ?? null);
     setBaseBranch(null);
     setPinnedWorkerId(null);
@@ -309,45 +299,29 @@ export function BoardCardCreateDialog({
     setBrief("");
     setLabelIds([]);
     setDependsOn([]);
-  }, [defaultProjectId, defaultStage, projects]);
+  };
 
   /** The staged rows that are safe to persist: an upload that has landed is a
       server-side pending attachment the next session can claim. Rows still in
       flight are this session's only. */
-  const attachmentRefs = useMemo<ReadonlyArray<BoardCardDraftAttachment>>(
-    () =>
-      briefAttachments.staged.flatMap((row) =>
-        row.status === "uploaded" && row.upload !== null && row.uploadedAt !== null
-          ? [{ ...row.upload, uploadedAt: row.uploadedAt }]
-          : [],
-      ),
-    [briefAttachments.staged],
+  const attachmentRefs: ReadonlyArray<BoardCardDraftAttachment> = briefAttachments.staged.flatMap(
+    (row) =>
+      row.status === "uploaded" && row.upload !== null && row.uploadedAt !== null
+        ? [{ ...row.upload, uploadedAt: row.uploadedAt }]
+        : [],
   );
 
-  const draftFields = useMemo<BoardCardDraft>(
-    () => ({
-      title,
-      brief,
-      stage,
-      projectId,
-      baseBranch,
-      labelIds,
-      dependsOn,
-      scheduledStartAt,
-      attachments: attachmentRefs,
-    }),
-    [
-      attachmentRefs,
-      baseBranch,
-      brief,
-      dependsOn,
-      labelIds,
-      projectId,
-      scheduledStartAt,
-      stage,
-      title,
-    ],
-  );
+  const draftFields: BoardCardDraft = {
+    title,
+    brief,
+    stage,
+    projectId,
+    baseBranch,
+    labelIds,
+    dependsOn,
+    scheduledStartAt,
+    attachments: attachmentRefs,
+  };
   const draftHasContent = boardCardDraftHasContent(draftFields);
 
   // Restore or reset ONLY on the closed→open transition, honouring the
@@ -356,6 +330,7 @@ export function BoardCardCreateDialog({
   // input — every time a background shell delta gives `projects` a new
   // identity while the dialog is open; the ref pins this to the open edge.
   const wasOpen = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the localStorage draft and the staged uploads' blob URLs on the dialog's open edge
   useEffect(() => {
     if (open && !wasOpen.current) {
       setFeedback(null);
@@ -370,6 +345,7 @@ export function BoardCardCreateDialog({
       stagedScopeKey.current = draftKey;
       const draft = readBoardCardDraft(draftKey);
       if (draft === null) {
+        // oxlint-disable-next-line react/set-state-in-effect -- opening the dialog with no stored draft clears the previous session's fields.
         resetFields();
         setRestored(null);
       } else {
@@ -408,8 +384,10 @@ export function BoardCardCreateDialog({
     // cards, the projects, the catalogue, the stored draft) is read ONCE, as
     // the dialog opens. Listing them would re-run the restore mid-edit every
     // time a background delta gave one a new identity.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- restores once per open edge; deltas must not re-run it mid-edit.
   }, [open]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- autosaves the open dialog's fields to the localStorage draft store
   useEffect(() => {
     if (!open) return;
     if (skipNextSave.current) {
@@ -422,6 +400,7 @@ export function BoardCardCreateDialog({
 
   // Closing, or going away entirely, is a save point: land the debounced
   // write rather than trust the page to still be here in 0.7s.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- flushes the debounced localStorage draft write on unmount
   useEffect(
     () => () => {
       flushBoardCardDrafts();
@@ -462,7 +441,7 @@ export function BoardCardCreateDialog({
     !briefAttachments.busy &&
     !briefAttachments.failed;
 
-  const submitShortcutLabel = useMemo(() => boardCardCreateShortcutLabel(), []);
+  const submitShortcutLabel = boardCardCreateShortcutLabel();
 
   const submit = () => {
     if (projectId === null) return;

@@ -23,7 +23,7 @@ import {
 } from "@t3tools/contracts";
 import { ArrowDownIcon, CopyIcon, DownloadIcon } from "lucide-react";
 import { AsyncResult } from "effect/reactivity";
-import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useContext, useEffect, useRef, useState } from "react";
 
 import { Dialog, DialogPopup, DialogTitle } from "../components/ui/dialog";
 import { toastManager } from "../components/ui/toast";
@@ -64,6 +64,7 @@ function LogLine({
         segment.className === null ? (
           segment.text
         ) : (
+          // oxlint-disable-next-line react/no-array-index-key -- ANSI segments of one immutable line keep their order
           <span className={segment.className} key={index}>
             {segment.text}
           </span>
@@ -114,6 +115,7 @@ const LogBlock = memo(function LogBlock({
   return (
     <pre className="m-0 font-mono text-[11.5px]/[1.6] whitespace-pre text-foreground [contain-intrinsic-size:auto_320px] [content-visibility:auto]">
       {parsed.lines.map((segments, index) => (
+        // oxlint-disable-next-line react/no-array-index-key -- a block's log lines never reorder; the log only appends
         <LogLine highlighted={index === highlightLine} key={index} segments={segments} />
       ))}
     </pre>
@@ -174,18 +176,15 @@ export function BoardCiLogDialog({
 }) {
   const { pass, index, live, openAt } = target;
   const step = pass.steps[index];
-  const request = useMemo<BoardCiLogRequest>(
-    () => ({
-      cardId,
-      runId: pass.runId,
-      index,
-      follow: true,
-      ...(openAt === undefined
-        ? {}
-        : { fromOffset: Math.max(0, openAt.offset - OPEN_AT_CONTEXT_BYTES), alignStart: true }),
-    }),
-    [cardId, pass.runId, index, openAt],
-  );
+  const request: BoardCiLogRequest = {
+    cardId,
+    runId: pass.runId,
+    index,
+    follow: true,
+    ...(openAt === undefined
+      ? {}
+      : { fromOffset: Math.max(0, openAt.offset - OPEN_AT_CONTEXT_BYTES), alignStart: true }),
+  };
   const result = useAtomValue(boardEnvironment.ciLogAtom({ environmentId, input: request }));
   const view = AsyncResult.isSuccess(result) ? result.value : null;
   const failed = AsyncResult.isFailure(result);
@@ -280,20 +279,18 @@ export function BoardCiLogDialogView({
   const targetedRef = useRef(false);
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "CI log" });
 
-  const progress = useMemo(() => (view === null ? null : latestProgress(view)), [view]);
-  const highlight = useMemo(
-    () => (openAt === undefined || view === null ? null : boardCiLogLineAt(view, openAt.offset)),
-    [openAt, view],
-  );
+  const progress = view === null ? null : latestProgress(view);
+  const highlight =
+    openAt === undefined || view === null ? null : boardCiLogLineAt(view, openAt.offset);
 
-  // Keeps the DOM pinned to the newest output while following, as it grows.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the log content's size to keep the scroller pinned to the newest output while following
   useEffect(() => {
     if (!following || scroller === null || content === null) return;
     pinToBottom(scroller);
     return observeResize(content, () => pinToBottom(scroller));
   }, [following, scroller, content]);
 
-  // Scrolls once to the line `openAt` marks, when it has loaded.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the DOM once to the line `openAt` marks, when it has loaded
   useEffect(() => {
     if (highlight === null || content === null || targetedRef.current) return;
     targetedRef.current = true;

@@ -68,10 +68,12 @@ function InlineCode({ text }: { readonly text: string }) {
     <>
       {parts.map((part, index) =>
         part.length === 0 ? null : index % 2 === 1 ? (
+          // oxlint-disable-next-line react/no-array-index-key -- split parts of one immutable string keep their order
           <code className={CODE_CLASS} key={index}>
             {part}
           </code>
         ) : (
+          // oxlint-disable-next-line react/no-array-index-key -- split parts of one immutable string keep their order
           <Fragment key={index}>{part}</Fragment>
         ),
       )}
@@ -225,6 +227,7 @@ export function BoardCardSummaryPane({
             <Heading>Heads-up</Heading>
             <ul className="flex flex-col gap-2.5">
               {structured.notes.map((note, index) => (
+                // oxlint-disable-next-line react/no-array-index-key -- notes have no identity besides their position in the summary
                 <NoteRow detail={note.detail} key={index} kind={note.kind}>
                   <InlineCode text={note.text} />
                 </NoteRow>
@@ -264,6 +267,7 @@ export function BoardCardSummaryPane({
                       "flex flex-col gap-[3px] rounded-lg border px-[11px] py-[9px]",
                       style.tile,
                     )}
+                    // oxlint-disable-next-line react/no-array-index-key -- tiles have no identity besides their position in the summary
                     key={index}
                   >
                     <div className="flex items-baseline gap-[7px]">
@@ -342,6 +346,7 @@ export function BoardCardSummaryPane({
             ) : null}
             {structured?.areas.map((area, areaIndex) =>
               area.items.length === 0 ? null : (
+                // oxlint-disable-next-line react/no-array-index-key -- areas have no identity besides their position in the summary
                 <div className="flex flex-col gap-1" key={areaIndex}>
                   <div className="text-[12.5px] font-semibold text-muted-foreground">
                     <InlineCode text={area.name} />
@@ -350,6 +355,7 @@ export function BoardCardSummaryPane({
                     {area.items.map((item, itemIndex) => (
                       <li
                         className="flex items-baseline gap-[9px] text-[13px]/[1.6] text-foreground"
+                        // oxlint-disable-next-line react/no-array-index-key -- items have no identity besides their position in the area
                         key={itemIndex}
                       >
                         <span

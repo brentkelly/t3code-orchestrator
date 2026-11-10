@@ -8,9 +8,10 @@
  * spans stages (T3O-44), is only at the two ends of the board.
  */
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 
+import { useStableCallback } from "../hooks/useStableCallback";
 import { cn } from "../lib/utils";
 import { BoardHint } from "./BoardHint";
 import { boardCardNavStep, type BoardCardNav, type BoardCardNavTarget } from "./boardCardNav";
@@ -34,22 +35,21 @@ export function useBoardCardNavKeys(sheet: HTMLElement | null, nav: BoardCardNav
   // The handler is installed once per sheet element; reading the current nav
   // through a ref keeps a re-render (a neighbour changing, the card stepping)
   // from tearing the listener down and putting it back.
-  const navRef = useRef(nav);
-  navRef.current = nav;
+  const handleKeyDown = useStableCallback((event: KeyboardEvent, target: HTMLElement) => {
+    if (nav === null) return;
+    const step = boardCardNavStep(nav, event, target.ownerDocument.activeElement);
+    if (step === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    nav.onStep(step);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- native keydown listener on the sheet element, so portaled layers' keys never reach it
   useEffect(() => {
     if (sheet === null) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      const current = navRef.current;
-      if (current === null) return;
-      const step = boardCardNavStep(current, event, sheet.ownerDocument.activeElement);
-      if (step === null) return;
-      event.preventDefault();
-      event.stopPropagation();
-      current.onStep(step);
-    };
+    const onKeyDown = (event: KeyboardEvent) => handleKeyDown(event, sheet);
     sheet.addEventListener("keydown", onKeyDown);
     return () => sheet.removeEventListener("keydown", onKeyDown);
-  }, [sheet]);
+  }, [handleKeyDown, sheet]);
 }
 
 /** The band fades inward from the sheet's edge and is masked top and bottom,

@@ -66,6 +66,7 @@ export function BoardCardSchedulePopover({
   // passes — and that is the window this label has to be honest about. The
   // board pill next to it does the same (`BoardCardItem`); a `Date.now()` per
   // render costs nothing and starts nothing ticking.
+  // oxlint-disable-next-line react/purity -- the trigger samples the clock on each render so a passed moment never reads as upcoming.
   const triggerNowMs = Date.now();
   // Empty when nothing is scheduled, deliberately: see `scheduleInputValue`.
   // A pre-filled field plus commit-on-complete would make the first spinner

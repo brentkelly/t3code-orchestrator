@@ -19,7 +19,6 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import * as Option from "effect/Option";
-import { useCallback, useMemo } from "react";
 
 import { SidebarInset } from "../components/ui/sidebar";
 import { environmentShell } from "../state/shell";
@@ -77,22 +76,16 @@ function EnvironmentList({ environmentId }: { readonly environmentId: Environmen
   const cardsByProject = useAtomValue(boardEnvironment.cardsByProjectAtom(environmentId));
   const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
   const orderedStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
-  const stageState = useMemo(() => stageStateOf(orderedStages), [orderedStages]);
+  const stageState = stageStateOf(orderedStages);
   const boardSettings = useBoardSettings((settings) => settings.board);
 
-  const allProjects = useMemo(
-    () => Option.getOrNull(shellState.snapshot)?.projects ?? [],
-    [shellState.snapshot],
+  const allProjects = Option.getOrNull(shellState.snapshot)?.projects ?? [];
+  const accentByProject = new Map(
+    allProjects.map((project) => [project.id, projectIconColorOf(project)] as const),
   );
-  const accentNameFor = useMemo(() => {
-    const byProject = new Map(
-      allProjects.map((project) => [project.id, projectIconColorOf(project)] as const),
-    );
-    return (projectId: ProjectId) => byProject.get(projectId) ?? null;
-  }, [allProjects]);
-  const projects = useMemo(
-    () => allProjects.filter((project) => !isBoardProjectHidden(boardSettings, project.id)),
-    [allProjects, boardSettings],
+  const accentNameFor = (projectId: ProjectId) => accentByProject.get(projectId) ?? null;
+  const projects = allProjects.filter(
+    (project) => !isBoardProjectHidden(boardSettings, project.id),
   );
   const scopeProjectId = (search.project ?? null) as ProjectId | null;
   const scopeIsStale =
@@ -104,89 +97,58 @@ function EnvironmentList({ environmentId }: { readonly environmentId: Environmen
 
   // Every live card of every visible project: a group's rules read across
   // projects, and a child in another project still shows under its group.
-  const allShells = useMemo(
-    () => [...cardsByProject.values()].flatMap((columns) => Object.values(columns).flat()),
-    [cardsByProject],
+  const allShells = [...cardsByProject.values()].flatMap((columns) =>
+    Object.values(columns).flat(),
   );
-  const shells = useMemo(
-    () => allShells.filter((card) => !isBoardProjectHidden(boardSettings, card.projectId)),
-    [allShells, boardSettings],
-  );
-  const inScope = useCallback(
-    (card: BoardCardShell) => scopeProjectId === null || card.projectId === scopeProjectId,
-    [scopeProjectId],
-  );
+  const shells = allShells.filter((card) => !isBoardProjectHidden(boardSettings, card.projectId));
+  const inScope = (card: BoardCardShell) =>
+    scopeProjectId === null || card.projectId === scopeProjectId;
 
   // "Needs you" agrees with the board's card faces: same settle grace.
-  const threadShellsById = useMemo(() => {
-    const threads = Option.getOrNull(shellState.snapshot)?.threads ?? [];
-    return new Map(threads.map((thread) => [thread.id, thread]));
-  }, [shellState.snapshot]);
-  const threadShellOf = useCallback(
-    (threadId: ThreadId) => threadShellsById.get(threadId),
-    [threadShellsById],
+  const threadShellsById = new Map(
+    (Option.getOrNull(shellState.snapshot)?.threads ?? []).map((thread) => [thread.id, thread]),
   );
+  const threadShellOf = (threadId: ThreadId) => threadShellsById.get(threadId);
   const { threadIdleSinceByCard, now } = useBoardAttentionSettle({
     cards: shells,
     threadOf: threadShellOf,
   });
-  const attentionFor = useCallback(
-    (card: BoardCardShell) => {
-      const threadIdleSince = threadIdleSinceByCard.get(String(card.cardId));
-      return boardCardAttention({
-        card: threadIdleSince === undefined ? card : { ...card, threadIdleSince },
-        stages: orderedStages,
-        now,
-      });
-    },
-    [now, orderedStages, threadIdleSinceByCard],
-  );
+  const attentionFor = (card: BoardCardShell) => {
+    const threadIdleSince = threadIdleSinceByCard.get(String(card.cardId));
+    return boardCardAttention({
+      card: threadIdleSince === undefined ? card : { ...card, threadIdleSince },
+      stages: orderedStages,
+      now,
+    });
+  };
 
-  const keyPrefixFor = useCallback(
-    (projectId: ProjectId) =>
-      assignBoardKeyPrefix({
-        board: boardSettings,
-        projectId,
-        projectTitle: allProjects.find((project) => project.id === projectId)?.title ?? "",
-      }).prefix,
-    [allProjects, boardSettings],
-  );
+  const keyPrefixFor = (projectId: ProjectId) =>
+    assignBoardKeyPrefix({
+      board: boardSettings,
+      projectId,
+      projectTitle: allProjects.find((project) => project.id === projectId)?.title ?? "",
+    }).prefix;
 
   const query = useBoardUiStore((state) => state.queryByBoard[LIST_QUERY_KEY] ?? "");
   const setBoardQuery = useBoardUiStore((state) => state.setBoardQuery);
-  const setQuery = useCallback(
-    (next: string) => setBoardQuery(LIST_QUERY_KEY, next),
-    [setBoardQuery],
-  );
+  const setQuery = (next: string) => setBoardQuery(LIST_QUERY_KEY, next);
 
-  const patchSearch = useCallback(
-    (updater: (previous: BoardSearch) => BoardSearch) => {
-      void navigate({ to: ".", search: (previous) => updater(validateBoardSearch(previous)) });
-    },
-    [navigate],
-  );
-  const openCard = useCallback(
-    (cardId: string) => patchSearch((previous) => ({ ...previous, card: cardId })),
-    [patchSearch],
-  );
-  const closeCard = useCallback(
-    () =>
-      patchSearch((previous) => {
-        const { card: _card, ...rest } = previous;
-        return rest;
-      }),
-    [patchSearch],
-  );
-  const openBoard = useCallback(
-    (parentCardId: string) => {
-      void navigate({
-        to: "/board/$parentCardId",
-        params: { parentCardId },
-        search: scopeProjectId === null ? {} : { project: scopeProjectId },
-      });
-    },
-    [navigate, scopeProjectId],
-  );
+  const patchSearch = (updater: (previous: BoardSearch) => BoardSearch) => {
+    void navigate({ to: ".", search: (previous) => updater(validateBoardSearch(previous)) });
+  };
+  const openCard = (cardId: string) => patchSearch((previous) => ({ ...previous, card: cardId }));
+  const closeCard = () =>
+    patchSearch((previous) => {
+      const { card: _card, ...rest } = previous;
+      return rest;
+    });
+  const openBoard = (parentCardId: string) => {
+    void navigate({
+      to: "/board/$parentCardId",
+      params: { parentCardId },
+      search: scopeProjectId === null ? {} : { project: scopeProjectId },
+    });
+  };
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <BoardTopBar mode="list">

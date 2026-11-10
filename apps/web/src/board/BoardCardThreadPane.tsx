@@ -34,7 +34,7 @@ import {
   SquareArrowOutUpRightIcon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import ChatView from "../components/ChatView";
 import { observeResize } from "../lib/observeResize";
@@ -219,16 +219,18 @@ export function BoardCardThreadPane({
   // remain hidden so the chevron only appears when it does something.
   const stripRef = useRef<HTMLDivElement | null>(null);
   const [canScrollRight, setCanScrollRight] = useState(false);
-  const syncScrollAffordance = useCallback(() => {
+  const syncScrollAffordance = () => {
     const el = stripRef.current;
     if (el === null) return;
     setCanScrollRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 1);
-  }, []);
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the tab strip's size to show the scroll chevron only while tabs are hidden
   useEffect(() => {
     const el = stripRef.current;
     if (el === null) return undefined;
     syncScrollAffordance();
     return observeResize(el, syncScrollAffordance);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- a new tab widens the strip's content without resizing the strip, so it re-measures.
   }, [syncScrollAffordance, threadLinks]);
   const scrollOlderIntoView = () => {
     stripRef.current?.scrollBy({ left: stripRef.current.clientWidth * 0.7, behavior: "smooth" });

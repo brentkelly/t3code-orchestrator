@@ -23,7 +23,7 @@ import {
   BOARD_THREAD_TODO_STATUS_IN_PROGRESS,
 } from "@t3tools/contracts";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { cn } from "../lib/utils";
 import { BoardTodoPips } from "./BoardCardSummaryRow";
@@ -45,13 +45,9 @@ export function BoardCardThreadTodosStrip({
   // Switching thread, or the awaiting-input state changing, drops the manual
   // override — which is exactly "a manual collapse sticks until the
   // awaiting-input state clears and returns".
-  useEffect(() => {
-    setManual((current) =>
-      current === null || (current.threadId === threadId && current.awaitingInput === awaitingInput)
-        ? current
-        : null,
-    );
-  }, [threadId, awaitingInput]);
+  if (manual !== null && (manual.threadId !== threadId || manual.awaitingInput !== awaitingInput)) {
+    setManual(null);
+  }
   const expanded = manual?.expanded ?? awaitingInput;
 
   const total = todo?.todoTotal ?? 0;

@@ -34,6 +34,7 @@ export function BoardModeTabsSidebarSlot() {
   // Layout phase for the same reason as the write below: seeding the width
   // after paint would show one frame of the tabs in the top bar on every mount
   // of a sidebar wide enough to hold them.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the header wrapper's width to decide whether the tabs fit
   useLayoutEffect(() => {
     const wrapper = wrapperRef.current;
     if (wrapper === null) return;
@@ -57,6 +58,7 @@ export function BoardModeTabsSidebarSlot() {
   // render, while the top bar's copy waits on this store write. A passive
   // effect would land after paint, so crossing the width threshold would show
   // one frame with the tabs doubled (going wider) or missing (going narrower).
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the store's sidebar-hosts-tabs flag while this slot is mounted and hands it back on unmount
   useLayoutEffect(() => {
     setSidebarHostsModeTabs(hosting);
     // On unmount the sidebar is gone (settings, the board, a route without

@@ -17,7 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { ArchiveRestoreIcon, HardDriveIcon, LayersIcon, Trash2Icon } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 
@@ -81,6 +81,7 @@ function ArchivedCardList({
     readonly cardId: BoardCardId;
     readonly key: string;
   } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the server's archived-cards list each time the sheet opens; the archive is not on the live board stream
   useEffect(() => {
     refreshBoardArchivedCards(environmentId);
   }, [environmentId]);
@@ -89,22 +90,17 @@ function ArchivedCardList({
   const snapshot = Option.getOrNull(AsyncResult.value(result));
   const stages = useAtomValue(boardEnvironment.stageListAtom(environmentId));
 
-  const cards = useMemo(
-    () => boardArchivedCardsInScope(snapshot?.cards ?? [], scopeProjectId),
-    [snapshot, scopeProjectId],
-  );
+  const cards = boardArchivedCardsInScope(snapshot?.cards ?? [], scopeProjectId);
 
   // Resolves a card id to a key for the parent badge (t3o-25, AC6): live
   // parents come from the board's own key map, an archived parent from the
   // very list this sheet is rendering. An id neither can name (the parent was
   // purged) simply shows no badge.
-  const parentKeyOf = useMemo(() => {
-    const archivedKeyById = new Map(
-      (snapshot?.cards ?? []).map((card) => [String(card.cardId), card.key]),
-    );
-    return (parentCardId: string): string | undefined =>
-      liveCardKeyById.get(parentCardId) ?? archivedKeyById.get(parentCardId);
-  }, [liveCardKeyById, snapshot]);
+  const archivedKeyById = new Map(
+    (snapshot?.cards ?? []).map((card) => [String(card.cardId), card.key]),
+  );
+  const parentKeyOf = (parentCardId: string): string | undefined =>
+    liveCardKeyById.get(parentCardId) ?? archivedKeyById.get(parentCardId);
 
   if (result.waiting && snapshot === null) {
     return <p className="text-[13px] text-muted-foreground">Loading…</p>;

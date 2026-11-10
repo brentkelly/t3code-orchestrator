@@ -68,7 +68,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Dialog } from "../components/ui/dialog";
 import { randomUUID } from "../lib/utils";
@@ -204,16 +204,13 @@ export function BoardCardDetail({
   const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
   const pipelineCardProjectId = detail?.card.projectId ?? null;
   const pipelineCardStage = detail?.card.stage ?? null;
-  const stages = useMemo(
-    () =>
-      pipelineCardProjectId === null || pipelineCardStage === null
-        ? allStages
-        : boardCardPipelineStages(
-            { stages: allStages, projectStageConfigs },
-            { stage: pipelineCardStage, projectId: pipelineCardProjectId },
-          ),
-    [allStages, pipelineCardProjectId, pipelineCardStage, projectStageConfigs],
-  );
+  const stages =
+    pipelineCardProjectId === null || pipelineCardStage === null
+      ? allStages
+      : boardCardPipelineStages(
+          { stages: allStages, projectStageConfigs },
+          { stage: pipelineCardStage, projectId: pipelineCardProjectId },
+        );
   const projectExecutionConfig =
     pipelineCardProjectId === null ? null : (projectStageConfigs[pipelineCardProjectId] ?? null);
   // T3O-65: the board's workers, for the queue's reason.
@@ -311,7 +308,7 @@ export function BoardCardDetail({
   const [checkingWorktree, setCheckingWorktree] = useState(false);
   const [removingWorktree, setRemovingWorktree] = useState(false);
 
-  const snapshot = useMemo(() => Option.getOrNull(shellState.snapshot), [shellState.snapshot]);
+  const snapshot = Option.getOrNull(shellState.snapshot);
   // The board rides its own subscription (T3O-57), cards' thread state derived.
   const board = useAtomValue(boardEnvironment.boardAtom(environmentId));
   // Refresh trigger: the card detail opening. One of the moments the answer
@@ -321,16 +318,15 @@ export function BoardCardDetail({
   // the card id so it fires once per open, not on every re-render; the
   // server-side lookup is cached for two minutes, so reopening a card in quick
   // succession costs no forge calls at all.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the card's pull request state from the forge once per card open
   useEffect(() => {
     void refreshCardPullRequest({ environmentId, input: { cardId } });
     // The command atom is stable, and is left out on purpose: re-running on its
     // identity would defeat the once-per-open key.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- the command atom is stable; this runs once per card open.
   }, [environmentId, cardId]);
-  const labelsById = useMemo(() => indexBoardLabels(catalogue), [catalogue]);
-  const stageState = useMemo<BoardState>(
-    () => ({ cards: [], stages, nextCardNumberByProject: {} }),
-    [stages],
-  );
+  const labelsById = indexBoardLabels(catalogue);
+  const stageState: BoardState = { cards: [], stages, nextCardNumberByProject: {} };
   const boardSettings = useBoardSettings((settings) => settings.board);
   // Persisting a newly derived key prefix for the target project (T3O-33), the
   // same write the create dialog makes on a project's first card.
@@ -343,7 +339,7 @@ export function BoardCardDetail({
 
   /** Report a rejected command inline (the decider names cycles, missing
       dependencies, the label cap); clear it once the next command succeeds. */
-  const runCommand = useCallback((promise: Promise<BoardCommandResult>) => {
+  const runCommand = (promise: Promise<BoardCommandResult>) => {
     void promise.then((result) => {
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         setFeedback(describeBoardCommandFailure(result));
@@ -351,7 +347,7 @@ export function BoardCardDetail({
         setFeedback(null);
       }
     });
-  }, []);
+  };
 
   const card = detail?.card ?? null;
   /** Whether a merge conflict fix is live on this card (T3O-9) — the branch is
@@ -365,18 +361,18 @@ export function BoardCardDetail({
       conflict fix that did not exist. Now that click reaches the server, which
       refuses it with a true sentence ("A thread is already open on this stage")
       instead of a false button state. */
-  const conflictFix = useMemo(() => {
-    const shell = (board?.cards ?? []).find((candidate) => candidate.cardId === cardId);
-    if (shell === undefined) return null;
-    return boardConflictFix({
-      live: shell.stepConflictFix,
-      checks: shell.stepChecksFix,
-      queued: shell.queued,
-      // Only the modal names the base branch: the shell carries none, and it
-      // should not grow one for a tooltip.
-      baseRef: detail?.card.pullRequest?.baseRef ?? null,
-    });
-  }, [board, cardId, detail]);
+  const cardShell = (board?.cards ?? []).find((candidate) => candidate.cardId === cardId);
+  const conflictFix =
+    cardShell === undefined
+      ? null
+      : boardConflictFix({
+          live: cardShell.stepConflictFix,
+          checks: cardShell.stepChecksFix,
+          queued: cardShell.queued,
+          // Only the modal names the base branch: the shell carries none, and it
+          // should not grow one for a tooltip.
+          baseRef: detail?.card.pullRequest?.baseRef ?? null,
+        });
   /** Whether the card's step has SETTLED and left the card standing — the same
       `held` the card face reads for its "Needs a human" chip, ranked by
       `boardCardAttention` so the chip and the detail's forward button can never
@@ -390,44 +386,38 @@ export function BoardCardDetail({
       settle grace does not apply here: the grace exists to stop a chip flashing
       for attention, and an affordance that made you wait for it would only be
       the same lie told slowly. */
-  const stepHeld = useMemo(() => {
-    const shell = (board?.cards ?? []).find((candidate) => candidate.cardId === cardId);
-    return shell !== undefined && boardCardAttention({ card: shell, stages })?.reason === "held";
-  }, [board, cardId, stages]);
+  const stepHeld =
+    cardShell !== undefined && boardCardAttention({ card: cardShell, stages })?.reason === "held";
   /** Whether the card's live step has given up (t3o-17, D3) — the failure
       banner's gate and the reason a non-auto-executing stage still offers a
       restart (t3o-30, D3). */
-  const stepStalled = useMemo(
-    () => (board?.cards ?? []).find((shell) => shell.cardId === cardId)?.stalled === true,
-    [board, cardId],
-  );
+  const stepStalled = cardShell?.stalled === true;
   /** Whether a human stopped the card's live step (T3O-23) — the paused
       banner's gate. Read off the same shell field the card face's neutral chip
       reads, so the board and the open modal cannot disagree about it. */
-  const stepPausedByHuman = useMemo(
-    () => (board?.cards ?? []).find((shell) => shell.cardId === cardId)?.stepAwaiting === "paused",
-    [board, cardId],
-  );
+  const stepPausedByHuman = cardShell?.stepAwaiting === "paused";
 
   // Resolved server-side (t3o-13, D4): the shell snapshot drops archived
   // cards, so resolving here would render every archived dependency as an
   // unknown id. `detail.dependencies` is already in `dependsOn` order and
   // omits only ids with no card left at all.
-  const dependencies = useMemo<ReadonlyArray<BoardDetailDependency>>(() => {
-    if (detail === null || card === null) return [];
-    const resolvedById = new Map(detail.dependencies.map((entry) => [entry.cardId, entry]));
-    return card.dependsOn.map((dependencyId) => {
-      const resolved = resolvedById.get(dependencyId);
-      return {
-        cardId: dependencyId,
-        key: resolved?.key ?? dependencyId,
-        title: resolved?.title ?? null,
-        stage: resolved?.stage ?? BOARD_SEED_STAGE_IDS.backlog,
-        known: resolved !== undefined,
-        archived: resolved !== undefined && resolved.archivedAt !== null,
-      };
-    });
-  }, [card, detail]);
+  const resolvedDependencyById = new Map(
+    (detail?.dependencies ?? []).map((entry) => [entry.cardId, entry]),
+  );
+  const dependencies: ReadonlyArray<BoardDetailDependency> =
+    detail === null || card === null
+      ? []
+      : card.dependsOn.map((dependencyId) => {
+          const resolved = resolvedDependencyById.get(dependencyId);
+          return {
+            cardId: dependencyId,
+            key: resolved?.key ?? dependencyId,
+            title: resolved?.title ?? null,
+            stage: resolved?.stage ?? BOARD_SEED_STAGE_IDS.backlog,
+            known: resolved !== undefined,
+            archived: resolved !== undefined && resolved.archivedAt !== null,
+          };
+        });
 
   // A dependency may name a card in ANOTHER project (T3O-33, D3). `dependsOn`
   // stores card ids, and the decider has never enforced a same-project rule —
@@ -436,45 +426,53 @@ export function BoardCardDetail({
   // be inherited but not made, the picker offers them and marks them with the
   // owning project's dot.
 
-  const dependencyOptions = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
-    if (card === null) return [];
-    const shells = board?.cards ?? [];
-    const projectById = new Map(
-      (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
-    );
-    const existing = new Set<string>([card.id, ...card.dependsOn]);
-    // Dependencies cross groups (T3O-27); the card's own ancestors and
-    // descendants are refused, so they are not offered.
-    const related = new Set<string>([
-      ...boardShellAncestorIds(shells, card.parentCardId),
-      ...boardShellDescendantIds(shells, card.id),
-    ]);
-    return shells
-      .filter((candidate) => !existing.has(candidate.cardId) && !related.has(candidate.cardId))
-      .map((candidate) => ({
-        id: candidate.cardId,
-        key: candidate.key,
-        title: candidate.title,
-        ...(candidate.projectId === card.projectId
-          ? {}
-          : {
-              project: {
-                id: candidate.projectId,
-                title: projectById.get(String(candidate.projectId))?.title ?? "Another project",
-                accent: projectIconColorOf(projectById.get(String(candidate.projectId))),
-              },
-            }),
-      }));
-  }, [board, card, snapshot]);
+  const shells = board?.cards ?? [];
+  const projectById = new Map(
+    (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
+  );
+  const existingDependencyIds = new Set<string>(card === null ? [] : [card.id, ...card.dependsOn]);
+  // Dependencies cross groups (T3O-27); the card's own ancestors and
+  // descendants are refused, so they are not offered.
+  const relatedCardIds = new Set<string>(
+    card === null
+      ? []
+      : [
+          ...boardShellAncestorIds(shells, card.parentCardId),
+          ...boardShellDescendantIds(shells, card.id),
+        ],
+  );
+  const dependencyOptions: ReadonlyArray<BoardPickerOption> =
+    card === null
+      ? []
+      : shells
+          .filter(
+            (candidate) =>
+              !existingDependencyIds.has(candidate.cardId) && !relatedCardIds.has(candidate.cardId),
+          )
+          .map((candidate) => ({
+            id: candidate.cardId,
+            key: candidate.key,
+            title: candidate.title,
+            ...(candidate.projectId === card.projectId
+              ? {}
+              : {
+                  project: {
+                    id: candidate.projectId,
+                    title: projectById.get(String(candidate.projectId))?.title ?? "Another project",
+                    accent: projectIconColorOf(projectById.get(String(candidate.projectId))),
+                  },
+                }),
+          }));
 
   // The child's parent, resolved for the sheet's "part of" chip (t3o-25). An
   // archived parent is off the live shell and its sub-board would redirect
   // straight back out — no chip rather than a dead door.
-  const parentCard = useMemo(() => {
-    if (card === null || card.parentCardId === null) return null;
-    const parent = (board?.cards ?? []).find((shell) => shell.cardId === card.parentCardId);
-    return parent === undefined ? null : { cardId: String(parent.cardId), key: parent.key };
-  }, [board, card]);
+  const parentShell =
+    card === null || card.parentCardId === null
+      ? undefined
+      : shells.find((shell) => shell.cardId === card.parentCardId);
+  const parentCard =
+    parentShell === undefined ? null : { cardId: String(parentShell.cardId), key: parentShell.key };
 
   // THIS card's children, as shells (t3o-29, D1). The snapshot is unscoped —
   // a child is filtered out of the root board's COLUMNS by
@@ -483,10 +481,7 @@ export function BoardCardDetail({
   // second subscription or a byte on the wire. Archived children are not here
   // (they leave the snapshot, D15); the Plans panel renders those from
   // `detail.children` instead.
-  const childShells = useMemo(() => {
-    if (card === null) return [];
-    return (board?.cards ?? []).filter((shell) => shell.parentCardId === card.id);
-  }, [board, card]);
+  const childShells = card === null ? [] : shells.filter((shell) => shell.parentCardId === card.id);
 
   // T3o (T3O-63): the worker each thread lives on, for where it opens.
   const workers = useAtomValue(boardEnvironment.workersAtom(environmentId));
@@ -495,28 +490,27 @@ export function BoardCardDetail({
   // The group archive confirmation (T3O-29): a group always warns.
   const [archiveGroupOpen, setArchiveGroupOpen] = useState(false);
   // Older settled threads are not in the shell; read them so they are named, not "deleted".
-  const missingThreadIds = useMemo(
-    () => cardThreadIdsMissingFromShell(card?.threadLinks ?? [], snapshot?.threads ?? []),
-    [card, snapshot],
+  const missingThreadIds = cardThreadIdsMissingFromShell(
+    card?.threadLinks ?? [],
+    snapshot?.threads ?? [],
   );
   const offShellThreads = useBoardCardThreadRows(environmentId, missingThreadIds);
-  const threadLinks = useMemo<ReadonlyArray<BoardDetailThreadLink>>(() => {
-    if (card === null) return [];
-    const threads = snapshot?.threads ?? [];
-    // T3O-65: "Moved from {worker}" above the first thread after each move.
-    const movedFrom = boardThreadMoveDividers({
-      links: card.threadLinks,
-      moves: (detail?.activity ?? []).flatMap((entry) =>
-        entry.kind === "card-worker-moved" && entry.payload.movePhase === "done"
-          ? [{ at: entry.createdAt, fromWorkerId: entry.payload.fromWorkerId ?? null }]
-          : [],
-      ),
-      state: workers,
-      nowMs: openedAt,
-    });
-    return card.threadLinks.map((link) => {
+  const shellThreads = snapshot?.threads ?? [];
+  // T3O-65: "Moved from {worker}" above the first thread after each move.
+  const movedFrom = boardThreadMoveDividers({
+    links: card?.threadLinks ?? [],
+    moves: (detail?.activity ?? []).flatMap((entry) =>
+      entry.kind === "card-worker-moved" && entry.payload.movePhase === "done"
+        ? [{ at: entry.createdAt, fromWorkerId: entry.payload.fromWorkerId ?? null }]
+        : [],
+    ),
+    state: workers,
+    nowMs: openedAt,
+  });
+  const threadLinks: ReadonlyArray<BoardDetailThreadLink> = (card?.threadLinks ?? []).map(
+    (link) => {
       const thread =
-        threads.find((candidate) => candidate.id === link.threadId) ??
+        shellThreads.find((candidate) => candidate.id === link.threadId) ??
         offShellThreads.threads.get(link.threadId);
       const { threadState, awaitingInput } = deriveBoardCardThreadState(
         thread === undefined ? undefined : boardThreadStateSource(thread),
@@ -544,55 +538,44 @@ export function BoardCardDetail({
         ranOn: threadWorkerRanOn(worker, workers),
         movedFrom: movedFrom.get(link.threadId) ?? null,
       };
-    });
-  }, [card, detail?.activity, snapshot, offShellThreads, workers, environmentId, openedAt]);
+    },
+  );
 
   // Agent display names and accents for the Activity rail (t3o-18, D11). Resolved
   // at render time from the provider instance list the app already holds, so a
   // renamed or recoloured instance relabels its own history rather than freezing
   // a stale label on every row it ever wrote.
-  const providerEntries = useMemo(
-    () => deriveProviderInstanceEntries(serverProviders ?? []),
-    [serverProviders],
-  );
+  const providerEntries = deriveProviderInstanceEntries(serverProviders ?? []);
   // Resolve an override's model slug to its display name for the header pill
   // (t3o-29, D7), the same lookup the popover's placeholder uses — so the pill,
   // its tooltip and the popover all name a model the same way.
-  const resolveModelDisplayName = useCallback(
-    (override: BoardCardStageModelOverride): string => {
-      const option = getCustomModelOptionsByInstance(
-        allSettings,
-        serverProviders ?? [],
-        override.instanceId,
-        override.model,
-      )
-        .get(override.instanceId)
-        ?.find((candidate) => candidate.slug === override.model);
-      const driverKind = providerEntries.find(
-        (entry) => entry.instanceId === override.instanceId,
-      )?.driverKind;
-      return option ? getTriggerDisplayModelName(option, driverKind) : override.model;
-    },
-    [allSettings, providerEntries, serverProviders],
-  );
-  const agents = useMemo<BoardActivityAgentLookup>(() => {
-    const byId = new Map(providerEntries.map((entry) => [entry.instanceId, entry]));
-    return {
-      displayName: (instanceId) => byId.get(instanceId)?.displayName ?? String(instanceId),
-      accentColor: (instanceId) => byId.get(instanceId)?.accentColor,
-    };
-  }, [providerEntries]);
+  const resolveModelDisplayName = (override: BoardCardStageModelOverride): string => {
+    const option = getCustomModelOptionsByInstance(
+      allSettings,
+      serverProviders ?? [],
+      override.instanceId,
+      override.model,
+    )
+      .get(override.instanceId)
+      ?.find((candidate) => candidate.slug === override.model);
+    const driverKind = providerEntries.find(
+      (entry) => entry.instanceId === override.instanceId,
+    )?.driverKind;
+    return option ? getTriggerDisplayModelName(option, driverKind) : override.model;
+  };
+  const providerEntryById = new Map(providerEntries.map((entry) => [entry.instanceId, entry]));
+  const agents: BoardActivityAgentLookup = {
+    displayName: (instanceId) =>
+      providerEntryById.get(instanceId)?.displayName ?? String(instanceId),
+    accentColor: (instanceId) => providerEntryById.get(instanceId)?.accentColor,
+  };
 
   // Each live-linked thread's cached todo list (t3o-18, D3), off the same shell
   // array the column cards read — the modal opens no extra subscription.
-  const threadTodos = useMemo<ReadonlyMap<ThreadId, BoardCardThreadShell>>(
-    () =>
-      new Map(
-        (board?.cardThreads ?? [])
-          .filter((entry) => entry.cardId === cardId)
-          .map((entry) => [entry.threadId, entry]),
-      ),
-    [board, cardId],
+  const threadTodos: ReadonlyMap<ThreadId, BoardCardThreadShell> = new Map(
+    (board?.cardThreads ?? [])
+      .filter((entry) => entry.cardId === cardId)
+      .map((entry) => [entry.threadId, entry]),
   );
 
   // The shell holds only the newest settled threads; the rest come from search (T3O-41).
@@ -604,25 +587,22 @@ export function BoardCardDetail({
   );
   const [adoptOpen, setAdoptOpen] = useState(false);
   const knownCardThreads = useBoardAdoptKnownCardThreadIds(environmentId, adoptOpen);
-  const adoptableThreads = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
-    if (card === null) return [];
-    const onCards = new Set((board?.cardThreads ?? []).map((entry) => entry.threadId));
-    return boardAdoptableThreads({
-      projectId: card.projectId,
-      cardThreadIds: card.threadLinks.map((link) => link.threadId),
-      linkedElsewhere: (threadId) =>
-        onCards.has(threadId) || (knownCardThreads?.has(threadId) ?? false),
-      threads: [...(snapshot?.threads ?? []), ...adoptSearchRead.rows],
-    });
-  }, [card, snapshot, board, knownCardThreads, adoptSearchRead.rows]);
-  const adoptSearch = useMemo(
-    () => ({
-      onQueryChange: setAdoptQuery,
-      onOpenChange: setAdoptOpen,
-      pending: adoptSearchRead.pending,
-    }),
-    [adoptSearchRead.pending],
-  );
+  const threadIdsOnCards = new Set((board?.cardThreads ?? []).map((entry) => entry.threadId));
+  const adoptableThreads: ReadonlyArray<BoardPickerOption> =
+    card === null
+      ? []
+      : boardAdoptableThreads({
+          projectId: card.projectId,
+          cardThreadIds: card.threadLinks.map((link) => link.threadId),
+          linkedElsewhere: (threadId) =>
+            threadIdsOnCards.has(threadId) || (knownCardThreads?.has(threadId) ?? false),
+          threads: [...(snapshot?.threads ?? []), ...adoptSearchRead.rows],
+        });
+  const adoptSearch = {
+    onQueryChange: setAdoptQuery,
+    onOpenChange: setAdoptOpen,
+    pending: adoptSearchRead.pending,
+  };
 
   // ── Everything below this line runs before the loading early return ──
   // The card's own shell, and the queue state derived from it. These sit ABOVE
@@ -634,7 +614,6 @@ export function BoardCardDetail({
   //
   // The in-flight proxy for the `+` menu's restart affordance (t3o-14, D1)
   // reads this same shell, since the step-state read model is server-only.
-  const cardShell = (board?.cards ?? []).find((candidate) => candidate.cardId === cardId);
 
   // The card's place in the board-wide build queue (t3o-33). Derived from the
   // shells the modal already holds — every project, since the queue is global —
@@ -648,49 +627,37 @@ export function BoardCardDetail({
   // empty, and ranking every queued card equally would print a position that is
   // wrong rather than absent.
   const queueStages = stages.length > 0 ? stages : BOARD_SEED_STAGES;
-  const queueInfo = useMemo(
-    () =>
-      cardShell?.queued !== true
-        ? null
-        : boardQueueInfo({
-            slot: boardBuildQueue(allShellCards, queueStages, Date.now()).get(cardId),
-            running: boardRunningStepCount(allShellCards),
-            cap: boardSettings.concurrency.globalMaxConcurrent,
-            reason: boardQueueReason({
-              card: cardShell,
-              state: workersState,
-              cards: allShellCards,
-              concurrency: boardSettings.concurrency,
-              // Named as the board's own queue pill names it.
-              projectName:
-                snapshot?.projects.find((project) => project.id === cardShell.projectId)?.title ??
-                "this project",
-            }),
+  const queueInfo =
+    cardShell?.queued !== true
+      ? null
+      : boardQueueInfo({
+          // oxlint-disable-next-line react/purity -- the queue order samples the clock when the shells change; the compiler recomputes it only then.
+          slot: boardBuildQueue(allShellCards, queueStages, Date.now()).get(cardId),
+          running: boardRunningStepCount(allShellCards),
+          cap: boardSettings.concurrency.globalMaxConcurrent,
+          reason: boardQueueReason({
+            card: cardShell,
+            state: workersState,
+            cards: allShellCards,
+            concurrency: boardSettings.concurrency,
+            // Named as the board's own queue pill names it.
+            projectName:
+              snapshot?.projects.find((project) => project.id === cardShell.projectId)?.title ??
+              "this project",
           }),
-    [
-      allShellCards,
-      boardSettings.concurrency,
-      cardId,
-      cardShell,
-      queueStages,
-      snapshot,
-      workersState,
-    ],
-  );
+        });
   // Null whenever reordering could not actually improve the card's position —
   // the rail hides the button rather than offering one that does nothing.
-  const queueMoveToFront = useMemo(
-    () =>
-      queueInfo === null
-        ? null
-        : planBoardQueueMoveToFront({
-            cards: allShellCards,
-            stages: queueStages,
-            cardId,
-            nowMs: Date.now(),
-          }),
-    [allShellCards, cardId, queueInfo, queueStages],
-  );
+  const queueMoveToFront =
+    queueInfo === null
+      ? null
+      : planBoardQueueMoveToFront({
+          cards: allShellCards,
+          stages: queueStages,
+          cardId,
+          // oxlint-disable-next-line react/purity -- the queue order samples the clock when the shells change; the compiler recomputes it only then.
+          nowMs: Date.now(),
+        });
   // Strictly "the command is in flight" — cleared when it settles, either way.
   // It deliberately does NOT wait for the card to leave the queue: the governor
   // can decline to start it (a worktree that will not provision), and a button
@@ -718,15 +685,10 @@ export function BoardCardDetail({
   const baseBranchProject =
     snapshot?.projects.find((entry) => entry.id === card?.projectId) ?? null;
   const baseBranchWorkspaceRoot = baseBranchProject?.workspaceRoot ?? null;
-  const projectRefs = usePaginatedBranches(
-    useMemo(
-      () => ({
-        environmentId,
-        cwd: card !== null && card.baseBranch === null ? baseBranchWorkspaceRoot : null,
-      }),
-      [baseBranchWorkspaceRoot, card, environmentId],
-    ),
-  );
+  const projectRefs = usePaginatedBranches({
+    environmentId,
+    cwd: card !== null && card.baseBranch === null ? baseBranchWorkspaceRoot : null,
+  });
   const projectDefaultBranch = projectRefs.refs.find((ref) => ref.isDefault)?.name ?? null;
 
   if (detail === null || card === null) {

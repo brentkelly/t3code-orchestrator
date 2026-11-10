@@ -339,6 +339,7 @@ function StepRow({
           {step.result.failures.map((failure, index) => (
             <div
               className="flex flex-col border-l-2 border-warning pl-2"
+              // oxlint-disable-next-line react/no-array-index-key -- one result's failures never reorder and titles can repeat
               key={`${failure.title}:${index}`}
             >
               <span className="text-foreground">{failure.title}</span>
@@ -495,6 +496,7 @@ function PassSteps({
           <StepRow
             fixing={fixing}
             index={index}
+            // oxlint-disable-next-line react/no-array-index-key -- a step is its position in the pipeline; step names can repeat
             key={`${index}:${step.name}`}
             live={live}
             onOpenThread={onOpenThread}

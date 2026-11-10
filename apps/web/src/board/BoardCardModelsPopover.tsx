@@ -18,7 +18,7 @@
  * traits, and nesting those inside a still-open menu stacks three focus traps
  * where picking a model is an outside-pointerdown on the menu containing it.
  */
-import { useMemo, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import {
   type BoardCardModelOverrides,
@@ -103,10 +103,7 @@ export function BoardCardModelsPopover({
   // T3O-65: and the instance ids only workers have, so a card can pick a model
   // its worker offers.
   const workers = useBoardWorkersState();
-  const serverProviders = useMemo(
-    () => [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)],
-    [ownProviders, workers],
-  );
+  const serverProviders = [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)];
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
   );
