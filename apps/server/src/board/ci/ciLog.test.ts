@@ -15,6 +15,7 @@ import {
   type BoardCiLogItem,
   type BoardCiPassStep,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -325,6 +326,51 @@ it.effect("a log with an invalid byte still ends cleanly when its step settles",
       detail = cardDetail({ logDir, status: "failed" });
       yield* Queue.offer(changes, undefined);
       assert.deepStrictEqual(yield* log.next, { _tag: "end", size: 3 });
+    }),
+  ),
+);
+
+it.effect("a failed detail re-read keeps following rather than ending the log", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { logDir } = passLogDir();
+      const path = NodePath.join(logDir, "0.log");
+      NodeFS.writeFileSync(path, "first\n");
+      let reads = 0;
+      const failed = yield* Deferred.make<void>();
+      const changes = yield* Queue.unbounded<void>();
+      const log = yield* following((poll) =>
+        readBoardCiLog(
+          {
+            readDetail: () => {
+              reads++;
+              if (reads === 2) {
+                return Deferred.succeed(failed, undefined).pipe(
+                  Effect.andThen(Effect.fail("board busy")),
+                );
+              }
+              return Effect.succeed(
+                cardDetail({ logDir, status: reads === 1 ? "running" : "passed" }),
+              );
+            },
+            subscribeChanges: Effect.succeed(Stream.fromQueue(changes)),
+            poll,
+            worker: () => Effect.succeed(null),
+          },
+          readInput as never,
+        ),
+      );
+      assert.strictEqual((yield* log.next)._tag, "chunk");
+      yield* Queue.offer(changes, undefined);
+      yield* Deferred.await(failed);
+      for (const text of ["more\n", "again\n"]) {
+        NodeFS.appendFileSync(path, text);
+        yield* log.tick;
+        const item = yield* log.next;
+        assert.strictEqual(item._tag === "chunk" ? item.text : item._tag, text);
+      }
+      yield* Queue.offer(changes, undefined);
+      assert.deepStrictEqual(yield* log.next, { _tag: "end", size: 17 });
     }),
   ),
 );

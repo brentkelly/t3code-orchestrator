@@ -328,10 +328,15 @@ export const readBoardCiLog = <E>(
       const settledNow = isBoardCiLogSettled(detail, input.runId, input.index);
       // A burst of board changes landing during a re-read is one more wake.
       const settled = Stream.fromQueue(wake).pipe(
+        // A failed re-read says nothing about the step: the follow goes on
+        // until a later change reads cleanly.
         Stream.mapEffect(() =>
-          deps.readDetail(input.cardId).pipe(Effect.catch(() => Effect.succeed(null))),
+          deps.readDetail(input.cardId).pipe(
+            Effect.map((latest) => isBoardCiLogSettled(latest, input.runId, input.index)),
+            Effect.catch(() => Effect.succeed(false)),
+          ),
         ),
-        Stream.filter((latest) => isBoardCiLogSettled(latest, input.runId, input.index)),
+        Stream.filter((settledNow) => settledNow),
         Stream.take(1),
         Stream.runDrain,
       );
