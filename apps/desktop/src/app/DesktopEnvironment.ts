@@ -18,7 +18,6 @@ import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 import {
   T3O_DESKTOP_IDENTITY,
   resolveT3oAppId,
-  resolveT3oLinuxWmClass,
 } from "../../../../scripts/lib/t3o-desktop-identity.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
@@ -81,7 +80,6 @@ export class DesktopEnvironment extends Context.Service<
     readonly displayName: string;
     readonly appUserModelId: string;
     readonly linuxDesktopEntryName: string;
-    readonly linuxWmClass: string;
     readonly linuxApplicationsDir: string;
     readonly desktopLauncherPath: Option.Option<string>;
     readonly appImagePath: Option.Option<string>;
@@ -240,8 +238,6 @@ const make = Effect.fn("desktop.environment.make")(function* (
       resolveT3oAppId(isDevelopment),
     ),
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
-    // T3o: own WM class.
-    linuxWmClass: resolveT3oLinuxWmClass(isDevelopment),
     linuxApplicationsDir,
     desktopLauncherPath: config.desktopLauncherPath,
     appImagePath: config.appImagePath,

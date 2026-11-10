@@ -85,6 +85,7 @@ export interface NewProjectScriptInput {
   runOnWorktreeCreate: boolean;
   waitForSetup: boolean;
   runOnSettle: boolean;
+  stopOnSettle?: boolean;
   /** T3o: T3O-23 — run just before the worktree is removed. */
   runOnWorktreeRemove?: boolean;
   /** Omit to preserve the current shortcut when the form did not edit it. */
@@ -102,6 +103,7 @@ export const EMPTY_PROJECT_SCRIPT_INPUT: NewProjectScriptInput = {
   runOnWorktreeCreate: false,
   waitForSetup: false,
   runOnSettle: false,
+  stopOnSettle: false,
   runOnWorktreeRemove: false, // T3o: T3O-23
   keybinding: null,
   previewUrl: null,
@@ -127,6 +129,7 @@ export function editorRequestForScript(
       runOnWorktreeCreate: script.runOnWorktreeCreate,
       waitForSetup: script.runOnWorktreeCreate && script.async === false,
       runOnSettle: script.runOnSettle ?? false,
+      stopOnSettle: script.stopOnSettle ?? false,
       runOnWorktreeRemove: script.runOnWorktreeRemove === true, // T3o: T3O-23
       keybinding: keybindingValueForCommand(keybindings, commandForProjectScript(script.id)),
       previewUrl: script.previewUrl ?? null,
@@ -279,6 +282,7 @@ function ProjectScriptEditorForm({
   );
   const [waitForSetup, setWaitForSetup] = useState(request.initial.waitForSetup);
   const [runOnSettle, setRunOnSettle] = useState(request.initial.runOnSettle);
+  const [stopOnSettle, setStopOnSettle] = useState(request.initial.stopOnSettle ?? false);
   // T3o: T3O-23
   const [runOnWorktreeRemove, setRunOnWorktreeRemove] = useState(
     request.initial.runOnWorktreeRemove === true,
@@ -367,6 +371,7 @@ function ProjectScriptEditorForm({
         runOnWorktreeCreate,
         waitForSetup: runOnWorktreeCreate && waitForSetup,
         runOnSettle,
+        stopOnSettle,
         runOnWorktreeRemove, // T3o: T3O-23
         ...((request.scriptId === null && canChangeKeybinding) || changesKeybinding
           ? { keybinding: keybindingRule?.key ?? null }
@@ -528,6 +533,13 @@ function ProjectScriptEditorForm({
               <Switch
                 checked={runOnSettle}
                 onCheckedChange={(checked) => setRunOnSettle(Boolean(checked))}
+              />
+            </label>
+            <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
+              <span>Stop this action when the thread settles</span>
+              <Switch
+                checked={stopOnSettle}
+                onCheckedChange={(checked) => setStopOnSettle(Boolean(checked))}
               />
             </label>
             {/* T3o: T3O-23 — several actions may set this; they run in order. */}
