@@ -94,7 +94,7 @@ it.effect("a pass the worker could not run arrives as unavailable, with its reas
 
 it.effect("a machine problem on the worker keeps its machine flag across the wire", () =>
   Effect.gen(function* () {
-    const done = Schema.decodeUnknownSync(BoardWorkerCiProgress)(
+    const done = yield* Schema.decodeUnknownEffect(BoardWorkerCiProgress)(
       toWireCiDone({
         result: "unavailable",
         failedIndex: null,
@@ -111,7 +111,7 @@ it.effect("a machine problem on the worker keeps its machine flag across the wir
     });
     // An older worker's `done` has no flag, and still decodes.
     assert.deepStrictEqual(
-      Schema.decodeUnknownSync(BoardWorkerCiProgress)({
+      yield* Schema.decodeUnknownEffect(BoardWorkerCiProgress)({
         _tag: "done",
         result: "unavailable",
         failedIndex: null,

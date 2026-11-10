@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * T3O-44 — the Continuous integration stage, driven through the supervisor
  * reactor with a scripted CI runner: a pass moves the card on, a failure gets
