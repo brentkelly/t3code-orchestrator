@@ -92,8 +92,10 @@ let gitenvPath: string | undefined;
 let fileCache: GitenvFileCache | undefined;
 let warnedLoosePermissions = false;
 /** `.git/config` path → its `origin`'s GitHub repo, keyed by the config's mtime. */
-const repoCache = new Map<string, { readonly mtimeMs: number; readonly repo: GitHubRepoRef | null }>();
-
+const repoCache = new Map<
+  string,
+  { readonly mtimeMs: number; readonly repo: GitHubRepoRef | null }
+>();
 
 /** Shortest value `scrubGitenvTokens` will redact. A real PAT is far longer;
     the floor keeps a placeholder value from mangling unrelated output. */
@@ -251,6 +253,11 @@ function resolveMainRepositoryRoot(cwd: string): string | null {
   }
 
   return root;
+}
+
+/** The main checkout a directory belongs to, or null outside any repository. */
+export function gitenvMainRoot(cwd: string): string | null {
+  return resolveMainRepositoryRoot(cwd);
 }
 
 /** `.git` file contents are `gitdir: <path>`; a linked worktree's gitdir is

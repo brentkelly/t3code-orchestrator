@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off - the gh cwd case needs real checkout folders.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -11,6 +16,7 @@ import type * as SourceControlHost from "@t3tools/source-control-core/server/Sou
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
+import { T3oGitenvProject } from "./t3oGitenvCredential.ts";
 
 const TOKEN_VARIABLES = [
   "GH_TOKEN",
@@ -32,9 +38,11 @@ function harness(
   tokens: Record<string, string> = {},
 ) {
   const calls: Array<ReadonlyArray<string>> = [];
+  const cwds: Array<string | undefined> = [];
   const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
     Effect.sync(() => {
       calls.push(input.args);
+      cwds.push(input.cwd);
       const user = input.args[input.args.indexOf("--user") + 1];
       if (input.args.includes("--user") && user !== undefined && signedOut.includes(user)) {
         return {
@@ -70,7 +78,7 @@ function harness(
       ),
     ),
   );
-  return { layer, calls };
+  return { layer, calls, cwds };
 }
 
 describe("GitHubCredentials", () => {
@@ -129,6 +137,26 @@ describe("GitHubCredentials", () => {
         ["auth", "token", "--hostname", "github.com", "--user", "gone"],
         ["auth", "token", "--hostname", "github.com"],
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("asks gh from the project's main checkout and caches per project", () => {
+    const base = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "gh-cwd-")));
+    const projectA = NodePath.join(base, "a");
+    const projectB = NodePath.join(base, "b");
+    for (const project of [projectA, projectB]) {
+      NodeFS.mkdirSync(NodePath.join(project, ".git"), { recursive: true });
+    }
+    NodeFS.mkdirSync(NodePath.join(projectA, "src"));
+    const { layer, cwds } = harness();
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      const under = (project: string) =>
+        credentials.get("github.com").pipe(Effect.provideService(T3oGitenvProject, project));
+      yield* under(NodePath.join(projectA, "src"));
+      yield* under(projectA);
+      yield* under(projectB);
+      expect(cwds).toEqual([projectA, projectB]);
     }).pipe(Effect.provide(layer));
   });
 
