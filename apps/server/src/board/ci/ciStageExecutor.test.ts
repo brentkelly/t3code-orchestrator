@@ -265,6 +265,23 @@ describe("CiStageExecutor", () => {
     expect(finding).toContain('CI step "Build"');
     expect(finding.length).toBeLessThanOrEqual(BOARD_CI_SHELL_FINDING_MAX);
     expect(finding).toContain("line 199");
+    // T3O-61: each failure leads with what failed and why.
+    const headlined = boardCiSendBackFinding([
+      {
+        ...failure,
+        headline: {
+          what: "Test → unit",
+          why: "FAIL thing.test.ts",
+          machine: false,
+          logLine: 12,
+          logOffset: 300,
+          source: "pattern",
+        },
+      },
+    ]);
+    expect(headlined.split("\n\n")[1]!.split("\n")[0]).toBe(
+      "Test → unit: FAIL thing.test.ts (log line 12)",
+    );
   });
 });
 

@@ -5499,7 +5499,19 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     // completion, exactly like the human "Begin build" gate before it.
 
     case "board.card.select-step": {
-      yield* requireActiveBoardCard({ board, command });
+      const selecting = yield* requireActiveBoardCard({ board, command });
+      // T3O-59: a Stop or hold that settles the pass between the reactor's
+      // begin-fix and this command must win; no agent starts on a held pass.
+      if (
+        selecting.stage === BOARD_SEED_STAGE_IDS.ci &&
+        selecting.ci !== null &&
+        isBoardCiPassSettledPhase(selecting.ci.phase)
+      ) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' has its CI pass ${selecting.ci.phase}; no step can start on it.`,
+        );
+      }
       // One step at a time (D4): a new step cannot be selected while the card's
       // current step is still live. A terminal step is done and may be
       // superseded — that is how a re-entry starts after the last step settled.

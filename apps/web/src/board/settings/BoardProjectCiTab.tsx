@@ -923,11 +923,18 @@ const RESULT_EXAMPLE = `cat > "$T3O_CI_RESULT" <<'JSON'
 { "summary": "3 of 212 tests failed",
   "failures": [{ "title": "slow_consumer_drops_oldest",
     "detail": "dropped frames (0 vs 12)",
-    "file": "src/fanout.rs", "line": 311 }] }
+    "file": "src/fanout.rs", "line": 311 },
+    { "title": "browser", "detail": "libnspr4.so missing",
+      "machine": true }] }
 JSON`;
+const FAILURE_EXAMPLE = `echo '::t3o-failure::{"step":"lint","reason":"No files matched src/**"}'`;
 
 const SNIPPETS = [
   { title: "Progress · print any time, the latest line wins", code: PROGRESS_EXAMPLE },
+  {
+    title: "Failure · say what failed and why; the first line a step prints wins",
+    code: FAILURE_EXAMPLE,
+  },
   {
     title: "Result · write once before exiting; adds detail, never overrides the exit code",
     code: RESULT_EXAMPLE,
@@ -961,11 +968,22 @@ function ScriptContractHelp() {
       {open ? (
         <div className="flex flex-col gap-3 pt-0.5 pr-4 pb-4 pl-10">
           <p className="max-w-[66ch] text-[12.5px] leading-[1.55] text-pretty text-muted-foreground">
-            Print progress lines and the card shows a live fraction instead of a timer. Write a
-            result file and failures show up as a list with file and line, and go to the fix agent
-            as structured input instead of a log tail. Both are optional; the exit code alone
-            decides pass or fail. Scripts run in the card&apos;s worktree, so install what they need
-            in the command itself.
+            Print progress lines and the step shows the message, a count and a bar, and the card
+            shows the count instead of a timer. The card catches up about every 10 seconds; the
+            step&apos;s live log shows each line as it&apos;s printed, and a failed step keeps its
+            last progress. Write a result file and failures show up as a list with file and line,
+            and go to the fix agent as structured input instead of a log tail. All of these are
+            optional; the exit code alone decides pass or fail. Scripts run in the card&apos;s
+            worktree, so install what they need in the command itself.
+          </p>
+          <p className="max-w-[66ch] text-[12.5px] leading-[1.55] text-pretty text-muted-foreground">
+            A failed step heads the card with what failed and why: a failure line if the script
+            printed one, else a reason read from its result file and output. A machine problem (a
+            missing system library, a full or read-only disk, a command that isn&apos;t installed, a
+            step killed for memory) holds the card for you with no fix agent; fix the machine, then
+            Retry CI. Add <code className="font-mono text-xs">&quot;machine&quot;</code> to a
+            failure line or a result-file failure to say so yourself: true holds the card, false
+            keeps it with the fix agent.
           </p>
           {SNIPPETS.map((snippet) => (
             <Snippet code={snippet.code} key={snippet.title} title={snippet.title} />

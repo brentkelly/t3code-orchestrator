@@ -99,6 +99,7 @@ const supervisorCalls: {
   removeWorktree: Array<string>;
   checkWorktree: Array<string>;
   link: Array<string>;
+  ciAction: Array<string>;
 } = {
   refresh: [],
   merge: [],
@@ -107,6 +108,7 @@ const supervisorCalls: {
   removeWorktree: [],
   checkWorktree: [],
   link: [],
+  ciAction: [],
 };
 
 const supervisorStub: SupervisorReactorShape = {
@@ -171,7 +173,13 @@ const supervisorStub: SupervisorReactorShape = {
       return { outcome: "started", round: 2 } as const;
     }),
   skipCi: () => Effect.succeed({ outcome: "not-in-ci" } as const),
-  retryCi: () => Effect.succeed({ outcome: "not-in-ci" } as const),
+  retryCi: (cardId, action) =>
+    Effect.sync(() => {
+      supervisorCalls.ciAction.push(`${String(cardId)}:${action ?? "none"}`);
+      return action === "stop"
+        ? ({ outcome: "stopped" } as const)
+        : ({ outcome: "retried" } as const);
+    }),
   ciSendBack: () => Effect.succeed({ outcome: "not-in-ci" } as const),
   drainCi: Effect.void,
 };
@@ -327,6 +335,38 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-remove-worktree-test-"))(
     );
   },
 );
+
+// T3O-59: Stop CI rides Retry CI's method, so it is human-only and needs the
+// operate scope the same way; an old client's bare `{ cardId }` is a retry.
+it.layer(makeBoardRpcTestLayer("t3o-board-rpc-ci-action-test-"))("board.retryCi", (it) => {
+  it.effect("rejects Stop CI from a session with only the read scope", () =>
+    Effect.gen(function* () {
+      yield* seedCard;
+      const before = supervisorCalls.ciAction.length;
+      const handlers = yield* makeHandlers([AuthOrchestrationReadScope]);
+      const failure = yield* Effect.flip(handlers["board.retryCi"]({ cardId, action: "stop" }));
+      assert.strictEqual(failure._tag, "EnvironmentAuthorizationError");
+      assert.strictEqual(supervisorCalls.ciAction.length, before);
+    }),
+  );
+
+  it.effect("passes Stop through with the operate scope, and a bare call retries", () =>
+    Effect.gen(function* () {
+      yield* seedCard;
+      const handlers = yield* makeHandlers([AuthOrchestrationOperateScope]);
+      assert.deepStrictEqual(yield* handlers["board.retryCi"]({ cardId, action: "stop" }), {
+        outcome: "stopped",
+      });
+      assert.deepStrictEqual(yield* handlers["board.retryCi"]({ cardId }), {
+        outcome: "retried",
+      });
+      assert.deepStrictEqual(supervisorCalls.ciAction.slice(-2), [
+        `${String(cardId)}:stop`,
+        `${String(cardId)}:retry`,
+      ]);
+    }),
+  );
+});
 
 // "Check again" on a kept worktree removes a durable checkout, so it needs the
 // operate scope like "Remove worktree" does.

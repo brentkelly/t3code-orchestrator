@@ -30,6 +30,7 @@
 import type {
   BoardCiAgentStepPayload,
   BoardCiFixIssue,
+  BoardCiHeadline,
   BoardCiStepResult,
   BoardCard,
   BoardCardStageModelOverride,
@@ -164,6 +165,8 @@ export interface BoardCiFailure {
   readonly logPath: string | null;
   /** What the step reported in its result file (T3O-49). */
   readonly result?: BoardCiStepResult | null;
+  /** What failed and why, as the runner read it (T3O-61). */
+  readonly headline?: BoardCiHeadline | null;
 }
 
 /** What the executor decides the reactor should do next. */

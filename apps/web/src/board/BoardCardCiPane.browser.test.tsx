@@ -1,4 +1,4 @@
-import { BoardCardId, type BoardCardCi, type BoardCiPass } from "@t3tools/contracts";
+import { BoardCardId, EnvironmentId, type BoardCardCi, type BoardCiPass } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -64,7 +64,9 @@ describe("BoardCardCiPane", () => {
     await using screen = await render(
       <BoardCardCiPane
         activeThreadId={null}
+        cardId={BoardCardId.make("card-1")}
         cardKey="RL-16"
+        environmentId={EnvironmentId.make("env-1")}
         ci={ci}
         inCi
         lastOutcome={null}
@@ -93,7 +95,9 @@ describe("BoardCardCiPane", () => {
     await using screen = await render(
       <BoardCardCiPane
         activeThreadId={null}
+        cardId={BoardCardId.make("card-1")}
         cardKey="RL-16"
+        environmentId={EnvironmentId.make("env-1")}
         ci={ci}
         inCi
         lastOutcome={null}

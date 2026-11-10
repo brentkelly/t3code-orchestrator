@@ -17,6 +17,7 @@ import {
   BOARD_CI_SHELL_FINDING_MAX,
   boardCiFixStepId,
   boardCiShellFinding,
+  boardCiHeadlineLead,
   boardModelSelectionOfOverride,
   composeBoardCiFixPrompt,
   decodeBoardCiAgentStepPayload,
@@ -45,6 +46,7 @@ function boardCiFailureFinding(failure: BoardCiFailure, tailLines: number): stri
       : `exited with code ${failure.exitCode ?? "unknown"}`;
   const tail = tailLines <= 0 ? "" : failure.tail.split("\n").slice(-tailLines).join("\n").trim();
   return [
+    ...(failure.headline == null ? [] : [boardCiHeadlineLead(failure.headline)]),
     `CI step "${failure.stepName}" (\`${failure.command}\`) ${ended}.`,
     ...(tail.length === 0 ? [] : ["Last lines of its output:", "```", tail, "```"]),
   ].join("\n");

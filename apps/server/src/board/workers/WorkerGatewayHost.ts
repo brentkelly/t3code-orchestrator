@@ -52,6 +52,7 @@ import {
 import { McpRelayHost, type McpRelayRefused } from "./McpRelayHost.ts";
 import { BoardCiRunner, boardCiLogDir } from "../ci/BoardCiRunner.ts";
 import { toWireCiDone } from "../ci/remoteCiRunner.ts";
+import { isSafeBoardCiLogTarget, readBoardCiLogFile } from "../ci/ciLog.ts";
 
 type CallerBound = "spawn" | "subscribeMcpRelay" | "mcpRelayRespond";
 
@@ -260,6 +261,21 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
             Effect.andThen(Queue.end(queue)),
           ),
       ),
+    // T3O-60: a step's log, followed until the central server closes it.
+    readCiLog: (input) =>
+      isSafeBoardCiLogTarget(input.runId, input.index)
+        ? readBoardCiLogFile(
+            path.join(boardCiLogDir(input.worktreePath, input.runId), `${input.index}.log`),
+            input,
+          )
+        : Stream.fail(
+            new BoardWorkerGatewayError({
+              kind: "refused",
+              operation: "readCiLog",
+              threadId: null,
+              detail: "That isn't a CI log this worker keeps.",
+            }),
+          ),
   } satisfies WorkerGatewayHostShape;
 });
 

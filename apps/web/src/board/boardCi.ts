@@ -7,6 +7,7 @@
  * passed step green, a terminal failure or a stopped pass amber, cancelled grey.
  */
 import {
+  BOARD_CI_STOPPED_BY_YOU_REASON,
   BOARD_CI_TAIL_LINES,
   boardCiFixIssueOutcomes,
   boardCiFixIssues,
@@ -19,7 +20,9 @@ import {
   type BoardStepCompletion,
   type BoardCardCiLastOutcome,
   type BoardCiPass,
+  type BoardCiHeadline,
   type BoardCiPassOutcome,
+  type BoardCiProgress,
   type BoardCiStepStatus,
 } from "@t3tools/contracts";
 
@@ -79,7 +82,14 @@ export interface BoardCiFace {
   /** Steps passed over steps in the pass, `2/3`. */
   readonly count: string;
   readonly detail: string;
+  /** A held pass's detail is amber (T3O-61): it says what is blocking it. */
+  readonly detailTone?: "warning";
   readonly tooltip: string;
+}
+
+/** What failed and why, as one line (T3O-61). */
+function boardCiHeadlineText(headline: { readonly what: string; readonly why: string }) {
+  return `${headline.what}: ${headline.why}`;
 }
 
 const failWord = (status: BoardCiStepStatus) => (status === "timed-out" ? "timed out" : "failed");
@@ -104,6 +114,13 @@ function fixAttemptNumber(ci: BoardCardCi): number {
  * The card face while the card is in CI. Whole minutes only: the face is
  * repainted at most once a minute (`useNowMinute`), and nothing on it animates.
  */
+/** A held pass's chip: a machine problem, a human's Stop, or a pass CI
+    couldn't run (T3O-59). */
+function boardCiHeldLabel(ci: Pick<BoardCardCi, "machine" | "stopReason">): string {
+  if (ci.machine === true) return "Machine problem";
+  return ci.stopReason === BOARD_CI_STOPPED_BY_YOU_REASON ? "Stopped" : "Can't run";
+}
+
 export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
   const segments = boardCiSegments(ci);
   const fixSegment = boardCiFixSegment(ci);
@@ -132,15 +149,26 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
         detail: "Every step passed",
         tooltip: "CI passed; the card moves on",
       };
-    case "held":
+    // T3O-59: held says why, and a machine problem says so.
+    // A machine hold leads with the problem; any other hold with why it was held.
+    case "held": {
+      const headline = ci.machine === true ? ci.headline : undefined;
       return {
-        chip: { label: "Can't run", tone: "warning" },
+        chip: { label: boardCiHeldLabel(ci), tone: "warning" },
         segments,
         fixSegment,
         count,
-        detail: "CI couldn't finish this pass",
-        tooltip: "Retry CI to run it again, or Skip CI",
+        detail:
+          headline === undefined
+            ? (ci.stopReason ?? "CI couldn't finish this pass")
+            : boardCiHeadlineText(headline),
+        detailTone: "warning",
+        tooltip:
+          headline !== undefined && ci.stopReason !== undefined
+            ? ci.stopReason
+            : "Retry CI to run it again, or Skip CI",
       };
+    }
     // T3O-49/57: fix attempts used up, a fix the agent couldn't make, or a
     // conflict CI couldn't resolve.
     case "stopped":
@@ -162,9 +190,11 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
         detail:
           ci.fixIssues !== undefined
             ? `Fix ${fixAttemptNumber(ci)} of ${ci.maxFixAttempts} · ${plural(ci.fixIssues, "issue", "issues")}`
-            : failed === undefined
-              ? `Check failed · ${attempt}`
-              : `${failed.name} ${failWord(failed.status)} · ${attempt}`,
+            : ci.headline !== undefined
+              ? `${attempt} · ${boardCiHeadlineText(ci.headline)}`
+              : failed === undefined
+                ? `Check failed · ${attempt}`
+                : `${failed.name} ${failWord(failed.status)} · ${attempt}`,
         tooltip:
           "A fix agent is working on every failure. Every step re-runs from the top after the fix.",
       };
@@ -176,16 +206,21 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
           segments,
           fixSegment,
           count,
-          detail: failed === undefined ? "Starting" : `${failed.name} ${failWord(failed.status)}`,
+          detail:
+            failed === undefined
+              ? "Starting"
+              : ci.headline !== undefined
+                ? boardCiHeadlineText(ci.headline)
+                : `${failed.name} ${failWord(failed.status)}`,
           tooltip: `CI over ${total} ${total === 1 ? "step" : "steps"}`,
         };
       }
-      const startedMs = running.startedAt === null ? Number.NaN : Date.parse(running.startedAt);
-      const minutes = Number.isNaN(startedMs)
-        ? 0
-        : Math.max(0, Math.floor((nowMs - startedMs) / 60_000));
       const index = ci.steps.indexOf(running);
-      const elapsed = minutes < 1 ? "under 1m" : `${minutes}m`;
+      // T3O-60: a script reporting progress shows how far it got, not a timer.
+      const progress =
+        running.progress === undefined ? null : boardCiProgressLabel(running.progress);
+      const minutes = boardCiElapsedMinutes(running.startedAt, nowMs);
+      const elapsed = progress ?? (minutes < 1 ? "under 1m" : `${minutes}m`);
       return {
         chip: { label: "Running", tone: "info" },
         segments,
@@ -196,7 +231,11 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
           failedCount > 0
             ? `${failedCount} failed · running ${running.name} · ${elapsed}`
             : `${running.name} · ${elapsed}`,
-        tooltip: `Step ${index + 1} of ${total} running`,
+        tooltip: `Step ${index + 1} of ${total} running${
+          progress === null || running.progress?.message == null
+            ? ""
+            : ` · ${running.progress.message}`
+        }`,
       };
     }
   }
@@ -304,7 +343,9 @@ export function boardCiPaneStatus(input: {
     }
     if (ci.phase === "queued") return { label: "Queued", tone: "neutral" };
     if (ci.phase === "passed") return { label: "Passed", tone: "success" };
-    if (ci.phase === "held") return { label: "Can't run", tone: "warning" };
+    if (ci.phase === "held") {
+      return { label: boardCiHeldLabel(ci), tone: "warning" };
+    }
     if (ci.phase === "stopped") return { label: "Needs you", tone: "attention" };
     const index = ci.steps.findIndex((step) => step.status === "running");
     return {
@@ -446,4 +487,74 @@ export function boardCiFixRow(input: {
     issues: outcomes,
     fixedSha: payload?.fixedSha ?? null,
   };
+}
+
+/** Whole minutes since `startedAt`, never negative. */
+function boardCiElapsedMinutes(startedAt: string | null, nowMs: number): number {
+  const startedMs = startedAt === null ? Number.NaN : Date.parse(startedAt);
+  return Number.isNaN(startedMs) ? 0 : Math.max(0, Math.floor((nowMs - startedMs) / 60_000));
+}
+
+/** A running step's time against its limit (T3O-60): `12 / 60 min`, and
+    whether it is over. */
+export function boardCiStepLimit(
+  step: { readonly startedAt: string | null; readonly timeoutMinutes: number },
+  nowMs: number,
+): { readonly elapsed: number; readonly limit: number; readonly over: boolean } {
+  const elapsed = boardCiElapsedMinutes(step.startedAt, nowMs);
+  return { elapsed, limit: step.timeoutMinutes, over: elapsed > step.timeoutMinutes };
+}
+
+/** How far a progress line says a step got, 0 to 1, or null with no total. */
+export function boardCiProgressFraction(
+  progress: Pick<BoardCiProgress, "done" | "total">,
+): number | null {
+  if (progress.done === null || progress.total === null || progress.total <= 0) return null;
+  return Math.min(1, progress.done / progress.total);
+}
+
+/** The progress count, `128 / 212` (or the message when there's no count),
+    or null when the line said nothing showable. */
+export function boardCiProgressLabel(
+  progress: Pick<BoardCiProgress, "done" | "total" | "message">,
+): string | null {
+  if (progress.done !== null && progress.total !== null) {
+    return `${progress.done} / ${progress.total}`;
+  }
+  if (progress.done !== null) return String(progress.done);
+  return progress.message;
+}
+
+/** "No output for N min" on a silent running step (T3O-60), or null. */
+export function boardCiSilenceLabel(silentSince: string | undefined, nowMs: number): string | null {
+  if (silentSince === undefined) return null;
+  return `No output for ${boardCiElapsedMinutes(silentSince, nowMs)} min`;
+}
+
+/** Download's file name: `<card>-<step>-pass<N>.log`. */
+export function boardCiLogFileName(cardKey: string, stepName: string, ordinal: number): string {
+  const step = stepName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${cardKey}-${step.length === 0 ? "step" : step}-pass${ordinal}.log`;
+}
+
+/** The CI pane's headline (T3O-61): the pass's first failing step that says
+    what failed and why, with its index for "Show in log". A live pass held
+    before its step's row landed falls back to the card's headline. */
+export function boardCiPaneHeadline(input: {
+  readonly pass: BoardCiPass | undefined;
+  readonly ci: BoardCardCi | null | undefined;
+  readonly live: boolean;
+}): { readonly headline: BoardCiHeadline; readonly index: number | null } | null {
+  const steps = input.pass?.steps ?? [];
+  const index = steps.findIndex(
+    (step) => isBoardCiStepFailure(step.status) && step.headline !== undefined,
+  );
+  const step = index === -1 ? undefined : steps[index];
+  if (step?.headline !== undefined) return { headline: step.headline, index };
+  const fallback = input.live ? input.ci?.headline : undefined;
+  return fallback === undefined ? null : { headline: fallback, index: null };
 }

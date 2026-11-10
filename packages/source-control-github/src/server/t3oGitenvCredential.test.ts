@@ -10,6 +10,7 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Redacted from "effect/Redacted";
 import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/http";
 
@@ -155,20 +156,30 @@ describe("GitHubRequestPolicy.credential under gitenv", () => {
 });
 
 describe("a refused token", () => {
-  it.effect("keeps the ambient cache when GitHub refuses the gitenv token", () => {
+  it.effect("keeps the ambient cache when GitHub refuses the gitenv token, and warns once", () => {
     const { project } = makeFixture();
     const { layer, invalidated, appInvalidated } = harness(401);
+    const warnings: Array<string> = [];
+    const logger = Logger.make(({ logLevel, message }) => {
+      if (logLevel === "Warn") warnings.push(String([message].flat()[0]));
+    });
     return Effect.gen(function* () {
       const api = yield* GitHubRest.GitHubRest;
       const read = api.rest({ host: "github.com", operation: "read", path: "user" });
       yield* Effect.flip(read.pipe(Effect.provideService(T3oGitenvProject, project)));
+      yield* Effect.flip(read.pipe(Effect.provideService(T3oGitenvProject, project)));
+      expect(warnings).toEqual([
+        `GitHub rejected the token from gitenv entry ${project} (401); edit that line to rotate it.`,
+      ]);
+      expect(warnings.join("")).not.toContain(PROJECT_TOKEN);
       expect(invalidated).toEqual([]);
       expect(appInvalidated).toEqual([]);
       // The ambient token itself refused still drops both caches, as upstream intends.
       yield* Effect.flip(read);
       expect(invalidated).toEqual(["github.com"]);
       expect(appInvalidated).toEqual(["github.com"]);
-    }).pipe(Effect.provide(layer));
+      expect(warnings).toHaveLength(1);
+    }).pipe(Effect.provide(layer), Effect.provide(Logger.layer([logger])));
   });
 });
 

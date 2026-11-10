@@ -36,6 +36,7 @@ import type {
 } from "./board.ts";
 import {
   BOARD_REVIEW_STEP_PHASE_LABELS,
+  boardCiHeadlineLead,
   parseReviewStepId,
   BOARD_CI_FIX_PAYLOAD_SHAPE,
   BOARD_CI_AGENT_PAYLOAD_SHAPE,
@@ -843,6 +844,12 @@ export interface BoardCiFixFailure {
     readonly summary: string | null;
     readonly failures: ReadonlyArray<unknown>;
   } | null;
+  /** What failed and why, as the runner read it (T3O-61). */
+  readonly headline?: {
+    readonly what: string;
+    readonly why: string;
+    readonly logLine: number | null;
+  } | null;
 }
 
 /** The output tail allowance shared by every failure in one fix prompt. */
@@ -923,6 +930,9 @@ export function composeBoardCiFixPrompt(input: {
     return [
       "",
       `## ${failure.stepName}`,
+      ...(failure.headline == null
+        ? []
+        : [`What failed: ${boardCiHeadlineLead(failure.headline)}`]),
       `\`${failure.command}\` ${ended}.`,
       ...(failure.logPath === null ? [] : [`The full log is at \`${failure.logPath}\`.`]),
       ...(summary === null ? [] : [`The step reported: ${summary}`]),

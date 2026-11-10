@@ -164,9 +164,12 @@ export const requestBoardReviewRound = (input: { readonly cardId: BoardCardId })
 export const skipBoardCardCi = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.skipCi, input);
 
-/** Retry CI and "Send back to review anyway" (T3O-49). */
-export const retryBoardCardCi = (input: { readonly cardId: BoardCardId }) =>
-  request(BOARD_WS_METHODS.retryCi, input);
+/** Retry CI and "Send back to review anyway" (T3O-49); Retry carries
+    `action: "stop"` for Stop CI (T3O-59). */
+export const retryBoardCardCi = (input: {
+  readonly cardId: BoardCardId;
+  readonly action?: "retry" | "stop";
+}) => request(BOARD_WS_METHODS.retryCi, input);
 
 export const sendBackBoardCardCi = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.ciSendBack, input);
@@ -541,6 +544,9 @@ export const dismissBoardProjectImport = dispatchSettings(
 /** A project's full delta, with the prompts the shell leaves out. */
 export const getBoardProjectConfig = (input: { readonly projectId: ProjectId }) =>
   request(BOARD_WS_METHODS.getProjectConfig, input);
+
+/** T3O-58: each project's GitHub token source and whether GitHub accepts it. */
+export const getBoardProjectTokenStatus = () => request(BOARD_WS_METHODS.projectTokenStatus, {});
 
 export const getBoardProjectImportCandidates = (input: BoardProjectImportCandidatesInput) =>
   request(BOARD_WS_METHODS.projectImportCandidates, input);

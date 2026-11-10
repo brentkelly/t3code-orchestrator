@@ -597,6 +597,8 @@ export interface BoardCardDetailViewProps {
   readonly onSkipCi?: (() => void) | undefined;
   /** T3O-49: Retry CI and "Send back to review anyway" on a stopped pass. */
   readonly onRetryCi?: (() => void) | undefined;
+  /** T3O-59: Stop CI on a queued, running or fixing pass. */
+  readonly onStopCi?: (() => void) | undefined;
   readonly onCiSendBack?: (() => void) | undefined;
   /** A Skip CI request is in flight. */
   readonly skipCiPending?: boolean | undefined;
@@ -3269,7 +3271,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
               <BoardCardCiPane
                 activeThreadId={activeThreadId}
+                cardId={card.id}
                 cardKey={card.key}
+                environmentId={props.environmentId}
                 projectId={card.projectId}
                 ci={card.ci}
                 inCi={inCi}
@@ -3281,6 +3285,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 }}
                 onSkipCi={props.onSkipCi}
                 onRetryCi={props.onRetryCi}
+                onStopCi={props.onStopCi}
                 onSendBack={props.onCiSendBack}
                 passes={props.detail.ciPasses}
                 completions={props.detail.stepCompletions}

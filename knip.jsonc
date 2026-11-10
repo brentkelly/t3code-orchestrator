@@ -46,6 +46,8 @@
       "entry": [
         "src/bin.ts!",
         "src/claude-history-worker.ts!",
+        // T3o (T3O-58): the git credential helper and gh shim entry.
+        "src/t3oGitCredential.ts!",
         "scripts/cli.ts",
         "scripts/fetch-expo-schema.ts",
         "scripts/probe-claude-fork-local-rollback-replay.ts",

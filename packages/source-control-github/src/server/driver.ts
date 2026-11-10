@@ -16,6 +16,8 @@ import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
+// T3o (T3O-58): per-project token status for Settings → Source Control.
+import * as T3oProjectTokens from "./t3oProjectTokens.ts";
 
 // `GitHubRest.layerWithDependencies` carries the quota reserve every GitHub reader shares, so it
 // must be built once; the driver is.
@@ -79,6 +81,8 @@ const makeInstance = Effect.all({
   fetchMedia: GitHubMediaFetch.make,
   signIn: makeSignIn,
   isRepositoryStarred: makeIsRepositoryStarred,
+  // T3o (T3O-58)
+  t3oProjectTokens: T3oProjectTokens.make,
 });
 
 export const driver = defineSourceControlDriver({

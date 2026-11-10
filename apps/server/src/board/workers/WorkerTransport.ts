@@ -367,5 +367,7 @@ const makeLiveGatewayRpc = (
     stageAttachments: (input) =>
       wire(client[M.stageAttachments](input), "The worker couldn't stage the card's files."),
     runCi: (input) => wireStream(client[M.runCi](input), "The worker's CI run ended early."),
+    readCiLog: (input) =>
+      wireStream(client[M.readCiLog](input), "The worker's CI log read failed."),
   };
 };

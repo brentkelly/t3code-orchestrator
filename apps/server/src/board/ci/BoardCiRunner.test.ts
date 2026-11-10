@@ -11,15 +11,20 @@ import * as NodePath from "node:path";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 
 import {
+  BoardCiLineReader,
   BoardCiTail,
   BOARD_CI_TAIL_LINE_CHARS,
   runBoardCiPass,
+  runBoardCiStep,
+  type BoardCiLine,
   type BoardCiStepProgress,
   type BoardCiRunRequest,
 } from "./BoardCiRunner.ts";
+import { BoardDiskSpace } from "./diskSpace.ts";
 
 const workdir = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-ci-"));
 
@@ -79,7 +84,20 @@ it.live("stops at the first failing step", () =>
       ]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, ranAll: false });
+    assert.deepStrictEqual(result, {
+      result: "failed",
+      failedIndex: 0,
+      exitCode: 3,
+      ranAll: false,
+      headline: {
+        what: "Fails",
+        why: "broken",
+        machine: false,
+        logLine: 1,
+        logOffset: 0,
+        source: "last-line",
+      },
+    });
     const last = events.at(-1)!;
     assert.strictEqual(last.step.status, "failed");
     assert.strictEqual(last.step.exitCode, 3);
@@ -98,7 +116,12 @@ it.live("times a step out and kills it", () =>
       request(cwd, [{ name: "Hangs", command: "sleep 30", timeoutMinutes: 0.0005 }]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, ranAll: true });
+    assert.deepInclude(result, { result: "failed", failedIndex: 0, exitCode: null, ranAll: true });
+    assert.deepInclude(result.result === "failed" ? result.headline : undefined, {
+      what: "Hangs",
+      source: "exit",
+      machine: false,
+    });
     assert.strictEqual(events.at(-1)!.step.status, "timed-out");
     assert.include(events.at(-1)!.step.tail, "timed out");
   }),
@@ -332,7 +355,11 @@ it.live("runs a parallel group together and stops later groups once it finishes"
       ]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 1, ranAll: false });
+    assert.deepInclude(result, { result: "failed", failedIndex: 1, exitCode: 7, ranAll: false });
+    assert.strictEqual(
+      result.result === "failed" ? result.headline?.why : null,
+      "Exited with code 7",
+    );
     const finals = events.filter((event) => event.step.status !== "running");
     assert.deepStrictEqual(
       finals.map((event) => [event.index, event.step.status, event.step.exitCode]),
@@ -361,7 +388,7 @@ it.live("reads the step's result file, which adds detail and never overrides the
       summary: "1 of 3 failed",
       failures: [{ title: "boom", file: "src/a.ts", line: 4 }],
     });
-    assert.include(final.tail, "weren't { title, detail?, file?, line? }");
+    assert.include(final.tail, "weren't { title, detail?, file?, line?, machine? }");
   }),
 );
 
@@ -379,7 +406,11 @@ it.live("fails a group that leaves tracked changes in the worktree", () =>
       request(cwd, [{ name: "Formats", command: "echo two > tracked.txt", timeoutMinutes: 1 }]),
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0, ranAll: true });
+    assert.deepInclude(result, { result: "failed", failedIndex: 0, exitCode: 0, ranAll: true });
+    assert.strictEqual(
+      result.result === "failed" ? result.headline?.why : null,
+      "Left tracked changes in the worktree: tracked.txt",
+    );
     assert.include(events.at(-1)!.step.tail, "left tracked changes");
     // An edit that was there before the group ran is not the group's.
     const again = yield* runBoardCiPass(
@@ -392,7 +423,7 @@ it.live("fails a group that leaves tracked changes in the worktree", () =>
       request(cwd, [{ name: "Formats", command: "echo three > tracked.txt", timeoutMinutes: 1 }]),
       () => Effect.void,
     );
-    assert.deepStrictEqual(reedit, { result: "failed", failedIndex: 0, ranAll: true });
+    assert.deepInclude(reedit, { result: "failed", failedIndex: 0, exitCode: 0, ranAll: true });
     // Without stop on failure the dirty group still fails, and the next runs
     // against the changed tree (T3O-57).
     const carriesOn = collect();
@@ -406,7 +437,7 @@ it.live("fails a group that leaves tracked changes in the worktree", () =>
       },
       carriesOn.emit,
     );
-    assert.deepStrictEqual(continued, { result: "failed", failedIndex: 0, ranAll: true });
+    assert.deepInclude(continued, { result: "failed", failedIndex: 0, ranAll: true });
     const finals = carriesOn.events.filter((event) => event.step.status !== "running");
     assert.deepStrictEqual(
       finals.map((event) => [event.index, event.step.status]),
@@ -436,7 +467,7 @@ it.live("without stop on failure, runs every step after a failure or a timeout",
       },
       emit,
     );
-    assert.deepStrictEqual(result, { result: "failed", failedIndex: 1, ranAll: true });
+    assert.deepInclude(result, { result: "failed", failedIndex: 1, exitCode: 2, ranAll: true });
     const finals = events.filter((event) => event.step.status !== "running");
     assert.deepStrictEqual(
       finals.map((event) => [event.index, event.step.status]),
@@ -448,5 +479,247 @@ it.live("without stop on failure, runs every step after a failure or a timeout",
       ],
     );
     assert.isTrue(NodeFS.existsSync(NodePath.join(cwd, "ran")));
+  }),
+);
+
+it("the line reader numbers lines from 1 with each line's byte offset in the log", () => {
+  const reader = new BoardCiLineReader();
+  const chunks = ["héllo\r\nwor", "ld\n", "a\rb\n\nlast"];
+  const lines = chunks.flatMap((chunk) => reader.push(chunk, 5));
+  lines.push(...reader.flush());
+  const log = Buffer.from(chunks.join(""), "utf8");
+  assert.deepStrictEqual(
+    lines.map((line) => [line.lineNo, line.line]),
+    [
+      [1, "héllo"],
+      [2, "world"],
+      // A bare \r doesn't end a line: only \n does, as the log file reads.
+      [3, "a\rb"],
+      [4, ""],
+      [5, "last"],
+    ],
+  );
+  for (const line of lines) {
+    const text = log.subarray(line.byteOffset).toString("utf8");
+    assert.isTrue(text.startsWith(line.line), `line ${line.lineNo} starts at its offset`);
+  }
+  assert.strictEqual(lines[1]!.byteOffset, Buffer.byteLength("héllo\r\n"));
+  assert.strictEqual(reader.lastOutputAt, 5);
+  assert.deepStrictEqual(reader.flush(), []);
+});
+
+it.live("delivers every output line to onLine, by pass index, before the step settles", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const seen: Array<[number, BoardCiLine]> = [];
+    const result = yield* runBoardCiPass(
+      {
+        ...request(cwd, [
+          { name: "Says", command: "printf 'one\\ntwo\\nthree'", timeoutMinutes: 1 },
+        ]),
+        indexOffset: 2,
+        onLine: (index, line) => Effect.sync(() => seen.push([index, line])),
+      },
+      () => Effect.void,
+    );
+    assert.strictEqual(result.result, "passed");
+    assert.deepStrictEqual(
+      seen.map(([index, line]) => [index, line.lineNo, line.line, line.byteOffset]),
+      [
+        [2, 1, "one", 0],
+        [2, 2, "two", 4],
+        [2, 3, "three", 8],
+      ],
+    );
+  }),
+);
+
+it.live("a step past its limit settles timed-out even when its kill never lands", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const tail = new BoardCiTail();
+    // The kill is stubbed out, so the child neither dies nor closes its pipes
+    // in time: only the hard bound can settle the step.
+    const exit = yield* runBoardCiStep({
+      command: "sleep 3",
+      cwd,
+      timeoutMs: 30,
+      tail,
+      logPath: NodePath.join(cwd, "0.log"),
+      resultPath: NodePath.join(cwd, "0.result.json"),
+      timing: { killGraceMs: 40, exitDrainMs: 40, killGroup: () => false },
+    }).pipe(Effect.timeoutOption("2 seconds"));
+    assert.deepStrictEqual(exit, Option.some({ status: "timed-out" as const, exitCode: null }));
+    assert.include(tail.text(), "timed out");
+  }),
+);
+
+it.live("a full disk makes the pass unavailable as a machine problem before any step runs", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { events, emit } = collect();
+    const result = yield* runBoardCiPass(
+      request(cwd, [{ name: "Say", command: "touch ran", timeoutMinutes: 1 }]),
+      emit,
+    ).pipe(
+      Effect.provideService(BoardDiskSpace, { freeBytes: () => Effect.succeed(1.25 * 1024 ** 3) }),
+    );
+    assert.strictEqual(result.result, "unavailable");
+    assert.isTrue(result.result === "unavailable" && result.machine === true);
+    assert.match(
+      result.result === "unavailable" ? result.detail : "",
+      /^Disk nearly full on .+: 1\.3 GiB free\.$/,
+    );
+    assert.lengthOf(events, 0);
+    assert.isFalse(NodeFS.existsSync(NodePath.join(cwd, "ran")));
+  }),
+);
+
+it.live("a disk that can't be read never blocks the pass", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const result = yield* runBoardCiPass(
+      request(cwd, [{ name: "Say", command: "echo hi", timeoutMinutes: 1 }]),
+      () => Effect.void,
+    ).pipe(Effect.provideService(BoardDiskSpace, { freeBytes: () => Effect.die("statfs broke") }));
+    assert.strictEqual(result.result, "passed");
+  }),
+);
+
+it.live("reports a script's progress while it runs, and its settled row keeps the last", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { events, emit } = collect();
+    const line = (done: number) =>
+      `echo '::t3o-progress::{"message":"Testing","done":${done},"total":4}'`;
+    const result = yield* runBoardCiPass(
+      request(cwd, [
+        {
+          name: "Tests",
+          command: `${line(1)}; ${line(3)}; exit 1`,
+          timeoutMinutes: 1,
+        },
+      ]),
+      emit,
+    );
+    assert.strictEqual(result.result, "failed");
+    const running = events.filter((event) => event.step.status === "running");
+    // The first line reports at once; the second is inside the 10 s window.
+    assert.deepStrictEqual(
+      running.map((event) => event.step.progress?.done ?? null),
+      [null, 1],
+    );
+    assert.isTrue(running.every((event) => event.step.tail === ""));
+    const settled = events.at(-1)!.step;
+    assert.strictEqual(settled.status, "failed");
+    assert.deepInclude(settled.progress, { message: "Testing", done: 3, total: 4 });
+    assert.isUndefined(settled.silentSince);
+    // Progress lines stay in the raw log.
+    assert.include(settled.tail, "::t3o-progress::");
+  }),
+);
+
+it.live("a failed step's headline points at its line and byte offset in <n>.log", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { events, emit } = collect();
+    const script = [
+      "echo 'naïve start'",
+      "printf 'partial'; printf ' line\\n'",
+      `echo '::t3o-failure::{"step":"lint","reason":"No files to lint"}'`,
+      "echo 'error: later'",
+      "exit 1",
+    ].join("; ");
+    const result = yield* runBoardCiPass(
+      request(cwd, [
+        { name: "Ok", command: "true", timeoutMinutes: 1 },
+        { name: "Panel", command: script, timeoutMinutes: 1 },
+      ]),
+      emit,
+    );
+    assert.strictEqual(result.result, "failed");
+    const headline = result.result === "failed" ? result.headline : undefined;
+    assert.deepInclude(headline, {
+      what: "Panel → lint",
+      why: "No files to lint",
+      machine: false,
+      logLine: 3,
+      source: "failure-line",
+    });
+    const log = NodeFS.readFileSync(NodePath.join(cwd, ".t3", "ci", "run-1", "1.log"));
+    const from = log.subarray(headline!.logOffset!).toString("utf8");
+    assert.isTrue(from.startsWith("::t3o-failure::"));
+    assert.deepStrictEqual(events.at(-1)!.step.headline, headline);
+  }),
+);
+
+it.live("a missing tool is a machine problem, and an empty result file is said", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { emit } = collect();
+    const result = yield* runBoardCiPass(
+      request(cwd, [
+        {
+          name: "Browser",
+          command: ': > "$T3O_CI_RESULT"; t3o-no-such-tool-xyz --run',
+          timeoutMinutes: 1,
+        },
+      ]),
+      emit,
+    );
+    assert.strictEqual(result.result, "failed");
+    const headline = result.result === "failed" ? result.headline : undefined;
+    assert.strictEqual(headline?.machine, true);
+    assert.strictEqual(
+      headline?.why,
+      "A tool the script needs isn't installed: t3o-no-such-tool-xyz (its result file was empty)",
+    );
+    assert.match(headline?.hint ?? "", /^Install t3o-no-such-tool-xyz\.$/);
+  }),
+);
+
+it.live("a machine problem in a parallel group outranks an earlier code failure", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { emit } = collect();
+    const result = yield* runBoardCiPass(
+      request(cwd, [
+        { name: "Lint", command: "echo 'error: bad style'; exit 1", timeoutMinutes: 1 },
+        {
+          name: "Browser",
+          command: "t3o-no-such-tool-xyz --run",
+          timeoutMinutes: 1,
+          parallel: true,
+        },
+      ]),
+      emit,
+    );
+    assert.deepInclude(result, { result: "failed", failedIndex: 1, exitCode: 127 });
+    assert.strictEqual(result.result === "failed" ? result.headline?.machine : null, true);
+    // Without stop on failure, a later group's machine problem outranks too (T3O-57).
+    const later = yield* runBoardCiPass(
+      {
+        ...request(cwd, [
+          { name: "Lint", command: "echo 'error: bad style'; exit 1", timeoutMinutes: 1 },
+          { name: "Browser", command: "t3o-no-such-tool-xyz --run", timeoutMinutes: 1 },
+          { name: "Docs", command: "exit 2", timeoutMinutes: 1 },
+        ]),
+        stopOnFailure: false,
+      },
+      () => Effect.void,
+    );
+    assert.deepInclude(later, { result: "failed", failedIndex: 1, exitCode: 127, ranAll: true });
+  }),
+);
+
+it.live("a passing step carries no headline", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { events, emit } = collect();
+    yield* runBoardCiPass(
+      request(cwd, [{ name: "Ok", command: "echo 'error: not really'", timeoutMinutes: 1 }]),
+      emit,
+    );
+    assert.isUndefined(events.at(-1)!.step.headline);
   }),
 );

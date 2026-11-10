@@ -93,7 +93,12 @@ function BoardCardCiProgress({ ci }: { readonly ci: BoardCardCi }) {
           <span className="shrink-0 font-mono text-[10.5px] font-medium text-foreground">
             {face.count}
           </span>
-          <span className="min-w-0 flex-1 truncate text-[10.5px] text-muted-foreground">
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-[10.5px]",
+              face.detailTone === "warning" ? "text-warning-foreground" : "text-muted-foreground",
+            )}
+          >
             {face.detail}
           </span>
         </div>

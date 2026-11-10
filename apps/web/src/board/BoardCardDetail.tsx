@@ -280,6 +280,7 @@ export function BoardCardDetail({
   const skipCi = useAtomCommand(boardEnvironment.skipCi, { reportFailure: false });
   const retryCi = useAtomCommand(boardEnvironment.retryCi, { reportFailure: false });
   const sendBackCi = useAtomCommand(boardEnvironment.sendBackCi, { reportFailure: false });
+  const stopCi = useAtomCommand(boardEnvironment.stopCi, { reportFailure: false });
   const [skippingCi, setSkippingCi] = useState(false);
   const createCard = useAtomCommand(boardEnvironment.createCard);
   // "Remove worktree" (T3O-52). Same reason again: a refusal is an answer.
@@ -1021,15 +1022,24 @@ export function BoardCardDetail({
     });
   };
 
-  /** Retry CI and "Send back to review anyway" (T3O-49). */
-  const onCiAction = (action: "retry" | "send-back") => {
-    const run = action === "retry" ? retryCi : sendBackCi;
+  /** Retry CI, Stop CI (T3O-59) and "Send back to review anyway" (T3O-49). */
+  const onCiAction = (action: "retry" | "stop" | "send-back") => {
+    const run = action === "retry" ? retryCi : action === "stop" ? stopCi : sendBackCi;
+    const failed = {
+      retry: "CI could not be retried",
+      stop: "CI could not be stopped",
+      "send-back": "The card could not be sent back",
+    }[action];
+    const refused = {
+      retry: "CI was not retried",
+      stop: "CI was not stopped",
+      "send-back": "The card was not sent back",
+    }[action];
     void run({ environmentId, input: { cardId: card.id } }).then((result) => {
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           boardToast({
-            title:
-              action === "retry" ? "CI could not be retried" : "The card could not be sent back",
+            title: failed,
             description: describeBoardCommandFailure(result),
             tone: "error",
           });
@@ -1037,19 +1047,23 @@ export function BoardCardDetail({
         return;
       }
       const outcome = result.value.outcome;
-      if (outcome === "retried" || outcome === "sent-back") return;
+      if (outcome === "retried" || outcome === "sent-back" || outcome === "stopped") return;
+      // A second Stop (a double-click) finds CI already stopped, which is what was asked.
+      if (action === "stop" && outcome === "not-running") return;
       boardToast({
-        title: action === "retry" ? "CI was not retried" : "The card was not sent back",
+        title: refused,
         description:
           outcome === "ci-off"
             ? "CI is switched off for this project."
             : outcome === "running"
               ? "CI is still running on this card."
-              : outcome === "not-stopped"
-                ? "Only a stopped CI pass can be sent back."
-                : outcome === "not-in-ci"
-                  ? "The card is no longer in CI."
-                  : "Try again in a moment.",
+              : outcome === "not-running"
+                ? "CI has already stopped on this card."
+                : outcome === "not-stopped"
+                  ? "Only a stopped CI pass can be sent back."
+                  : outcome === "not-in-ci"
+                    ? "The card is no longer in CI."
+                    : "Try again in a moment.",
         tone: "error",
       });
     });
@@ -1551,6 +1565,7 @@ export function BoardCardDetail({
       onRequestReviewRound={onRequestReviewRound}
       onSkipCi={onSkipCi}
       onRetryCi={() => onCiAction("retry")}
+      onStopCi={() => onCiAction("stop")}
       onCiSendBack={() => onCiAction("send-back")}
       skipCiPending={skippingCi}
       onCreateFollowUp={onCreateFollowUp}
