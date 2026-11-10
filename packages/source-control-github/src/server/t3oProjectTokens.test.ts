@@ -112,7 +112,7 @@ describe("T3oProjectTokens", () => {
     return Effect.gen(function* () {
       const status = yield* T3oProjectTokens.make;
       const rows = yield* status(projects);
-      expect(rows.map(({ projectId, ...row }) => row)).toEqual([
+      expect(rows.map(({ projectId: _projectId, ...row }) => row)).toEqual([
         {
           title: "z5",
           repo: "Zeald/core.z5",

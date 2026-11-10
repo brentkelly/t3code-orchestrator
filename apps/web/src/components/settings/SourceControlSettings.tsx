@@ -36,6 +36,8 @@ import { SourceControlAppSignInSettings } from "./SourceControlAppSignInSettings
 import { SourceControlTokenSettings } from "./SourceControlTokenSettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
+// T3o (T3O-58): which gitenv line or ambient source each project's GitHub token comes from.
+import { T3oProjectTokensSection } from "./T3oProjectTokensSection";
 import {
   SettingsPageContainer,
   SettingsSearchTarget,
@@ -520,6 +522,9 @@ export function SourceControlSettingsPanel() {
           onScan={handleScan}
         />
       )}
+
+      {/* T3o (T3O-58) */}
+      {environmentId === null ? null : <T3oProjectTokensSection environmentId={environmentId} />}
 
       <SourceControlWritingSettingsSection />
     </SettingsPageContainer>

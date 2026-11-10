@@ -79,6 +79,7 @@ import {
   exportBoardProjectFile,
   getBoardProjectConfig,
   getBoardProjectImportCandidates,
+  getBoardProjectTokenStatus,
   importBoardProjectFile,
   resetBoardProject,
   setBoardProjectCiEnabled,
@@ -1008,6 +1009,10 @@ export function createBoardEnvironmentAtoms<R, ER>(
     getProjectConfig: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:get-project-config",
       execute: (input: { readonly projectId: ProjectId }) => getBoardProjectConfig(input),
+    }),
+    projectTokenStatus: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:project-token-status",
+      execute: (_input: Record<string, never>) => getBoardProjectTokenStatus(),
     }),
     projectImportCandidates: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:project-import-candidates",
