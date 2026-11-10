@@ -801,12 +801,12 @@ a:hover{text-decoration:underline}
                               </div>
                             </div>
                           </sc-if>
-                          <sc-if value="{{ c.ciBack }}" hint-placeholder-val="{{ false }}">
-                            <div title="{{ c.ciBack.tip }}" style="display:flex;align-items:flex-start;gap:7px;margin-top:9px;padding:7px 8px;border-radius:7px;background:color-mix(in srgb,var(--warning) 9%,transparent)">
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--warning-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path></svg>
-                              <div style="min-width:0;display:flex;flex-direction:column;gap:1px">
-                                <span style="font:500 10.5px var(--font-sans);color:var(--fg)">Sent back by CI</span>
-                                <span style="font:400 10.5px/1.4 var(--font-sans);color:var(--muted-fg)">{{ c.ciBack.line }}</span>
+                          <sc-if value="{{ c.ciHeld }}" hint-placeholder-val="{{ false }}">
+                            <div title="Auto-merge is on but waits because CI committed fixes" style="display:flex;flex-direction:column;gap:6px;margin-top:9px;padding:7px 8px;border-radius:7px;background:color-mix(in srgb,var(--attention) 9%,transparent)">
+                              <span style="font:400 10.5px/1.4 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ c.ciHeld.text }}</span>
+                              <div style="display:flex;align-items:center;gap:8px">
+                                <button type="button" onClick="{{ c.ciHeld.merge }}" style="display:inline-flex;align-items:center;height:20px;padding:0 8px;border:none;border-radius:6px;background:var(--attention);color:#fff;font:500 10.5px var(--font-sans);cursor:pointer">Merge</button>
+                                <button type="button" onClick="{{ c.ciHeld.view }}" style="border:none;background:transparent;padding:0;color:var(--attention-fg);font:500 10.5px var(--font-sans);cursor:pointer" style-hover="text-decoration:underline">{{ c.ciHeld.link }}</button>
                               </div>
                             </div>
                           </sc-if>
@@ -1361,15 +1361,15 @@ a:hover{text-decoration:underline}
             </button>
           </div>
         </sc-if>
-        <sc-if value="{{ ciBanner }}" hint-placeholder-val="{{ false }}">
-          <div style="display:flex;align-items:flex-start;gap:10px;margin:10px 10px 0;padding:10px 11px;flex:none;border:1px solid color-mix(in srgb,var(--destructive) 35%,transparent);border-radius:10px;background:color-mix(in srgb,var(--destructive) 6%,var(--card))">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--destructive-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path></svg>
+        <sc-if value="{{ ciMergeHeld }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;align-items:flex-start;gap:10px;margin:10px 10px 0;padding:10px 11px;flex:none;border:1px solid color-mix(in srgb,var(--attention) 40%,transparent);border-radius:10px;background:color-mix(in srgb,var(--attention) 7%,var(--card))">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--attention-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M6 21V9a9 9 0 0 0 9 9"></path></svg>
             <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
-              <span style="font:500 12.5px var(--font-sans);color:var(--fg)">{{ ciBanner.title }}</span>
-              <span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ciBanner.reason }}</span>
-              <span style="margin-top:1px;font:400 11px/1.45 var(--font-sans);color:color-mix(in srgb,var(--muted-fg) 85%,transparent);text-wrap:pretty">{{ ciBanner.meta }}</span>
+              <span style="font:500 12.5px var(--font-sans);color:var(--fg)">{{ ciMergeHeld.title }}</span>
+              <span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ciMergeHeld.meta }}</span>
+              <button type="button" onClick="{{ ciMergeHeld.view }}" style="align-self:flex-start;border:none;background:transparent;padding:0;color:var(--attention-fg);font:500 11.5px var(--font-sans);cursor:pointer" style-hover="text-decoration:underline">{{ ciMergeHeld.link }}</button>
             </div>
-            <button type="button" onClick="{{ ciBanner.open }}" style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;flex:none;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">View CI run</button>
+            <button type="button" onClick="{{ ciMergeHeld.merge }}" style="display:inline-flex;align-items:center;height:28px;padding:0 12px;flex:none;border:none;border-radius:8px;background:var(--attention);color:#fff;font:500 11.5px var(--font-sans);cursor:pointer">Merge</button>
           </div>
         </sc-if>
         <div style="{{ cardBodyStyle }}">
@@ -1674,6 +1674,21 @@ a:hover{text-decoration:underline}
               </sc-if>
 
               <sc-if value="{{ ciPaneFull }}" hint-placeholder-val="{{ true }}">
+              <sc-if value="{{ ci.stuckBox }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:none;display:flex;flex-direction:column;gap:9px;padding:12px 14px;border:1px solid color-mix(in srgb,var(--attention) 45%,transparent);border-radius:12px;background:color-mix(in srgb,var(--attention) 6%,var(--card))">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:5px;background:color-mix(in srgb,var(--attention) 14%,transparent);color:var(--attention-fg);font:500 10.5px var(--font-sans)">Needs you</span>
+                    <span style="font:600 12.5px var(--font-sans);color:var(--fg)">{{ ci.stuckBox.reason }}</span>
+                  </div>
+                  <span style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ci.stuckBox.note }}</span>
+                  <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ ci.stuckBox.meta }}</span>
+                  <div style="display:flex;flex-wrap:wrap;gap:8px">
+                    <button type="button" onClick="{{ ci.stuckBox.retry }}" style="display:inline-flex;align-items:center;height:28px;padding:0 12px;border:none;border-radius:8px;background:var(--attention);color:#fff;font:500 11.5px var(--font-sans);cursor:pointer">Retry CI</button>
+                    <button type="button" onClick="{{ ci.stuckBox.sendBack }}" style="display:inline-flex;align-items:center;height:28px;padding:0 10px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">Send back to review anyway</button>
+                    <button type="button" onClick="{{ ci.stuckBox.skip }}" style="display:inline-flex;align-items:center;height:28px;padding:0 10px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">Skip CI…</button>
+                  </div>
+                </div>
+              </sc-if>
               <sc-if value="{{ ci.blockedBox }}" hint-placeholder-val="{{ false }}">
                 <div style="flex:none;display:flex;gap:10px;padding:12px 14px;border:1px solid color-mix(in srgb,var(--warning) 45%,transparent);border-radius:12px;background:color-mix(in srgb,var(--warning) 7%,var(--card))">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--warning-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><path d="m21.7 18-8-14a2 2 0 0 0-3.5 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
@@ -1872,6 +1887,63 @@ a:hover{text-decoration:underline}
                           </div>
                         </div>
                       </sc-for>
+                      <sc-if value="{{ p.fix }}" hint-placeholder-val="{{ false }}">
+                        <div style="border-top:1px solid var(--border)">
+                          <div onClick="{{ p.fix.toggle }}" style="{{ p.fix.rowStyle }}">
+                            <span style="position:relative;display:inline-flex;flex:none">
+                              <span style="{{ p.fix.dotStyle }}">F</span>
+                              <sc-if value="{{ p.fix.markOk }}" hint-placeholder-val="{{ false }}">
+                                <span style="position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--success);box-shadow:0 0 0 1.5px var(--card)"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+                              </sc-if>
+                              <sc-if value="{{ p.fix.markAttn }}" hint-placeholder-val="{{ false }}">
+                                <span style="position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--attention);box-shadow:0 0 0 1.5px var(--card);color:#fff;font:700 8px/1 var(--font-sans)">!</span>
+                              </sc-if>
+                            </span>
+                            <span style="display:inline-flex;flex:none;color:var(--muted-fg)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg></span>
+                            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+                              <span data-shine="{{ p.fix.shine }}" style="{{ p.fix.nameStyle }}">{{ p.fix.name }}</span>
+                              <span style="font:400 11px var(--font-sans);color:var(--muted-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.fix.sub }}</span>
+                            </div>
+                            <span style="{{ p.fix.timeStyle }}">{{ p.fix.time }}</span>
+                            <span style="{{ p.fix.labelStyle }}">{{ p.fix.label }}</span>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;transform:{{ p.fix.caret }};transition:transform .12s ease"><path d="m6 9 6 6 6-6"></path></svg>
+                          </div>
+                          <sc-if value="{{ p.fix.open }}" hint-placeholder-val="{{ false }}">
+                            <div style="display:flex;flex-direction:column;gap:9px;padding:2px 12px 12px 65px">
+                              <div style="display:flex;flex-direction:column;gap:5px">
+                                <span style="font:400 11.5px var(--font-sans);color:var(--fg)">{{ p.fix.progLabel }}</span>
+                                <div style="height:4px;border-radius:2px;background:color-mix(in srgb,var(--fg) 8%,transparent);overflow:hidden"><div style="{{ p.fix.progBar }}"></div></div>
+                              </div>
+                              <div style="display:flex;flex-direction:column">
+                                <sc-for list="{{ p.fix.issues }}" as="fi" hint-placeholder-count="3">
+                                  <div style="{{ fi.rowStyle }}">
+                                    <span style="{{ fi.iconStyle }}">{{ fi.icon }}</span>
+                                    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                                      <span style="{{ fi.titleStyle }}">{{ fi.title }}</span>
+                                      <span style="font:400 10.5px var(--font-mono);color:var(--muted-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ fi.where }}</span>
+                                      <sc-if value="{{ fi.hasNote }}" hint-placeholder-val="{{ false }}">
+                                        <span style="font:400 11px/1.45 var(--font-sans);color:var(--attention-fg);text-wrap:pretty">{{ fi.note }}</span>
+                                      </sc-if>
+                                    </div>
+                                    <span style="{{ fi.labelStyle }}">{{ fi.label }}</span>
+                                  </div>
+                                </sc-for>
+                              </div>
+                              <sc-if value="{{ p.fix.hasNote }}" hint-placeholder-val="{{ false }}">
+                                <span style="font:400 11px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ p.fix.note }}</span>
+                              </sc-if>
+                              <sc-if value="{{ p.fix.canThread }}" hint-placeholder-val="{{ false }}">
+                                <div>
+                                  <button type="button" onClick="{{ p.fix.openThread }}" style="display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--popover);color:var(--fg);font:500 11px var(--font-sans);cursor:pointer" style-hover="background:var(--accent)">
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                                    Open fix thread
+                                  </button>
+                                </div>
+                              </sc-if>
+                            </div>
+                          </sc-if>
+                        </div>
+                      </sc-if>
                       <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--border)">
                         <span style="flex:1;min-width:0;font:400 11px/1.4 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ci.source }}</span>
                       </div>
@@ -3376,7 +3448,7 @@ const IMPORT_PENDING = { relay: "changed" };
 // steps form a group, groups run in order. Sync with base is built in and always first.
 const SYNC = { id: "sync", type: "sync", name: "Sync with base" };
 const PIPELINES = {
-  advisor: { on: { ci: true }, fixCap: 2, forge: "GitHub", forgeRun: "https://github.com/brentkelly/advisor/pull/312/checks",
+  advisor: { on: { ci: true }, fixCap: 3, stopOnFail: true, forge: "GitHub", forgeRun: "https://github.com/brentkelly/advisor/pull/312/checks",
     ci: [
       SYNC,
       { id: "tc", type: "script", name: "Typecheck", run: "bun run typecheck" },
@@ -3386,7 +3458,7 @@ const PIPELINES = {
       { id: "gh", type: "forge", name: "GitHub checks", only: ["ci/build", "ci/e2e", "ci/lint", "codeql", "deploy-preview"] },
     ] },
   web: { on: { sprint: false, ready: false, qa: true }, ci: null, forge: "GitHub" },
-  relay: { on: { sprint: false, soak: true, ci: true }, fixCap: 2, forge: "Forgejo", forgeRun: "https://git.mesh.dev/infra/relay/actions/runs/1184",
+  relay: { on: { sprint: false, soak: true, ci: true }, fixCap: 3, stopOnFail: false, forge: "Forgejo", forgeRun: "https://git.mesh.dev/infra/relay/actions/runs/1184",
     ci: [
       SYNC,
       { id: "check", type: "script", name: "Check", run: "cargo xtask check" },
@@ -3545,18 +3617,39 @@ const CI_RUNS = {
         gh: { s: "running", ago: 312, checks: GH_CHECKS(false), forgeState: "checks" } } },
   ],
   "RL-16": [
-    { when: "6m ago", outcome: "fixing", attempt: 1,
+    { when: "6m ago", outcome: "running",
       steps: { sync: { s: "passed", d: 3, sync: "uptodate" },
         check: { s: "failed", d: 124, tail: TAIL_TS, result: { summary: "1 error, 1 warning in relay-fanout", failures: FAIL_TS } },
-        test: { s: "pending" }, fj: { s: "pending" } } },
+        test: { s: "running", ago: 190 }, fj: { s: "running", ago: 190, checks: FJ_CHECKS(false) } } },
+  ],
+  "RL-17": [
+    { when: "4m ago", outcome: "fixing", fix: { done: 2, ago: 140 },
+      steps: { sync: { s: "passed", d: 2, sync: "uptodate" },
+        check: { s: "failed", d: 118, tail: TAIL_TS, result: { summary: "1 error, 1 warning in relay-fanout", failures: FAIL_TS } },
+        test: { s: "failed", d: 15, tail: TAIL_TEST, result: { summary: "3 of 212 tests failed", failures: FAIL_TEST } },
+        fj: { s: "passed", d: 344, checks: FJ_CHECKS(false) } } },
   ],
   "RL-15": [
-    { when: "58m ago", outcome: "fixed", note: "Fix agent moved the drop counter ahead of the queue trim and committed 8a41d2c.",
+    { when: "1h 40m ago", outcome: "fixed", commit: "8a41d2c", note: "Fix agent moved the drop counter ahead of the queue trim and committed 8a41d2c.",
       steps: { sync: { s: "passed", d: 2, sync: "uptodate" }, check: { s: "passed", d: 131 }, test: { s: "failed", d: 15, tail: TAIL_TEST, result: { summary: "3 of 212 tests failed", failures: FAIL_TEST } }, fj: { s: "failed", d: 372, checks: FJ_CHECKS(true) } } },
-    { when: "41m ago", outcome: "fixed", note: "Fix agent rewrote the slow-consumer fixture. The same 3 tests still fail.",
-      steps: { sync: { s: "passed", d: 2, sync: "uptodate" }, check: { s: "passed", d: 128 }, test: { s: "failed", d: 15, tail: TAIL_TEST, result: { summary: "3 of 212 tests failed", failures: FAIL_TEST } }, fj: { s: "failed", d: 368, checks: FJ_CHECKS(true) } } },
-    { when: "18m ago", outcome: "returned", note: "Both fix attempts used. 3 tests in fanout::backpressure still fail, which points at the bounded-queue design rather than a slip in the code.",
-      steps: { sync: { s: "passed", d: 2, sync: "uptodate" }, check: { s: "passed", d: 129 }, test: { s: "failed", d: 15, tail: TAIL_TEST, result: { summary: "3 of 212 tests failed", failures: FAIL_TEST } }, fj: { s: "failed", d: 371, checks: FJ_CHECKS(true) } } },
+    { when: "1h 12m ago", outcome: "fixed", commit: "c19e0b7", note: "Fix agent rewrote the slow-consumer fixture and committed c19e0b7. The same 3 tests still fail.",
+      steps: { sync: { s: "passed", d: 2, sync: "uptodate" }, check: { s: "passed", d: 131 }, test: { s: "failed", d: 15, tail: TAIL_TEST, result: { summary: "3 of 212 tests failed", failures: FAIL_TEST } }, fj: { s: "failed", d: 372, checks: FJ_CHECKS(true) } } },
+    { when: "44m ago", outcome: "fixed", commit: "5d2f6a0", note: "Fix agent bumped the bounded queue to 64 frames and committed 5d2f6a0. The same 3 tests still fail.",
+      steps: { sync: { s: "passed", d: 2, sync: "uptodate" }, check: { s: "passed", d: 131 }, test: { s: "failed", d: 15, tail: TAIL_TEST, result: { summary: "3 of 212 tests failed", failures: FAIL_TEST } }, fj: { s: "failed", d: 372, checks: FJ_CHECKS(true) } } },
+    { when: "18m ago", outcome: "stuck", stuck: { kind: "exhausted" }, note: "3 tests in fanout::backpressure still fail after every fix, which points at the bounded-queue design rather than a slip in the code.",
+      steps: { sync: { s: "passed", d: 2, sync: "uptodate" }, check: { s: "passed", d: 131 }, test: { s: "failed", d: 15, tail: TAIL_TEST, result: { summary: "3 of 212 tests failed", failures: FAIL_TEST } }, fj: { s: "failed", d: 372, checks: FJ_CHECKS(true) } } },
+  ],
+  "T3-189": [
+    { when: "2h 10m ago", outcome: "fixed", commit: "e4a17c2", note: "Fix agent added the missing await in the size cache and committed e4a17c2.",
+      steps: { sync: { s: "passed", d: 1, sync: "uptodate" }, tc: { s: "failed", d: 47, result: { summary: "1 type error", failures: [] } }, lint: { s: "passed", d: 19 }, test: { s: "cancelled", d: 30 }, mig: { s: "cancelled", d: 30 }, gh: { s: "pending" } } },
+    { when: "1h 48m ago", outcome: "fixed", commit: "0b93f5d", note: "Fix agent updated the size snapshot and committed 0b93f5d.",
+      steps: { sync: { s: "passed", d: 1, sync: "uptodate" }, tc: { s: "passed", d: 48 }, lint: { s: "passed", d: 20 }, test: { s: "failed", d: 128, result: { summary: "1 of 212 tests failed", failures: [] } }, mig: { s: "passed", d: 110, verdict: "passed", summary: "No migrations changed on this branch.", thread: "Migration review" }, gh: { s: "cancelled" } } },
+    { when: "1h 20m ago", outcome: "passed",
+      steps: { sync: { s: "passed", d: 1, sync: "uptodate" }, tc: { s: "passed", d: 49 }, lint: { s: "passed", d: 20 }, test: { s: "passed", d: 131 }, mig: { s: "passed", d: 112, verdict: "passed", summary: "No migrations changed on this branch.", thread: "Migration review" }, gh: { s: "passed", d: 402, checks: GH_CHECKS(true) } } },
+  ],
+  "T3-190": [
+    { when: "35m ago", outcome: "passed",
+      steps: { sync: { s: "passed", d: 1, sync: "uptodate" }, tc: { s: "passed", d: 46 }, lint: { s: "passed", d: 18 }, test: { s: "passed", d: 126 }, mig: { s: "passed", d: 101, verdict: "passed", summary: "No migrations changed on this branch.", thread: "Migration review" }, gh: { s: "passed", d: 388, checks: GH_CHECKS(true) } } },
   ],
   "T3-173": [
     { when: "25m ago", outcome: "skipped", by: "brent",
@@ -3697,6 +3790,8 @@ const SEED = [
   { key: "T3-182", p: "advisor", type: "Feature", status: "review", t: "working", title: "Typed IPC boundaries for the desktop bridge", brief: "Every desktopBridge call is untyped today. Generate the contract from the shared schema.", deps: ["T3-186"], plan: PLAN("Typed IPC boundaries", ["Describe each channel with an Effect Schema", "Generate the preload surface from the schema", "Fail the build on an unlisted channel"], ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts"]), pr: { n: 291, title: "feat(desktop): typed IPC boundaries", add: 612, del: 208, files: ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts", "apps/web/src/env.ts"], state: "In review" } },
   { key: "T3-180", p: "advisor", type: "bug", status: "review", title: "Compaction leaves orphaned tool-call spans", brief: "After a compaction, spans whose parent turn was summarised away keep streaming into the timeline.", plan: PLAN("Orphaned span cleanup", ["Reparent live spans onto the summary turn", "Drop spans whose turn no longer exists", "Replay test over a recorded compaction"], ["packages/client-runtime/src/compaction.ts", "apps/web/src/state/timeline.ts"]), pr: { n: 287, title: "fix(runtime): reparent spans across compaction", add: 244, del: 96, files: ["packages/client-runtime/src/compaction.ts", "apps/web/src/state/timeline.ts"], state: "In review" } },
   { key: "T3-179", p: "advisor", type: "chore", status: "merge", title: "Pre-commit format and lint gate", brief: "Formatting drift keeps landing on main. Gate commits with the same checks CI runs.", t: "working", conflict: { files: 3, resolved: 1, base: "main", cur: "package.json", started: "4m ago" }, plan: PLAN("Pre-commit gate", ["Wire lefthook with a staged-file filter", "Run oxlint + prettier on staged files only", "Document the escape hatch in CONTRIBUTING"], ["lefthook.yml", "CONTRIBUTING.md"]), pr: { n: 284, title: "chore: pre-commit format and lint", add: 96, del: 12, files: ["lefthook.yml", "package.json", "CONTRIBUTING.md"], state: "Approved" } },
+  { key: "T3-189", p: "advisor", type: "bug", status: "merge", title: "Worktree size refresh blocks the picker", brief: "Sizing large worktrees runs on the picker's render path. Move it off and debounce it.", autoMerge: true, pr: { n: 309, title: "fix(picker): debounce worktree size refresh", add: 64, del: 21, files: ["apps/web/src/components/BranchPicker.tsx", "apps/server/src/worktrees/size.ts"], state: "Approved" } },
+  { key: "T3-190", p: "advisor", type: "chore", status: "merge", title: "Rename board_ci_result to board_report_ci", brief: "One name for the CI reporting tool across agent steps and the fix agent.", autoMerge: true, pr: { n: 311, title: "chore: rename CI report tool", add: 18, del: 18, files: ["apps/server/src/board/tools.ts"], state: "Approved" } },
   { key: "T3-184", p: "advisor", type: "Feature", status: "merge", title: "Worktree disk usage in the branch picker", brief: "Show reclaimable size per worktree so pruning is an informed decision.", autoMerge: true, hold: { since: 12, next: 10, attempt: 5, of: 8, reason: "The forge refused the merge: required check ci/build has not finished.", detail: "3 of 5 checks green · ci/build and ci/e2e still running" }, plan: PLAN("Worktree disk usage", ["Walk the worktree dir off the main thread", "Cache sizes per launch", "Show a reclaim total in the picker footer"], ["apps/web/src/components/BranchPicker.tsx"]), pr: { n: 305, title: "feat(picker): worktree disk usage", add: 187, del: 22, files: ["apps/web/src/components/BranchPicker.tsx", "apps/server/src/worktrees/size.ts"], state: "Approved" } },
   { key: "T3-177", p: "advisor", type: "bug", status: "merge", title: "Reconnect drops queued tool results", brief: "Results that land while the socket is down are never replayed after reconnect.", autoMerge: true, hold: { since: 96, next: 0, attempt: 8, of: 8, gaveUp: true, reason: "The forge refused the merge: branch is behind main and the repo requires a linear history.", detail: "Last attempt 41m ago · rebase the branch, then merge" } },
   { key: "T3-173", p: "advisor", type: "chore", status: "merge", title: "Drop the legacy thread migration path", brief: "Every workspace is on the new schema. Delete the migration and its fixtures.", autoMerge: true, pr: { n: 296, title: "chore: drop legacy thread migration", add: 12, del: 418, files: ["packages/client-runtime/src/migrate.ts"], state: "Approved" } },
@@ -3710,7 +3805,8 @@ const SEED = [
   { key: "T3-185", p: "advisor", type: "Feature", status: "ci", title: "Remember column widths per project", brief: "Column widths reset on every reload. Store them per project next to the collapse state.", plan: PLAN("Column widths", ["Persist widths beside collapse state", "Clamp to the column min and max"], ["apps/web/src/board/BoardView.tsx"]), pr: { n: 312, title: "feat(board): persist column widths", add: 88, del: 14, files: ["apps/web/src/board/BoardView.tsx"], state: "Approved" } },
   { key: "T3-187", p: "advisor", type: "bug", status: "ci", title: "File watcher misses renames inside new folders", brief: "Renaming a file inside a folder created after launch never reaches the timeline.", plan: PLAN("Watcher renames", ["Watch new folders as they appear", "Regression test over a create-then-rename"], ["apps/server/src/fs/watcher.ts"]), pr: { n: 314, title: "fix(fs): watch folders created after launch", add: 61, del: 9, files: ["apps/server/src/fs/watcher.ts", "apps/server/test/watcher.test.ts"], state: "Approved" } },
   { key: "RL-16", p: "relay", type: "Feature", status: "ci", title: "Weighted fair queueing for fan-out", brief: "Large frames starve small ones on a shared subscriber queue. Weight the queue by frame size.", plan: PLAN("Weighted queue", ["Weight by encoded size", "Keep drop-oldest as the overflow policy"], ["infra/relay/src/queue.rs", "infra/relay/src/fanout.rs"]), pr: { n: 91, title: "feat(relay): weighted fan-out queue", add: 176, del: 40, files: ["infra/relay/src/queue.rs", "infra/relay/src/fanout.rs"], state: "Approved" } },
-  { key: "RL-15", p: "relay", type: "Feature", status: "review", t: "working", title: "Drop metric for slow subscribers", brief: "Count frames dropped per subscriber so slow consumers show up on the dashboard.", plan: PLAN("Drop metric", ["Counter per subscriber", "Export through the existing metrics endpoint"], ["infra/relay/src/fanout.rs", "infra/relay/src/metrics.rs"]), pr: { n: 90, title: "feat(relay): per-subscriber drop metric", add: 143, del: 22, files: ["infra/relay/src/fanout.rs", "infra/relay/src/metrics.rs"], state: "In review" } },
+  { key: "RL-17", p: "relay", type: "Feature", status: "ci", title: "Backpressure metrics per subscriber class", brief: "Export queue depth and drops per subscriber class so the dashboard can show which consumers fall behind.", pr: { n: 93, title: "feat(relay): per-class backpressure metrics", add: 142, del: 18, files: ["infra/relay/src/fanout.rs", "infra/relay/src/metrics.rs"], state: "Approved" } },
+  { key: "RL-15", p: "relay", type: "Feature", status: "ci", t: "stopped", title: "Drop metric for slow subscribers", brief: "Count frames dropped per subscriber so slow consumers show up on the dashboard.", plan: PLAN("Drop metric", ["Counter per subscriber", "Export through the existing metrics endpoint"], ["infra/relay/src/fanout.rs", "infra/relay/src/metrics.rs"]), pr: { n: 90, title: "feat(relay): per-subscriber drop metric", add: 143, del: 22, files: ["infra/relay/src/fanout.rs", "infra/relay/src/metrics.rs"], state: "In review" } },
   { key: "RL-12", p: "relay", type: "chore", status: "soak", title: "Move session store to the new Redis cluster", brief: "Dual-write for a day, then cut reads over." },
   { key: "MW-36", p: "web", type: "Feature", status: "qa", title: "Dark-mode hero artwork", brief: "The hero image is hard-coded light. Swap in the dark variant under prefers-color-scheme.", pr: { n: 57, title: "feat(marketing): dark hero", add: 34, del: 6, files: ["apps/marketing/src/components/Hero.tsx"], state: "Approved" } },
   { key: "RL-14", p: "relay", type: "Feature", status: "review", t: "waiting", title: "Backpressure on session fan-out", brief: "Slow consumers currently stall the whole fan-out loop.", deps: ["RL-18"], plan: PLAN("Fan-out backpressure", ["Bounded queue per subscriber", "Drop-oldest with a metric"], ["infra/relay/src/fanout.ts"]), pr: { n: 88, title: "feat(relay): bounded fan-out queues", add: 214, del: 63, files: ["infra/relay/src/fanout.ts", "infra/relay/test/fanout.test.ts"], state: "In review" } },
@@ -4101,24 +4197,6 @@ const REVIEWS = {
             ruling: "Bounded label set. Rejection justified.",
           }),
           ISS("nitpick", "Help text says frames, the unit is messages", "infra/relay/src/metrics.rs", "rejected", "justified"),
-        ],
-      },
-      {
-        n: 3,
-        when: "18m ago",
-        outcome: "",
-        carried: {
-          kind: "ci",
-          step: "Test",
-          when: "18m ago",
-          note: "Both fix attempts used. 3 tests in fanout::backpressure still fail, which points at the bounded-queue design rather than a slip in the code.",
-          issues: [
-            ISS("critical", "3 tests in fanout::backpressure still fail after 2 fix attempts", "infra/relay/src/fanout.rs", "open", "pending", { carry: true }),
-          ],
-        },
-        steps: { review: "done", triage: "active", adjudicate: "pending" },
-        issues: [
-          ISS("improvement", "Drop counter and queue trim aren't atomic under contention", "infra/relay/src/fanout.rs", "open", "pending"),
         ],
       },
     ],
@@ -5177,21 +5255,27 @@ class Component extends DCLogic {
     const isFail = (r) => r.s === "failed" || r.s === "timedout" || r.s === "blocked";
     const curRes = steps.map((x) => res(cur, x));
     const runIxs = curRes.map((r, i) => (r.s === "running" ? i : -1)).filter((i) => i >= 0);
-    const fixesDone = runs.filter((r) => r.outcome === "fixed").length;
+    // Fix attempts count within one CI visit, from the last human retry.
+    const lastRetry = runs.map((r) => !!r.retry).lastIndexOf(true);
+    const fixesDone = runs.filter((r, i) => i >= Math.max(0, lastRetry) && r.outcome === "fixed").length;
+    const failNames = steps.filter((x, i) => isFail(curRes[i])).map((x) => x.name);
     return {
       steps, groups: groupsOf(steps), runs, cur, res, curRes,
-      pass: runs.length, cap: pp.fixCap || 2, forge: pp.forge || "forge", forgeRun: pp.forgeRun || "",
+      pass: runs.length, cap: pp.fixCap || 3, forge: pp.forge || "forge", forgeRun: pp.forgeRun || "",
+      stopOnFail: pp.stopOnFail !== false,
+      failNames, failCount: failNames.length,
+      fixCommits: runs.filter((r) => r.outcome === "fixed" && r.commit).map((r) => r.commit),
       fixesDone,
       attempt: cur.outcome === "fixing" ? fixesDone + 1 : fixesDone,
       runIxs, runIx: runIxs.length ? runIxs[0] : -1,
       failIx: curRes.findIndex(isFail),
       passed: curRes.filter((r) => r.s === "passed").length,
       total: steps.length,
-      live: c.status === "ci" && ["running", "fixing", "blocked"].indexOf(cur.outcome) >= 0,
+      live: c.status === "ci" && ["running", "fixing", "blocked", "stuck"].indexOf(cur.outcome) >= 0,
       running: cur.outcome === "running",
       fixing: cur.outcome === "fixing",
       blocked: cur.outcome === "blocked",
-      returned: cur.outcome === "returned",
+      stuck: cur.outcome === "stuck",
       skipped: cur.outcome === "skipped",
       isFail,
     };
@@ -5248,6 +5332,41 @@ class Component extends DCLogic {
     if (x.type === "agent") return x.name + (face ? " · agent" : "") + " · " + t;
     return x.name + " · " + t;
   }
+  // The fix agent as the last step of a pass: the issues CI reported and how far
+  // the agent has got. Null for a pass with nothing to fix.
+  ciFixOf(ci, r) {
+    const failed = ci.steps.filter((x) => ci.isFail(ci.res(r, x)));
+    if (!failed.length) return null;
+    const issues = [];
+    failed.forEach((x) => {
+      const st = ci.res(r, x);
+      const fs = (st.result && st.result.failures) || st.failures || [];
+      if (fs.length) fs.forEach((f) => issues.push({ step: x.name, title: f.title, loc: f.file ? f.file + (f.line ? ":" + f.line : "") : "" }));
+      else issues.push({ step: x.name, title: x.name + (st.s === "timedout" ? " timed out" : st.forgeState === "none" ? ": no checks appeared" : " failed"), loc: "" });
+    });
+    const fx = r.fix || {};
+    let state = "pending";
+    if (r.outcome === "fixed") state = "done";
+    else if (r.outcome === "fixing") state = "working";
+    else if (r.outcome === "stuck") state = (r.stuck || {}).kind === "cant" ? "cant" : "none";
+    else if (r.outcome === "skipped" || r.outcome === "blocked") state = "off";
+    const done = state === "done" ? issues.length : state === "working" ? Math.min(fx.done || 0, issues.length)
+      : state === "cant" ? issues.filter((it) => !(fx.cant || []).some((c) => c.step === it.step)).length : 0;
+    issues.forEach((it, k) => {
+      it.state = state === "done" ? "resolved"
+        : state === "working" ? (k < done ? "resolved" : k === done ? "working" : "open")
+        : state === "cant" ? ((fx.cant || []).some((c) => c.step === it.step) ? "cant" : "resolved")
+        : "open";
+      const c = (fx.cant || []).find((q) => q.step === it.step);
+      it.note = it.state === "cant" && c ? c.reason : "";
+    });
+    return { issues, done, total: issues.length, state, commit: r.commit || "", ago: fx.ago };
+  }
+  ciStuckReason(ci) {
+    const st = ci.cur.stuck || {};
+    if (st.kind === "cant") return "The fix agent couldn't fix " + st.step + ": " + st.reason;
+    return "CI still failing after " + ci.fixesDone + " fixes: " + ci.failNames.join(", ") + ".";
+  }
   ciSegColor(r, fixing) {
     if (r.s === "passed") return "var(--success)";
     if (r.s === "running") return "var(--info)";
@@ -5265,28 +5384,37 @@ class Component extends DCLogic {
     run.sort((a, b) => rank(a) - rank(b));
     const conflict = run.some((o) => o.x.type === "sync" && o.r.sync === "conflict");
     let chip = "Running", tone = "info", line = "Starting";
-    if (ci.blocked) {
+    if (ci.stuck) {
+      chip = "Needs you"; tone = "attn";
+      line = this.ciStuckReason(ci);
+    } else if (ci.blocked) {
       chip = "Blocked"; tone = "warn";
       line = "Can't read " + this.ciForgeName(ci, failRes) + " checks";
     } else if (ci.fixing) {
       chip = "Fixing";
-      line = (fail ? fail.name : "Step") + failWord + " · fix " + ci.attempt + " of " + ci.cap;
+      const fx = this.ciFixOf(ci, cur);
+      line = "Fix " + ci.attempt + " of " + ci.cap + (fx ? " · " + fx.done + " of " + fx.total + " issues resolved" : "");
     } else if (run.length) {
       if (conflict) chip = "Fixing";
-      line = this.ciStepLine(ci, run[0].x, run[0].r, true) + (run.length > 1 ? " +" + (run.length - 1) : "");
+      line = ci.failCount && !conflict
+        ? ci.failCount + " failed · running " + run[0].x.name + " · " + Math.max(1, Math.round((run[0].r.ago || 0) / 60)) + " min"
+        : this.ciStepLine(ci, run[0].x, run[0].r, true) + (run.length > 1 ? " +" + (run.length - 1) : "");
     }
     const chipStyle = "display:inline-flex;align-items:center;height:16px;padding:0 6px;flex:none;border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;" +
-      (tone === "warn" ? "background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning-fg)" : "background:color-mix(in srgb,var(--info) 13%,transparent);color:var(--info-fg)");
+      (tone === "warn" ? "background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning-fg)"
+        : tone === "attn" ? "background:color-mix(in srgb,var(--attention) 14%,transparent);color:var(--attention-fg)"
+        : "background:color-mix(in srgb,var(--info) 13%,transparent);color:var(--info-fg)");
     return {
       head: "CI" + (ci.pass > 1 ? " · pass " + ci.pass : ""),
       chip, chipStyle,
       count: ci.passed + "/" + ci.total,
       cur: line,
-      curStyle: "font:400 10.5px var(--font-sans);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:" + (ci.blocked ? "var(--warning-fg)" : "var(--muted-fg)"),
+      curStyle: "font:400 10.5px var(--font-sans);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:" + (ci.blocked ? "var(--warning-fg)" : ci.stuck ? "var(--attention-fg)" : "var(--muted-fg)"),
       back: cur.back ? "Back from Ready for merge: " + (cur.back.reason === "base" ? "base moved" : cur.back.reason === "conflict" ? "conflicts" : "checks failing") : "",
       backTip: cur.back ? cur.back.detail + ". CI re-runs from Sync with base." : "",
-      tip: ci.blocked ? "The forge's checks can't be read, so CI can't finish. Open the card to skip CI or change the step."
-        : ci.fixing ? "A fix agent is working on the failed step. Every step re-runs from the top after the fix."
+      tip: ci.stuck ? "CI stopped for you. Open the card to retry CI, send it back to review, or skip CI."
+        : ci.blocked ? "The forge's checks can't be read, so CI can't finish. Open the card to skip CI or change the step."
+        : ci.fixing ? "A fix agent is working on every failed step. Every step re-runs from the top after the fix."
         : "Sync with base, then " + (ci.groups.length - 1) + " groups in order; stacked bars run in parallel",
       segs: ci.groups.map((g, gi) => ({
         style: "display:flex;flex-direction:column;gap:1px;height:5px;min-width:0;flex:" + (gi === 0 ? "0 0 10px" : g.length + " 1 0"),
@@ -5298,7 +5426,18 @@ class Component extends DCLogic {
             style: "flex:1;min-height:0;border-radius:2px;background:" + bg + (bg === "transparent" ? ";box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 14%,transparent)" : ""),
           };
         }),
-      })),
+      })).concat((() => {
+        const fx = ci.failCount ? this.ciFixOf(ci, cur) : null;
+        if (!fx || fx.state === "off") return [];
+        const bg = fx.state === "working" ? "var(--info)" : fx.state === "done" ? "var(--success)" : fx.state === "none" || fx.state === "cant" ? "var(--attention)" : "transparent";
+        return [{
+          style: "display:flex;flex-direction:column;gap:1px;height:5px;min-width:0;flex:0 0 10px",
+          lanes: [{
+            tip: "Fix · " + (fx.state === "working" ? fx.done + " of " + fx.total + " issues resolved" : fx.state === "pending" ? "starts when the pass finishes" : fx.state === "none" ? "no fix attempts left" : fx.state),
+            style: "flex:1;min-height:0;border-radius:2px;background:" + bg + (bg === "transparent" ? ";box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 14%,transparent)" : ""),
+          }],
+        }];
+      })()),
     };
   }
   openForgePopup(url) {
@@ -5321,13 +5460,14 @@ class Component extends DCLogic {
     };
     const OUT = {
       running: ["Running", "info"], fixing: ["Fixing", "info"], fixed: ["Fixed in place", "plain"], blocked: ["Blocked", "warn"],
-      returned: ["Sent back to review", "warn"], skipped: ["Skipped", "plain"], passed: ["Passed", "success"],
+      stuck: ["Needs you", "attn"], skipped: ["Skipped", "plain"], passed: ["Passed", "success"],
     };
     const chip = (tone) =>
       "display:inline-flex;align-items:center;height:18px;padding:0 7px;flex:none;border-radius:5px;font:500 10.5px var(--font-sans);white-space:nowrap;" +
       (tone === "info" ? "background:color-mix(in srgb,var(--info) 13%,transparent);color:var(--info-fg)"
         : tone === "success" ? "background:color-mix(in srgb,var(--success) 15%,transparent);color:var(--success-fg)"
         : tone === "warn" ? "background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning-fg)"
+        : tone === "attn" ? "background:color-mix(in srgb,var(--attention) 14%,transparent);color:var(--attention-fg)"
         : "background:var(--accent);color:var(--fg)");
     const CHECK = {
       success: ["Passed", "passed"], failure: ["Failed", "failed"], running: ["Running", "running"], pending: ["Queued", "pending"],
@@ -5350,7 +5490,7 @@ class Component extends DCLogic {
       const x = ci.steps[i];
       const s = ci.res(r, x);
       const fail = ci.isFail(s);
-      const fixing = fail && r.outcome === "fixing" && isCur;
+      const fixing = false;
       const live = s.s === "running" && isCur && c.status === "ci" && ci.live;
       const m = META[s.s] || META.pending;
       const key = c.id + ":" + pi + ":" + x.id;
@@ -5440,6 +5580,61 @@ class Component extends DCLogic {
         syncText, hasSyncThread: x.type === "sync" && s.sync === "conflict",
       };
     };
+    const fixVm = (r, pi, isCur) => {
+      const fx = this.ciFixOf(ci, r);
+      if (!fx || fx.state === "off") return null;
+      const fixN = ci.runs.slice(0, pi + 1).filter((q) => q.outcome === "fixed" || q.outcome === "fixing").length;
+      const key = c.id + ":" + pi + ":fix";
+      const working = fx.state === "working" && isCur && c.status === "ci";
+      const detailOpen = open[key] != null ? !!open[key] : isCur;
+      const tone = { done: "var(--success-fg)", working: "var(--info-fg)", pending: "var(--muted-fg)", none: "var(--attention-fg)", cant: "var(--attention-fg)" }[fx.state];
+      const ICON = {
+        resolved: ["✓", "background:var(--success);color:#fff"],
+        working: ["", "background:var(--info);box-shadow:inset 0 0 0 3px color-mix(in srgb,var(--info) 35%,var(--card))"],
+        open: ["", "box-shadow:inset 0 0 0 1.5px var(--input)"],
+        cant: ["!", "background:var(--attention);color:#fff"],
+      };
+      const LBL = { resolved: ["Resolved", "var(--success-fg)"], working: ["Fixing", "var(--info-fg)"], open: ["Open", "var(--muted-fg)"], cant: ["Can't fix", "var(--attention-fg)"] };
+      return {
+        name: "Fix failures",
+        sub: fx.state === "pending" ? "Fix agent · starts when the pass finishes"
+          : fx.state === "none" ? "Fix agent · not run, " + ci.cap + " of " + ci.cap + " attempts used"
+          : "Fix agent · fix " + fixN + " of " + ci.cap + (fx.commit ? " · committed " + fx.commit : ""),
+        dotStyle: badge(fx.state === "working" ? "running" : fx.state === "pending" || fx.state === "none" ? "pending" : "done"),
+        markOk: fx.state === "done",
+        markAttn: fx.state === "cant" || fx.state === "none",
+        nameStyle: "font:500 12.5px var(--font-sans);color:var(--fg);width:fit-content" + (working ? this.shineStyle("var(--muted-fg)", "var(--fg)") : ""),
+        shine: working,
+        time: working ? this.ciElapsed(c, "fix", fx.ago || 0) : "",
+        timeStyle: "flex:none;width:58px;text-align:right;font:500 11.5px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)",
+        label: fx.state === "done" ? "Fixed" : fx.state === "working" ? fx.done + "/" + fx.total + " resolved" : fx.state === "pending" ? "Waiting" : fx.state === "none" ? "Not run" : "Couldn't fix",
+        labelStyle: "flex:none;min-width:84px;text-align:right;font:500 11.5px var(--font-sans);white-space:nowrap;color:" + tone,
+        rowStyle: "display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;" +
+          (working ? "background:color-mix(in srgb,var(--info) 5%,transparent)" : fx.state === "none" || fx.state === "cant" ? "background:color-mix(in srgb,var(--attention) 5%,transparent)" : ""),
+        open: detailOpen, toggle: flip(key, detailOpen),
+        caret: detailOpen ? "rotate(180deg)" : "none",
+        progLabel: fx.state === "pending" ? fx.total + (fx.total === 1 ? " issue" : " issues") + " so far · the fix agent gets them all when the pass finishes"
+          : fx.done + " of " + fx.total + (fx.total === 1 ? " issue" : " issues") + " resolved",
+        progBar: "height:100%;border-radius:2px;width:" + Math.round((fx.done / Math.max(1, fx.total)) * 100) + "%;background:" +
+          (fx.state === "done" ? "var(--success)" : fx.state === "working" ? "var(--info)" : "var(--attention)"),
+        note: fx.state === "working" ? "When every issue is resolved the agent commits and pushes, and CI runs again from Sync with base."
+          : fx.state === "none" ? "No fix attempts left, so these stay open and the card waits for you."
+          : fx.state === "done" ? "Every issue resolved, committed and pushed. The next pass checks the fix." : "",
+        hasNote: fx.state !== "pending" && fx.state !== "cant",
+        issues: fx.issues.map((it, k) => ({
+          title: it.title, where: it.step + (it.loc ? " · " + it.loc : ""),
+          icon: ICON[it.state][0],
+          iconStyle: "width:15px;height:15px;flex:none;margin-top:1px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;font:700 9px var(--font-sans);" + ICON[it.state][1],
+          label: LBL[it.state][0],
+          labelStyle: "flex:none;font:500 11px var(--font-sans);white-space:nowrap;color:" + LBL[it.state][1],
+          note: it.note, hasNote: !!it.note,
+          rowStyle: "display:flex;align-items:flex-start;gap:9px;padding:7px 0;" + (k ? "border-top:1px solid color-mix(in srgb,var(--border) 70%,transparent)" : ""),
+          titleStyle: "font:500 12px/1.4 var(--font-sans);text-wrap:pretty;color:" + (it.state === "resolved" ? "var(--muted-fg)" : "var(--fg)"),
+        })),
+        canThread: fx.state !== "pending" && fx.state !== "none",
+        openThread: (e) => { if (e && e.stopPropagation) e.stopPropagation(); setPane("thread")(); },
+      };
+    };
     const passVm = (r, pi, isCur) => {
       const pk = c.id + ":p" + pi;
       const isOpen = isCur || !!open[pk];
@@ -5448,7 +5643,12 @@ class Component extends DCLogic {
       return {
         title: "Pass " + (pi + 1), when: r.when, isCur,
         outcome: out[0], outcomeStyle: chip(out[1]),
-        summary: !isCur ? (ix >= 0 ? ci.steps[ix].name + (ci.res(r, ci.steps[ix]).s === "timedout" ? " timed out" : " failed") : r.outcome === "skipped" ? "Skipped by " + (r.by || "brent") : r.outcome === "passed" ? "All steps passed" : "") : "",
+        summary: !isCur ? (() => {
+          const nf = ci.steps.filter((x) => ci.isFail(ci.res(r, x))).length;
+          const fixN = r.outcome === "fixed" ? ci.runs.slice(0, pi + 1).filter((q) => q.outcome === "fixed").length : 0;
+          const base = nf > 1 ? nf + " of " + ci.total + " steps failed" : ix >= 0 ? ci.steps[ix].name + (ci.res(r, ci.steps[ix]).s === "timedout" ? " timed out" : " failed") : r.outcome === "skipped" ? "Skipped by " + (r.by || "brent") : r.outcome === "passed" ? "All steps passed" : "";
+          return base + (fixN ? " · Fix " + fixN + " of " + ci.cap + (r.commit ? " · " + r.commit : "") : "");
+        })() : "",
         note: r.note || "", hasNote: !isCur && !!r.note && isOpen,
         back: r.back ? "Back from Ready for merge · " + r.back.detail : "", hasBack: !isCur && !!r.back,
         open: isOpen, collapsible: !isCur,
@@ -5462,6 +5662,7 @@ class Component extends DCLogic {
           innerStyle: g.length > 1 ? "display:flex;flex-direction:column;box-shadow:inset 3px 0 0 color-mix(in srgb,var(--info) 55%,var(--border))" : "display:flex;flex-direction:column",
           steps: g.map((i, k) => ({ ...stepVm(r, pi, isCur, i), wrapStyle: k ? "border-top:1px solid var(--border)" : "" })),
         })),
+        fix: isOpen ? fixVm(r, pi, isCur) : null,
       };
     };
     const passes = ci.runs.map((r, i) => passVm(r, i, i === ci.runs.length - 1)).reverse();
@@ -5469,16 +5670,28 @@ class Component extends DCLogic {
     const failX = ci.failIx >= 0 ? ci.steps[ci.failIx] : null;
     const confirming = st.ciSkipConfirm === c.id;
     const runX = ci.runIx >= 0 ? ci.steps[ci.runIx] : null;
-    const status = ci.blocked ? "Blocked" : ci.fixing ? "Fixing " + (failX ? failX.name : "")
+    const fxCur = ci.fixing ? this.ciFixOf(ci, ci.cur) : null;
+    const status = ci.stuck ? "Needs you" : ci.blocked ? "Blocked" : ci.fixing ? "Fixing · " + (fxCur ? fxCur.done + "/" + fxCur.total + " resolved" : "")
       : ci.running ? (runX ? this.ciStepLine(ci, runX, ci.curRes[ci.runIx], false) : "Starting")
-      : ci.returned ? "Sent back to review" : ci.skipped ? "Skipped" : "Passed";
+      : ci.skipped ? "Skipped" : "Passed";
     const blockedRes = ci.blocked && failX ? ci.curRes[ci.failIx] : null;
     return {
-      sub: "Pass " + ci.pass + " · fix attempts " + ci.attempt + " of " + ci.cap,
-      status, statusStyle: chip(ci.blocked ? "warn" : ci.fixing || ci.running ? "info" : ci.returned ? "warn" : "plain"),
+      sub: "Pass " + ci.pass + " · fix " + ci.attempt + " of " + ci.cap + " · stop on failure " + (ci.stopOnFail ? "Yes" : "No"),
+      status, statusStyle: chip(ci.stuck ? "attn" : ci.blocked ? "warn" : ci.fixing || ci.running ? "info" : "plain"),
       settingsHref: SETTINGS_PAGE + "#projects/" + c.project + "/ci",
       settingsLabel: "CI settings for " + project.name,
-      source: ci.total + " steps · Sync with base, then " + (ci.groups.length - 1) + " groups in order · a failure stops later groups once its own group finishes",
+      source: ci.total + " steps · Sync with base, then " + (ci.groups.length - 1) + " groups in order · " + (ci.stopOnFail ? "a failure stops later groups once its own group finishes" : "every step runs, even after a failure"),
+      stuckBox: ci.stuck && c.status === "ci"
+        ? {
+            title: "Needs you · CI stopped",
+            reason: this.ciStuckReason(ci),
+            note: ci.cur.note || "",
+            meta: ci.fixesDone + " of " + ci.cap + " fix attempts used · " + ci.cur.when,
+            retry: () => this.retryCi(c),
+            sendBack: () => this.ciSendBack(c),
+            skip: () => this.setState({ ciSkipConfirm: c.id }),
+          }
+        : null,
       passes,
       backBox: ci.cur.back && c.status === "ci"
         ? { title: "Back from Ready for merge: " + (ci.cur.back.reason === "base" ? "base moved" : ci.cur.back.reason), note: ci.cur.back.detail.charAt(0).toUpperCase() + ci.cur.back.detail.slice(1) + ". Ready for merge sent the card back so CI runs against the new base, starting with Sync with base." }
@@ -5486,20 +5699,18 @@ class Component extends DCLogic {
       blockedBox: ci.blocked
         ? { title: "Blocked: can't read " + this.ciForgeName(ci, blockedRes) + " checks", note: "CI can't pass while this step waits on checks the board can't see. Skip CI for this card, or change the step in CI settings." }
         : null,
-      fixBox: ci.fixing && c.status === "ci"
+      fixBox: false
         ? {
-            title: "Fix agent is working on " + (failX ? failX.name : "the failed step"),
-            note: "Attempt " + ci.attempt + " of " + ci.cap + ". It has the step's structured failures and output. When it commits, every step re-runs from Sync with base." +
-              (ci.attempt >= ci.cap ? " This is the last attempt; if the step still fails, the card goes back to Code review with a finding." : ""),
+            title: "Fix agent is working on " + (ci.failCount > 1 ? ci.failNames.join(", ") : failX ? failX.name : "the failed step"),
+            note: "Fix " + ci.attempt + " of " + ci.cap + ". It has every failed step's structured failures and output at once. When it commits and pushes, every step re-runs from Sync with base." +
+              (ci.attempt >= ci.cap ? " This is the last attempt; if CI still fails, the card stops here for you." : ""),
             openThread: setPane("thread"),
           }
         : null,
-      outcomeBox: ci.returned
-        ? { title: "Sent back to Code review", note: ci.cur.note || "", meta: ci.cur.when + " · the failures went to the review as a finding" }
-        : ci.skipped
+      outcomeBox: ci.skipped
           ? { title: "CI skipped by " + (ci.cur.by || "brent"), note: "Moved to Ready for merge without a passing run. Steps still running were cancelled.", meta: ci.cur.when }
           : null,
-      canSkip: c.status === "ci" && !confirming,
+      canSkip: c.status === "ci" && !confirming && !ci.stuck,
       confirming: c.status === "ci" && confirming,
       skipNote: "Moves the card to Ready for merge without a passing CI run. The skip is recorded on the card under your name.",
       confirmTitle: "Skip CI for " + c.key + "?",
@@ -5582,6 +5793,37 @@ class Component extends DCLogic {
       copy: () => { try { navigator.clipboard.writeText(txt); } catch (e) {} this.setState({ ciLogCopied: true }); setTimeout(() => this.setState({ ciLogCopied: false }), 1500); },
       close: () => { clearInterval(this._logTimer); this.setState({ ciLog: null }); },
     };
+  }
+  // Needs you → Retry CI: a fresh pass from Sync with base with the fix attempts reset.
+  retryCi(card) {
+    if (!card || card.status !== "ci") return;
+    this.setState((s) => ({
+      cards: s.cards.map((c) => {
+        if (c.id !== card.id) return c;
+        const steps = {};
+        (pipeOf(c.project).ci || []).forEach((x, i) => { steps[x.id] = i === 0 ? { s: "running", ago: 0 } : { s: "pending" }; });
+        return { ...c, ciRuns: c.ciRuns.concat([{ steps, outcome: "running", when: "just now", retry: true }]) };
+      }),
+    }));
+    this.toast("CI restarted for " + card.key + " from Sync with base, with " + (pipeOf(card.project).fixCap || 3) + " fix attempts.");
+  }
+  // Needs you → Send back to review anyway: a human decision, never automatic.
+  ciSendBack(card) {
+    if (!card || card.status !== "ci") return;
+    this.setStatus(card.id, "review");
+    this.toast(card.key + " sent back to Code review by you. CI's failures go with it as a finding.");
+  }
+  ciHeldFor(c) {
+    if (!c || c.status !== "merge" || !this.autoMergeOn(c) || this.holdFor(c)) return null;
+    if ((this.state.ciLooked || {})[c.id]) return null;
+    const ci = this.ciFor(c);
+    if (!ci || !ci.fixCommits.length) return null;
+    return { n: ci.fixCommits.length, commits: ci.fixCommits };
+  }
+  mergeHeldCard(card) {
+    this.setState((s) => ({ ciLooked: { ...(s.ciLooked || {}), [card.id]: true } }));
+    this.setStatus(card.id, "done");
+    this.toast(card.key + " merged.");
   }
   skipCi(card) {
     if (!card || card.status !== "ci") return;
@@ -8389,16 +8631,14 @@ class Component extends DCLogic {
       const armed = blocked && (this.autoBuildsFor(c) || !!this.state.autoStart[c.id]);
       const ciS = isGrp ? null : this.ciFor(c);
       const ciFace = ciS && ciS.live ? this.ciFaceVm(c, ciS) : null;
-      const ciBack = ciS && ciS.returned && c.status === "review"
-        ? (() => {
-            const st = ciS.failIx >= 0 ? ciS.steps[ciS.failIx] : { name: "A step" };
-            const fr = ciS.failIx >= 0 ? ciS.curRes[ciS.failIx] : null;
-            const nf = fr && fr.result && fr.result.failures ? fr.result.failures.length : 0;
-            return {
-              line: st.name + (nf ? " · " + nf + (nf === 1 ? " failure" : " failures") : "") + " still failing after " + ciS.fixesDone + " fix attempts",
-              tip: "CI sent this card back to Code review " + ciS.cur.when + ". The failures are attached to the review as a finding.",
-            };
-          })()
+      const ciHeldD = isGrp ? null : this.ciHeldFor(c);
+      const ciHeld = ciHeldD
+        ? {
+            text: "CI made " + ciHeldD.n + " fix commit" + (ciHeldD.n === 1 ? "" : "s") + ". Auto-merge is waiting for you to look.",
+            link: "Fix commits",
+            merge: (e) => { if (e) e.stopPropagation(); this.mergeHeldCard(c); },
+            view: (e) => { if (e) e.stopPropagation(); this.setState((s) => ({ activeId: c.id, artifact: null, pane: { ...s.pane, [c.id]: "ci" } })); },
+          }
         : null;
       const ciSkip = ciS && ciS.skipped && c.status !== "ci"
         ? { label: "CI skipped by " + (ciS.cur.by || "someone"), tip: "Moved past CI without a passing run · " + ciS.cur.when }
@@ -8409,7 +8649,7 @@ class Component extends DCLogic {
         splitNote: c.proposal && c.status === "planning" ? "Split proposed · " + c.proposal.children.length + " cards" : "",
         review,
         ciFace,
-        ciBack,
+        ciHeld,
         ciSkip,
         stageGone: stageGone
           ? { label: this.stage(c.status).name + " is switched off for " + projName(c.project), tip: "Switched off in " + projName(c.project) + "'s pipeline settings. Move the card on; the column goes once it's empty." }
@@ -8425,7 +8665,7 @@ class Component extends DCLogic {
           : null,
         holdWait: hd && !hd.gaveUp ? { label: "Merge held · " + this.fmtMins(hd.since), tip: holdTip } : null,
         holdStop: hd && hd.gaveUp ? { label: "Merge needs you", tip: holdTip } : null,
-        autoIdle: !hd && !cf && c.status === "merge" && this.autoMergeOn(c),
+        autoIdle: !hd && !cf && !ciHeld && c.status === "merge" && this.autoMergeOn(c),
         id: c.id,
         isCard: true,
         isPlaceholder: false,
@@ -9227,11 +9467,11 @@ class Component extends DCLogic {
               if (r.back)
                 rows.push({ who: "Ready for merge", what: "sent the card back to CI: " + r.back.detail, when: r.when, isLink: true, open: openCi });
               if (r.outcome === "fixed")
-                rows.push({ who: "CI", what: pass + nm + word + ". The fix agent fixed it in place and re-ran every step", when: r.when, isLink: true, open: openCi });
+                rows.push({ who: "CI", what: pass + nm + word + ". Fix " + ciA.runs.slice(0, i + 1).filter((q) => q.outcome === "fixed").length + " of " + ciA.cap + (r.commit ? " committed " + r.commit : "") + " and every step re-ran", when: r.when, isLink: true, open: openCi });
               else if (r.outcome === "fixing")
                 rows.push({ who: "CI", what: pass + nm + word + ". Fix agent working, attempt " + ciA.attempt + " of " + ciA.cap, when: r.when, isLink: true, open: openCi });
-              else if (r.outcome === "returned")
-                rows.push({ who: "CI", what: "sent the card back to code review: " + nm + " still failing after " + ciA.fixesDone + " fix attempts", when: r.when, isLink: true, open: openCi });
+              else if (r.outcome === "stuck")
+                rows.push({ who: "CI", what: "stopped for you: " + this.ciStuckReason(ciA).replace(/\.$/, ""), when: r.when, isLink: true, open: openCi });
               else if (r.outcome === "blocked")
                 rows.push({ who: "CI", what: pass + "blocked, the forge's checks can't be read", when: r.when, isLink: true, open: openCi });
               else if (r.outcome === "passed")
@@ -10182,14 +10422,15 @@ class Component extends DCLogic {
       ci: hasCi ? this.ciPaneVm(active, ciData, setPane) : { passes: [] },
       ciEmptyVm: ciEmpty ? this.ciEmptyVm(active) : {},
       ciLog: this.ciLogVm(),
-      ciBanner: (() => {
-        if (!ciData || !ciData.returned || !active || active.status !== "review") return null;
-        const fs = ciData.steps[ciData.failIx] || { name: "A step" };
+      ciMergeHeld: (() => {
+        const h = active ? this.ciHeldFor(active) : null;
+        if (!h) return null;
         return {
-          title: "Sent back from CI · " + fs.name + " still failing",
-          reason: ciData.cur.note || "",
-          meta: ciData.fixesDone + " of " + ciData.cap + " fix attempts used · " + ciData.cur.when + " · the failures are attached to this review round as a finding",
-          open: setPane("ci"),
+          title: "CI made " + h.n + " fix commit" + (h.n === 1 ? "" : "s") + ". Auto-merge is waiting for you to look.",
+          meta: "Auto-merge is on for this card, but holds whenever CI changed code. Merge once you've looked, or turn auto-merge off to keep it here.",
+          link: "View the fix commits · " + h.commits.join(", "),
+          view: setPane("ci"),
+          merge: () => this.mergeHeldCard(active),
         };
       })(),
       reviewTabStyle: paneBtn(pane === "review", false),
