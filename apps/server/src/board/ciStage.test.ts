@@ -1243,6 +1243,31 @@ it.effect.each(["failed", "passed"] as const)(
     }),
 );
 
+it.effect("Stop CI landing as a fix begins wins: no fix agent starts on the held pass", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([{ result: "failed", failedIndex: 1, exitCode: 1 }]);
+    const subject = card("stop-begin-fix", review);
+    // The stop lands after begin-fix, just before the fix step is selected.
+    const stopper: { stop: Effect.Effect<unknown> | null } = { stop: null };
+    const onDispatch = (command: HarnessCommand) => {
+      const stop = stopper.stop;
+      if (stop === null || command.type !== "board.card.select-step") return Effect.void;
+      stopper.stop = null;
+      return Effect.asVoid(stop);
+    };
+    yield* withGovernor({ board: boardWith([subject]), settings, onDispatch }, (h) =>
+      Effect.gen(function* () {
+        stopper.stop = h.reactor.retryCi(subject.id, "stop");
+        yield* enterCiAndRun(h, subject, 1);
+        const held = yield* live(h, subject.id);
+        assert.strictEqual(held.stage, ci);
+        assert.strictEqual(held.ci?.phase, "held");
+        assert.strictEqual(stepStatus(yield* h.board, subject.id), null);
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
 it.effect("Stop CI while a fix agent works abandons its step and holds the pass", () =>
   Effect.gen(function* () {
     const { runner } = yield* scriptedRunner([{ result: "failed", failedIndex: 1, exitCode: 1 }]);

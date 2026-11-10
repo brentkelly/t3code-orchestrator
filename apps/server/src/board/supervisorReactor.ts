@@ -4377,7 +4377,7 @@ const make = Effect.gen(function* () {
         });
         if (!began) return;
         const board = yield* readBoard;
-        yield* dispatch({
+        const selected = yield* dispatchLanded({
           type: "board.card.select-step",
           commandId: yield* commandId("select-step"),
           cardId: card.id,
@@ -4397,6 +4397,7 @@ const make = Effect.gen(function* () {
           baseTipAtRoundStart: yield* baseTipForPlan(card, false),
           createdAt: yield* nowIso,
         });
+        if (!selected) return;
         yield* provisionPlacedBuildStep(card.id);
         yield* schedule();
         return;
