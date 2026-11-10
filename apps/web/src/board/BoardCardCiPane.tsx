@@ -125,18 +125,23 @@ function RunningTimer({ startedAt }: { readonly startedAt: string }) {
   return <>{formatBoardCiTimer(nowMs - Date.parse(startedAt))}</>;
 }
 
-/** "Running 12 / 60 min", the over-limit minutes in the warning tone, and
-    "No output for N min" on a silent step (T3O-60). */
+/** The step's limit once it is near (T3O-68) and "No output for N min" while
+    the script is quiet (T3O-60), each on its own line; nothing for a healthy
+    step, whose time the right-hand timer already shows. */
 function RunningMeta({ step }: { readonly step: BoardCiPassStep }) {
   const nowMs = useNowSecond();
-  const { elapsed, limit, over } = boardCiStepLimit(step, nowMs);
+  const limit = boardCiStepLimit(step, nowMs);
   const silence = boardCiSilenceLabel(step.silentSince, nowMs);
+  if (limit === null && silence === null) return null;
   return (
-    <span className="text-[11px] text-muted-foreground tabular-nums">
-      Running <span className={cn(over && "font-medium text-warning-foreground")}>{elapsed}</span> /{" "}
-      {limit} min
-      {silence === null ? null : <span className="text-warning-foreground">{` · ${silence}`}</span>}
-    </span>
+    <>
+      {limit === null ? null : (
+        <span className="text-[11px] text-warning-foreground tabular-nums">{limit}</span>
+      )}
+      {silence === null ? null : (
+        <span className="text-[11px] text-warning-foreground tabular-nums">{silence}</span>
+      )}
+    </>
   );
 }
 
@@ -835,8 +840,15 @@ export function BoardCardCiPane({
                 {currentSummary}
               </span>
               <span className="flex-1" />
-              <span className="text-[11px] text-muted-foreground">
-                {formatRelativeTimeLabel(current.startedAt)}
+              <span className="text-[11px] text-muted-foreground tabular-nums">
+                {/* T3O-68: a live round shows its total time; the chip says Running. */}
+                {live &&
+                current.finishedAt === null &&
+                (ci?.phase === "queued" || ci?.phase === "running") ? (
+                  <RunningTimer startedAt={current.startedAt} />
+                ) : (
+                  formatRelativeTimeLabel(current.startedAt)
+                )}
               </span>
             </div>
             <PassSteps

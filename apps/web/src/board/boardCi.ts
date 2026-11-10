@@ -495,14 +495,24 @@ function boardCiElapsedMinutes(startedAt: string | null, nowMs: number): number 
   return Number.isNaN(startedMs) ? 0 : Math.max(0, Math.floor((nowMs - startedMs) / 60_000));
 }
 
-/** A running step's time against its limit (T3O-60): `12 / 60 min`, and
-    whether it is over. */
+/** The share of a step's limit after which the row names it (T3O-68). */
+const BOARD_CI_LIMIT_WARN_FRACTION = 0.85;
+
+/** A running step's limit, named only once it matters (T3O-68): "Stops at N
+    min" from 85% of it, "Over its N min limit" past it, otherwise null. */
 export function boardCiStepLimit(
   step: { readonly startedAt: string | null; readonly timeoutMinutes: number },
   nowMs: number,
-): { readonly elapsed: number; readonly limit: number; readonly over: boolean } {
-  const elapsed = boardCiElapsedMinutes(step.startedAt, nowMs);
-  return { elapsed, limit: step.timeoutMinutes, over: elapsed > step.timeoutMinutes };
+): string | null {
+  const startedMs = step.startedAt === null ? Number.NaN : Date.parse(step.startedAt);
+  if (Number.isNaN(startedMs)) return null;
+  const elapsedMs = nowMs - startedMs;
+  const limitMs = step.timeoutMinutes * 60_000;
+  if (elapsedMs > limitMs) return `Over its ${step.timeoutMinutes} min limit`;
+  if (elapsedMs >= limitMs * BOARD_CI_LIMIT_WARN_FRACTION) {
+    return `Stops at ${step.timeoutMinutes} min`;
+  }
+  return null;
 }
 
 /** How far a progress line says a step got, 0 to 1, or null with no total. */
