@@ -1,4 +1,3 @@
-import { ThreadId } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -10,7 +9,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { boardKeptWorktrees, isBoardCardThread } from "./upstreamGuards.ts";
+import { boardKeptWorktrees } from "./upstreamGuards.ts";
 import { CENTRAL_OWNER_MARKER } from "./workspace/LocalBoardWorkspace.ts";
 
 const database = SqlitePersistence.layerMemory.pipe(
@@ -29,36 +28,6 @@ const insertCard = (cardId: string, worktree: unknown) =>
         ${worktree === null ? null : JSON.stringify(worktree)})
     `;
   });
-
-describe("isBoardCardThread", () => {
-  it.effect("answers true for linked, tombstoned and relayed threads only", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`
-        INSERT INTO boards.board_card_thread_links (thread_id, card_id, role, linked_at, tombstoned_at)
-        VALUES ('thread-linked', 'card-1', 'building', ${NOW}, NULL),
-               ('thread-tombstoned', 'card-1', 'planning', ${NOW}, ${NOW})
-      `;
-      yield* sql`
-        INSERT INTO boards.board_relayed_threads (thread_id, central_environment_id, created_at)
-        VALUES ('thread-relayed', 'env-central', ${NOW})
-      `;
-      const check = (id: string) => isBoardCardThread(sql, ThreadId.make(id));
-      assert.isTrue(yield* check("thread-linked"));
-      assert.isTrue(yield* check("thread-tombstoned"));
-      assert.isTrue(yield* check("thread-relayed"));
-      assert.isFalse(yield* check("thread-plain"));
-    }).pipe(Effect.provide(database)),
-  );
-
-  it.effect("fails closed when the board tables cannot be read", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`DROP TABLE boards.board_relayed_threads`;
-      assert.isTrue(yield* isBoardCardThread(sql, ThreadId.make("thread-plain")));
-    }).pipe(Effect.provide(database)),
-  );
-});
 
 /** A linked worktree whose private git dir sits elsewhere, as git lays one out. */
 const linkedWorktree = (root: string, name: string, centralOwned: boolean) =>

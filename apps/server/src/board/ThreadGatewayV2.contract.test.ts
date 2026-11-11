@@ -450,6 +450,12 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         `;
         assert.isFalse((yield* threads.threadState(threadId))!.alive);
         assert.isNull(yield* threads.pendingTurnStartAt(threadId));
+
+        // An unreadable outbox fails closed: the board waits rather than racing a continuation.
+        yield* sql`ALTER TABLE orchestration_v2_effect_outbox RENAME TO outbox_unreadable`;
+        const unreadable = (yield* threads.threadState(threadId))!.alive;
+        yield* sql`ALTER TABLE outbox_unreadable RENAME TO orchestration_v2_effect_outbox`;
+        assert.isTrue(unreadable);
       }),
     );
 

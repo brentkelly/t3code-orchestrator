@@ -27,7 +27,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 // T3o: card threads share their card's worktree, so they skip settle scripts.
-import { isBoardCardThread } from "../board/upstreamGuards.ts";
+import { isBoardKeptWorktree } from "../board/upstreamGuards.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -606,10 +606,10 @@ export const make = Effect.gen(function* () {
       const settled = yield* projections.getThread(threadId);
       if (settled.settledOverride !== "settled") return;
       yield* terminals.closeOnSettle({ threadId });
-      // T3o: a card's worktree outlives its threads; the board runs the settle script at retirement.
-      if (yield* isBoardCardThread(sql, threadId)) return;
       const worktreePath = settled.worktreePath;
       if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
+      // T3o: a card's worktree outlives its threads; the board runs the settle script at retirement.
+      if (yield* isBoardKeptWorktree(sql, fileSystem, path, worktreePath)) return;
       // Recheck after closing and worktree I/O; re-engaged threads must not be cleaned up.
       const thread = yield* projections.getThread(threadId);
       if (thread.settledOverride !== "settled") return;

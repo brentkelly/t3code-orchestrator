@@ -1,33 +1,12 @@
 // Board checks that upstream-owned services call through one-line `T3o:` seams. They are plain
 // SQL functions rather than a service because the settlement worker and the storage sweep sit
 // outside the board's layer graph. Board tables exist whenever the database is open.
-import type { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 import type * as SqlClient from "effect/sql/SqlClient";
 
 import { CENTRAL_OWNER_MARKER } from "./workspace/LocalBoardWorkspace.ts";
-
-/**
- * Whether a card links this thread (tombstoned links included) or, on a worker, a central board
- * spawned it. Fails closed: a read error answers true.
- */
-export const isBoardCardThread = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
-  sql<{ readonly found: number }>`
-    SELECT 1 AS found FROM boards.board_card_thread_links WHERE thread_id = ${threadId}
-    UNION ALL
-    SELECT 1 AS found FROM boards.board_relayed_threads WHERE thread_id = ${threadId}
-    LIMIT 1
-  `.pipe(
-    Effect.map((rows) => rows.length > 0),
-    Effect.catch((error) =>
-      Effect.logWarning("board card thread check failed; treating it as a card thread", {
-        threadId,
-        error,
-      }).pipe(Effect.as(true)),
-    ),
-  );
 
 /**
  * Whether a worker's checkout belongs to a central board: the marker sits in the worktree's own
@@ -74,4 +53,19 @@ export const boardKeptWorktrees = (
         error,
       }).pipe(Effect.as((_worktreePath: string) => Effect.succeed(true))),
     ),
+  );
+
+/**
+ * Whether a settled thread's worktree is one the board still owns, so its settle script waits for
+ * the card's retirement. Keyed on the worktree, not the link: an unlinked thread can still sit in a
+ * card's checkout, and a linked one can have its own. Read errors answer true.
+ */
+export const isBoardKeptWorktree = (
+  sql: SqlClient.SqlClient,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  worktreePath: string,
+) =>
+  boardKeptWorktrees(sql, fs, path).pipe(
+    Effect.flatMap((kept) => kept(path.resolve(worktreePath))),
   );

@@ -555,7 +555,13 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
       Effect.map(
         Option.exists((effect) => effect.status === "pending" || effect.status === "running"),
       ),
-      Effect.orElseSucceed(() => false),
+      // Fail closed like the other guards: a pending turn only defers recovery to the next tick.
+      Effect.catch((error) =>
+        Effect.logWarning("restart continuation read failed; treating the turn as pending", {
+          runId,
+          error,
+        }).pipe(Effect.as(true)),
+      ),
     );
   };
 
