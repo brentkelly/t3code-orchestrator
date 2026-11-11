@@ -30,10 +30,20 @@ describe("how a card's cost is written", () => {
   });
 
   it("never writes $0 for a card that reported nothing, and the face may say so in words", () => {
-    const empty = usage({ tokens: 0, costUsd: 0, costKnown: false, partial: true });
+    const empty = usage({
+      tokens: 0,
+      costUsd: 0,
+      costKnown: false,
+      partial: true,
+      providers: [{ provider: "codex", tokens: 0, costUsd: 0 }],
+    });
     expect(formatBoardUsageCost(empty).text).toBe("—");
     expect(formatBoardUsageCost(empty, { noUsageWord: true }).text).toBe("no usage");
     expect(formatBoardUsageCost(empty).known).toBe(false);
+    // Nothing recorded here at all, only earlier work on a worker: not the provider's doing.
+    const historyOnly = formatBoardUsageCost({ ...empty, providers: [] }, { noUsageWord: true });
+    expect(historyOnly.text).toBe("—");
+    expect(historyOnly.tooltip).toContain("worker");
   });
 
   it("names the steps behind ≈ and + in its tooltip", () => {

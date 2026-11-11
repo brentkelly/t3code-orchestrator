@@ -34,6 +34,7 @@ export interface BoardUsageMarks {
   readonly estimated?: boolean | undefined;
   readonly partial?: boolean | undefined;
   readonly tokens: number;
+  readonly providers?: ReadonlyArray<unknown>;
 }
 
 export function formatBoardUsd(costUsd: number): string {
@@ -64,6 +65,14 @@ export function formatBoardUsageCost(
     return { text: BOARD_USAGE_UNKNOWN, known: false, tooltip: "No usage recorded yet." };
   }
   if (usage.costKnown !== true) {
+    // No rows at all, only a partial mark: the card's earlier work ran on a worker.
+    if (usage.tokens === 0 && usage.partial === true && usage.providers?.length === 0) {
+      return {
+        text: BOARD_USAGE_UNKNOWN,
+        known: false,
+        tooltip: "Earlier work ran on a worker before usage was tracked, so it is not counted.",
+      };
+    }
     const nothingReported = usage.tokens === 0;
     return {
       text: nothingReported && options.noUsageWord === true ? "no usage" : BOARD_USAGE_UNKNOWN,
