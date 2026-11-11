@@ -202,7 +202,7 @@ type ThreadShellLookup = (threadId: ThreadId) => OrchestrationV2ThreadShell | un
 
 /** Every live-linked thread id of a card. Falls back to `activeThreadId` when
     `boardCardThreads` has not arrived, so the aggregate degrades rather than empties. */
-export function liveCardThreadIds(
+function liveCardThreadIds(
   card: BoardCardShell,
   cardThreads: ReadonlyArray<BoardCardThreadShell> | undefined,
 ): ReadonlyArray<ThreadId> {
@@ -211,6 +211,20 @@ export function liveCardThreadIds(
     .map((entry) => entry.threadId);
   if (linked.length > 0) return linked;
   return card.activeThreadId === null ? [] : [card.activeThreadId];
+}
+
+/** `liveCardThreadIds` for many cards: indexes the links once instead of per card. */
+export function indexLiveCardThreadIds(
+  cardThreads: ReadonlyArray<BoardCardThreadShell> | undefined,
+): (card: BoardCardShell) => ReadonlyArray<ThreadId> {
+  const linkedByCard = new Map<string, Array<ThreadId>>();
+  for (const entry of cardThreads ?? []) {
+    const linked = linkedByCard.get(entry.cardId);
+    if (linked === undefined) linkedByCard.set(entry.cardId, [entry.threadId]);
+    else linked.push(entry.threadId);
+  }
+  return (card) =>
+    linkedByCard.get(card.cardId) ?? (card.activeThreadId === null ? [] : [card.activeThreadId]);
 }
 
 /** Aggregated across every live-linked thread, matching the server's snapshot enrichment

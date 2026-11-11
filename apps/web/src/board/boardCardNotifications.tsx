@@ -4,7 +4,7 @@
  * in the client, so nothing alerts while no client is open.
  */
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
-import { liveCardThreadIds } from "@t3tools/client-runtime/state/shell";
+import { indexLiveCardThreadIds } from "@t3tools/client-runtime/state/shell";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import type { AnyRouter } from "@tanstack/react-router";
@@ -112,6 +112,9 @@ export function startBoardCardNotifications(
   let watched: { environmentId: EnvironmentId; unsubscribe: () => void } | null = null;
   let wakeTimer: ReturnType<typeof setTimeout> | null = null;
   const withProgress = new WeakMap<BoardCardShell, BoardCardShell>();
+  // Identity of every atom `evaluate` read last time: the board atom derives from the
+  // shell, so one shell change notifies two subscriptions with nothing new for the second.
+  let lastInputs: ReadonlyArray<unknown> = [];
 
   const syncBadge = () => setBoardNotificationBadge(pending.size);
   const clearPending = () => {
@@ -208,9 +211,25 @@ export function startBoardCardNotifications(
     }
   };
 
+  const readInputs = (environmentId: EnvironmentId): ReadonlyArray<unknown> => [
+    registry.get(boardEnvironment.boardAtom(environmentId)),
+    registry.get(environmentShell.stateValueAtom(environmentId)),
+    registry.get(boardEnvironment.workersAtom(environmentId)),
+    registry.get(boardEnvironment.stageListAtom(environmentId)),
+    registry.get(boardEnvironment.projectStageConfigsAtom(environmentId)),
+    registry.get(serverEnvironment.settingsValueAtom(environmentId)),
+  ];
+  const evaluateIfChanged = (environmentId: EnvironmentId) => {
+    const inputs = readInputs(environmentId);
+    if (inputs.length === lastInputs.length && inputs.every((value, i) => value === lastInputs[i]))
+      return;
+    evaluate(environmentId);
+  };
+
   const evaluate = (environmentId: EnvironmentId) => {
     if (wakeTimer !== null) clearTimeout(wakeTimer);
     wakeTimer = null;
+    lastInputs = readInputs(environmentId);
     const board = registry.get(boardEnvironment.boardAtom(environmentId));
     const shell = registry.get(environmentShell.stateValueAtom(environmentId));
     const target = resolveWatchedBoard(registry);
@@ -282,10 +301,18 @@ export function startBoardCardNotifications(
       now: Date.now(),
     });
 
+    const liveThreadIdsOf = indexLiveCardThreadIds(board.cardThreads);
+    const doneStageId = boardStageWithRole(stageState, "done")?.stageId ?? null;
+    // Only cards that can alert stand in for their threads' routine alerts.
     const liveThreadIds = new Set<string>();
     for (const card of cards) {
-      for (const threadId of liveCardThreadIds(card, board.cardThreads))
-        liveThreadIds.add(threadId);
+      if (
+        card.archivedAt != null ||
+        card.stage === doneStageId ||
+        isBoardProjectHidden(boardSettings, card.projectId)
+      )
+        continue;
+      for (const threadId of liveThreadIdsOf(card)) liveThreadIds.add(threadId);
     }
     setBoardMutedRoutineThreads(
       settings.boardNotifications.muteRoutineThreadAlerts ? liveThreadIds : null,
@@ -312,12 +339,10 @@ export function startBoardCardNotifications(
       };
     };
     for (const firing of fire) {
-      const cardThreads = liveCardThreadIds(firing.card, board.cardThreads).flatMap(
-        (threadId: ThreadId) => {
-          const thread = threadById.get(threadId);
-          return thread === undefined ? [] : [threadState(thread, firing.card.activeThreadId)];
-        },
-      );
+      const cardThreads = liveThreadIdsOf(firing.card).flatMap((threadId: ThreadId) => {
+        const thread = threadById.get(threadId);
+        return thread === undefined ? [] : [threadState(thread, firing.card.activeThreadId)];
+      });
       if (
         boardCardWaitAlreadyAlerted({
           reason: firing.reason,
@@ -338,7 +363,7 @@ export function startBoardCardNotifications(
 
   const watch = (environmentId: EnvironmentId) => {
     gate.reset();
-    const reevaluate = () => evaluate(environmentId);
+    const reevaluate = () => evaluateIfChanged(environmentId);
     const unsubscribes = [
       registry.subscribe(boardEnvironment.boardAtom(environmentId), reevaluate, {
         immediate: true,
@@ -357,6 +382,7 @@ export function startBoardCardNotifications(
   const unwatch = () => {
     watched?.unsubscribe();
     watched = null;
+    lastInputs = [];
     if (wakeTimer !== null) clearTimeout(wakeTimer);
     wakeTimer = null;
     setBoardMutedRoutineThreads(null);

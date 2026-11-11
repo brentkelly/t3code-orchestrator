@@ -325,15 +325,29 @@ it("toasts in the app, except while that card is open", async () => {
 
 it("stays quiet when the card's thread already alerted for the same question", async () => {
   await using app = setup();
-  const linked = [{ cardId: "card-1", threadId: "thread-1" }];
-  app.setBoard("one", [card({ activeThreadId: "thread-1" as never })], linked);
+  const linked = [
+    { cardId: "card-1", threadId: "thread-1" },
+    { cardId: "card-2", threadId: "thread-2" },
+  ];
+  const done = card({
+    cardId: BoardCardId.make("card-2"),
+    stage: BoardStageId.make("done"),
+    activeThreadId: "thread-2" as never,
+  });
+  app.setBoard("one", [card({ activeThreadId: "thread-1" as never }), done], linked);
   app.start();
   registry.set(shellAtom("one"), live([threadShell("thread-1", true)]));
-  app.setBoard("one", [card({ activeThreadId: "thread-1" as never, awaitingInput: true })], linked);
+  app.setBoard(
+    "one",
+    [card({ activeThreadId: "thread-1" as never, awaitingInput: true }), done],
+    linked,
+  );
   expect(TestNotification.sent).toEqual([]);
   // The card's threads are muted for routine alerts while the mute is on.
   expect(isBoardRoutineThreadAlertMuted("thread-1", "completion", "ready")).toBe(true);
   expect(isBoardRoutineThreadAlertMuted("thread-1", "input", "input")).toBe(false);
+  // A Done card never alerts, so nothing stands in for its thread's own alerts.
+  expect(isBoardRoutineThreadAlertMuted("thread-2", "completion", "ready")).toBe(false);
 });
 
 it("watches the nominated board server and stays silent while it is disconnected", async () => {
