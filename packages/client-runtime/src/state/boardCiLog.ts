@@ -1,11 +1,7 @@
 /**
- * A CI step's log on the client (T3O-60): `board.readCiLog` folded into what
- * the log viewer renders, and the whole file for Download.
- *
- * The viewer keeps at most about 2 MiB of the log, in blocks of lines so a
- * long log renders as a few hundred stable `<pre>` blocks rather than one
- * huge node; past the limit the oldest blocks are dropped. A dropped
- * connection resumes the read from the last byte received.
+ * The viewer keeps at most about 2 MiB of a CI log, in blocks of lines so a long log renders
+ * as a few hundred stable `<pre>` blocks; past the limit the oldest blocks drop. A dropped
+ * connection resumes from the last byte received.
  */
 import {
   BOARD_WS_METHODS,

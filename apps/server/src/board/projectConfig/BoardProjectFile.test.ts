@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * T3O-49: `t3o.json` is read from the project's default branch, whatever the
+ * `t3o.json` is read from the project's default branch, whatever the
  * checkout has open, and an export never overwrites uncommitted edits.
  */
 import * as NodeChildProcess from "node:child_process";
@@ -8,6 +8,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProjectId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -44,7 +45,7 @@ const layerFor = (root: string) =>
     ),
     Layer.provideMerge(GitVcsDriver.layer),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3o-project-file-" })),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 it.live("reads the default branch's file, not the checkout's feature branch", () => {

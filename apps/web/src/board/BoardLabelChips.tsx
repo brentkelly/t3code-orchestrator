@@ -1,10 +1,6 @@
 /**
- * T3o card label chips (t3o-06a): a card renders 0..n chips resolved from the
- * board's label catalogue by id. Designed for the cap — the first two show,
- * the rest collapse into a `+N` overflow, so a heavily-labelled card cannot
- * push the summary out of the card. A tombstoned or unknown label renders
- * muted (its history stays honest) rather than disappearing. Chip foreground
- * is computed from the fill colour's luminance, never hand-picked.
+ * Card label chips: two show, the rest collapse to `+N`. A tombstoned or unknown
+ * label renders muted rather than disappearing; foreground comes from fill luminance.
  */
 import type { BoardLabel, BoardLabelId } from "@t3tools/contracts";
 

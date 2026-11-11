@@ -1,10 +1,6 @@
 /**
- * T3o: a v2 thread shell, read as the board's thread-state source (T3O-59).
- *
- * The board's card state (`deriveBoardCardThreadState` in contracts) predates
- * orchestration-v2 and reads a small structural shape. This is the one place
- * that shape is filled from a v2 shell, shared by the server's thread gateway
- * and the client's live re-derivation so the two cannot disagree.
+ * Fills the board's thread-state shape from a v2 shell, shared by the server's thread
+ * gateway and the client's live re-derivation so the two cannot disagree.
  */
 import type { BoardThreadStateSource, OrchestrationV2ThreadShell } from "@t3tools/contracts";
 
@@ -27,11 +23,8 @@ const holdsAnswerableRequest = (thread: BoardThreadShellFields): boolean =>
   thread.pendingRuntimeRequest != null && thread.pendingRuntimeRequest.kind !== "auth_refresh";
 
 /**
- * The session status the board reads. v2 has no per-thread session status;
- * the live run's activity stands in for it. A `waiting` run has finished its
- * provider turn and only awaits its checkpoint, so the board's turn has ended
- * (the gateway signals it there); only a request it still holds keeps it
- * mid-turn.
+ * v2 has no per-thread session status; the live run's activity stands in. A `waiting`
+ * run only awaits its checkpoint, so only a request it still holds keeps it mid-turn.
  */
 export function boardThreadSessionStatus(
   thread: BoardThreadShellFields,
@@ -53,12 +46,10 @@ export function boardThreadSessionStatus(
 }
 
 /**
- * Background work left running after the turn ended (T3O-20). Only work that
- * wakes the agent counts — a command left running (a dev server) does not
- * (upstream #14872), nor a monitor the agent is not waiting on (#24610).
- * Awaited monitors alone read as `monitoring`.
+ * Only work that wakes the agent counts: not a command left running (a dev server), nor
+ * a monitor the agent is not waiting on. Awaited monitors alone read as `monitoring`.
  */
-export function boardThreadBackgroundLiveness(
+function boardThreadBackgroundLiveness(
   thread: BoardThreadShellFields,
 ): "working" | "monitoring" | null {
   const status = boardThreadSessionStatus(thread);

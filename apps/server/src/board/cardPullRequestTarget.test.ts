@@ -1,5 +1,5 @@
 /**
- * Naming a pull request to link to a card (T3O-18): what the card's input
+ * Naming a pull request to link to a card: what the card's input
  * and the agent tools accept, and the refusals that keep a link on the
  * card's own repository.
  */
@@ -96,7 +96,7 @@ describe("resolveCardPullRequestTarget", () => {
   });
 });
 
-// T3O-24: upstream's identity prefers an `upstream` remote, so in a fork it
+// Upstream's identity prefers an `upstream` remote, so in a fork it
 // names the repository the board's pull requests are NOT on.
 describe("resolveCardPullRequestTarget in a fork", () => {
   const upstream: RepositoryIdentity = {

@@ -1,12 +1,7 @@
 /**
- * T3o (T3O-66, D22; prototype 5.5–5.6): force-moving a card off a worker the
- * board can't reach — offline, or removed.
- *
- * Nothing on the old worker can be checked, so the card continues from its
- * branch on the remote, and whatever wasn't pushed is abandoned there: the
- * move stays disabled until the human ticks that they accept it. With no
- * branch on the remote there is nothing to continue from, and a second
- * confirmation offers to restart the card's Build from its base instead.
+ * Force-moving a card off an unreachable worker. The card continues from its
+ * remote branch and unpushed work is abandoned, so the human must accept that.
+ * With no remote branch, a second confirmation offers to restart Build.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
@@ -16,7 +11,7 @@ import {
   type BoardWorkersState,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -76,7 +71,7 @@ export function BoardCardForceMoveDialog(props: {
 }) {
   const { card, environmentId, source } = props;
   const move = useAtomCommand(boardEnvironment.cardWorkerMove, { reportFailure: false });
-  const targets = useMemo(() => {
+  const targets = (() => {
     const picked = props.choices.filter(
       (choice) => choice.selectable && choice.workerId !== props.sourceWorkerId,
     );
@@ -94,7 +89,7 @@ export function BoardCardForceMoveDialog(props: {
             cloning: false,
           } satisfies BoardWorkerChoice,
         ];
-  }, [props.choices, props.sourceWorkerId]);
+  })();
   const initial =
     targets.find((choice) => choice.workerId === props.workers.defaultWorkerId)?.workerId ??
     targets[0]?.workerId ??
@@ -118,6 +113,7 @@ export function BoardCardForceMoveDialog(props: {
     (checked !== null && checked.target === target ? checked.phase : { kind: "checking" });
   const setPhase = setAction;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the board server whether the card can be forced onto the target; the answer arrives later.
   useEffect(() => {
     if (!open || target === null) return;
     let live = true;

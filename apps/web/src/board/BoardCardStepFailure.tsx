@@ -1,25 +1,7 @@
 /**
- * T3o: the card's step-failure banner (t3o-30, D3).
- *
- * A stalled step is the board saying "nobody is working on this and nobody will
- * until you act" — but until now it said that only as a badge, with no reason
- * and nothing to press. The worst case was a step whose provider never started:
- * the card rendered a spinner for a thread that had already died, the error
- * lived inside a thread the card would not point at, and the only exit was to
- * archive the card.
- *
- * So this states the reason in the provider's own words. The ways out —
- * Continue, Restart, or move on — live in the card's actions as one split
- * button (T3O-13). The banner used to carry its own Restart, hidden whenever
- * ANY linked thread was busy, which stranded a card whose stalled step had no
- * thread at all while a human was talking to an earlier phase's.
- *
- * T3O-22 splits its tone by whether anything is coming. A stall the board will
- * end by itself — a quota park waiting for its provider's window, a backoff rung
- * waiting for its time — is amber and says it is waiting; only a stall that has
- * stopped until a human acts keeps the red "stopped" treatment. Red on a card
- * counting down to its own resume was the loudest thing on screen saying the
- * opposite of the card's own chip.
+ * The step-failure banner states why a step stalled in the provider's own words.
+ * A stall the board will end by itself (quota park, backoff) is amber and says it
+ * is waiting; only one stopped until a human acts is red.
  */
 import { TriangleAlertIcon } from "lucide-react";
 
@@ -32,7 +14,7 @@ export function BoardCardStepFailure(props: {
   /** The provider's error text, or null for a stall with no recorded reason —
       recovery exhausting its budget, which the sentence covers instead. */
   readonly error: string | null;
-  /** Whether the BOARD will start this step again by itself (T3O-22) —
+  /** Whether the BOARD will start this step again by itself —
       `boardStallIsWaiting` off the same shell field the card face's chip reads,
       so the board and the open modal cannot disagree about whether anything is
       coming. */

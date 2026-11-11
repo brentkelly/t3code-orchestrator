@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-63): the worker's half of the MCP relay, on its own.
+ * T3o: the worker's half of the MCP relay, on its own.
  */
 import {
   AuthSessionId,
@@ -9,7 +9,9 @@ import {
   type BoardMcpRelayOutcome,
   type BoardMcpRelayRequest,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, describe, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -67,7 +69,7 @@ describe("McpRelayHost", () => {
       yield* host.respond({ callId: request.callId, outcome: created }, SESSION);
       assert.deepStrictEqual(yield* Fiber.join(retry), created);
       assert.isTrue(Option.isNone(yield* Queue.poll(sent)));
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("a retry that comes a full timeout later still rejoins the call", () =>
@@ -85,7 +87,7 @@ describe("McpRelayHost", () => {
       yield* host.respond({ callId: request.callId, outcome: created }, SESSION);
       assert.deepStrictEqual(yield* Fiber.join(retry), created);
       assert.isTrue(Option.isNone(yield* Queue.poll(sent)));
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("a timed-out call nobody retries is dropped after its grace period", () =>
@@ -111,7 +113,7 @@ describe("McpRelayHost", () => {
       assert.deepStrictEqual(delivered.params, { title: "Next" });
       yield* host.respond({ callId: delivered.callId, outcome: created }, SESSION);
       yield* Fiber.join(other);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("a different call after a timeout is sent as a new call", () =>
@@ -128,7 +130,7 @@ describe("McpRelayHost", () => {
       assert.notStrictEqual(otherRequest.callId, firstRequest.callId);
       yield* host.respond({ callId: otherRequest.callId, outcome: created }, SESSION);
       assert.deepStrictEqual(yield* Fiber.join(other), created);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
 
@@ -156,7 +158,7 @@ describe("McpRelayHost, parallel timeouts on one thread", () => {
       assert.deepStrictEqual(yield* Fiber.join(retryTwo), answer("Two"));
       // Neither retry was sent as a call of its own.
       assert.isTrue(Option.isNone(yield* Queue.poll(sent)));
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("both of two timed-out calls nobody retries are dropped after their grace", () =>
@@ -185,7 +187,7 @@ describe("McpRelayHost, parallel timeouts on one thread", () => {
       assert.deepStrictEqual(delivered.params, { title: "Next" });
       yield* host.respond({ callId: delivered.callId, outcome: created }, SESSION);
       yield* Fiber.join(next);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
 
@@ -233,6 +235,6 @@ describe("McpRelayHost, a board's session", () => {
       yield* Fiber.join(holding);
       yield* host.respond({ callId: again.callId, outcome: created }, REPLACEMENT);
       assert.deepStrictEqual(yield* Fiber.join(forwarded), created);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });

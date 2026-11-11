@@ -1,5 +1,5 @@
 /**
- * The CI stage's executor and CI records (T3O-44/57), pure: what follows entry,
+ * The CI stage's executor and CI records, pure: what follows entry,
  * a failed pass and a fix agent's report, and how each record changes the
  * card and its pass rows.
  */
@@ -207,7 +207,7 @@ describe("CiStageExecutor", () => {
       reason:
         "The fix agent couldn't fix Test: The tests need a database this worktree doesn't have.",
     });
-    // The T3O-44 word means the same.
+    // The older word means the same.
     expect(
       plan({
         card: fixing,
@@ -265,7 +265,7 @@ describe("CiStageExecutor", () => {
     expect(finding).toContain('CI step "Build"');
     expect(finding.length).toBeLessThanOrEqual(BOARD_CI_SHELL_FINDING_MAX);
     expect(finding).toContain("line 199");
-    // T3O-61: each failure leads with what failed and why.
+    // Each failure leads with what failed and why.
     const headlined = boardCiSendBackFinding([
       {
         ...failure,

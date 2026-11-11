@@ -1,11 +1,7 @@
 /**
- * T3o (T3O-65, D11; prototype screen 3): the per-worker Concurrency settings
- * as pure functions — the patches the steppers write, the over-the-board-limit
- * warning, and a collapsed worker's one-line summary.
- *
- * Patches go through the stock `deepMerge`, which key-unions maps and cannot
- * delete a key: a cleared limit or cap is a retained `null`, never a missing
- * entry.
+ * Per-worker Concurrency settings as pure functions. Patches go through
+ * `deepMerge`, which cannot delete a key, so a cleared value is a retained
+ * `null`.
  */
 import {
   BOARD_LOCAL_WORKER_ID,

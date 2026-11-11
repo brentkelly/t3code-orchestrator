@@ -1,5 +1,5 @@
 /**
- * T3O-59 — the CI record decider: a held pass keeps why (and whether the
+ * The CI record decider: a held pass keeps why (and whether the
  * machine was to blame), and a late report from a held or stopped pass can't
  * move the card's steps or start a fix.
  */
@@ -19,6 +19,8 @@ import * as Schema from "effect/Schema";
 
 import { makeBoardCard, NOW } from "../supervisorHarness.testkit.ts";
 import { decideBoardCiRecord } from "./ciRecord.ts";
+
+const decodeRecordCiCommand = Schema.decodeSync(BoardCardRecordCiCommand);
 
 const ci = (phase: BoardCardCi["phase"]): BoardCardCi => ({
   runId: "run-1",
@@ -167,7 +169,7 @@ it("a fix's re-run starts only on a pass still being fixed", () => {
 });
 
 it("a finish-pass recorded before held reasons existed still decodes", () => {
-  const decoded = Schema.decodeUnknownSync(BoardCardRecordCiCommand)({
+  const decoded = decodeRecordCiCommand({
     type: "board.card.record-ci",
     commandId: "cmd-old",
     cardId: "card-ci",

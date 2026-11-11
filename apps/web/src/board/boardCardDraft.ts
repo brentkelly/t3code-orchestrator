@@ -1,16 +1,7 @@
 /**
- * T3o new-card draft (T3O-26) — the pure half.
- *
- * Everything typed into the create dialog is kept while the dialog is closed,
- * so an accidental Esc, backdrop click or ✕ costs nothing. This module owns
- * the shape that is stored, the rule for what counts as a draft at all, and
- * the sanitising restore that maps a stored record back onto a board whose
- * projects, cards, labels and stages have moved on since. The store
- * (`boardCardDraftStore.ts`) only persists what these functions produce.
- *
- * Attachments are kept by REFERENCE, never by bytes: a staged file is already
- * a server-side pending upload (t3o-32, K6), so the draft holds the pending id
- * and the card claims it at create time exactly as an in-session row would.
+ * The new-card draft, pure half: the stored shape, what counts as a draft, and
+ * the sanitising restore. Attachments are kept by reference: a staged file is
+ * already a server-side pending upload the card claims at create time.
  */
 import {
   BOARD_CARD_ATTACHMENTS_MAX,
@@ -140,20 +131,9 @@ export interface BoardCardDraftRestore {
 }
 
 /**
- * Map a stored draft onto the board as it is now.
- *
- * The draft's own stage wins over the stage the dialog was opened on (the
- * brief, and the prototype): a card drafted for Planning is a Planning card,
- * and the picker in the identity row shows which stage it will land in. A
- * stage this scope no longer offers falls back to the opened one, and the
- * result is always clamped to the offered stages.
- *
- * Everything else is filtered against the live snapshot: a project that is
- * gone takes its base branch with it (the same reasoning as the dialog's
- * project-switch handler), dependencies must still exist and stay inside this
- * sub-board — but not inside the chosen project, since a cross-project edge is
- * legal (T3O-33, D3) and the picker offers those too — deleted labels drop out,
- * and attachment references past the pending-upload TTL are not offered back.
+ * Map a stored draft onto the board as it is now. The draft's stage wins over
+ * the opened one, clamped to offered stages. Gone projects, cards and labels
+ * drop out, as do attachments past the pending-upload TTL.
  */
 export function restoreBoardCardDraft(input: {
   readonly draft: BoardCardDraft;
@@ -177,12 +157,8 @@ export function restoreBoardCardDraft(input: {
   const projectId = projectKnown ? draft.projectId : input.fallbackProjectId;
 
   const cardsById = new Map(input.cards.map((card) => [card.cardId as string, card]));
-  // A dependency survives on the card still existing, not on which project it
-  // sits in (T3O-33, D3): `dependsOn` stores card ids, the decider has never
-  // enforced a same-project rule, and the dialog's picker now offers foreign
-  // cards — so a restored draft must not quietly drop an edge the picker was
-  // happy to create. The sub-board rule still binds: a child may only depend
-  // on its siblings, and the decider refuses anything else.
+  // A dependency survives while the card exists, in any project (cross-project
+  // edges are legal). Inside a sub-board a child may only depend on siblings.
   const dependsOn = draft.dependsOn.filter((cardId, index) => {
     if (draft.dependsOn.indexOf(cardId) !== index) return false;
     const card = cardsById.get(cardId as string);

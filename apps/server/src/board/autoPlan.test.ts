@@ -1,12 +1,7 @@
 /**
- * Auto-planning through the live reactor (T3O-32, T3O-38).
- *
- * Auto-plan has the agent decide what is left. Alone, its plan waits at the
- * human gate; with Auto-build too it is approved — decisions flagged unclear
- * included, since the decision log lives outside the read model and never
- * gates a move — and built. A group's toggles reach its children unless they
- * set their own. The card's current planning thread is steered, never
- * replaced.
+ * Auto-planning through the live reactor. Alone, the plan waits at the human gate; with Auto-build
+ * it is approved (unclear decisions included) and built. A group's toggles reach children that set
+ * none, and the card's current planning thread is steered, never replaced.
  */
 import {
   BOARD_AUTO_PLAN_INSTRUCTION,
@@ -51,7 +46,7 @@ const PLANNING = String(BOARD_SEED_STAGE_IDS.planning);
 const settings = settingsWith({
   building: [codexStep],
   planning: codexStep,
-  // The real planning interview is human-in-the-loop (t3o-34).
+  // The real planning interview is human-in-the-loop.
   planningHumanInLoop: true,
   globalMaxConcurrent: 3,
 });
@@ -137,7 +132,7 @@ it.effect("Auto-plan alone plans unattended and leaves the plan at the approval 
 
         yield* h.pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
         const after = yield* h.board;
-        // Not approved, and not D8-advanced either: the plan waits for a human.
+        // Not approved, and not auto-advanced either: the plan waits for a human.
         assert.strictEqual(cardStage(after, id), BOARD_SEED_STAGE_IDS.planning);
         assert.strictEqual(cardOf(after.cards, "gated")?.autoPlan?.endedAt, null);
 

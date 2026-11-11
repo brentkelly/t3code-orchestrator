@@ -1,12 +1,7 @@
 /**
- * T3o searchable add control (t3o-06): a button that opens a popover with a
- * filter box over a set of options — shared by the detail pane's dependency
- * and thread-adoption pickers and the create dialog's initial-dependency
- * picker. Pure: options in, a pick out.
- *
- * `BoardPickerSearchBody` is the popover's contents on their own, so the card
- * thread pane's add MENU (t3o-14) can swap the same search into a popover it
- * already owns rather than nesting a second one inside a menu item.
+ * A searchable add control: a button opening a filtered option list. Pure:
+ * options in, a pick out. `BoardPickerSearchBody` is the contents alone, for
+ * menus that already own a popover.
  */
 import type { ProjectIconColor, ProjectId } from "@t3tools/contracts";
 import { PlusIcon } from "lucide-react";
@@ -25,21 +20,15 @@ export interface BoardPickerOption {
   /** Short leading identifier (a card key); empty hides the column. */
   readonly key: string;
   readonly title: string;
-  /** The owning project when the option is OUTSIDE the current card's project
-      (T3O-33, D3). Cross-project dependencies are legal — a card that changes
-      project inherits them — so the picker offers them, marked with the same
-      dot the board colours their cards with. Absent for same-project options,
-      which is every option on a board with one project. */
+  /** The owning project when the option is outside the current card's project
+      (cross-project dependencies are legal). Absent for same-project options. */
   readonly project?:
     | { readonly id: ProjectId; readonly title: string; readonly accent: ProjectIconColor | null }
     | undefined;
 }
 
-/** How many rows the popover will build at once. The list scrolls in a
-    `max-h-64` box — about eight rows — so anything past this is reached by
-    typing, never by scrolling. The cap is what keeps the popover's cost flat:
-    since T3O-33 the dependency picker offers cards from EVERY project, so its
-    option list grows with the whole board rather than with one project. */
+/** Rows the popover builds at once; more are reached by typing. Keeps the cost
+    flat now that the dependency picker offers every project's cards. */
 const PICKER_RENDER_LIMIT = 50;
 
 /** The rows to render for a query, and how many matches are left off the end.
@@ -65,7 +54,7 @@ export function BoardPickerSearchBody({
   readonly placeholder: string;
   readonly options: ReadonlyArray<BoardPickerOption>;
   readonly onPick: (id: string) => void;
-  /** For a caller that searches beyond `options` as the user types (T3O-41). */
+  /** For a caller that searches beyond `options` as the user types. */
   readonly onQueryChange?: ((query: string) => void) | undefined;
   readonly pending?: boolean | undefined;
 }) {
@@ -115,7 +104,7 @@ export function BoardPickerSearchBody({
             ))}
             {hidden > 0 ? (
               <span className="px-1.5 py-1 text-[12.5px] text-muted-foreground">
-                {hidden} more — keep typing to narrow.
+                {hidden} more. Keep typing to narrow.
               </span>
             ) : null}
           </>

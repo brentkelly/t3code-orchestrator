@@ -1,14 +1,7 @@
 /**
- * Retarget confirmation (T3O-5, D14). Changing a card's base branch BEFORE its
- * branch is cut is free — the picker just records an intention. Changing it
- * after is not: the branch already carries commits made on top of the old base,
- * so honouring the new one means a rebase and a `--force-with-lease` push on
- * the card's next code-review round.
- *
- * That is a consequence someone should agree to, not discover, so this names
- * all three facts — the branch, what it was cut from, what it is being pointed
- * at — and says what will happen. Cancel is the focused default, following
- * `BoardArchiveConfirmDialog`: nothing dispatches until Continue.
+ * Retarget confirmation for a card whose branch is already cut: the new base means
+ * a rebase and a `--force-with-lease` push on the next review round, so it names the
+ * branch, its cut point and the new target. Cancel is focused.
  */
 import { Button } from "../components/ui/button";
 import {

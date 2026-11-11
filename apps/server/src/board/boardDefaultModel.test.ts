@@ -1,13 +1,6 @@
 /**
- * The workspace default model (t3o-30, D1).
- *
- * A stage that names no model used to fall straight through to the app's
- * `textGenerationModelSelection`, whose compiled-in value is a codex pair. On a
- * machine with no codex CLI that spawned steps onto a provider that could not
- * start — and the settings card never said which model an unset stage would
- * take, so there was nothing to look at and nothing to change. These pin the
- * ladder: the stage's own model, then the board's default, then the card's
- * project's own default model (T3O-74), then the app's selection.
+ * The model ladder for a step: the stage's own model, then the board's default, then the card's
+ * project's own default model, then the app's text generation selection.
  */
 import {
   BoardCardId,
@@ -73,7 +66,7 @@ it.effect("a stage with no model of its own runs on the board's default", () =>
       Effect.gen(function* () {
         yield* pumpDomain(movedToPlanning(1));
 
-        // Frozen onto the run row (D12), so the pair is resolved once at entry
+        // Frozen onto the run row, so the pair is resolved once at entry
         // rather than re-read while the card runs.
         const state = boardCardStepState(yield* board, cardId);
         assert.strictEqual(state?.providerInstanceId, BOARD_DEFAULT.instanceId);
@@ -92,7 +85,7 @@ it.effect("the app's text-generation selection still governs when no default is 
       Effect.gen(function* () {
         yield* pumpDomain(movedToPlanning(1));
 
-        // The pre-t3o-30 behaviour, kept underneath: nobody who never sets a
+        // The fallback behaviour, kept underneath: nobody who never sets a
         // board default sees their cards move.
         const state = boardCardStepState(yield* board, cardId);
         assert.strictEqual(

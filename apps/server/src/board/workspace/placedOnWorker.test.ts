@@ -1,15 +1,7 @@
 /**
- * T3o (T3O-64, D21): a card placed on a worker has its git and forge work done
- * THERE, against the live reactor.
- *
- * These suites supply their own placement rather than the board's (T3O-65),
- * so one card sits on an in-process worker whose `boardWorker.git.*` handlers run
- * a local workspace of the worker's own. Every git command the worker runs is
- * logged separately from the central server's, so "on that worker" is a
- * checked fact: the central server runs none for the placed card.
- *
- * And a worker the board cannot reach is no git failure: nothing is reported
- * on the card, no provisioning attempt is spent, and the next pass retries.
+ * A card placed on a worker has its git and forge work done there: the central
+ * server runs no git for it. A worker the board cannot reach is no git failure:
+ * nothing is reported, no attempt is spent, and the next pass retries.
  */
 import {
   BOARD_SEED_STAGE_IDS,

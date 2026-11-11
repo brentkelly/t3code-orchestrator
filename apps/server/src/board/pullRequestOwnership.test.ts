@@ -1,17 +1,7 @@
 /**
- * T3O-24: a pull request that closed before the card existed is not the
- * card's.
- *
- * Board branches are named after card keys, and keys get reused, so
- * `board/t3o-23` can already carry a pull request a card from months ago
- * merged. The forge's branch lookup falls back to the newest pull request on
- * the branch when none is open, so until the new card opens its own, that old
- * merge is what the lookup returns. Adopting it showed the wrong "View PR",
- * pointed Merge at the wrong number, and authorised branch cleanup to delete
- * the new card's unmerged work. The merged-link guard then kept it for good.
- *
- * Against the live reactor and the real decider (`withGovernor`), because the
- * rule lives in both: the reactor ignores and heals, and the decider refuses.
+ * A pull request that closed before the card existed is not the card's. Card keys get reused, so
+ * the branch lookup can return an old merge; adopting it would point Merge and branch cleanup at
+ * the wrong work. Against the live reactor and real decider: the reactor heals, the decider refuses.
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";

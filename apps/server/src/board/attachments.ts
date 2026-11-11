@@ -1,19 +1,8 @@
 /**
- * T3o brief attachments — board-owned storage (t3o-32, K1/K2/K4).
- *
- * Files live at `<stateDir>/board/attachments/<cardId>/<name>`, beside
- * `boards.sqlite`. One copy, board-owned: never a worktree (reclaimed at
- * Done) and never upstream's flat `attachmentsDir` (opaque uuid names, mixed
- * with chat-turn files). Upstream's UPLOAD half is reused unchanged — the
- * client mints a `pending-<uuid>` upload and POSTs the bytes — and this module
- * owns the CLAIM: copy the pending file under the original (sanitised,
- * de-duplicated) filename and hand back the record the decider stores.
- *
- * The one push (K4) is also here: `stageBriefAttachmentsAsPending` copies a
- * card's attachments back out as fresh pending uploads so the supervisor can pass
- * them as ordinary `ChatAttachment`s on a spawn turn — the gateway
- * claims them into thread scope through upstream's intake, and the board
- * copy stays the truth.
+ * Brief attachments live board-owned under `<stateDir>/board/attachments/<cardId>/`,
+ * never in a worktree (reclaimed at Done) or upstream's flat `attachmentsDir`.
+ * Upstream's upload is reused; this module owns the claim into the card folder
+ * and the copy back out as pending uploads for a spawn turn.
  */
 import {
   BOARD_CARD_ATTACHMENTS_MAX,
@@ -31,6 +20,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import { isSvgAttachment } from "@t3tools/shared/image";
 
@@ -47,7 +37,7 @@ import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { inferImageExtension } from "../imageMime.ts";
 
 /** Where every card's attachment folder lives. */
-export function boardAttachmentsRoot(input: {
+function boardAttachmentsRoot(input: {
   readonly path: Path.Path;
   readonly stateDir: string;
 }): string {
@@ -95,14 +85,9 @@ function isUnsafeNameChar(char: string): boolean {
 }
 
 /**
- * A filename safe to store and pleasant to `cat`: the original name with
- * path separators and control characters stripped, collapsed whitespace,
- * `..` runs removed from the front (one leading dot is fine — a dotfile is a
- * dotfile), and a bounded length that keeps the extension. A generic file
- * keeps its name exactly, extension or not (`Makefile` stays `Makefile`):
- * the whole point of the card folder is that an agent sees the file as it
- * was. Only an image gets an inferred extension, so a pasted screenshot
- * named "" becomes `image.png` rather than nothing.
+ * A filename safe to store: separators, control characters and leading `..`
+ * runs stripped, length bounded keeping the extension. Agents should see the
+ * file as it was, so only an image gets an inferred extension (`image.png`).
  */
 export function sanitizeBoardAttachmentName(input: {
   readonly name: string;
@@ -152,19 +137,32 @@ export function dedupeBoardAttachmentName(name: string, taken: ReadonlySet<strin
   }
 }
 
-export type BoardAttachmentClaimFailure =
-  | { readonly reason: "upload-missing"; readonly message: string; readonly cause?: unknown }
-  | { readonly reason: "rejected"; readonly message: string }
-  | { readonly reason: "storage"; readonly message: string; readonly cause?: unknown };
+const BoardAttachmentClaimFailure = Schema.Union([
+  Schema.Struct({
+    reason: Schema.Literal("upload-missing"),
+    message: Schema.String,
+    cause: Schema.optionalKey(Schema.Unknown),
+  }),
+  Schema.Struct({ reason: Schema.Literal("rejected"), message: Schema.String }),
+  Schema.Struct({
+    reason: Schema.Literal("storage"),
+    message: Schema.String,
+    cause: Schema.optionalKey(Schema.Unknown),
+  }),
+]);
+export type BoardAttachmentClaimFailure = typeof BoardAttachmentClaimFailure.Type;
 
-export class BoardAttachmentClaimError extends Error {
-  readonly _tag = "BoardAttachmentClaimError";
-  readonly failure: BoardAttachmentClaimFailure;
-  constructor(failure: BoardAttachmentClaimFailure) {
-    super(failure.message);
-    this.failure = failure;
+export class BoardAttachmentClaimError extends Schema.TaggedError<BoardAttachmentClaimError>()(
+  "BoardAttachmentClaimError",
+  { failure: BoardAttachmentClaimFailure },
+) {
+  override get message(): string {
+    return this.failure.message;
   }
 }
+
+const claimError = (failure: BoardAttachmentClaimFailure) =>
+  new BoardAttachmentClaimError({ failure });
 
 /**
  * Copy a pending upload into the card's folder and return the record to
@@ -190,8 +188,7 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const fail = (failure: BoardAttachmentClaimFailure) =>
-    Effect.fail(new BoardAttachmentClaimError(failure));
+  const fail = (failure: BoardAttachmentClaimFailure) => Effect.fail(claimError(failure));
 
   if (input.card.attachments.length >= BOARD_CARD_ATTACHMENTS_MAX) {
     return yield* fail({
@@ -240,13 +237,12 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
     });
   }
   const info = yield* fileSystem.stat(sourcePath).pipe(
-    Effect.mapError(
-      (cause) =>
-        new BoardAttachmentClaimError({
-          reason: "upload-missing",
-          message: `'${input.name}' was not found on the server. Attach it again.`,
-          cause,
-        }),
+    Effect.mapError((cause) =>
+      claimError({
+        reason: "upload-missing",
+        message: `'${input.name}' was not found on the server. Attach it again.`,
+        cause,
+      }),
     ),
   );
   if (Number(info.size) !== input.sizeBytes) {
@@ -259,13 +255,9 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
   if (dir === null) {
     return yield* fail({ reason: "rejected", message: "Attachment name is not allowed." });
   }
-  // De-duplicate against the card's records, then claim the name on disk
-  // with an EXCLUSIVE create: two attaches of the same name racing each other
-  // read the same record list, and a check-then-copy would let the loser
-  // overwrite the winner's file and, when the decider refused its duplicate
-  // record, delete it on rollback. `wx` makes the collision the filesystem's
-  // to detect — the loser lands as `name-2`, the decider accepts both, and
-  // each rollback removes only its own file.
+  // Racing attaches read the same record list, so the name is claimed with an
+  // exclusive create: the loser lands as `name-2` instead of overwriting the
+  // winner's file (and deleting it on rollback).
   const taken = new Set(input.card.attachments.map((attachment) => attachment.name));
   const preferred = sanitizeBoardAttachmentName({
     name: input.name,
@@ -273,13 +265,12 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
     mimeType,
   });
   yield* fileSystem.makeDirectory(dir, { recursive: true }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new BoardAttachmentClaimError({
-          reason: "storage",
-          message: `Failed to store '${preferred}' for card ${input.card.key}.`,
-          cause,
-        }),
+    Effect.mapError((cause) =>
+      claimError({
+        reason: "storage",
+        message: `Failed to store '${preferred}' for card ${input.card.key}.`,
+        cause,
+      }),
     ),
   );
   let name = dedupeBoardAttachmentName(preferred, taken);
@@ -293,11 +284,9 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
     if (target === null) {
       return yield* fail({ reason: "rejected", message: "Attachment name is not allowed." });
     }
-    // Two phases, so a failure is never misread. RESERVE the name with an
-    // exclusive open: the only way that fails against an existing file is a
-    // collision, which is retried under the next suffix. Then COPY the bytes
-    // over the reservation: a failure here is a storage error — the reserved
-    // (possibly partial) file is removed and nothing is retried.
+    // Reserve with an exclusive open (a failure on an existing file is a
+    // collision, retried under the next suffix), then copy over it (a failure
+    // is a storage error: the reservation is removed, nothing retried).
     const reserved = yield* Effect.scoped(fileSystem.open(target, { flag: "wx" })).pipe(
       Effect.as(true),
       Effect.catch((cause) =>
@@ -307,7 +296,7 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
             exists && attempt < 100
               ? Effect.succeed(false)
               : Effect.fail(
-                  new BoardAttachmentClaimError({
+                  claimError({
                     reason: "storage",
                     message: `Failed to store '${name}' for card ${input.card.key}.`,
                     cause,
@@ -324,13 +313,12 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
     }
     yield* fileSystem.copyFile(sourcePath, target).pipe(
       Effect.tapError(() => fileSystem.remove(target).pipe(Effect.ignore)),
-      Effect.mapError(
-        (cause) =>
-          new BoardAttachmentClaimError({
-            reason: "storage",
-            message: `Failed to store '${name}' for card ${input.card.key}.`,
-            cause,
-          }),
+      Effect.mapError((cause) =>
+        claimError({
+          reason: "storage",
+          message: `Failed to store '${name}' for card ${input.card.key}.`,
+          cause,
+        }),
       ),
     );
     break;

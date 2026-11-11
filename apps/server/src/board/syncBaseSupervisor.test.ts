@@ -1,18 +1,8 @@
 /**
- * The sync-base gate and the parent mirror check (t3o-24), against the LIVE
- * reactor.
- *
- * D2: a sub-board child whose base moved since its last review round started is
- * intercepted at the review→merge crossing (and again on the Merge click) — the
- * card stays in review and the sync-base step is what runs next. D4: a child
- * dragged back out of Done regresses a parent that had advanced past the
- * build-role stage, abandoning its in-flight step through the existing abandon
- * path.
- *
- * Staleness is driven through the harness's movable rev-parse fixture: the
- * seeded run row records `baseTipAtRoundStart`, and the stub answers "main"
- * for every unset ref, so a row recorded at "main" is fresh and a row recorded
- * elsewhere (or a tip moved with `setBaseTip`) is stale.
+ * The sync-base gate and parent mirror check against the live reactor. A child whose base
+ * moved since its round started is held at review→merge for a sync-base step; a child
+ * dragged out of Done regresses an advanced parent. Staleness comes from the rev-parse stub:
+ * a run row recorded at "main" is fresh, anything else (or `setBaseTip`) is stale.
  */
 import {
   BoardCardId,
@@ -54,7 +44,7 @@ const childCard = (stage: string): BoardCard => ({
 });
 
 /** The settled last step of a converged review loop, carrying the tip its
-    round started from (t3o-24, D1). Recorded at "main" it is FRESH (the stub's
+    round started from. Recorded at "main" it is FRESH (the stub's
     rev-parse answers "main"); recorded anywhere else it is STALE. */
 const settledReviewStep = (tip: string): BoardCardStepState => ({
   cardId: childId,
@@ -289,7 +279,7 @@ it.effect("the Merge click on a fresh child merges as before", () =>
   ),
 );
 
-// ── D4: the parent mirror check ────────────────────────────────────────────
+// ── The parent mirror check ────────────────────────────────────────────
 
 /** The parent, advanced past build (its children had all finished) with a
     review-loop step left stalled — the in-flight work the regression must
@@ -341,7 +331,7 @@ it.effect(
           );
           assert.strictEqual(stepStatus(yield* board, parentId), "abandoned");
 
-          // The child finishing again re-advances the parent (t3o-23 D4). An
+          // The child finishing again re-advances the parent. An
           // externally-pumped move is not folded into the harness model, so
           // reflect the child's new stage there first, as the projection
           // pipeline would have before the reactor observed the event.

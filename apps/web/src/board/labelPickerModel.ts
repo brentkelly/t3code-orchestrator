@@ -1,9 +1,5 @@
 /**
- * T3o label picker model (t3o-06a) — the pure view logic behind
- * `BoardLabelPicker`, ported from the prototype's `labelPickerVm` minus its
- * single-select `apply` (selecting toggles membership rather than replacing).
- * Kept pure and separate so it is unit-testable without a DOM and a future
- * mobile picker can reuse it.
+ * The pure view logic behind `BoardLabelPicker`. Selecting toggles membership.
  */
 import type { BoardLabel, BoardLabelId } from "@t3tools/contracts";
 

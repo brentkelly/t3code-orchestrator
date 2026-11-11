@@ -1,12 +1,7 @@
 /**
- * T3o (T3O-65, prototype 4.3 and 6): the card's Worker row in the details
- * column, and the worker notices' panel actions.
- *
- * Before a worktree exists, picking a worker just re-pins the card. Once it has
- * one the card is bound where it is, and picking another worker opens Move.
- * Absent on a board with one worker — unless the card's worker was removed,
- * whose panel stays until the card is moved (T3O-66). A card whose worker is
- * offline or removed is moved by force-move, from its pushed branch.
+ * The card's Worker row. Before a worktree exists, picking re-pins; after, it
+ * opens Move. Absent on a single-worker board unless the card's worker was
+ * removed. Offline or removed workers are left by force-move.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
@@ -35,7 +30,7 @@ export function BoardCardWorkerRow(props: {
   readonly card: BoardCard;
   /** The live step's stall reason, from the card's shell. */
   readonly stalledReason?: BoardCardStepStalledReason | undefined;
-  /** What the card's shell says of its work, for Worker offline (T3O-66). */
+  /** What the card's shell says of its work, for Worker offline. */
   readonly shell?:
     | Pick<
         BoardCardShell,
@@ -103,7 +98,7 @@ export function BoardCardWorkerRow(props: {
   return (
     <div className="flex flex-col gap-1 py-1">
       {trouble === null ? null : (
-        // Worker removed or Worker offline (T3O-66): amber, with the one way
+        // Worker removed or Worker offline: amber, with the one way
         // out — a force-move from the pushed branch.
         <div className="flex flex-col gap-1.5 rounded-md bg-warning/10 px-2 py-1.5 text-warning-foreground">
           <span className="font-semibold">{trouble.panelTitle}</span>
@@ -121,7 +116,7 @@ export function BoardCardWorkerRow(props: {
           <BoardWorkerPicker
             choices={field.choices}
             className="h-6 flex-1 text-[11.5px]"
-            followLabel={`Follow default — ${boardWorkerLabel(workers.defaultWorkerId, workers)}`}
+            followLabel={`Follow default (${boardWorkerLabel(workers.defaultWorkerId, workers)})`}
             onSelect={select}
             onSetUp={field.setUp}
             pinnedWorkerId={card.pinnedWorkerId}

@@ -1,9 +1,6 @@
 /**
- * The accent palette is authored as literal Tailwind arbitrary values (Tailwind
- * scans source text, so an interpolated class would emit no CSS). That means
- * each pill's foreground is written by hand beside its fill, and a typo would
- * ship an unreadable pill. These tests pin the hand-written values to the same
- * luminance rule the label chips use.
+ * The accent palette is hand-written literal Tailwind values, so these tests pin
+ * each pill's foreground to the label chips' luminance rule.
  */
 import { describe, expect, it } from "vite-plus/test";
 

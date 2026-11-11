@@ -1,11 +1,7 @@
 /**
- * The board's read-only tail of upstream's log (T3O-56): where it resumes.
- *
- * The tail's cursor lives in `boards.sqlite` and counts sequences in
- * `state.sqlite`. Two files can drift apart — a backup restored for one and not
- * the other, or copies taken a moment apart — and a cursor AHEAD of upstream's
- * head would silently skip every new plan update until the log caught up with
- * it. Each case builds its own tail after arranging the cursor.
+ * Where the board's tail of upstream's log resumes. The cursor lives in
+ * `boards.sqlite` but counts `state.sqlite` sequences, so the files can drift;
+ * a cursor ahead of upstream's head would skip new plan updates.
  */
 import {
   BoardCardId,

@@ -1,10 +1,6 @@
 /**
- * T3o (T3O-62): Settings → Board → Project checkouts (prototype 2.1–2.4).
- *
- * Board projects down, workers across. A worker can only run cards for a
- * project it has a checkout of — the checkout whose repository grouping key
- * matches the board project's (D20). Set up clones the project's remote onto
- * the worker, with that machine's git credentials; the clone runs on the
+ * Settings > Board > Project checkouts: projects down, workers across. A worker
+ * runs a project's cards only with a matching checkout. Set up clones on the
  * server, so leaving the page doesn't cancel it. Hidden on a local-only board.
  */
 import {
@@ -19,7 +15,7 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { CheckIcon } from "lucide-react";
 import * as Option from "effect/Option";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -79,20 +75,13 @@ export function ProjectCheckoutsSection(props: { readonly environmentId: Environ
   const { environmentId } = props;
   const workers = useBoardWorkers(environmentId);
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
-  const projects = useMemo(
-    () => (Option.getOrNull(shellState.snapshot)?.projects ?? []).map(matrixProject),
-    [shellState.snapshot],
-  );
+  const projects = (Option.getOrNull(shellState.snapshot)?.projects ?? []).map(matrixProject);
   const setups = workers.state.setups;
   // Re-read the clock only when a "Set up just now" cell is due to settle.
-  const justNowDeadlines = useMemo(
-    () =>
-      setups.flatMap((setup) =>
-        setup.phase === "done" && setup.endedAt !== null
-          ? [Date.parse(setup.endedAt) + SETUP_JUST_NOW_MS]
-          : [],
-      ),
-    [setups],
+  const justNowDeadlines = setups.flatMap((setup) =>
+    setup.phase === "done" && setup.endedAt !== null
+      ? [Date.parse(setup.endedAt) + SETUP_JUST_NOW_MS]
+      : [],
   );
   const nowMs = useNowAtDeadlines(justNowDeadlines);
   const [details, setDetails] = useState<{

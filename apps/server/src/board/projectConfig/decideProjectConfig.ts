@@ -1,11 +1,6 @@
 /**
- * T3o: deciding stage defaults and per-project config commands (T3O-49).
- *
- * Every project command emits `board.project-stage-config-set` with the
- * project's whole new delta, so the projector, the SQL projection and the
- * client reducer all apply one shape. The config service normalizes
- * overrides against global settings before dispatch; this decider checks
- * the version, validates, recomputes the version and stamps `lastChangedBy`.
+ * Every project command emits `board.project-stage-config-set` with the whole
+ * new delta, so projector, SQL projection and client reducer apply one shape.
  */
 import {
   BOARD_CI_RUNNABLE_STEP_KINDS,
@@ -28,7 +23,7 @@ import {
   type BoardState,
   type ProjectId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import type * as PlatformError from "effect/PlatformError";
 
@@ -50,9 +45,9 @@ const projectConfigEvent = Effect.fn("projectConfigEvent")(function* (input: {
   readonly config: BoardProjectStageConfig;
   readonly cause: ConfigCause;
 }) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   return {
-    eventId: EventId.make(yield* crypto.randomUUIDv4()),
+    eventId: EventId.make(yield* crypto.uuidV4()),
     aggregateKind: "project" as const,
     aggregateId: input.projectId,
     occurredAt: input.command.createdAt,
@@ -110,7 +105,7 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
 ): Effect.fn.Return<
   ReadonlyArray<PlannedBoardEvent>,
   BoardCommandInvariantError | PlatformError.PlatformError,
-  Crypto.Crypto
+  SecureRandom.SecureRandom
 > {
   const current =
     boardProjectStageConfig(board, command.projectId) ?? EMPTY_BOARD_PROJECT_STAGE_CONFIG;
@@ -205,7 +200,7 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
     }
     case "board.project.import-file": {
       const events: PlannedBoardEvent[] = [];
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       for (const stage of command.createStages) {
         if (boardStageById(board, stage.stageId) !== null) {
           return yield* refuse(command, `Stage '${stage.stageId}' already exists; check again.`);
@@ -217,7 +212,7 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
       if (violation !== null) return yield* refuse(command, `Can't import: ${violation}.`);
       for (const stage of command.createStages) {
         events.push({
-          eventId: EventId.make(yield* crypto.randomUUIDv4()),
+          eventId: EventId.make(yield* crypto.uuidV4()),
           aggregateKind: "stage",
           aggregateId: stage.stageId,
           occurredAt: command.createdAt,

@@ -1,16 +1,7 @@
 /**
- * T3o new-card drafts (T3O-26) — the persisted store.
- *
- * One draft per board scope (`boardCardDraftKey`), autosaved while the create
- * dialog is open and restored the next time it opens. Shaped on
- * `boardUiStore.ts` — zustand `persist` over `resolveStorage`, its own key, a
- * `migrate` AND a `merge` sanitiser so hand-edited or corrupt storage cannot
- * poison state — with `composerDraftStore.ts`'s debounced writes and
- * `beforeunload` flush, which is what makes "save every ~0.7s" cheap.
- *
- * The dialog talks to this module through the plain functions below rather
- * than a hook: it writes on every keystroke and must not re-render itself for
- * its own writes.
+ * The persisted new-card drafts, one per board scope. Debounced writes with a
+ * `beforeunload` flush. The dialog uses the plain functions below, not a hook,
+ * so its per-keystroke writes do not re-render it.
  */
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -97,12 +88,8 @@ export const useBoardCardDraftStore = create<BoardCardDraftStore>()(
     }),
     {
       name: BOARD_CARD_DRAFT_STORAGE_KEY,
-      // v2 added each attachment reference's own `uploadedAt`. A v1 record
-      // has no upload time to age its references against, so it is dropped
-      // rather than guessed at — the sanitisers below do that for free.
-      // Dropping the draft's own `updatedAt` afterwards needed no bump: the
-      // schema ignores properties it does not name, so a record written
-      // before that decodes unchanged, minus a field nothing read.
+      // v1 records have no per-attachment `uploadedAt` to age against, so they
+      // are dropped by the sanitisers rather than guessed at.
       version: 2,
       storage: createJSONStorage(() => boardCardDraftStorage),
       migrate: sanitisePersistedBoardCardDrafts,

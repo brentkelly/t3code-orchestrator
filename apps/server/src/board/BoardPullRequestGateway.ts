@@ -1,26 +1,7 @@
 /**
- * The board's narrow window onto the forge: resolve a branch's pull request,
- * read one by number, merge one, and ask why a merge was refused.
- *
- * Deliberately NOT a direct `GitManager` / `PullRequestService` dependency.
- * The board needs a handful of operations out of two services that between
- * them expose stacked git actions, commit-message generation, listings, diffs,
- * reviews, labels and more; taking either whole would couple the supervisor
- * reactor's type graph to all of it, and would let any future board code reach
- * for forge operations the board has no business performing. One seam, and
- * the reactor is testable against a stub instead of a real git checkout.
- *
- * Since T3O-47 the merge and the refusal probe run on upstream's
- * `apps/server/src/pullRequest/` module rather than on a hand-rolled path
- * through `SourceControlProvider`. That is what lets the board merge on every
- * host upstream supports — GitHub, GitLab, Bitbucket, Azure DevOps and Forgejo
- * — instead of the two the fork had implemented, and it is why the fork owns
- * no merge code below this file any more.
- *
- * The error type is flattened to one shape carrying the forge's own words,
- * because that text is what the board actually does with a failure: shows it
- * to the user on the card. A refused merge carries one more field —
- * `BoardPullRequestRefusal` — saying whether the host is the one that refused.
+ * The board's narrow window onto the forge, so the supervisor never depends on
+ * `GitManager` / `PullRequestService` whole. Errors flatten to the forge's own
+ * words, because the card shows them to the user.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -42,25 +23,10 @@ import { BoardGitStatus } from "./ports/BoardGitStatus.ts";
 import { ThreadGateway } from "./ThreadGateway.ts";
 
 /**
- * Where a refused merge was refused (T3O-47) — the one bit the board cannot
- * work out for itself, and the bit that decides what it does next.
- *
- * - `host` — the request reached the host, which weighed this merge and said
- *   no. `detail` is the host's own error text where its API returned one
- *   (T3O-67). The board still asks for the structured state through
- *   `mergeState`, because that is what it can act on: a conflict, a branch
- *   behind its base, failing checks.
- * - `blocked` — refused before the host was asked, and no retry can change it:
- *   a merge strategy or an action this host does not offer, a permission this
- *   account lacks, a project with no recognised remote. `detail` is upstream's
- *   own sentence and names the fix.
- * - `unavailable` — the attempt could not be made right now: the host's CLI is
- *   missing or unauthenticated, or the account is rate limited. `detail` again
- *   names the thing to do; a retry may well work.
- *
- * Only `host` is worth a merge-state probe. On the other two the pull request
- * was never the problem, and a probe would describe a branch that is perfectly
- * mergeable.
+ * Where a refused merge was refused: `host` (the host said no; probe `mergeState`),
+ * `blocked` (refused before the host was asked; no retry helps), or `unavailable`
+ * (CLI missing, unauthenticated or rate limited; a retry may work). Only `host` is
+ * worth a merge-state probe: otherwise the pull request was never the problem.
  */
 export type BoardPullRequestRefusal = "host" | "blocked" | "unavailable";
 
@@ -72,7 +38,7 @@ export class BoardPullRequestGatewayError extends Schema.TaggedError<BoardPullRe
         a missing approval, an unmergeable branch. Shown verbatim on the card,
         so the user reads the host's reason rather than a paraphrase of it. */
     detail: Schema.String,
-    /** T3o (T3O-47): set by `merge`, which is the only caller whose next move
+    /** T3o: set by `merge`, which is the only caller whose next move
         depends on it. Absent on a read, where there is nothing to decide. */
     refusal: Schema.optional(Schema.Literals(["host", "blocked", "unavailable"])),
   },
@@ -85,15 +51,9 @@ export class BoardPullRequestGatewayError extends Schema.TaggedError<BoardPullRe
 const isProviderError = Schema.is(PullRequestProviderError);
 
 /**
- * Read `BoardPullRequestRefusal` out of a `PullRequestService` failure.
- *
- * `PullRequestOperationError` is upstream's one bucket for both "I refused
- * this before calling anything" and "the host refused it", so the `cause`
- * separates them: a provider error is the host's answer, its absence is
- * upstream's own pre-flight refusal. A provider error that is `rate-limited`
- * never reached the host either — the backoff stopped it — and `missing-tool`
- * / `unauthenticated` arrive as `PullRequestUnavailableError`, which has no
- * cause to read and is unavailable by construction.
+ * `PullRequestOperationError` covers both upstream's pre-flight refusal and the
+ * host's, so its `cause` separates them: a provider error is the host's answer,
+ * unless it is `rate-limited`, which never reached the host.
  */
 function refusalOf(error: unknown): BoardPullRequestRefusal {
   if (typeof error !== "object" || error === null) return "unavailable";
@@ -123,7 +83,7 @@ function failureDetail(error: unknown): string {
 }
 
 /**
- * A draft title with its `WIP:` / `[WIP]` marker taken off (T3O-12) — how
+ * A draft title with its `WIP:` / `[WIP]` marker taken off — how
  * Forgejo and Gitea mark a pull request ready, since neither has a ready
  * action. Null when nothing would be left of the title, which no host takes.
  * A title without the marker comes back unchanged.
@@ -137,7 +97,7 @@ export function boardTitleWithoutWipPrefix(title: string): string | null {
 
 /** A pull request as the board addresses it. `repository` is resolved here
     rather than carried on the card: it is the project's `origin` remote
-    (T3O-24, see `boardRepository.ts`), and a card that predates the field
+    (see `boardRepository.ts`), and a card that predates the field
     would otherwise be unmergeable. */
 export interface BoardPullRequestRef {
   readonly projectId: ProjectId;
@@ -161,7 +121,7 @@ function vcsStatusOf(summary: PullRequestSummary): BoardFoundPullRequest {
 
 /**
  * A pull request as the board reads it: the VCS status shape, plus when it
- * merged or closed (T3O-24) — what tells a pull request this card opened from
+ * merged or closed — what tells a pull request this card opened from
  * one an earlier card left on the same branch name. Absent where the host
  * does not report it.
  */
@@ -174,40 +134,20 @@ export class BoardPullRequestGateway extends Context.Service<
   BoardPullRequestGateway,
   {
     /**
-     * The pull request open on `branch`, or null when there is none.
-     *
-     * A FAILURE (rate limit, unauthenticated, network) is an error, not a
-     * null: the caller must be able to tell "we looked and there is no PR"
-     * from "we could not look", because recording the first over an existing
-     * link would blank a card's badge on a transient blip.
+     * The pull request open on `branch`, or null when there is none. A failure
+     * is an error, not a null, so a transient blip never blanks a card's link.
      */
     readonly find: (input: {
       readonly cwd: string;
       readonly branch: string;
-      /** T3o (T3O-48): skip the cache and ask the forge now.
-       *
-       * The lookup is cached per branch, with an exponential backoff on top
-       * for a branch that keeps failing. That is right for the automatic
-       * refresh, whose cost model depends on a burst of card opens costing one
-       * forge call — and wrong for a human pressing "Check again", who has just
-       * read "no pull request" and is asking whether it is still true. A button
-       * answered out of the cache that produced the answer being questioned is
-       * a button that does nothing. */
+      /** Skip the lookup cache and its failure backoff and ask the forge now:
+       * a human's "Check again" questions the very answer the cache holds. */
       readonly force?: boolean;
     }) => Effect.Effect<BoardFoundPullRequest | null, BoardPullRequestGatewayError>;
     /**
-     * The pull request with this number on the board's repository — the
-     * project's `origin` (T3O-24).
-     *
-     * Used when the card already holds a link — a merged title backfill — so
-     * the answer must not depend on a board branch Done may already have
-     * deleted. A FAILURE is an error, not a null, for the same reason as
-     * `find`: "could not look" must not blank a recorded link, and a number
-     * the forge does not know is a failure too, so there is no null answer.
-     *
-     * Never answered from `lastGoodSummary`, which can still say "open" after
-     * the merge landed; an unforced read still uses the PR read cache. `force`
-     * (a human's "Check again") invalidates this pull request first.
+     * The pull request with this number on the board's repository, independent
+     * of a branch Done may have deleted. Failures are errors (no null answer).
+     * Never served from `lastGoodSummary`, which can say "open" after a merge.
      */
     readonly get: (
       input: BoardPullRequestRef & { readonly force?: boolean },
@@ -223,32 +163,23 @@ export class BoardPullRequestGateway extends Context.Service<
       input: BoardPullRequestRef & { readonly method: PullRequestMergeMethod },
     ) => Effect.Effect<void, BoardPullRequestGatewayError>;
     /**
-     * Why the forge refused (T3O-38, D7) — asked only AFTER a refusal, so the
-     * happy path stays one call.
-     *
-     * A FAILURE is an error rather than a null answer, and the caller reads
-     * that error as "unclassifiable" and retries: on a host the workspace has
-     * no credentials for this fails every time, which is exactly the plain
-     * ladder those projects are meant to get.
+     * Why the forge refused, asked only after a refusal. A failure is read by
+     * the caller as "unclassifiable" and retried, which is the plain ladder a
+     * host without credentials is meant to get.
      */
     readonly mergeState: (
       input: BoardPullRequestRef,
     ) => Effect.Effect<BoardMergeState, BoardPullRequestGatewayError>;
     /**
-     * Mark a draft pull request ready for review (T3O-12).
-     *
-     * Reads the forge LIVE first and acts only on an open draft, which is what
-     * makes it idempotent and retry-safe: a pull request a human already
-     * readied, one that was never a draft, or one this call readied a moment
-     * ago comes back `not-draft` with no write. A host with a `ready` action
-     * gets that; a host without one (Forgejo, Gitea) marks drafts with a
-     * `WIP:` / `[WIP]` title prefix, so the prefix is taken off the title.
+     * Idempotent: reads the forge live and acts only on an open draft, else
+     * `not-draft` with no write. A host without a `ready` action (Forgejo,
+     * Gitea) marks drafts with a `WIP:` / `[WIP]` title prefix, which is removed.
      */
     readonly markReady: (
       input: BoardPullRequestRef,
     ) => Effect.Effect<"readied" | "not-draft", BoardPullRequestGatewayError>;
     /**
-     * Close an open pull request without merging it (T3O-28) — archiving a
+     * Close an open pull request without merging it — archiving a
      * group, or cancelling a started card's work. Reads the forge LIVE first
      * and acts only on an open one, so it is idempotent: a pull request that
      * is already closed or merged comes back `not-open` with no write.
@@ -257,7 +188,7 @@ export class BoardPullRequestGateway extends Context.Service<
       input: BoardPullRequestRef,
     ) => Effect.Effect<"closed" | "not-open", BoardPullRequestGatewayError>;
     /**
-     * The repository the board's pull requests live on (T3O-24): the
+     * The repository the board's pull requests live on: the
      * project's `origin`, falling back to its identity. Null when the project
      * has neither. Every other operation here addresses this one, so a pull
      * request linked to a card is checked against it too.
@@ -269,11 +200,8 @@ export class BoardPullRequestGateway extends Context.Service<
 >()("t3/board/BoardPullRequestGateway") {}
 
 /**
- * Explicitly annotated rather than inferred. The server's layer graph is deep
- * enough that adding an un-annotated layer to it pushes TypeScript past its
- * inference budget, and the whole composition silently degrades to `any` —
- * which the Effect lint rules then flag across every file that touches the
- * runtime. Stating the type here cuts the inference chain at this layer.
+ * Annotated, not inferred: un-annotated, this layer pushes the server's layer
+ * graph past TypeScript's inference budget and the composition degrades to `any`.
  */
 export const layer: Layer.Layer<
   BoardPullRequestGateway,
@@ -291,11 +219,8 @@ export const layer: Layer.Layer<
       Effect.fail(new BoardPullRequestGatewayError({ operation, detail: failureDetail(error) }));
 
     /**
-     * The repository `PullRequestService` addresses the board's pull requests
-     * by: the project's `origin`, with the host that lets the service act on
-     * it when that is not the project identity's own repository (T3O-24, see
-     * `boardRepository.ts`). A project with neither has no pull requests to
-     * act on, and saying so names the reason.
+     * The project's `origin`, host-qualified when it is not the project
+     * identity's own repository (see `boardRepository.ts`).
      */
     const repository = (projectId: ProjectId, operation = "repository") =>
       threads.project(projectId).pipe(
@@ -315,17 +240,15 @@ export const layer: Layer.Layer<
       refusal?: BoardPullRequestRefusal,
     ) =>
       repository(projectId, operation).pipe(
-        Effect.flatMap((repository) => {
-          return repository === null
-            ? Effect.fail(
-                new BoardPullRequestGatewayError({
-                  operation,
-                  detail: "This project has no recognised source-control remote.",
-                  ...(refusal === undefined ? {} : { refusal }),
-                }),
-              )
-            : Effect.succeed(repository);
-        }),
+        Effect.filterOrFail(
+          (repository): repository is BoardRepository => repository !== null,
+          () =>
+            new BoardPullRequestGatewayError({
+              operation,
+              detail: "This project has no recognised source-control remote.",
+              ...(refusal === undefined ? {} : { refusal }),
+            }),
+        ),
       );
 
     /** The `PullRequestService` reference fields for a board repository. */
@@ -366,14 +289,13 @@ export const layer: Layer.Layer<
             }),
           );
         }),
-        Effect.catch((error) =>
-          Effect.fail(
+        Effect.mapError(
+          (error) =>
             new BoardPullRequestGatewayError({
               operation: "markReady",
               detail: failureDetail(error),
               refusal: refusalOf(error),
             }),
-          ),
         ),
       );
 
@@ -397,35 +319,32 @@ export const layer: Layer.Layer<
             ),
           );
         }),
-        Effect.catch((error) =>
-          Effect.fail(
+        Effect.mapError(
+          (error) =>
             new BoardPullRequestGatewayError({
               operation: "close",
               detail: failureDetail(error),
               refusal: refusalOf(error),
             }),
-          ),
         ),
       );
 
     return BoardPullRequestGateway.of({
-      repository: (projectId) => repository(projectId),
+      repository: Effect.fn("BoardPullRequestGateway.repository")((projectId) =>
+        repository(projectId),
+      ),
       markReady,
       close,
-      find: (input) =>
-        // T3o (T3O-48): a forced lookup bumps this checkout's PR-lookup epoch,
-        // which is part of the cache key — so it bypasses the lookup TTL and
-        // the per-branch failure backoff together. `{ refresh: true }` alone is
-        // not enough: upstream applies it to SUCCESSFUL answers only (see
-        // `GitManager.branchPullRequest`, "keep failed lookups' retry
-        // backoff"), so the very case the button exists for — a user who just
-        // read a lookup error — would be re-served that cached error for up to
-        // 15 minutes without a forge call.
+      find: Effect.fn("BoardPullRequestGateway.find")((input) =>
+        // The epoch is part of the cache key, so bumping it bypasses both the
+        // lookup TTL and the failure backoff. `{ refresh: true }` applies to
+        // successful answers only and would re-serve a cached lookup error.
         (input.force === true ? gitManager.invalidateStatus(input.cwd) : Effect.void).pipe(
           Effect.andThen(gitManager.branchPullRequest({ cwd: input.cwd, branch: input.branch })),
           Effect.catch(fail("find")),
         ),
-      get: (input) =>
+      ),
+      get: Effect.fn("BoardPullRequestGateway.get")((input) =>
         repositoryOf("get", input.projectId).pipe(
           Effect.flatMap((repository) => {
             const reference = {
@@ -444,7 +363,8 @@ export const layer: Layer.Layer<
           }),
           Effect.catch(fail("get")),
         ),
-      merge: (input) =>
+      ),
+      merge: Effect.fn("BoardPullRequestGateway.merge")((input) =>
         repositoryOf("merge", input.projectId, "blocked").pipe(
           Effect.flatMap((repository) =>
             pullRequests.runAction({
@@ -455,28 +375,25 @@ export const layer: Layer.Layer<
               mergeMethod: input.method,
             }),
           ),
-          Effect.catch((error) =>
-            Effect.fail(
+          Effect.mapError(
+            (error) =>
               new BoardPullRequestGatewayError({
                 operation: "merge",
                 detail: failureDetail(error),
                 refusal: refusalOf(error),
               }),
-            ),
           ),
         ),
-      mergeState: (input) =>
+      ),
+      mergeState: Effect.fn("BoardPullRequestGateway.mergeState")((input) =>
         repositoryOf("mergeState", input.projectId).pipe(
           Effect.flatMap((repository) => {
             const reference = {
               projectId: input.projectId,
               ...addressOf(repository),
               number: input.number,
-              // The probe runs immediately after a refused merge, and it is the
-              // refusal it has to explain. `runAction` leaves the in-process
-              // detail cache alone when the action FAILED, so without both of
-              // these the answer could be the state that was read before the
-              // merge was even attempted.
+              // `runAction` leaves the detail cache alone when the merge fails,
+              // so without both of these the probe could read pre-merge state.
               allowStale: false,
             } as const;
             return pullRequests
@@ -486,6 +403,7 @@ export const layer: Layer.Layer<
           Effect.map(boardMergeStateOf),
           Effect.catch(fail("mergeState")),
         ),
+      ),
     });
   }),
 );

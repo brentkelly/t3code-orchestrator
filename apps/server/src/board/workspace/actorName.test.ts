@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-64): where the human actor's name comes from on a distributed
+ * T3o: where the human actor's name comes from on a distributed
  * board — this server's own checkout of the card's project when it has one,
  * otherwise the card's worker, where the commits are made.
  */

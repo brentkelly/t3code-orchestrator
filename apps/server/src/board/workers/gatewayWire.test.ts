@@ -4,12 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { ThreadCommandRefusedError } from "../ThreadGateway.ts";
-import {
-  fromWireCommandError,
-  fromWireSignal,
-  toWireCommandError,
-  toWireSignal,
-} from "./gatewayWire.ts";
+import { fromWireCommandError, fromWireSignal, wireCommand, toWireSignal } from "./gatewayWire.ts";
 
 // The `turn-ended` arm as the previous protocol-1 build declared it: `errorMessage` required.
 const PreviousTurnEnded = Schema.Struct({
@@ -65,7 +60,7 @@ it.effect("a provider-disabled refusal keeps its reason across the wire", () =>
       reason: "provider-disabled",
     });
     const decoded = yield* decodeGatewayError(
-      yield* encodeGatewayError(toWireCommandError(refused)),
+      yield* encodeGatewayError(yield* Effect.flip(wireCommand(Effect.fail(refused)))),
     );
     const back = fromWireCommandError("thread.spawn", threadId)(decoded);
     assert.strictEqual(back._tag, "ThreadCommandRefusedError");

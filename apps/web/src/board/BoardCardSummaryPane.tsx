@@ -1,10 +1,6 @@
 /**
- * The card modal's Summary pane (T3O-5, redesigned T3O-21): a read-only recap
- * of how the work went — the build agent's lead sentence over one meta line
- * (verdict, review, PR), then Heads-up notes, open findings, check tiles and
- * what was built. Merge / Another review round / View PR stay on the rail;
- * this pane only links into View PR, the Review pane (open findings), and a
- * split-parent child (same as the Plans panel).
+ * The card modal's read-only Summary pane. Actions stay on the rail; this pane
+ * only links into View PR, the Review pane and split-parent children.
  */
 import type { BoardBuildSummaryCheckStatus, BoardBuildSummaryNoteKind } from "@t3tools/contracts";
 import { ChevronLeftIcon } from "lucide-react";
@@ -68,10 +64,12 @@ function InlineCode({ text }: { readonly text: string }) {
     <>
       {parts.map((part, index) =>
         part.length === 0 ? null : index % 2 === 1 ? (
+          // oxlint-disable-next-line react/no-array-index-key -- split parts of one immutable string keep their order
           <code className={CODE_CLASS} key={index}>
             {part}
           </code>
         ) : (
+          // oxlint-disable-next-line react/no-array-index-key -- split parts of one immutable string keep their order
           <Fragment key={index}>{part}</Fragment>
         ),
       )}
@@ -129,7 +127,7 @@ export function BoardCardSummaryPane({
   buildPending = false,
 }: {
   readonly summary: BoardCardWorkSummary;
-  /** The card's decision log section (T3O-32), when it has one. */
+  /** The card's decision log section, when it has one. */
   readonly decisionLog?: React.ReactNode;
   /** No build has finished yet: the pane is here for the decision log. */
   readonly buildPending?: boolean;
@@ -225,6 +223,7 @@ export function BoardCardSummaryPane({
             <Heading>Heads-up</Heading>
             <ul className="flex flex-col gap-2.5">
               {structured.notes.map((note, index) => (
+                // oxlint-disable-next-line react/no-array-index-key -- notes have no identity besides their position in the summary
                 <NoteRow detail={note.detail} key={index} kind={note.kind}>
                   <InlineCode text={note.text} />
                 </NoteRow>
@@ -264,6 +263,7 @@ export function BoardCardSummaryPane({
                       "flex flex-col gap-[3px] rounded-lg border px-[11px] py-[9px]",
                       style.tile,
                     )}
+                    // oxlint-disable-next-line react/no-array-index-key -- tiles have no identity besides their position in the summary
                     key={index}
                   >
                     <div className="flex items-baseline gap-[7px]">
@@ -342,6 +342,7 @@ export function BoardCardSummaryPane({
             ) : null}
             {structured?.areas.map((area, areaIndex) =>
               area.items.length === 0 ? null : (
+                // oxlint-disable-next-line react/no-array-index-key -- areas have no identity besides their position in the summary
                 <div className="flex flex-col gap-1" key={areaIndex}>
                   <div className="text-[12.5px] font-semibold text-muted-foreground">
                     <InlineCode text={area.name} />
@@ -350,6 +351,7 @@ export function BoardCardSummaryPane({
                     {area.items.map((item, itemIndex) => (
                       <li
                         className="flex items-baseline gap-[9px] text-[13px]/[1.6] text-foreground"
+                        // oxlint-disable-next-line react/no-array-index-key -- items have no identity besides their position in the area
                         key={itemIndex}
                       >
                         <span

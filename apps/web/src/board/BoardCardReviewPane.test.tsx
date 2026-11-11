@@ -1,5 +1,5 @@
 /**
- * The Review pane (t3o-16, D9), rendered to static markup straight from step
+ * The Review pane, rendered to static markup straight from step
  * completions — the pane is a pure function of the completions plus the
  * configured round cap, so these tests need no atoms and no subscription.
  */
@@ -155,7 +155,7 @@ describe("BoardCardReviewPane", () => {
     expect(html).not.toContain('disabled=""');
   });
 
-  // T3O-3: the same pane, read through its ROUND. A card that has never
+  // The same pane, read through its ROUND. A card that has never
   // reached review still derives a synthetic round 1 (that is where the loop
   // will start), and the pane used to dress it as "In progress" with a
   // spinning phase marker while the card sat in Building.
@@ -180,7 +180,7 @@ describe("BoardCardReviewPane", () => {
     expect(html).toContain("starts when the card reaches the review stage");
   });
 
-  // T3O-3: a card dragged BACK off the review stage mid-loop. Round 1 has
+  // A card dragged BACK off the review stage mid-loop. Round 1 has
   // history, so it is not "not started" — but nothing is running either.
   it("renders an off-stage mid-loop round as not running, with no spinning phase", () => {
     const html = renderToStaticMarkup(
@@ -215,7 +215,7 @@ describe("BoardCardReviewPane", () => {
     expect(html).toContain("paused while the card sits off the review stage");
   });
 
-  // T3O-3, the mixed case: off-stage with a closed round behind the open one.
+  // The mixed case: off-stage with a closed round behind the open one.
   // The closed round keeps its real outcome; only the round the loop would
   // have entered next reads as not started.
   it("keeps a closed round's outcome while its unstarted successor reads as not started", () => {
@@ -248,7 +248,7 @@ describe("BoardCardReviewPane", () => {
     expect(html).not.toContain(`data-step-state="running"`);
   });
 
-  // ── The round ceiling is gone (T3O-39, D4) ─────────────────────────────
+  // ── The round ceiling is gone ─────────────────────────────
 
   /** A round that ran every phase and left its critical unresolved — a loop
       that held rather than converged. */
@@ -334,7 +334,7 @@ describe("BoardCardReviewPane", () => {
         onBackToThread={noop}
       />,
     );
-    expect(html).toContain("Not running — card is off the review stage");
+    expect(html).toContain("Not running: card is off the review stage");
     expect(html).not.toContain("running now");
     expect(html).not.toContain("waiting to run");
   });

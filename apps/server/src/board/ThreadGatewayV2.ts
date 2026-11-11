@@ -1,14 +1,7 @@
 /**
- * The thread gateway over orchestration-v2 (T3O-59).
- *
- * Every call the board makes into upstream's thread engine, in board
- * vocabulary. This is the ONLY board module that may import upstream
- * orchestration, persistence or provider code (`threadGatewayBoundary.test.ts`);
- * everything v2-shaped the board touches lives here.
- *
- * Commands go through `ThreadManagementService.dispatch`, upstream's own
- * enablement chokepoint. Signals and the todo log read the engine's stored
- * event log (`EventSinkV2`), unbounded: the supervisor must never have its
+ * The board's thread gateway over orchestration-v2, and the ONLY board module that may import
+ * upstream orchestration, persistence or provider code (`threadGatewayBoundary.test.ts`).
+ * Signals and the todo log read `EventSinkV2` unbounded: the supervisor must never have its
  * subscription dropped under load the way a bounded RPC subscriber may.
  */
 import {
@@ -27,7 +20,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { boardThreadSessionStatus, boardThreadStateSource } from "@t3tools/shared/boardThreadState";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -93,11 +86,10 @@ const isoOrNull = (value: DateTime.Utc | null | undefined): string | null =>
   value == null ? null : DateTime.formatIso(value);
 
 /**
- * Whether v2's recovery worker will ever act on this thread's usage limit with
- * auto-resume on — arm it, or resume an arm — read through the worker's own
- * policy. Asked as of the end of time, so a window that has not reopened yet
- * still counts. An archived or settled thread, one holding a question, or a
- * reset no later than the failure is never resumed by v2, so the board keeps it.
+ * Whether v2's recovery worker will ever auto-resume this thread's usage limit, read through
+ * the worker's own policy as of the end of time (an unreopened window still counts). A thread
+ * v2 will never resume (archived, settled, holding a question, reset no later than the failure)
+ * stays the board's to resume.
  */
 const v2RecoversLimit = (shell: OrchestrationV2ThreadShell): boolean =>
   limitRecoveryCommand(shell, true, Number.POSITIVE_INFINITY) !== null;
@@ -123,7 +115,7 @@ export const boardThreadStateFromShell = (
     awaitingUserInput: source.hasPendingUserInput,
     awaitingPermission: isThreadAwaitingPermission(source),
     backgroundWork: source.backgroundLiveness ?? null,
-    // An active run, or a question someone can still answer (t3o-10, D1). A
+    // An active run, or a question someone can still answer. A
     // failed latest run is dead whatever else the shell still says.
     alive: shell.status !== "failed" && (shell.activeRunId !== null || source.hasPendingUserInput),
     waitingOnBackground: deriveBoardCardThreadState(source).waitingOnBackground,
@@ -173,7 +165,7 @@ const turnOutcomeOf = (status: OrchestrationV2Run["status"]): TurnOutcome | null
 const todoStatusOf = (status: string): string => (status === "running" ? "inProgress" : status);
 
 /** The todo signal one stored event carries, if any. */
-export const todoSignal = (stored: OrchestrationV2StoredEvent): TodoSignal | null => {
+const todoSignal = (stored: OrchestrationV2StoredEvent): TodoSignal | null => {
   const event = stored.event;
   if (event.type === "plan.updated" && event.payload.kind === "todo_list") {
     const todos: ReadonlyArray<BoardTodoItem> = event.payload.steps.map((step) => ({
@@ -209,26 +201,20 @@ const isHumanCommandId = (commandId: CommandId | null): boolean =>
   commandId !== null && !SERVER_COMMAND_PREFIXES.some((prefix) => commandId.startsWith(prefix));
 
 /**
- * Who asked for a run, read from the command that created it, the run's own
- * wake fields and the author of the message it carries. `board` is a
- * board-minted command; `limit-resume` is v2's usage-limit recovery worker;
- * `human` is a message a person sent from a client; anything else is `engine`:
- * v2 carrying on work it already had (a wake, a restart continuation, a
- * delegated task's result or question, the follow-up a steer becomes).
+ * Who asked for a run. `board` is a board-minted command, `limit-resume` is v2's usage-limit
+ * recovery, `human` is a message a person sent from a client, and anything else is `engine`:
+ * v2 carrying on work it already had (a wake, a restart continuation, a delegated task, a steer).
  */
-export const runOrigin = (
+const runOrigin = (
   commandId: CommandId | null,
   run: OrchestrationV2Run,
   message: Pick<OrchestrationV2ConversationMessage, "createdBy" | "creationSource">,
 ): "board" | "limit-resume" | "engine" | "human" => {
   if (isBoardMintedCommandId(commandId)) return "board";
   if (commandId?.startsWith("limit-resume:")) return "limit-resume";
-  // `user` from `server` is never a person typing: it is the board's own
-  // message (BOARD_AUTHOR), so a board turn re-dispatched as a steer follow-up
-  // is not mistaken for a human's, or v2's async-answer run (Orchestrator's
-  // `async-answer:` message), which carries a human's answer under their own
-  // command id but is the engine carrying on: `input-resolved` already
-  // un-parked the step, so it must not also read as a human turn.
+  // `user` from `server` is never a person typing: it is the board's own message (BOARD_AUTHOR)
+  // or v2's async-answer run, whose step `input-resolved` already un-parked, so neither may read
+  // as a human turn.
   if (
     message.createdBy !== "user" ||
     message.creationSource === "server" ||
@@ -243,11 +229,9 @@ export const runOrigin = (
 };
 
 /**
- * Turns one stored event into the supervisor's signals. Stateful only to
- * report each run end, interrupt request and question ONCE: v2 rewrites a run,
- * a turn item or a runtime request in place, so the same fact arrives as
- * several `*.updated` events. The memory is bounded; anything older than it has
- * long since been acted on.
+ * Turns one stored event into the supervisor's signals. Stateful only to report each run end,
+ * interrupt request and question ONCE: v2 rewrites those in place, so the same fact arrives as
+ * several `*.updated` events. The memory is bounded.
  */
 export const makeSignalReader = () => {
   const seen = new Set<string>();
@@ -269,14 +253,9 @@ export const makeSignalReader = () => {
     string,
     { readonly run: OrchestrationV2Run; readonly commandId: CommandId | null }
   >();
-  // Runs whose latest status was `queued` (T3O-76). v2 cancels a queued run
-  // straight out of the queue when a human promotes its message to a steer,
-  // deletes it from the queue, or archives the thread, under that human's
-  // command id and with `startedAt` null — the same shape as a Stop during
-  // start-up. Nothing in the cancelled payload tells them apart (`queuePosition`
-  // is null either way, and a queued run already owns its root node and
-  // attempt), so the reader remembers the one fact that does: the status it
-  // last saw. A run with no remembered status keeps the Stop reading.
+  // Runs last seen `queued`. v2 cancels a queued run (steered, deleted or archived) under the
+  // human's command id with `startedAt` null, the same shape as a Stop during start-up, and only
+  // the remembered status tells them apart. A run with none keeps the Stop reading.
   const queuedRuns = new Set<string>();
   const noteRunStatus = (run: OrchestrationV2Run): boolean => {
     const key = String(run.id);
@@ -295,12 +274,9 @@ export const makeSignalReader = () => {
     const event = stored.event;
     switch (event.type) {
       case "run.created": {
-        // Every requested turn is a run. Only a turn someone ASKED for is a
-        // request: v2 carrying on its own work is neither a human steering nor
-        // a reason to wake a parked step, and its limit resume is told apart so
-        // the board wakes only the usage-limit park it was holding. Who wrote
-        // the run's message decides the rest; v2 commits that message right
-        // after the run, in the same command, so the run waits for it.
+        // Only a turn someone ASKED for is a request; v2 carrying on its own work is not, and its limit
+        // resume is told apart so only the usage-limit park wakes. The run's message (committed right
+        // after it in the same command) decides who asked, so the run waits for it.
         const run = event.payload;
         noteRunStatus(run);
         if (isBoardMintedCommandId(stored.commandId)) {
@@ -344,14 +320,11 @@ export const makeSignalReader = () => {
         const wasQueued = noteRunStatus(run);
         const outcome = turnOutcomeOf(run.status);
         if (outcome === null || !firstTime(`run:${run.id}`)) return [];
-        // A run cancelled without ever leaving the queue was never a turn: its
-        // message was steered into the live turn, deleted, or dropped with the
-        // thread. It is neither a Stop nor an ending the board should read. A
-        // queued run that FAILED to start (v2's failQueuedRunStart) still is a
-        // turn that never began, and reads as one below.
+        // A run cancelled without leaving the queue was never a turn (steered, deleted, or dropped
+        // with the thread). A queued run that FAILED to start is a turn that never began, read below.
         if (wasQueued && run.status === "cancelled") return [];
-        // A run that failed without ever starting is a turn that never began
-        // (t3o-30, D2) — workspace preparation, or the provider refusing it.
+        // A run that failed without ever starting is a turn that never began —
+        // workspace preparation, or the provider refusing it.
         if (outcome === "failed" && run.startedAt === null) {
           return [
             {
@@ -366,11 +339,9 @@ export const makeSignalReader = () => {
           threadId: event.threadId,
           turnRef: String(run.id),
         };
-        // v2 records no interrupt request for a run its provider never
-        // started, so a human's Stop during start-up arrives only as this end,
-        // under the Stop's own command id.
-        // Say it was a Stop first, as it would be for a running turn, or the
-        // board reads it as an unexplained ending and nudges the card on.
+        // v2 records no interrupt request for a run its provider never started, so a Stop during
+        // start-up arrives only as this end. Report the Stop first, or the board reads an unexplained
+        // ending and nudges the card on.
         if (
           (run.status === "interrupted" || run.status === "cancelled") &&
           run.startedAt === null &&
@@ -397,7 +368,7 @@ export const makeSignalReader = () => {
               ? [{ type: "input-requested", threadId: event.threadId }]
               : [];
           }
-          // Only an ANSWER resumes a parked step (t3o-34, D5): a question that
+          // Only an ANSWER resumes a parked step: a question that
           // was cancelled or expired is still unanswered.
           return firstTime(`input-closed:${request.id}`)
             ? [
@@ -466,21 +437,17 @@ export const followStoredEvents = (
     );
   });
 
-/** How far before a resume cursor `readSignalLog` starts reading, so the reader
-    holds most of the memory it would have had at the cursor. A bounded best
-    effort: a live reader remembers a run until its message says who wrote it,
-    and which runs are still queued (`queuedRuns`), so a resume whose run
-    started further back than this loses that memory. A queued run forgotten
-    that way and later cancelled out of the queue falls back to the Stop
-    reading, and pauses its card. */
-export const SIGNAL_READER_WARMUP_EVENTS = 4096;
+/**
+ * How far before a resume cursor `readSignalLog` starts reading, to rebuild the reader's
+ * memory. Best effort: a queued run that started further back is forgotten, and if it is later
+ * cancelled out of the queue it reads as a Stop and pauses its card.
+ */
+const SIGNAL_READER_WARMUP_EVENTS = 4096;
 
 /**
- * The signals after `afterSequence` (from now on when null), batched by the log
- * position that produced them. The reader is stateful (a run awaiting its
- * message, the dedupe set), so a resume replays the events before the cursor
- * through it with their signals discarded: a stream that drops between a run's
- * start and its end still reports it once, and correctly attributed.
+ * The signals after `afterSequence` (from now when null), batched by log position. A resume
+ * replays the events before the cursor through the stateful reader with their signals
+ * discarded, so a run interrupted by a dropped stream is still reported once, correctly attributed.
  */
 export const readSignalLog = (
   sink: Pick<EventSink.EventSinkV2["Service"], "stream" | "latestSequence">,
@@ -549,13 +516,13 @@ const readError = (operation: string) => (cause: unknown) =>
 
 // ── The gateway ────────────────────────────────────────────────────────
 
-export const makeThreadGatewayV2 = Effect.gen(function* () {
+const makeThreadGatewayV2 = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projectRows = yield* ProjectStore.ProjectStoreV2;
   const projectService = yield* ProjectService.ProjectService;
   const eventSink = yield* EventSink.EventSinkV2;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const path = yield* Path.Path;
   // What upstream's message intake needs to claim a turn's pending uploads
   // into thread scope (and extract a PDF's text sidecar), captured so the
@@ -567,7 +534,7 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
     | FileSystem.FileSystem
   >();
   const nowMs = Effect.map(DateTime.now, DateTime.toEpochMillis);
-  const freshMessageId = crypto.randomUUIDv4().pipe(
+  const freshMessageId = crypto.uuidV4().pipe(
     Effect.map((uuid) => MessageId.make(`msg-${uuid}`)),
     Effect.orDie,
   );
@@ -585,10 +552,10 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
 
   /** A thread the command needs to exist, live. */
   const liveShell = (command: string, threadId: ThreadId) =>
-    Effect.flatMap(shellOf(threadId), (shell) =>
-      shell === null || shell.deletedAt !== null
-        ? Effect.fail(refused(command, threadId, `thread ${threadId} does not exist`))
-        : Effect.succeed(shell),
+    Effect.filterOrFail(
+      shellOf(threadId),
+      (shell): shell is NonNullable<typeof shell> => shell !== null && shell.deletedAt === null,
+      () => refused(command, threadId, `thread ${threadId} does not exist`),
     ).pipe(
       Effect.catchTags({
         ThreadReadError: (error) =>
@@ -610,149 +577,142 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
-  const startTurn = (input: {
+  const startTurn = Effect.fn("ThreadGatewayV2.startTurn")(function* (input: {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
     readonly text: string;
     readonly attachments: ReadonlyArray<ChatAttachment>;
-  }) =>
-    Effect.gen(function* () {
-      // Through the intake, as a client's send goes: it claims the turn's
-      // pending uploads and releases them if the dispatch is not accepted.
-      const dispatch = (attachments: ReadonlyArray<ChatAttachment>) =>
-        Effect.flatMap(freshMessageId, (messageId) =>
-          ThreadMessageIntake.dispatchCommand({
-            type: "message.dispatch",
-            commandId: input.commandId,
-            threadId: input.threadId,
-            messageId,
-            text: input.text,
-            attachments,
-            dispatchMode: { type: "start_immediately" },
-            ...BOARD_AUTHOR,
-          }),
-        ).pipe(Effect.provideContext(intakeServices));
-      // The claim is all-or-nothing and runs before the dispatch, so nothing
-      // was committed: the turn goes again without its attachments, which
-      // the brief's manifest still names by path.
-      yield* dispatch(input.attachments).pipe(
-        Effect.catchTags({
-          AttachmentClaimError: (error) =>
-            input.attachments.length === 0
-              ? Effect.fail(error)
-              : Effect.logWarning("board gateway: attachments failed to claim, sent without them", {
-                  threadId: input.threadId,
-                  detail: error.message,
-                }).pipe(Effect.andThen(dispatch([]))),
+  }) {
+    // Through the intake, as a client's send goes: it claims the turn's
+    // pending uploads and releases them if the dispatch is not accepted.
+    const dispatch = (attachments: ReadonlyArray<ChatAttachment>) =>
+      Effect.flatMap(freshMessageId, (messageId) =>
+        ThreadMessageIntake.dispatchCommand({
+          type: "message.dispatch",
+          commandId: input.commandId,
+          threadId: input.threadId,
+          messageId,
+          text: input.text,
+          attachments,
+          dispatchMode: { type: "start_immediately" },
+          ...BOARD_AUTHOR,
         }),
-        Effect.mapError(commandError("message.dispatch", input.threadId)),
-      );
-    });
+      ).pipe(Effect.provideContext(intakeServices));
+    // The claim is all-or-nothing and runs before the dispatch, so nothing
+    // was committed: the turn goes again without its attachments, which
+    // the brief's manifest still names by path.
+    yield* dispatch(input.attachments).pipe(
+      Effect.catchTags({
+        AttachmentClaimError: (error) =>
+          input.attachments.length === 0
+            ? Effect.fail(error)
+            : Effect.logWarning("board gateway: attachments failed to claim, sent without them", {
+                threadId: input.threadId,
+                detail: error.message,
+              }).pipe(Effect.andThen(dispatch([]))),
+      }),
+      Effect.mapError(commandError("message.dispatch", input.threadId)),
+    );
+  });
 
   const gateway: LocalThreadGatewayShape = {
-    // Upstream's `ThreadLaunchService.launch` is NOT used: its preparation runs
-    // the project's setup script on every launch, including into an existing
-    // worktree or the project root, so every review phase would re-run it and
-    // planning would run it in the main checkout. The board provisions its own
-    // worktrees and runs setup once (t3o-09); a spawn is `launch` minus
-    // preparation — create, then start the first turn.
-    spawn: (input) =>
-      Effect.gen(function* () {
-        // v2 does not hold a thread to an existing project; the board does.
-        const project = yield* projectRows.get(input.projectId).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ThreadCommandFailedError({
-                command: "thread.create",
-                threadId: input.threadId,
-                detail: describe(cause),
-                cause,
-              }),
-          ),
-        );
-        if (Option.isNone(project)) {
-          return yield* refused(
-            "thread.create",
-            input.threadId,
-            `project ${input.projectId} does not exist`,
-          );
-        }
-        // Refused before anything is created, by this server's own settings,
-        // so a provider turned off for the project never flashes a thread.
-        yield* threads
-          .assertProviderInstanceEnabled({
-            commandId: input.commandId,
-            projectId: input.projectId,
-            instanceId: input.modelSelection.instanceId,
-          })
-          .pipe(Effect.mapError(commandError("thread.create", input.threadId)));
-        const inWorktree = input.branch !== null;
-        yield* run({
-          type: "thread.create",
-          commandId: input.commandId,
-          threadId: input.threadId,
-          projectId: input.projectId,
-          title: input.title,
-          modelSelection: input.modelSelection,
-          runtimeMode: input.runtimeMode,
-          interactionMode: input.interactionMode,
-          branch: inWorktree ? input.branch : null,
-          worktreePath: inWorktree ? input.worktreePath : null,
-          ...BOARD_AUTHOR,
-        });
-        yield* startTurn({
-          commandId: CommandId.make(`${input.commandId}:turn`),
-          threadId: input.threadId,
-          text: input.text,
-          attachments: input.attachments,
-        }).pipe(
-          // A thread whose first turn never started is deleted again rather
-          // than left empty in the sidebar.
-          Effect.tapError(() =>
-            run({
-              type: "thread.delete",
-              commandId: CommandId.make(`${input.commandId}:cleanup`),
+    // Not upstream's `ThreadLaunchService.launch`: it runs the project's setup script on every
+    // launch, including review phases and planning in the main checkout. The board provisions its
+    // own worktrees and runs setup once; a spawn is create, then start the first turn.
+    spawn: Effect.fn("ThreadGatewayV2.spawn")(function* (input) {
+      // v2 does not hold a thread to an existing project; the board does.
+      const project = yield* projectRows.get(input.projectId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ThreadCommandFailedError({
+              command: "thread.create",
               threadId: input.threadId,
-            }).pipe(Effect.ignore),
-          ),
+              detail: describe(cause),
+              cause,
+            }),
+        ),
+      );
+      if (Option.isNone(project)) {
+        return yield* refused(
+          "thread.create",
+          input.threadId,
+          `project ${input.projectId} does not exist`,
         );
-      }),
-    send: (input) =>
-      Effect.gen(function* () {
-        const shell = yield* liveShell("message.dispatch", input.threadId);
-        // Modes are thread settings in v2, not per-turn fields; a stage that
-        // runs this turn differently sets them first.
-        if (shell.runtimeMode !== input.runtimeMode) {
-          yield* run({
-            type: "thread.runtime-mode.set",
-            commandId: CommandId.make(`${input.commandId}:runtime-mode`),
-            threadId: input.threadId,
-            runtimeMode: input.runtimeMode,
-          });
-        }
-        if (shell.interactionMode !== input.interactionMode) {
-          yield* run({
-            type: "thread.interaction-mode.set",
-            commandId: CommandId.make(`${input.commandId}:interaction-mode`),
-            threadId: input.threadId,
-            interactionMode: input.interactionMode,
-          });
-        }
-        yield* startTurn(input);
-      }),
-    interrupt: (input) =>
-      Effect.gen(function* () {
-        const shell = yield* liveShell("run.interrupt", input.threadId);
-        if (shell.activeRunId === null) {
-          return yield* refused("run.interrupt", input.threadId, "no run is active");
-        }
-        yield* run({
-          type: "run.interrupt",
+      }
+      // Refused before anything is created, by this server's own settings,
+      // so a provider turned off for the project never flashes a thread.
+      yield* threads
+        .assertProviderInstanceEnabled({
           commandId: input.commandId,
+          projectId: input.projectId,
+          instanceId: input.modelSelection.instanceId,
+        })
+        .pipe(Effect.mapError(commandError("thread.create", input.threadId)));
+      const inWorktree = input.branch !== null;
+      yield* run({
+        type: "thread.create",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        projectId: input.projectId,
+        title: input.title,
+        modelSelection: input.modelSelection,
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
+        branch: inWorktree ? input.branch : null,
+        worktreePath: inWorktree ? input.worktreePath : null,
+        ...BOARD_AUTHOR,
+      });
+      yield* startTurn({
+        commandId: CommandId.make(`${input.commandId}:turn`),
+        threadId: input.threadId,
+        text: input.text,
+        attachments: input.attachments,
+      }).pipe(
+        // A thread whose first turn never started is deleted again rather
+        // than left empty in the sidebar.
+        Effect.tapError(() =>
+          run({
+            type: "thread.delete",
+            commandId: CommandId.make(`${input.commandId}:cleanup`),
+            threadId: input.threadId,
+          }).pipe(Effect.ignore),
+        ),
+      );
+    }),
+    send: Effect.fn("ThreadGatewayV2.send")(function* (input) {
+      const shell = yield* liveShell("message.dispatch", input.threadId);
+      // Modes are thread settings in v2, not per-turn fields; a stage that
+      // runs this turn differently sets them first.
+      if (shell.runtimeMode !== input.runtimeMode) {
+        yield* run({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make(`${input.commandId}:runtime-mode`),
           threadId: input.threadId,
-          runId: shell.activeRunId,
+          runtimeMode: input.runtimeMode,
         });
-      }),
+      }
+      if (shell.interactionMode !== input.interactionMode) {
+        yield* run({
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.make(`${input.commandId}:interaction-mode`),
+          threadId: input.threadId,
+          interactionMode: input.interactionMode,
+        });
+      }
+      yield* startTurn(input);
+    }),
+    interrupt: Effect.fn("ThreadGatewayV2.interrupt")(function* (input) {
+      const shell = yield* liveShell("run.interrupt", input.threadId);
+      if (shell.activeRunId === null) {
+        return yield* refused("run.interrupt", input.threadId, "no run is active");
+      }
+      yield* run({
+        type: "run.interrupt",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        runId: shell.activeRunId,
+      });
+    }),
     stopSession: (input) =>
       run({ type: "thread.stop", commandId: input.commandId, threadId: input.threadId }),
     // The automatic settle re-reads candidacy itself and stamps the read time
@@ -792,69 +752,67 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
           }),
     delete: (input) =>
       run({ type: "thread.delete", commandId: input.commandId, threadId: input.threadId }),
-    armLimitRecovery: (input) =>
-      Effect.gen(function* () {
-        const shell = yield* liveShell("thread.metadata.update", input.threadId);
-        const state = boardThreadStateFromShell(shell, yield* nowMs);
-        const limit = state.usageLimit;
-        if (limit === null || limit.resetAt === null || shell.latestRunId === null) return false;
-        if (limit.resumeArmed) return true;
-        // An arm v2 would never act on leaves the resume to the board.
-        if (!v2RecoversLimit(shell)) return false;
-        yield* run({
-          type: "thread.metadata.update",
-          commandId: input.commandId,
-          threadId: input.threadId,
-          limitRecovery: { runId: shell.latestRunId, resetAt: limit.resetAt, autoResume: true },
-        });
-        return true;
-      }),
+    armLimitRecovery: Effect.fn("ThreadGatewayV2.armLimitRecovery")(function* (input) {
+      const shell = yield* liveShell("thread.metadata.update", input.threadId);
+      const state = boardThreadStateFromShell(shell, yield* nowMs);
+      const limit = state.usageLimit;
+      if (limit === null || limit.resetAt === null || shell.latestRunId === null) return false;
+      if (limit.resumeArmed) return true;
+      // An arm v2 would never act on leaves the resume to the board.
+      if (!v2RecoversLimit(shell)) return false;
+      yield* run({
+        type: "thread.metadata.update",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        limitRecovery: { runId: shell.latestRunId, resetAt: limit.resetAt, autoResume: true },
+      });
+      return true;
+    }),
 
-    answerPendingInput: (input) =>
-      Effect.gen(function* () {
-        const shell = yield* liveShell("runtime-request.respond", input.threadId);
-        const pending = shell.pendingRuntimeRequest;
-        if (pending === null || pending.kind !== "user_input") return false;
-        const context = yield* projections
-          .getRuntimeResponseContext(input.threadId, pending.id)
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new ThreadCommandFailedError({
-                  command: "runtime-request.respond",
-                  threadId: input.threadId,
-                  detail: describe(cause),
-                  cause,
-                }),
-            ),
-          );
-        const request = context.request;
-        if (request === undefined || request.status !== "pending") return false;
-        if (request.responseCapability.type === "not_resumable") return false;
-        const item = context.item;
-        if (item === undefined || item.type !== "user_input_request") return false;
-        if (item.questions.length === 0) return false;
-        yield* run({
-          type: "runtime-request.respond",
-          commandId: input.commandId,
-          threadId: input.threadId,
-          requestId: pending.id,
-          answers: Object.fromEntries(item.questions.map((question) => [question.id, input.text])),
-        });
-        return true;
-      }),
+    answerPendingInput: Effect.fn("ThreadGatewayV2.answerPendingInput")(function* (input) {
+      const shell = yield* liveShell("runtime-request.respond", input.threadId);
+      const pending = shell.pendingRuntimeRequest;
+      if (pending === null || pending.kind !== "user_input") return false;
+      const context = yield* projections.getRuntimeResponseContext(input.threadId, pending.id).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ThreadCommandFailedError({
+              command: "runtime-request.respond",
+              threadId: input.threadId,
+              detail: describe(cause),
+              cause,
+            }),
+        ),
+      );
+      const request = context.request;
+      if (request === undefined || request.status !== "pending") return false;
+      if (request.responseCapability.type === "not_resumable") return false;
+      const item = context.item;
+      if (item === undefined || item.type !== "user_input_request") return false;
+      if (item.questions.length === 0) return false;
+      yield* run({
+        type: "runtime-request.respond",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        requestId: pending.id,
+        answers: Object.fromEntries(item.questions.map((question) => [question.id, input.text])),
+      });
+      return true;
+    }),
 
-    threadState: (threadId) =>
-      Effect.gen(function* () {
+    threadState: Effect.fn("ThreadGatewayV2.threadState")(
+      function* (threadId) {
         const shell = yield* shellOf(threadId);
         if (shell !== null && shell.deletedAt === null) {
           return boardThreadStateFromShell(shell, yield* nowMs);
         }
         const deleted = shell ?? (yield* deletedRecord(threadId));
         return deleted === null ? null : deletedThreadState(threadId, deleted.projectId);
-      }).pipe(Effect.mapError(readError("threadState"))),
-    threadRecords: (threadIds) =>
-      Effect.gen(function* () {
+      },
+      Effect.mapError(readError("threadState")),
+    ),
+    threadRecords: Effect.fn("ThreadGatewayV2.threadRecords")(
+      function* (threadIds) {
         const records = new Map<ThreadId, BoardThreadRecord>();
         for (const threadId of threadIds) {
           const shell = yield* shellOf(threadId);
@@ -877,9 +835,11 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
           }
         }
         return records as ReadonlyMap<ThreadId, BoardThreadRecord>;
-      }).pipe(Effect.mapError(readError("threadRecords"))),
-    threadsInWorktree: (worktreePath) =>
-      Effect.gen(function* () {
+      },
+      Effect.mapError(readError("threadRecords")),
+    ),
+    threadsInWorktree: Effect.fn("ThreadGatewayV2.threadsInWorktree")(
+      function* (worktreePath) {
         const resolved = path.resolve(worktreePath);
         const rows = yield* projections.getThreadWorktreePaths();
         const matching = rows.filter((row) => path.resolve(row.worktreePath) === resolved);
@@ -906,7 +866,9 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
             };
           }),
         );
-      }).pipe(Effect.mapError(readError("threadsInWorktree"))),
+      },
+      Effect.mapError(readError("threadsInWorktree")),
+    ),
     listLiveThreadIds: () =>
       projections.getShellSnapshot({}).pipe(
         Effect.flatMap((active) =>
@@ -917,8 +879,8 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
         ),
         Effect.mapError(readError("listLiveThreadIds")),
       ),
-    latestAssistantMessage: (threadId) =>
-      Effect.gen(function* () {
+    latestAssistantMessage: Effect.fn("ThreadGatewayV2.latestAssistantMessage")(
+      function* (threadId) {
         // Read from the latest run only: a thread's whole assistant history is
         // unbounded, and anything older than the latest run predates the work
         // the caller is asking about.
@@ -932,7 +894,9 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
         return newest === undefined
           ? null
           : { text: newest.text, createdAt: DateTime.formatIso(newest.createdAt) };
-      }).pipe(Effect.mapError(readError("latestAssistantMessage"))),
+      },
+      Effect.mapError(readError("latestAssistantMessage")),
+    ),
     // The timeout sweep's life sign: the thread's own update time moves with
     // every message, turn item and run change the engine records.
     lastSignalAt: (threadId) =>
@@ -1008,7 +972,7 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
   return gateway;
 });
 
-/** The gateway onto this server's own threads (T3O-63): what the router and
+/** The gateway onto this server's own threads: what the router and
     the worker side build on. */
 export const LocalThreadGatewayV2Live = Layer.effect(LocalThreadGateway, makeThreadGatewayV2);
 

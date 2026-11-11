@@ -1,14 +1,7 @@
 /**
- * T3o (T3O-63): run something against every registered worker's live link,
- * again on each new link.
- *
- * The signal feed and the MCP relay both hold a stream open on each worker
- * for as long as its connection lasts, and open it again when the connection
- * manager redials. This is that loop, once: a fiber per registered worker
- * that waits for a link, runs, and runs again — at once on a new link, after
- * a backoff on the same one, so a transient failure on a healthy link does
- * not stop the feed until the next redial. A worker removed from the
- * registry has its fiber stopped.
+ * Run something against every registered worker's live link: at once on a new
+ * link, after a backoff on the same one, so a transient failure on a healthy link
+ * does not stop it until the next redial.
  */
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -46,75 +39,74 @@ const nextLink = (
 
 /** The pause before a run that ended is run again on the same link: one
     second, doubling to thirty while it keeps ending soon after it starts. */
-export const rerunDelay = (reruns: number): Duration.Duration =>
+const rerunDelay = (reruns: number): Duration.Duration =>
   Duration.seconds(Math.min(30, 2 ** Math.min(reruns, 5)));
 
-export const runPerOnlineWorker = (
+// Untraced: it and its loops run for the server's lifetime.
+export const runPerOnlineWorker = Effect.fnUntraced(function* (
   connections: WorkerConnectionsShape,
   name: string,
   run: (workerId: EnvironmentId, rpc: WorkerRpc) => Effect.Effect<void>,
   delay: (reruns: number) => Duration.Duration = rerunDelay,
-): Effect.Effect<void, never, Scope.Scope> =>
-  Effect.gen(function* () {
-    const fibers = yield* FiberMap.make<EnvironmentId>();
-    const started = new Set<EnvironmentId>();
-    const loop = (workerId: EnvironmentId) =>
-      Effect.gen(function* () {
-        let last: WorkerRpc | null = null;
-        let reruns = 0;
-        let pause: Duration.Duration | null = null;
-        while (true) {
-          // A run that ended on a link still up is run on it again after a
-          // pause; a new link (a redial) starts at once.
-          const rpc: WorkerRpc | null =
-            last === null
-              ? yield* nextLink(connections, workerId, null)
-              : yield* Effect.raceFirst(
-                  nextLink(connections, workerId, last),
-                  Effect.sleep(pause ?? delay(0)).pipe(
-                    Effect.andThen(nextLink(connections, workerId, null)),
-                  ),
-                );
-          if (rpc === null) return;
-          if (rpc !== last) {
-            reruns = 0;
-            pause = null;
-          }
-          last = rpc;
-          const startedAt = yield* Clock.currentTimeMillis;
-          yield* run(workerId, rpc).pipe(
-            Effect.catchCauseIf(
-              (cause) => !Cause.hasInterruptsOnly(cause),
-              (cause) =>
-                Effect.logWarning(`board ${name}: a worker's run ended`, {
-                  workerId,
-                  cause: Cause.pretty(cause),
-                }),
-            ),
-          );
-          // A run that outlasted its pause was healthy: the backoff starts over.
-          const ranFor = (yield* Clock.currentTimeMillis) - startedAt;
-          if (pause !== null && ranFor >= Duration.toMillis(pause)) reruns = 0;
-          pause = delay(reruns);
-          reruns += 1;
-        }
-      });
-    yield* connections.states.pipe(
-      Stream.runForEach((runtime) =>
-        Effect.gen(function* () {
-          for (const workerId of runtime.keys()) {
-            if (!(yield* FiberMap.has(fibers, workerId))) {
-              started.add(workerId);
-              yield* FiberMap.run(fibers, workerId, loop(workerId));
-            }
-          }
-          for (const workerId of started) {
-            if (runtime.has(workerId)) continue;
-            started.delete(workerId);
-            yield* FiberMap.remove(fibers, workerId);
-          }
-        }),
-      ),
-      Effect.forkScoped,
-    );
+): Effect.fn.Return<void, never, Scope.Scope> {
+  const fibers = yield* FiberMap.make<EnvironmentId>();
+  const started = new Set<EnvironmentId>();
+  const loop = Effect.fnUntraced(function* (workerId: EnvironmentId) {
+    let last: WorkerRpc | null = null;
+    let reruns = 0;
+    let pause: Duration.Duration | null = null;
+    while (true) {
+      // A run that ended on a link still up is run on it again after a
+      // pause; a new link (a redial) starts at once.
+      const rpc: WorkerRpc | null =
+        last === null
+          ? yield* nextLink(connections, workerId, null)
+          : yield* nextLink(connections, workerId, last).pipe(
+              Effect.timeoutOrElse({
+                duration: pause ?? delay(0),
+                orElse: () => nextLink(connections, workerId, null),
+              }),
+            );
+      if (rpc === null) return;
+      if (rpc !== last) {
+        reruns = 0;
+        pause = null;
+      }
+      last = rpc;
+      const startedAt = yield* Clock.currentTimeMillis;
+      yield* run(workerId, rpc).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning(`board ${name}: a worker's run ended`, {
+              workerId,
+              cause: Cause.pretty(cause),
+            }),
+        ),
+      );
+      // A run that outlasted its pause was healthy: the backoff starts over.
+      const ranFor = (yield* Clock.currentTimeMillis) - startedAt;
+      if (pause !== null && ranFor >= Duration.toMillis(pause)) reruns = 0;
+      pause = delay(reruns);
+      reruns += 1;
+    }
   });
+  yield* connections.states.pipe(
+    Stream.runForEach((runtime) =>
+      Effect.gen(function* () {
+        for (const workerId of runtime.keys()) {
+          if (!(yield* FiberMap.has(fibers, workerId))) {
+            started.add(workerId);
+            yield* FiberMap.run(fibers, workerId, loop(workerId));
+          }
+        }
+        for (const workerId of started) {
+          if (runtime.has(workerId)) continue;
+          started.delete(workerId);
+          yield* FiberMap.remove(fibers, workerId);
+        }
+      }),
+    ),
+    Effect.forkScoped,
+  );
+});

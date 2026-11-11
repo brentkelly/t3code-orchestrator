@@ -1,23 +1,7 @@
 /**
- * "New thread — restart <stage>" — the `+` menu's on-demand kickoff (T3O-21).
- *
- * The reported bug: the menu row is enabled (the card's thread is idle, so the
- * client's in-flight gate lets the click through) and clicking it does nothing
- * at all. `board.card.start-stage-thread` is decided, the event lands, and the
- * reactor drops it on the floor — because `beginStageRun` only ever superseded
- * a `stalled` step. Every other resting state was blocked by one of two guards
- * written for the AUTOMATIC kickoff:
- *
- *  - a live thread link whose role is the stage (which is what a step thread's
- *    link IS — a human's adopted thread links as `linked`, never as the stage),
- *    so a stage that has ever run could never be restarted; and
- *  - a non-terminal step, which is what a planning interview parked on a
- *    question (`awaiting-input`) rests in — the exact state of the card in the
- *    bug report.
- *
- * An on-demand request is a human's explicit restart, so it supersedes the
- * card's current run whatever state it rests in, exactly as the stalled path
- * always did: settle the old step abandoned, interrupt and unlink its thread,
+ * The `+` menu's on-demand stage restart is a human's explicit restart, so it
+ * supersedes the card's current run whatever state it rests in (not just
+ * `stalled`): settle the old step abandoned, interrupt and unlink its thread,
  * then spawn a fresh one.
  */
 import {
@@ -188,7 +172,7 @@ it.effect("restarts a planning step parked on a question — the reported no-op"
       ),
       "the restarted thread is linked to the card",
     );
-    // The superseded run stays on the card as a retired past thread (T3O-41):
+    // The superseded run stays on the card as a retired past thread:
     // the board no longer supervises it, but its history is not lost.
     const superseded = outcome.card.threadLinks.find((entry) => entry.threadId === oldThread);
     assert.isDefined(superseded?.retiredAt, "the superseded planning thread is retired");
@@ -257,7 +241,7 @@ it.effect("restarts a step the supervisor still believes is running, and stops t
       "the superseded turn is interrupted",
     );
     // The old row settles rather than lingering non-terminal: a second live
-    // step for one card is the state D4 exists to forbid.
+    // step for one card is the state the board forbids.
     assert.isDefined(
       outcome.commands.find(
         (command) => command.type === "board.card.settle-step" && command.outcome === "abandoned",
@@ -282,11 +266,8 @@ it.effect("restarts a stalled step, as it always did", () =>
 it.effect("restarts a stalled step whose thread never existed", () =>
   Effect.gen(function* () {
     const outcome = yield* restartOutcome({
-      // The spawn-failure stall (t3o-30): the provider could not start, so the
-      // row names no thread — while the stage's earlier thread is still linked.
-      // The old supersede read that lingering link as a conversation a human had
-      // adopted and bailed, so the one state most in need of a restart was the
-      // one that ignored the click.
+      // A spawn-failure stall names no thread while the stage's earlier thread
+      // is still linked; that link must not read as a human-adopted conversation.
       card: planningCard(),
       stepStates: [planningStep({ status: "stalled", threadId: null })],
     });
@@ -336,7 +317,7 @@ it.effect("drops a request for a stage that runs nothing — no promptless threa
 
 it.effect("abandons a stalled step on a stage that runs nothing, without spawning a thread", () =>
   Effect.gen(function* () {
-    // Restart is offered on any stalled step (t3o-30 D3), including stages that
+    // Restart is offered on any stalled step, including stages that
     // do not auto-execute and have no prompt. The click must clear the stall
     // rather than succeed and leave it in place.
     const backlog = String(BOARD_SEED_STAGE_IDS.backlog);

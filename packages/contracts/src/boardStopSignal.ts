@@ -1,32 +1,11 @@
 /**
- * T3o stop-signal reading (t3o-34) — did the agent's last message end blocked
- * on a human answer?
- *
- * A human-in-the-loop step whose turn ends without completing has stopped and
- * will not move again on its own. That much is structural. This module answers
- * the only remaining question: is there something for the human to *answer*, or
- * just something to look at? The board paints the first violet ("Input needed")
- * and the second amber ("Needs a human").
- *
- * The envelope already asks agents to raise blockers through their runtime's
- * user-input request (`BOARD_ENVELOPE_QUESTION_MECHANISM`) and forbids ending a
- * turn with a question in prose. They do it anyway — a question with a
- * paragraph of consequence per option is a poor fit for a structured picker, and
- * planning is the stage where asking IS the job. So the board reads the text
- * instead of trusting the instruction.
- *
- * Deliberately GENEROUS, and this is the design, not a shortcut: both outcomes
- * mean "a human is needed on this card". A false positive costs violet instead
- * of amber; it never costs a card that keeps claiming to work. Precision would
- * be worth paying for only if one branch were silent, and neither is.
+ * Did the agent's last message end blocked on a human answer? Agents ask in prose despite
+ * the envelope, so the board reads the text. Deliberately generous: both outcomes mean a
+ * human is needed, and a false positive only costs violet instead of amber.
  */
 
-/** How far back from the end of the message the question may be.
- *
- *  Long enough to reach past several paragraph-sized options to the question
- *  that introduced them — the exact shape that defeats a structured picker, and
- *  the reason this module exists. Short enough that a whole plan document
- *  pasted into chat is not swept for an incidental `?` in its opening. */
+/** Long enough to reach past several paragraph-sized options to the question that
+ *  introduced them; short enough that a pasted plan is not swept for an early `?`. */
 const TAIL_WINDOW = 4000;
 
 /** Ask-shapes that routinely arrive WITHOUT a question mark. Kept short on
@@ -50,18 +29,9 @@ const INLINE_CODE = /`{1,2}[^`\n]*`{1,2}/g;
 const FENCE = /^[ \t]*(`{3,}|~{3,})/;
 
 /**
- * Drop fenced code blocks, keeping the prose around them.
- *
- * Line-wise rather than by regex on purpose. The regex form has to express "up
- * to the matching closer, or the end of the message if the fence was never
- * closed", and under the multiline flag every `$` in it also matches at every
- * line END — so a lazy body stops at the first newline and the rest of the block
- * leaks straight into the question window. Walking the lines says exactly what
- * it means and cannot be read two ways.
- *
- * A fence left open at the end swallows the remainder, which is the right
- * reading: whatever follows an unterminated fence is code the agent was still
- * writing, not a question it was asking.
+ * Line-wise, not regex: under the multiline flag `$` matches every line end, so a lazy
+ * body stops at the first newline. An unterminated fence swallows the rest, which is code
+ * the agent was still writing.
  */
 function stripFencedBlocks(text: string): string {
   const kept: Array<string> = [];
@@ -73,8 +43,7 @@ function stripFencedBlocks(text: string): string {
       else fence = marker[0]!; // the fence CHARACTER; a closer may be longer
       continue;
     }
-    // Only a fence of the same character closes the block, so a ``` inside a
-    // ~~~ block stays code.
+    // Only a fence of the same character closes the block.
     if (marker !== undefined && marker[0] === fence) fence = null;
   }
   return kept.join("\n");

@@ -1,5 +1,5 @@
 /**
- * T3o per-project pipelines on the board (T3O-43/49): which columns a view
+ * T3o per-project pipelines on the board: which columns a view
  * draws, which projects each covers.
  */
 import {

@@ -1,5 +1,5 @@
 /**
- * Board migration 060 (T3O-44): the CI seed stage row, the card's CI columns
+ * Board migration 060: the CI seed stage row, the card's CI columns
  * and the CI pass table.
  */
 import { assert, it } from "@effect/vitest";

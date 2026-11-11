@@ -97,7 +97,7 @@ describe("the worker chip (prototype 4.4)", () => {
     expect(boardCardWorkerChip({}, board)).toEqual({
       label: "local",
       bound: false,
-      tooltip: "Follows the default worker — This server",
+      tooltip: "Follows the default worker (This server)",
     });
     expect(boardCardWorkerChip({ workerId: LINUX }, board)).toEqual({
       label: "linux-box",
@@ -180,10 +180,10 @@ describe("the worker picker (prototype 4.2)", () => {
 });
 
 describe("the worker field", () => {
-  it("reads Follow default — {worker}, or the pin", () => {
+  it("reads Follow default ({worker}), or the pin", () => {
     const board = state([worker(LINUX, "linux-box")], { defaultWorkerId: LINUX });
     expect(boardWorkerFieldLabel(null, board)).toEqual({
-      label: "Follow default — linux-box",
+      label: "Follow default (linux-box)",
       pinned: false,
     });
     expect(boardWorkerFieldLabel(BOARD_LOCAL_WORKER_ID, board)).toEqual({

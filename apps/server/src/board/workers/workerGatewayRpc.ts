@@ -1,7 +1,7 @@
 /**
- * T3o (T3O-63): the worker side's `boardWorker.gateway.*`, the MCP relay and
+ * T3o: the worker side's `boardWorker.gateway.*`, the MCP relay and
  * attachment staging, spread into the board's RPC handler record. Each is a
- * thin call into `WorkerGatewayHost`, read per call like the T3O-62 worker
+ * thin call into `WorkerGatewayHost`, read per call like the other worker
  * handlers, so building the record needs no service.
  */
 import {
@@ -27,7 +27,7 @@ import { WorkerGatewayHost, type WorkerGatewayHostShape } from "./WorkerGatewayH
 type Method = keyof typeof BOARD_WORKER_GATEWAY_RPC_SCOPES;
 
 /** Run one gateway call on the host, its answer untyped for the wire. */
-export const runGatewayCall = (
+const runGatewayCall = (
   host: WorkerGatewayHostShape,
   call: BoardGatewayCall,
   caller: AuthSessionId,

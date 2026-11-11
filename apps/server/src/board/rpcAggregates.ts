@@ -1,5 +1,5 @@
 /**
- * The `rpc.aggregate` label of every board RPC (T3O-59), spread into upstream's
+ * The `rpc.aggregate` label of every board RPC, spread into upstream's
  * `RPC_AGGREGATES` (observability/RpcInstrumentation.ts), whose type makes a
  * method without a label a compile error.
  */
@@ -11,9 +11,9 @@ import {
   BOARD_WS_METHODS,
 } from "@t3tools/contracts";
 
-// T3O-62: worker management and the worker-side handshake are board RPCs too.
-// T3O-63: so are the worker's thread gateway, the MCP relay and staging, and
-// T3O-64: the git operations a card's worker runs.
+// Worker management and the worker-side handshake are board RPCs too.
+// So are the worker's thread gateway, the MCP relay and staging, and
+// The git operations a card's worker runs.
 const BOARD_METHOD_MAPS = [
   BOARD_WS_METHODS,
   BOARD_WORKERS_WS_METHODS,

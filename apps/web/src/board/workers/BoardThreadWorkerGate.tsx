@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-63; prototype 7.2/7.3): a card thread that runs on a worker opens
+ * T3o (prototype 7.2/7.3): a card thread that runs on a worker opens
  * in that worker's environment, which this device may not be connected to.
  * Until it is, the thread pane says so — and offers the way there — instead
  * of showing the chat. The rest of the card stays fully usable.
@@ -23,7 +23,7 @@ import {
 } from "./threadWorker";
 
 /** This device's way into a thread on `worker`. */
-export function useWorkerThreadAccess(worker: BoardThreadWorker): WorkerThreadAccess {
+function useWorkerThreadAccess(worker: BoardThreadWorker): WorkerThreadAccess {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const state = useAtomValue(environmentCatalog.stateAtom(worker.environmentId));
   const connection = catalog.entries.has(worker.environmentId)

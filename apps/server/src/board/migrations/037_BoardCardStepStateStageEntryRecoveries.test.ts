@@ -1,15 +1,6 @@
 /**
- * Board migration 037 (T3O-12, D4/D8): the stage entry's RECOVERY total on the
- * step-state row.
- *
- * The point of the test is the DEFAULT. The runaway ceiling used to be read off
- * `attempt`, which every planned review-phase selection carried forward, so a
- * long loop's counter was permanently past the ceiling and every card in that
- * state escalated its first stall instantly. Defaulting the new column to 0 is
- * what un-wedges those cards on upgrade, so a row written before the column
- * existed has to read as "this stage entry has spent nothing on recovery" —
- * not NULL, which would fail the row's schema, and not a backfill from
- * `attempt`, which would carry the bug forward.
+ * A row written before the column existed must read 0, not NULL (fails the
+ * schema) and not a copy of `attempt` (carries the bug forward).
  */
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -66,7 +57,7 @@ it.effect("a step-state row written before 037 reads a recovery total of 0", () 
       readonly stage_entry_recoveries: number;
     }>`SELECT attempt, stage_entry_recoveries FROM board_card_step_state`;
     assert.strictEqual(rows.length, 1);
-    // Not backfilled from `attempt` (D8): the card's blown counter is exactly
+    // Not backfilled from `attempt`: the card's blown counter is exactly
     // what has to go away, so it starts over at zero and the card stops being
     // falsely escalated the moment the server restarts.
     assert.strictEqual(rows[0]?.attempt, 45);

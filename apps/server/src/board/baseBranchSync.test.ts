@@ -1,10 +1,6 @@
 /**
- * Pulling a merged card's base branch forward in the project-root checkout.
- *
- * The logic worth pinning is which git command runs, and that every failure is
- * a reported skip rather than a raised error: the card is already merged, so a
- * base we could not fast-forward must never surface as a failure. The git
- * driver is faked down to the two methods this module calls.
+ * Pins which git command runs, and that every failure is a reported skip: the
+ * card is already merged, so a base that could not fast-forward is never an error.
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";

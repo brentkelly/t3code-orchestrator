@@ -1,5 +1,5 @@
 /**
- * T3o board subscription (T3O-57): the client's own board stream, its reducer
+ * T3o board subscription: the client's own board stream, its reducer
  * guard, and resume on reconnect.
  */
 import {

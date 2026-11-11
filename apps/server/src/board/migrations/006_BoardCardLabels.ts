@@ -1,10 +1,5 @@
-// T3o: card↔label join (t3o-06a). `ordinal` preserves the card's label order
-// so table rehydration reproduces the array the decider computed. Indexed both
-// ways: by card_id (a card's labels — read on every rehydration and shell) and
-// by label_id ("which cards use this label" — the reverse lookup a future
-// board-by-label filter needs; t3o-06a itself never queries it, but the plan
-// mandates the join be indexed both ways so that filter is a lookup, not a
-// scan). Numbered from 900_ upward so it can never collide with upstream.
+// `ordinal` keeps the card's label order so rehydration reproduces the decider's
+// array. Indexed both ways, so a by-label lookup is never a scan.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

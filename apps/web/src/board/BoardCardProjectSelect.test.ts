@@ -1,11 +1,6 @@
 /**
- * The two decisions in the `Project ·` row that nothing else catches (T3O-33):
- * WHY the row is pinned, and which projects the menu is allowed to offer.
- *
- * The lock predicate lives in contracts because the decider refuses on it too —
- * a control that disagrees with the rejection is a control that lies — so the
- * cases here are the ones a stage-index-only test would pass and production
- * would fail.
+ * The lock predicate lives in contracts because the decider refuses on it too;
+ * these are the cases a stage-index-only rule would get wrong.
  */
 import {
   BOARD_SEED_STAGES,

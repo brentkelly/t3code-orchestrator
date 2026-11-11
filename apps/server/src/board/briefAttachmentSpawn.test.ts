@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * The one push (t3o-32, K4): a plan-mode or build-mode spawn carries the
- * brief's attachments on its first turn, staged as fresh pending uploads —
- * images natively, everything else as files (T3O-74).
+ * The one push (K4): a plan-mode or build-mode spawn carries the brief's
+ * attachments on its first turn, staged as fresh pending uploads — images
+ * natively, everything else as files.
  */
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";

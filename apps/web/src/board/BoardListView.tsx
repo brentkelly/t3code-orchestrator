@@ -1,9 +1,6 @@
 /**
- * The List view (T3O-30): the card tree as an indented outline, with a
- * selection, a toolbar, Tab / Shift+Tab to indent and outdent, Move to…, and
- * drag and drop. Every move — toolbar, keyboard, drag — goes through
- * `runMove`, which applies `planBoardListMove`'s guard rails and sends one
- * `board.card.move-cards`; the decider checks each one again.
+ * The card tree as an indented outline. Every move (toolbar, keyboard, drag) goes
+ * through `runMove`, which applies `planBoardListMove` and sends one `board.card.move-cards`.
  */
 import {
   BoardCardId,
@@ -34,10 +31,8 @@ import {
 } from "lucide-react";
 import {
   memo,
-  useCallback,
   useEffect,
   useId,
-  useMemo,
   useRef,
   useState,
   type DragEvent,
@@ -57,6 +52,7 @@ import {
 } from "../components/ui/menu";
 import { isEditableFocused } from "../lib/editableFocus";
 import { observeResize } from "../lib/observeResize";
+import { useStableCallback } from "../hooks/useStableCallback";
 import { cn, randomUUID } from "../lib/utils";
 import { boardEnvironment } from "../state/board";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -150,22 +146,66 @@ interface DropTarget {
   readonly zone: BoardListDropZone;
 }
 
+// Its own hook so a selection change, which the model reads, never rebuilds the rows.
+function useBoardListRows(props: BoardListViewProps) {
+  const { shells, stages, inScope, query } = props;
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  const [stageFilter, setStageFilter] = useState<ReadonlySet<string>>(() => new Set());
+  const tree = buildBoardListTree({ shells, stages, inScope });
+  const filter = { query, stages: stageFilter };
+  const rows = boardListRows({ tree, collapsed, filter });
+  const visibleIds = rows.map((row) => String(row.card.cardId));
+  return { collapsed, setCollapsed, stageFilter, setStageFilter, tree, rows, visibleIds };
+}
+
+// The derivations live in their own hook: a value the compiler sees later passed to
+// a call after one of the view's hooks loses its cache, and hook results are frozen.
+function useBoardListModel(props: BoardListViewProps) {
+  const { shells, allShells, stages, attentionFor, query } = props;
+  const { collapsed, setCollapsed, stageFilter, setStageFilter, tree, rows, visibleIds } =
+    useBoardListRows(props);
+  const [rawSelected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const [dragIds, setDragIds] = useState<ReadonlyArray<string> | null>(null);
+  // Every action reads only the selected rows still on screen: a filter or a
+  // collapse must not leave Tab, Move to… or a drag acting on hidden cards.
+  const selected = boardListVisibleSelection(rawSelected, visibleIds);
+  const selection = boardListSelection(tree, selected);
+  const selectionIds = selection.map((card) => String(card.cardId));
+  const filtering = query.trim().length > 0 || stageFilter.size > 0;
+  const indent = boardListIndent(tree, selected, filtering ? new Set(visibleIds) : undefined);
+  const outdent = boardListOutdent(tree, selected, allShells);
+  const dragBlocked = dragIds === null ? null : boardListDragBlocked(shells, dragIds);
+  // `boardGroupStats` caches per input object, so this must keep its identity.
+  const statsInput: BoardGroupStatsInput = { shells, stages, attentionFor };
+  return {
+    setSelected,
+    collapsed,
+    setCollapsed,
+    stageFilter,
+    setStageFilter,
+    dragIds,
+    setDragIds,
+    tree,
+    rows,
+    visibleIds,
+    selected,
+    selection,
+    selectionIds,
+    indent,
+    outdent,
+    dragBlocked,
+    statsInput,
+  };
+}
+
 export function BoardListView(props: BoardListViewProps) {
-  const { environmentId, shells, allShells, stages, inScope, attentionFor } = props;
-  // `useAtomCommand` hands back a new function every render; read it through a
-  // ref so the move path, and every memoised row's handlers, stay stable.
+  const { environmentId, shells, allShells, stages, attentionFor } = props;
   const moveCards = useAtomCommand(boardEnvironment.moveCards);
-  const moveCardsRef = useRef(moveCards);
-  moveCardsRef.current = moveCards;
   const archiveCard = useAtomCommand(boardEnvironment.archiveCard);
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
 
-  // Session-scoped view state: none of it is worth a reload (D9).
-  const [rawSelected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  // Session-scoped view state: none of it is worth a reload.
   const [anchorId, setAnchorId] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
-  const [stageFilter, setStageFilter] = useState<ReadonlySet<string>>(() => new Set());
-  const [dragIds, setDragIds] = useState<ReadonlyArray<string> | null>(null);
   const [over, setOver] = useState<DropTarget | null>(null);
   const [startedDialog, setStartedDialog] = useState<{
     readonly startedId: string;
@@ -174,168 +214,119 @@ export function BoardListView(props: BoardListViewProps) {
   const [newGroup, setNewGroup] = useState<{ readonly ids: ReadonlyArray<string> } | null>(null);
   const [archiveGroupId, setArchiveGroupId] = useState<string | null>(null);
 
-  const tree = useMemo(
-    () => buildBoardListTree({ shells, stages, inScope }),
-    [inScope, shells, stages],
-  );
-  const filter = useMemo(
-    () => ({ query: props.query, stages: stageFilter }),
-    [props.query, stageFilter],
-  );
-  const rows = useMemo(() => boardListRows({ tree, collapsed, filter }), [collapsed, filter, tree]);
-  const visibleIds = useMemo(() => rows.map((row) => String(row.card.cardId)), [rows]);
-  // Every action reads only the selected rows still on screen: a filter or a
-  // collapse must not leave Tab, Move to… or a drag acting on hidden cards.
-  const selected = useMemo(
-    () => boardListVisibleSelection(rawSelected, visibleIds),
-    [rawSelected, visibleIds],
-  );
-  const selection = useMemo(() => boardListSelection(tree, selected), [selected, tree]);
-  const selectionIds = useMemo(() => selection.map((card) => String(card.cardId)), [selection]);
-  const filtering = props.query.trim().length > 0 || stageFilter.size > 0;
-  const indent = useMemo(
-    () => boardListIndent(tree, selected, filtering ? new Set(visibleIds) : undefined),
-    [filtering, selected, tree, visibleIds],
-  );
-  const outdent = useMemo(
-    () => boardListOutdent(tree, selected, allShells),
-    [allShells, selected, tree],
-  );
-  const dragBlocked = useMemo(
-    () => (dragIds === null ? null : boardListDragBlocked(shells, dragIds)),
-    [dragIds, shells],
-  );
-  const statsInput = useMemo<BoardGroupStatsInput>(
-    () => ({ shells, stages, attentionFor }),
-    [attentionFor, shells, stages],
-  );
+  const {
+    setSelected,
+    setCollapsed,
+    stageFilter,
+    setStageFilter,
+    dragIds,
+    setDragIds,
+    tree,
+    rows,
+    visibleIds,
+    selected,
+    selection,
+    selectionIds,
+    indent,
+    outdent,
+    dragBlocked,
+    statsInput,
+  } = useBoardListModel(props);
   const stageDefinitions = stages.stages ?? [];
 
   // ── The one move path ────────────────────────────────────────────────
-  const runMove = useCallback(
-    (request: BoardListMoveRequest) => {
-      const plan = planBoardListMove({ shells: allShells, stages, request });
-      if (plan.kind === "noop") return;
-      if (plan.kind === "refused") {
-        boardToast({ tone: "error", title: plan.reason });
-        return;
-      }
-      if (plan.kind === "started") {
-        setStartedDialog({
-          startedId: String(plan.started.cardId),
-          movingIds: plan.moving.map((card) => String(card.cardId)),
-        });
-        return;
-      }
-      const parentId = plan.input.parentCardId;
-      if (parentId !== null) {
-        setCollapsed((current) => {
-          if (!current.has(parentId)) return current;
-          const next = new Set(current);
-          next.delete(parentId);
-          return next;
-        });
-      }
-      void moveCardsRef.current({ environmentId, input: plan.input }).then((result) => {
-        if (failed(result)) {
-          boardToast({
-            tone: "error",
-            title: "Could not move the cards",
-            description: describeBoardCommandFailure(result),
-          });
-          return;
-        }
-        const byStage = new Map<BoardStageId, Array<(typeof plan.reverting)[number]>>();
-        for (const entry of plan.reverting) {
-          byStage.set(entry.stageId, [...(byStage.get(entry.stageId) ?? []), entry]);
-        }
-        for (const [stageId, entries] of byStage) {
-          const keys = entries.map((entry) => entry.card.key).join(", ");
-          const stage = isBoardDeferredStage(stageId)
-            ? BOARD_DEFERRED_STAGE.label
-            : boardStageLabel(stageDefinitions, stageId);
-          boardToast({
-            title: `${keys} ${entries.length === 1 ? "has" : "have"} no children left and ${
-              entries.length === 1 ? "is an ordinary card" : "are ordinary cards"
-            } again, back in ${stage}.`,
-          });
-        }
+  const runMove = (request: BoardListMoveRequest) => {
+    const plan = planBoardListMove({ shells: allShells, stages, request });
+    if (plan.kind === "noop") return;
+    if (plan.kind === "refused") {
+      boardToast({ tone: "error", title: plan.reason });
+      return;
+    }
+    if (plan.kind === "started") {
+      setStartedDialog({
+        startedId: String(plan.started.cardId),
+        movingIds: plan.moving.map((card) => String(card.cardId)),
       });
-    },
-    [allShells, environmentId, stageDefinitions, stages],
-  );
-
-  const runStep = useCallback(
-    (step: BoardListStep) => {
-      if (step.kind === "refused") {
-        boardToast({ title: step.reason });
+      return;
+    }
+    const parentId = plan.input.parentCardId;
+    if (parentId !== null) {
+      setCollapsed((current) => {
+        if (!current.has(parentId)) return current;
+        const next = new Set(current);
+        next.delete(parentId);
+        return next;
+      });
+    }
+    void moveCards({ environmentId, input: plan.input }).then((result) => {
+      if (failed(result)) {
+        boardToast({
+          tone: "error",
+          title: "Could not move the cards",
+          description: describeBoardCommandFailure(result),
+        });
         return;
       }
-      runMove(step.request);
-    },
-    [runMove],
-  );
-
-  const clearSelection = useCallback(() => {
-    setSelected((current) => (current.size === 0 ? current : new Set()));
-  }, []);
-
-  // ── Row handlers, stable so a memoised row re-renders only on its own data ──
-  const latest = useRef({
-    selected,
-    anchorId,
-    visibleIds,
-    selectionIds,
-    dragIds,
-    over,
-    dragBlocked,
-    tree,
-    runMove,
-  });
-  latest.current = {
-    selected,
-    anchorId,
-    visibleIds,
-    selectionIds,
-    dragIds,
-    over,
-    dragBlocked,
-    tree,
-    runMove,
+      const byStage = new Map<BoardStageId, Array<(typeof plan.reverting)[number]>>();
+      for (const entry of plan.reverting) {
+        byStage.set(entry.stageId, [...(byStage.get(entry.stageId) ?? []), entry]);
+      }
+      for (const [stageId, entries] of byStage) {
+        const keys = entries.map((entry) => entry.card.key).join(", ");
+        const stage = isBoardDeferredStage(stageId)
+          ? BOARD_DEFERRED_STAGE.label
+          : boardStageLabel(stageDefinitions, stageId);
+        boardToast({
+          title: `${keys} ${entries.length === 1 ? "has" : "have"} no children left and ${
+            entries.length === 1 ? "is an ordinary card" : "are ordinary cards"
+          } again, back in ${stage}.`,
+        });
+      }
+    });
   };
 
-  const onRowClick = useCallback((id: string, event: MouseEvent) => {
-    const state = latest.current;
-    if (event.shiftKey && state.anchorId !== null) {
-      setSelected(new Set(boardListRange(state.visibleIds, state.anchorId, id)));
+  const runStep = (step: BoardListStep) => {
+    if (step.kind === "refused") {
+      boardToast({ title: step.reason });
+      return;
+    }
+    runMove(step.request);
+  };
+
+  const clearSelection = () => {
+    setSelected((current) => (current.size === 0 ? current : new Set()));
+  };
+
+  // ── Row handlers, stable so a memoised row re-renders only on its own data ──
+  const onRowClick = useStableCallback((id: string, event: MouseEvent) => {
+    if (event.shiftKey && anchorId !== null) {
+      setSelected(new Set(boardListRange(visibleIds, anchorId, id)));
       return;
     }
     if (event.metaKey || event.ctrlKey) {
-      setSelected(toggled(state.selected, id));
+      setSelected(toggled(selected, id));
       setAnchorId(id);
       return;
     }
     // The second click of a double-click must not deselect the row it opens.
     const again = event.detail === 1;
-    const current = state.selected;
-    setSelected(again && current.size === 1 && current.has(id) ? new Set() : new Set([id]));
+    setSelected(again && selected.size === 1 && selected.has(id) ? new Set() : new Set([id]));
     setAnchorId(id);
-  }, []);
-  const onRowCheck = useCallback((id: string) => {
-    setSelected(toggled(latest.current.selected, id));
+  });
+  const onRowCheck = useStableCallback((id: string) => {
+    setSelected(toggled(selected, id));
     setAnchorId(id);
-  }, []);
-  const onRowToggle = useCallback((id: string) => {
+  });
+  const onRowToggle = (id: string) => {
     setCollapsed((current) => {
       const next = new Set(current);
       if (!next.delete(id)) next.add(id);
       return next;
     });
-  }, []);
+  };
   const { onOpenCard, onOpenBoard } = props;
-  const onRowDragStart = useCallback((id: string, event: DragEvent) => {
-    const state = latest.current;
-    const ids = state.selected.has(id) ? state.selectionIds : [id];
+  const onRowDragStart = useStableCallback((id: string, event: DragEvent) => {
+    const ids = selected.has(id) ? selectionIds : [id];
     event.dataTransfer.effectAllowed = "move";
     try {
       event.dataTransfer.setData("text/plain", id);
@@ -344,51 +335,46 @@ export function BoardListView(props: BoardListViewProps) {
     }
     setDragIds(ids);
     setOver(null);
-  }, []);
-  const onRowDragEnd = useCallback(() => {
+  });
+  const onRowDragEnd = () => {
     setDragIds(null);
     setOver(null);
-  }, []);
-  const onRowDragOver = useCallback((id: string, event: DragEvent<HTMLElement>) => {
-    const state = latest.current;
-    if (state.dragIds === null) return;
-    if (state.dragBlocked?.has(id) === true) {
-      if (state.over !== null) setOver(null);
+  };
+  const onRowDragOver = useStableCallback((id: string, event: DragEvent<HTMLElement>) => {
+    if (dragIds === null) return;
+    if (dragBlocked?.has(id) === true) {
+      if (over !== null) setOver(null);
       return;
     }
     event.preventDefault();
     const rect = event.currentTarget.getBoundingClientRect();
     const zone = boardListDropZone(event.clientY - rect.top, rect.height);
-    if (state.over?.id !== id || state.over.zone !== zone) setOver({ id, zone });
-  }, []);
-  const onRowDrop = useCallback((id: string, event: DragEvent<HTMLElement>) => {
+    if (over?.id !== id || over.zone !== zone) setOver({ id, zone });
+  });
+  const onRowDrop = useStableCallback((id: string, event: DragEvent<HTMLElement>) => {
     event.preventDefault();
-    const state = latest.current;
     setDragIds(null);
     setOver(null);
-    if (state.dragIds === null || state.dragBlocked?.has(id) === true) return;
-    const target = state.tree.byId.get(id);
+    if (dragIds === null || dragBlocked?.has(id) === true) return;
+    const target = tree.byId.get(id);
     if (target === undefined) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const zone = boardListDropZone(event.clientY - rect.top, rect.height);
-    state.runMove(boardListDropRequest(state.dragIds, target, zone));
-  }, []);
+    runMove(boardListDropRequest(dragIds, target, zone));
+  });
 
-  const onKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLDivElement>) => {
-      if (event.defaultPrevented || isEditableFocused(event.target)) return;
-      if (event.key === "Escape" && selected.size > 0) {
-        event.preventDefault();
-        clearSelection();
-        return;
-      }
-      if (event.key !== "Tab" || selected.size === 0) return;
-      if (event.altKey || event.metaKey || event.ctrlKey) return;
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || isEditableFocused(event.target)) return;
+    if (event.key === "Escape" && selected.size > 0) {
       event.preventDefault();
-      runStep(event.shiftKey ? outdent : indent);
-    },
-    [clearSelection, indent, outdent, runStep, selected.size],
-  );
+      clearSelection();
+      return;
+    }
+    if (event.key !== "Tab" || selected.size === 0) return;
+    if (event.altKey || event.metaKey || event.ctrlKey) return;
+    event.preventDefault();
+    runStep(event.shiftKey ? outdent : indent);
+  };
 
   // ── Toolbar actions ──────────────────────────────────────────────────
   const openGroupInto = () => {
@@ -433,25 +419,18 @@ export function BoardListView(props: BoardListViewProps) {
     });
   };
 
-  const counts = useMemo(() => boardListStageCounts(tree), [tree]);
-  const moveTargets = useMemo(
-    () =>
-      selected.size === 0
-        ? []
-        : boardListMoveTargets(tree, selected).map((target) => ({
-            ...target,
-            isGroup: target.card !== null && boardShellGroup(shells, target.card) !== null,
-          })),
-    [selected, shells, tree],
-  );
-  const groupCount = useMemo(
-    () =>
-      [...tree.inScope].filter((id) => {
-        const card = tree.byId.get(id);
-        return card !== undefined && boardShellGroup(shells, card) !== null;
-      }).length,
-    [shells, tree],
-  );
+  const counts = boardListStageCounts(tree);
+  const moveTargets =
+    selected.size === 0
+      ? []
+      : boardListMoveTargets(tree, selected).map((target) => ({
+          ...target,
+          isGroup: target.card !== null && boardShellGroup(shells, target.card) !== null,
+        }));
+  const groupCount = [...tree.inScope].filter((id) => {
+    const card = tree.byId.get(id);
+    return card !== undefined && boardShellGroup(shells, card) !== null;
+  }).length;
   const stageOptions = [...stageDefinitions, BOARD_DEFERRED_STAGE];
 
   // ── Rows ────────────────────────────────────────────────────────────
@@ -461,7 +440,7 @@ export function BoardListView(props: BoardListViewProps) {
     height: VIRTUALISE_FROM * BOARD_LIST_ROW_HEIGHT,
   });
   const virtualised = rows.length > VIRTUALISE_FROM;
-  const measure = useCallback(() => {
+  const measure = () => {
     const element = scrollRef.current;
     if (element === null) return;
     const { scrollTop, clientHeight: height } = element;
@@ -470,7 +449,8 @@ export function BoardListView(props: BoardListViewProps) {
         ? current
         : { scrollTop, height },
     );
-  }, []);
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the scroller's size to window the virtualised rows
   useEffect(() => {
     if (!virtualised) return;
     measure();
@@ -1072,13 +1052,16 @@ const BoardListRowView = memo(function BoardListRowView(props: BoardListRowViewP
         {stats !== null ? (
           <>
             <span className="flex min-w-0 flex-1 items-center gap-[2px]">
-              {stats.states.map((state, index) => (
-                <span
-                  className={cn("h-1 max-w-3 min-w-1 flex-1 rounded-[2px]", PIP_CLASS[state])}
-                  data-state={state}
-                  key={index}
-                />
-              ))}
+              {stats.active.map((child, index) => {
+                const state = stats.states[index]!;
+                return (
+                  <span
+                    className={cn("h-1 max-w-3 min-w-1 flex-1 rounded-[2px]", PIP_CLASS[state])}
+                    data-state={state}
+                    key={child.key}
+                  />
+                );
+              })}
             </span>
             <span
               className={cn(

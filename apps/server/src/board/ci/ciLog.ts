@@ -1,17 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Reading a CI step's log, `<logDir>/<index>.log` (T3O-60), for the card's
- * log viewer and its Download.
- *
- * `readBoardCiLogFile` reads one file, here or on a worker, in chunks of at
- * most 1 MiB, and with `follow` polls for growth until whoever reads it stops.
- * Text is cut on UTF-8 character boundaries, so every chunk's `offset` is the
- * exact byte offset of its first character.
- *
- * `readBoardCiLog` is the central server's read for a client: it finds the
- * log from the pass row and the card's worker (the client never names a
- * path), follows it while the step runs, and once the step settles, the pass
- * finishes or the card moves to another pass, reads the flushed rest and ends.
+ * A CI step's log, `<logDir>/<index>.log`. Chunks are at most 1 MiB and cut on
+ * UTF-8 boundaries, so each `offset` is the exact byte offset of its first
+ * character. The client never names a path: the server finds it from the pass.
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -70,9 +61,12 @@ const missing = (reason: string): BoardCiLogItem => ({ _tag: "missing", reason }
 
 /** The file's size, or null when it doesn't exist. */
 const statSize = (path: string) =>
-  Effect.tryPromise(() => NodeFS.promises.stat(path)).pipe(
+  Effect.tryPromise({
+    try: () => NodeFS.promises.stat(path),
+    catch: (error) => (error instanceof Error ? error.message : String(error)),
+  }).pipe(
     Effect.map((stats) => stats.size),
-    Effect.catch(() => Effect.succeed(null)),
+    Effect.orElseSucceed(() => null),
   );
 
 const readBytes = (path: string, position: number, length: number) =>
@@ -92,14 +86,13 @@ const readBytes = (path: string, position: number, length: number) =>
 
 /** Where a read without an offset starts: the last 256 KiB, moved on to the
     start of its first whole line. */
-const tailStart = (path: string, size: number) =>
-  Effect.gen(function* () {
-    if (size <= BOARD_CI_LOG_TAIL_BYTES) return 0;
-    const start = size - BOARD_CI_LOG_TAIL_BYTES;
-    const window = yield* readBytes(path, start, Math.min(64 * 1024, size - start));
-    const newline = window.indexOf(NEWLINE);
-    return newline === -1 ? start : start + newline + 1;
-  });
+const tailStart = Effect.fn("BoardCiLog.tailStart")(function* (path: string, size: number) {
+  if (size <= BOARD_CI_LOG_TAIL_BYTES) return 0;
+  const start = size - BOARD_CI_LOG_TAIL_BYTES;
+  const window = yield* readBytes(path, start, Math.min(64 * 1024, size - start));
+  const newline = window.indexOf(NEWLINE);
+  return newline === -1 ? start : start + newline + 1;
+});
 
 const decoder = new TextDecoder();
 
@@ -119,39 +112,38 @@ export const readBoardCiLogFile = (
     let held: Uint8Array = new Uint8Array(0);
 
     /** Start reading a file of `size` bytes; false when the offset is past it. */
-    const begin = (size: number) =>
-      Effect.gen(function* () {
-        if (options.fromOffset !== undefined && options.fromOffset > size) return false;
-        position = options.fromOffset ?? (yield* tailStart(path, size));
-        return true;
-      });
+    const begin = Effect.fn("BoardCiLog.begin")(function* (size: number) {
+      if (options.fromOffset !== undefined && options.fromOffset > size) return false;
+      position = options.fromOffset ?? (yield* tailStart(path, size));
+      return true;
+    });
 
-    const readTo = (size: number) =>
-      Effect.gen(function* () {
-        while (position !== null && position < size) {
-          const bytes = yield* readBytes(
-            path,
-            position,
-            Math.min(BOARD_CI_LOG_CHUNK_BYTES, size - position),
-          );
-          if (bytes.length === 0) return;
-          const offset = position - held.length;
-          position += bytes.length;
-          const combined = new Uint8Array(held.length + bytes.length);
-          combined.set(held);
-          combined.set(bytes, held.length);
-          const complete = utf8CompleteLength(combined);
-          held = combined.slice(complete);
-          if (complete > 0) {
-            yield* Queue.offer(queue, {
-              _tag: "chunk",
-              offset,
-              end: offset + complete,
-              text: decoder.decode(combined.subarray(0, complete)),
-            });
-          }
+    // Untraced: runs on every poll tick of a followed log.
+    const readTo = Effect.fnUntraced(function* (size: number) {
+      while (position !== null && position < size) {
+        const bytes = yield* readBytes(
+          path,
+          position,
+          Math.min(BOARD_CI_LOG_CHUNK_BYTES, size - position),
+        );
+        if (bytes.length === 0) return;
+        const offset = position - held.length;
+        position += bytes.length;
+        const combined = new Uint8Array(held.length + bytes.length);
+        combined.set(held);
+        combined.set(bytes, held.length);
+        const complete = utf8CompleteLength(combined);
+        held = combined.slice(complete);
+        if (complete > 0) {
+          yield* Queue.offer(queue, {
+            _tag: "chunk",
+            offset,
+            end: offset + complete,
+            text: decoder.decode(combined.subarray(0, complete)),
+          });
         }
-      });
+      }
+    });
 
     const finish = (item: BoardCiLogItem) =>
       Queue.offer(queue, item).pipe(Effect.andThen(Queue.end(queue)));
@@ -333,7 +325,7 @@ export const readBoardCiLog = <E>(
         Stream.mapEffect(() =>
           deps.readDetail(input.cardId).pipe(
             Effect.map((latest) => isBoardCiLogSettled(latest, input.runId, input.index)),
-            Effect.catch(() => Effect.succeed(false)),
+            Effect.orElseSucceed(() => false),
           ),
         ),
         Stream.filter((settledNow) => settledNow),

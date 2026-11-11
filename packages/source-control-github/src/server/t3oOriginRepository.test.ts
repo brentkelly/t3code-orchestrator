@@ -13,7 +13,7 @@ const resolve = (remoteList: string, resolved = "") =>
     defaultHost: "github.com",
   }).locator;
 
-// T3O-48: in a fork with an `upstream` remote, gh's own rule picks the parent.
+// In a fork with an `upstream` remote, gh's own rule picks the parent.
 describe("origin-first repository resolution", () => {
   it("acts on origin even with an upstream remote, or a gh default set on it", () => {
     const fork = remotes(

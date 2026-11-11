@@ -1,5 +1,5 @@
 /**
- * The pre-build dependency gate (T3O-24), asserted as a pure decision rather
+ * The pre-build dependency gate, asserted as a pure decision rather
  * than by rendering the modal.
  */
 import { BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS } from "@t3tools/contracts";

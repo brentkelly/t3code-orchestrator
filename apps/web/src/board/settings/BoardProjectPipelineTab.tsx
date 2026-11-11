@@ -1,5 +1,5 @@
 /**
- * T3o: a project's Pipeline tab (T3O-49): every stage in board order with
+ * T3o: a project's Pipeline tab: every stage in board order with
  * its switch for this project and the settings this project overrides. Only
  * the switches and overrides are stored, so a stage added globally later
  * reaches this project with its default. Saves immediately.

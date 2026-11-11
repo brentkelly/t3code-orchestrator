@@ -1,5 +1,5 @@
 /**
- * Migration 044 (T3O-56): the board's history moves from upstream's log into
+ * Migration 044: the board's history moves from upstream's log into
  * its own, in order, with receipts and watermarks renumbered into the board's
  * sequence space — and running it twice changes nothing.
  */
@@ -24,8 +24,8 @@ const schemaBefore044 = Effect.gen(function* () {
   }
 });
 
-/** A v1 log: board events interleaved with thread events, as a t3o database
-    written before T3O-56 holds them. */
+/** A v1 log: board events interleaved with thread events, as an older t3o
+    database holds them. */
 const LOG = [
   { type: "thread.created", kind: "thread", stream: "thread-1" },
   { type: "board.card-created", kind: "card", stream: "card-1" },

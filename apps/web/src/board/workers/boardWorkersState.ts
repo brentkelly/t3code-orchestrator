@@ -1,26 +1,27 @@
 /**
- * T3o (T3O-62): the web's reads and the one client-side action behind the
+ * T3o: the web's reads and the one client-side action behind the
  * Workers settings.
  */
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { mintEnvironmentPairingToken } from "@t3tools/client-runtime/state/shell";
 import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import type { BoardWorkersState, EnvironmentId } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { useEffect, useRef, useState } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { boardEnvironment, environmentBoard } from "../../state/board";
 import { readPreparedConnection } from "../../state/session";
 
-export class WorkerEnvironmentNotConnected extends Data.TaggedError(
+export class WorkerEnvironmentNotConnected extends Schema.TaggedError<WorkerEnvironmentNotConnected>()(
   "WorkerEnvironmentNotConnected",
-)<{ readonly message: string }> {}
+  { message: Schema.String },
+) {}
 
 /**
  * Mint a one-time pairing token on a worker environment with THIS client's
- * session there, for the board server to spend (D19). The token is labelled
+ * session there, for the board server to spend. The token is labelled
  * as the board's session, so the worker's Authorized clients list names it.
  */
 export const mintWorkerPairingToken = createRuntimeCommand(connectionAtomRuntime, {
@@ -74,6 +75,7 @@ export function useNowAtDeadlines(deadlines: ReadonlyArray<number>): number {
   // The deadlines `now` was last read for; new ones may belong to state that
   // arrived after that read, so the clock is re-read once for them.
   const readFor = useRef(key);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- one timer that re-reads the clock when the next deadline passes.
   useEffect(() => {
     const deadlinesNow = key
       .split(",")

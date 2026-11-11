@@ -1,12 +1,7 @@
 /**
- * The pre-build dependency gate (T3O-24, D7) — pure, so the decision is
- * testable without rendering a modal.
- *
- * `BoardCard.blocked` is derived from the BUILD ROLE ONWARD (D11/D18,
- * `deriveBoardCardBlocked`), so a card waiting at Ready always carries
- * `blocked === false` — and the detail's forward button, which disables on
- * that flag, would be live at the one gate where the dependency rule actually
- * bites. The detail already resolves every dependency, so it asks here.
+ * The pre-build dependency gate. `BoardCard.blocked` only applies from the build
+ * role onward, so a card at Ready reads unblocked; the detail resolves its
+ * dependencies and asks here instead.
  */
 import {
   isBoardStageAtOrAfterBuild,
@@ -24,11 +19,8 @@ const stageStateOf = (stages: ReadonlyArray<BoardStageDefinition>): BoardState =
 });
 
 /**
- * Whether the forward button would be refused by the dependency gate, so it
- * must be disabled and the blocker callout must render. Mirrors the decider's
- * move arm exactly: a CROSSING into the build-or-after zone with something
- * unmet. A move that stays before build, or that is already inside the zone,
- * is not a crossing.
+ * Whether the dependency gate would refuse the forward button. Mirrors the
+ * decider: only a crossing into the build-or-after zone with something unmet.
  */
 export function boardCardMoveBlocked(input: {
   readonly stages: ReadonlyArray<BoardStageDefinition>;

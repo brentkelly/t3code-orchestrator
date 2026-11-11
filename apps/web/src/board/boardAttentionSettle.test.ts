@@ -1,5 +1,5 @@
 /**
- * The settle grace's two inputs (T3O-29): when each card's thread went quiet,
+ * The settle grace's two inputs: when each card's thread went quiet,
  * and when the board next has to repaint because a grace expired.
  */
 import { BOARD_ATTENTION_SETTLE_MS, BoardCardId, ThreadId } from "@t3tools/contracts";

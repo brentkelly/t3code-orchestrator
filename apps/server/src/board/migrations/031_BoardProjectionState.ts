@@ -1,16 +1,6 @@
-// T3o-26 P1: the board projector's watermark moves into the board database.
-//
-// The projection pipeline commits a projector's writes and its watermark in ONE
-// transaction. With the board tables in `boards.sqlite` and the watermark still
-// in `main.projection_state`, that transaction spans two attached databases —
-// and SQLite gives up cross-database atomicity in WAL mode, committing each
-// database separately. The dangerous half of that split is the watermark landing
-// while the board rows do not: the projector would then skip events it never
-// applied, losing a card update with no way to notice.
-//
-// Same schema as upstream's `projection_state` (Migrations/005_Projections.ts),
-// deliberately: this is the same concept, just owned by the board so the board's
-// transaction stays inside one file.
+// The board watermark lives in the board database: SQLite in WAL mode commits
+// attached databases separately, so a watermark in `main` could land without the
+// board rows it covers and the projector would skip events.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -25,12 +15,9 @@ export default Effect.gen(function* () {
     )
   `;
 
-  // Carry an existing board watermark across rather than restarting it at zero:
-  // a fresh watermark would replay the whole log through the board projector.
-  // That is idempotent (every board write is an upsert) but needlessly expensive,
-  // and on a large log it would stall boot.
-  // Upstream's migration 063 (v0.1.3) drops `main.projection_state`, so a fresh
-  // database has no watermark to carry (T3O-74).
+  // Carry an existing watermark across: restarting at zero would replay the whole
+  // log and stall boot on a large one. Upstream's 063 drops
+  // `main.projection_state`, so a fresh database has none to carry.
   const upstreamState = yield* sql`
     SELECT 1 FROM main.sqlite_schema WHERE type = 'table' AND name = 'projection_state'
   `;

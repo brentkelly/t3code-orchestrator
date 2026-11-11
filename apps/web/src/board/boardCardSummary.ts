@@ -1,23 +1,7 @@
 /**
- * T3o stage-specific card summary (t3o-06). The one thing that makes this
- * board different from every other Kanban board: what a card shows changes
- * with the stage it is in, because what matters about a piece of work changes
- * as it moves.
- *
- * This is a PURE function of `BoardCardShell` — the bounded summary that rides
- * the shell snapshot (D7). It NEVER opens `board.subscribeCard`; the column
- * view renders from the shell alone, and taking only a `BoardCardShell`
- * structurally guarantees it (a subscription needs an environment id and a
- * card id this function is never given). That guarantee is asserted in
- * `boardCardSummary.test.ts`.
- *
- * No-speculative-inventory (t3o-03): most stage fields have no data source
- * until a later spec populates them (sub-board plans, the review pipeline, PR
- * detection). This function emits a summary item ONLY when its field is
- * present, so a stage variant with nothing to show degrades to the base card,
- * NOT to a skeleton of empty slots. The `items` array is empty today for
- * every stage; the renderers exist so the card lights up the day the data
- * lands, with no further UI work.
+ * The stage-specific card summary: a pure function of `BoardCardShell` that
+ * never opens a card subscription. An item is emitted only when its field is
+ * present, so a stage with nothing to show degrades to the base card.
  */
 import {
   resolveBoardCardReviewOutcome,
@@ -40,9 +24,9 @@ export type BoardCardSummaryItem =
   | {
       readonly kind: "round";
       readonly current: number;
-      /** Absent when the producer could not see the budget (t3o-22, D7). */
+      /** Absent when the producer could not see the budget. */
       readonly max: number | undefined;
-      /** How the loop stands (t3o-22, D7). `round-cap`/`stopped` are the two
+      /** How the loop stands. `round-cap`/`stopped` are the two
           that must not read as a pass — the row tints every pip and flags the
           card, because the counts alone are identical to a converged loop's. */
       readonly outcome: BoardReviewLoopOutcome | undefined;
@@ -62,7 +46,7 @@ export type BoardCardSummaryItem =
       readonly disputed: number;
       readonly escalated: number;
     }
-  /** A human advanced the card past a stuck review round (T3O-51): not a
+  /** A human advanced the card past a stuck review round: not a
       pass, and not a call for a human either — just the record. */
   | {
       readonly kind: "review-advanced";
@@ -79,7 +63,7 @@ export interface BoardCardSummary {
 }
 
 /** Present and non-zero — an absent optional key or a hardcoded `0`/`false`
-    placeholder (t3o-04's not-yet-sourced shell fields) contributes nothing. */
+    placeholder (a not-yet-sourced shell field) contributes nothing. */
 function positive(value: number | undefined): value is number {
   return value !== undefined && value > 0;
 }
@@ -108,19 +92,14 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
       break;
 
     case "review":
-      // The PR reference is NOT here: it moved to the card's meta row, which
-      // renders it at every stage rather than only where the pipeline happens
-      // to be looking (`boardCardMeta`).
-      // The round row renders on any card with review history. `roundMax` may
-      // be absent — the projection cannot see the board's review settings — in
-      // which case the row shows the round reached and no total, rather than a
-      // total it invented.
+      // The round row shows on any card with review history. Without `roundMax`
+      // (the projection cannot see review settings) it shows no total.
       if (card.roundCurrent !== undefined && card.roundCurrent > 0) {
         items.push({
           kind: "round",
           current: card.roundCurrent ?? 0,
           max: card.roundMax,
-          // The shell carries the outcome UNRESOLVED (t3o-22, D7): `running`
+          // The shell carries the outcome UNRESOLVED: `running`
           // there means the ledger's rounds are accounted for, not that the
           // loop is still going. Settling it here — the one place — is what
           // keeps a snapshot and a `card-review` delta from disagreeing.
@@ -171,7 +150,7 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
 
     case "merge":
       // PR state and check summary. The PR number itself rides the meta row
-      // (`boardCardMeta`); a check summary has no data source until t3o-11.
+      // (`boardCardMeta`); a check summary has no data source yet.
       if (card.reviewOutcome === "advanced" && card.reviewAdvancedRound !== undefined) {
         items.push({
           kind: "review-advanced",
@@ -184,19 +163,9 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
     case "done":
       break;
   }
-  // Sub-board plan progress (t3o-23, D12) rides the card face at every stage
-  // but ONE: where the parent sits does not change that it is a pile of plans.
-  //
-  // Review is the exception, because there the bar is a lie of emphasis. A
-  // parent only reaches review once every child is finished — the supervisor
-  // regresses it to Building the moment one stops being done
-  // (`regressParentIfChildLeftDone`) — so its plan bar is permanently full and
-  // permanently green while the only thing actually moving is the loop reading
-  // the merged branch. A card in Code review wearing a complete build overview
-  // reads as work that is over. The review ledger is the block instead
-  // (`boardCardProgressBlock`), and where the ledger has not recorded a round
-  // yet the card falls through to the review thread's own todos — live work,
-  // rather than a summary of work that finished before review began.
+  // Plan progress shows at every stage but review: a parent only reaches review
+  // with every child done, so its bar would always read complete. The review
+  // ledger (or the review thread's todos) is the block there instead.
   if (card.stage !== "review" && card.planTotal !== undefined && card.planTotal > 0) {
     items.unshift({
       kind: "plans",
@@ -209,27 +178,20 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
 }
 
 /**
- * The card's footer meta row: four counts, then the brief's image flag pushed
- * to the far end. Unlike `boardCardSummary` this is stage-INDEPENDENT — how
- * many things a card is tied to does not change with where it sits, and a
- * dependency that only shows up in some columns is a dependency you forget.
- *
- * `threadCount` is the one input that is not a shell field: the card's live
- * thread links ride the snapshot as their own array (t3o-18, D3), joined
- * client-side. Surfaces that do not carry them (the archive sheet, the drag
- * ghost) pass 0 and the bubble simply does not render.
+ * The card's footer meta row, stage-independent. `threadCount` is joined
+ * client-side from the thread links; surfaces without them pass 0.
  */
 export interface BoardCardMeta {
   /** How many other cards this one waits on. */
   readonly dependencyCount: number;
   /** Agent threads attached to the card — its own, plus any running on the
-      plans stacked under it once sub-boards materialise (D12). */
+      plans stacked under it once sub-boards materialise. */
   readonly threadCount: number;
   /** Stacked plan cards, else the count of attached plan documents. */
   readonly planCount: number;
-  /** The linked pull request, absent until PR detection lands (t3o-11). */
+  /** The linked pull request, absent until PR detection lands. */
   readonly prNumber: number | undefined;
-  /** Whether that pull request is an open draft (T3O-12) — the Draft tag. */
+  /** Whether that pull request is an open draft — the Draft tag. */
   readonly prDraft: boolean;
   /** Whether the brief carries a picture — the one right-aligned indicator. */
   readonly briefHasImage: boolean;
@@ -238,8 +200,8 @@ export interface BoardCardMeta {
 }
 
 export function boardCardMeta(card: BoardCardShell, threadCount: number): BoardCardMeta {
-  // `planTotal` is the sub-board's count of stacked plan cards (D12) and
-  // outranks `planCount`, the card's own attached plan documents (t3o-08) —
+  // `planTotal` is the sub-board's count of stacked plan cards and
+  // outranks `planCount`, the card's own attached plan documents —
   // a parent card counts its children, not the plan it was built from.
   const planCount = card.planTotal ?? card.planCount ?? 0;
   const prNumber = positive(card.prNumber) ? card.prNumber : undefined;

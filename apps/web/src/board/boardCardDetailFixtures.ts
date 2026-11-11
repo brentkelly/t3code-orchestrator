@@ -18,11 +18,11 @@ import {
 import { boardThreadWorker } from "./workers/threadWorker";
 
 export const NOW = "2026-01-01T00:00:00.000Z";
-export const environmentId = "env-1" as never;
+const environmentId = "env-1" as never;
 
 export const cardId = BoardCardId.make("card-1");
 
-export function card(overrides?: Partial<BoardCard>): BoardCard {
+function card(overrides?: Partial<BoardCard>): BoardCard {
   return {
     id: cardId,
     key: "T3-7",
@@ -107,7 +107,7 @@ export function detail(
 }
 
 /** A parent with `childCount` plans, and one materialised child per plan from
-    `archivedFrom` onward marked archived (t3o-29). */
+    `archivedFrom` onward marked archived. */
 export function splitDetail(options: {
   readonly childCount: number;
   readonly archivedFrom?: number;

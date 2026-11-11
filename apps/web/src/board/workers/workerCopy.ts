@@ -1,10 +1,7 @@
 /**
- * T3o (T3O-62): every word and colour the Workers and Project checkouts
- * settings show, as pure functions of the board's worker summary. The copy is
- * the prototype's (`.plans/prototype/Distributed Board.dc.html`, screens 1–2);
- * the colours follow `docs/t3o/status-colours.md`: online is the steady state
- * and stays grey, connecting and cloning are blue, anything that needs a human
- * to act on the worker is amber, and only a finished setup is green.
+ * The Workers and Project checkouts copy and colours. Online stays grey,
+ * connecting and cloning are blue, needs-a-human is amber, and only a finished
+ * setup is green.
  */
 import {
   BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
@@ -280,7 +277,7 @@ export function setupFailureCopy(input: {
       };
     case "worker-offline":
       return {
-        cell: "Interrupted — worker offline",
+        cell: "Interrupted: worker offline",
         detail: `${input.worker} went offline during the clone. Retry once it's back.`,
       };
     case "unknown":

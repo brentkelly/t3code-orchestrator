@@ -1,5 +1,5 @@
 /**
- * T3o mode-tabs placement (T3O-34, D8/D9).
+ * T3o mode-tabs placement.
  */
 import { describe, expect, it } from "vite-plus/test";
 

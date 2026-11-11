@@ -1,18 +1,7 @@
 /**
- * The SNAPSHOT producer for `stepConflictFix` (T3O-9).
- *
- * The flag has two producers that must agree: the `card-stalled` delta, which
- * keeps a connected client's card honest, and this SQL-derived shell snapshot,
- * which is what every client gets on connect and on reload. The delta path is
- * covered by the projector and reducer suites; if only that side were right,
- * the amber "Conflicts" pill would survive right up until the page refreshed
- * and then vanish while the merge was still held.
- *
- * That is also the whole reason the fact rides the PERSISTED step label rather
- * than the reactor's in-memory merge arm: the arm dies on restart, the row does
- * not. So this drives the real seams (decider → event store → projection →
- * snapshot query), because a snapshot read is exactly what a restarted server
- * hands its clients.
+ * The snapshot producer for `stepConflictFix`, which must agree with the
+ * `card-stalled` delta. The flag rides the persisted step label, not the
+ * reactor's in-memory arm, so it survives restart; this drives the real seams.
  */
 import {
   BOARD_CHECKS_FIX_STEP_LABEL,

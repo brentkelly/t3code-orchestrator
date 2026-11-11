@@ -1,17 +1,13 @@
 /**
- * T3o (T3O-63) acceptance: the board runs a planning step on a worker.
- *
- * The live supervisor, over the real router, remote gateway and signal feed,
- * with an in-process worker behind the fake transport and the card pinned to
- * it (T3O-65). The step's
- * thread is spawned in the worker's checkout, a turn ending there reaches the
- * supervisor, which decides on the thread as the worker reports it, and the
- * step completes.
+ * The board runs a planning step on a worker: live supervisor, real router,
+ * remote gateway and signal feed, an in-process worker behind the fake
+ * transport, and the card pinned to it.
  */
 import { BOARD_SEED_STAGE_IDS, BoardCardId, boardCardStepState } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -54,7 +50,7 @@ const PLANNING = String(BOARD_SEED_STAGE_IDS.planning);
 const centralLayer = BoardRelayStoreLive.pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3o-accept-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 it.effect("the board spawns, drives and completes a planning step on a worker", () =>
@@ -76,10 +72,10 @@ it.effect("the board spawns, drives and completes a planning step on a worker", 
     yield* env.connections.sync([registeredWorker]);
     yield* waitOnline(env.connections);
     const feed = yield* makeWorkerSignalFeed.pipe(
-      Effect.provide(Layer.succeed(WorkerConnections, env.connections)),
+      Effect.provideService(WorkerConnections, env.connections),
     );
     const fileSystem = yield* FileSystem.FileSystem;
-    const crypto = yield* Crypto.Crypto;
+    const digest = yield* Digest.Digest;
     /** The step's thread, once spawned, and its read after the turn ends. */
     const watched = yield* Ref.make<string | null>(null);
     const turnEndRead = yield* Deferred.make<void>();
@@ -117,7 +113,7 @@ it.effect("the board spawns, drives and completes a planning step on a worker", 
                 local,
                 centralEnvironmentId: CENTRAL_ID,
                 fileSystem,
-                crypto,
+                digest,
               }),
           });
           // The supervisor reading the step's thread after its turn ended:

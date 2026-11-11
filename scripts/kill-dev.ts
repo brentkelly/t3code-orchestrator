@@ -1,16 +1,8 @@
 #!/usr/bin/env node
 /**
- * `npm run kill` — free this checkout's dev ports.
- *
- * Resolves the same ports `npm run dev` would prefer (see `dev-runner.ts`:
- * `T3CODE_PORT` for the backend, otherwise `13773`/`5733` plus this
- * worktree's offset), finds whatever is listening on them, and terminates it
- * together with the rest of its dev process tree — the `vp run` supervisor
- * above it and the Vite/backend children below — so a half-killed run cannot
- * respawn onto the port a second later.
- *
- * Ports may be given explicitly (`npm run kill -- 3773 5733`), which skips
- * port resolution entirely.
+ * `npm run kill`: free this checkout's dev ports (the ports `dev-runner.ts` would pick),
+ * killing the whole dev process tree so a supervisor cannot respawn onto the port.
+ * Explicit ports (`npm run kill -- 3773 5733`) skip port resolution.
  */
 // @effect-diagnostics nodeBuiltinImport:off - signalling a pid has no Effect platform service.
 import * as NodeProcess from "node:process";
@@ -18,11 +10,7 @@ import * as NodeProcess from "node:process";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { resolveGitWorktreePath } from "@t3tools/shared/devHome";
-import {
-  HostProcessEnvironment,
-  HostProcessPlatform,
-  HostProcessWorkingDirectory,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -30,8 +18,8 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Argument, Command, Flag } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { BASE_SERVER_PORT, BASE_WEB_PORT, resolveOffset } from "./dev-runner.ts";
 
@@ -40,11 +28,8 @@ const TERMINATE_GRACE = Duration.seconds(5);
 const TERMINATE_POLL_INTERVAL = Duration.millis(250);
 
 /**
- * A process group whose leader is one of these is a shell session, not a dev
- * run: `npm run dev` normally gets a process group of its own (job control),
- * but a shell started without it leaves its children sharing the shell's group.
- * Killing that group would kill the terminal. `sh -c <cmd>` is exempt — it is a
- * wrapper npm itself inserts, not a session.
+ * A group led by a shell is a session, not a dev run; killing it would kill the terminal.
+ * `sh -c` is exempt because npm inserts it as a wrapper.
  */
 const SESSION_LEADER_PATTERN =
   /^-?(?:[\w./\\-]*[\\/])?(bash|zsh|sh|dash|ksh|fish|login|sshd|systemd|tmux|screen|init)\b/;
@@ -56,7 +41,7 @@ export interface ProcessEntry {
   readonly command: string;
 }
 
-export class KillDevUnsupportedPlatformError extends Schema.TaggedErrorClass<KillDevUnsupportedPlatformError>()(
+export class KillDevUnsupportedPlatformError extends Schema.TaggedError<KillDevUnsupportedPlatformError>()(
   "KillDevUnsupportedPlatformError",
   { platform: Schema.String },
 ) {
@@ -65,7 +50,7 @@ export class KillDevUnsupportedPlatformError extends Schema.TaggedErrorClass<Kil
   }
 }
 
-export class KillDevConfigurationError extends Schema.TaggedErrorClass<KillDevConfigurationError>()(
+export class KillDevConfigurationError extends Schema.TaggedError<KillDevConfigurationError>()(
   "KillDevConfigurationError",
   { cause: Schema.Defect() },
 ) {
@@ -184,16 +169,9 @@ export function ownAncestry(table: ReadonlyArray<ProcessEntry>, selfPid: number)
 }
 
 /**
- * The listeners plus the rest of their dev run.
- *
- * `npm run dev` and everything under it — the `sh -c` wrapper, `dev-runner`,
- * `vp run`, the `node --watch` supervisor, the server itself — share one
- * process group, so the group is the unit to kill. Killing only the listener
- * leaves `node --watch` alive, and it restarts the server onto the same port
- * within a second. Where the group cannot be trusted (it is this script's own,
- * or it is led by a shell session) we fall back to the listener and its
- * descendants, and the caller reports the port as still held if that was not
- * enough.
+ * The whole dev run shares one process group, and killing only the listener lets
+ * `node --watch` restart the server onto the port. Where the group cannot be trusted (our
+ * own, or a shell's) fall back to the listener and its descendants.
  */
 export function selectKillTargets({
   table,
@@ -262,24 +240,20 @@ const collectOutput = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<s
  * missing `lsof`, or an exit code that only means "nothing matched", both leave
  * us with the same answer as an empty listing.
  */
-function readCommandOutput(
-  executable: string,
-  args: ReadonlyArray<string>,
-): Effect.Effect<string, never, ChildProcessSpawner.ChildProcessSpawner> {
-  return Effect.gen(function* () {
+const readCommandOutput = Effect.fn("KillDev.readCommandOutput")(
+  function* (executable: string, args: ReadonlyArray<string>) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(ChildProcess.make(executable, args));
     const [stdout] = yield* Effect.all([collectOutput(child.stdout), child.exitCode], {
       concurrency: "unbounded",
     });
     return stdout;
-  }).pipe(
-    Effect.scoped,
-    Effect.timeoutOption(Duration.seconds(10)),
-    Effect.map(Option.getOrElse(() => "")),
-    Effect.catchCause(() => Effect.succeed("")),
-  );
-}
+  },
+  Effect.scoped,
+  Effect.timeoutOption(Duration.seconds(10)),
+  Effect.map(Option.getOrElse(() => "")),
+  Effect.catchCause(() => Effect.succeed("")),
+);
 
 function readListenerPids(
   port: number,
@@ -331,102 +305,97 @@ const isAlive = (pid: number): Effect.Effect<boolean> =>
     }
   });
 
-function terminate(
+const terminate = Effect.fn("KillDev.terminate")(function* (
   pids: ReadonlyArray<number>,
   platform: string,
-): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner> {
-  return Effect.gen(function* () {
-    if (platform === "win32") {
-      yield* Effect.forEach(
-        pids,
-        (pid) => readCommandOutput("taskkill", ["/PID", String(pid), "/T", "/F"]),
-        { discard: true },
-      );
-      return;
-    }
+) {
+  if (platform === "win32") {
+    yield* Effect.forEach(
+      pids,
+      (pid) => readCommandOutput("taskkill", ["/PID", String(pid), "/T", "/F"]),
+      { discard: true },
+    );
+    return;
+  }
 
-    yield* Effect.forEach(pids, (pid) => signal(pid, "SIGTERM"), { discard: true });
+  yield* Effect.forEach(pids, (pid) => signal(pid, "SIGTERM"), { discard: true });
 
-    const deadline =
-      Duration.toMillis(TERMINATE_GRACE) / Duration.toMillis(TERMINATE_POLL_INTERVAL);
-    let survivors = pids;
-    for (let attempt = 0; attempt < deadline && survivors.length > 0; attempt += 1) {
-      yield* Effect.sleep(TERMINATE_POLL_INTERVAL);
-      survivors = yield* Effect.filter(survivors, isAlive);
-    }
+  const deadline = Duration.toMillis(TERMINATE_GRACE) / Duration.toMillis(TERMINATE_POLL_INTERVAL);
+  let survivors = pids;
+  for (let attempt = 0; attempt < deadline && survivors.length > 0; attempt += 1) {
+    yield* Effect.sleep(TERMINATE_POLL_INTERVAL);
+    survivors = yield* Effect.filter(survivors, isAlive);
+  }
 
-    if (survivors.length > 0) {
-      yield* Effect.logInfo(
-        `[kill] SIGKILL after ${Duration.format(TERMINATE_GRACE)}: ${survivors.join(", ")}`,
-      );
-      yield* Effect.forEach(survivors, (pid) => signal(pid, "SIGKILL"), { discard: true });
-    }
-  });
-}
+  if (survivors.length > 0) {
+    yield* Effect.logInfo(
+      `[kill] SIGKILL after ${Duration.format(TERMINATE_GRACE)}: ${survivors.join(", ")}`,
+    );
+    yield* Effect.forEach(survivors, (pid) => signal(pid, "SIGKILL"), { discard: true });
+  }
+});
 
-export function runKillDev(input: {
+export const runKillDev = Effect.fn("runKillDev")(function* (input: {
   readonly ports: ReadonlyArray<number>;
   readonly dryRun: boolean;
 }) {
-  return Effect.gen(function* () {
-    const platform = yield* HostProcessPlatform;
-    if (platform !== "linux" && platform !== "darwin" && platform !== "win32") {
-      return yield* new KillDevUnsupportedPlatformError({ platform });
-    }
+  const platform = yield* HostProcess.Platform;
+  if (platform !== "linux" && platform !== "darwin" && platform !== "win32") {
+    return yield* new KillDevUnsupportedPlatformError({ platform });
+  }
 
-    const environment = yield* HostProcessEnvironment;
-    const worktreePath = yield* resolveGitWorktreePath(yield* HostProcessWorkingDirectory);
-    const { offset, source } = yield* resolveOffset({
-      portOffset: parsePort(environment.T3CODE_PORT_OFFSET),
-      devInstance: environment.T3CODE_DEV_INSTANCE,
-      worktreePath,
-    }).pipe(Effect.catchCause((cause) => new KillDevConfigurationError({ cause })));
+  const environment = yield* HostProcess.Environment;
+  const worktreePath = yield* resolveGitWorktreePath(yield* HostProcess.WorkingDirectory);
+  const { offset, source } = yield* resolveOffset({
+    portOffset: parsePort(environment.T3CODE_PORT_OFFSET),
+    devInstance: environment.T3CODE_DEV_INSTANCE,
+    worktreePath,
+  }).pipe(Effect.catchCause((cause) => new KillDevConfigurationError({ cause })));
 
-    const ports = resolveKillPorts({
-      explicitPorts: input.ports,
-      serverPortOverride: parsePort(environment.T3CODE_PORT),
-      offset,
-    });
-
-    yield* Effect.logInfo(
-      `[kill] ports=${ports.join(", ")} source=${input.ports.length > 0 ? "explicit arguments" : source}`,
-    );
-
-    const table = yield* readProcessTable(platform);
-    const selfPid = NodeProcess.pid;
-
-    for (const port of ports) {
-      const listenerPids = yield* readListenerPids(port, platform);
-      if (listenerPids.length === 0) {
-        yield* Effect.logInfo(`[kill] port ${String(port)}: nothing listening`);
-        continue;
-      }
-
-      const targets = selectKillTargets({ table, listenerPids, selfPid });
-      const describe = targets
-        .map((pid) => {
-          const command = table.find((entry) => entry.pid === pid)?.command;
-          return command ? `${String(pid)} (${command.slice(0, 80)})` : String(pid);
-        })
-        .join("\n         ");
-
-      if (input.dryRun) {
-        yield* Effect.logInfo(`[kill] port ${String(port)}: would kill\n         ${describe}`);
-        continue;
-      }
-
-      yield* Effect.logInfo(`[kill] port ${String(port)}: killing\n         ${describe}`);
-      yield* terminate(targets, platform);
-
-      const remaining = yield* readListenerPids(port, platform);
-      yield* remaining.length === 0
-        ? Effect.logInfo(`[kill] port ${String(port)}: free`)
-        : Effect.logWarning(
-            `[kill] port ${String(port)}: still held by ${remaining.join(", ")} — another user's process, or one this shell may not signal.`,
-          );
-    }
+  const ports = resolveKillPorts({
+    explicitPorts: input.ports,
+    serverPortOverride: parsePort(environment.T3CODE_PORT),
+    offset,
   });
-}
+
+  yield* Effect.logInfo(
+    `[kill] ports=${ports.join(", ")} source=${input.ports.length > 0 ? "explicit arguments" : source}`,
+  );
+
+  const table = yield* readProcessTable(platform);
+  const selfPid = NodeProcess.pid;
+
+  for (const port of ports) {
+    const listenerPids = yield* readListenerPids(port, platform);
+    if (listenerPids.length === 0) {
+      yield* Effect.logInfo(`[kill] port ${String(port)}: nothing listening`);
+      continue;
+    }
+
+    const targets = selectKillTargets({ table, listenerPids, selfPid });
+    const describe = targets
+      .map((pid) => {
+        const command = table.find((entry) => entry.pid === pid)?.command;
+        return command ? `${String(pid)} (${command.slice(0, 80)})` : String(pid);
+      })
+      .join("\n         ");
+
+    if (input.dryRun) {
+      yield* Effect.logInfo(`[kill] port ${String(port)}: would kill\n         ${describe}`);
+      continue;
+    }
+
+    yield* Effect.logInfo(`[kill] port ${String(port)}: killing\n         ${describe}`);
+    yield* terminate(targets, platform);
+
+    const remaining = yield* readListenerPids(port, platform);
+    yield* remaining.length === 0
+      ? Effect.logInfo(`[kill] port ${String(port)}: free`)
+      : Effect.logWarning(
+          `[kill] port ${String(port)}: still held by ${remaining.join(", ")} — another user's process, or one this shell may not signal.`,
+        );
+  }
+});
 
 function parsePort(value: string | undefined): number | undefined {
   const trimmed = value?.trim();
@@ -438,11 +407,11 @@ function parsePort(value: string | undefined): number | undefined {
 }
 
 const killDevCli = Command.make("kill-dev", {
-  dryRun: Flag.boolean("dry-run").pipe(
+  dryRun: Flag.Boolean("dry-run").pipe(
     Flag.withDescription("List what would be killed, then exit without signalling anything."),
     Flag.withDefault(false),
   ),
-  ports: Argument.integer("port").pipe(
+  ports: Argument.Int("port").pipe(
     Argument.withDescription(
       "Ports to free. Defaults to this checkout's dev server and web ports.",
     ),

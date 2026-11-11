@@ -1,8 +1,9 @@
 /**
- * T3o (T3O-74): the board toolkit's wiring into the production MCP layer.
+ * T3o: the board toolkit's wiring into the production MCP layer.
  * Upstream deleted the worktree registration test this grew out of; the board
  * keeps its own so a sync that drops the toolkit's registration fails here.
  */
+import { AssetSigner } from "../../../assets/AssetSigner.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
@@ -58,6 +59,7 @@ const layerServerEnvironment = Layer.mock(ServerEnvironment.ServerEnvironment)({
 });
 
 const layerStubServices = Layer.mergeAll(
+  Layer.mock(AssetSigner)({}),
   Layer.mock(McpProviderSessions.McpProviderSessions)({}),
   Layer.mock(DocumentText.DocumentText)({}),
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -86,7 +88,7 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(PeerLinks)({}),
   Layer.mock(ProjectCloneTracker)({}),
   Layer.mock(RemoteDelegation)({}),
-  // T3o: the board toolkit registers on the same server (t3o-08); unused here.
+  // T3o: the board toolkit registers on the same server; unused here.
   Layer.mock(BoardEngine)({}),
   Layer.mock(BoardQueries)({}),
   Layer.mock(SupervisorReactor)({}),

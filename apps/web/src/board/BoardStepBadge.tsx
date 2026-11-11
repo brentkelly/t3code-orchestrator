@@ -1,5 +1,5 @@
 /**
- * The numbered step badge shared by CI and Code review (T3O-44), and the
+ * The numbered step badge shared by CI and Code review, and the
  * shimmer a running step's name wears. Colours per `docs/t3o/status-colours.md`:
  * a done step's tick is green, a running step solid blue, a failure amber (blue
  * while a fix agent works on it), a cancelled step a grey dash.

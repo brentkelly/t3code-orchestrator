@@ -1,23 +1,7 @@
 /**
- * T3o: the three lines between the board and upstream's forge services.
- *
- * Everything either side of this file is covered elsewhere — the reactor
- * forwards `force` (`cardPullRequest.test.ts`), an invalidated checkout really
- * does re-ask the forge (`GitManager.test.ts`), `runAction` really does merge
- * (`PullRequestService.test.ts`) — and the wiring between them is a handful of
- * lines a refactor could drop while every neighbouring test stayed green.
- *
- * Three things have to hold, and none of them are visible from either side:
- *
- *  1. "Check again" reaches the forge rather than the lookup cache — including
- *     a cached lookup FAILURE, whose backoff only the epoch bump clears
- *     (T3O-48).
- *  2. A pull request is addressed by the board's repository: the project's
- *     `origin`, host-qualified when that is not the project identity (a fork,
- *     whose identity names upstream — T3O-24). A hostless reference to another
- *     repository is refused by the service as "not this project's".
- *  3. The refusal probe reads the state AFTER the refused merge, not the one
- *     the detail cache was already holding (T3O-47).
+ * The wiring between the board and upstream's forge services: "Check again" bypasses
+ * the lookup cache and its failure backoff, pull requests are addressed by the board's
+ * repository (host-qualified for a fork), and the refusal probe reads post-merge state.
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -130,7 +114,7 @@ function makeGateway(
     readonly detail?: PullRequestDetail;
     readonly runActionFails?: boolean;
     readonly runActionError?: unknown;
-    /** `remote.origin.url` (T3O-24). Absent is a checkout with no origin. */
+    /** `remote.origin.url`. Absent is a checkout with no origin. */
     readonly originUrl?: string;
   } = {},
 ) {
@@ -179,7 +163,9 @@ function makeGateway(
               if (options.runActionError !== undefined) {
                 return Effect.fail(options.runActionError as PullRequestOperationError);
               }
-              return options.runActionFails === true ? Effect.fail(hostRefusal()) : Effect.void;
+              return options.runActionFails === true
+                ? Effect.fail(hostRefusal())
+                : Effect.undefined;
             }),
           invalidate: (input: PullRequestInvalidateInput) =>
             Effect.sync(() => {
@@ -234,13 +220,9 @@ describe("BoardPullRequestGateway.find", () => {
       const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
       const found = yield* gateway.find({ cwd: "/repo", branch: "board/t3o-47", force: true });
 
-      // The epoch bump has to come FIRST, and it has to be the bump rather
-      // than `{ refresh: true }`: refresh clears a cached ANSWER, while the
-      // case "Check again" exists for is a cached FAILURE, which upstream
-      // deliberately holds for its backoff
-      // (`GitManager.test.ts`, "branch PR lookup propagates provider
-      // failures"). Only the epoch, which is part of the cache key, gets past
-      // both.
+      // The epoch bump comes first, and not `{ refresh: true }`: refresh clears a
+      // cached answer, but "Check again" exists for a cached failure, which only
+      // the epoch (part of the cache key) gets past.
       assert.deepStrictEqual(calls, [
         "invalidateStatus:/repo",
         "branchPullRequest:/repo:board/t3o-47",
@@ -322,12 +304,9 @@ describe("BoardPullRequestGateway.merge", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // The whole point of `refusal`: upstream refuses several things itself,
-  // BEFORE the host is asked, and each carries a sentence naming the fix. A
-  // caller that cannot tell those from the host's own "no" throws those
-  // sentences away and asks the pull request why it was refused — and the pull
-  // request, never having been the problem, answers that it is perfectly
-  // mergeable.
+  // Upstream refuses some merges itself, before the host is asked, with a sentence
+  // naming the fix. Mistaking that for the host's "no" would probe a pull request
+  // that was never the problem.
   it.effect("marks a refusal upstream made itself as blocked, not the host's", () => {
     const { layer } = makeGateway({
       // What `runAction` fails with when the configured strategy is not in
@@ -572,7 +551,7 @@ describe("boardTitleWithoutWipPrefix (T3O-12)", () => {
   });
 });
 
-// T3O-24: in a fork the project identity names `upstream` — upstream's
+// In a fork the project identity names `upstream` — upstream's
 // resolver prefers it on purpose — while the board pushes to and opens its
 // pull requests on `origin`. Every operation has to reach the fork.
 describe("BoardPullRequestGateway in a fork (T3O-24)", () => {

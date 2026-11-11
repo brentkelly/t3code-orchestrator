@@ -1,15 +1,7 @@
 /**
- * T3o (T3O-63): the remote thread gateway's wire, both ends.
- *
- * `WorkerGatewayRpc` is what the central server calls on a worker: one method
- * per `ThreadGatewayShape` method, plus the signal stream, the MCP relay and
- * attachment staging. The live transport implements it over `boardWorker.*`
- * RPCs; a test transport implements it with the worker's own host in process.
- *
- * The converters translate between the board's gateway vocabulary and the
- * wire's: a signal's `turnRef` is absent on the wire rather than
- * `undefined`, and the gateway's three error classes travel as one
- * `BoardWorkerGatewayError` that names which it was.
+ * The remote thread gateway's wire, both ends. A signal's `turnRef` is absent on
+ * the wire rather than `undefined`, and the gateway's three error classes travel
+ * as one `BoardWorkerGatewayError` naming which it was.
  */
 import {
   BOARD_GATEWAY_CALL_RESULTS,
@@ -47,7 +39,6 @@ import {
   type BoardProject,
   type BoardProjectDetail,
   type BoardThreadRecord,
-  type BoardThreadState,
   type BoardWorktreeThread,
   type ThreadCommandError,
   type ThreadSignal,
@@ -97,9 +88,9 @@ export interface WorkerGatewayRpcOf<E> {
   readonly stageAttachments: (
     input: BoardStageAttachmentsInput,
   ) => Effect.Effect<BoardStageAttachmentsResult, E>;
-  /** Run a card's CI steps in its worktree on the worker (T3O-44, D21). */
+  /** Run a card's CI steps in its worktree on the worker. */
   readonly runCi: (input: BoardWorkerRunCiInput) => Stream.Stream<BoardWorkerCiProgress, E>;
-  /** Read, and optionally follow, one CI step's log on the worker (T3O-60). */
+  /** Read, and optionally follow, one CI step's log on the worker. */
   readonly readCiLog: (input: BoardWorkerReadCiLogInput) => Stream.Stream<BoardCiLogItem, E>;
 }
 
@@ -161,12 +152,9 @@ export const fromWireSignal = (signal: BoardGatewaySignal): ThreadSignal => {
   };
 };
 
-/** The wire state is the board's own shape; only the error is translated. */
-export const fromWireThreadState = (state: BoardGatewayThreadState): BoardThreadState => state;
-
 // ── Errors ─────────────────────────────────────────────────────────────
 
-export const toWireCommandError = (error: ThreadCommandError): BoardWorkerGatewayError =>
+const toWireCommandError = (error: ThreadCommandError): BoardWorkerGatewayError =>
   new BoardWorkerGatewayError({
     kind: error._tag === "ThreadCommandRefusedError" ? "refused" : "failed",
     operation: error.command,

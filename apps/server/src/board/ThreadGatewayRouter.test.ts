@@ -1,14 +1,15 @@
 /**
- * T3o (T3O-63): the router's batch read across this server and its workers.
+ * T3o: the router's batch read across this server and its workers.
  *
  * The worker is in process (`distributed.testkit.ts`) behind the fake
  * transport; the thread links and the worker registry are rows in a real
  * board database, so the batch worker lookup runs its real query.
  */
 import { CommandId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -33,7 +34,7 @@ import { emptyWorkerSignalFeed } from "./workers/WorkerSignalFeed.ts";
 
 const database = SqlitePersistence.layerMemory.pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3o-router-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const LOCAL_THREAD = ThreadId.make("thread-local");
@@ -80,7 +81,7 @@ const setup = Effect.gen(function* () {
   yield* env.connections.sync([registeredWorker]);
   yield* waitOnline(env.connections);
   const fileSystem = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const router = makeThreadGatewayRouter({
     local: central.gateway,
     connections: env.connections,
@@ -93,7 +94,7 @@ const setup = Effect.gen(function* () {
         local: central.gateway,
         centralEnvironmentId: CENTRAL_ID,
         fileSystem,
-        crypto,
+        digest,
       }),
   });
   return { ...env, router };

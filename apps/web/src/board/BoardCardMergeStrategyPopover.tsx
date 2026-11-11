@@ -1,5 +1,5 @@
 /**
- * The card's merge strategy override (T3O-80), opened from the card modal's
+ * The card's merge strategy override, opened from the card modal's
  * kebab menu or its header pill. Like `BoardCardModelsPopover` it renders no
  * trigger of its own: it has two doors, so the caller owns `open` and anchors
  * it. Picking an option applies at once; the default option sends null.

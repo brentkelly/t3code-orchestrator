@@ -1,5 +1,5 @@
 /**
- * Pure transforms for the Board settings panel (t3o-07). Kept out of the
+ * Pure transforms for the Board settings panel. Kept out of the
  * component so the map/array mutations that back the whole-map patches — where
  * a wrong merge silently corrupts a recipe or strands a project override — are
  * unit-tested directly.
@@ -35,17 +35,9 @@ export function parsePositiveIntInput(value: string, fallback: number): number {
 }
 
 /**
- * Apply a stage-execution change and return the next `pipeline` map (t3o-15).
- * The map is keyed by stage id, so a rename never orphans it (D4).
- *
- * A stage absent from the map starts from what `resolveBoardStageExecution`
- * RESOLVES it to, not the empty all-defaults config — that is the config the
- * user is editing on screen, and it is also the only base that keeps a review
- * stage a review member. Starting from the all-defaults simple config instead
- * turned "Code review: rounds 6" into a `kind: "simple"` entry whose `rounds`
- * and `phases` the patch encoder then dropped on the floor, silently retiring
- * the review loop. Absent entries are the NORMAL case: settings.json prunes
- * every entry that still equals its compiled-in default.
+ * Apply a stage-execution change and return the next `pipeline` map. An absent
+ * stage (the normal case: settings prune defaults) starts from what it resolves
+ * to, not the all-defaults simple config, which would drop a review loop.
  */
 export function setBoardStageExecution(
   board: BoardSettings,
@@ -62,12 +54,8 @@ export function setBoardStageExecution(
 
 /**
  * Apply a project-settings change and return the next `projects` map. An entry
- * that reverts to all-defaults is KEPT with null fields rather than deleted:
- * settings patches merge through the stock `deepMerge`, which key-unions maps
- * and cannot delete a key, so omitting the entry would silently retain the old
- * override. A `{ keyPrefix: null }` entry resolves to the default (see
- * `resolveBoardKeyPrefix`), so a null entry and an absent key look identical —
- * and clearing actually persists.
+ * reverting to defaults is kept with null fields: settings patches `deepMerge`,
+ * which cannot delete a key, so omitting it would keep the old override.
  */
 export function setBoardProjectSetting(
   projects: Readonly<Record<string, BoardProjectSettings>>,

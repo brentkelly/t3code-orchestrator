@@ -1,21 +1,7 @@
 /**
- * T3o board RPC handlers (t3o-04).
- *
- * `boardRpcHandlers` is the injected factory the upstream ws.ts handler
- * object spreads (`...(yield* boardRpcHandlers({ currentSession, boardSupervisor }))`).
- * Adding a board RPC grows the returned record here plus the contracts-side
- * registries (`BOARD_WS_METHODS` / `BOARD_RPCS` / `BOARD_RPC_SCOPES`) and
- * touches zero upstream files.
- *
- * Authorization: upstream's `RpcScopeAuthorization` middleware already checks
- * `RPC_REQUIRED_SCOPES`, which spreads `BOARD_RPC_SCOPES`; the handlers keep
- * their own check against the same session as a second line, with the same
- * failure shape (`EnvironmentAuthorizationError`). Spans and request metrics
- * come from upstream's `RpcInstrumentation` middleware.
- *
- * Writes go through the board's own engine and reads through `BoardQueries`
- * (T3O-56); nothing here touches upstream's orchestration engine. The board's
- * client state rides its own subscription and dispatch RPCs (T3O-57).
+ * Board RPC handlers, spread into upstream's ws.ts handler object. Upstream's
+ * `RpcScopeAuthorization` already checks `BOARD_RPC_SCOPES`; the handlers re-check the
+ * same session as a second line, with the same `EnvironmentAuthorizationError` shape.
  */
 import {
   BOARD_RPC_SCOPES,
@@ -38,13 +24,13 @@ import {
   type BoardRequestReviewRoundInput,
   type BoardCardWorkerMoveAnswer,
   type BoardCardWorkerMoveRequest,
-  // T3o: the refresh's own payload (T3O-48).
+  // T3o: the refresh's own payload.
   type BoardRefreshCardPullRequestInput,
   type BoardLinkCardPullRequestInput,
   type BoardClientCommand,
   type BoardSubscribeBoardInput,
   type BoardSubscribeCardInput,
-  // T3o (T3O-49): project config RPCs.
+  // T3o: project config RPCs.
   type BoardProjectConfigInput,
   type BoardProjectImportCandidatesInput,
   type BoardProjectImportInput,
@@ -53,7 +39,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -108,6 +94,7 @@ export interface BoardRpcHandlerDeps {
 }
 
 const decodeClientOrigin = Schema.decodeUnknownOption(OrchestrationClientOrigin);
+const isBoardAttachmentClaimError = Schema.is(BoardAttachmentClaimError);
 
 /**
  * The origin a client's board commands carry: its surface and app version, each kept only
@@ -125,52 +112,53 @@ export const boardClientOrigin = (
   return origin.surface === undefined && origin.appVersion === undefined ? undefined : origin;
 };
 
-export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
-  Effect.gen(function* () {
-    const boardEngine = yield* BoardEngine;
-    const boardQueries = yield* BoardQueries;
-    // Built once per connection, so the actor-name caches live as long as it does.
-    const workspaces = yield* BoardWorkspaces;
-    const threads = yield* ThreadGateway;
-    const stampActor = boardActorStamp({ threads, boardQueries, workspaces });
-    const projectActorName = boardProjectActorName({ threads, workspaces });
-    // The subscription's services, provided here so the handler's stream needs
-    // only the RPC scope.
-    const subscriptionContext = yield* Effect.context<
-      BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
-    >();
-    const workerConnections = yield* Effect.serviceOption(WorkerConnections);
-    return {
-      ...makeBoardRpcHandlers(deps, {
-        ciLogWorker: (workerId) =>
-          Option.isNone(workerConnections)
-            ? Effect.succeed(null)
-            : workerConnections.value.get(workerId).pipe(
-                Effect.map((rpc) => rpc.gateway.readCiLog),
-                Effect.catch(() => Effect.succeed(null)),
-              ),
-        boardEngine,
-        boardQueries,
-        stampActor,
-        projectActorName,
-        projectConfig: yield* makeBoardProjectConfigService,
-        mover: yield* BoardCardMover,
-        subscriptionContext,
-        // Optional so board-only harnesses need no source control stack; ws.ts always has one.
-        projectTokenStatus: boardProjectTokenStatus(
-          threads,
-          Option.getOrElse(yield* Effect.serviceOption(SourceControlDrivers), () => []),
-        ),
-      }),
-      // T3O-62: worker management, and the worker side's handshake.
-      ...(yield* boardWorkerRpcHandlers(deps.currentSession)),
-      // T3O-63: the worker side's thread gateway, MCP relay and staging.
-      ...workerGatewayRpcHandlers(deps.currentSession),
-      // T3O-64: the named git and forge operations, for a central server
-      // whose cards run here.
-      ...boardWorkerGitCallRpcHandlers(deps.currentSession, workspaces),
-    };
-  });
+export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
+  deps: BoardRpcHandlerDeps,
+) {
+  const boardEngine = yield* BoardEngine;
+  const boardQueries = yield* BoardQueries;
+  // Built once per connection, so the actor-name caches live as long as it does.
+  const workspaces = yield* BoardWorkspaces;
+  const threads = yield* ThreadGateway;
+  const stampActor = boardActorStamp({ threads, boardQueries, workspaces });
+  const projectActorName = boardProjectActorName({ threads, workspaces });
+  // The subscription's services, provided here so the handler's stream needs
+  // only the RPC scope.
+  const subscriptionContext = yield* Effect.context<
+    BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
+  >();
+  const workerConnections = yield* Effect.serviceOption(WorkerConnections);
+  return {
+    ...makeBoardRpcHandlers(deps, {
+      ciLogWorker: (workerId) =>
+        Option.isNone(workerConnections)
+          ? Effect.succeed(null)
+          : workerConnections.value.get(workerId).pipe(
+              Effect.map((rpc) => rpc.gateway.readCiLog),
+              Effect.orElseSucceed(() => null),
+            ),
+      boardEngine,
+      boardQueries,
+      stampActor,
+      projectActorName,
+      projectConfig: yield* makeBoardProjectConfigService,
+      mover: yield* BoardCardMover,
+      subscriptionContext,
+      // Optional so board-only harnesses need no source control stack; ws.ts always has one.
+      projectTokenStatus: boardProjectTokenStatus(
+        threads,
+        Option.getOrElse(yield* Effect.serviceOption(SourceControlDrivers), () => []),
+      ),
+    }),
+    // Worker management, and the worker side's handshake.
+    ...(yield* boardWorkerRpcHandlers(deps.currentSession)),
+    // The worker side's thread gateway, MCP relay and staging.
+    ...workerGatewayRpcHandlers(deps.currentSession),
+    // The named git and forge operations, for a central server
+    // whose cards run here.
+    ...boardWorkerGitCallRpcHandlers(deps.currentSession, workspaces),
+  };
+});
 
 function makeBoardRpcHandlers(
   deps: BoardRpcHandlerDeps,
@@ -237,7 +225,7 @@ function makeBoardRpcHandlers(
 
   return {
     /**
-     * The board's bounded summary, then its live deltas (t3o-26 D4, T3O-57) —
+     * The board's bounded summary, then its live deltas —
      * see `boardSubscription.ts` for the resume rules.
      */
     [BOARD_WS_METHODS.subscribeBoard]: (input: BoardSubscribeBoardInput) =>
@@ -249,11 +237,11 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * A client board command (T3O-57). The human actor is stamped first: this
-     * RPC is the transport that knows a person is on the other end (t3o-18).
+     * A client board command. The human actor is stamped first: this
+     * RPC is the transport that knows a person is on the other end.
      */
     [BOARD_WS_METHODS.dispatchCommand]: (input: BoardClientCommand) => {
-      // T3O-49: a person's move, whatever the client said; it resets the
+      // A person's move, whatever the client said; it resets the
       // card's CI round trips.
       const command: BoardClientCommand =
         input.type === "board.card.move" ? { ...input, cause: "human" } : input;
@@ -274,7 +262,7 @@ function makeBoardRpcHandlers(
     },
 
     /**
-     * Stage and project config commands (T3O-49), at the settings-write tier.
+     * Stage and project config commands, at the settings-write tier.
      * The actor is always this human, whatever the client sent.
      */
     [BOARD_WS_METHODS.dispatchSettingsCommand]: (command: BoardSettingsClientCommand) =>
@@ -319,11 +307,11 @@ function makeBoardRpcHandlers(
         }),
       ),
 
-    /** T3O-58: each project's GitHub token source and check, when Settings asks. */
+    /** Each project's GitHub token source and check, when Settings asks. */
     [BOARD_WS_METHODS.projectTokenStatus]: (_input: Record<string, never>) =>
       authorized(BOARD_WS_METHODS.projectTokenStatus, services.projectTokenStatus),
 
-    /** The archive page's cards (t3o-13), read when the page opens. */
+    /** The archive page's cards, read when the page opens. */
     [BOARD_WS_METHODS.getArchivedCards]: (_input: Record<string, never>) =>
       authorized(
         BOARD_WS_METHODS.getArchivedCards,
@@ -336,21 +324,10 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * Re-resolve the card's pull request from the forge.
-     *
-     * The refreshed link reaches the open card through the `subscribeCard`
-     * stream that is already re-emitting on every board event, so the automatic
-     * callers (a card opening, View PR being clicked) ignore the answer
-     * entirely. A failed lookup is deliberately NOT an error — the reactor
-     * keeps the last known link and logs, because a rate limit must leave a
-     * card's PR badge alone rather than blanking it or popping a toast at
-     * someone who only opened a card.
-     *
-     * T3o (T3O-48): it does RETURN an answer now, and a human's "Check again"
-     * passes `force` to bypass the two-minute lookup cache and its failure
-     * backoff. A button whose result is silence cannot tell "this branch has no
-     * pull request" from "the forge could not be asked", and that confusion is
-     * what this card was filed about.
+     * Re-resolve the card's pull request from the forge. A failed lookup is not an error: the
+     * reactor keeps the last known link, so a rate limit never blanks a card's PR badge.
+     * `force` (a human's "Check again") bypasses the lookup cache and its failure backoff, and
+     * the answer tells "no pull request" apart from "the forge could not be asked".
      */
     [BOARD_WS_METHODS.refreshCardPullRequest]: (input: BoardRefreshCardPullRequestInput) =>
       authorized(
@@ -362,7 +339,7 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * "No PR linked · Link one" on the card detail (T3O-18). The input is sent
+     * "No PR linked · Link one" on the card detail. The input is sent
      * as typed; the server owns the parsing, so the card and the agent tools
      * accept exactly the same names for a pull request.
      */
@@ -393,11 +370,9 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * Open the card's pull request from Building and route it past Code review
-     * ("Submit for merge — no review", t3o-07). Always human-initiated, and
-     * the result is a value rather than an error channel for the same reason
-     * merging's is: "this card has no branch to push" is the system working,
-     * and the caller renders each refusal differently.
+     * Open the card's pull request from Building and route it past Code review. The result is
+     * a value rather than an error channel: each refusal is the system working, and the
+     * caller renders each differently.
      */
     [BOARD_WS_METHODS.submitCardForMerge]: (input: BoardCardPullRequestActionInput) =>
       authorized(
@@ -406,11 +381,9 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * Run one more review round on a settled loop (T3O-39, D6) — "Another
-     * review round", and "Request review" on a card that never had one. An
-     * RPC rather than a card command because the ordering is load-bearing:
-     * the `runThroughRound` override must be written before the card moves,
-     * or the executor re-plans a converged loop and bounces it straight back.
+     * Run one more review round on a settled loop. An RPC rather than a card command because
+     * the `runThroughRound` override must be written before the card moves, or the executor
+     * re-plans a converged loop and bounces it straight back.
      */
     [BOARD_WS_METHODS.requestReviewRound]: (input: BoardRequestReviewRoundInput) =>
       authorized(
@@ -418,7 +391,7 @@ function makeBoardRpcHandlers(
         deps.boardSupervisor.requestReviewRound(input.cardId, input.carry),
       ),
 
-    /** Skip CI (T3O-44): a human's override, so what it records carries the
+    /** Skip CI: a human's override, so what it records carries the
         human, like a drag. */
     [BOARD_WS_METHODS.skipCi]: (input: BoardCardPullRequestActionInput) =>
       authorized(
@@ -426,7 +399,7 @@ function makeBoardRpcHandlers(
         deps.boardSupervisor.skipCi(input.cardId, services.stampActor),
       ),
 
-    /** Retry CI, Stop CI (T3O-59) and "Send back to review anyway" (T3O-49):
+    /** Retry CI, Stop CI and "Send back to review anyway":
         human-only, like Skip CI; no agent tool reaches them. */
     [BOARD_WS_METHODS.retryCi]: (input: BoardCiActionInput) =>
       authorized(
@@ -437,7 +410,7 @@ function makeBoardRpcHandlers(
       authorized(BOARD_WS_METHODS.ciSendBack, deps.boardSupervisor.ciSendBack(input.cardId)),
 
     /**
-     * "Remove worktree" on a finished card that kept one (T3O-52, D5). The
+     * "Remove worktree" on a finished card that kept one. The
      * human confirmed at a dialog naming what is lost; the branch survives.
      */
     [BOARD_WS_METHODS.removeCardWorktree]: (input: BoardCardPullRequestActionInput) =>
@@ -446,7 +419,7 @@ function makeBoardRpcHandlers(
         deps.boardSupervisor.forceRemoveWorktree(input.cardId),
       ),
 
-    /** "Check again" on a card that kept its worktree (T3O-52): operate, like
+    /** "Check again" on a card that kept its worktree: operate, like
         removal, because a durable checkout is removed by it. */
     [BOARD_WS_METHODS.checkCardWorktree]: (input: BoardCardPullRequestActionInput) =>
       authorized(
@@ -454,14 +427,14 @@ function makeBoardRpcHandlers(
         deps.boardSupervisor.checkWorktree(input.cardId),
       ),
 
-    /** The Move dialog (T3O-65): check, move, or ask the agent to push. A
-        move is a human act (D18), so each step it records carries the human. */
+    /** The Move dialog: check, move, or ask the agent to push. A
+        move is a human act, so each step it records carries the human. */
     [BOARD_WS_METHODS.cardWorkerMove]: (input: BoardCardWorkerMoveRequest) =>
       authorized(
         BOARD_WS_METHODS.cardWorkerMove,
         Effect.suspend((): Effect.Effect<BoardCardWorkerMoveAnswer> => {
           if (input.action === "ask-push") return services.mover.askAgentToPush(input.cardId);
-          // T3O-66: a force-move off an offline or removed worker, and its
+          // A force-move off an offline or removed worker, and its
           // restart-from-base confirmation.
           const force = { force: input.force, restartFromBase: input.restartFromBase };
           if (input.action === "move") {
@@ -480,7 +453,7 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * Attach a pending upload to the card's brief (t3o-32, K2). Copy first,
+     * Attach a pending upload to the card's brief (K2). Copy first,
      * record second: the file lands in the card's folder, then the internal
      * `board.card.attach` command is dispatched; a refused dispatch deletes
      * the copy again so disk and record never disagree.
@@ -490,7 +463,7 @@ function makeBoardRpcHandlers(
         BOARD_WS_METHODS.attachCardFile,
         Effect.gen(function* () {
           const config = yield* ServerConfig.ServerConfig;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
           const detail = yield* readDetail(input.cardId).pipe(
             Effect.mapError(
               (cause) =>
@@ -513,7 +486,7 @@ function makeBoardRpcHandlers(
             attachmentsDir: config.attachmentsDir,
             card: detail.card,
             pendingAttachmentId: input.pendingAttachmentId,
-            attachmentId: BoardCardAttachmentId.make(yield* crypto.randomUUIDv4()),
+            attachmentId: BoardCardAttachmentId.make(yield* crypto.uuidV4()),
             name: input.name,
             type: input.type,
             mimeType: input.mimeType,
@@ -521,7 +494,7 @@ function makeBoardRpcHandlers(
             addedAt: createdAt,
           }).pipe(
             Effect.mapError((error) =>
-              error instanceof BoardAttachmentClaimError
+              isBoardAttachmentClaimError(error)
                 ? new BoardCardAttachmentError({
                     code: error.failure.reason,
                     message: error.failure.message,
@@ -536,7 +509,7 @@ function makeBoardRpcHandlers(
                   }),
             ),
           );
-          const uuid = yield* crypto.randomUUIDv4();
+          const uuid = yield* crypto.uuidV4();
           yield* boardEngine
             .dispatch({
               type: "board.card.attach",
@@ -567,7 +540,7 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * Drop a brief attachment (t3o-32): record first, then the file. A file
+     * Drop a brief attachment: record first, then the file. A file
      * that fails to delete is logged and left for a manual tidy — the record
      * is gone, which is what the user asked for.
      */
@@ -576,7 +549,7 @@ function makeBoardRpcHandlers(
         BOARD_WS_METHODS.detachCardFile,
         Effect.gen(function* () {
           const config = yield* ServerConfig.ServerConfig;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
           const detail = yield* readDetail(input.cardId).pipe(
             Effect.mapError(
               (cause) =>
@@ -596,7 +569,7 @@ function makeBoardRpcHandlers(
               message: `Attachment ${input.attachmentId} is not on card ${input.cardId}.`,
             });
           }
-          const uuid = yield* crypto.randomUUIDv4();
+          const uuid = yield* crypto.uuidV4();
           yield* boardEngine
             .dispatch({
               type: "board.card.detach",
@@ -623,7 +596,7 @@ function makeBoardRpcHandlers(
         }).pipe(Effect.mapError(toAttachmentError)),
       ),
 
-    /** One CI step's log, followed while it runs (T3O-60): `ci/ciLog.ts`. */
+    /** One CI step's log, followed while it runs: `ci/ciLog.ts`. */
     [BOARD_WS_METHODS.readCiLog]: (input: BoardReadCiLogInput) =>
       Stream.unwrap(
         authorized(
@@ -642,36 +615,22 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * One streaming subscription per open card, mirroring
-     * `subscribeThread`'s lifecycle: emits the full detail on subscribe,
-     * re-emits it on every board event for this card, and is disposed with
-     * the stream's scope when the client closes the card. Detail is one
-     * card's worth of data, so re-emitting whole is cheaper than an event
-     * grammar and needs no client-side merge.
+     * One subscription per open card: emits the full detail on subscribe and re-emits it on
+     * every board event, disposed with the stream's scope. One card's detail is small enough
+     * that re-emitting it whole beats an event grammar and a client-side merge.
      */
     [BOARD_WS_METHODS.subscribeCard]: (input: BoardSubscribeCardInput) =>
       Stream.unwrap(
         authorized(
           BOARD_WS_METHODS.subscribeCard,
           Effect.gen(function* () {
-            // Attach live delivery into a scope-bound buffer BEFORE the
-            // initial read, exactly like subscribeShell/subscribeThread: an
-            // event committed while the initial detail read is in flight
-            // must trigger a re-read, not vanish. The buffer carries no
-            // payload and slides at capacity 1: any burst that lands while
-            // a re-read is in flight collapses into one queued wake-up, so
-            // the follow-up read observes the latest projected state and
-            // the stream emits one frame for the whole burst.
+            // Attach live delivery BEFORE the initial read, so an event committed during
+            // it triggers a re-read. The payload-free buffer slides at capacity 1, so a burst
+            // during a re-read collapses into one wake-up and one frame of the latest state.
             const liveBuffer = yield* Queue.sliding<void>(1);
             yield* Effect.forkScoped(
-              // Wake on ANY board event, not only ones aggregated on the open
-              // card: the detail embeds resolved dependencies/dependents with
-              // live stage/archive state, and those change under events fired
-              // on OTHER aggregate ids (a dependency moving to Done, another
-              // card adopting this one into its dependsOn). One card's detail
-              // re-read per coalesced burst (the sliding buffer above) is the
-              // cost; a stale dependency chip until an unrelated local event
-              // was the alternative.
+              // Wake on ANY board event: the detail embeds dependencies and dependents
+              // whose stage and archive state change under events on other cards' ids.
               boardEngine.liveBoardEvents.pipe(
                 Stream.runForEach(() => Queue.offer(liveBuffer, undefined)),
               ),
@@ -689,12 +648,9 @@ function makeBoardRpcHandlers(
               Stream.make(detailItem(initial)),
               Stream.fromQueue(liveBuffer).pipe(
                 Stream.mapEffect(() => readDetail(input.cardId)),
-                // A null mid-stream means the card was DELETED under an open
-                // viewer — an archived card still resolves, so nothing else
-                // produces one. The frame is dropped rather than closing the
-                // stream: the client that issued the delete closes its own
-                // modal, and another device's viewer keeps rendering the last
-                // frame, which beats a dialog that vanishes mid-read.
+                // Null mid-stream: the card was deleted under an open viewer (an
+                // archived card still resolves). Drop the frame rather than close the
+                // stream, so other viewers keep the last frame.
                 Stream.flatMap((detail) =>
                   detail === null ? Stream.empty : Stream.make(detailItem(detail)),
                 ),
@@ -706,29 +662,13 @@ function makeBoardRpcHandlers(
   };
 }
 
-// ── The human dispatch boundary (t3o-18, D11) ──────────────────────────
+// ── The human dispatch boundary ──────────────────────────
 
 /**
- * Stamp the HUMAN actor on a board command arriving over `board.dispatchCommand`,
- * so the Activity rail can say "brent moved to Building" rather than
- * attributing every drag to the system.
- *
- * Called immediately before dispatch: that RPC is the transport that knows a
- * person is on the other end, and no other caller can claim to be one.
- * A non-board command, or one that names no card, is left alone.
- *
- * **The name** is the card's project git `user.name`, cached per project and
- * frozen onto the row at write time (so it stays correct after the git config
- * changes), falling back to `"You"`. There is no user identity anywhere in
- * t3code — it is a single-user local server — and for a dev tool the git identity
- * is the right one: it is already what lands on every commit the agent makes.
- *
- * Resolution is two point reads plus at most one `git config` per project for the
- * lifetime of the process, on a path a human drives by hand. Every failure
- * degrades to the fallback name; none can fail the dispatch.
- *
- * T3O-64: read from this server's own checkout of the project when it has
- * one, and otherwise from the card's worker, where the commits are made.
+ * Stamp the human actor on a command from `board.dispatchCommand`, the only transport that
+ * knows a person is on the other end. The name is the project's git `user.name` (read on
+ * this server's checkout, else the card's worker), cached and frozen onto the row, falling
+ * back to "You". Every failure degrades to the fallback; none can fail the dispatch.
  */
 export function boardActorStamp(deps: {
   readonly threads: Pick<ThreadGatewayShape, "project">;
@@ -745,7 +685,7 @@ export function boardActorStamp(deps: {
         .boardCardDetail(cardId)
         .pipe(Effect.catchCause(() => Effect.succeed(null)));
       if (detail === null) return BOARD_HUMAN_ACTOR_FALLBACK_NAME;
-      // Cacheable until the card MOVES project (T3O-33), which the stamp
+      // Cacheable until the card MOVES project, which the stamp
       // below invalidates — it is the same call path, so the eviction cannot
       // be missed.
       projectId = detail.card.projectId;
@@ -759,18 +699,15 @@ export function boardActorStamp(deps: {
       const cardId = (command as { readonly cardId?: BoardCardId }).cardId;
       if (cardId === undefined) return;
       stampBoardActivityActor(command.commandId, boardHumanActor(yield* resolveName(cardId)));
-      // A card changing project (T3O-33) invalidates the card->project mapping
-      // above, which is otherwise held for the life of the process. Evicted
-      // AFTER the stamp on purpose: the command has not been decided yet, so
-      // re-reading now would only re-cache the project the card is leaving.
-      // This row keeps the old project's identity — the human acted there — and
-      // the next command on the card resolves against the new one.
+      // A project change invalidates the cached card->project mapping. Evicted AFTER the stamp:
+      // the command is not decided yet, so this row keeps the old project's identity and the
+      // next command resolves against the new one.
       if (command.type === "board.card.set-project") projectByCard.delete(String(cardId));
-    }).pipe(Effect.catchCause(() => Effect.void));
+    }).pipe(Effect.ignoreCause);
 }
 
 /**
- * A human's name for a project (T3O-49, extracted from `boardActorStamp`):
+ * A human's name for a project (extracted from `boardActorStamp`):
  * the project's git `user.name`, cached per project, falling back to "You".
  * Read from this server's checkout when it has one, else from `cardId`'s
  * worker; with neither, the fallback.

@@ -1,12 +1,6 @@
-// T3o: stall detection (t3o-17, D1/D2). The step-state row splits the single
-// recovery counter into two: `attempt` (cumulative invocations this stage
-// entry, already present) keeps counting for display and the D5 ceiling, and a
-// new `stall_count` (CONSECUTIVE stalls, reset on progress) is what recovery
-// gates on. `last_nudge_at` records when recovery last nudged the step, the
-// boundary the reactor resolves the progress signal against. NOT NULL columns
-// added with defaults, as SQLite requires; every real row is written by the
-// projector with resolved values. Greenfield (D14): no backfill, the dev
-// database may be recreated.
+// `stall_count` counts CONSECUTIVE stalls (reset on progress) and gates recovery;
+// `attempt` keeps counting for display. NOT NULL columns need defaults in SQLite;
+// the projector writes resolved values for every real row.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

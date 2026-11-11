@@ -1,5 +1,5 @@
 /**
- * T3o: Settings → Board → Projects → <project> (T3O-49): the project's
+ * T3o: Settings → Board → Projects → <project>: the project's
  * differences from the global pipeline, in three deep-linkable tabs —
  * Pipeline (switches and overrides), CI (steps and fix agent) and Import &
  * export (`t3o.json`). Controls need the settings-write scope.
@@ -10,7 +10,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { boardEnvironment } from "../../state/board";
@@ -48,7 +48,7 @@ export function BoardProjectSettingsPage(props: {
     (candidate) => candidate.id === projectId,
   );
   const config = useBoardProjectConfig(environmentId, projectId);
-  const ids = useMemo(() => [projectId], [projectId]);
+  const ids = [projectId];
   const imports = useBoardImportCandidates(ids);
   const tabCounts: Readonly<Record<BoardProjectSettingsTab, number>> = {
     pipeline:

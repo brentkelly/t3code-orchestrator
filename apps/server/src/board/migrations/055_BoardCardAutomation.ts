@@ -1,22 +1,6 @@
-// T3o: the Automation section (T3O-38).
-//
-// `board_cards.auto_{plan,build,merge}_setting` — each card's own toggle,
-// NULL to inherit from its parent group, matching `BoardCard`'s decoding
-// default. Backfilled so every card keeps today's behaviour:
-//
-//   - `auto_start = 1` → own Auto-build on; `auto_merge = 1` → own Auto-merge
-//     on (0 stays NULL: the old flag could only add, never override off).
-//   - A pending auto-plan request (053's JSON) from the Auto-plan → Build
-//     button (`mode: build`) → own Auto-plan and Auto-build on. A pending
-//     `ready` request came from the group setting, which still applies.
-//   - A group with a live child at or past the build stage has begun
-//     (`group_started = 1`): begun is now that flag alone.
-//   - A group whose children land on an integration branch merged them under
-//     its auto-build; they now read its auto-merge, so it takes that value.
-//
-// The old `auto_start` / `auto_merge` columns are left in place, unused. Like
-// 051, a from-empty replay of pre-055 events does not reproduce the backfill;
-// production hydrates from these tables. Guarded, so re-running is a no-op.
+// NULL toggles inherit from the parent group. The backfill keeps each card's
+// existing behaviour; a from-empty replay of older events does not reproduce it,
+// as production hydrates from these tables. Guarded, so re-running is a no-op.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

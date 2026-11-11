@@ -1,5 +1,5 @@
 /**
- * T3o board projector (t3o-03): legacy walking-skeleton payloads decode to
+ * T3o board projector: legacy walking-skeleton payloads decode to
  * the documented defaults, archive keeps the card in the read model while
  * the shell drops it, tombstoned links survive projection, and the created
  * counter bump is monotonic.
@@ -175,7 +175,7 @@ const eventBase = {
 describe("board projector", () => {
   it.effect("replays a walking-skeleton created payload with the legacy defaults", () =>
     Effect.gen(function* () {
-      // The exact five-field payload t3o-02 wrote to real event logs.
+      // The exact five-field payload the first release wrote to real event logs.
       const legacyEvent = {
         ...eventBase,
         type: "board.card-created",
@@ -195,7 +195,7 @@ describe("board projector", () => {
       assert.strictEqual(card?.cardNumber, LEGACY_BOARD_CARD_NUMBER);
       // A legacy payload with no cardType/labels maps to the feature seed label.
       assert.deepStrictEqual(card?.labels, [BOARD_SEED_LABEL_IDS.feature]);
-      // No dependsOn/brief on a pre-t3o-06 event: empty deps, no brief ref —
+      // No dependsOn/brief on a legacy event: empty deps, no brief ref —
       // matching migration 903's `depends_on DEFAULT '[]'` and null brief_ref.
       assert.deepStrictEqual(card?.dependsOn, []);
       assert.strictEqual(card?.briefRef, null);
@@ -254,7 +254,7 @@ describe("board projector", () => {
       const model = yield* projectBoardEvent(emptyModel(), event);
       const card = model.board?.cards[0];
       assert.isDefined(card);
-      // briefRef is the sentinel kind (D8: the body never enters the read model).
+      // briefRef is the sentinel kind (the body never enters the read model).
       assert.strictEqual(card?.briefRef, "brief");
       assert.deepStrictEqual(card?.dependsOn, [dependencyId]);
       // A creation-stage card is before Ready, so it is never blocked at birth.
@@ -272,8 +272,8 @@ describe("board projector", () => {
     }),
   );
 
-  // The footer's image indicator (t3o-06). The brief BODY is not on the card
-  // aggregate (D8), so the flag can only be decided by the two events that
+  // The footer's image indicator. The brief BODY is not on the card
+  // aggregate, so the flag can only be decided by the two events that
   // carry a brief; every other card delta has to leave it alone, or a drag
   // would blank the icon.
   it("decides the brief-image flag only on the events that carry a brief", () => {
@@ -360,7 +360,7 @@ describe("board projector", () => {
     );
   });
 
-  // The footer's plan indicator (t3o-08): the plan set is its own slice, so a
+  // The footer's plan indicator: the plan set is its own slice, so a
   // proposal emits a one-number delta of its own rather than a card upsert.
   it("emits a plan-count delta when the card's plans are replaced", () => {
     const plan = (key: string, ordinal: number) => ({
@@ -434,7 +434,7 @@ describe("board projector", () => {
       });
 
       // And unarchiving emits the card back onto the shell — as the bounded
-      // shell (t3o-04), never the full aggregate.
+      // shell, never the full aggregate.
       const restoredCard = makeCard({});
       const unarchived: BoardEvent = {
         ...eventBase,
@@ -498,13 +498,9 @@ describe("board projector", () => {
     }),
   );
 
-  // The absent-vs-empty rule `loadBoardState` enforces on rehydration must
-  // hold on the replay edge too, or D7's replay-equals-rehydration (compared
-  // with deepStrictEqual) breaks. Two ways it could:
-  //  - an absent slice becoming a present `undefined`, and
-  //  - a slice the delete EMPTIES becoming a present `[]` instead of omitted
-  //    (rehydration drops an empty table — deleting the last plan-holder would
-  //    otherwise leave replay with `plans: []` and rehydration with no key).
+  // Replay must match rehydration's absent-vs-empty rule (compared with deepStrictEqual): no
+  // absent slice becomes a present `undefined`, and a slice the delete empties is omitted, not
+  // `[]`.
   it.effect("omits a slice the delete empties, and leaves an absent slice absent", () =>
     Effect.gen(function* () {
       // The deleted card is the SOLE holder of every per-card slice; plans is
@@ -537,7 +533,7 @@ describe("board projector", () => {
     }),
   );
 
-  // The `blocked` re-flag an archive emits for its dependents (t3o-13, D5)
+  // The `blocked` re-flag an archive emits for its dependents
   // rides the ordinary card-updated event, so it must reach every client the
   // same way any other card change does — via a shell delta, with no reload.
   it.effect("emits a shell upsert for a dependent re-flagged by an archive", () =>
@@ -639,7 +635,7 @@ describe("board projector", () => {
         awaitingReason: "question" as const,
         stalledReason: "gave-up" as const,
         retryAt: null,
-        // Frozen execution config on the run row (D12).
+        // Frozen execution config on the run row.
         prompt: "do it",
         providerInstanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.4",
@@ -695,9 +691,9 @@ describe("board projector", () => {
       const afterSettle = yield* projectBoardEvent(afterAdmit, settledEvent);
       assert.strictEqual(afterSettle.board?.stepStates?.[0]?.status, "succeeded");
       assert.strictEqual(afterSettle.board?.stepStates?.[0]?.slotHeld, false);
-      // Admission to RUNNING flips the one step field on the shell (t3o-11,
-      // D11): a `card-queued` delta clearing the queued badge (queued=false).
-      // Every other step field stays card DETAIL on the subscription (D7).
+      // Admission to RUNNING flips the one step field on the shell: a `card-queued` delta
+      // clearing the queued badge (queued=false). Every other step field stays card DETAIL on
+      // the subscription.
       const admittedDelta = boardShellStreamEvent(admittedEvent);
       assert.strictEqual(Option.isSome(admittedDelta), true);
       assert.deepStrictEqual(Option.getOrThrow(admittedDelta), {
@@ -707,11 +703,9 @@ describe("board projector", () => {
         queued: false,
         stepRunning: true,
       });
-      // Settling clears the stalled badge (t3o-17, D3): the one path a stalled
-      // step leaves without a fresh select-step is a human taking over its live
-      // thread and completing it, so settle emits card-stalled=false. It clears
-      // the QUEUE badge too — a step held for a slot can settle straight out of
-      // the queue, and admission is not the only way out of it.
+      // Settling clears the stalled badge (a human completing a stalled step's thread emits no
+      // fresh select-step) and the QUEUE badge (a step held for a slot can settle straight out
+      // of the queue).
       assert.deepStrictEqual(Option.getOrThrow(boardShellStreamEvent(settledEvent)), {
         kind: "card-stalled",
         sequence: settledEvent.sequence,
@@ -724,7 +718,7 @@ describe("board projector", () => {
         stepConflictFix: false,
         queued: false,
       });
-      // t3o-34 (D4): parking on a human is a column-card fact now, and this
+      // Parking on a human is a column-card fact now, and this
       // event emitted NO delta at all before — which is exactly how a card
       // whose agent asked in prose went on pulsing its blue dot.
       const awaitingEvent: BoardEvent = {
@@ -747,7 +741,7 @@ describe("board projector", () => {
         stepConflictFix: false,
         queued: false,
       });
-      // T3O-23: a human stop is the fourth transition that is a column-card
+      // A human stop is the fourth transition that is a column-card
       // fact, and it rides the same delta. `paused` is derived from the STATUS
       // — the row's `awaitingReason` still says whatever it last said, and the
       // delta must ignore it.
@@ -887,7 +881,7 @@ describe("board projector", () => {
         stepRunning: false,
         held: false,
         stepAwaiting: null,
-        // Why it stalled rides the same delta (T3O-22, D10). No `retryAt` here:
+        // Why it stalled rides the same delta. No `retryAt` here:
         // recovery giving up promises no retry, and a time on it would be a
         // promise nothing keeps.
         stalledReason: "gave-up",
@@ -1087,7 +1081,7 @@ describe("board projector", () => {
     }),
   );
 
-  // ── Sub-boards (t3o-23) ──────────────────────────────────────────────
+  // ── Sub-boards ──────────────────────────────────────────────
 
   it.effect("projects a sub-board child creation: parent link, source plan, brief pointer", () =>
     Effect.gen(function* () {

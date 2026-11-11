@@ -1,12 +1,7 @@
 /**
- * The board's own engine (T3O-56), on real SQLite.
- *
- * What the engine promises, and what these pin: a command's events, their
- * projection, its receipt and the watermark commit together or not at all, and
- * only then is anything published; a command id is decided once; a subscriber
- * that catches up from the log and then follows the live tail sees every event
- * exactly once, in order; and nothing a board command does lands in upstream's
- * log.
+ * Pins: events, projection, receipt and watermark commit together before any
+ * publish; a command id is decided once; catch-up then live tail sees every
+ * event exactly once, in order; nothing lands in upstream's log.
  */
 import {
   BoardCardId,
@@ -256,7 +251,7 @@ it.layer(makeBoardStackTestLayer("t3o-board-engine-"))("BoardEngine", (it) => {
       yield* engine.dispatch(createProject("retired"));
       yield* engine.dispatch(createCard("retired-1"));
       const cursor = yield* engine.boardEngine.latestSequence;
-      // A board that ran T3O-22's cooldowns has these in its permanent log.
+      // A board that ran the old cooldowns has these in its permanent log.
       yield* sql`
         INSERT INTO boards.board_events (
           event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,

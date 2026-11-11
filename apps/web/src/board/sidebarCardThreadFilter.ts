@@ -1,4 +1,4 @@
-/** T3o: which Settled rows the card-thread filter hides, and how many card threads it covers (T3O-78). */
+/** T3o: which Settled rows the card-thread filter hides, and how many card threads it covers. */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   unloadedOlderSettledCount,

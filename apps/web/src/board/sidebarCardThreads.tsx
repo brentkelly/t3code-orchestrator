@@ -1,17 +1,13 @@
 /**
- * T3o: board card threads leave the sidebar's Settled shelf by default (T3O-78).
- *
- * Settled is where one-off threads are found again, and card threads swamp it; a historic card
- * thread is reached through its card. Active, Working, Pinned and Snoozed are unchanged, so a
- * running card thread still shows. Each environment's server names its card threads: it filters older pages
- * and counts itself, and lists the card threads its shell carries so they are matched here.
+ * Board card threads leave the sidebar's Settled shelf (a historic card thread
+ * is reached through its card); other shelves are unchanged. Each server names
+ * its card threads, so they are matched here.
  */
 import { useAtomValue } from "@effect/atom-react";
 import type { OlderSettled, OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
-import { useMemo } from "react";
 
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
@@ -75,11 +71,8 @@ const cardThreadReadsAtom = Atom.family((key: string) => {
 export function useSettledCardThreadFilter(environmentIds: ReadonlyArray<EnvironmentId>) {
   const [hide, setHide] = useHideCardThreads();
   const reads = useAtomValue(cardThreadReadsAtom(JSON.stringify([...environmentIds].sort())));
-  const olderSettled = useMemo(
-    () => (environmentId: EnvironmentId) => reads.get(environmentId) ?? null,
-    [reads],
-  );
-  const isCardThread = useMemo(() => cardThreadMatcher(olderSettled), [olderSettled]);
+  const olderSettled = (environmentId: EnvironmentId) => reads.get(environmentId) ?? null;
+  const isCardThread = cardThreadMatcher(olderSettled);
   return {
     hide,
     setHide,

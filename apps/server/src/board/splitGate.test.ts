@@ -1,5 +1,5 @@
 /**
- * The split gate's new state (T3O-31) through the real seams: the Planned
+ * The split gate's new state through the real seams: the Planned
  * flag on plans, the stored recommendation on the card, and a Needs-planning
  * child that owns no plan row. The SQL projection (migration 052) and a
  * from-empty replay of the log must agree on all three.

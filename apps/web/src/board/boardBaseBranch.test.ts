@@ -1,6 +1,6 @@
 /**
- * The two picker decisions that can be wrong in a way nothing else catches
- * (T3O-5, D12/D16): what a click STORES, and which row reads as current.
+ * The two picker decisions that can be wrong in a way nothing else catches:
+ * what a click STORES, and which row reads as current.
  */
 import type { VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -9,6 +9,7 @@ import {
   boardBaseBranchOptions,
   boardBaseBranchSelectedName,
   boardBaseBranchSelectionValue,
+  shouldLoadNextBranchPageAfterScroll,
 } from "./boardBaseBranch";
 
 const ref = (name: string, extra?: Partial<VcsRef>): VcsRef => ({
@@ -87,5 +88,26 @@ describe("boardBaseBranchSelectedName", () => {
     // would silently claim the default it is not — and the amber divergence
     // line would be the only hint anything was wrong.
     expect(boardBaseBranchSelectedName({ baseBranch: "gone", options })).toBe("gone");
+  });
+});
+
+describe("branch page scroll trigger", () => {
+  const scroll = (previousScrollTop: number | null, scrollTop: number, scrollHeight: number) =>
+    shouldLoadNextBranchPageAfterScroll({
+      previousScrollTop,
+      scrollTop,
+      scrollHeight,
+      clientHeight: 224,
+    });
+
+  it("does not load from mount, layout, or an unchanged scroll position", () => {
+    expect(scroll(null, 0, 224)).toBe(false);
+    expect(scroll(120, 120, 344)).toBe(false);
+  });
+
+  it("loads only after a downward scroll reaches the end threshold", () => {
+    expect(scroll(0, 100, 800)).toBe(false);
+    expect(scroll(100, 500, 800)).toBe(true);
+    expect(scroll(499.5, 500, 800)).toBe(true);
   });
 });

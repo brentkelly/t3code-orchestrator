@@ -1,18 +1,7 @@
 /**
- * T3o column-card meta row (t3o-06): the two footer indicators whose data is
- * NOT on the card aggregate — whether the brief carries a picture, and how many
- * plans the card holds.
- *
- * Both are derived from slices a card-carrying delta cannot see (the brief body
- * lives only in `board_card_bodies` (D8); plans live in `board_plans`), so each
- * has two producers that must agree: a SQL expression on the shell-snapshot
- * query, and a JS derivation on the delta path. The whole point of these
- * assertions is that they agree — a card that shows an image icon after a
- * reconnect but not after an edit is exactly the "stale label" this codebase
- * refuses to ship.
- *
- * Run through the real seams (decider → event store → projection → snapshot
- * query), because that is where the two producers actually meet.
+ * Card shell fields not on the aggregate have two producers, a SQL expression on
+ * the snapshot query and a JS derivation on the delta path, which must agree.
+ * Run through the real seams, where the two producers meet.
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -468,11 +457,9 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
 
   it.effect("keeps the badge on a RETIRED pull request across a round boundary", () =>
     Effect.gen(function* () {
-      // A card dragged back out of Done starts a second round on a re-cut
-      // branch, which nulls `pullRequest` until that round opens one of its
-      // own. Both producers fall back to the newest retired round so the badge
-      // does not blink out in between — and, more to the point, so the merged
-      // pull request stays reachable from the card while the new work runs.
+      // A second round nulls `pullRequest` until it opens one; both producers
+      // fall back to the newest retired round so the merged pull request stays
+      // reachable meanwhile.
       const engine = yield* boardStackEngine;
       const snapshotQuery = yield* boardStackSnapshotQuery;
       // Its own card id: the tests in this layer share one database, so
@@ -541,9 +528,8 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
       });
       assert.strictEqual((yield* shellCard)?.prNumber, 284);
 
-      // Round two begins when the card LEAVES Done — that move retires #284 and
-      // clears the card's current pull request, whatever became of its
-      // worktree.
+      // Leaving Done retires the merged pull request and clears the card's
+      // current one, whatever became of its worktree.
       yield* engine.dispatch({
         type: "board.card.move",
         commandId: CommandId.make("cmd-round-2-reopen"),
@@ -563,11 +549,8 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
 
   it.effect("carries the PR number onto the ARCHIVED shell too", () =>
     Effect.gen(function* () {
-      // A THIRD producer: the archive page reuses the same bounded shell
-      // through its own SQL query and its own mapper, so it can drop a field
-      // the live pair agree on. Archived work is exactly when the PR number
-      // matters most — it is how you find out what happened to a card someone
-      // abandoned.
+      // A third producer: the archive page has its own SQL query and mapper, so
+      // it can drop a field the live pair agree on.
       const engine = yield* boardStackEngine;
       const snapshotQuery = yield* boardStackSnapshotQuery;
       const archivedId = BoardCardId.make("card-archived-pr");
@@ -614,15 +597,9 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
 it.layer(makeTestLayer("t3o-card-meta-4-"))("sub-board parent, snapshot vs delta", (it) => {
   it.effect("carries a child's parentCardId on the SNAPSHOT, not only on deltas", () =>
     Effect.gen(function* () {
-      // The same failure the PR-number pair exists to catch, one field over and
-      // with worse consequences: `parentCardId` derived only on the delta path
-      // holds the sub-board together while the client stays connected, then
-      // every reload flattens it — the children reappear on the ROOT board
-      // (`isBoardCardInScope` reads a top-level card), the parent loses its
-      // plan pips and its drill-in door (`deriveBoardCardPlanProgress` skips a
-      // parentless card), and, because the shell's pending-split derivation
-      // keys on those same pips, an already-approved parent goes back to
-      // wearing "Needs approval" with no approval left to give.
+      // `parentCardId` missing from the snapshot producer would flatten the
+      // sub-board on every reload: children reappear on the root board and an
+      // approved parent goes back to "Needs approval".
       const engine = yield* seedCard();
       const snapshotQuery = yield* boardStackSnapshotQuery;
       yield* engine.dispatch({
@@ -725,7 +702,7 @@ it.layer(makeTestLayer("t3o-card-schedule-"))("scheduled start, column to shell 
         scheduledStartAt: null,
         createdAt,
       });
-      // Absent, not null (D8): an unscheduled card's shell is byte-for-byte
+      // Absent, not null: an unscheduled card's shell is byte-for-byte
       // what it was before this field existed, which is what keeps the
       // per-card budget and the linear snapshot growth unchanged.
       const cleared = yield* shellCard;
@@ -755,7 +732,7 @@ it.layer(makeTestLayer("t3o-card-auto-merge-"))(
 
         // Nothing yet: an unheld, unarmed card is byte-for-byte what it was
         // before these three keys existed, which is what keeps the per-card
-        // budget and the linear snapshot growth unchanged (D14).
+        // budget and the linear snapshot growth unchanged.
         const quiet = yield* shellCard;
         assert.isFalse(quiet !== undefined && "autoMergeHeldSince" in quiet);
         assert.isFalse(quiet !== undefined && "autoMergeGaveUp" in quiet);
@@ -826,7 +803,7 @@ it.layer(makeTestLayer("t3o-card-auto-merge-"))(
         assert.strictEqual(delta.autoMergeSetting, hard?.autoMergeSetting);
         assert.strictEqual(delta.autoPlanPending, hard?.autoPlanPending);
 
-        // Disarming clears the hold (D10) and, with it, both hold keys — the
+        // Disarming clears the hold and, with it, both hold keys — the
         // reverse state a one-way door would have missed.
         yield* engine.dispatch({
           type: "board.card.set-automation",
@@ -925,7 +902,7 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
             cardId,
             outcome: "removed",
             forced: true,
-            // T3O-23: the remove script failed, and the removal went ahead.
+            // The remove script failed, and the removal went ahead.
             hookWarning: 'Remove script "park" exited with code 1',
             createdAt,
           });

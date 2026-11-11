@@ -1,15 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Board top bar (T3O-16). The board mounts without a sidebar, so this row is
- * the only chrome the surface has: it carries the brand, the mode tabs and the
- * board's own controls.
- *
- * The defect pinned here is a class name that never resolved. The header asked
- * for `workspace-topbar`, but no stylesheet defines that class — only the
- * `--workspace-topbar-height` VARIABLE exists — so the row had no height, no
- * vertical centring and no reserved space beside the tabs. Nothing throws on a
- * class that does not exist, which is why it is asserted from source, the way
- * `-chatIndexTitlebar.test.ts` pins the same geometry for the threads surface.
+ * The board's only chrome row. Asserted from source because a class that no
+ * stylesheet defines fails silently.
  */
 import * as NodeFS from "node:fs";
 
@@ -35,7 +27,7 @@ describe("board top bar", () => {
 
   it("carries the brand and the mode tabs, plus a slot for the board's controls", () => {
     expect(topBarSource).toContain("<T3Wordmark />");
-    expect(topBarSource).toContain('<BoardModeTabs mode="board" />');
+    expect(topBarSource).toContain("<BoardModeTabs mode={mode} />");
     expect(topBarSource).toContain("{children}");
   });
 

@@ -1,16 +1,6 @@
 /**
- * T3o: the board migration lineage was split out of upstream's shared
- * `effect_sql_migrations` ledger into its own `t3o_sql_migrations` table (board
- * ids restart at 1). Databases provisioned under the old "number from 900"
- * scheme carry board rows 900+ in the upstream ledger, which pins upstream's
- * high-water mark above every future upstream migration.
- *
- * `reconcileLegacyBoardLedger` (run before upstream migrations) evicts those rows
- * and seeds the already-applied board ids into the new ledger; `runBoardMigrations`
- * then runs whatever remains. These tests exercise the real boot sequence
- * (reconcile → runMigrations → runBoardMigrations) and verify it: heals a
- * fully-migrated legacy database WITHOUT replaying the one-time data backfill
- * (007), completes a PARTIALLY-migrated one, is idempotent, and runs cleanly on a
+ * The real boot sequence heals a legacy 900+ ledger without replaying 007's
+ * backfill, completes a partially migrated one, is idempotent, and runs on a
  * fresh database.
  */
 import { assert, describe, it } from "@effect/vitest";
@@ -47,8 +37,8 @@ const boot = Effect.gen(function* () {
 const seedLegacyDatabase = (throughCount: number = BOARD_MIGRATIONS.length) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    // T3o-26: these tests are about the LEDGER lineage, not the file split, so
-    // they attach up front and let the board tables land where they land now.
+    // These tests are about the LEDGER lineage, not the file split, so they
+    // attach up front.
     // Relocating a legacy layout out of `main` is covered in boardDatabase.test.ts.
     yield* attachBoardDatabase();
     // Upstream schema + its ledger.
@@ -199,8 +189,8 @@ describe("board migration reconciliation", () => {
         expectedBoardIds,
       );
 
-      // T3o-26: the board lineage builds its tables in the ATTACHED database, and
-      // leaves none behind in the file stock t3code reads.
+      // The board lineage builds its tables in the ATTACHED database and leaves
+      // none in the file stock t3code reads.
       const boardCards = yield* sql`
         SELECT name FROM boards.sqlite_master WHERE type = 'table' AND name = 'board_cards'
       `;

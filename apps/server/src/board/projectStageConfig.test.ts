@@ -1,10 +1,7 @@
 /**
- * T3o per-project stage config (T3O-49) through the real board engine: a
- * project's delta lands in the read model, moves walk the card's own
- * project's pipeline, a stage made for one project is a global stage the
- * other projects don't use, a stale edit is refused, a deleted stage is
- * pruned from every delta, and a from-empty replay equals the table
- * rehydration. T3O-43 payloads upcast on read.
+ * Per-project stage config through the real board engine: deltas, moves on the
+ * card's own pipeline, stale edits refused, deleted stages pruned, replay
+ * equals rehydration, and legacy payloads upcast on read.
  */
 import {
   BOARD_CONFIG_VERSION_MISMATCH,

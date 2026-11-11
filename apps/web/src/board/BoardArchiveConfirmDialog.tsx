@@ -1,12 +1,6 @@
 /**
- * T3o archive confirmation (t3o-13, D3/D9). Archiving a card that live cards
- * still depend on is safe and reversible — the edges survive, and an archived
- * dependency simply stops gating (D1) — but it silently changes what those
- * cards are waiting for, so the person doing it is told which ones.
- *
- * Cancel is the primary, focused action: this dialog exists because the user
- * may not have known the card had dependents at all, so the default answer is
- * "not yet".
+ * Archive confirmation, shown when live cards depend on this one: archiving is
+ * reversible but silently ungates those dependents, so they are named. Cancel is focused.
  */
 import type { BoardCardDependencyRef } from "@t3tools/contracts";
 

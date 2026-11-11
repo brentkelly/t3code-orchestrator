@@ -1,23 +1,7 @@
 /**
- * T3o: the machine-readable answer to "why did that merge get refused?",
- * read out of upstream's pull-request detail (T3O-38 D6/D7, rebuilt on
- * `pullRequest/` by T3O-47).
- *
- * The board classifies a refusal into "wait, this clears itself" and "stop, a
- * human is needed". That decision must not be made by matching error prose,
- * which every forge rewrites — so it is made against the structured detail
- * every provider in `apps/server/src/pullRequest/` already reports.
- *
- * Pure and total. Anything it cannot read comes back as `unknown` with zero
- * counts, which the classifier degrades to a soft refusal: a probe we cannot
- * read costs a few extra retries and never a wrong verdict.
- *
- * It names only what the detail shows. A refusal the detail cannot explain is
- * left unexplained, never guessed at (T3O-67): the forge's own words, which
- * now reach the board, say why.
- *
- * Not a contract. Nothing here crosses the wire — the gateway hands it to the
- * classifier, and what the card persists is the classifier's verdict.
+ * Why a merge was refused, read from upstream's structured pull-request detail
+ * rather than forge prose. Pure and total: anything unreadable is `unknown`
+ * (a soft refusal), and a refusal the detail cannot explain is never guessed.
  */
 import {
   boardCheckNameMatches,
@@ -34,16 +18,9 @@ import {
 export type BoardMergeability = "mergeable" | "blocked" | "unknown";
 
 /**
- * Why the forge is blocking, when its detail shows it in a way the board can
- * act on.
- *
- * Narrow on purpose: only the reasons that change what the board DOES. A
- * branch that is behind needs a rebase, a draft needs a human to mark it
- * ready, and a conflict has its own resolution path already. A missing
- * approval, a protection rule or a required conversation is not here: the
- * detail does not carry them, and inferring one by elimination stopped cards
- * whose merge was really refused for something else, such as the wrong
- * credential (T3O-67).
+ * Only the blocking reasons that change what the board does. Missing approvals
+ * and protection rules are absent from the detail, and inferring one by
+ * elimination stops cards refused for something else (a wrong credential).
  */
 export type BoardMergeBlockReason = "behind" | "draft" | "conflict";
 
@@ -59,7 +36,7 @@ export interface BoardMergeChecks {
   /** The names of the checks counted in `pending`, same contract. */
   readonly running: ReadonlyArray<string>;
   /** Every check's verdict, up to `BOARD_MERGE_STATE_MAX_LISTED_CHECKS`, so a
-      CI forge step can filter by name (T3O-49). Absent from older workers. */
+      CI forge step can filter by name. Absent from older workers. */
   readonly verdicts?: ReadonlyArray<BoardCheckVerdict>;
 }
 
@@ -75,10 +52,10 @@ export interface BoardMergeState {
   readonly blockedReason: BoardMergeBlockReason | null;
   readonly checks: BoardMergeChecks;
   /** The head commit the checks above describe. A new sha means new CI, which
-      is what resets the board's retry ladder (T3O-38, D9). Null where the host
+      is what resets the board's retry ladder. Null where the host
       reported none. */
   readonly headSha: string | null;
-  /** True when the token was refused the checks (T3O-8), so the zero counts
+  /** True when the token was refused the checks, so the zero counts
       above are "could not look". Nothing may then be concluded from a green
       rollup, least of all a missing approval. */
   readonly checksUnread: boolean;
@@ -93,18 +70,14 @@ export const BOARD_MERGE_STATE_MAX_NAMED_CHECKS = 4;
     because it crosses the worker wire on every forge poll. */
 const BOARD_MERGE_STATE_MAX_LISTED_CHECKS = 500;
 
-/** How much of the forge's own refusal text a card will show (T3O-67). Bounded
+/** How much of the forge's own refusal text a card will show. Bounded
     for the same reason as the check names: it is persisted on the card and
     rendered in a banner, and a forge error can run to paragraphs. */
 export const BOARD_MERGE_FORGE_TEXT_MAX_LENGTH = 300;
 
 /**
- * One check's verdict.
- *
- * `neutral` and `skipped` count as passed because GitHub does not block a
- * merge on either, so they must not block the ladder either. `action-required`
- * and `cancelled` count as failed: both need a new commit or a human, and
- * neither clears on its own.
+ * `neutral` and `skipped` pass because GitHub does not block on them;
+ * `action-required` and `cancelled` fail because neither clears on its own.
  */
 function verdictOf(status: PullRequestCheckStatus): "passed" | "pending" | "failed" {
   switch (status) {
@@ -159,7 +132,7 @@ function checksOf(detail: PullRequestDetail): BoardMergeChecks {
 }
 
 /**
- * The checks a CI forge step's `only` patterns select (T3O-49), counted and
+ * The checks a CI forge step's `only` patterns select, counted and
  * named from the full verdict list. A worker that sends no list leaves only
  * the bounded name lists to filter, so its counts are a best effort.
  */
@@ -194,20 +167,9 @@ export function boardFilteredMergeChecks(
 }
 
 /**
- * Read a refusal out of the forge's own detail.
- *
- * Asked only AFTER a merge has been refused. A conflict, a draft and a branch
- * behind its base are structural, and the board routes each of them. A pull
- * request the host reports as mergeable, green, ready and up to date was
- * refused for a reason the detail does not show, so it reads as `mergeable`
- * and the refusal stays soft. The forge's own words go on the card instead
- * (`boardHostMergeRefusalReason`). This used to conclude "needs an approval"
- * by elimination and stop the card. A merge refused for any other reason,
- * such as a token that could read the pull request but not merge it, then sat
- * held behind a reason that was not true (T3O-67). A refusal that really does
- * need an approval now climbs the soft ladder and holds when it runs out,
- * showing GitHub's "approving review is required". Unclassifiable stays soft
- * (D7).
+ * Asked only after a merge was refused. A mergeable, green, ready, up-to-date
+ * PR was refused for a reason the detail does not show: it reads `mergeable`,
+ * the refusal stays soft, and the forge's own words go on the card.
  */
 export function boardMergeStateOf(detail: PullRequestDetail): BoardMergeState {
   const checks = checksOf(detail);
@@ -232,7 +194,7 @@ export function boardMergeStateOf(detail: PullRequestDetail): BoardMergeState {
 
 /**
  * The state of a pull request the forge could not describe but git proved
- * conflicting (T3O-8) — see `probeLocalMergeConflict`. Nothing was read from
+ * conflicting — see `probeLocalMergeConflict`. Nothing was read from
  * the forge, so the checks are unread and there is no head sha.
  */
 export const LOCAL_CONFLICT_MERGE_STATE: BoardMergeState = {
@@ -244,17 +206,9 @@ export const LOCAL_CONFLICT_MERGE_STATE: BoardMergeState = {
 };
 
 /**
- * The sentence a card shows for a refused merge.
- *
- * Derived from the same facts the board branches on, so it cannot disagree
- * with the verdict shown beside it. A host refusal adds the forge's own words
- * through `boardHostMergeRefusalReason` (T3O-67); this sentence alone serves
- * when there are none.
- *
- * `null` is a probe that itself failed. The forge may well have a reason the
- * board could not read, so the card says the READ failed and passes on its
- * words, which usually name the fix (a missing token scope, a rate limit),
- * rather than claiming the forge gave no reason (T3O-8).
+ * Derived from the facts the board branches on, so it cannot disagree with the
+ * verdict. `null` is a failed probe: say the read failed and pass on its words
+ * (usually the fix), never that the forge gave no reason.
  */
 export function boardMergeRefusalReason(
   state: BoardMergeState | null,
@@ -285,15 +239,8 @@ export function boardMergeRefusalReason(
 }
 
 /**
- * The sentence a card shows for a merge the HOST refused (T3O-67): the board's
- * own reading of the detail, together with what the forge said.
- *
- * Since v0.1.0 the merge goes through the forge's API rather than a CLI, so the
- * forge's refusal text reaches the board again ("GitHub returned an error:
- * …"). When the probe names a concrete cause (a conflict, failing checks, a
- * draft), that sentence leads and the forge's text follows. When it names
- * none, the forge's text is the whole explanation. Nothing here branches on
- * that text: it is shown, never parsed.
+ * A host-refused merge: the probe's concrete cause leads, the forge's text
+ * follows (or stands alone). The forge's text is shown, never parsed.
  */
 export function boardHostMergeRefusalReason(
   state: BoardMergeState | null,

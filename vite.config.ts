@@ -107,7 +107,16 @@ const taskCacheConfig = {
 export default defineConfig({
   run: {
     cache: taskCacheConfig,
-    tasks: cachedTestTasks(process.env.T3_CACHED_TESTS),
+    tasks: {
+      ...cachedTestTasks(process.env.T3_CACHED_TESTS),
+      // The two knip passes read the same files and write nothing, so they run side by side.
+      // The `knip:check` script runs this task, so `vp run knip:check` and `pnpm run knip:check` both use it.
+      "knip:check:all": {
+        command: 'node -e ""',
+        dependsOn: ["knip:check:files", "knip:check:exports"],
+        cache: false,
+      },
+    },
   },
   resolve: {
     alias: {
@@ -199,6 +208,7 @@ export default defineConfig({
       // Vendored and generated C.
       "apps/mobile/modules/t3-highlights/Vendor/**",
       "apps/mobile/modules/t3-highlights/cpp/generated/**",
+      "apps/mobile/modules/t3-highlights/nitrogen/generated/**",
       "*.icon/**",
     ],
     sortPackageJson: {},
@@ -502,7 +512,7 @@ export default defineConfig({
         files: ["apps/mobile/src/**"],
         excludeFiles: [
           "apps/mobile/src/components/ui/AppSymbol.tsx",
-          "apps/mobile/src/components/ui/AppSymbol.ios.tsx",
+          "apps/mobile/src/components/ui/AppSymbol.android.tsx",
           "apps/mobile/src/features/pull-requests/pullRequestGlyphs.ts",
         ],
         rules: { "t3code/no-mobile-pull-request-glyph-literals": "error" },
@@ -528,6 +538,10 @@ export default defineConfig({
       {
         files: ["apps/web/src/**"],
         rules: { "t3code/no-outset-state-indicators": "error" },
+      },
+      {
+        files: ["apps/web/src/**"],
+        rules: { "t3code/max-settings-description-length": "error" },
       },
       {
         files: ["apps/*/src/**", "packages/*/src/**"],
@@ -651,6 +665,7 @@ export default defineConfig({
           "apps/mobile/src/features/files/AttachmentFileScreen.tsx",
           "apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx",
           "apps/mobile/src/features/files/thread-file-navigator-pane.tsx",
+          "apps/mobile/src/features/layout/nested-stacks.tsx",
           "apps/mobile/src/features/review/ReviewSheet.tsx",
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
@@ -658,8 +673,8 @@ export default defineConfig({
           "apps/mobile/src/features/threads/ThreadFeed.tsx",
           "apps/mobile/src/features/threads/ThreadQueueControl.tsx",
           "apps/mobile/src/features/review/ReviewCommentCard.tsx",
-          "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx",
           "apps/mobile/src/features/threads/thread-list-v2-items.tsx",
+          "apps/mobile/src/components/ui/SecretTextInput.android.tsx",
           "apps/mobile/src/lib/useMobileNavigationTheme.ts",
           "apps/mobile/src/native/T3ComposerEditor.ios.tsx",
           "apps/mobile/src/native/T3ComposerEditor.native.tsx",
@@ -671,9 +686,8 @@ export default defineConfig({
         },
       },
       {
-        // T3o: last, so it wins. Board UI predates upstream's token, React Compiler and copy
-        // rules; they stay off for fork-owned web files only until T3O-75 moves it onto
-        // them. Upstream files keep the full rule set (T3O-54, T3O-74).
+        // T3o: the board's design-system restyle is pending under T3O-67; these four
+        // shadcn rules stay off for fork-owned web files until it lands.
         files: [
           "apps/web/src/board/**",
           "apps/web/src/components/settings/Board*.{ts,tsx}",
@@ -685,40 +699,6 @@ export default defineConfig({
           "shadcn/no-restyle": "off",
           "shadcn/no-raw-colors": "off",
           "shadcn/require-static-classes": "off",
-          "t3code/no-low-value-comments": "off",
-          "t3code/no-manual-memo": "off",
-          "t3code/no-em-dash-copy": "off",
-          // T3o (T3O-79): replaced react-effect-budget upstream in v0.1.6.
-          "t3code/no-unreasoned-state-sync": "off",
-          "react/purity": "off",
-          "react/refs": "off",
-          "react/set-state-in-effect": "off",
-          "react/exhaustive-effect-dependencies": "off",
-          "react/memo-dependencies": "off",
-          "react/no-array-index-key": "off",
-        },
-      },
-      {
-        // T3o: the same deferral for fork-owned server, package and script files, which
-        // predate upstream's comment, copy and Effect.fn rules (T3O-74; cleanup is T3O-75).
-        files: [
-          "apps/server/src/board/**",
-          "apps/server/src/mcp/toolkits/board/**",
-          "apps/server/src/t3o/**",
-          "packages/contracts/src/board*.ts",
-          "packages/contracts/src/commandOrigin*.ts",
-          "packages/contracts/src/worktreeRemoveHook*.ts",
-          "packages/client-runtime/src/**/board*.ts",
-          "packages/shared/src/boardThreadState*.ts",
-          "packages/shared/src/gitenv*.ts",
-          "scripts/kill-dev.ts",
-          "scripts/t3o-*.mjs",
-        ],
-        rules: {
-          "t3code/no-low-value-comments": "off",
-          "t3code/no-em-dash-copy": "off",
-          "t3code/prefer-effect-fn": "off",
-          "t3code/no-inline-schema-compile": "off",
         },
       },
     ],

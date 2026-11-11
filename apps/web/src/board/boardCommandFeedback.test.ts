@@ -1,10 +1,6 @@
 /**
- * T3o (T3O-48): what "Check again" says back.
- *
- * The refresh used to return nothing at all, so a card sitting at Ready for
- * merge with no pull request could not tell "the forge says this branch has
- * none" from "the forge could not be asked" — and only the second is worth
- * retrying. Every arm answers; the sentences are what the user reads.
+ * What "Check again" says back: every arm answers, so "no pull request" is told
+ * apart from "the forge could not be asked".
  */
 import { describe, expect, it } from "vite-plus/test";
 
@@ -69,7 +65,7 @@ describe("describeBoardRefreshOutcome", () => {
   });
 });
 
-// T3O-52: a repeat refusal writes nothing to the card, so the banner alone
+// A repeat refusal writes nothing to the card, so the banner alone
 // cannot show that Check again ran.
 describe("describeBoardCheckWorktreeOutcome", () => {
   it("names the refusal when the worktree is still kept", () => {

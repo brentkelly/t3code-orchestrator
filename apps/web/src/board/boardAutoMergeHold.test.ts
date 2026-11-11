@@ -37,7 +37,8 @@ describe("boardAutoMergePill (T3O-38, D12/D13)", () => {
     expect(boardAutoMergePill({ heldSince: HELD, gaveUp: false, done: false, nowMs: NOW })).toEqual(
       {
         label: "Merge held · 12m",
-        tooltip: "The forge refused the merge. The board is retrying — nothing is needed from you.",
+        tooltip:
+          "The forge refused the merge. The board is retrying, so nothing is needed from you.",
         icon: "clock",
       },
     );
@@ -87,7 +88,7 @@ describe("boardAutoMergeBanner (T3O-38, D12)", () => {
   });
 
   it("goes RED once it stays put until a human acts", () => {
-    // The same split the stalled banner has had since t3o-30: red on a card
+    // The same split as the stalled banner: red on a card
     // counting down to its own retry would be the loudest thing on screen
     // saying the opposite of the card's own pill.
     const banner = boardAutoMergeBanner({ ...base, retryAt: null });

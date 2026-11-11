@@ -1,5 +1,5 @@
 /**
- * The release rule (t3o-13): which of a card's threads the board is finished
+ * The release rule: which of a card's threads the board is finished
  * with. Pure — the retrying that turns a release into a settled thread is the
  * reactor's, and is proved in `threadSettle.test.ts`.
  */
@@ -159,7 +159,7 @@ describe("boardReleasedThreadIds", () => {
       }),
       step: stepState({ stepId: "review@2", threadId: "thread-r2", status: "running" }),
       // Planned, so the planning thread is a finished interview rather than one
-      // the card kept unfinished (T3O-19).
+      // the card kept unfinished.
       plannedBy: "thread-plan",
     });
     assert.deepStrictEqual(released(state), ["thread-plan", "thread-build", "thread-r1"]);
@@ -311,7 +311,7 @@ describe("boardReleasedThreadIds", () => {
     assert.deepStrictEqual(released(state, new Set(["thread-build"])), ["thread-build"]);
   });
 
-  // T3O-19: a card that left Planning before the plan was written keeps its
+  // A card that left Planning before the plan was written keeps its
   // interview, which may still ask something after the move. It stays in the
   // inbox until it finishes: the thread reports its step.
   describe("a planning interview the card left unfinished", () => {

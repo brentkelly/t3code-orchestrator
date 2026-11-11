@@ -1,5 +1,5 @@
 /**
- * The server's plan review resolution (T3O-39): which step has a review
+ * The server's plan review resolution: which step has a review
  * running, and the stance its instructions are worded for.
  */
 import {

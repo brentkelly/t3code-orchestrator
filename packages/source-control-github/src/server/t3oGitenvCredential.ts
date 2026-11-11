@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
 /**
- * T3o (t3o-34, T3O-67): the directory the current GitHub API call acts on, set from each
+ * T3o: the directory the current GitHub API call acts on, set from each
  * provider call's `cwd`. `GitHubRequestPolicy.credential` resolves pinned credential, then this
  * project's gitenv token, then the ambient sources. See docs/t3o/gitenv.md.
  */
@@ -37,7 +37,7 @@ const warnedRejected = new Set<string>();
  * Runs `invalidate` (the ambient credential cache's reset) unless the refused request carried
  * the project's gitenv token: that token never came from the cache, so dropping the cache would
  * only force a needless re-read. A refused gitenv token is logged once per entry and token,
- * naming the entry and never the value (T3O-58).
+ * naming the entry and never the value.
  */
 export const t3oInvalidateAmbientUnlessGitenv = Effect.fn("T3oGitenv.invalidateAmbient")(function* <
   E,
@@ -57,7 +57,7 @@ export const t3oInvalidateAmbientUnlessGitenv = Effect.fn("T3oGitenv.invalidateA
 });
 
 /**
- * The folder `gh auth token` runs from (T3O-58): the main checkout of the project the call acts
+ * The folder `gh auth token` runs from: the main checkout of the project the call acts
  * on, so a per-repo gh setup answers for it, else the server's own working directory. The main
  * checkout rather than the worktree keeps one cached answer per project.
  */

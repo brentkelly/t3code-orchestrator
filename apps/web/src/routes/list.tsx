@@ -1,5 +1,5 @@
 /**
- * T3o /list route (T3O-30): the List view, the whole card tree as an outline.
+ * T3o /list route: the List view, the whole card tree as an outline.
  * Lazy, like `/board`, so neither bundle rides the thread path. It shares the
  * board's search grammar: `?project` scopes it and `?card` opens a card.
  */

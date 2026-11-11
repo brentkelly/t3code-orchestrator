@@ -1,11 +1,6 @@
 /**
- * T3o board MCP toolkit — the relay (T3O-63, D3).
- *
- * The central server runs the real board engine, queries and handlers on a
- * real board database, behind the thread router; the worker is in process
- * (`distributed.testkit.ts`). An agent's call on the worker goes through
- * `relayable` → the worker's relay host → the central server's relay client →
- * the handlers, and back, exactly as it would across the wire.
+ * The relay end to end: a worker-side call goes through `relayable`, the worker's relay host,
+ * the central relay client and the handlers on a real central board database, and back.
  */
 import {
   BoardCardAttachmentId,
@@ -18,9 +13,10 @@ import {
   boardCardStepCompletions,
   type BoardMcpRelayRequest,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -79,12 +75,17 @@ const t0 = "2026-01-01T00:00:00.000Z";
 const PROJECT_ID = ProjectId.make("project-1");
 const CENTRAL_ROOT = "/home/central/repo";
 const CODEX = ProviderInstanceId.make("codex");
+const decodeCardContext = Schema.decodeEffect(
+  BoardToolkit.tools.board_get_card_context.successSchema as unknown as Schema.Codec<
+    Record<string, unknown>
+  >,
+);
 
 /** The central server's database, settings and files. */
 const centralBase = Layer.mergeAll(ServerSettings.layerTest(), BoardRelayStoreLive).pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3o-relay-central-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 /** The supervisor is not this suite's subject; the tools here never reach it. */
@@ -113,7 +114,7 @@ const setup = (options: { readonly relay?: boolean } = {}) =>
     yield* waitOnline(env.connections);
     const sql = yield* SqlClient.SqlClient;
     const fileSystem = yield* FileSystem.FileSystem;
-    const crypto = yield* Crypto.Crypto;
+    const digest = yield* Digest.Digest;
     const router = makeThreadGatewayRouter({
       local: central.gateway,
       connections: env.connections,
@@ -126,7 +127,7 @@ const setup = (options: { readonly relay?: boolean } = {}) =>
           local: central.gateway,
           centralEnvironmentId: CENTRAL_ID,
           fileSystem,
-          crypto,
+          digest,
         }),
     });
     const runtime = yield* Layer.build(
@@ -452,11 +453,7 @@ describe("the board MCP relay", () => {
           decisions: _decisions,
           ...older
         } = answer.value as Record<string, unknown>;
-        const decoded = yield* Schema.decodeUnknownEffect(
-          BoardToolkit.tools.board_get_card_context.successSchema as unknown as Schema.Codec<
-            Record<string, unknown>
-          >,
-        )(older);
+        const decoded = yield* decodeCardContext(older);
         assert.deepStrictEqual(decoded.ancestors, []);
         assert.isNull(decoded.sourcePlan);
         assert.deepStrictEqual(decoded.decisions, []);

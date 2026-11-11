@@ -1,19 +1,6 @@
 /**
- * T3o create-card dialog (t3o-06). Title, brief, labels, project, target stage
- * and initial dependencies — everything a card needs to land in one atomic
- * `board.card.create` (the command carries brief and dependsOn, t3o-06). The
- * key is allocated server-side; the UI never invents one.
- *
- * The sheet is the card modal's, one column wide: the same identity row, the
- * same uppercase section headings, the same label field and the same
- * dependency rows (`BoardCardFields`) — a card being created should look like
- * the card it is about to become, not like a form.
- *
- * A card may be created into ANY stage (t3o-15, D10): Mode governs the
- * worktree/slot on entry, so creation and dragging follow an identical path.
- * The picker offers every stage in read-model order, and a warning appears when
- * the chosen stage auto-executes ("creating here starts an agent"). The decider
- * enforces existence + the dependency gate; this is a convenience, not the guard.
+ * The card key is allocated server-side; the UI never invents one. The stage
+ * picker's auto-execute warning is a convenience — the decider is the guard.
  */
 import {
   BOARD_CARD_ATTACHMENTS_MAX,
@@ -38,7 +25,7 @@ import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime"
 import { useAtomValue } from "@effect/atom-react";
 import { LayersIcon } from "lucide-react";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { Dialog, DialogFooter, DialogPopup, DialogTitle } from "../components/ui/dialog";
@@ -131,7 +118,7 @@ export function BoardCardCreateDialog({
   readonly projects: ReadonlyArray<BoardCreateProject>;
   readonly defaultProjectId: ProjectId | null;
   readonly defaultStage: BoardStageId;
-  /** Create a child of this parent (t3o-25): the sub-board's dialog presets
+  /** Create a child of this parent: the sub-board's dialog presets
       it, which narrows the dependency picker to siblings. Null creates an
       ordinary top-level card. */
   readonly subBoardParentId?: BoardCardId | null;
@@ -139,7 +126,7 @@ export function BoardCardCreateDialog({
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
   const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
   const allStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
-  // T3O-43: the picker offers the chosen project's own pipeline.
+  // The picker offers the chosen project's own pipeline.
   const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const boardSettings = useBoardSettings((settings) => settings.board);
@@ -153,19 +140,16 @@ export function BoardCardCreateDialog({
   const deleteLabel = useAtomCommand(boardEnvironment.deleteLabel);
   const undeleteLabel = useAtomCommand(boardEnvironment.undeleteLabel);
 
-  const snapshot = useMemo(() => Option.getOrNull(shellState.snapshot), [shellState.snapshot]);
+  const snapshot = Option.getOrNull(shellState.snapshot);
   const board = useAtomValue(environmentBoard.snapshotValueAtom(environmentId));
   const allCards = board?.cards ?? EMPTY_CARDS;
   const isChild = subBoardParentId !== null;
-  const parentShell = useMemo(
-    () =>
-      subBoardParentId === null
-        ? null
-        : (allCards.find((card) => card.cardId === subBoardParentId) ?? null),
-    [allCards, subBoardParentId],
-  );
+  const parentShell =
+    subBoardParentId === null
+      ? null
+      : (allCards.find((card) => card.cardId === subBoardParentId) ?? null);
 
-  // Brief attachments (t3o-32, K6): staged as pending uploads while the user
+  // Brief attachments (K6): staged as pending uploads while the user
   // types, claimed onto the card right after `board.card.create` returns.
   const environment = useEnvironment(environmentId);
   const attachmentLimits = boardAttachmentLimits(
@@ -182,27 +166,24 @@ export function BoardCardCreateDialog({
 
   const initialProjectId = defaultProjectId ?? projects[0]?.id ?? null;
   const [projectId, setProjectId] = useState<ProjectId | null>(initialProjectId);
-  const stages = useMemo(
-    () =>
-      projectId === null
-        ? allStages
-        : boardCardPipelineStages(
-            { stages: allStages, projectStageConfigs },
-            { stage: "", projectId },
-          ),
-    [allStages, projectId, projectStageConfigs],
-  );
+  const stages =
+    projectId === null
+      ? allStages
+      : boardCardPipelineStages(
+          { stages: allStages, projectStageConfigs },
+          { stage: "", projectId },
+        );
   const projectExecutionConfig =
     projectId === null ? null : (projectStageConfigs[projectId] ?? null);
-  // The card's base branch (T3O-5, D13): null follows the chosen project's
+  // The card's base branch: null follows the chosen project's
   // default, which is what the picker reads until someone changes it.
   const [baseBranch, setBaseBranch] = useState<string | null>(null);
-  // The worker the card is pinned to (T3O-65, D20); null follows the default.
+  // The worker the card is pinned to; null follows the default.
   // Not part of the stored draft: a pin is a choice about the board as it is
   // now, and a worker can be gone by the time a draft is reopened.
   const [pinnedWorkerId, setPinnedWorkerId] = useState<BoardWorkerId | null>(null);
   const workerField = useBoardWorkerChoices(environmentId, projectId);
-  /** The card's scheduled start (T3O-19), null until the clock is touched. */
+  /** The card's scheduled start, null until the clock is touched. */
   const [scheduledStartAt, setScheduledStartAt] = useState<string | null>(null);
   const [stage, setStage] = useState<BoardStageId>(defaultStage);
   const [title, setTitle] = useState("");
@@ -212,41 +193,37 @@ export function BoardCardCreateDialog({
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  // Dependencies may cross projects (T3O-33, D3): `dependsOn` stores card ids
+  // Dependencies may cross projects: `dependsOn` stores card ids
   // and the decider has never enforced a same-project rule, so a card that
   // changes project inherits cross-project edges — a state the picker should be
   // able to create too. Foreign options carry their project's dot.
-  const dependencyOptions = useMemo(() => {
-    const projectTitleById = new Map(
-      projects.map((project) => [String(project.id), project.title]),
-    );
-    // Every project, hidden ones included, so a foreign card keeps its colour.
-    const projectById = new Map(
-      (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
-    );
-    // Dependencies cross groups (T3O-27); only the new card's own ancestry is
-    // refused, so its group and that group's ancestors are not offered.
-    const ancestors = boardShellAncestorIds(allCards, subBoardParentId ?? null);
-    return allCards
-      .filter(
-        (card) =>
-          !dependsOn.includes(card.cardId as BoardCardId) && !ancestors.has(String(card.cardId)),
-      )
-      .map((card) => ({
-        id: card.cardId,
-        key: card.key,
-        title: card.title,
-        ...(card.projectId === projectId
-          ? {}
-          : {
-              project: {
-                id: card.projectId,
-                title: projectTitleById.get(String(card.projectId)) ?? "Another project",
-                accent: projectIconColorOf(projectById.get(String(card.projectId))),
-              },
-            }),
-      }));
-  }, [allCards, dependsOn, projectId, projects, snapshot, subBoardParentId]);
+  const projectTitleById = new Map(projects.map((project) => [String(project.id), project.title]));
+  // Every project, hidden ones included, so a foreign card keeps its colour.
+  const projectById = new Map(
+    (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
+  );
+  // Dependencies cross groups; only the new card's own ancestry is
+  // refused, so its group and that group's ancestors are not offered.
+  const ancestors = boardShellAncestorIds(allCards, subBoardParentId ?? null);
+  const dependencyOptions = allCards
+    .filter(
+      (card) =>
+        !dependsOn.includes(card.cardId as BoardCardId) && !ancestors.has(String(card.cardId)),
+    )
+    .map((card) => ({
+      id: card.cardId,
+      key: card.key,
+      title: card.title,
+      ...(card.projectId === projectId
+        ? {}
+        : {
+            project: {
+              id: card.projectId,
+              title: projectTitleById.get(String(card.projectId)) ?? "Another project",
+              accent: projectIconColorOf(projectById.get(String(card.projectId))),
+            },
+          }),
+    }));
 
   /** The chosen dependencies as the card modal's rows — same shape, same
       renderer, so an unresolvable id reads the same in both sheets. */
@@ -264,7 +241,7 @@ export function BoardCardCreateDialog({
     };
   });
 
-  // The chosen project's checkout — where the base branch's refs live (D11).
+  // The chosen project's checkout — where the base branch's refs live.
   // Null when the project is not on this server, which disables the picker
   // rather than querying refs of nothing.
   const workspaceRoot =
@@ -272,14 +249,11 @@ export function BoardCardCreateDialog({
 
   const selectedProject = projects.find((project) => project.id === projectId);
 
-  // Every stage, top-level or sub-board (D10, T3O-53).
-  const stageOptions = useMemo(() => boardStagesInOrder(stageStateOf(stages)), [stages]);
+  // Every stage, top-level or sub-board.
+  const stageOptions = boardStagesInOrder(stageStateOf(stages));
 
-  // ── Draft persistence (T3O-26) ──────────────────────────────────────
-  // One draft per board scope, autosaved while the dialog is open and offered
-  // back the next time it opens. The dialog writes through the store's plain
-  // functions rather than a hook: it saves on every keystroke and must not
-  // re-render itself for its own writes.
+  // Writes through the store's plain functions rather than a hook: it saves on
+  // every keystroke and must not re-render itself for its own writes.
   const draftKey = boardCardDraftKey(environmentId, subBoardParentId);
   const [restored, setRestored] = useState<{ readonly droppedAttachments: boolean } | null>(null);
   // Set once the stored draft is gone for good — a card was created from
@@ -299,7 +273,7 @@ export function BoardCardCreateDialog({
   const hydrateBriefAttachments = briefAttachments.hydrate;
 
   /** Every field back to what the dialog opens with. */
-  const resetFields = useCallback(() => {
+  const resetFields = () => {
     setProjectId(defaultProjectId ?? projects[0]?.id ?? null);
     setBaseBranch(null);
     setPinnedWorkerId(null);
@@ -309,53 +283,35 @@ export function BoardCardCreateDialog({
     setBrief("");
     setLabelIds([]);
     setDependsOn([]);
-  }, [defaultProjectId, defaultStage, projects]);
+  };
 
   /** The staged rows that are safe to persist: an upload that has landed is a
       server-side pending attachment the next session can claim. Rows still in
       flight are this session's only. */
-  const attachmentRefs = useMemo<ReadonlyArray<BoardCardDraftAttachment>>(
-    () =>
-      briefAttachments.staged.flatMap((row) =>
-        row.status === "uploaded" && row.upload !== null && row.uploadedAt !== null
-          ? [{ ...row.upload, uploadedAt: row.uploadedAt }]
-          : [],
-      ),
-    [briefAttachments.staged],
+  const attachmentRefs: ReadonlyArray<BoardCardDraftAttachment> = briefAttachments.staged.flatMap(
+    (row) =>
+      row.status === "uploaded" && row.upload !== null && row.uploadedAt !== null
+        ? [{ ...row.upload, uploadedAt: row.uploadedAt }]
+        : [],
   );
 
-  const draftFields = useMemo<BoardCardDraft>(
-    () => ({
-      title,
-      brief,
-      stage,
-      projectId,
-      baseBranch,
-      labelIds,
-      dependsOn,
-      scheduledStartAt,
-      attachments: attachmentRefs,
-    }),
-    [
-      attachmentRefs,
-      baseBranch,
-      brief,
-      dependsOn,
-      labelIds,
-      projectId,
-      scheduledStartAt,
-      stage,
-      title,
-    ],
-  );
+  const draftFields: BoardCardDraft = {
+    title,
+    brief,
+    stage,
+    projectId,
+    baseBranch,
+    labelIds,
+    dependsOn,
+    scheduledStartAt,
+    attachments: attachmentRefs,
+  };
   const draftHasContent = boardCardDraftHasContent(draftFields);
 
-  // Restore or reset ONLY on the closed→open transition, honouring the
-  // caller's prefilled stage/project (the column button opens onto its own
-  // stage). A plain `open`-guarded effect would re-run — and wipe in-progress
-  // input — every time a background shell delta gives `projects` a new
-  // identity while the dialog is open; the ref pins this to the open edge.
+  // Restore or reset ONLY on the closed→open edge: a plain `open`-guarded effect
+  // would re-run, wiping in-progress input, whenever `projects` gets a new identity.
   const wasOpen = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the localStorage draft and the staged uploads' blob URLs on the dialog's open edge
   useEffect(() => {
     if (open && !wasOpen.current) {
       setFeedback(null);
@@ -370,6 +326,7 @@ export function BoardCardCreateDialog({
       stagedScopeKey.current = draftKey;
       const draft = readBoardCardDraft(draftKey);
       if (draft === null) {
+        // oxlint-disable-next-line react/set-state-in-effect -- opening the dialog with no stored draft clears the previous session's fields.
         resetFields();
         setRestored(null);
       } else {
@@ -408,8 +365,10 @@ export function BoardCardCreateDialog({
     // cards, the projects, the catalogue, the stored draft) is read ONCE, as
     // the dialog opens. Listing them would re-run the restore mid-edit every
     // time a background delta gave one a new identity.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- restores once per open edge; deltas must not re-run it mid-edit.
   }, [open]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- autosaves the open dialog's fields to the localStorage draft store
   useEffect(() => {
     if (!open) return;
     if (skipNextSave.current) {
@@ -422,6 +381,7 @@ export function BoardCardCreateDialog({
 
   // Closing, or going away entirely, is a save point: land the debounced
   // write rather than trust the page to still be here in 0.7s.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- flushes the debounced localStorage draft write on unmount
   useEffect(
     () => () => {
       flushBoardCardDrafts();
@@ -462,7 +422,7 @@ export function BoardCardCreateDialog({
     !briefAttachments.busy &&
     !briefAttachments.failed;
 
-  const submitShortcutLabel = useMemo(() => boardCardCreateShortcutLabel(), []);
+  const submitShortcutLabel = boardCardCreateShortcutLabel();
 
   const submit = () => {
     if (projectId === null) return;
@@ -470,11 +430,8 @@ export function BoardCardCreateDialog({
     if (trimmedTitle.length === 0) return;
     const trimmedBrief = brief.trim();
     setSubmitting(true);
-    // Card keys carry the project's prefix. A project that has never been given
-    // one is assigned an acronym from its name here, on its first card, and the
-    // choice is persisted immediately — every later card reads the stored
-    // prefix, so a rename (or a differently-derived acronym) can never split a
-    // project's keys across two namespaces.
+    // A project's key prefix is persisted on its first card, so a later rename can
+    // never split its keys across two namespaces.
     const { prefix, assigned } = assignBoardKeyPrefix({
       board: boardSettings,
       projectId,
@@ -501,23 +458,23 @@ export function BoardCardCreateDialog({
         labels: labelIds,
         dependsOn,
         ...(trimmedBrief.length === 0 ? {} : { brief: trimmedBrief }),
-        // Absent when the picker was never moved off the project default
-        // (T3O-5, D12/D16): "no opinion" and "pinned to whatever main is
+        // Absent when the picker was never moved off the project default:
+        // "no opinion" and "pinned to whatever main is
         // called today" must not collapse into the same stored value.
         ...(baseBranch === null ? {} : { baseBranch }),
-        // The worker pin (T3O-65): absent follows the default — and a child
+        // The worker pin: absent follows the default — and a child
         // created here then copies its parent's pin.
         ...(pinnedWorkerId === null ? {} : { pinnedWorkerId }),
-        // The scheduled start (T3O-19, D14). Absent when the clock was never
+        // The scheduled start. Absent when the clock was never
         // touched, which is nearly every card — and the reason the field is
         // key-optional on the command rather than a nullable one.
         ...(scheduledStartAt === null ? {} : { scheduledStartAt }),
-        // The child preset (t3o-25): a card created inside a drill-in is that
+        // The child preset: a card created inside a drill-in is that
         // parent's child, exactly as if a plan had materialised it.
         ...(subBoardParentId === null ? {} : { parentCardId: subBoardParentId }),
         keyPrefix: prefix,
         // No `orderKey`: the server places the card at the bottom of the
-        // stage's column (T3O-27). This dialog only ever saw the column its
+        // stage's column. This dialog only ever saw the column its
         // board scope renders, so its idea of "bottom" was the bottom of one
         // project — which put a new card above older cards of every other.
       },
@@ -527,7 +484,7 @@ export function BoardCardCreateDialog({
         if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
         return;
       }
-      // The card exists, so the draft has served its purpose (T3O-26). Drop
+      // The card exists, so the draft has served its purpose. Drop
       // it before the claims below, which can only fail per-file — a retry of
       // Create is not on the table once the card is there.
       setDraftSuppressed(true);
@@ -563,11 +520,8 @@ export function BoardCardCreateDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      {/* Mod+Enter creates the card from anywhere inside the dialog (T3O-43):
-          it used to be the title field's alone, which is the one field a user
-          has usually already left by the time they want to submit. Nested
-          popups (stage, project, schedule) portal out of this subtree, so
-          their own Enter handling is untouched. */}
+      {/* Nested popups (stage, project, schedule) portal out of this subtree, so
+          their own Enter handling is untouched by Mod+Enter here. */}
       <DialogPopup
         className="max-h-[86vh] w-[min(600px,100%)] max-w-[600px] overflow-hidden p-0"
         onKeyDown={(event) => {
@@ -633,16 +587,16 @@ export function BoardCardCreateDialog({
           </Select>
           <span className="flex-1" />
         </div>
-        {/* A card may be created into any stage (D10); warn when the chosen
+        {/* A card may be created into any stage; warn when the chosen
             stage auto-executes, since creating there starts an agent. */}
         {resolveBoardStageExecution(boardSettings, stage, projectExecutionConfig).autoExecute ? (
           <p className="mx-4 mt-2 rounded-md bg-warning/10 px-2.5 py-1.5 text-[12px] text-warning-foreground">
-            {boardStageLabel(stages, stage)} runs automatically — creating here starts an agent.
+            {boardStageLabel(stages, stage)} runs automatically: creating here starts an agent.
           </p>
         ) : null}
 
         <div className="mt-3 flex min-h-0 flex-[0_1_auto] flex-col gap-[18px] overflow-y-auto border-t border-border px-5 pt-4 pb-5">
-          {/* Restored-draft banner (T3O-26). Neutral, never blue: the status
+          {/* Restored-draft banner. Neutral, never blue: the status
               vocabulary reserves `--info` for "running"
               (docs/t3o/status-colours.md), and a draft is not work in
               progress. */}
@@ -664,11 +618,8 @@ export function BoardCardCreateDialog({
             </p>
           ) : null}
 
-          {/* Project and Base branch share a row (T3O-5, D13): the base is a
-              property of the project's checkout, so the two read as one
-              decision. A sub-board child shows both read-only: it lives in
-              its parent's project and inherits the parent's integration
-              branch (D4), which depends on the group's merge target. */}
+          {/* A sub-board child shows both read-only: it inherits the parent's
+              project and integration branch. */}
           <div className="flex min-w-0 items-start gap-3">
             <div className="min-w-0 flex-1">
               <BoardSectionHeading className="mb-[7px]">Project</BoardSectionHeading>
@@ -694,15 +645,10 @@ export function BoardCardCreateDialog({
                   onValueChange={(value: string | null) => {
                     if (value === null || value === projectId) return;
                     setProjectId(value as ProjectId);
-                    // Chosen dependencies are KEPT (T3O-33, D3): a cross-project
-                    // edge is legal, so switching project no longer silently
-                    // discards work the user has already done in this dialog.
-                    //
-                    // The base branch still resets (T3O-5, D13): a branch named in
-                    // the old project's checkout says nothing about the new one,
-                    // so it goes back to that project's default.
+                    // Dependencies are kept (cross-project edges are legal), but a
+                    // base branch from the old project's checkout means nothing here.
                     setBaseBranch(null);
-                    // So does the worker pin (T3O-65): a worker chosen for the
+                    // So does the worker pin: a worker chosen for the
                     // old project may have no checkout of the new one.
                     setPinnedWorkerId(null);
                   }}
@@ -764,7 +710,7 @@ export function BoardCardCreateDialog({
             )}
 
             {workerField.shown ? (
-              // Where the card runs (T3O-65, prototype 4.1). Only once a second
+              // Where the card runs (prototype 4.1). Only once a second
               // worker exists.
               <div className="min-w-0 flex-1">
                 <BoardSectionHeading className="mb-[7px]">
@@ -776,7 +722,7 @@ export function BoardCardCreateDialog({
                 <BoardWorkerPicker
                   choices={workerField.choices}
                   className="h-8 w-full"
-                  followLabel={`Follow default — ${boardWorkerLabel(workerField.workers.defaultWorkerId, workerField.workers)}`}
+                  followLabel={`Follow default (${boardWorkerLabel(workerField.workers.defaultWorkerId, workerField.workers)})`}
                   onSelect={setPinnedWorkerId}
                   onSetUp={workerField.setUp}
                   pinnedWorkerId={pinnedWorkerId}
@@ -799,7 +745,7 @@ export function BoardCardCreateDialog({
               })()
             : null}
 
-          {/* Title and Label share a row (T3O-31). Title comes FIRST and holds
+          {/* Title and Label share a row. Title comes FIRST and holds
               autofocus: the label control used to be the dialog's first text
               box, so a typed title landed in a label search that matched
               nothing and threw the text away. */}
@@ -906,14 +852,9 @@ export function BoardCardCreateDialog({
             scheduledStartAt={scheduledStartAt}
             stageLabel="the build"
           />
-          {/* The footer holds the ONLY destructive path (T3O-26): X, Esc and
-              the backdrop all keep the draft, so say what closing does and
-              make discarding read as the deliberate act it is. Once the draft
-              is gone — the card was created and only its files failed to
-              attach, so the dialog stays open on the words it was made from —
-              there is nothing left to keep or discard, and this goes back to a
-              plain Cancel rather than promising to keep a draft that no longer
-              exists. */}
+          {/* X, Esc and the backdrop all keep the draft; this footer is the only
+              discard path. With no draft left (card created, only attachments
+              failed) it reverts to a plain Cancel. */}
           {draftHasContent && !draftSuppressed ? (
             <>
               <span className="text-[12px] text-muted-foreground max-sm:sr-only">

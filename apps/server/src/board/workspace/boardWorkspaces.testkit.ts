@@ -1,11 +1,7 @@
 /**
- * T3o (T3O-64): `BoardWorkspaces` for suites that are not about workspaces.
- *
- * `localGitOnlyBoardWorkspaces` is the real local workspace over whatever
- * `GitVcsDriver` and `ThreadGateway` the suite provides, for a suite that only
- * reaches git reads (the human-actor stamp's `user.name`). Its forge and
- * retirement collaborators die if touched, so a suite that unexpectedly
- * reaches them fails loudly rather than passing on a stub.
+ * `localGitOnlyBoardWorkspaces`: the real local workspace for suites that only
+ * read git. Its forge and retirement collaborators die if touched, so a suite
+ * that reaches them fails loudly rather than passing on a stub.
  */
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

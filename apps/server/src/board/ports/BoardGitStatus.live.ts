@@ -9,7 +9,7 @@ export const BoardGitStatusLive = Layer.effect(
   Effect.gen(function* () {
     const git = yield* GitManager;
     return BoardGitStatus.of({
-      branchPullRequest: (input) => git.branchPullRequest(input),
+      branchPullRequest: git.branchPullRequest,
       invalidateStatus: git.invalidateStatus,
     });
   }),

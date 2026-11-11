@@ -1,5 +1,5 @@
 /**
- * T3O-44 — a CI pass whose run dies still reports, so the card never sits in
+ * A CI pass whose run dies still reports, so the card never sits in
  * CI "running" with nothing behind it, and its slot comes back.
  */
 import {

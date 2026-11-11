@@ -1,16 +1,6 @@
 /**
- * Delete confirmation — the one gate in front of the only irreversible thing
- * the board can do to a card.
- *
- * Archive has its own dialog, and the two are deliberately not merged.
- * `BoardArchiveConfirmDialog` appears CONDITIONALLY, warns about one specific
- * consequence (dependents that stop being blocked) and offers a reversible
- * action. This one always appears, and its job is the opposite: not to warn
- * about a side effect, but to state the whole of what is about to be destroyed
- * so nobody discovers an item on that list afterwards.
- *
- * Cancel is the focused, primary action for the same reason it is in the
- * archive dialog, only more so.
+ * The gate before the board's only irreversible card action. Always shown, and it
+ * states everything about to be destroyed. Cancel is focused.
  */
 import type { BoardCardDependencyRef } from "@t3tools/contracts";
 
@@ -32,14 +22,8 @@ const DEPENDENT_LIST_MAX = 10;
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
 /**
- * What is about to be destroyed, in one sentence.
- *
- * Both inputs are three-state, because the two places this dialog opens from
- * know different amounts. The card modal has the whole aggregate and can name
- * the branch and count the threads; the archive sheet has only the bounded card
- * shell, which carries neither — and a shell-sourced dialog that claimed "0
- * threads" would be a confident lie. Undefined means "we do not know", and the
- * copy stays honest by staying general.
+ * What is about to be destroyed. Undefined inputs mean "unknown" (the archive sheet
+ * only has the shell), and the copy stays general rather than claim "0 threads".
  */
 function describeDeletion(input: {
   readonly branch: string | null | undefined;
@@ -56,7 +40,7 @@ function describeDeletion(input: {
       ? "its worktree and branches, including any commits that were never merged"
       : input.branch === null
         ? null
-        : `its worktree, and the local and remote ${input.branch} branches — including any commits that were never merged`;
+        : `its worktree, and the local and remote ${input.branch} branches, including any commits that were never merged`;
   const also = [threads, disk].filter((part) => part !== null);
   const tail = also.length === 0 ? "" : `, along with ${also.join(" and ")}`;
   return `This cannot be undone. The card, its brief, its plans and its history go for good${tail}. Archiving instead keeps all of it and is reversible.`;

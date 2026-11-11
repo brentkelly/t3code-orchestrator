@@ -1,5 +1,5 @@
 /**
- * T3O-52 (D5): which cards wear the amber "Worktree kept" flag. A pure
+ * Which cards wear the amber "Worktree kept" flag. A pure
  * derivation over the shell's worktree pair, the stage role and the setting.
  */
 import { describe, expect, it } from "vite-plus/test";

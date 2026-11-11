@@ -1,19 +1,13 @@
 /**
- * T3o (T3O-64, D21): every named board git and forge operation answers the
- * same through `LocalBoardWorkspace` and through `RemoteBoardWorkspace` — the
- * remote one reaching an in-process worker over the real `boardWorker.git.*`
- * handlers, with every payload, answer and error round-tripped through the
- * wire schemas.
- *
- * Each implementation runs one scenario against its own fresh set of real git
- * repositories — a bare remote, the project checkout, and a second clone that
- * pushes as another worker would. Commit dates and identities are fixed, so
- * the two sets hold identical commits, and the two transcripts must match once
- * their temp roots are taken out.
+ * Every named operation answers the same locally and through a remote workspace
+ * over the real wire handlers. Each runs on fresh, identical git repositories
+ * (fixed dates and identities), so the transcripts must match once temp roots
+ * are taken out.
  */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it as vitest } from "@effect/vitest";
 import {
@@ -49,12 +43,12 @@ const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
 });
 const GitLayer = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfigLayer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const TestLayer = worktreeRetirerTestLayer().pipe(
   Layer.provideMerge(GitLayer),
   Layer.provideMerge(ServerConfigLayer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const projectId = ProjectId.make("project-repo");
@@ -366,10 +360,16 @@ const scenario = (ws: BoardWorkspace, env: Env, forgeAsked: Array<string>) =>
     return out;
   });
 
-/** A transcript with its temp root and per-run repository name taken out. */
+/** A transcript with its temp root, per-run repository name and the worktree folder suffix
+    upstream hashes from the repository's own git dir taken out. */
 const normalise = (env: Env, label: string, transcript: unknown) =>
   JSON.parse(
-    JSON.stringify(transcript).split(env.root).join("<root>").split(`repo-${label}`).join("repo"),
+    JSON.stringify(transcript)
+      .split(env.root)
+      .join("<root>")
+      .split(`repo-${label}`)
+      .join("repo")
+      .replace(/-[0-9a-f]{16}(?=["/])/g, "-<hash>"),
   );
 
 vitest.layer(RepoTemplateLive)((it) => {

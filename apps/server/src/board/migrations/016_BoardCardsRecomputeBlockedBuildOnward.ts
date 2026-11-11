@@ -1,23 +1,7 @@
-// T3o: recompute the stored `blocked` flag under the t3o-15 build-onward rule.
-//
-// Migration 012 recomputed `blocked` under the rule of its day — blocked from
-// `ready` onward (a hardcoded stage list). t3o-15 moved the live rule to
-// `deriveBoardCardBlocked` → `isBoardStageAtOrAfterBuild`: blocked only from
-// the BUILD-ROLE stage onward, over the user-defined stage order. `blocked` is
-// rehydrated straight from this table, so on a legacy database a `ready` card
-// with an unfinished live dependency would boot wearing a blocked badge the
-// decider contradicts at its next event. 012 is frozen history; this follow-up
-// re-aligns the stored column with the shipped rule.
-//
-// The stage order and the build role come from `board_stages` (014), which is
-// seeded before any user edit, so `order_key` comparison mirrors
-// `isBoardStageAtOrAfterBuild` over whatever stages this database holds. With
-// no build-role stage (never in practice — the role is undeletable) nothing is
-// at-or-after build, so every card unblocks, matching the live derivation.
-// The unmet test is 012's, unchanged: a dependency gates unless its row is
-// archived or sits in the done-role stage; a missing row still gates.
-//
-// Idempotent by construction — running it twice writes the same values.
+// Recomputes `blocked` under the build-onward rule, mirroring
+// `isBoardStageAtOrAfterBuild` over this database's `board_stages` order. With no
+// build-role stage nothing is at-or-after build, so every card unblocks. 012 is
+// frozen, hence this follow-up. Idempotent.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

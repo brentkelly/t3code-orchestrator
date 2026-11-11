@@ -1,5 +1,5 @@
 /**
- * The create-card submit shortcut (T3O-43): which keystrokes create the card,
+ * The create-card submit shortcut: which keystrokes create the card,
  * and what the Create button says the shortcut is.
  */
 import { describe, expect, it } from "vite-plus/test";

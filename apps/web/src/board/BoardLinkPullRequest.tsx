@@ -5,14 +5,8 @@ import { cn } from "../lib/utils";
 import { BoardHint } from "./BoardHint";
 
 /**
- * "No PR linked · Link one" (T3O-18): attach a pull request the agent didn't
- * record to a card that has none. The text goes to the server as typed — it
- * owns the parsing and the forge check — and its refusal (not found, another
- * repository, unreadable) renders inline. There is no unlink here: an agent
- * clears a link on request through `board_update_card`.
- *
- * `onLink` resolves to the refusal to show, or null once the link landed — at
- * which point the card's own View PR button takes this control's place.
+ * Links a pull request to a card that has none. The server parses and checks the
+ * text; `onLink` resolves to its refusal, or null once linked. No unlink here.
  */
 export function BoardLinkPullRequest(props: {
   readonly onLink: (target: string) => Promise<string | null>;

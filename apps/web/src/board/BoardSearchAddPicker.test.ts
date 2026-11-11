@@ -1,10 +1,6 @@
 /**
- * What the add-picker's popover actually builds (T3O-33 review, n1).
- *
- * Since the dependency picker was opened to cross-project cards its option list
- * grows with the WHOLE board, not with one project, so the two things worth
- * pinning are that the rendered list stays bounded and that the overflow is
- * still reachable by typing.
+ * The dependency picker's options grow with the whole board, so the rendered
+ * list must stay bounded and the overflow reachable by typing.
  */
 import { describe, expect, it } from "vite-plus/test";
 

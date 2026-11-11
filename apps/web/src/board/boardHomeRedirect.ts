@@ -1,32 +1,17 @@
 /**
- * T3o cold-start home (T3O-34, D1): the board is the app's *entry*, not the
- * meaning of the root URL.
- *
- * `/` is the "go home" target of roughly a dozen upstream call sites — a
- * thread was deleted, a draft was discarded, settings closed, the sidebar
- * brand was clicked. Making `/` mean the board would drag the user onto the
- * board every one of those times, or force a new `/threads` route and an edit
- * to every one of those files. So only the session's *first authenticated*
- * resolution is redirected, and only in a session that actually booted at `/`;
- * every later `/` is threads home, exactly as before.
- *
- * Pairing carries the same rule in its own source (D2) rather than inheriting
- * it from here, so a reader of `pair.tsx` can see where pairing goes.
+ * Cold-start home: only the session's first authenticated resolution, in a
+ * session that booted at `/`, redirects to the board. Every later `/` (upstream's
+ * "go home") stays threads home.
  */
 import { redirect } from "@tanstack/react-router";
 
 export const BOARD_HOME_PATH = "/board";
-export const THREADS_HOME_PATH = "/";
+const THREADS_HOME_PATH = "/";
 
 /**
- * The auth-gate statuses this file branches on. Upstream assembles them in two
- * places and exports a type from neither: `resolveInitialServerAuthGateState`
- * yields `authenticated` / `requires-auth`, and `__root.tsx` returns
- * `hosted-static` / `hosted-pairing` from its own early returns. Naming the set
- * here makes an upstream rename a compile error at the seams that pass
- * `authGateState.status` in, instead of every comparison below silently falling
- * to its default branch — which would stop the cold-start redirect firing and
- * send hosted-static pairing to the board.
+ * The auth-gate statuses this file branches on. Upstream exports no type for
+ * them, so naming the set here turns an upstream rename into a compile error at
+ * the seams instead of a silent default branch.
  */
 export type BoardAuthStatus =
   | "authenticated"
@@ -36,11 +21,9 @@ export type BoardAuthStatus =
   | "guest";
 
 /**
- * Where the pairing flow lets go of the user. The hosted static app with no
- * environment connected has no board worth showing (D3), so it keeps the
- * threads surface and its "Connect an environment" hero. A guest-link session
- * is someone else's visitor to one thread, not an operator of the board, so it
- * goes where upstream sends it too.
+ * Where pairing lets go of the user. Hosted-static with no environment keeps
+ * the threads surface and its connect hero; a guest-link visitor goes where
+ * upstream sends it.
  */
 export function resolvePairExitTarget(authStatus: BoardAuthStatus): "/" | "/board" {
   return authStatus === "hosted-static" || authStatus === "guest"
@@ -49,19 +32,9 @@ export function resolvePairExitTarget(authStatus: BoardAuthStatus): "/" | "/boar
 }
 
 /**
- * Where upstream's first-run wizard lets go of the user, when it has no
- * project of its own to open.
- *
- * The wizard is the other moment onboarding ends, and it runs *after* the
- * cold-start flag has been spent — the gate sends a fresh install to
- * `/welcome`, so the one redirect this session had is already gone by the time
- * the wizard closes. Left as upstream wrote it, setting T3o up for the first
- * time is the one path that never sees the board. So it exits where pairing
- * exits, hosted-static exemption and all.
- *
- * A wizard that DID set up a project still opens a thread in it, as upstream
- * intends: the user asked for that project, and answering with the board would
- * drop the thing they just made.
+ * Where upstream's first-run wizard exits when it opened no project. It runs
+ * after the cold-start flag is spent, so it exits where pairing does. A wizard
+ * that set up a project still opens a thread in it.
  */
 export function resolveOnboardingExitTarget(authStatus: BoardAuthStatus): "/" | "/board" {
   return resolvePairExitTarget(authStatus);
@@ -94,13 +67,11 @@ export function createColdStartHomeRedirect({
       if (spent) return false;
       // Nothing before authentication is a cold start yet, so the flag stays
       // unspent through the whole unauthenticated phase. `hosted-static` is
-      // never "authenticated", which is also how D3 stays exempt forever.
+      // never "authenticated", which is also how it stays exempt forever.
       if (authStatus !== "authenticated") return false;
-      // The first authenticated resolution *is* the cold start, wherever it
-      // lands — so it is spent here rather than only at `/`. Pairing boots at
-      // `/`, detours through `/pair` and lands on `/board` by its own rule
-      // (D2); leaving the flag armed through that would hand the board the
-      // user's next "go home" as well.
+      // The first authenticated resolution is the cold start wherever it lands, so
+      // it is spent here; otherwise pairing's detour would hand the board the next
+      // "go home" too.
       spent = true;
       return pathname === THREADS_HOME_PATH;
     },

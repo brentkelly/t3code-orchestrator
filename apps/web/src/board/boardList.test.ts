@@ -1,5 +1,5 @@
 /**
- * The List view's outline (T3O-30): tree order and scope, filter context,
+ * The List view's outline: tree order and scope, filter context,
  * indent and outdent eligibility, range selection, drop zones and the one
  * move path's guard rails.
  */

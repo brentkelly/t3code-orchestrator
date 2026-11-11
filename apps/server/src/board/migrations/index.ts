@@ -1,19 +1,11 @@
 /**
- * T3o board migration lineage.
- *
- * Board migrations are tracked in their OWN ledger table (`t3o_sql_migrations`),
- * separate from upstream's `effect_sql_migrations`. This is deliberate: effect's
- * `Migrator` advances a single high-water mark per table and skips any migration
- * whose id is <= that mark. Sharing one table with upstream (the old "number
- * board migrations from 900" scheme) meant that once a board migration ran, every
- * later upstream migration — all numbered below 900 — was silently skipped. Two
- * tables give the two lineages independent high-water marks, so board ids restart
- * at 1 and never interfere with upstream numbering again.
- *
- * New board migrations: add `NNN_Name.ts` here and append it to BOARD_MIGRATIONS.
+ * Board migrations keep their own ledger (`t3o_sql_migrations`): effect's
+ * `Migrator` keeps one high-water mark per table, so sharing upstream's would
+ * silently skip lower-numbered upstream migrations.
  */
 import * as Migrator from "effect/sql/Migrator";
 import { backupBoardDatabaseBeforeV2 } from "../boardPreV2Backup.ts";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -85,23 +77,15 @@ import Migration061 from "./061_BoardStageDefaults.ts";
 export const BOARD_MIGRATION_TABLE = "t3o_sql_migrations";
 
 /**
- * The ledger as the Migrator must address it: qualified into the board database
- * (t3o-26). `sql("boards.t3o_sql_migrations")` compiles to
- * `"boards"."t3o_sql_migrations"` — the client splits on the dot rather than
- * quoting one identifier containing it. Worth knowing, because the alternative
- * failure is silent: a single quoted identifier would have created a table
- * literally NAMED `boards.t3o_sql_migrations` inside `main`, defeating the
- * separation without erroring.
+ * Qualified into the board database. The client splits on the dot; a single
+ * quoted identifier would silently create a table literally named
+ * `boards.t3o_sql_migrations` inside `main`.
  */
 export const BOARD_MIGRATION_TABLE_QUALIFIED = `${BOARD_SCHEMA}.${BOARD_MIGRATION_TABLE}`;
 
 /**
- * Where the legacy reconciler seeds the ledger: `main`, not `boards`. The
- * reconciler only ever acts on a database still carrying 900+ rows in upstream's
- * ledger, and such a database has never been relocated — its board tables are
- * in `main`. Seeding the ledger beside them lets the relocation move ledger and
- * tables together in one copy, which is what makes a torn relocation provable
- * as a resume (see `relocateBoardSchema`) rather than misread as a conflict.
+ * `main`, beside a legacy database's unrelocated board tables, so the relocation
+ * copies ledger and tables together and a torn relocation reads as a resume.
  */
 const LEGACY_SEED_TABLE = `main.${BOARD_MIGRATION_TABLE}`;
 
@@ -179,27 +163,12 @@ const boardLoader = Migrator.fromRecord(
 const run = Migrator.make({});
 
 /**
- * Reconcile a database provisioned under the old shared-ledger scheme, in which
- * board migrations were numbered 900+ and recorded in upstream's
- * `effect_sql_migrations`.
- *
- * MUST run BEFORE upstream `runMigrations()`: while the legacy rows are present
- * they pin upstream's high-water mark to the top board id (e.g. 910), so on that
- * first boot upstream would skip every pending migration numbered below it — the
- * exact "no such column" crash this split fixes.
- *
- * Maps each recorded legacy board id back to its new id and marks it applied in
- * `t3o_sql_migrations`, then evicts the legacy rows. Seeding the already-applied
- * ids (rather than letting the board Migrator re-run the whole lineage) is
- * deliberate: migration 007 is a one-time DATA backfill, and replaying it would
- * resurrect seed labels a user has since removed. Seeding ONLY the ids the legacy
- * ledger actually recorded keeps a PARTIALLY-migrated database correct too — its
- * not-yet-run migrations stay unseeded, so the board Migrator runs them normally.
- *
- * Idempotent: a no-op on a fresh database (no `effect_sql_migrations` yet) or one
- * already migrated to the split scheme (no legacy rows left).
+ * MUST run before upstream `runMigrations()`: legacy 900+ board rows pin
+ * upstream's high-water mark. Seeds only the recorded ids rather than re-running
+ * the lineage, because 007's data backfill would resurrect removed seed labels.
+ * Idempotent.
  */
-export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger")(function* () {
+const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger")(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   const upstreamLedger = yield* sql<{ readonly name: string }>`
@@ -235,7 +204,7 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
       .map((row) => row.migration_id - (LEGACY_BOARD_ID_FLOOR - 1))
       .filter((id): id is number => nameById.has(id))
       .map((id) => ({ migration_id: id, name: nameById.get(id) as string }));
-    if (seedRows.length > 0) {
+    if (Arr.isArrayNonEmpty(seedRows)) {
       yield* sql`INSERT INTO ${sql(LEGACY_SEED_TABLE)} ${sql.insert(seedRows)}`;
     }
   }
@@ -247,30 +216,13 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
 });
 
 /**
- * Everything that must happen to the board database BEFORE any migration runs
- * (t3o-26).
- *
- * Ordering is the whole content of this function:
- *
- * 1. Attach `boards.sqlite` — nothing below can address the `boards` schema
- *    until it exists.
- * 2. Reconcile the legacy 900+ shared-ledger scheme: seed the board ledger in
- *    `main`, beside the board tables, from upstream's ledger, and evict the
- *    legacy rows. FIRST, so that a legacy database has its ledger in place
- *    before anything is copied — the relocation copies ledger and tables in one
- *    transaction, and that identical ledger is what proves a torn relocation is
- *    a resume rather than a conflict. Reconciling afterwards would leave a torn
- *    legacy relocation with no ledger on either side, refused forever.
- * 3. Relocate a pre-t3o-26 layout's board tables and ledger out of `main`, so
- *    the Migrator sees the state the database is actually in.
- *
- * Runs BEFORE upstream `runMigrations()`, because while the legacy rows are
- * present they pin upstream's high-water mark and would make it skip every
- * pending migration numbered below the top board id.
+ * Runs before upstream `runMigrations()`. The ledger is reconciled before the
+ * relocation, which copies ledger and tables together; reconciling after would
+ * leave a torn legacy relocation with no ledger on either side, refused forever.
  */
 export const initialiseBoardDatabase = Effect.fn("initialiseBoardDatabase")(function* () {
   yield* attachBoardDatabase();
-  // Before anything below writes to it (T3O-59).
+  // Before anything below writes to it.
   yield* backupBoardDatabaseBeforeV2();
   yield* reconcileLegacyBoardLedger();
   yield* relocateBoardSchema();

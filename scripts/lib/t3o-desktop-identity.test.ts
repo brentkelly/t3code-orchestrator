@@ -2,7 +2,6 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   resolveT3oAppId,
   resolveT3oLinuxDesktopEntryName,
-  resolveT3oLinuxWmClass,
   resolveT3oUserDataNames,
 } from "./t3o-desktop-identity.ts";
 
@@ -19,7 +18,6 @@ describe("t3oIdentity", () => {
 
   it("keeps the runtime portal entry distinct from the .deb's t3o.desktop", () => {
     assert.equal(resolveT3oAppId(false), "com.brentkelly.t3o");
-    assert.equal(resolveT3oLinuxWmClass(false), "t3o");
     assert.notEqual(resolveT3oLinuxDesktopEntryName(false), "t3o.desktop");
     assert.notEqual(resolveT3oLinuxDesktopEntryName(true), resolveT3oLinuxDesktopEntryName(false));
   });

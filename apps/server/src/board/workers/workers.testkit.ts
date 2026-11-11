@@ -1,8 +1,6 @@
 /**
- * T3o (T3O-62): test doubles for the worker suites — a scripted worker per
- * URL behind a fake `WorkerTransport`, and an in-memory `ServerSecretStore`.
- * Each fake worker's link can be dropped on demand, so connection tests drive
- * status changes without any socket.
+ * Test doubles for the worker suites: a scripted worker per URL behind a fake
+ * `WorkerTransport`, with droppable links, and an in-memory `ServerSecretStore`.
  */
 import {
   BOARD_WORKER_PROTOCOL_VERSION,
@@ -71,15 +69,15 @@ export interface FakeWorker {
   readonly sessionExpiry: Map<string, number>;
   /** The open link's close signal, while one is open. */
   link: Deferred.Deferred<void> | null;
-  /** What the worker's thread gateway answers (T3O-63): an in-process
+  /** What the worker's thread gateway answers: an in-process
       worker's own host, or a worker that has none. */
   gateway: WorkerGatewayRpc;
   /** How the worker answers `boardWorker.git.*`; by default it has no such
-      calls, as a T3o before T3O-64 does not. */
+      calls, as an older T3o worker does not. */
   git: WorkerRpc["git"];
 }
 
-/** A worker without the T3O-63 gateway: every call is unsupported. */
+/** A worker too old for the thread gateway: every call is unsupported. */
 export const unsupportedGateway: WorkerGatewayRpc = (() => {
   const unsupported = new WorkerRpcError({
     message: "The worker doesn't support this board call.",
@@ -173,7 +171,7 @@ const linkedGateway = (
   };
 };
 
-export const makeFakeWorkers = Effect.sync(() => {
+const makeFakeWorkers = Effect.sync(() => {
   const workers = new Map<string, FakeWorker>();
 
   const add = (url: string, environmentId: string) =>
@@ -326,8 +324,7 @@ export const makeFakeWorkers = Effect.sync(() => {
   return { workers, add, drop, transport };
 });
 
-/** An in-memory secret store. */
-export const makeMemorySecretStore = Effect.sync(() => {
+const makeMemorySecretStore = Effect.sync(() => {
   const secrets = new Map<string, Uint8Array>();
   /** While true, every `set` fails, as a full or read-only disk would. */
   const control = { failSets: false };

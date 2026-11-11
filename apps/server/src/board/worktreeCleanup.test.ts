@@ -1,12 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * T3O-52: finished cards give their worktree back, and a kept one says why.
- *
- * The supervisor half — which cards are swept, when, and what the card records
- * — through the governor harness. The git half (the durability rule itself) is
- * proven against real repositories in `worktree.test.ts`; here the git stub
- * answers "durable" or not, and the assertions are about what the board does
- * with that answer.
+ * Finished cards give their worktree back, and a kept one says why. The git stub answers
+ * "durable" or not; the durability rule itself is proven in `worktree.test.ts`.
  */
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -126,7 +121,7 @@ describe("reclaim at Done (D2)", () => {
             yield* h.reactor.drainWorktreeSweep;
             assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
             assert.equal((yield* h.board).cards[0]!.worktree?.status, "reclaimed");
-            // Branch deletion still needs a merged pull request (D2).
+            // Branch deletion still needs a merged pull request.
             assert.equal(branchCleanupNotes(yield* h.commands).length, 0);
           }),
       ),

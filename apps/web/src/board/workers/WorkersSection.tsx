@@ -1,11 +1,7 @@
 /**
- * T3o (T3O-62): Settings → Board → Workers (prototype 1.1–1.3, 1.11).
- *
- * The built-in row is always first and can't be removed. Every other row is a
- * worker the board server dials with its own session (D19). Online is the
- * steady state and stays grey; colour appears only when a worker needs a
- * human. Status comes live from the board server, so every client shows the
- * same list.
+ * Settings > Board > Workers. The built-in row is first and permanent; other
+ * rows are workers the board server dials. Online stays grey; colour means a
+ * human is needed. Status is live from the board server.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
@@ -17,7 +13,7 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { EllipsisIcon, PlusIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   AlertDialog,
@@ -69,7 +65,7 @@ export function WorkersSection(props: {
 }) {
   const { environmentId } = props;
   const workers = useBoardWorkers(environmentId);
-  // The board server's own row, which is the primary unless this device nominated another (T3O-71).
+  // The board server's own row, which is the primary unless this device nominated another.
   const boardServer = useEnvironment(environmentId);
   const boardLabel = boardServer?.label ?? "this board";
   const localVersion = boardServer?.serverConfig?.environment.serverVersion ?? null;
@@ -80,10 +76,7 @@ export function WorkersSection(props: {
   const [removing, setRemoving] = useState<BoardWorkerView | null>(null);
   // Last seen is coarse ("2 min ago"): re-read the clock only when an offline
   // worker's label is due to change.
-  const lastSeenDeadlines = useMemo(
-    () => workers.state.workers.flatMap(workerLastSeenDeadlines),
-    [workers.state.workers],
-  );
+  const lastSeenDeadlines = workers.state.workers.flatMap(workerLastSeenDeadlines);
   const nowMs = useNowAtDeadlines(lastSeenDeadlines);
 
   const runDefault = async (workerId: BoardWorkerId) => {
@@ -301,7 +294,7 @@ function WorkerRow(props: {
         )}
       </div>
       <span className="font-mono text-[11.5px] text-muted-foreground max-md:hidden">
-        {props.version ?? "—"}
+        {props.version ?? "Unknown"}
       </span>
       <span className="text-[12px] text-muted-foreground max-md:hidden">{props.lastSeen}</span>
       <div className="flex justify-end">{props.actions}</div>
@@ -367,7 +360,7 @@ function WorkerMenu(props: {
 /**
  * The remove confirmation (1.11): the cards removal affects, from the board
  * server — those with no worktree yet move to the default worker, and those
- * with work there hold until they are moved (D22).
+ * with work there hold until they are moved.
  */
 function RemoveWorkerDialog(props: {
   readonly environmentId: EnvironmentId;
@@ -385,6 +378,7 @@ function RemoveWorkerDialog(props: {
     | undefined
   >(undefined);
   const workerId = worker?.id ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the board server which cards the removal would move while the confirm is open.
   useEffect(() => {
     if (workerId === null) return;
     let live = true;
@@ -437,7 +431,7 @@ function RemoveWorkerDialog(props: {
                 cards={current.result.byHand}
               />
               <span className="text-muted-foreground">
-                These cards hold and show “Worker removed — move this card” until you move them.
+                These cards hold and show “Worker removed: move this card” until you move them.
                 {stopsAStep ? " The running step is stopped." : ""}
               </span>
             </>

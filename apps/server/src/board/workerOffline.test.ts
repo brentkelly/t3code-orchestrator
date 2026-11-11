@@ -1,13 +1,7 @@
 /**
- * T3o (T3O-66, D22) — the supervisor and a worker it can't reach.
- *
- * An offline worker is unknown, not dead: its steps keep their state and their
- * slots, nothing times them out, and no signal from it is acted on until it is
- * back and the boot reconcile, scoped to it, has run. Driven against the
- * stateful engine double with a placement whose worker summary each test flips
- * between online and offline; the thread gateway is the fake, so "is the thread
- * alive" is whatever the test sets. `it.effect` runs on the TestClock, whose
- * "now" starts at the epoch.
+ * An offline worker is unknown, not dead: its steps keep their state and slots, nothing times
+ * them out, and its signals wait until it is back and its scoped boot reconcile has run.
+ * The placement's worker summary is flipped per test; the TestClock starts at the epoch.
  */
 import {
   BOARD_LOCAL_WORKER_ID,

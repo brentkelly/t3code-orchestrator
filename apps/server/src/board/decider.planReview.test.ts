@@ -1,9 +1,7 @@
 /**
- * Plan review in the decider (T3O-39): the review starts on the first
- * proposal or on the first succeeded completion of the live planning step,
- * the completion that ran it records how it finished, and the card's toggle
- * stops a running review or changes its rounds. Turned on late, it reopens a
- * finished planning step or resumes a paused one (T3O-50).
+ * Plan review in the decider: it starts on the first proposal or succeeded
+ * planning completion, the card's toggle stops it or changes its rounds, and
+ * turned on late it reopens a finished planning step or resumes a paused one.
  */
 import {
   BoardCardId,
@@ -20,7 +18,9 @@ import {
   type BoardState,
   type BoardStepCompletion,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -149,7 +149,7 @@ function readModel(input: {
 const decide = (command: BoardCommand, model: BoardOrchestrationReadModel) =>
   decideBoardCommandOnModel({ command, readModel: model }).pipe(
     Effect.map(boardDecidedEvents),
-    Effect.provide(NodeServices.layer),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 const decideFail = (command: BoardCommand, model: BoardOrchestrationReadModel) =>

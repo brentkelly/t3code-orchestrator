@@ -1,11 +1,7 @@
 /**
- * T3o (T3O-62, D8): what each worker last reported, persisted on the central
- * server so an offline worker still shows its last providers and checkouts
- * ("Last known · offline").
- *
- * Not a projection: connection state is runtime, never event-sourced, and this
- * is its durable residue. Rows live in `board_worker_snapshots` (migration 046)
- * and go with the worker on remove.
+ * Each worker's last report, kept so an offline worker still shows its last
+ * providers and checkouts. Not a projection: connection state is runtime and
+ * never event-sourced. Rows go with the worker on remove.
  */
 import {
   BoardWorkerSnapshot,
@@ -105,7 +101,7 @@ export const WorkerSnapshotStoreLive = Layer.effect(
         ),
         [],
       ),
-      write: (record) =>
+      write: Effect.fn("WorkerSnapshotStore.write")((record) =>
         logged("board worker snapshot not saved")(
           sql`
             INSERT INTO board_worker_snapshots (
@@ -124,11 +120,13 @@ export const WorkerSnapshotStoreLive = Layer.effect(
           `.pipe(Effect.asVoid),
           undefined,
         ),
-      remove: (workerId) =>
+      ),
+      remove: Effect.fn("WorkerSnapshotStore.remove")((workerId) =>
         logged("board worker snapshot not removed")(
           sql`DELETE FROM board_worker_snapshots WHERE worker_id = ${workerId}`.pipe(Effect.asVoid),
           undefined,
         ),
+      ),
     };
   }),
 );

@@ -1,8 +1,6 @@
-// t3o-21: the legacy-NULL authority fallback for a rehydrated step-state row.
-// A card mid-stage at deploy (a row persisted before migration 021, so its
-// `runtime_mode` column is NULL) must keep the authority it was RUNNING under —
-// `full-access` for a build-mode run — not silently drop to the new safer
-// default. This guards that backward-compat path directly.
+// A step-state row persisted before migration 021 has a NULL `runtime_mode` and
+// must keep the authority it was running under (`full-access` for a build-mode
+// run), not drop to the newer safer default.
 import { assert, describe, it } from "@effect/vitest";
 
 import { resolveStoredStepRuntimeMode } from "./projection.ts";

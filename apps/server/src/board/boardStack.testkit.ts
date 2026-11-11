@@ -1,14 +1,7 @@
 /**
- * The real stack, board included (T3O-56, T3O-59): upstream's orchestration-v2
- * engine on in-memory SQLite with no provider behind it, the v2 thread gateway
- * over it, and the board's own engine, queries and todo tail on the same
- * connection.
- *
- * `boardStackEngine` and `boardStackSnapshotQuery` are the two facades suites
- * talk to. The engine facade routes a board command to the board engine, a
- * project or thread creation to the v2 services that own them, and anything
- * else to v2's dispatch chokepoint; the snapshot facade reads the board back
- * from its tables, the form a restart boots from.
+ * The real stack on in-memory SQLite with no provider: upstream's v2 engine,
+ * the v2 thread gateway, and the board's engine, queries and todo tail. The
+ * snapshot facade reads the board from its tables, as a restart boots.
  */
 import {
   CommandId,
@@ -28,6 +21,7 @@ import {
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
@@ -56,12 +50,12 @@ import { BoardEngine, BoardEngineLive } from "./BoardEngine.ts";
 import { BoardQueries, BoardQueriesLive } from "./BoardQueries.ts";
 import { makeBoardEventStore } from "./boardEventStore.ts";
 import { BoardThreadTail } from "./boardThreadTail.ts";
-import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
+import type { BoardReadModel } from "./projector.ts";
 import { BoardRuntimeLive } from "./runtimeLayer.ts";
 import { ThreadGatewayV2Live } from "./ThreadGatewayV2.ts";
 import { BoardWorkersLocalOnlyTest } from "./workers/boardWorkers.testkit.ts";
 
-export const STACK_PROVIDER_INSTANCE_ID = ProviderInstanceId.make("codex");
+const STACK_PROVIDER_INSTANCE_ID = ProviderInstanceId.make("codex");
 
 /** A provider that is never asked to run anything: no effect worker runs in
     the stack, so every turn stays requested and nothing reaches a session. */
@@ -117,9 +111,9 @@ const orchestrationStack = (prefix: string) =>
     Layer.provideMerge(CommandReceiptStore.layer),
     Layer.provideMerge(layerDatabase),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
-    // T3O-74: the gateway claims a turn's attachments, PDFs' text included.
+    // The gateway claims a turn's attachments, PDFs' text included.
     Layer.provideMerge(DocumentText.layer),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 /** The whole stack on in-memory SQLite, board included. */
@@ -127,7 +121,7 @@ export const makeBoardStackTestLayer = (prefix: string) =>
   BoardRuntimeLive.pipe(
     Layer.provideMerge(ThreadGatewayV2Live),
     Layer.provideMerge(orchestrationStack(prefix)),
-    // T3O-62: a local-only board, for the subscription.
+    // A local-only board, for the subscription.
     Layer.provideMerge(BoardWorkersLocalOnlyTest),
   );
 
@@ -273,24 +267,11 @@ export const boardStackSnapshotQuery = Effect.gen(function* () {
   };
 });
 
-/** The board a from-empty replay of the board log lands on. */
-export const replayBoardLog = Effect.gen(function* () {
-  const engine = yield* boardStackEngine;
-  const events = yield* Stream.runCollect(engine.readBoardEvents());
-  let model: BoardReadModel = {};
-  for (const event of events) model = yield* projectBoardEvent(model, event);
-  return model.board;
-});
-
 /** Wait until the board's tail of upstream's log has applied everything. */
 export const drainBoardThreadTail = Effect.gen(function* () {
   const tail = yield* BoardThreadTail;
   yield* tail.drain;
 });
-
-/** A board-minted command id, as the supervisor mints them. */
-export const stackBoardCommandId = (tag: string, n: number) =>
-  CommandId.make(`server:board-${tag}:00000000-0000-4000-8000-${String(n).padStart(12, "0")}`);
 
 const V2_PLAN_STEP_STATUS: Readonly<Record<string, "pending" | "running" | "completed">> = {
   pending: "pending",

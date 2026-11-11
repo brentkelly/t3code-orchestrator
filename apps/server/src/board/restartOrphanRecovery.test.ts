@@ -1,15 +1,7 @@
 /**
- * A server restart mid-build leaves a card claiming work nobody is doing
- * (t3o-10). Upstream's `reconcileProviderSessions` marks the orphaned session
- * `error` — the `Failed` the thread list shows — while the killed turn's id
- * lingers on the projection, so the board's boot reconcile used to read the
- * corpse as mid-turn and resume-watch it forever: the step held its
- * concurrency slot and its card pulsed blue for as long as the server stayed
- * up.
- *
- * Driven through the shared governor harness rather than the command-level
- * reactor stubs, because what matters here is the STATE the reconcile leaves:
- * the attempt burned, the slot kept, the step eventually stalled.
+ * A restart mid-build leaves an `error` session whose turn id lingers; boot
+ * reconcile must not read it as mid-turn and watch it forever. Asserts on the
+ * state reconcile leaves: attempt burned, slot kept, step eventually stalled.
  */
 import {
   BoardCardId,
@@ -62,7 +54,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   runtimeMode: "auto",
   humanInLoop: false,
   maxAttempts: 3,
-  // Well past any backoff rung this fixture waits out (T3O-22, D7): with a
+  // Well past any backoff rung this fixture waits out: with a
   // one-minute timeout the 30s tick's timeout sweep would fire while the step
   // sat waiting for its rung and re-park it, testing the sweep rather than the
   // restart recovery this is about.
@@ -127,13 +119,8 @@ it.effect("boot: a STALE activeTurnRef does not keep an errored session alive", 
       Effect.gen(function* () {
         yield* reactor.drain;
         const parked = boardCardStepState(yield* board, cardId);
-        // Recovery happened — the attempt was charged — but since T3O-22 (D7) it
-        // WAITS its first backoff rung rather than nudging the corpse on the
-        // spot, and gives the restored slot straight back while it waits. That
-        // supersedes t3o-17's "a retry keeps its place" for the waiting window:
-        // holding a worker idle for two minutes on a three-slot board is the
-        // worse trade, and `orderBoardQueue` ranks a started, later-stage card
-        // ahead of fresh work when its rung arrives.
+        // Recovery charged the attempt, but it waits its first backoff rung and
+        // gives the restored slot back meanwhile: idling a worker is the worse trade.
         assert.strictEqual(parked?.attempt, 2);
         assert.strictEqual(parked?.status, "stalled");
         assert.strictEqual(parked?.stalledReason, "waiting-retry");

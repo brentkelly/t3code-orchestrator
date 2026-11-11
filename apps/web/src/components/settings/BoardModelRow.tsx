@@ -1,12 +1,7 @@
 /**
- * The board's model-picker row, shared by the pipeline settings panel and the
- * card Review pane's per-round override drawer (t3o-22, D4).
- *
- * It lives in its own module rather than in `BoardPipelineSection` because the
- * Review pane is lazily loaded — a card that never reaches review is supposed
- * to pay nothing for it — and importing the row from the settings section
- * dragged the whole board-pipeline panel, its prompt envelopes and its dialogs
- * into the pane's chunk.
+ * The board's model-picker row, shared by the pipeline settings and the card
+ * Review pane. Its own module so the lazily loaded Review pane does not pull in
+ * the whole pipeline panel.
  */
 import { useRef, useState } from "react";
 
@@ -31,7 +26,7 @@ import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
 import { BoardModelControlsMenu } from "./BoardModelControlsMenu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { useBoardEnvironmentId, useBoardSettings } from "../../board/useBoardEnvironmentId";
+import { useBoardEnvironmentId } from "../../board/useBoardEnvironmentId";
 
 export type InstanceEntries = ReturnType<typeof sortProviderInstanceEntries>;
 export type ActiveModel = { instanceId: ProviderInstanceId; model: string };
@@ -61,21 +56,16 @@ function ModelControlsMenu(props: {
   runtimeMode: RuntimeMode | undefined;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
-  // Upstream gates plan-mode traits on the client setting; the row reads the
-  // same source as the composer so both show the same controls for a model.
-  const planModeEnabled = useBoardSettings((settings) => settings.planModeEnabled);
   const traits = getTraitsSectionVisibility({
     provider: props.provider,
     models: props.models,
     model: props.model,
     modelOptions: props.modelOptions,
     allowPromptInjectedEffort: false,
-    planModeEnabled,
   });
   const labels: string[] = [];
   if (traits.hasAnyControls) {
     const display = buildTraitsTriggerDisplay({
-      provider: props.provider,
       descriptors: traits.descriptors,
       primarySelectDescriptorId: traits.primarySelectDescriptor?.id ?? null,
       ultrathinkPromptControlled: false,
@@ -103,7 +93,6 @@ function ModelControlsMenu(props: {
             model={props.model}
             modelOptions={props.modelOptions}
             allowPromptInjectedEffort={false}
-            planModeEnabled={planModeEnabled}
             onModelOptionsChange={props.onModelOptionsChange}
           />
         ) : undefined
@@ -116,17 +105,9 @@ function ModelControlsMenu(props: {
 }
 
 /**
- * The model row. A stage names the model it runs on EXPLICITLY — there is no
- * "Default" state to fall into, because the board never had a default worth
- * advertising: the old one was a compiled-in codex + `gpt-5.6-luna` pair the
- * user may never have enabled, so "Default" named a model that could not run.
- * An unset stage reads "Select a model" and, while the stage auto-executes,
- * says so in the same required-field language the prompt uses.
- *
- * The trigger is local rather than `ProviderModelPicker`'s, which always
- * renders a concrete model name (falling back to the instance's first option)
- * and so cannot show "nothing picked yet". The popup is the app's own
- * `ModelPickerContent`, so the list, search and favourites are identical.
+ * The model row. There is no "Default" state: an unset stage reads "Select a
+ * model". The trigger is local because `ProviderModelPicker`'s always names a
+ * model; the popup is the app's own `ModelPickerContent`.
  */
 export function ModelRow(props: {
   label: string;
@@ -136,27 +117,22 @@ export function ModelRow(props: {
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
   onChange: (selection: ModelSelection) => void;
-  /** Reasoning/effort selections for the chosen model, and the setter (t3o-21).
+  /** Reasoning/effort selections for the chosen model, and the setter.
       Rendered inside the composer's combined controls menu; hidden when no
       model is picked. */
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
   onModelOptionsChange: (options: ReadonlyArray<ProviderOptionSelection> | undefined) => void;
-  /** The stage/phase agent authority (t3o-21) — the user's, in the same menu
+  /** The stage/phase agent authority — the user's, in the same menu
       as the model's traits, exactly like the chat composer. */
   runtimeMode: RuntimeMode;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
   /** Hide the access-level section — the card's per-round review override
-      (t3o-22, D4) has nowhere to keep one until a model is picked. */
+       has nowhere to keep one until a model is picked. */
   hideRuntimeMode?: boolean;
   /**
-   * What the trigger reads with nothing picked. Defaults to "Select a model",
-   * which is right for a stage that MUST name one; an override row instead
-   * names the value it is inheriting and where from — `Sonnet 4.7 (default)`
-   * for the workspace, `Opus 4.8 (from T3O-41)` for a parent card (t3o-29, D5).
-   *
-   * Not cosmetic: once a card can inherit from a parent, "nothing picked" is
-   * three different situations, and a row that renders them identically leaves
-   * a user unable to tell which model their card will actually run on.
+   * What the trigger reads with nothing picked. Override rows name what they
+   * inherit and from where, since "nothing picked" can mean the workspace
+   * default or a parent card's model.
    */
   placeholder?: string;
 }) {

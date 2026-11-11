@@ -1,11 +1,6 @@
 /**
- * The board's one confirmation shell (T3O-29, the prototype's `dialogVm()`):
- * a title, a body and optional parts — a choice between options, a title
- * input, a ticked list, a plain item list, a box of what is lost, and a
- * typed-ID gate. Enter confirms whenever the confirm button would.
- *
- * Each caller (start a group, new phase, started-card parent, archive a group)
- * fills in only the parts it needs; the shell owns the layout and the gate.
+ * The board's one confirmation shell: callers fill only the parts they need, the
+ * shell owns the layout and the typed-key gate. Enter confirms whenever the button would.
  */
 import type { ReactNode } from "react";
 
@@ -249,7 +244,7 @@ export function BoardDialogShell(props: BoardDialogShellProps) {
               </div>
               <ul className="flex list-disc flex-col gap-0.5 pl-4 text-[12.5px] text-foreground">
                 {props.losses.items.map((item, index) => (
-                  // The losses are a fixed, ordered list built per render.
+                  // oxlint-disable-next-line react/no-array-index-key -- the losses are a fixed, ordered list built per render
                   <li key={index}>{item}</li>
                 ))}
               </ul>

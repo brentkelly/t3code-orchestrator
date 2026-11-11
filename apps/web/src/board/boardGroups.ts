@@ -1,9 +1,7 @@
 /**
- * Groups on the board (T3O-29): everything the card face, the drag, the
- * sub-board header, the settings popover and the dialogs ask about a group,
- * answered over the client's shells. The decider owns the rules
- * (`@t3tools/contracts` `boardGroups.ts`); these mirror the ones a human hits
- * before a command is sent, so a refused column says why instead of bouncing.
+ * Group questions answered over the client's shells. The decider owns the rules
+ * (contracts `boardGroups.ts`); these mirror the ones a human hits so a refused
+ * column says why.
  */
 import {
   boardCardMoveRefusal,
@@ -285,7 +283,7 @@ export function boardGroupCardVm(
     pips: stats.active
       .map((child, index) => ({
         state: stats.states[index]!,
-        tooltip: `${child.key} · ${child.title} — ${CHILD_STATE_NAME[stats.states[index]!]}`,
+        tooltip: `${child.key} · ${child.title} (${CHILD_STATE_NAME[stats.states[index]!]})`,
       }))
       .toSorted((a, b) => PIP_ORDER[a.state] - PIP_ORDER[b.state]),
     doneLabel: stats.active.length > 0 ? `${stats.done}/${stats.active.length}` : "0",
@@ -342,7 +340,7 @@ export function boardDropRefusal(input: {
 }): string | null {
   const { shells, stages, card, toStage } = input;
   if (toStage === card.stage) return null;
-  // A stage the card's project does not use (T3O-43): the decider's own
+  // A stage the card's project does not use: the decider's own
   // sentence, so the tooltip and the refusal never drift.
   const pipelineRefusal = boardCardMoveRefusal(
     { stages: stages.stages, projectStageConfigs: stages.projectStageConfigs, cards: shells },
@@ -528,7 +526,7 @@ export function boardGroupSettingsVm(
 }
 
 /** Whether a group's popup draws the leaf action area (Merge, review controls,
-    View PR) rather than Open board alone (T3O-37): from Code review on, an
+    View PR) rather than Open board alone: from Code review on, an
     own-branch group is reviewing and merging its own pull request. */
 export function boardGroupUsesCardActions(input: {
   readonly ownBranch: boolean;

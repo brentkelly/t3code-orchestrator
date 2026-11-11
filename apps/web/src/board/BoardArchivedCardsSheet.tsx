@@ -1,13 +1,6 @@
 /**
- * T3o archived cards (t3o-13, D7) — the way back out of the archive.
- *
- * Archiving was a one-way door: `board.card.unarchive` and the detail modal's
- * Restore action both existed, but nothing listed an archived card, so neither
- * was reachable. This sheet is that list.
- *
- * It reads `board.getArchivedCards` when it opens — the archive is a page you
- * open, never state every client carries, so archived cards stay off the live
- * board and its delta stream (D15).
+ * Lists archived cards so restore and delete are reachable. Read on open, never
+ * carried by every client, so archived cards stay off the live board stream.
  */
 import {
   boardCardWorktreeKeptReason,
@@ -17,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { ArchiveRestoreIcon, HardDriveIcon, LayersIcon, Trash2Icon } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 
@@ -49,15 +42,9 @@ export function refreshBoardArchivedCards(environmentId: EnvironmentId): void {
 }
 
 /**
- * The list itself, mounted ONLY while the sheet is open — that is what makes
- * the archive a page you open rather than a query every board mount pays for.
- *
- * The read is refreshed on open rather than left to the atom's own staleness
- * rule. `Atom.swr` skips revalidation entirely while the cached value is
- * younger than its 30s `staleTime`, and "archive a card, then go looking for
- * it" happens well inside that window — so without this the sheet would open
- * on a snapshot taken before the archive and show nothing. It also picks up
- * archives made from another device, which no local invalidation could.
+ * Mounted only while the sheet is open, and refreshed on open: `Atom.swr` skips
+ * revalidation inside its 30s `staleTime`, so a just-archived card (or one archived
+ * from another device) would otherwise be missing.
  */
 function ArchivedCardList({
   environmentId,
@@ -81,6 +68,7 @@ function ArchivedCardList({
     readonly cardId: BoardCardId;
     readonly key: string;
   } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the server's archived-cards list each time the sheet opens; the archive is not on the live board stream
   useEffect(() => {
     refreshBoardArchivedCards(environmentId);
   }, [environmentId]);
@@ -89,22 +77,17 @@ function ArchivedCardList({
   const snapshot = Option.getOrNull(AsyncResult.value(result));
   const stages = useAtomValue(boardEnvironment.stageListAtom(environmentId));
 
-  const cards = useMemo(
-    () => boardArchivedCardsInScope(snapshot?.cards ?? [], scopeProjectId),
-    [snapshot, scopeProjectId],
-  );
+  const cards = boardArchivedCardsInScope(snapshot?.cards ?? [], scopeProjectId);
 
-  // Resolves a card id to a key for the parent badge (t3o-25, AC6): live
+  // Resolves a card id to a key for the parent badge: live
   // parents come from the board's own key map, an archived parent from the
   // very list this sheet is rendering. An id neither can name (the parent was
   // purged) simply shows no badge.
-  const parentKeyOf = useMemo(() => {
-    const archivedKeyById = new Map(
-      (snapshot?.cards ?? []).map((card) => [String(card.cardId), card.key]),
-    );
-    return (parentCardId: string): string | undefined =>
-      liveCardKeyById.get(parentCardId) ?? archivedKeyById.get(parentCardId);
-  }, [liveCardKeyById, snapshot]);
+  const archivedKeyById = new Map(
+    (snapshot?.cards ?? []).map((card) => [String(card.cardId), card.key]),
+  );
+  const parentKeyOf = (parentCardId: string): string | undefined =>
+    liveCardKeyById.get(parentCardId) ?? archivedKeyById.get(parentCardId);
 
   if (result.waiting && snapshot === null) {
     return <p className="text-[13px] text-muted-foreground">Loading…</p>;
@@ -140,7 +123,7 @@ function ArchivedCardList({
                     ? undefined
                     : parentKeyOf(String(card.parentCardId));
                 return parentKey === undefined ? null : (
-                  // A sub-board child names its parent (t3o-25, AC6) — the
+                  // A sub-board child names its parent — the
                   // archive flattens every board into one list, so without
                   // this the child reads as a stray top-level card.
                   <BoardHint label={`Part of ${parentKey}'s sub-board`}>
@@ -155,7 +138,7 @@ function ArchivedCardList({
                 {card.title}
               </span>
               {card.worktreeReady === true ? (
-                // T3O-52: archive is the guaranteed cleanup point, so an
+                // Archive is the guaranteed cleanup point, so an
                 // archived card still holding a worktree is always flagged.
                 // Amber: its cleanup is blocked. Open the card to act on it.
                 <BoardHint
@@ -224,7 +207,7 @@ export function BoardArchivedCardsSheet({
   scopeProjectId,
 }: {
   readonly environmentId: EnvironmentId;
-  /** Live card ids → keys, from the board (t3o-25): resolves an archived
+  /** Live card ids → keys, from the board: resolves an archived
       child's badge when its parent is still on the live board. */
   readonly liveCardKeyById: ReadonlyMap<string, string>;
   /** Purge the card outright — always behind this sheet's own confirmation. */
@@ -269,7 +252,7 @@ export function BoardArchivedCardsSheet({
 
 /**
  * The sheet's scrolling body. Upstream's `SheetPanel` was removed as unused in v0.0.45, so the
- * board keeps its own copy (T3O-54).
+ * board keeps its own copy.
  */
 function SheetBody({ children }: { children: ReactNode }) {
   return (

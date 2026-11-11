@@ -1,10 +1,7 @@
 /**
- * Boot-reconciliation coverage for the supervisor reactor's effectful shell
- * (t3o-10). The pure decision logic is covered in supervisor.test.ts; here we
- * drive the exposed `reconcile` against stub services and a fake thread
- * gateway, and assert the shell wires each reconciliation decision to the right
- * board command or thread call — the "restart the server mid-step"
- * verification bullet.
+ * Boot reconciliation for the reactor's effectful shell: drives `reconcile` against stub
+ * services and a fake thread gateway, and asserts each decision reaches the right board
+ * command or thread call. The pure decisions are covered in supervisor.test.ts.
  */
 import {
   BoardCardId,
@@ -17,6 +14,7 @@ import {
   type BoardState,
   type BoardEvent,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -55,7 +53,7 @@ const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
 const cardId = BoardCardId.make("card-1");
 
-// The single step id per stage is the stage id (t3o-15, D1): a card in Building
+// The single step id per stage is the stage id: a card in Building
 // runs a step keyed "building", and its completion is keyed the same.
 const stepId = String(BoardStageId.make("building"));
 
@@ -112,7 +110,7 @@ const card: BoardCard = {
   updatedAt: NOW,
 };
 
-// The frozen execution config (t3o-15, D12) the Building stage stamped onto the
+// The frozen execution config the Building stage stamped onto the
 // run row at entry: an unattended build-mode step on codex.
 const runningState: BoardCardStepState = {
   cardId,
@@ -169,7 +167,7 @@ function readModel(board: BoardState): BoardOrchestrationReadModel {
 
 const aliveShell: BoardThreadState = aliveThread("thread-1", { activeTurnRef: "turn-1" });
 
-/** The shape a server restart leaves behind (t3o-10): the orphaned session is
+/** The shape a server restart leaves behind: the orphaned session is
     marked `error`, and the id of the turn that died with the process is still
     on the thread. */
 const restartOrphanShell: BoardThreadState = failedThread("thread-1");
@@ -183,31 +181,25 @@ type ReconcileCall = BoardCommand | ThreadGatewayCall;
 function reconcileCommandObjects(input: {
   readonly board: BoardState;
   readonly threadShells?: ReadonlyMap<string, BoardThreadState>;
-  /** Provide a `ServerActivation` (t3o-10, D3) whose effect is this function,
-      called with "everything dispatched so far". It runs exactly at the
-      boundary the reconcile waits on, which is what makes "it read nothing
-      before activation" an observation rather than a race. Absent (the
-      default) leaves the reference at its `undefined` default, so reconcile
-      waits for nothing — the shape every other test runs under. */
+  /**
+   * Provide a `ServerActivation` whose effect is this function, called with everything
+   * dispatched so far, so "it read nothing before activation" is an observation, not a race.
+   * Absent leaves reconcile waiting for nothing.
+   */
   readonly gateOnActivation?: (
     dispatchedSoFar: Effect.Effect<ReadonlyArray<ReconcileCall>>,
   ) => Effect.Effect<void>;
-  /** Follow the reconcile with the backoff rung it just set (T3O-22, D7).
-      Recovery no longer nudges on the spot — it parks the step with a
-      `retryAt` and the retry sweep puts it back through the governor when the
-      rung arrives — so a test about what a RECOVERY does has to wait the rung
-      out. Absent leaves reconcile's own commands alone, which is what every
-      test about what reconcile does NOT do wants. */
+  /**
+   * Follow the reconcile with the backoff rung it just set. A recovery parks the step with a
+   * `retryAt` rather than nudging, so a test about what a recovery does waits the rung out.
+   */
   readonly throughRetry?: boolean;
 }): Effect.Effect<ReadonlyArray<ReconcileCall>> {
   return Effect.gen(function* () {
     const recorded = yield* Ref.make<ReadonlyArray<ReconcileCall>>([]);
-    // Ref-held rather than a frozen snapshot, and BOARD commands are folded back
-    // into it through the real decider and projector (T3O-22). Reconcile's own
-    // decisions used to be write-only here, which was fine while every recovery
-    // acted immediately; now a recovery PARKS the step and a later sweep acts on
-    // the parked row, so a model that never changed would leave the sweep
-    // reading a step that boot had already moved on from.
+    // Board commands fold back into the model through the real decider and projector: a
+    // recovery parks the step and a later sweep acts on the parked row, so a frozen model would
+    // leave the sweep reading a step boot had already moved on from.
     const model = yield* Ref.make(readModel(input.board));
     const foldBoardCommand = (command: BoardCommand) =>
       Effect.gen(function* () {
@@ -247,7 +239,7 @@ function reconcileCommandObjects(input: {
     } as unknown as GitVcsDriver.GitVcsDriver["Service"];
 
     const setupStub = {
-      runForThread: () => Effect.succeed(undefined),
+      runForThread: () => Effect.undefined,
     } as unknown as BoardSetupScriptRunner["Service"];
 
     const deps = Layer.mergeAll(
@@ -320,7 +312,7 @@ function reconcileCommandObjects(input: {
         ),
       ),
     );
-  }).pipe(Effect.provide(NodeServices.layer));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 }
 
 function reconcileCommands(input: {
@@ -336,14 +328,9 @@ function reconcileCommands(input: {
   );
 }
 
-// ── The round cap holds the card (t3o-22, D1) ─────────────────────────
-//
-// The regression this spec exists to fix: PR #40 made the cap complete
-// `succeeded`, and `advanceStage` moves any successful stage whose
-// `autoAdvance` is on — which the review stage's is BY DEFAULT. So a card whose
-// reviewer raised criticals it never resolved graduated to the next stage,
-// indistinguishable from one that passed. Asserted at the reactor, not just the
-// executor, because `board.card.move` is the thing that must not happen.
+// The round cap holds the card. Completing the capped review `succeeded` would let
+// `advanceStage` move it (review auto-advances by default), so a card with unresolved
+// criticals would graduate. Asserted at the reactor: `board.card.move` must not happen.
 
 const reviewCard: BoardCard = { ...card, stage: BoardStageId.make("review") };
 
@@ -478,7 +465,7 @@ it.effect("boot: a running step whose thread is gone is recovered (respawned)", 
     });
     assert.include(types, "board.card.recover-step");
     // A gone thread is respawned, not nudged into the void — through the
-    // governor when the backoff rung arrives (T3O-22, D7), which is also what
+    // governor when the backoff rung arrives, which is also what
     // gets the step its slot back.
     assert.include(types, "thread.spawn");
     assert.notInclude(types, "thread.send");
@@ -544,9 +531,9 @@ it.effect(
         board: { cards: [card], stepStates: [exhausted], nextCardNumberByProject: {} },
         // no shell → thread gone, but escalation must not respawn/nudge it
       });
-      // D3 gate: the step is parked stalled (its badge is the human-facing
-      // signal — t3o-18 D13 deleted `board.card.request-input`, so the question
-      // itself now goes to the server log)...
+      // The step is parked stalled (its badge is the human-facing
+      // signal; `board.card.request-input` is gone, so the question
+      // itself goes to the server log)...
       assert.notInclude(types, "board.card.request-input");
       assert.include(types, "board.card.recover-step");
       // ...and the agent is NOT driven (no turn), so recovery never loops.
@@ -576,7 +563,7 @@ it.effect("boot: a step that completed while the server was down is settled and 
       },
     });
     assert.include(types, "board.card.settle-step");
-    // Every step succeeded → board-driven Building → Code review advance (D18).
+    // Every step succeeded → board-driven Building → Code review advance.
     assert.include(types, "board.card.pipeline-move");
   }),
 );
@@ -606,14 +593,9 @@ it.effect("boot: a human-in-the-loop step that completed while down advances too
   }),
 );
 
-// ── The restart orphan (t3o-10) ────────────────────────────────────────
-//
-// A server restart kills every provider session mid-turn. Upstream's
-// `reconcileProviderSessions` marks each orphaned session `error` — the
-// `Failed` the thread list shows — but the killed turn's id lingers on the
-// thread (`activeTurnRef`), so a liveness rule that reads `activeTurnId` alone sees a corpse
-// mid-turn and resume-watches it forever: slot held, card pulsing, nothing
-// running.
+// After a restart upstream marks each orphaned session `error`, but the killed turn's
+// `activeTurnRef` lingers. Liveness that read only the turn would resume-watch a corpse
+// forever, holding its slot.
 
 it.effect("boot: a session upstream marked `error` is dead even with a stale activeTurnRef", () =>
   Effect.gen(function* () {
@@ -626,7 +608,7 @@ it.effect("boot: a session upstream marked `error` is dead even with a stale act
     // The thread still EXISTS, so recovery drives the thread it has rather than
     // respawning — which is upstream's own instruction on that error ("Send a
     // new message to continue"). It goes out when the backoff rung arrives
-    // (T3O-22, D7) rather than on the spot.
+    // rather than on the spot.
     assert.include(types, "thread.send");
     assert.notInclude(types, "thread.spawn");
   }),

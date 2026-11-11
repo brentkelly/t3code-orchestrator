@@ -1,15 +1,5 @@
-// T3o: the decision log and auto-planning (T3O-32).
-//
-//   board_card_decisions — one row per planning decision: what was asked, what
-//     was decided, why, who decided and a flag (normal | important | unclear).
-//     Keyed by `decision_id`, which the decider derives from the event id, so a
-//     re-projected event is an idempotent insert. A fresh table, schema-qualified
-//     like every board CREATE (see 042).
-//   board_cards.auto_plan — JSON `{ mode, requestedAt, endedAt }`, the card's
-//     auto-plan request. NULL for every older row, matching `BoardCard.autoPlan`
-//     decoding to null. Altered unqualified like 052.
-//
-// Both guarded, so re-running is a no-op.
+// `decision_id` derives from the event id, so a re-projected event is an
+// idempotent insert. A NULL `auto_plan` matches `BoardCard.autoPlan`'s default.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

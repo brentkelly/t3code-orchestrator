@@ -1,12 +1,11 @@
 /**
- * T3o board server (T3O-71). Settings → Board's "Board server" picker, and the notice every board
+ * T3o board server. Settings → Board's "Board server" picker, and the notice every board
  * surface shows when the nominated server is not reachable. The setting is a per-device client
  * setting: a desktop app paired with the central board server nominates it here, and from then on
  * the board, its card detail and Settings → Board all read that server.
  */
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useMemo } from "react";
 
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
@@ -73,10 +72,7 @@ export function BoardServerSection() {
   const nominated = useClientSettings(selectBoardEnvironmentId);
   const primary = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
-  const options = useMemo(
-    () => boardServerOptions({ primary, nominated, environments }),
-    [environments, nominated, primary],
-  );
+  const options = boardServerOptions({ primary, nominated, environments });
   const value = nominated === null || nominated === primary ? THIS_SERVER : nominated;
   const labelOf = (selected: string | null) =>
     options.find((option) => option.value === selected)?.label ?? "This server";

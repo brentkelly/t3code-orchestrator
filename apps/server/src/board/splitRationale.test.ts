@@ -1,16 +1,7 @@
 /**
- * T3o card 11 — the split justification on the card.
- *
- * A multi-plan proposal splits the card into child cards behind a human
- * approval gate, so the decider makes it carry a reason. That reason has to
- * reach the human at the gate, which means it has to survive both paths into
- * the read model: the SQL projection (migration 035's `split_rationale`) and a
- * from-empty replay of the log. Those two agreeing is the whole property —
- * a card that shows its split reason after an edit but not after a reconnect
- * is the stale label this codebase refuses to ship.
- *
- * Run through the real seams (decider → event store → projection → snapshot
- * query), because that is where the two producers meet.
+ * A split's justification must survive both paths into the read model: the SQL projection
+ * and a from-empty replay. Run through the real seams (decider, event store, projection,
+ * snapshot query), because that is where the two producers meet.
  */
 import {
   BoardCardId,

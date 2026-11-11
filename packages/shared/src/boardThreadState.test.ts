@@ -68,7 +68,7 @@ describe("boardThreadStateSource (T3O-59)", () => {
   });
 
   it("waits on background work that wakes the agent, not on a command left running", () => {
-    // Upstream holds a monitor only when the agent waits on it (#24610).
+    // Upstream holds a monitor only when the agent waits on it.
     const monitor = { taskId: "m", kind: "monitor" as const, awaited: true as const };
     const subagent = { taskId: "s", kind: "subagent" as const };
     const command = { taskId: "c", kind: "command" as const };

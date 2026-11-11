@@ -1,12 +1,7 @@
 /**
- * Sub-board group header (t3o-25, D2; T3O-29): inside its own board the group
- * is a HEADER, not a card. It says the group's key and title, `n/m done · N
- * deferred`, where its cards merge, its auto-build state, and carries the
- * dependency chart toggle and the Automation popover.
- *
- * Counts and target come from the live shells; the pull request and the plans
- * ride the per-card detail, so the header opens the same `board.subscribeCard`
- * the modal does — one group per drill-in, so the board at rest opens none.
+ * The group's header inside its own sub-board. Counts come from live shells;
+ * the PR and plans need the card's detail subscription, opened only while
+ * drilled in.
  */
 import type {
   BoardCardAttention,
@@ -49,13 +44,13 @@ export function BoardSubBoardHeader({
   readonly environmentId: EnvironmentId;
   readonly parentCardId: BoardCardId;
   /** The parent's decorated live shell; null until the snapshot arrives (or
-      once the parent leaves the board, when the D3 redirect is imminent). */
+      once the parent leaves the board, when the redirect is imminent). */
   readonly parentShell: BoardCardShell | null;
   readonly accentName: ProjectIconColor | null;
-  /** The parent's own sheet lives on the ROOT board (D2) — clicking the
+  /** The parent's own sheet lives on the ROOT board — clicking the
       title goes there with the sheet open. */
   readonly onOpenParentCard: () => void;
-  /** The dependency chart's toggle (t3o-29): the button lives here, in the
+  /** The dependency chart's toggle: the button lives here, in the
       header row, and the chart itself renders below in
       `BoardSubBoardPlanStrip` — so the state is the page's, not ours. */
   readonly chartOpen: boolean;
@@ -64,7 +59,7 @@ export function BoardSubBoardHeader({
   readonly shells: ReadonlyArray<BoardCardShell>;
   readonly stages: BoardState;
   readonly attentionFor: (card: BoardCardShell) => BoardCardAttention | null;
-  /** Settings → Board → Pipeline merges every card (T3O-38). */
+  /** Settings → Board → Pipeline merges every card. */
   readonly boardWideAutoMerge: boolean;
 }) {
   const detail = useAtomValue(
@@ -103,7 +98,7 @@ export function BoardSubBoardHeader({
       <BoardHint
         label={
           group?.target === "own"
-            ? `Integration branch — every card here builds on ${target}`
+            ? `Integration branch: every card here builds on ${target}`
             : `Cards here merge into ${target}`
         }
       >
@@ -117,7 +112,7 @@ export function BoardSubBoardHeader({
       )}
       {pullRequest !== null && pullRequest.state === "open" ? (
         <BoardHint
-          label={`${parentShell.key}'s integration pull request is open — ${pullRequest.url}`}
+          label={`${parentShell.key}'s integration pull request is open: ${pullRequest.url}`}
         >
           <span className="inline-flex shrink-0 items-center gap-1 rounded bg-info/12 px-1.5 py-0.5 text-[11px] font-medium text-info-foreground">
             <PullRequestGlyph.pullRequest className="size-3" />
@@ -126,14 +121,10 @@ export function BoardSubBoardHeader({
         </BoardHint>
       ) : null}
       <span className="flex-1" />
-      {/* The chart is drawn from the group's PLANS (t3o-29, D3), so the toggle
+      {/* The chart is drawn from the group's PLANS, so the toggle
           only exists once there are some. */}
       {(detail?.plans.length ?? 0) > 0 ? (
-        <button
-          className={boardHeaderButtonClass(chartOpen)}
-          onClick={onToggleChart}
-          type="button"
-        >
+        <button className={boardHeaderButtonClass(chartOpen)} onClick={onToggleChart} type="button">
           <Link2Icon />
           {chartOpen ? "Hide chart" : "Dependency chart"}
         </button>

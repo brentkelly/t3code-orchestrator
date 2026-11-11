@@ -1,5 +1,5 @@
 /**
- * The board card's schedule pill (T3O-19, D9/D11).
+ * The board card's schedule pill.
  */
 import { describe, expect, it } from "vite-plus/test";
 

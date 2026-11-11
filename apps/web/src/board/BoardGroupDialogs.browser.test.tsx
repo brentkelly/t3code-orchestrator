@@ -1,5 +1,5 @@
 /**
- * The group confirmations (T3O-29): the typed-ID gate on the dialog shell,
+ * The group confirmations: the typed-ID gate on the dialog shell,
  * and the New phase dialog's default title and the commands it sends.
  */
 import {

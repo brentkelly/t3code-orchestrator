@@ -1,10 +1,7 @@
 /**
- * T3o: a project's CI tab (T3O-49): the "Run CI for this project" and "Stop
- * on failure" (T3O-57) switches,
- * the step list behind the built-in Sync with base, the fix agent and how a
- * script reports. Steps save together, against the version they were loaded
- * at. Turning CI off with cards in CI asks first: those cards move on with
- * auto-merge disarmed.
+ * A project's CI tab. Steps save together against the version they were loaded
+ * at. Turning CI off with cards in CI asks first: they move on with auto-merge
+ * disarmed.
  */
 import {
   BOARD_CI_AGENT_PAYLOAD_SHAPE,

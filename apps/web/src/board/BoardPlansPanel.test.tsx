@@ -1,11 +1,6 @@
 /**
- * The Plans panel (t3o-29), rendered to static markup — the same technique
- * `BoardCardDetailView.test.tsx` uses, and for the same reason: the panel is a
- * pure function of derived rows, so its markup is assertable without a DOM or
- * a subscription.
- *
- * The chart is not here: it defaults closed, and its geometry is pinned in
- * `boardPlanRows.test.ts` where the arithmetic lives.
+ * The Plans panel rendered to static markup: it is a pure function of derived
+ * rows. The chart's geometry is tested in `boardPlanRows.test.ts`.
  */
 import {
   BOARD_SEED_STAGES,
@@ -160,13 +155,13 @@ describe("BoardPlansPanel", () => {
     expect(html).toContain(
       "1 of 3 cards done. The final review starts on its own when the last one lands.",
     );
-    // D5: no action. The reactor owns this transition.
+    // No action. The reactor owns this transition.
     expect(html).not.toContain("Start final review");
     expect(html).not.toContain("Waiting on plans");
   });
 
   it("shows no final review for a group that inherits its parent's branch", () => {
-    // T3O-34: an inheriting group has no integration branch to review.
+    // An inheriting group has no integration branch to review.
     const html = render({ ownBranch: false, branch: null });
     expect(html).not.toContain("Final review");
     expect(html).not.toContain("integration branch pending");
@@ -183,7 +178,7 @@ describe("BoardPlansPanel", () => {
 });
 
 /**
- * A done row carries no tint (t3o-36): completion is a check in place of the
+ * A done row carries no tint: completion is a check in place of the
  * stage dot, so the rail reads down its left edge without colour doing the
  * work. #1 is the done row in the fixture; #2 and #3 are not.
  */

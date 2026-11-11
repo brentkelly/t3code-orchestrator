@@ -1,5 +1,5 @@
 /**
- * T3o label chip colour + picker model (t3o-06a). Pure logic, no DOM: contrast
+ * T3o label chip colour + picker model. Pure logic, no DOM: contrast
  * is computed from luminance, unknown/tombstoned labels resolve to a muted
  * placeholder, and the picker toggles membership / offers inline create.
  */

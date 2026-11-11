@@ -1,14 +1,7 @@
 /**
- * T3o distributed board: the named git and forge operations a central server
- * runs on a card's worker (T3O-64, overview D21).
- *
- * Remote callers never get raw `git`: each operation here has typed inputs, a
- * bounded effect and a test. Every payload names the WORKER's project id, and
- * the worker resolves it to its own checkout — a path the central server sends
- * is only ever a worktree of that checkout, which the worker checks.
- *
- * The same shapes back `BoardWorkspace` on the server, so the local and the
- * remote implementation answer in one vocabulary.
+ * Remote callers never get raw `git`: each operation has typed inputs and a bounded
+ * effect. Payloads name the worker's project id; a path the central server sends is only
+ * ever a worktree of that checkout, which the worker checks.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -43,7 +36,7 @@ export const BoardWorkspaceProvisionedWorktree = Schema.Struct({
 });
 export type BoardWorkspaceProvisionedWorktree = typeof BoardWorkspaceProvisionedWorktree.Type;
 
-/** Cutting a split parent's integration branch (D12). `create-failed` is git
+/** Cutting a split parent's integration branch. `create-failed` is git
     itself failing on a repository that is otherwise fine. */
 export const BoardWorkspaceIntegrationBranch = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("ready"), pushed: Schema.Boolean }),
@@ -52,7 +45,7 @@ export const BoardWorkspaceIntegrationBranch = Schema.Union([
 export type BoardWorkspaceIntegrationBranch = typeof BoardWorkspaceIntegrationBranch.Type;
 
 /**
- * What the durability probe found (T3O-52, D1). `durable`, `unmergedCount`
+ * What the durability probe found. `durable`, `unmergedCount`
  * and the changed paths drive the reclaim decision; `unpushedCount` and
  * `hasUpstream` are the detail a move-refusal screen shows.
  */
@@ -72,7 +65,7 @@ export const BoardWorkspaceDurability = Schema.Struct({
   /** Whether the checked-out branch tracks a remote branch. */
   hasUpstream: Schema.Boolean,
   /** The newest of those commits, at most `BOARD_UNPUSHED_COMMITS_MAX`, for the
-      move refusal to list (T3O-65). Empty from a worker that predates it. */
+      move refusal to list. Empty from a worker that predates it. */
   unpushedCommits: Schema.Array(
     Schema.Struct({ sha: TrimmedNonEmptyString, subject: Schema.String }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
@@ -103,7 +96,7 @@ export type BoardWorkspaceWorktree = typeof BoardWorkspaceWorktree.Type;
 export const BoardWorkspaceBranchCleanup = Schema.Struct({
   remoteDeleted: Schema.Boolean,
   localDeleted: Schema.Boolean,
-  /** No remote to delete from. A pre-T3O-26 worker omits it; false keeps a
+  /** No remote to delete from. An older worker omits it; false keeps a
       group discard retrying rather than settling with a remote copy alive. */
   remoteAbsent: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   skippedReason: Schema.NullOr(Schema.String),
@@ -417,7 +410,7 @@ export type BoardWorkerGitSuccess<Method extends BoardWorkerGitMethod> = Rpc.Suc
  * Each operation's scope, which the worker's handler checks. Reads sit at the thread-read tier;
  * anything that writes to the repository — a ref, a worktree, a branch, a
  * merge, even a fetch's remote-tracking refs — at source-control write. The
- * board's own session holds both (D19).
+ * board's own session holds both.
  */
 export const BOARD_WORKER_GIT_RPC_SCOPES = {
   [M.resolveDefaultBranch]: AuthOrchestrationReadScope,
@@ -451,12 +444,9 @@ export const BOARD_WORKER_GIT_RPC_SCOPES = {
 // ── The RPC (`boardWorker.git.call`) ───────────────────────────────────
 
 /**
- * The one RPC every operation above travels as. The WebSocket RPC group is at
- * the edge of what the type checker will instantiate (see `BoardGatewayCall`),
- * so the operations are not registered one each: `payload` is the operation's
- * payload encoded with its own schema, the answer is its success encoded the
- * same way, and each end codes them with `BOARD_WORKER_GIT_RPCS`. The worker's
- * handler enforces the operation's own scope; the call sits at the lowest.
+ * One RPC for every operation, because the WebSocket RPC group is at the edge of what
+ * the type checker will instantiate. `payload` and the answer are encoded with each
+ * operation's own schema via `BOARD_WORKER_GIT_RPCS`; the worker enforces the scope.
  */
 export const BOARD_WORKER_GIT_CALL_WS_METHODS = {
   call: "boardWorker.git.call",

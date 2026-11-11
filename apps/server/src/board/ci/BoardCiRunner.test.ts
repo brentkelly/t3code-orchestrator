@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * The CI script runner (T3O-44) against real subprocesses: a pass, fail-fast
- * and run-everything (T3O-57), a timeout, a cancel that kills the process group, and the output tail.
+ * The CI script runner against real subprocesses: a pass, fail-fast
+ * and run-everything, a timeout, a cancel that kills the process group, and the output tail.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -425,7 +425,7 @@ it.live("fails a group that leaves tracked changes in the worktree", () =>
     );
     assert.deepInclude(reedit, { result: "failed", failedIndex: 0, exitCode: 0, ranAll: true });
     // Without stop on failure the dirty group still fails, and the next runs
-    // against the changed tree (T3O-57).
+    // against the changed tree.
     const carriesOn = collect();
     const continued = yield* runBoardCiPass(
       {
@@ -696,7 +696,7 @@ it.live("a machine problem in a parallel group outranks an earlier code failure"
     );
     assert.deepInclude(result, { result: "failed", failedIndex: 1, exitCode: 127 });
     assert.strictEqual(result.result === "failed" ? result.headline?.machine : null, true);
-    // Without stop on failure, a later group's machine problem outranks too (T3O-57).
+    // Without stop on failure, a later group's machine problem outranks too.
     const later = yield* runBoardCiPass(
       {
         ...request(cwd, [

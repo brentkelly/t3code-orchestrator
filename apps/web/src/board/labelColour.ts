@@ -1,11 +1,6 @@
 /**
- * T3o label chip colour helpers (t3o-06a), board-owned.
- *
- * Contrast is COMPUTED, never chosen: a user picks any swatch (or arbitrary
- * hex) and the foreground is derived from the colour's WCAG relative
- * luminance, so a chip stays readable in light and dark. Ported from the
- * prototype's `keyPillStyle`. Chips read names and colours from the board's
- * single label catalogue by id — never from data denormalised onto the card.
+ * Label chip colours. Contrast is computed from the colour's WCAG luminance,
+ * never chosen, so any swatch stays readable in light and dark.
  */
 import type { BoardLabel, BoardLabelId } from "@t3tools/contracts";
 
@@ -35,13 +30,9 @@ export function boardLabelForeground(hex: string): string {
 }
 
 /**
- * A card label chip's fill and text. Unlike the key pill — a SOLID swatch that
- * needs the black/white luminance split above — a chip is a soft tint of the
- * label colour, so it reads as a tag rather than a badge and several chips on
- * one card stay quiet. Contrast is still computed rather than chosen: the text
- * is the label colour carried most of the way toward the surface foreground,
- * which stays legible over the 14% fill in either theme. (The prototype's
- * `typeStyle`.)
+ * A label chip's fill and text: a soft tint of the label colour, with text
+ * carried most of the way toward the surface foreground so it stays legible
+ * over the 14% fill in either theme.
  */
 export function boardLabelChipStyle(hex: string): { background: string; color: string } {
   return {
@@ -57,11 +48,8 @@ export function indexBoardLabels(
   return new Map(labels.map((label) => [label.labelId, label]));
 }
 
-/** What a chip needs to render one label id: the resolved label plus its
-    display state. `missing` — the id is not in the catalogue at all (a hard
-    edge) — renders a muted placeholder, as does a tombstoned (`deleted`)
-    label, so a card's history stays honest rather than silently dropping a
-    reference. */
+/** A label id resolved for a chip. `missing` and `deleted` labels render a muted
+    placeholder so a card's history keeps the reference. */
 export interface ResolvedBoardLabel {
   readonly labelId: BoardLabelId;
   readonly name: string;
@@ -115,14 +103,9 @@ export function boardLabelChipRows(
 }
 
 /**
- * A picker row's selected state, as inline style. Selection has to be
- * UNMISSABLE — the list stays open across several picks, so a click that only
- * nudges a font weight reads as a no-op. A selected row gets a 16% tint of its
- * own colour, a colour-matched hairline ring and a 3px left bar; unselected
- * rows carry no style at all and fall back to the Tailwind hover.
- *
- * The left bar rides in the box-shadow rather than a `border-left` so that
- * selecting a row cannot shift its label sideways by 3px.
+ * A picker row's selected style: tint, ring and a 3px left bar, since the list
+ * stays open across picks. The bar rides in the box-shadow so selecting cannot
+ * shift the label. Unselected rows get no style.
  */
 export function boardLabelRowStyle(
   colour: string | null,

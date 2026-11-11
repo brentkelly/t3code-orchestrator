@@ -1,37 +1,8 @@
 /**
- * T3o activity actors (t3o-18, D11) — who caused a board event.
- *
- * `board.ts` contains no `actor`, `userId` or `author`: board commands carry no
- * provenance at all, and a stage move may originate from a human drag, an
- * agent's MCP tool call, or the supervisor reactor. So the actor is stamped at
- * the DISPATCH BOUNDARY, because the transport already knows who called:
- *
- * | Origin                                | Actor                                       |
- * | ------------------------------------- | ------------------------------------------- |
- * | Board RPC from the web client         | `{ kind: "human", name }`                   |
- * | MCP board toolkit                     | `{ kind: "agent", providerInstanceId, threadId }` |
- * | Supervisor reactor / internal command | `{ kind: "system" }`                        |
- *
- * No command schema changes, and no caller can misreport itself —
- * `BOARD_CLIENT_COMMANDS` vs `BOARD_INTERNAL_COMMANDS` already draws half this
- * line.
- *
- * **How the stamp reaches the projector.** The activity rail is a projection of
- * the board's own event log (D10), so the actor has to be readable where the row
- * is written: inside the projection pipeline's transaction, one hop after the
- * dispatcher. That is a different fiber from the caller's, so a `FiberRef` will
- * not carry it and the event envelope is upstream-owned. This module is
- * therefore an explicit in-process side channel keyed by `commandId` — the one
- * identifier the dispatcher chooses and the event carries.
- *
- * It is deliberately best-effort, like the reactor's own in-memory watermarks:
- *
- * - Bounded (`MAX_STAMPS`, FIFO), so a rejected command's stamp cannot leak.
- * - Read without eviction, so a command that lands several events attributes all
- *   of them.
- * - Unknown / unstamped / restarted-process ⇒ `BOARD_SYSTEM_ACTOR`. A rebuilt
- *   projection therefore attributes historic rows to the system rather than
- *   inventing a human — wrong-but-honest beats confidently wrong.
+ * Who caused a board event, stamped at the dispatch boundary and read by the
+ * projector a fiber later, so it rides an in-process side channel keyed by
+ * `commandId`. Best-effort: an unknown or post-restart stamp reads as
+ * `BOARD_SYSTEM_ACTOR`, never an invented human.
  */
 import {
   BOARD_SYSTEM_ACTOR,
@@ -72,7 +43,7 @@ export function boardActivityActorFor(
   return stamps.get(String(commandId)) ?? BOARD_SYSTEM_ACTOR;
 }
 
-/** The agent actor for an MCP tool call (D11). The display name and accent are
+/** The agent actor for an MCP tool call. The display name and accent are
     resolved client-side from the provider instance, so a renamed instance
     relabels its own history rather than freezing a stale label on the row. */
 export function boardAgentActor(input: {
@@ -87,7 +58,7 @@ export function boardAgentActor(input: {
   };
 }
 
-/** The human actor (D11). `name` is frozen on the row at write time, so it stays
+/** The human actor. `name` is frozen on the row at write time, so it stays
     correct after the project's git config changes. */
 export function boardHumanActor(name: string): BoardActivityActor {
   return {

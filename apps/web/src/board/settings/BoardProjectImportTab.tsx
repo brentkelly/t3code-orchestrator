@@ -1,5 +1,5 @@
 /**
- * T3o: a project's Import & export tab (T3O-49). Import reads the `t3o.json`
+ * T3o: a project's Import & export tab. Import reads the `t3o.json`
  * committed on the default branch and replaces this project's differences,
  * after the confirmation. Export writes the file into the project's checkout,
  * uncommitted; with no checkout it is a download.

@@ -1,10 +1,4 @@
-/**
- * T3o migration 012 (t3o-13, D6): recompute the stored `blocked` flag under
- * the new dependency rule. Databases written before t3o-13 flagged a card
- * blocked because of an archived dependency, which now no longer gates — the
- * flag those rows hold is simply wrong, and it is wrong at exactly the moment
- * a user is trying to work out why a card looked stuck.
- */
+/** An archived dependency no longer gates, so its stored `blocked` flag is recomputed. */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -24,8 +18,7 @@ const dependsOnColumn = (ids: ReadonlyArray<string>) => `[${ids.map((id) => `"${
 /** Everything up to (but not including) 012 — the schema as the rows below
     were written under. */
 const migrateToPrevious = Effect.gen(function* () {
-  // T3o-26: board tables live in the attached board database now, so the
-  // attach has to happen before any board migration, exactly as at boot.
+  // Board tables live in the attached board database, so attach first, as at boot.
   yield* attachBoardDatabase();
   yield* runMigrations();
   for (const [id, , migration] of BOARD_MIGRATIONS) {
@@ -85,7 +78,7 @@ describe("migration 012: recompute blocked", () => {
         blocked: 1,
       });
       // Unfinished live dependency at Ready: blocked under 012's ready-onward
-      // rule, then UNBLOCKED by 016 (t3o-15 moved the gate to build-onward).
+      // rule, then UNBLOCKED by 016 (the gate moved to build-onward).
       yield* insertCard({
         id: "ready-open-dep",
         stage: "ready",

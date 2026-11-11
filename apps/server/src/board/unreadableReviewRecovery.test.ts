@@ -1,19 +1,7 @@
 /**
- * Getting a card OUT of a review round that recorded an unreadable payload
- * (T3O-14), against the LIVE reactor.
- *
- * The deadlock this closes: a `review@N` step completed `succeeded` with a
- * payload nothing could decode. The executor is right to refuse to converge on
- * it — an unreadable payload must never be read as "no findings" — so the loop
- * terminates and the card parks. But the completion was pinned by the
- * idempotency rule, so the round could be neither re-run nor rewritten, and
- * `handleStepCompleted` ignores any completion whose step has already settled.
- * Nothing in the board would ever ask again.
- *
- * Both ways out land here as a `repaired` completion — the agent re-recording a
- * valid payload, or the pane's Reopen sending the round back as `failed` — and
- * what these pin is that the reactor acts on it: the executor is asked again,
- * and the step it plans is the one the ledger now implies.
+ * Getting a card out of a review round that recorded an unreadable payload. The completion
+ * is pinned and an unreadable payload must never read as "no findings", so the card parks.
+ * Both ways out arrive as a `repaired` completion; the reactor must re-ask the executor.
  */
 import {
   BoardCardId,
@@ -139,7 +127,6 @@ it.effect("a repaired review payload restarts the loop at the step it was blocki
         completionEvent({
           outcome: "succeeded",
           summary: "Re-recording round 1",
-          // @effect-diagnostics-next-line preferSchemaOverJson:off - the stored payload is an opaque JSON string.
           payload: JSON.stringify({
             reviewedSha: "abc123",
             findings: [

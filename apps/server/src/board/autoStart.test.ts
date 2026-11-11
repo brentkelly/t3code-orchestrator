@@ -1,16 +1,7 @@
 /**
- * Auto-start (T3O-24): one boolean on a card waiting at Ready that moves it
- * into Building the moment its last dependency reaches Done.
- *
- * Driven through the live reactor against the stateful engine double
- * (`withGovernor`), because the behaviour spans the fire path, the real
- * decider's move gate, worktree provisioning and the 30s tick. The engine
- * double decides every dispatched command with the production decider, so a
- * move this suite says the card makes is a move the decider really allowed.
- *
- * Nothing here sleeps or polls: the sweep is driven by calling the reactor's
- * own `startArmed` hook, exactly as the scheduled-start suite drives
- * `fireSchedules`.
+ * Auto-start: a card waiting at Ready moves into Building the moment its last dependency
+ * reaches Done. Driven through the live reactor and the engine double, which decides with the
+ * production decider; the sweep runs by calling the reactor's own `startArmed` hook.
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -41,15 +32,8 @@ import {
 } from "./supervisorHarness.testkit.ts";
 
 /**
- * Fold an event into the read model, then deliver it — the order production
- * runs in, the projection pipeline sitting ahead of the reactor's domain
- * stream.
- *
- * The harness's own pump folds only the handful of event types whose suites
- * need it; every other suite seeds the post-move card into its fixture board
- * instead. This one cannot: the card it asserts on is a DIFFERENT card from
- * the one that moved, so the dependency really has to change under the reactor
- * while it runs.
+ * Fold an event into the read model, then deliver it, in production order. Needed here because
+ * the asserted card is not the one that moved, so the dependency must change under the reactor.
  */
 const deliver = (h: Pick<Harness, "model" | "pumpDomain">, event: HarnessEvent) =>
   Ref.get(h.model).pipe(
@@ -64,12 +48,10 @@ const deliver = (h: Pick<Harness, "model" | "pumpDomain">, event: HarnessEvent) 
     Effect.andThen(h.pumpDomain(event)),
   );
 
-/** Deliver the move a reactor DISPATCH produced, so the rest of the pipeline
-    runs on it. The engine double decides and projects a dispatched command but
-    does not feed its event back into the domain queue, so a suite that wants
-    the downstream — step selection, the governor's slots — has to hand it over
-    itself. Reads the card as the dispatch left it, so the event is the real
-    one. */
+/**
+ * Deliver the move a reactor DISPATCH produced: the engine double does not feed dispatched
+ * events back into the domain queue, so a suite that needs the downstream hands it over.
+ */
 const deliverAutoStart = (
   h: Pick<Harness, "model" | "pumpDomain" | "board">,
   id: string,
@@ -145,9 +127,9 @@ it.effect("starts an armed card when its last dependency reaches Done", () =>
       yield* deliver(h, cardMoved(blocker("dep", DONE), BUILDING, DONE, 1));
 
       assert.strictEqual(stageOf(yield* board, "waiter"), BUILDING);
-      // Auto-build is a lasting setting (T3O-38): the move does not spend it.
+      // Auto-build is a lasting setting: the move does not spend it.
       assert.strictEqual(armOf(yield* board, "waiter"), true);
-      // An ORDINARY forward move, the one a human's Begin build makes (D3):
+      // An ORDINARY forward move, the one a human's Begin build makes:
       // no `override`, so the decider's every gate still applies and nothing
       // downstream can tell an auto-started card from a dragged one.
       const [move] = moveTypes(yield* h.commands);
@@ -200,7 +182,7 @@ it.effect("fires when the blocking card is ARCHIVED rather than finished", () =>
   withGovernor(setup([armedCard({ dependsOn: ["dep"] }), blocker("dep", BUILDING)]), (h) =>
     Effect.gen(function* () {
       const { board } = h;
-      // t3o-13 D1: archiving means the work is not happening, so a gate
+      // Archiving means the work is not happening, so a gate
       // waiting on it is a deadlock. An armed card must clear it too.
       // The card the decider emits already carries its `archivedAt` — the
       // projector upserts the payload card whole.
@@ -235,7 +217,7 @@ it.effect("fires for a leaf inside a group too — any leaf may be armed (T3O-27
   ),
 );
 
-// ── D5: a move refused for a NON-dependency reason leaves the card armed ──
+// ── A move refused for a NON-dependency reason leaves the card armed ──
 
 it.effect("a card awaiting split approval stays armed, and fires once it is approved", () =>
   Effect.gen(function* () {
@@ -294,7 +276,7 @@ it.effect("a card awaiting split approval stays armed, and fires once it is appr
   }),
 );
 
-// ── D6: the sweep is the self-healing half ───────────────────────────────
+// ── The sweep is the self-healing half ───────────────────────────────
 
 it.effect("the sweep starts a card whose dependency landed while nothing was listening", () =>
   withGovernor(
@@ -383,7 +365,7 @@ it.effect("an unrelated edit on an armed, still-blocked card does nothing", () =
   ),
 );
 
-// ── D10: an arm and a schedule compose without knowing about each other ──
+// ── An arm and a schedule compose without knowing about each other ──
 
 it.effect("an armed AND scheduled card enters Building, then holds its step for the time", () =>
   withGovernor(
@@ -434,7 +416,7 @@ it.effect("an auto-started card with no free slot queues honestly", () =>
         assert.strictEqual(stageOf(yield* board, "waiter"), BUILDING);
         yield* deliverAutoStart(h, "waiter", 3);
 
-        // Nothing downstream is special-cased for an auto-start (D3): with the
+        // Nothing downstream is special-cased for an auto-start: with the
         // only slot taken the card sits `Queued #n` like any other, which is
         // the honest answer.
         assert.strictEqual(stepStatus(yield* board, BoardCardId.make("waiter")), "queued");
@@ -442,7 +424,7 @@ it.effect("an auto-started card with no free slot queues honestly", () =>
   ),
 );
 
-// ── Automation toggles (T3O-38) ───────────────────────────────────────────
+// ── Automation toggles ───────────────────────────────────────────
 
 const armEdit = (card: BoardCard, sequence: number) =>
   ({

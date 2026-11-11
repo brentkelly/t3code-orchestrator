@@ -1,22 +1,8 @@
 /**
- * The board's todo cache feed (t3o-26 D3, T3O-56, T3O-58).
- *
- * The board's todo cache (`board_thread_todos`, t3o-18) is a projection of two
- * thread signals: `todos-changed` and `thread-deleted`. They come off the
- * thread gateway's durable todo log, which the tail follows itself — reading,
- * never writing — with its cursor in `boards.projection_state`.
- *
- * The cursor only moves inside the transaction that applies a relevant event,
- * and at the end of a catch-up. A crash therefore re-scans irrelevant events at
- * worst, never re-applies an older plan over a newer one.
- *
- * An event that fails to apply (or a catch-up that fails part-way) pins the
- * persisted cursor just before it for the rest of the run. The tail keeps going
- * so `drain` does not hang, and the next boot replays from the failure, in
- * order, so the newest plan still lands last.
- *
- * A database that has never had a cursor starts at upstream's head: a board
- * that has no cards cannot have linked any thread whose history it would miss.
+ * Feeds `board_thread_todos` from the gateway's durable todo log. The cursor
+ * moves only inside the applying transaction, so a crash never re-applies an
+ * older plan; a failed apply pins the persisted cursor before it so the next
+ * boot replays from there in order. A first boot starts at the log head.
  */
 import type { ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -54,7 +40,7 @@ export class BoardThreadTail extends Context.Service<BoardThreadTail, BoardThrea
   "t3/board/boardThreadTail",
 ) {}
 
-export const makeBoardThreadTail = Effect.gen(function* () {
+const makeBoardThreadTail = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const gateway = yield* ThreadGateway;
   const store = makeBoardEventStore(sql);
@@ -84,40 +70,39 @@ export const makeBoardThreadTail = Effect.gen(function* () {
     Ref.update(pinnedAt, (pinned) => (pinned === null ? sequence : Math.min(pinned, sequence)));
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-  const saveCursor = (sequence: number) =>
-    Effect.gen(function* () {
-      const pinned = yield* Ref.get(pinnedAt);
-      const at = yield* nowIso;
-      yield* store.setWatermark(
-        BOARD_THREAD_TAIL_PROJECTOR,
-        pinned === null ? sequence : Math.min(pinned, sequence),
-        at,
-      );
-    });
+  // Untraced: saveCursor and apply run once per thread-log entry.
+  const saveCursor = Effect.fnUntraced(function* (sequence: number) {
+    const pinned = yield* Ref.get(pinnedAt);
+    const at = yield* nowIso;
+    yield* store.setWatermark(
+      BOARD_THREAD_TAIL_PROJECTOR,
+      pinned === null ? sequence : Math.min(pinned, sequence),
+      at,
+    );
+  });
 
-  const apply = (entry: TodoLogEntry) =>
-    Effect.gen(function* () {
-      if (entry.cursor <= (yield* SubscriptionRef.get(processed))) return;
-      const signal = entry.signal;
-      if (signal !== null) {
-        const applied = yield* sql
-          .withTransaction(
-            projector.applyTodoSignal(signal).pipe(Effect.andThen(saveCursor(entry.cursor))),
-          )
-          .pipe(
-            Effect.as(true),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("board thread tail failed to apply a signal", {
-                signalType: signal.type,
-                cursor: entry.cursor,
-                cause,
-              }).pipe(Effect.andThen(pin(entry.cursor - 1)), Effect.as(false)),
-            ),
-          );
-        if (applied) yield* PubSub.publish(changes, signal.threadId);
-      }
-      yield* SubscriptionRef.set(processed, entry.cursor);
-    });
+  const apply = Effect.fnUntraced(function* (entry: TodoLogEntry) {
+    if (entry.cursor <= (yield* SubscriptionRef.get(processed))) return;
+    const signal = entry.signal;
+    if (signal !== null) {
+      const applied = yield* sql
+        .withTransaction(
+          projector.applyTodoSignal(signal).pipe(Effect.andThen(saveCursor(entry.cursor))),
+        )
+        .pipe(
+          Effect.as(true),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("board thread tail failed to apply a signal", {
+              signalType: signal.type,
+              cursor: entry.cursor,
+              cause,
+            }).pipe(Effect.andThen(pin(entry.cursor - 1)), Effect.as(false)),
+          ),
+        );
+      if (applied) yield* PubSub.publish(changes, signal.threadId);
+    }
+    yield* SubscriptionRef.set(processed, entry.cursor);
+  });
 
   // Catch up through the head captured above, then persist the cursor once so
   // the next boot does not re-scan what was just read.
@@ -137,7 +122,7 @@ export const makeBoardThreadTail = Effect.gen(function* () {
   }
 
   yield* Effect.forkScoped(Stream.runForEach(live, apply));
-  // T3o (T3O-63): the workers' todo signals are applied by their feed, with
+  // T3o: the workers' todo signals are applied by their feed, with
   // its own cursor; their changes reach board clients here all the same.
   const feed = yield* Effect.serviceOption(WorkerSignalFeed);
   if (Option.isSome(feed)) {

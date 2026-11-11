@@ -1,14 +1,7 @@
 /**
- * Draft pull requests (T3O-12): with the Code review stage's
- * `draftPullRequests` on, the review agent opens the pull request as a draft
- * and the board marks it ready when the card arrives at Ready for merge — the
- * one moment the repository's full CI should start.
- *
- * Driven through the live reactor (`withGovernor`), because the behaviour is
- * the arrival handler, the merge path and the forge seam together. The
- * gateway's own live-read idempotency is covered in
- * `BoardPullRequestGateway.test.ts`; here the stub answers `readied` once and
- * `not-draft` after, which is exactly what that read produces.
+ * With `draftPullRequests` on, the board marks the draft ready when the card
+ * arrives at Ready for merge. The stub answers `readied` once and `not-draft`
+ * after, as the gateway's live read does.
  */
 import {
   BOARD_DRAFT_PULL_REQUEST_BUILD,

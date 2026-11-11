@@ -1,5 +1,5 @@
 /**
- * Regrouping gestures (T3O-27) as one shared service: indent, outdent and
+ * Regrouping gestures as one shared service: indent, outdent and
  * "group into new" all resolve to the one `board.card.move-cards` primitive,
  * so the list view, keyboard, drag and MCP agree on where cards land. Pure:
  * the decider still validates every move.
@@ -23,7 +23,7 @@ export type BoardRegroupPlan =
   | { readonly kind: "refused"; readonly reason: string };
 
 /** A group's live children in board order: stage order, then column order. */
-export function boardSiblingsInOrder(
+function boardSiblingsInOrder(
   board: BoardState,
   parentCardId: BoardCardId | null,
 ): ReadonlyArray<BoardCard> {
@@ -124,7 +124,7 @@ export function boardGroupIntoNewPlan(
 }
 
 /**
- * Shared parent (T3O-28, decision 12): a started card cannot become a group,
+ * Shared parent (decision 12): a started card cannot become a group,
  * so a new group is made where it sits and it and `cardIds` move in side by
  * side. The started card's merge target is unchanged: the new group inherits.
  */

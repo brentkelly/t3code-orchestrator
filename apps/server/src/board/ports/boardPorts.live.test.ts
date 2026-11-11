@@ -1,5 +1,5 @@
 /**
- * The port adapters (T3O-45) against stubbed upstream services: each port
+ * The port adapters against stubbed upstream services: each port
  * forwards to the upstream service it narrows. Testkits stub the ports
  * directly, so without this a broken adapter would only surface in prod.
  */

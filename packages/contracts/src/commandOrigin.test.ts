@@ -1,12 +1,6 @@
 /**
- * The command-id origin rule (T3O-17, D2), which two readers now share:
- * upstream's actor inference and the board supervisor's "was this my own
- * nudge, or a human typing?".
- *
- * The board test that matters most is the last one: it mints an id exactly the
- * way `supervisorReactor`'s `commandId` helper does and asserts it classifies
- * as the board's. If that minting ever changes shape, this fails here rather
- * than silently turning every board nudge into a human steer.
+ * The last test mints an id exactly as `supervisorReactor` does, so a change to that
+ * minting fails here rather than turning every board nudge into a human steer.
  */
 import { describe, expect, it } from "@effect/vitest";
 

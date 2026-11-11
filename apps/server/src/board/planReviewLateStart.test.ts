@@ -1,7 +1,7 @@
 /**
- * Plan review (T3O-39) in the supervisor: turned on after the plan was posted,
+ * Plan review in the supervisor: turned on after the plan was posted,
  * the review's instructions go to the planning thread as a turn, even on a
- * step the decider reopened or resumed for it (T3O-50). A rounds change
+ * step the decider reopened or resumed for it. A rounds change
  * mid-review tells the thread the new total.
  */
 import {

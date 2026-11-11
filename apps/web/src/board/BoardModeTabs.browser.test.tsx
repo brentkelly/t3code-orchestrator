@@ -1,6 +1,6 @@
 /**
  * The sidebar header takes the mode tabs only when it has `MODE_TABS_MIN_WIDTH`
- * of room (T3O-34). That threshold is built on the control's rendered width,
+ * of room. That threshold is built on the control's rendered width,
  * so the control as rendered must fit inside the number it is sized by.
  */
 import "~/index.css";

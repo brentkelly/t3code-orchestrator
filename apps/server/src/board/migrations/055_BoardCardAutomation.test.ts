@@ -1,5 +1,5 @@
 /**
- * Board migration 055 (T3O-38): own Automation toggles on `board_cards`,
+ * Board migration 055: own Automation toggles on `board_cards`,
  * backfilled so every card keeps the behaviour it had.
  */
 import { assert, it } from "@effect/vitest";

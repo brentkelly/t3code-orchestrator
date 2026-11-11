@@ -24,6 +24,11 @@ import {
   type BoardStageDefinition,
 } from "./index.ts";
 
+const decodeClientCommandOption = Schema.decodeUnknownOption(BoardClientCommand);
+const decodeSettingsCommandOption = Schema.decodeUnknownOption(BoardSettingsClientCommand);
+const decodeCommandOption = Schema.decodeUnknownOption(BoardCommand);
+const decodeSettingsCommand = Schema.decodeUnknownSync(BoardSettingsClientCommand);
+
 const script = (id: string, parallel = false): BoardCiStep => ({
   kind: "script",
   id,
@@ -110,7 +115,7 @@ describe("normalization and version", () => {
       },
     });
     expect(normalized.stageSwitches).toEqual({ sprint: false });
-    // T3O-57: `maxRoundTrips` is no longer a CI key, so a stored one is dropped.
+    // `maxRoundTrips` is no longer a CI key, so a stored one is dropped.
     expect(normalized.overrides.ci).toEqual({ autoExecute: false });
     // A prompt override is kept even when it matches: it pins the text.
     expect(normalized.overrides.building).toHaveProperty("prompt");
@@ -201,9 +206,9 @@ describe("settings commands", () => {
   };
 
   it("never decode through board.dispatchCommand", () => {
-    expect(Schema.decodeUnknownOption(BoardClientCommand)(command)._tag).toBe("None");
-    expect(Schema.decodeUnknownOption(BoardSettingsClientCommand)(command)._tag).toBe("Some");
-    expect(Schema.decodeUnknownOption(BoardCommand)(command)._tag).toBe("Some");
+    expect(decodeClientCommandOption(command)._tag).toBe("None");
+    expect(decodeSettingsCommandOption(command)._tag).toBe("Some");
+    expect(decodeCommandOption(command)._tag).toBe("Some");
     const stageCreate = {
       type: "board.stage.create",
       commandId: "c2",
@@ -212,11 +217,11 @@ describe("settings commands", () => {
       orderKey: "k",
       createdAt: "2026-01-01T00:00:00.000Z",
     };
-    expect(Schema.decodeUnknownOption(BoardClientCommand)(stageCreate)._tag).toBe("None");
+    expect(decodeClientCommandOption(stageCreate)._tag).toBe("None");
   });
 
   it("leave the actor for the server to stamp", () => {
-    const decoded = Schema.decodeUnknownSync(BoardSettingsClientCommand)(command);
+    const decoded = decodeSettingsCommand(command);
     expect("actor" in decoded).toBe(false);
   });
 });

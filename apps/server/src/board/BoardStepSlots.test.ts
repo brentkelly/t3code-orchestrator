@@ -80,7 +80,7 @@ it.effect("counts slots per worker and instance, and totals across all", () =>
   }).pipe(Effect.provide(BoardStepSlotsLive)),
 );
 
-// ── Governor policy (t3o-11, D11; T3O-65) ──────────────────────────────────
+// ── Governor policy ──────────────────────────────────
 
 it.effect("the board limit caps total running steps across every worker and instance", () =>
   Effect.gen(function* () {

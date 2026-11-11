@@ -1,5 +1,5 @@
 /**
- * Board card filter (T3O-16): the top bar's filter box. Typing narrows the
+ * Board card filter: the top bar's filter box. Typing narrows the
  * board to the cards whose title or key matches, across every column, without
  * disturbing the ordering substrate the drag path anchors into.
  */

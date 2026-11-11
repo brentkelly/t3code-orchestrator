@@ -7,7 +7,9 @@ import {
   type BoardState,
   type BoardWorker,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -73,7 +75,7 @@ const refusal = (readModel: BoardOrchestrationReadModel, command: BoardCommand) 
     Effect.map((error) => ("detail" in error ? error.detail : error.message)),
   );
 
-it.layer(NodeServices.layer)("board worker registry", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board worker registry", (it) => {
   it.effect("registers and removes workers, keeping the registry in label order", () =>
     Effect.gen(function* () {
       let next = yield* apply(model(), register(worker("env-b", "zeta")));

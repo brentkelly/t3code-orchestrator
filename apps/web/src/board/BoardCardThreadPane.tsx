@@ -1,19 +1,7 @@
 /**
- * T3o card thread pane (t3o-06). From Planning onward the card modal is a
- * working surface, not a form: the card's thread runs inside it, with a tab
- * per linked thread — the prototype's `T3 Code Kanban v4.dc.html` thread pane.
- *
- * The conversation itself is the app's own `ChatView`, mounted with
- * `chrome="embedded"` (its one T3o seam) so the pane's tab strip is the only
- * header. Nothing about the chat is reimplemented here: same timeline, same
- * composer, same model row, so a card thread and a Threads-view thread can
- * never drift apart.
- *
- * Threads arrive here three ways (t3o-14, superseding adoption-only): the board
- * starts one by itself when a card enters an auto-executing stage (t3o-15), the
- * `+` menu starts one on demand, or you adopt an existing thread. All three end
- * at the same `board.card.link-thread` (D9) — the link is still the only way a
- * thread joins a card.
+ * The card modal's thread pane: a tab per linked thread, each mounting the app's
+ * own `ChatView` with `chrome="embedded"` so a card thread never drifts from a
+ * Threads-view thread.
  */
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -34,7 +22,7 @@ import {
   SquareArrowOutUpRightIcon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import ChatView from "../components/ChatView";
 import { observeResize } from "../lib/observeResize";
@@ -75,7 +63,7 @@ function BoardCardChat({
 }) {
   const threadRef = scopeThreadRef(environmentId, threadId);
   const inShell = useThreadShell(threadRef) !== null;
-  // The shell keeps only the newest settled threads; older ones are read on demand (T3O-41).
+  // The shell keeps only the newest settled threads; older ones are read on demand.
   const rows = useBoardCardThreadRows(environmentId, inShell ? NO_THREAD_IDS : [threadId]);
   const presence = boardCardChatPresence({ threadId, inShell, rows });
 
@@ -187,21 +175,21 @@ export function BoardCardThreadPane({
   readonly onUnlinkThread: (threadId: ThreadId) => void;
   readonly maximised: boolean;
   readonly onToggleMaximised: () => void;
-  /** Each live-linked thread's cached todo list (t3o-18, D3/D5). The modal
+  /** Each live-linked thread's cached todo list. The modal
       always shows what is STORED — unlike the card strip, which hides a finished
       list on a stopped thread — so a thread that succeeded still reads `5/5`
       here. */
   readonly threadTodos?: ReadonlyMap<ThreadId, BoardCardThreadShell> | undefined;
-  /** The card's place in the build queue (t3o-33), or null when it is not
+  /** The card's place in the build queue, or null when it is not
       queued. */
   readonly queueInfo?: BoardQueueInfo | null | undefined;
   readonly queueForceStartPending?: boolean | undefined;
   readonly onQueueForceStart?: (() => void) | undefined;
-  /** Docked at the end of the thread, e.g. the split gate (T3O-31). */
+  /** Docked at the end of the thread, e.g. the split gate. */
   readonly footer?: ReactNode;
 }) {
   // A new blank thread becomes the card's most-recently-linked live thread, so
-  // selecting it opens its ChatView (which focuses the composer on mount, D3).
+  // selecting it opens its ChatView (which focuses the composer on mount).
   const createBlankThreadAndSelect = () => {
     void onCreateBlankThread().then((threadId) => {
       if (threadId !== null) onSelectThread(threadId);
@@ -219,17 +207,21 @@ export function BoardCardThreadPane({
   // remain hidden so the chevron only appears when it does something.
   const stripRef = useRef<HTMLDivElement | null>(null);
   const [canScrollRight, setCanScrollRight] = useState(false);
-  const syncScrollAffordance = useCallback(() => {
+  // What the tabs' widths depend on, so a board push that changes neither skips the re-measure.
+  const tabStripKey = threadLinks.map((link) => `${link.threadId}:${link.title ?? ""}`).join("\n");
+  const syncScrollAffordance = () => {
     const el = stripRef.current;
     if (el === null) return;
     setCanScrollRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 1);
-  }, []);
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the tab strip's size to show the scroll chevron only while tabs are hidden
   useEffect(() => {
     const el = stripRef.current;
     if (el === null) return undefined;
     syncScrollAffordance();
     return observeResize(el, syncScrollAffordance);
-  }, [syncScrollAffordance, threadLinks]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- a new or renamed tab widens the strip's content without resizing the strip, so it re-measures.
+  }, [syncScrollAffordance, tabStripKey]);
   const scrollOlderIntoView = () => {
     stripRef.current?.scrollBy({ left: stripRef.current.clientWidth * 0.7, behavior: "smooth" });
   };
@@ -254,11 +246,8 @@ export function BoardCardThreadPane({
           {orderedLinks.map((link) => {
             const active = link.threadId === selectedThreadId;
             return (
-              // The pill is a GROUP, not one button: nesting the unlink control
-              // inside the select button would be invalid HTML and made it
-              // keyboard-unreachable (it was a presentation-role span). The
-              // wrapper draws the pill; select and unlink are real sibling
-              // buttons, each focusable in its own right.
+              // A group, not one button: select and unlink are sibling buttons so
+              // the unlink control is valid HTML and keyboard-reachable.
               <span
                 className={cn(
                   // The tab strip scrolls, so its overflow clips anything drawn
@@ -295,7 +284,7 @@ export function BoardCardThreadPane({
                         />
                       </BoardHint>
                     ) : isBoardCardAwaitingPermission(link) ? (
-                      // Blocked on a permission prompt (T3O-16): as answerable
+                      // Blocked on a permission prompt: as answerable
                       // as a question, so the same violet, not the idle glyph.
                       <BoardHint label="Waiting for permission">
                         <span
@@ -313,11 +302,8 @@ export function BoardCardThreadPane({
                         />
                       </BoardHint>
                     ) : link.threadState === "failed" ? (
-                      // A dead provider session (t3o-10) reads as idle if it
-                      // falls through to the generic glyph, which is the lie
-                      // this card set out to remove. Red, the colour the thread
-                      // list and the activity rail already give a failure — not
-                      // a work-state colour, because no work is happening.
+                      // A dead provider session must not read as idle: red, the failure
+                      // colour, not a work-state colour.
                       <BoardHint label="Failed">
                         <span
                           aria-label="Failed"
@@ -332,7 +318,7 @@ export function BoardCardThreadPane({
                       {link.title ?? "Deleted thread"}
                     </span>
                     {(() => {
-                      // Per-tab todo counts (t3o-18): the point of tabs is choosing
+                      // Per-tab todo counts: the point of tabs is choosing
                       // between threads, and "3/9" answers that better than a title.
                       const todo = threadTodos?.get(link.threadId);
                       const total = todo?.todoTotal ?? 0;
@@ -401,11 +387,8 @@ export function BoardCardThreadPane({
         ) : null}
       </div>
 
-      {/* Queued for a build slot (t3o-33). PANE-LEVEL, above whichever thread is
-          selected, because a queued card has no build thread to put it in — the
-          governor spawns nothing until it admits the step, so the pane is
-          showing the planning conversation the card arrived with. Without this
-          the transcript reads as though the build already ran and stopped. */}
+      {/* Pane-level: a queued card has no build thread yet, so without this the
+          planning transcript reads as though the build already ran. */}
       {queueInfo == null ? null : (
         <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-3 py-2">
           <ClockIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -444,8 +427,8 @@ export function BoardCardThreadPane({
               {selected?.tombstoned === true
                 ? "The link stays so the card's history reads honestly. Start another thread to keep working."
                 : stageRestart !== null
-                  ? "Moving a card into this stage starts one by itself. Start another here, or adopt an existing thread — either way the brief, labels and dependencies travel with the card."
-                  : "Start a thread here, or adopt an existing one — the brief, labels and dependencies travel with the card."}
+                  ? "Moving a card into this stage starts one by itself. Start another here, or adopt an existing thread. Either way the brief, labels and dependencies travel with the card."
+                  : "Start a thread here, or adopt an existing one. The brief, labels and dependencies travel with the card."}
             </div>
             <div className="pt-0.5">
               <BoardCardThreadAddMenu
@@ -469,7 +452,7 @@ export function BoardCardThreadPane({
             threadId={selected.threadId}
             todo={threadTodos?.get(selected.threadId)}
           />
-          {/* A thread on a worker opens in that worker's environment (T3O-63). */}
+          {/* A thread on a worker opens in that worker's environment. */}
           <BoardThreadWorkerGate key={selected.threadId} worker={selected.worker}>
             {(threadEnvironmentId) => (
               <BoardCardChat environmentId={threadEnvironmentId} threadId={selected.threadId} />

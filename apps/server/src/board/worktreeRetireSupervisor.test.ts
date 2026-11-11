@@ -1,10 +1,6 @@
 /**
- * T3O-23: the supervisor retires a worktree before removing it.
- *
- * The retirement itself (stop, check, remove scripts, remove) is proven in
- * `worktreeRetire.test.ts`. Here: what the board does with its answers — a
- * process still running keeps the worktree and says why, a remove script's
- * failure reaches the card's rail, and a card delete does not wait for it.
+ * The supervisor's use of retirement: a running process keeps the worktree and says why, a
+ * remove script's failure reaches the card's rail, and a card delete does not wait for it.
  */
 import {
   BOARD_SEED_STAGE_IDS,

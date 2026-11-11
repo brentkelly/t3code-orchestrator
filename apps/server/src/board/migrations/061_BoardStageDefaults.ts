@@ -1,15 +1,6 @@
-// T3o: one global stage list with per-project switches (T3O-49).
-//
-// - `board_stages.default_for_projects`: whether a project with no switch of
-//   its own uses the stage. NULL on every existing row, read through
-//   `boardStageDefaultForProjects` (on for a global stage, off for CI and for
-//   a stage a T3O-43 `t3o.json` added), so no row needs rewriting.
-// - Stage rows that share an order key (two projects' files added a stage
-//   after the same anchor) are re-keyed, so the one list has one order.
-// - A role-less stage between CI and the merge stage could change code after
-//   CI passed: it moves to just before CI.
-// - `board_ci_passes.snapshot`: the CI steps a pass froze at its start.
-// - `board_cards.ci_round_trips`: CI failure round trips without a human.
+// A NULL `default_for_projects` is read through `boardStageDefaultForProjects`,
+// so no row needs rewriting. Stages sharing an order key are re-keyed, and a
+// role-less stage between CI and merge moves before CI.
 import { boardOrderKeyBetween } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";

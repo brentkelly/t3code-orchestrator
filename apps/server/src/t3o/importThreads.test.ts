@@ -193,10 +193,7 @@ it.layer(NodeServices.layer)("runImportThreads", (it) => {
       const error = yield* runImportThreads({ ...defaults, from, baseDir }).pipe(Effect.flip);
 
       assert.equal(error._tag, "ImportThreadsSourceNewerError");
-      assert.include(
-        error.message,
-        "Your T3 Code is newer than this T3o build — update T3o first.",
-      );
+      assert.include(error.message, "Your T3 Code is newer than this T3o build. Update T3o first.");
       assert.isFalse(yield* fs.exists(path.join(baseDir, "userdata", "statev2.sqlite")));
     }).pipe(Effect.scoped),
   );

@@ -1,22 +1,7 @@
 /**
- * T3o board MCP toolkit — the relay (T3O-63, D3).
- *
- * An agent on a worker keeps calling the `/mcp` of the server its thread runs
- * on. When that thread was placed there by a central board, its board tools
- * must act on THAT board, not the worker's own:
- *
- * - **Worker side** (`relayable`): a call from a thread in the relayed-thread
- *   registry is handed to the central server over the relay stream it holds
- *   open, and the agent gets the central server's answer. With no central
- *   server connected, or no answer in time, the tool fails with a retryable
- *   `board-unreachable` — never a silent success.
- * - **Central side** (`runRelayedBoardTool`): the same handlers run under a
- *   synthesized invocation scope, after two checks of its own: the thread is
- *   linked to a card on the very worker the call arrived from, and the thread
- *   is a live caller as the ROUTED gateway sees it (the thread is on the
- *   worker, which this server's own thread service has never heard of).
- *
- * Parameters and results cross the wire encoded with the tool's own schemas.
+ * Board MCP relay. Worker side (`relayable`): a relayed thread's board call goes to the central
+ * server and fails with a retryable `board-unreachable` when none answers. Central side
+ * (`runRelayedBoardTool`): the same handlers run once the thread is linked on the calling worker.
  */
 import {
   OrchestratorMcpFailure,
@@ -56,11 +41,8 @@ const READ_TOOLS: ReadonlySet<string> = new Set<BoardToolName>([
 ]);
 
 /**
- * Central side: the call being answered came from a worker. Board tools read
- * the worker's state directory from it, so the paths they hand out (the
- * brief's staged files) are paths on the machine the agent runs on, and stage
- * the card's current files there first, so a file added after the spawn
- * exists where its path points.
+ * Central side: the worker a call came from. Board tools hand out paths in its state directory
+ * and stage the card's current files there first, so the paths exist where the agent runs.
  */
 export class BoardRelayInvocation extends Context.Service<
   BoardRelayInvocation,
@@ -179,14 +161,14 @@ type AnyBoardHandler = (
  * `handlers` are the board tool handlers, passed in so this module needs no
  * import of them; their services must already be provided.
  */
-export const runRelayedBoardTool = (input: {
-  readonly workerId: EnvironmentId;
-  readonly centralEnvironmentId: EnvironmentId;
-  readonly request: BoardMcpRelayRequest;
-  readonly handlers: Readonly<Record<string, AnyBoardHandler>>;
-  readonly stageCardFiles: BoardRelayInvocation["Service"]["stageCardFiles"];
-}): Effect.Effect<BoardMcpRelayOutcome, never, BoardQueries | ThreadGateway> =>
-  Effect.gen(function* () {
+export const runRelayedBoardTool = Effect.fn("BoardMcpRelay.runRelayedBoardTool")(
+  function* (input: {
+    readonly workerId: EnvironmentId;
+    readonly centralEnvironmentId: EnvironmentId;
+    readonly request: BoardMcpRelayRequest;
+    readonly handlers: Readonly<Record<string, AnyBoardHandler>>;
+    readonly stageCardFiles: BoardRelayInvocation["Service"]["stageCardFiles"];
+  }) {
     const { request, workerId } = input;
     const handler = input.handlers[request.toolName];
     if (handler === undefined || !(request.toolName in BoardToolkit.tools)) {
@@ -194,7 +176,7 @@ export const runRelayedBoardTool = (input: {
     }
     const name = request.toolName as BoardToolName;
 
-    // Authorised twice (D3): linked to a card, and placed on THIS worker. A
+    // Authorised twice: linked to a card, and placed on THIS worker. A
     // write naming another card is bound the same way in its handler
     // (`refuseOtherWorkersCard`), so one worker never acts on another's cards.
     const queries = yield* BoardQueries;
@@ -271,10 +253,10 @@ export const runRelayedBoardTool = (input: {
     return Option.isSome(encoded)
       ? ({ _tag: "success", value: encoded.value } satisfies BoardMcpRelayOutcome)
       : failure("internal", "The board's answer did not encode.");
-  }).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logWarning("board relay: a relayed call failed", { cause }).pipe(
-        Effect.as(failure("internal", "The board failed to answer this call.")),
-      ),
+  },
+  Effect.catchCause((cause) =>
+    Effect.logWarning("board relay: a relayed call failed", { cause }).pipe(
+      Effect.as(failure("internal", "The board failed to answer this call.")),
     ),
-  );
+  ),
+);

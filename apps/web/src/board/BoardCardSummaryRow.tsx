@@ -1,20 +1,7 @@
 /**
- * T3o card summary rows (t3o-06). Two of them:
- *
- * `BoardCardSummaryRow` renders the inline `BoardCardSummaryItem`s
- * `boardCardSummary` derives from a `BoardCardShell` — attachment counts today
- * — and changes with the card's stage. The two full-width blocks live here too
- * but render on their own rows, because their bars stretch the card:
- * `BoardCardPlansRow` for a split parent's children and `BoardCardReviewBlock`
- * for the review ledger. `boardCardProgressBlock` picks which one a card gets.
- *
- * `BoardCardMetaRow` is the stage-independent footer: dependencies, agent
- * threads, plans and the pull request as icon+count pairs, with the brief's
- * image flag pushed to the far end.
- *
- * Static presentation only: no animations (upstream AGENTS.md — repainting
- * loops peg the GPU on high-refresh displays). Either row renders nothing when
- * it has nothing to say, so a card with no data adds no height.
+ * Card face summary rows: inline summary items, the full-width progress blocks
+ * (plans bar, review ledger), and the stage-independent meta footer. Static only:
+ * no animations. A row with nothing to say renders nothing.
  */
 import {
   boardReviewHeldLabel,
@@ -45,27 +32,10 @@ import type { BoardCardWorkerChip } from "./workers/cardWorker";
 import type { BoardCardMeta, BoardCardSummaryItem } from "./boardCardSummary";
 import { BoardHint } from "./BoardHint";
 
-/** Max pips rendered for the plan-progress dot row (`PlanPips`), so a
-    pathological count cannot blow out the card width. */
-const MAX_SUMMARY_PIPS = 6;
-
 /**
- * The review-round bar: one segment per round in the budget, at `flex:1`, the
- * same full-width treatment the plan bar and the todo strip wear. It is the
- * card's progress element while a card sits in code review, which is why it is
- * a bar and not the six dots this used to be — a card whose only visible
- * progress was a 1.5px dot read as a card with no progress at all.
- *
- * Rounds already run get a dim fill, the round in flight a stronger one, the
- * budget still to come an empty track. Neutral on purpose: green would claim a
- * round that closed with findings still open was finished, and blue would claim
- * a settled loop was still working (`docs/t3o/status-colours.md`).
- *
- * "Round 5 of 5, 12 raised, 7 fixed" describes a loop that PASSED and a loop
- * that ran out of road in exactly the same numbers, so the counts cannot be
- * left to speak for themselves. A held loop tints EVERY segment amber — the
- * finding is about the loop, not about round 5 — and the flag beside the round
- * label says so in words.
+ * One segment per round in the budget. Neutral on purpose (`docs/t3o/status-colours.md`):
+ * a passed loop and an exhausted one can show the same counts, so a held loop
+ * tints every segment amber and the label says so in words.
  */
 function RoundBar({
   current,
@@ -114,18 +84,9 @@ function pickItem<K extends BoardCardSummaryItem["kind"]>(
 }
 
 /**
- * The review ledger as the card's ONE progress block (D8), in the prototype's
- * three-line shape: the round and what the loop is doing, the round bar, then
- * what the rounds actually found.
- *
- * This is what a card in code review shows INSTEAD of its plan bar or its todo
- * strip — including a split parent, whose children are finished by the time the
- * merged branch is under review, so their bar would report progress on work
- * nobody is waiting for (`boardCardProgressBlock`).
- *
- * Renders whatever parts of the ledger it was given: a card with rounds but no
- * findings yet draws the label and the bar and stops there, rather than a row of
- * zeroes.
+ * The review ledger as the card's one progress block, replacing the plan bar or
+ * todo strip while the card is in code review. Renders only the ledger parts it
+ * was given, never a row of zeroes.
  */
 export function BoardCardReviewBlock({
   items,
@@ -180,10 +141,10 @@ export function BoardCardReviewBlock({
           label={`${rounds}${
             held
               ? round.outcome === "stopped"
-                ? " — stopped, no convergence"
+                ? " (stopped, no convergence)"
                 : round.outcome === "stuck"
-                  ? " — stuck, needs your call"
-                  : " — no convergence"
+                  ? " (stuck, needs your call)"
+                  : " (no convergence)"
               : ""
           }`}
         >
@@ -191,10 +152,10 @@ export function BoardCardReviewBlock({
             aria-label={`${rounds}${
               held
                 ? round.outcome === "stopped"
-                  ? " — stopped, no convergence"
+                  ? " (stopped, no convergence)"
                   : round.outcome === "stuck"
-                    ? " — stuck, needs your call"
-                    : " — no convergence"
+                    ? " (stuck, needs your call)"
+                    : " (no convergence)"
                 : ""
             }`}
             className="flex items-center"
@@ -232,16 +193,9 @@ export const BOARD_CHIP_CLASS =
   "inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 text-[10.5px] font-medium whitespace-nowrap text-muted-foreground";
 
 /**
- * The split parent's plan bar (t3o-25, prototype `hasPlans`): one segment per
- * child plan card at `flex:1`, coloured by where that plan stands — done,
- * started (at or after the build role), not started — with the drill-in chip
- * on the right. This row IS the sub-board affordance: the chip replaces the
- * old full-width "N cards" footer button the prototype never had.
- *
- * `statuses` is the derived `d`/`i`/`p` string; a shell that was never
- * decorated with it (the archive sheet) falls back to done-then-pending from
- * the counts. Without `onOpen` (the drag ghost, the archive sheet) the chip
- * renders as a static twin so the card face does not reflow between surfaces.
+ * The split parent's plan bar: one segment per child plan plus the drill-in chip.
+ * Without `statuses` it falls back to done-then-pending from the counts; without
+ * `onOpen` the chip renders static so the face does not reflow between surfaces.
  */
 export function BoardCardPlansRow({
   done,
@@ -313,35 +267,6 @@ export function BoardCardPlansRow({
   );
 }
 
-/** Exported for the sub-board parent header (t3o-25, D2), which wears the
-    same pips the parent's card face does. */
-export function PlanPips({ done, total }: { readonly done: number; readonly total: number }) {
-  const shown = Math.min(total, MAX_SUMMARY_PIPS);
-  return (
-    <BoardHint label={`${done} of ${total} plans done`}>
-      <span
-        className="inline-flex items-center gap-0.5"
-        aria-label={`${done} of ${total} plans done`}
-      >
-        <span className="inline-flex items-center gap-0.5">
-          {Array.from({ length: shown }, (_, index) => (
-            <span
-              key={index}
-              className={cn(
-                "size-1.5 rounded-full",
-                index < done ? "bg-success" : "bg-muted-foreground/30",
-              )}
-            />
-          ))}
-        </span>
-        <span className="ml-0.5 text-[10.5px] font-medium text-muted-foreground">
-          {done}/{total} plans
-        </span>
-      </span>
-    </BoardHint>
-  );
-}
-
 function SeverityTriple({
   critical,
   improvement,
@@ -352,7 +277,7 @@ function SeverityTriple({
   readonly nitpick: number;
 }) {
   // Three bare numbers are meaningless to anyone who has not read the spec —
-  // the tooltip spells them out (t3o-06 verification).
+  // the tooltip spells them out.
   return (
     <BoardHint label={`${critical} critical · ${improvement} improvements · ${nitpick} nitpicks`}>
       <span
@@ -404,7 +329,7 @@ function SummaryItem({ item }: { readonly item: BoardCardSummaryItem }) {
       // rendered by the card itself) so its segments can stretch the card.
       return null;
     case "review-advanced":
-      // Neutral: not a pass, and not a call for a human (T3O-51).
+      // Neutral: not a pass, and not a call for a human.
       return (
         <span className="text-[10.5px] font-medium text-muted-foreground">
           Advanced past stuck round {item.round}
@@ -485,7 +410,7 @@ export function BoardCardMetaRow({
   worker,
 }: {
   readonly meta: BoardCardMeta;
-  /** The worker chip (T3O-65), at the row's right end; null on a board with
+  /** The worker chip, at the row's right end; null on a board with
       one worker. */
   readonly worker?: BoardCardWorkerChip | null | undefined;
 }) {
@@ -519,7 +444,7 @@ export function BoardCardMetaRow({
       {meta.prNumber === undefined ? null : (
         <MetaCount
           icon={PullRequestGlyph.pullRequest}
-          // A draft is neutral (T3O-12): not running, not done, not blocked —
+          // A draft is neutral: not running, not done, not blocked —
           // the board marks it ready when the card reaches Ready for merge.
           tint={meta.prDraft ? "text-muted-foreground" : "text-info-foreground"}
           title={
@@ -540,7 +465,7 @@ export function BoardCardMetaRow({
         </BoardHint>
       ) : null}
       {worker == null ? null : (
-        // Never a status colour (T3O-65): worker trouble goes in the notice
+        // Never a status colour: worker trouble goes in the notice
         // slot. Solid when the card is bound to its worker, dashed while it
         // follows the default and hasn't started.
         <BoardHint label={worker.tooltip}>
@@ -559,24 +484,12 @@ export function BoardCardMetaRow({
   );
 }
 
-// ── Thread todo strip (t3o-18, D4/D5) ──────────────────────────────────
+// ── Thread todo strip ──────────────────────────────────
 
 /**
- * One pip per STORED todo item, coloured by that item's real status.
- *
- * Deriving pips from `(done, total, hasDoing)` renders a tidy
- * `[done…][doing][pending…]` fiction that is wrong whenever an agent completes an
- * item out of order — which they do — so the server sends a status STRING and
- * every character renders where it actually is.
- *
- * All stored pips render, at `flex:1`. At 24 items each pip is ~7px on a ~230px
- * card: thin, but it reads as the progress bar it is, and the `2/24` beside it
- * carries the precision. `MAX_SUMMARY_PIPS` is deliberately NOT reused — six pips
- * standing for twenty-four items is actively misleading rather than merely
- * coarse.
- *
- * Static presentation only: no animation (upstream AGENTS.md — repainting loops
- * peg the GPU on high-refresh displays).
+ * One pip per stored todo item, coloured by that item's real status, since agents
+ * complete items out of order. All stored pips render; `MAX_SUMMARY_PIPS` is
+ * deliberately not reused because a few pips standing for many items misleads.
  */
 export function BoardTodoPips({
   statuses,
@@ -593,7 +506,7 @@ export function BoardTodoPips({
       <span aria-label={label} className="flex items-center gap-[2px]">
         {/* Indexed rather than mapped over the characters: a pip IS its position
           — the row is a positional progress bar and items never reorder within a
-          render — which is the same shape `PlanPips` and `RoundBar` use. */}
+          render — which is the same shape `RoundBar` uses. */}
         {Array.from({ length: statuses.length }, (_, index) => (
           <span
             className={cn(
@@ -612,7 +525,7 @@ export function BoardTodoPips({
   );
 }
 
-/** "13m" / "2h" on the item the agent is currently on (D6). Elapsed is anchored
+/** "13m" / "2h" on the item the agent is currently on. Elapsed is anchored
     to the moment the in-progress item's TEXT changed, so reordering and
     insertion do not reset it. */
 function todoElapsedLabel(startedAt: string | undefined): string | null {
@@ -622,13 +535,8 @@ function todoElapsedLabel(startedAt: string | undefined): string | null {
 }
 
 /**
- * The card's todo strip: the pip row, the honest `done/total` (TRUE counts, even
- * when only 30 pips were stored), the in-progress item, and how long it has been
- * on it.
- *
- * A card with more than one live thread gets a chip carrying the count. The chip
- * adds no height — it sits on the existing meta row — and clicking it expands the
- * other threads WITHOUT opening the card.
+ * The todo strip: pips, the true `done/total`, and the in-progress item with how
+ * long it has run. More than one live thread adds a count chip on the meta row.
  */
 export function BoardCardTodoStrip({
   todo,
@@ -695,7 +603,7 @@ export function BoardCardTodoStrip({
   );
 }
 
-/** One non-winning thread, revealed only after the chip is clicked (D8: a second
+/** One non-winning thread, revealed only after the chip is clicked (a second
     thread adds no card height until then). Rendered from what is STORED, so a
     finished list still reads `5/5` here even though the strip above hid it. */
 export function BoardCardTodoThreadRow({

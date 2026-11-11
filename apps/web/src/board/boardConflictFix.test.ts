@@ -1,5 +1,5 @@
 /**
- * The words both conflict surfaces show (T3O-9). One module produces them, so
+ * The words both conflict surfaces show. One module produces them, so
  * the board card's tooltip and the modal's banner cannot drift apart — which is
  * what this asserts: the copy, the queued variant, and the fallback for a card
  * whose base branch the surface does not know.
@@ -44,7 +44,7 @@ describe("boardConflictFix (T3O-9)", () => {
     const info = boardConflictFix({ live: true, queued: true, baseRef: "t3o" });
     expect(info?.headline).toBe("Waiting for an agent to resolve conflicts against t3o");
     // The mechanics — the queue position, the agent count, the override
-    // buttons — belong to the build-queue banner beside it (t3o-33), so this
+    // buttons — belong to the build-queue banner beside it, so this
     // names the wait and stops rather than printing its sentence twice.
     expect(info?.detail).toBe("The merge holds until an agent is free and the thread finishes.");
     // The PILL is the same word either way: it asserts the held merge, not

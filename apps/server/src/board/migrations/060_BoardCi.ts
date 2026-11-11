@@ -1,10 +1,5 @@
-// T3o: the Continuous integration stage (T3O-44).
-//
-// - The CI seed stage row, inserted only when missing, so a board that already
-//   has it (or a hand-written row with that id) is left alone. It matches
-//   `BOARD_SEED_STAGES` field for field, so an untouched table stays seed-only.
-// - The card's compact CI state and last CI outcome, NULL outside CI.
-// - `board_ci_passes`: one row per CI pass, steps (with output tails) as JSON.
+// The CI seed stage is inserted only when missing and matches
+// `BOARD_SEED_STAGES` field for field, so an untouched table stays seed-only.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

@@ -1,5 +1,5 @@
 /**
- * The board's narrow view of upstream's `GitManager` (T3O-45): importing
+ * The board's narrow view of upstream's `GitManager`: importing
  * `git/GitManager.ts` loads `ProjectSetupScriptRunner` and through it every
  * provider driver. Only `BoardGitStatus.live.ts` imports upstream.
  */

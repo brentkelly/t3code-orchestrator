@@ -1,9 +1,6 @@
 /**
- * T3o board stage presentation (t3o-15, D13). Stages are user-defined, so
- * column order and labels come from the read-model stage list — the old fixed
- * `BOARD_STAGE_LABELS` map is gone. These helpers resolve a stage's display
- * label from that list, falling back to the raw id for a since-deleted stage a
- * legacy card might still reference.
+ * Stage display helpers over the user-defined stage list, falling back to the
+ * raw id for a since-deleted stage.
  */
 import type { BoardStageDefinition, BoardStageId } from "@t3tools/contracts";
 

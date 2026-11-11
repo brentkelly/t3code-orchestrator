@@ -1,24 +1,8 @@
 /**
- * The SNAPSHOT producer for `stepAwaiting` (t3o-34, D4), and the NULL fallback
- * migration 034 rests on.
- *
- * `stepAwaiting` has two producers that must agree: the `card-stalled` delta,
- * which keeps a connected client's card honest, and this SQL-derived shell
- * snapshot, which is what every client gets on connect and on reload. The delta
- * path is covered by the projector and reducer suites; if only that side were
- * right, a card would show the correct "Input needed" / "Needs a human"
- * treatment right up until the page refreshed and then go straight back to
- * claiming the agent was working — the exact lie t3o-34 exists to remove,
- * surviving one F5.
- *
- * The NULL case is the other half. Migration 033 adds `awaiting_reason` as a
- * plain nullable column and does not rewrite history, so every row written
- * before it reads NULL — and the whole back-compat story is that a NULL means
- * `question`, because before t3o-34 the only route into `awaiting-input` was the
- * structured-question path. Nothing else asserts that.
- *
- * Run through the real seams (decider → event store → projection → snapshot
- * query), because that is where the two producers actually meet.
+ * The SQL shell snapshot producer for `stepAwaiting`, which must agree with the
+ * `card-stalled` delta or a card's "Input needed" goes away on reload. Also pins the NULL
+ * fallback: rows from before `awaiting_reason` existed read as `question`. Run through the
+ * real seams, because that is where the two producers meet.
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -160,11 +144,8 @@ describe("stepAwaiting on the shell SNAPSHOT (t3o-34, D4)", () => {
     it.effect("reads a NULL awaiting_reason as `question`", () =>
       Effect.gen(function* () {
         yield* seedParkedStep("stopped");
-        // What a row written before migration 034 looks like: the column exists
-        // (the ALTER ran) but nothing ever wrote it. Every such row reached
-        // `awaiting-input` through the structured-question path, because before
-        // t3o-34 there was no other way in — so it must read as `question`, not
-        // as a card claiming its agent stopped for no reason.
+        // A row written before migration 034: the column exists but was never written. Such rows
+        // only reached `awaiting-input` via a structured question, so it must read as `question`.
         const sql = yield* SqlClient.SqlClient;
         yield* sql`UPDATE board_card_step_state SET awaiting_reason = NULL WHERE card_id = ${cardId}`;
 

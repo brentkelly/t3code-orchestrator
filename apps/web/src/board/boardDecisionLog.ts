@@ -1,5 +1,5 @@
 /**
- * The decision log's view (T3O-32): the card's planning decisions in reading
+ * The decision log's view: the card's planning decisions in reading
  * order, the header's count and flag summary, and whether the section opens by
  * default. Pure, so the Summary pane only draws it.
  */

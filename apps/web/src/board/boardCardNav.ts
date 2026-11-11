@@ -1,17 +1,7 @@
 /**
- * Card-to-card navigation in the detail sheet (T3O-37): the pure half.
- *
- * With a card open you can step to the card before or after it **on the whole
- * board**, in board order, without closing the sheet. The sibling list is the
- * board's own `visibleColumns` — scope-, project-, stalled- and query-filtered
- * — read in stage order, so what you step through is exactly what the board is
- * currently showing, with no second filter to drift from the first. Stepping
- * runs off the bottom of one column into the top of the next (T3O-44) and back
- * again, and never wraps: only the first card of the first stage has no
- * previous, only the last card of the last stage has no next.
- *
- * Everything here is a pure function over data the caller already has: the
- * rails component and `BoardPage` own the React and the routing.
+ * Card-to-card stepping in the detail sheet, the pure half. Steps follow the
+ * board's own `visibleColumns` in stage order, running across columns and never
+ * wrapping.
  */
 import type { BoardCardShell, BoardStageId } from "@t3tools/contracts";
 import type { BoardStageColumns } from "@t3tools/client-runtime/state/shell";
@@ -27,18 +17,9 @@ export interface BoardCardNeighbours {
 const NO_NEIGHBOURS: BoardCardNeighbours = { stage: null, prev: null, next: null };
 
 /**
- * Neighbours of `cardId` across `columns`, read in `stageOrder`.
- *
- * `stageOrder` is the ordered list of stages the board is RENDERING, which is
- * what makes the step follow the columns left to right: a `BoardStageColumns`
- * is keyed by stage id with no order of its own, and a board need not render
- * every stage. A stage missing from
- * `stageOrder`, or holding no cards, is simply not stepped through.
- *
- * A card that is not in `columns` at all — a deep link, or a card the search
- * box or the "Stalled only" filter is currently hiding — resolves to
- * `stage: null` with both neighbours null, which is how the rails and the
- * shortcuts go quiet rather than guessing at a list the user cannot see.
+ * Neighbours of `cardId`, reading `columns` in `stageOrder` (the rendered
+ * stages; columns have no order of their own). A card not in `columns` resolves
+ * to `stage: null` with no neighbours, so the rails and shortcuts go quiet.
  */
 export function resolveBoardCardNeighbours(
   columns: BoardStageColumns,
@@ -92,16 +73,9 @@ export interface BoardCardNavKeyEvent {
 }
 
 /**
- * The step a keystroke asks for, or null when it asks for nothing.
- *
- * `←`/`K` step back, `→`/`J` step forward. Deliberately no `↑`/`↓`: on a card
- * with no thread the focus sits on the dialog itself and those keys are how a
- * keyboard user scrolls a long brief. Held modifiers, auto-repeat (each step
- * opens a fresh card subscription, so holding a key would flood the socket),
- * and a text-entry target all return null.
- *
- * Pure on purpose — the caller passes the active element in rather than this
- * function reaching for `document`.
+ * The step a keystroke asks for: Left/K back, Right/J forward. No Up/Down: they
+ * scroll a long brief. Modifiers, auto-repeat (each step opens a card
+ * subscription) and text-entry targets return null.
  */
 export function boardCardStepForKey(
   event: BoardCardNavKeyEvent,
@@ -136,13 +110,8 @@ export interface BoardCardNavTarget {
 }
 
 /**
- * One rail's target (T3O-44): the neighbour card as the rail names it, or null
- * when there is no card that way.
- *
- * `fromStage` is the open card's stage and `stageLabels` maps stage id to the
- * label the columns are headed with, so an unlabelled stage — one the board is
- * not rendering, which a neighbour never is — degrades to naming the card
- * alone rather than inventing a column name.
+ * One rail's target, or null. A neighbour's stage without a label degrades to
+ * naming the card alone.
  */
 export function boardCardNavTarget(
   card: Pick<BoardCardShell, "key" | "title" | "stage"> | null,
@@ -163,14 +132,7 @@ export interface BoardCardNav {
   readonly onStep: (direction: BoardCardStep) => void;
 }
 
-/**
- * The step a keystroke should actually take, given what is open: null when the
- * keystroke asks for nothing, and null again when it asks for a card that is
- * not there — the end of the board, where the rail is absent too.
- *
- * This is the whole decision the sheet's key handler makes; it takes the
- * keystroke no further than that, so the handler is four lines of DOM.
- */
+/** The step to take: null when the key asks for nothing or no card is there. */
 export function boardCardNavStep(
   nav: Pick<BoardCardNav, "prev" | "next"> | null,
   event: BoardCardNavKeyEvent,
@@ -183,15 +145,9 @@ export function boardCardNavStep(
 }
 
 /**
- * Which card should be fullscreen after a step from `fromCardId` to
- * `toCardId`, given which card is fullscreen now (T3O-37, D5).
- *
- * Fullscreen belongs to the card the user maximised, and a step is the one
- * transition that hands it over — being thrown back into a window mid-read is
- * not a reset anybody asked for. Every OTHER way a card opens (a deep link, a
- * sub-board drill, clicking a different card) simply never calls this, so the
- * stored id stays on the card it was left on and the newly opened card, not
- * matching it, opens windowed.
+ * Which card is fullscreen after a step. A step is the only transition that
+ * hands fullscreen on; every other way a card opens skips this, so the new card
+ * opens windowed.
  */
 export function boardCardMaximisedAfterStep(
   maximisedCardId: string | null,

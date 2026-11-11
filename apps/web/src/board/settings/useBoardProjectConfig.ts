@@ -1,5 +1,5 @@
 /**
- * T3o: one project's config for its settings page (T3O-49) — the shell delta
+ * T3o: one project's config for its settings page — the shell delta
  * the board already holds, plus the full delta (prompts, step bodies,
  * "last changed by") fetched whenever the shell's version moves.
  */
@@ -34,6 +34,7 @@ export function useBoardProjectConfig(
   const getConfig = useAtomCommand(boardEnvironment.getProjectConfig, { reportFailure: false });
   const [full, setFull] = useState<BoardProjectStageConfig | null>(null);
   const version = shell.version;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches the full config from the board server; the live stream carries only its shell.
   useEffect(() => {
     let cancelled = false;
     void getConfig({ environmentId, input: { projectId } }).then((result) => {
@@ -43,6 +44,12 @@ export function useBoardProjectConfig(
     return () => {
       cancelled = true;
     };
-  }, [environmentId, projectId, version]);
+  }, [
+    environmentId,
+    getConfig,
+    projectId,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each new shell version needs its full config.
+    version,
+  ]);
   return { shell, full: full !== null && full.version === version ? full : null };
 }

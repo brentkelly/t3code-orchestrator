@@ -1,5 +1,5 @@
 /**
- * T3o card header notice slot (T3O-45). The bug: a card whose auto-merge had
+ * T3o card header notice slot. The bug: a card whose auto-merge had
  * given up wore `Needs a human` on the left AND `Merge needs you` on the right —
  * the same claim twice, in the same amber, ~23px wider than the 268px column, so
  * the second chip hung off the card. The rule is one notice, ranked.
@@ -147,7 +147,7 @@ describe("boardCardNotice", () => {
   });
 });
 
-// T3o (T3O-48): a card parked at Ready for merge with no pull request goes
+// T3o: a card parked at Ready for merge with no pull request goes
 // nowhere on its own, and nothing on the card face said so — the bug was a
 // human staring at "Ready for merge" with no PR link and no Merge button.
 describe("the no-pull-request notice", () => {
@@ -254,7 +254,7 @@ describe("the worktree-kept notice (T3O-52)", () => {
     expect(notice({ worktreeKeptReason: "kept", attention: attention() })?.kind).toBe("attention");
   });
 
-  // ── The card's worker (T3O-66) ──────────────────────────────────────
+  // ── The card's worker ──────────────────────────────────────
 
   const removed: BoardCardWorkerTrouble = {
     kind: "removed",
@@ -262,7 +262,7 @@ describe("the worktree-kept notice (T3O-52)", () => {
     workerLabel: "gpu-rig",
     label: "Move this card",
     tooltip: "gpu-rig was removed from the board. Move this card to keep going.",
-    panelTitle: "Worker removed — move this card",
+    panelTitle: "Worker removed: move this card",
     panelBody: "…",
   };
   const offline: BoardCardWorkerTrouble = {

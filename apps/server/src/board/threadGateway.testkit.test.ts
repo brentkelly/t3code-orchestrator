@@ -1,6 +1,6 @@
 /**
  * The in-memory gateway fake must keep `observe`'s contract, or harness suites
- * pass against a stream the real gateway never produces (T3O-58).
+ * pass against a stream the real gateway never produces.
  */
 import { ThreadId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";

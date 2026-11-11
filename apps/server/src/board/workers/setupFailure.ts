@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-62): why a Set up on worker clone failed, from what git said.
+ * T3o: why a Set up on worker clone failed, from what git said.
  *
  * Pure. Git's wording is stable across the versions in use; anything not
  * recognised is `unknown` and the UI still offers the log.

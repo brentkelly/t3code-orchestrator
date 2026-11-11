@@ -1,10 +1,6 @@
 /**
- * Pure helpers behind the card's base-branch picker (T3O-5, D11/D12).
- *
- * Split out of the component so the two decisions that actually matter — what a
- * click on a ref STORES, and which ref the picker shows as current — are unit
- * tested without a repository, a websocket or a DOM. The component is then the
- * plumbing it looks like.
+ * Pure helpers behind the card's base-branch picker: what a click stores and
+ * which ref shows as current.
  */
 import { isBoardCardBaseBranchShape } from "@t3tools/contracts";
 import type { VcsRef } from "@t3tools/contracts";
@@ -19,15 +15,9 @@ export interface BoardBaseBranchOption {
 }
 
 /**
- * The picker's rows. `listRefs` returns local branches plus remote-only refs
- * deduped against them, so a branch that exists only on the remote arrives as
- * `origin/develop`; it is shown under that name (it is what the user would type)
- * and stored under `develop` (D12), because every reader of a recorded base
- * re-qualifies it as `refs/heads/<name>` and breaks silently on the other form.
- *
- * Refs whose local name is not a usable base — the shapes
- * `isBoardCardBaseBranchShape` rejects — are dropped rather than offered and
- * then refused by the decider.
+ * The picker's rows. A remote-only ref shows as `origin/develop` but stores as
+ * `develop`, because readers re-qualify a base as `refs/heads/<name>`. Shapes
+ * `isBoardCardBaseBranchShape` rejects are dropped.
  */
 export function boardBaseBranchOptions(
   refs: ReadonlyArray<VcsRef>,
@@ -45,12 +35,8 @@ export function boardBaseBranchOptions(
 }
 
 /**
- * What selecting `option` writes to `board.card.update` (D12).
- *
- * Choosing the project's CURRENT default stores `null`, not the branch's name.
- * That is what keeps the nullable override meaningful: a project that later
- * renames or moves its default carries every card that never expressed an
- * opinion along with it, instead of stranding a fleet pinned to a dead branch.
+ * What selecting `option` writes. The project's current default stores `null`,
+ * so cards follow the project if its default branch later changes.
  */
 export function boardBaseBranchSelectionValue(
   option: Pick<BoardBaseBranchOption, "localName" | "isDefault">,
@@ -69,4 +55,20 @@ export function boardBaseBranchSelectedName(input: {
 }): string | null {
   if (input.baseBranch !== null) return input.baseBranch;
   return input.options.find((option) => option.isDefault)?.localName ?? null;
+}
+
+const NEXT_PAGE_DISTANCE_PX = 96;
+
+/** Whether a scroll should fetch the next branch page: only a downward scroll that reaches the
+    end, never mount or layout. Upstream dropped its copy with its move to Legend List. */
+export function shouldLoadNextBranchPageAfterScroll(input: {
+  readonly previousScrollTop: number | null;
+  readonly scrollTop: number;
+  readonly scrollHeight: number;
+  readonly clientHeight: number;
+}): boolean {
+  if (input.previousScrollTop === null || input.scrollTop <= input.previousScrollTop) {
+    return false;
+  }
+  return input.scrollHeight - input.scrollTop - input.clientHeight <= NEXT_PAGE_DISTANCE_PX;
 }

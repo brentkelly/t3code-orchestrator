@@ -1,15 +1,5 @@
-// T3o: general grouping (T3O-27, D12).
-//
-// `board_cards.group_*` — a group's settings, NULL `group_target` on every
-// leaf, matching the decoding default of `BoardCard.group`.
-//
-// Backfill: every existing split parent with a live child becomes a group exactly as approval
-// now makes one — its own integration branch, auto-build on — started if it
-// has reached the build stage, placed at its current pre-build stage (the
-// stage before build when it is already past), and integrated once it is
-// Done. Each sub-board child gets its own copy of the plan it was cut from,
-// so "planned" no longer needs a parent special case. Both steps are guarded,
-// so re-running is a no-op.
+// Backfills every split parent with a live child into a group, and gives each
+// child its own copy of its plan. Both steps are guarded, so re-running is a no-op.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

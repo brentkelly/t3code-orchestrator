@@ -1,16 +1,8 @@
 /**
- * A step whose agent is waiting on its own background work is checked on, not
- * nudged (T3O-20).
- *
- * Claude often ends a turn with a background command or a Monitor still
- * running. The turn-end handler now treats that as a wait
- * (`subagentWait.test.ts`), and the timeout sweep supervises the wait on its
- * own schedule: a check-in at +5, +15 and +30 minutes, then every 30 minutes.
- * The first three are free; each one after spends the recovery budget, and the
- * one that would cross a ceiling escalates the card to a human instead.
- *
- * Driven through the live reactor against the stateful engine double. The
- * clock is the TestClock: each step advances it and runs one sweep pass.
+ * An agent waiting on its own background work is checked on, not nudged: at
+ * +5, +15 and +30 minutes, then every 30. The first three are free; later ones
+ * spend the recovery budget and the one crossing a ceiling escalates. Each step
+ * advances the TestClock and runs one sweep pass.
  */
 import {
   BoardCardId,

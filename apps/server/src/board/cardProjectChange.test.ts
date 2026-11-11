@@ -1,5 +1,5 @@
 /**
- * T3O-33 — `board.card.set-project`, the decider half.
+ * `board.card.set-project`, the decider half.
  *
  * The six refusals in the order the decider applies them, the happy path's
  * reissued key / cleared base pin, and the counter-sharing rule that keeps a
@@ -16,7 +16,9 @@ import {
   type BoardCard,
   type BoardState,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -149,7 +151,7 @@ const decideFail = (command: BoardCommand, readModel: BoardOrchestrationReadMode
 /** A card sitting in Ready, which is the state the whole feature is for. */
 const movable = makeCard({ id: "card-1", stage: "ready", key: "P1-4", cardNumber: 4 });
 
-it.layer(NodeServices.layer)("board.card.set-project", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board.card.set-project", (it) => {
   describe("refusals", () => {
     it.effect("refuses a card that does not exist", () =>
       Effect.gen(function* () {
@@ -357,7 +359,7 @@ it.layer(NodeServices.layer)("board.card.set-project", (it) => {
           key: "MW-43",
           cardNumber: 43,
           // A branch named in the old project's checkout says nothing about the
-          // new one, and a stale pin fails at provisioning hours later (D5).
+          // new one, and a stale pin fails at provisioning hours later.
           baseBranch: null,
           // Everything else survives: the card id never changes, so the open
           // modal, its attachments and its board position are unaffected.
@@ -387,7 +389,7 @@ it.layer(NodeServices.layer)("board.card.set-project", (it) => {
         );
         assert.strictEqual(event.type, "board.card-project-changed");
         if (event.type !== "board.card-project-changed") return;
-        // D3: `dependsOn` stores card ids, and the decider has never enforced a
+        // `dependsOn` stores card ids, and the decider has never enforced a
         // same-project rule, so an inherited cross-project edge is legal and the
         // gate handles it. Nothing to rewrite.
         assert.deepStrictEqual([...event.payload.card.dependsOn], ["dep"]);
@@ -453,7 +455,7 @@ it.layer(NodeServices.layer)("board.card.set-project", (it) => {
           }),
         );
         if (event.type !== "board.card-project-changed") return assert.fail("wrong event");
-        // Threads are history (D2). Stopping the live one is the reactor's job,
+        // Threads are history. Stopping the live one is the reactor's job,
         // and the plan a thread produced lives on the card, not in the thread.
         assert.strictEqual(event.payload.card.threadLinks.length, 1);
         assert.strictEqual(event.payload.card.threadLinks[0]!.tombstonedAt, null);

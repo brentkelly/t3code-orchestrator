@@ -1,12 +1,7 @@
 /**
- * The board's own event log and command receipts, in `boards.sqlite` (T3O-56).
- *
- * Same row shape as upstream's `orchestration_events`, its own `AUTOINCREMENT`
- * sequence. Every statement names a `boards.` table, so a transaction built from
- * these writes exactly one database file.
- *
- * Not a service: `BoardEngine` is the only writer, and it composes these inside
- * its own transaction.
+ * The board's event log and command receipts in `boards.sqlite`. Every
+ * statement names a `boards.` table, so a transaction built from these writes
+ * one database file. Not a service: `BoardEngine` is the only writer.
  */
 import {
   BoardEvent,
@@ -266,10 +261,9 @@ export function makeBoardEventStore(sql: SqlClient.SqlClient) {
     }).pipe(
       Effect.mapError(toPersistenceSqlError("BoardEventStore.append:insert")),
       Effect.flatMap(decodeRow),
-      Effect.flatMap((saved) =>
-        saved === undefined
-          ? Effect.die(new Error(`Appended an unknown board event type '${event.type}'.`))
-          : Effect.succeed(saved),
+      Effect.filterOrElse(
+        (saved): saved is BoardEvent => saved !== undefined,
+        () => Effect.die(new Error(`Appended an unknown board event type '${event.type}'.`)),
       ),
     );
 
@@ -309,8 +303,7 @@ export function makeBoardEventStore(sql: SqlClient.SqlClient) {
       Effect.mapError(toPersistenceSqlError("BoardEventStore.getReceipt:query")),
     );
 
-  /** Whether `commandId` appended any event on this aggregate. Receipts written
-      before T3O-56's fix (and every one migrated from v1) name the command's
+  /** Whether `commandId` appended any event on this aggregate. Older receipts (and every one migrated from v1) name the command's
       LAST event, which for a multi-card command is a dependent card; this is
       how a replay recognises them as the same command. */
   const commandTouchedAggregate = (

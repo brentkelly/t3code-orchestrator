@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - a standalone entry with no Effect runtime.
 // @effect-diagnostics globalConsole:off - writes its one error line straight to stderr.
 /**
- * T3o (T3O-58): `node dist/t3oGitCredential.mjs [--file <gitenv>] get|store|erase` is a git
+ * T3o: `node dist/t3oGitCredential.mjs [--file <gitenv>] get|store|erase` is a git
  * credential helper; `... gh <args>` runs the real gh with the gitenv token for its repo.
  * Its own bundle entry so git and gh never wait for the server CLI to boot.
  */
