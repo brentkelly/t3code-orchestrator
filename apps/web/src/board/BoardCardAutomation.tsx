@@ -316,9 +316,12 @@ export function BoardCardAutomation(props: {
     stages: props.stages,
     card: props.card,
     boardWideAutoMerge: props.boardWideAutoMerge,
+  });
+  const rows = boardCardAutomationRows({
+    resolved,
+    inPlanning: props.inPlanning,
     planningFinished: props.planningFinished,
   });
-  const rows = boardCardAutomationRows({ resolved, inPlanning: props.inPlanning });
   return (
     <BoardCollapsibleSection summary={boardAutomationRowsSummary(rows)} title="Automation">
       <CardAutomationRows card={props.card} environmentId={props.environmentId} rows={rows} />

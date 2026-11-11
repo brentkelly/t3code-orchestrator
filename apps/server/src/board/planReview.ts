@@ -105,3 +105,17 @@ export function boardCompletionReopened(
   const after = (at: string | undefined) => at !== undefined && existing.completedAt < at;
   return after(current.planReviewStartedAt) || after(current.reopenedAt);
 }
+
+/** Turning Auto-plan on reopened this step and the agent has not finished
+    again since: `boardCompletionReopened`, by the Auto-plan stamp. */
+export function boardCompletionReopenedByAutoPlan(
+  existing: BoardStepCompletion | undefined,
+  current: BoardCardStepState | null,
+): boolean {
+  return (
+    boardCompletionReopened(existing, current) &&
+    current?.reopenedAt !== undefined &&
+    existing !== undefined &&
+    existing.completedAt < current.reopenedAt
+  );
+}

@@ -38,8 +38,8 @@ import {
   type BoardStepQueuedBy,
   type BoardWorkerId,
   boardCardAutoArchiveDue,
-  BOARD_AUTO_PLAN_OFF_INSTRUCTION,
   boardAutoPlanInstruction,
+  boardAutoPlanOffInstruction,
   BOARD_PLAN_REVIEW_LATE_START_LEAD,
   boardPlanReviewRoundsChangedLead,
   BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
@@ -257,7 +257,12 @@ import {
 import type { BoardCiFailure, BoardStagePlan } from "./stageExecutor.ts";
 import { boardCiSendBackFinding } from "./ci/ciStageExecutor.ts";
 import { BoardWorkspaces, type BoardCardWorkspace } from "./workspace/BoardWorkspace.ts";
-import { planReviewInstructions, runningPlanReviewStep } from "./planReview.ts";
+import {
+  boardCompletionReopened,
+  boardCompletionReopenedByAutoPlan,
+  planReviewInstructions,
+  runningPlanReviewStep,
+} from "./planReview.ts";
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
 
@@ -5485,6 +5490,8 @@ const make = Effect.gen(function* () {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;
   }) {
+    // A reopened Auto-plan handover still owed is the nudge, and spends no budget.
+    if (yield* deliverReopenedAutoPlan(input.card, input.state)) return;
     // Resolve the two things the pure decision needs but must not read itself:
     // the progress signal (git/activity) and the stage-entry recovery
     // total and its ceiling (settings). `recoveryDecision` stays pure.
@@ -7248,10 +7255,8 @@ const make = Effect.gen(function* () {
     // good. A `failed`/`blocked` completion must not disarm death detection —
     // after a failure + recovery nudge, a retry thread that dies silently
     // still needs to be recovered here.
-    const completed = boardCardStepCompletions(board, found.card.id).some(
-      (entry) => entry.stepId === found.state.stepId && entry.outcome === "succeeded",
-    );
-    if (completed) return; // the completion handler owns this step
+    // A reopened step's old completion does not count: the agent must finish again.
+    if (pinnedSuccess(board, found.card.id, found.state)) return; // the completion handler owns this step
     const shell = yield* liveThread(threadId);
     // Another turn is live, typically a recovery nudge; its own completion re-runs this. Compared
     // by identity, because the projection usually still names the just-ended turn as live. Without
@@ -7283,6 +7288,7 @@ const make = Effect.gen(function* () {
       // consumed. Move (or keep) the step on the human gate. A no-op when
       // it is already awaiting-input.
       if (found.state.status === "running") {
+        if (yield* answerReopenedQuestion(found.card, found.state)) return;
         yield* parkStepForInput({ card: found.card, state: found.state, reason: "question" });
       }
       return;
@@ -7307,6 +7313,7 @@ const make = Effect.gen(function* () {
       return;
     }
     backgroundWaits.delete(String(threadId));
+    if (yield* deliverReopenedAutoPlan(found.card, found.state)) return;
     // The one free turn-ending a human's turn bought: spent here only, since the timeout sweep also
     // reaches `recoverStep` and must still catch a hung agent. One ending, then supervision
     // resumes; an open-ended suppression could never be cleared.
@@ -7407,6 +7414,191 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
     if (ended) yield* autoPlanNote(cardId, detail);
+  });
+
+  /** The step's recorded `succeeded` completion, or undefined. */
+  const stepSuccess = (board: BoardState, cardId: BoardCardId, state: BoardCardStepState) =>
+    boardCardStepCompletions(board, cardId).find(
+      (entry) => entry.stepId === state.stepId && entry.outcome === "succeeded",
+    );
+
+  /** The step succeeded and no reopen has superseded that completion since. */
+  const pinnedSuccess = (board: BoardState, cardId: BoardCardId, state: BoardCardStepState) => {
+    const existing = stepSuccess(board, cardId, state);
+    return existing !== undefined && !boardCompletionReopened(existing, state);
+  };
+
+  /** Turning Auto-plan on reopened this step, the run is still pending and the agent has not
+      finished again. */
+  const reopenedForAutoPlan = (board: BoardState, card: BoardCard, state: BoardCardStepState) =>
+    isBoardCardAutoPlanPending(card) &&
+    boardCompletionReopenedByAutoPlan(stepSuccess(board, card.id, state), state);
+
+  /** Record that the reopened step's Auto-plan prompt went out: `lastNudgeAt` moves off
+      `reopenedAt`, so it goes out once, and no recovery budget is spent. */
+  const recordReopenedDelivery = Effect.fn("board-supervisor-recordReopenedDelivery")(function* (
+    state: BoardCardStepState,
+  ) {
+    return yield* dispatchOptional({
+      type: "board.card.check-in-step",
+      commandId: yield* commandId("auto-plan-reopened-delivered"),
+      cardId: state.cardId,
+      stepId: state.stepId,
+      charged: false,
+      progressed: false,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /**
+   * A step Auto-plan reopened gets its prompt when the agent's current turn ends, never mid-turn:
+   * interrupting or steering would stop running plan-review subagents. True when it went out.
+   */
+  const deliverReopenedAutoPlan = Effect.fn("board-supervisor-deliverReopenedAutoPlan")(
+    function* (card: BoardCard, state: BoardCardStepState) {
+      if (state.reopenedAt === undefined) return false;
+      const board = yield* readBoard;
+      const current = board.cards.find((candidate) => candidate.id === card.id);
+      const live = boardCardStepState(board, card.id);
+      if (current === undefined || live === null || live.threadId === null) return false;
+      if (live.stepId !== state.stepId || live.status !== "running") return false;
+      if (live.lastNudgeAt !== live.reopenedAt || !reopenedForAutoPlan(board, current, live)) {
+        return false;
+      }
+      if (!(yield* recordReopenedDelivery(live))) return false;
+      yield* sendTurn({
+        threadId: live.threadId,
+        text: boardAutoPlanInstruction(automationIn(board, current).autoBuild.value, {
+          reopened: true,
+        }),
+        runtimeMode: live.runtimeMode,
+      });
+      return true;
+    },
+  );
+
+  /**
+   * A question on a step Auto-plan reopened is answered with the Auto-plan prompt instead of
+   * parking it, which would end the run. False when it is not such a step or no answer landed.
+   */
+  const answerReopenedQuestion = Effect.fn("board-supervisor-answerReopenedQuestion")(function* (
+    card: BoardCard,
+    state: BoardCardStepState,
+  ) {
+    if (state.reopenedAt === undefined || state.threadId === null) return false;
+    const board = yield* readBoard;
+    const current = board.cards.find((candidate) => candidate.id === card.id);
+    if (current === undefined || !reopenedForAutoPlan(board, current, state)) return false;
+    const answered = yield* threads
+      .answerPendingInput({
+        commandId: yield* commandId("auto-plan-reopened-answer"),
+        threadId: state.threadId,
+        text: boardAutoPlanInstruction(automationIn(board, current).autoBuild.value, {
+          reopened: true,
+        }),
+      })
+      .pipe(
+        Effect.tapError((error) =>
+          Effect.logWarning("board supervisor: answerPendingInput failed", error),
+        ),
+        Effect.orElseSucceed(() => false),
+      );
+    if (answered && state.lastNudgeAt === state.reopenedAt) yield* recordReopenedDelivery(state);
+    return answered;
+  });
+
+  /**
+   * Auto-plan turned on after the agent marked planning finished. A thread still working is
+   * handed over: the step reopens and the prompt goes out when its turn ends (or answers its
+   * question now), so the agent's next completion approves and builds. A finished thread is left
+   * alone; turning Auto-plan on never approves by itself.
+   */
+  const reopenFinishedPlanning = Effect.fn("board-supervisor-reopenFinishedPlanning")(function* (
+    card: BoardCard,
+  ) {
+    const board = yield* readBoard;
+    const state = boardCardStepState(board, card.id);
+    const threadId = state?.threadId ?? null;
+    const shell =
+      threadId === null
+        ? undefined
+        : yield* liveThread(threadId).pipe(Effect.orElseSucceed(() => undefined));
+    const requestedTurn =
+      threadId === null || shell === undefined
+        ? null
+        : yield* threads
+            .pendingTurnStartAt(threadId)
+            .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    const active =
+      shell !== undefined &&
+      (shell.alive ||
+        shell.sessionStatus === "starting" ||
+        shell.backgroundWork !== null ||
+        requestedTurn !== null);
+    if (threadId === null || shell === undefined || !active) {
+      yield* autoPlanNote(
+        card.id,
+        "Auto-plan is on, but planning had already finished, so nothing was sent. The plan waits for your approval.",
+      );
+      return null;
+    }
+    const refusal = yield* dispatchRefusal({
+      type: "board.card.mark-auto-plan",
+      commandId: yield* commandId("auto-plan-reopen"),
+      cardId: card.id,
+      reopenFinished: true,
+      createdAt: yield* nowIso,
+    });
+    if (refusal !== null) return null;
+    const reopened = boardCardStepState(yield* readBoard, card.id);
+    if (reopened === null) return null;
+    if (reopened.humanInLoop) {
+      yield* dispatchOptional({
+        type: "board.card.retune-step",
+        commandId: yield* commandId("auto-plan-retune"),
+        cardId: card.id,
+        stepId: reopened.stepId,
+        humanInLoop: false,
+        createdAt: yield* nowIso,
+      });
+    }
+    yield* autoPlanNote(
+      card.id,
+      "Auto-plan is on: planning had been marked finished, so it was reopened. The agent is told when its current turn ends, and its next finish counts.",
+    );
+    if (!shell.awaitingUserInput) return "steered" as const;
+    const answered = yield* threads
+      .answerPendingInput({
+        commandId: yield* commandId("auto-plan-reopened-answer"),
+        threadId,
+        text: boardAutoPlanInstruction(automationIn(board, card).autoBuild.value, {
+          reopened: true,
+        }),
+      })
+      .pipe(
+        Effect.map((landed) => ({ landed, error: null })),
+        Effect.catch((error) => Effect.succeed({ landed: false, error: error.detail })),
+      );
+    if (answered.landed) {
+      const live = boardCardStepState(yield* readBoard, card.id);
+      if (live !== null) yield* recordReopenedDelivery(live);
+      return "steered" as const;
+    }
+    // No question left to answer: the turn-end handover still applies.
+    if (answered.error === null) return "steered" as const;
+    yield* endAutoPlan(
+      card.id,
+      `Auto-plan could not reach the planning thread, so nothing will be planned automatically: ${answered.error}`,
+    );
+    yield* dispatchOptional({
+      type: "board.card.settle-step",
+      commandId: yield* commandId("auto-plan-reopen-undo"),
+      cardId: card.id,
+      stepId: reopened.stepId,
+      outcome: "succeeded",
+      createdAt: yield* nowIso,
+    });
+    return null;
   });
 
   /**
@@ -7785,7 +7977,9 @@ const make = Effect.gen(function* () {
       if (state.status === "running" && state.threadId !== null && desired) {
         yield* sendTurn({
           threadId: state.threadId,
-          text: BOARD_AUTO_PLAN_OFF_INSTRUCTION,
+          text: boardAutoPlanOffInstruction({
+            reopened: boardCompletionReopened(stepSuccess(board, card.id, state), state),
+          }),
           runtimeMode: state.runtimeMode,
           delivery: "steer",
         });
@@ -7818,6 +8012,11 @@ const make = Effect.gen(function* () {
       const pending = isBoardCardAutoPlanPending(card);
       if (role === "plan") {
         const finished = boardCardPlanningFinished(board, card);
+        // Only the card's own toggle reopens a finished step; a group re-evaluation never does.
+        if (changed.autoPlan === true && resolved.autoPlan.value && !pending && finished) {
+          if (boardCardPendingSplit(board, card.id)) return null;
+          return yield* reopenFinishedPlanning(card);
+        }
         if (resolved.autoPlan.value && !pending && !finished) {
           if (boardCardPendingSplit(board, card.id)) return null;
           const result = yield* startOrSteerAutoPlan(card);
@@ -8127,6 +8326,7 @@ const make = Effect.gen(function* () {
       yield* handleReviewStepQuestion(watched.card, watched.state);
       return;
     }
+    if (yield* answerReopenedQuestion(watched.card, watched.state)) return;
     yield* parkStepForInput({ card: watched.card, state: watched.state, reason: "question" });
   });
 
@@ -9546,9 +9746,7 @@ const make = Effect.gen(function* () {
     // PubSub, not a durable replay, so an edit committed just before a kill is never redelivered.
     // A field comparison per step, dispatching only on disagreement; idempotent, and sends no turn.
     yield* reconcileStanceOverride(card, state);
-    const hasSucceeded = boardCardStepCompletions(board, card.id).some(
-      (entry) => entry.stepId === state.stepId && entry.outcome === "succeeded",
-    );
+    const hasSucceeded = pinnedSuccess(board, card.id, state);
     const shell = state.threadId === null ? undefined : yield* liveThread(state.threadId);
     const threadAlive = shell !== undefined && shell.alive;
     const decision = reconcileStepDecision({
