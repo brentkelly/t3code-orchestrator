@@ -1845,6 +1845,10 @@ function ReviewStageBody(props: {
     props.updateStage(stage.stageId, patch as Partial<BoardStageExecution>);
   const setPhase = (phaseId: BoardReviewPhaseId, patch: Partial<BoardReviewPhaseExecution>) =>
     set({ phases: { ...exec.phases, [phaseId]: { ...exec.phases[phaseId], ...patch } } });
+  // Off writes null, so the chosen round lives here until the toggle comes back on.
+  const lastSettleAfterRound = useRef(
+    exec.settleAfterRound ?? DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND,
+  );
   // A phase with no model of its own runs on the review STAGE's model, and only
   // if that is unset on the workspace default (`resolvePhaseModel`). Name the
   // nearer one — saying "default" when the stage above actually decides would be
@@ -1887,9 +1891,12 @@ function ReviewStageBody(props: {
             hint="After this, each round reviews only the new changes and only critical findings start another round. Another review round always runs a full review."
             checked={exec.settleAfterRound !== null}
             ariaLabel="Settling rounds"
-            onChange={(checked) =>
-              set({ settleAfterRound: checked ? DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND : null })
-            }
+            onChange={(checked) => {
+              if (!checked && exec.settleAfterRound !== null) {
+                lastSettleAfterRound.current = exec.settleAfterRound;
+              }
+              set({ settleAfterRound: checked ? lastSettleAfterRound.current : null });
+            }}
           />
           {exec.settleAfterRound === null ? null : (
             <>
