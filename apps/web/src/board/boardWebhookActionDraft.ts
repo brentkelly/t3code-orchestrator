@@ -121,7 +121,9 @@ function parseFilterLines(
     const value =
       op === "in" || op === "exists" ? (match[3] ?? "") : parseFilterValue(match[3] ?? "");
     if (value === null) {
-      return { error: `Filter line ${index + 1} has a quoted value that is not closed.` };
+      return {
+        error: `Filter line ${index + 1} has a value starting with a quote, so it must be one JSON string.`,
+      };
     }
     drafts.push({
       id: `line-${index}`,

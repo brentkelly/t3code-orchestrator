@@ -153,15 +153,19 @@ function BoardRuleEditor({
   );
   const labels = catalogue.filter((label) => label.deletedAt === null);
   // A stored id that is no longer offered stays checked, so it can be unchecked and the rule saved.
+  // Listed only once the snapshot is in, so nothing reads as deleted while it loads.
   const labelOptions = (rule: BoardRuleDraft) => [
     ...labels.map((label) => ({ id: label.labelId as string, name: label.name })),
-    ...rule.labelIds
+    ...(catalogue.length === 0 ? [] : rule.labelIds)
       .filter((id) => !labels.some((label) => label.labelId === id))
-      .map((id) => ({ id, name: "Deleted label" })),
+      .map((id) => ({
+        id,
+        name: `${catalogue.find((label) => label.labelId === id)?.name ?? "Unknown label"} (deleted)`,
+      })),
   ];
   const archiveStageOptions = (rule: BoardRuleDraft) => [
     ...span.map((stage) => ({ id: stage.stageId as string, name: stage.label })),
-    ...rule.archiveStages
+    ...(stageList.length === 0 ? [] : rule.archiveStages)
       .filter((id) => !span.some((stage) => stage.stageId === id))
       .map((id) => ({
         id,
