@@ -39,6 +39,7 @@ import {
   type BoardCiPass,
   type BoardEvent,
   type BoardConcurrencySettings,
+  type ServerSettings,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 
@@ -526,6 +527,11 @@ export function withGovernor(
      * `remote-delete` fails `git push <remote> --delete` as an auth or network error does.
      */
     readonly gitFailure?: "worktree-add" | "branch-create" | "remote-delete";
+    /** The app's text-generation fallback and its API-only text generators, when a test needs
+        them to differ from the defaults. */
+    readonly appSettings?: Partial<
+      Pick<ServerSettings, "textGenerationModelSelection" | "textGenerators">
+    >;
     /** Reject every `thread.create`, so a test can drive the spawn-failure path
         (a thread the engine refuses to create) without a provider double. */
     readonly rejectThreadCreate?: boolean;
@@ -828,6 +834,8 @@ export function withGovernor(
       getSettings: Effect.sync(() => ({
         board: boardSettings,
         textGenerationModelSelection: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+        textGenerators: DEFAULT_SERVER_SETTINGS.textGenerators,
+        ...input.appSettings,
       })),
     } as unknown as ServerSettingsService["Service"];
 

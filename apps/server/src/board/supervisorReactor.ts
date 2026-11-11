@@ -150,6 +150,7 @@ import {
   deriveBoardGroupStage,
   isBoardCardPlanned,
   type BoardCiFixIssue,
+  textGeneratorForSelection,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -582,6 +583,11 @@ function settledReviewPhase(
 }
 
 /** Triage and adjudication steps, which never wait on a human. */
+const spawnFailureError = (result: null | "no-agent-model") =>
+  result === "no-agent-model"
+    ? { lastError: "No model to run this stage: set a default model in Settings → Board." }
+    : {};
+
 const isReviewDecidingStep = (state: Pick<BoardCardStepState, "stepId">): boolean =>
   boardReviewQuestionAnswer(state.stepId) !== null;
 
@@ -1585,6 +1591,17 @@ const make = Effect.gen(function* () {
       });
     }
     const remoteWorker = workerId === BOARD_LOCAL_WORKER_ID ? null : workerId;
+    // An API-only text generator can't run an agent. Only this server's settings are known here,
+    // so a worker's own instances are left to the worker.
+    if (remoteWorker === null) {
+      const settings = yield* serverSettings.getSettings.pipe(Effect.orElseSucceed(() => null));
+      if (
+        settings !== null &&
+        textGeneratorForSelection(settings, step.providerInstanceId) !== undefined
+      ) {
+        return "no-agent-model" as const;
+      }
+    }
     // T3o: pin the agent's gh to origin on every build-mode spawn,
     // not only at provisioning, so a worktree that predates the pin gets it
     // before its next agent runs. Idempotent and never fails the spawn.
@@ -1661,7 +1678,11 @@ const make = Effect.gen(function* () {
    * step would block every later kickoff, while a stalled one shows and can be restarted.
    */
   const escalateSpawnFailure = Effect.fn("board-supervisor-escalateSpawnFailure")(
-    function* (input: { readonly card: BoardCard; readonly state: BoardCardStepState }) {
+    function* (input: {
+      readonly card: BoardCard;
+      readonly state: BoardCardStepState;
+      readonly lastError?: string;
+    }) {
       yield* Effect.logWarning("board supervisor: could not spawn a thread for the step", {
         cardId: input.card.id,
         stepId: input.state.stepId,
@@ -1677,6 +1698,7 @@ const make = Effect.gen(function* () {
         threadId: null,
         escalateToHuman: true,
         progressed: false,
+        ...(input.lastError === undefined ? {} : { lastError: input.lastError }),
         createdAt: yield* nowIso,
       });
       // Escalation releases the step's slot exactly as the recovery escalation
@@ -2191,12 +2213,12 @@ const make = Effect.gen(function* () {
         runSetup: true,
         text: yield* stepPromptFor(card, state),
       });
-      if (threadId === null) {
+      if (threadId === null || threadId === "no-agent-model") {
         // No thread was created, so release the slot this candidate just acquired
         // (the persisted `slotHeld` is still false — admit-step never ran — so
         // `releaseSlot` would decline it) and escalate rather than admit.
         yield* slots.release(slotKey);
-        yield* escalateSpawnFailure({ card, state });
+        yield* escalateSpawnFailure({ card, state, ...spawnFailureError(threadId) });
         return;
       }
       if (threadId === "worker-offline") {
@@ -2297,8 +2319,8 @@ const make = Effect.gen(function* () {
     });
     // A plan step holds no slot, so a failed spawn leaks no capacity — but it
     // must still not be admitted against a thread that was never created.
-    if (threadId === null) {
-      yield* escalateSpawnFailure({ card, state });
+    if (threadId === null || threadId === "no-agent-model") {
+      yield* escalateSpawnFailure({ card, state, ...spawnFailureError(threadId) });
       return;
     }
     if (threadId === "worker-offline") {

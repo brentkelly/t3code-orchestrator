@@ -180,6 +180,48 @@ it.effect("a pinned card's first thread spawns on its worker, which becomes its 
   }),
 );
 
+// A worker runs the step with its own instances, so this server's text generators say nothing
+// about it (T3O-72).
+it.effect(
+  "a step on a worker is not refused for an instance central knows as a text generator",
+  () =>
+    Effect.gen(function* () {
+      const { placement } = yield* makePlacement(workersState([workerView(W1)]));
+      const sprint = makeBoardCard({
+        id: "card-1",
+        stage: "sprint",
+        orderKey: "m",
+        pinnedWorkerId: W1,
+      });
+      yield* withGovernor(
+        {
+          board: { cards: [sprint], nextCardNumberByProject: {}, workers: registered },
+          settings: settingsWith({
+            building: [codexStep],
+            planning: codexStep,
+            globalMaxConcurrent: 3,
+          }),
+          appSettings: {
+            textGenerators: {
+              [codex]: {
+                kind: "openai",
+                baseUrl: "https://api.example.test",
+                apiKey: "",
+                enabled: true,
+              },
+            },
+          } as never,
+          placement,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.pumpDomain(cardMoved(inPlanning(sprint), "sprint", "planning", 1));
+            assert.deepStrictEqual(yield* spawnsOn(h), [W1]);
+          }),
+      );
+    }),
+);
+
 it.effect("an unpinned card follows the default worker", () =>
   Effect.gen(function* () {
     const { placement } = yield* makePlacement(workersState([workerView(W1)], W1));
