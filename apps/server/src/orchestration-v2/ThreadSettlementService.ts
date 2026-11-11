@@ -606,7 +606,7 @@ export const make = Effect.gen(function* () {
       const settled = yield* projections.getThread(threadId);
       if (settled.settledOverride !== "settled") return;
       yield* terminals.closeOnSettle({ threadId });
-      // T3o: a card's worktree outlives its threads; the board runs runOnWorktreeRemove instead.
+      // T3o: a card's worktree outlives its threads; the board runs the settle script at retirement.
       if (yield* isBoardCardThread(sql, threadId)) return;
       const worktreePath = settled.worktreePath;
       if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;

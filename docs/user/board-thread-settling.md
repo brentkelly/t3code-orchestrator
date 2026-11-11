@@ -61,7 +61,7 @@ does not wait for them.
 ## Settle scripts
 
 A card's threads share the card's worktree, so a project action marked to run when a thread settles
-(`runOnSettle`) does not run for card threads: it would clean up under the stage still working
-there. Closing that thread's own stop-on-settle terminals still happens. To tidy a card's worktree,
-mark the action **Run before the worktree is removed** instead (see
+(`runOnSettle`) does not run as each card thread settles: it would clean up under the stage still
+working there. Closing that thread's own stop-on-settle terminals still happens. The action runs
+once instead, when the card gives its worktree back, just before any remove scripts (see
 [When a card gives its worktree back](board-worktree-cleanup.md)).

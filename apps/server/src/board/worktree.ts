@@ -556,6 +556,7 @@ export const reclaimBoardCardWorktree = Effect.fn("reclaimBoardCardWorktree")(fu
     kind: "reclaim",
     verifiedClean: true,
     stillWanted,
+    cardWorktree: true,
   });
   if (retired === null) return null;
   if (retired.outcome === "blocked") {
@@ -583,6 +584,7 @@ export const forceRemoveBoardCardWorktree = Effect.fn("forceRemoveBoardCardWorkt
       worktreePath: input.worktreePath,
       kind: "forced",
       verifiedClean: false,
+      cardWorktree: true,
     });
     return { hookWarning: retired?.outcome === "removed" ? retired.hookWarning : null };
   },

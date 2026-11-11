@@ -74,6 +74,8 @@ removed**, or set `"runOnWorktreeRemove": true` on a script in `t3.json`:
   `T3_REMOVAL` (`reclaim`, or `forced` for **Remove worktree**, a card delete or a thread delete)
   and `T3_WORKTREE_VERIFIED_CLEAN` (`1` only when the worktree was just checked clean and its work
   saved elsewhere).
+- On a card's worktree, the project's run-on-settle action runs first, once, since card threads
+  skip it when they settle.
 - Several scripts may be marked; they run in order. The removal waits for them, up to 5 minutes
   each. Deleting a thread or a card does not wait: the worktree goes once the scripts finish.
 - A script that fails or times out does not stop the removal. The card's activity notes the failure.

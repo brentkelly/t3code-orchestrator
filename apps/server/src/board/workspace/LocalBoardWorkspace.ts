@@ -714,7 +714,7 @@ export function makeLocalBoardWorkspace(
     rootOf("retireWorktree", projectId).pipe(
       Effect.flatMap((projectCwd) =>
         retirer
-          .retire({ projectCwd, projectId, worktreePath, kind, verifiedClean })
+          .retire({ projectCwd, projectId, worktreePath, kind, verifiedClean, cardWorktree: true })
           .pipe(Effect.mapError(gitFailed("retireWorktree"))),
       ),
     );
