@@ -245,7 +245,7 @@ it.layer(makeBoardStackTestLayer("t3o-webhook-actions-4-"))("restore", (it) => {
 it.layer(makeBoardStackTestLayer("t3o-webhook-actions-3-"))("rule details", (it) => {
   it.effect("moves forward within the span only, and renders titles and briefs safely", () =>
     Effect.gen(function* () {
-      const { run, card, runner } = yield* setup;
+      const { engine, run, card, runner } = yield* setup;
       const move = (stage: string): BoardWebhookAction => ({
         externalRef: githubIssueBoardWebhookAction().externalRef,
         rules: [{ filters: [], action: { kind: "move", stage: BoardStageId.make(stage) } }],
@@ -321,6 +321,23 @@ it.layer(makeBoardStackTestLayer("t3o-webhook-actions-3-"))("rule details", (it)
         ),
         "Skipped: missing body.id",
       );
+
+      // Only a web link is kept: the card renders it as clickable.
+      const linkCard = (urlTemplate: string) =>
+        Effect.gen(function* () {
+          yield* run(issueEvent("opened"), {
+            action: {
+              externalRef: { system: "x", idTemplate: urlTemplate, urlTemplate },
+              rules: [{ filters: [], action: { kind: "create", titleTemplate: "Link" } }],
+            },
+          });
+          const model = yield* engine.boardEngine.getReadModel;
+          return model.board?.cards.find((c) => c.externalRef?.id === urlTemplate)?.externalRef
+            ?.url;
+        });
+      assert.isNull(yield* linkCard("javascript:alert(1)"));
+      assert.isNull(yield* linkCard("not a url"));
+      assert.strictEqual(yield* linkCard("http://example.com/1"), "http://example.com/1");
 
       // Saving a rule checks its stages by role and its labels against the catalogue.
       assert.isNull(yield* runner.validate({ projectId, action: githubIssueBoardWebhookAction() }));

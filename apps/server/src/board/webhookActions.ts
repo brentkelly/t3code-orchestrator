@@ -80,7 +80,14 @@ function renderBoardWebhookRef(
   }
   const url =
     template.urlTemplate === undefined ? "" : render(template.urlTemplate, request).prompt;
-  return { system: template.system, id: trimmed, url: url.trim() === "" ? null : url.trim() };
+  return { system: template.system, id: trimmed, url: webLinkOrNull(url.trim()) };
+}
+
+/** The card renders the link as clickable, so a sender-shaped non-web scheme is dropped. */
+function webLinkOrNull(url: string): string | null {
+  if (!URL.canParse(url)) return null;
+  const { protocol } = new URL(url);
+  return protocol === "http:" || protocol === "https:" ? url : null;
 }
 
 /** Collapsed to one line and capped, so an outside title cannot reshape the card face. */
