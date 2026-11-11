@@ -204,8 +204,10 @@ it.effect("a card on a worker stages no attachment copies on the central server"
     const folder = NodePath.join(stateDir, "board", "attachments", "card-1");
     NodeFS.mkdirSync(folder, { recursive: true });
     NodeFS.writeFileSync(NodePath.join(folder, "spec.pdf"), "pdf");
-    const sprint: BoardCard = {
-      ...makeBoardCard({ id: "card-1", stage: "sprint", orderKey: "m", pinnedWorkerId: W1 }),
+    const planning: BoardCard = {
+      // Already in Planning: the reactor reads the card off the live model at
+      // admit time, and the harness does not re-project the move.
+      ...makeBoardCard({ id: "card-1", stage: "planning", orderKey: "m", pinnedWorkerId: W1 }),
       attachments: [
         {
           id: BoardCardAttachmentId.make("att-doc"),
@@ -219,7 +221,7 @@ it.effect("a card on a worker stages no attachment copies on the central server"
     };
     yield* withGovernor(
       {
-        board: { cards: [sprint], nextCardNumberByProject: {}, workers: registered },
+        board: { cards: [planning], nextCardNumberByProject: {}, workers: registered },
         settings: settingsWith({
           building: [codexStep],
           planning: codexStep,
@@ -233,7 +235,7 @@ it.effect("a card on a worker stages no attachment copies on the central server"
       },
       (h) =>
         Effect.gen(function* () {
-          yield* h.pumpDomain(cardMoved(inPlanning(sprint), "sprint", "planning", 1));
+          yield* h.pumpDomain(cardMoved(planning, "sprint", "planning", 1));
           const spawn = (yield* h.commands).find((command) => command.type === "thread.spawn");
           assert.isTrue(spawn?.type === "thread.spawn" && spawn.workerId === W1);
           assert.deepStrictEqual(spawn?.type === "thread.spawn" ? spawn.attachments : null, []);
