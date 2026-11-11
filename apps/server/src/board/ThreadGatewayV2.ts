@@ -133,6 +133,9 @@ export const boardThreadStateFromShell = (
 
 // ── Signals ────────────────────────────────────────────────────────────
 
+/** `IdleCompactionService`'s command ids. */
+const IDLE_COMPACTION_COMMAND_PREFIX = "server:idle-compact:";
+
 /** How a run ended, or null while it is still going. */
 type TurnOutcome = "completed" | "failed" | "interrupted" | "cancelled";
 
@@ -264,6 +267,10 @@ export const makeSignalReader = () => {
     return wasQueued;
   };
 
+  // Idle `/compact` runs the server started on a quiet thread: never the agent's turn, so their
+  // end is not a turn end. Noted at creation because the end carries no command of its own.
+  const compactionRuns = new Set<string>();
+
   return (stored: OrchestrationV2StoredEvent): ReadonlyArray<ThreadSignal> => {
     const event = stored.event;
     switch (event.type) {
@@ -273,6 +280,14 @@ export const makeSignalReader = () => {
         // after it in the same command) decides who asked, so the run waits for it.
         const run = event.payload;
         noteRunStatus(run);
+        if (stored.commandId?.startsWith(IDLE_COMPACTION_COMMAND_PREFIX)) {
+          compactionRuns.add(String(run.id));
+          if (compactionRuns.size > SEEN_LIMIT) {
+            const oldest = compactionRuns.values().next().value;
+            if (oldest !== undefined) compactionRuns.delete(oldest);
+          }
+          return [];
+        }
         if (isBoardMintedCommandId(stored.commandId)) {
           return [
             {
@@ -313,6 +328,10 @@ export const makeSignalReader = () => {
         const run = event.payload;
         const wasQueued = noteRunStatus(run);
         const outcome = turnOutcomeOf(run.status);
+        if (outcome !== null && compactionRuns.delete(String(run.id))) {
+          firstTime(`run:${run.id}`); // so its checkpoint's `completed` stays quiet too
+          return [];
+        }
         if (outcome === null || !firstTime(`run:${run.id}`)) return [];
         // A run cancelled without leaving the queue was never a turn (steered, deleted, or dropped
         // with the thread). A queued run that FAILED to start is a turn that never began, read below.
