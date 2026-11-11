@@ -127,8 +127,7 @@ export function deriveBoardUsageBreakdown(input: {
   const { rows } = input;
   const lines: Array<BoardUsageLine & { readonly row: BoardCardUsageRow }> = rows.map((row) => {
     const costKnown = priced(row);
-    const noUsage =
-      !costKnown && row.turnsUnpriced === 0 && row.turnsNoUsage > 0;
+    const noUsage = !costKnown && row.turnsUnpriced === 0 && row.turnsNoUsage > 0;
     const running = input.runningThreadId !== null && row.threadId === input.runningThreadId;
     const estimated = row.turnsListPriced > 0;
     return {

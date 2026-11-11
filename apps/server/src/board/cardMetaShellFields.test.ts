@@ -1035,14 +1035,15 @@ it.layer(makeTestLayer("t3o-card-meta-usage-"))("usage, snapshot vs delta", (it)
 
       // Several steps, threads, providers and models, with every cost source, and
       // costs that drift when summed as floats.
-      const rows: ReadonlyArray<readonly [string, string, string, string, number, number, number]> = [
-        ["building", "thread-a", "claudeAgent", "claude-opus", 100_100, 0, 0],
-        ["review@1", "thread-b", "claudeAgent", "claude-opus", 100_200, 1, 0],
-        ["review@1", "thread-c", "codex", "gpt-5-codex", 300_000, 0, 0],
-        ["review@2", "thread-d", "cursor", "", 0, 0, 2],
-        ["ci-fix@1.1", "thread-e", "grok", "grok-4", 0, 0, 1],
-        ["merge", "thread-f", "opencode", "kimi", 7, 0, 0],
-      ];
+      const rows: ReadonlyArray<readonly [string, string, string, string, number, number, number]> =
+        [
+          ["building", "thread-a", "claudeAgent", "claude-opus", 100_100, 0, 0],
+          ["review@1", "thread-b", "claudeAgent", "claude-opus", 100_200, 1, 0],
+          ["review@1", "thread-c", "codex", "gpt-5-codex", 300_000, 0, 0],
+          ["review@2", "thread-d", "cursor", "", 0, 0, 2],
+          ["ci-fix@1.1", "thread-e", "grok", "grok-4", 0, 0, 1],
+          ["merge", "thread-f", "opencode", "kimi", 7, 0, 0],
+        ];
       for (const [stepId, threadId, provider, model, micro, listed, empty] of rows) {
         yield* sql`
           INSERT INTO boards.board_card_usage (

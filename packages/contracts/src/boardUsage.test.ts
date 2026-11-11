@@ -107,7 +107,10 @@ describe("a card's usage summary", () => {
 
 describe("summing summaries", () => {
   it("carries every child's flags and adds providers up, uncapped", () => {
-    const left = boardCardUsageSummaryFromRows([row({ turnsOverride: 0, turnsListPriced: 1 })], false);
+    const left = boardCardUsageSummaryFromRows(
+      [row({ turnsOverride: 0, turnsListPriced: 1 })],
+      false,
+    );
     const right = boardCardUsageSummaryFromRows(
       [row({ provider: "codex", costUsd: 1 }), row({ costUsd: 0.5 })],
       true,

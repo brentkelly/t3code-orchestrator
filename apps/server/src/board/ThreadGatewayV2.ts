@@ -495,7 +495,10 @@ export const finishedProviderTurnOf = (
   return { threadId: event.threadId, turn: event.payload };
 };
 
-type UsageRecords = Pick<OrchestrationV2ThreadProjection, "thread" | "providerThreads" | "attempts">;
+type UsageRecords = Pick<
+  OrchestrationV2ThreadProjection,
+  "thread" | "providerThreads" | "attempts"
+>;
 
 /**
  * One finished turn as the board's usage signal, or null for a turn the board never counts.
@@ -595,7 +598,9 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
 
   // T3o: a finished turn's usage, read off the projection the event just updated. A thread
   // that is gone by then (a catch-up over a deleted one) reports nothing.
-  const usageSignalFor = (stored: OrchestrationV2StoredEvent): Effect.Effect<UsageSignal | null> => {
+  const usageSignalFor = (
+    stored: OrchestrationV2StoredEvent,
+  ): Effect.Effect<UsageSignal | null> => {
     const finished = finishedProviderTurnOf(stored);
     if (finished === null) return Effect.succeed(null);
     return projections.getThreadRecords(finished.threadId, ["providerThreads", "attempts"]).pipe(

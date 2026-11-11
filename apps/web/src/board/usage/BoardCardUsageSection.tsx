@@ -17,7 +17,12 @@ import type {
   BoardUsageStageGroup,
   BoardUsageTag,
 } from "./boardUsageBreakdown";
-import { formatBoardTokens, formatBoardUsageCost, formatBoardUsd } from "./boardUsageFormat";
+import {
+  BOARD_USAGE_UNKNOWN,
+  formatBoardTokens,
+  formatBoardUsageCost,
+  formatBoardUsd,
+} from "./boardUsageFormat";
 
 const GRID =
   "grid grid-cols-[minmax(0,1.25fr)_minmax(0,1.35fr)_58px_58px_64px_74px] items-center gap-x-2";
@@ -57,14 +62,14 @@ function NumberCells({
   return (
     <>
       <span className={cn(cell, "text-foreground")}>
-        {known ? formatBoardTokens(columns.input) : "—"}
+        {known ? formatBoardTokens(columns.input) : BOARD_USAGE_UNKNOWN}
       </span>
       <span className={cn(cell, "text-muted-foreground")}>
-        {known ? formatBoardTokens(columns.cached) : "—"}
+        {known ? formatBoardTokens(columns.cached) : BOARD_USAGE_UNKNOWN}
       </span>
       <span className="flex flex-col items-end gap-px">
         <span className={cn(cell, "text-foreground")}>
-          {known ? formatBoardTokens(columns.output) : "—"}
+          {known ? formatBoardTokens(columns.output) : BOARD_USAGE_UNKNOWN}
         </span>
         {weight === "normal" && known && columns.reasoning > 0 ? (
           <BoardHint label="Reasoning tokens, included in output">
@@ -105,9 +110,7 @@ function StageRows({
         <span className="truncate text-[11px] text-muted-foreground">{stage.models}</span>
         <NumberCells columns={stage} weight="medium" />
         <BoardHint
-          label={
-            stage.running ? "Includes a running step. Grows as turns finish." : figure.tooltip
-          }
+          label={stage.running ? "Includes a running step. Grows as turns finish." : figure.tooltip}
         >
           <span className="whitespace-nowrap text-right font-mono text-[11.5px] font-semibold tabular-nums text-foreground">
             {figure.text}
@@ -143,10 +146,7 @@ function StageRows({
                   {line.provider}
                 </span>
               </span>
-              <NumberCells
-                columns={{ ...line, known: !line.noUsage }}
-                weight="normal"
-              />
+              <NumberCells columns={{ ...line, known: !line.noUsage }} weight="normal" />
               <span className="flex flex-col items-end gap-0.5 pt-px">
                 <span
                   className={cn(
@@ -156,7 +156,7 @@ function StageRows({
                 >
                   {line.costKnown
                     ? `${line.estimated ? "≈" : ""}${formatBoardUsd(line.costUsd)}`
-                    : "—"}
+                    : BOARD_USAGE_UNKNOWN}
                 </span>
                 {line.tag === null ? null : <Tag tag={line.tag} tooltip={TAG_TOOLTIP[line.tag]} />}
               </span>
@@ -420,7 +420,9 @@ export function BoardCardUsageSection({ breakdown }: { readonly breakdown: Board
               ? "≈ priced from the model price table on the Usage page; your own prices there count as exact. "
               : "Priced with your own prices from the Usage page. "}
             Cached input is billed at each model's cache rate.
-            {breakdown.running ? " * includes a running step; figures update as each turn finishes." : ""}
+            {breakdown.running
+              ? " * includes a running step; figures update as each turn finishes."
+              : ""}
           </p>
         </>
       ) : null}

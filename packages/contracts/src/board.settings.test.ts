@@ -85,7 +85,9 @@ describe("board settings defaults", () => {
 
   it("ships the cost emphasis at $5, keeps a set one, and refuses a negative one (T3O-77)", () => {
     expect(DEFAULT_BOARD_COST_EMPHASIS_USD).toBe(5);
-    expect(decodeSettings({ display: { autoCollapseEmptyStages: true } }).display.costEmphasisUsd).toBe(5);
+    expect(
+      decodeSettings({ display: { autoCollapseEmptyStages: true } }).display.costEmphasisUsd,
+    ).toBe(5);
     const set = decodeSettings({ display: { costEmphasisUsd: 12.5 } });
     expect(decodeSettings(encodeSettings(set)).display.costEmphasisUsd).toBe(12.5);
     expect(() => decodeSettings({ display: { costEmphasisUsd: -1 } })).toThrow();

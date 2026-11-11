@@ -152,16 +152,14 @@ export const listCardUsageRows = Effect.fn("boardUsageStore.listCardUsageRows")(
     WHERE card_id = ${cardId}
     ORDER BY updated_at, step_id, thread_id, provider, model
   `;
-  return rows.map(
-    (row): BoardCardUsageRow => ({
-      ...toTotals(row),
-      stepId: row.stepId,
-      threadId: row.threadId,
-      model: row.model === "" ? null : row.model,
-      reasoningTokens: row.reasoning,
-      updatedAt: row.updatedAt,
-    }),
-  );
+  return rows.map((row): BoardCardUsageRow => ({
+    ...toTotals(row),
+    stepId: row.stepId,
+    threadId: row.threadId,
+    model: row.model === "" ? null : row.model,
+    reasoningTokens: row.reasoning,
+    updatedAt: row.updatedAt,
+  }));
 });
 
 export const cardUsageHistoryPartial = Effect.fn("boardUsageStore.cardUsageHistoryPartial")(

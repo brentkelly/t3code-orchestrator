@@ -4,13 +4,14 @@
  */
 import type { BoardCardShell, BoardCardUsageSummary } from "@t3tools/contracts";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import { cn } from "../../lib/utils";
 import { BoardHint } from "../BoardHint";
 import { boardGroupUsage, type BoardUsageInView } from "./boardUsageViews";
 import {
+  BOARD_USAGE_UNKNOWN,
   boardUsageProviderLabel,
   formatBoardTokens,
   formatBoardUsageCost,
@@ -36,7 +37,7 @@ function providerCostText(provider: BoardCardUsageSummary["providers"][number]):
   if (provider.costUsd > 0 || provider.partial !== true) {
     return formatBoardUsageCost({ ...provider, costKnown: true }).text;
   }
-  return provider.tokens === 0 ? "—" : "unpriced";
+  return provider.tokens === 0 ? BOARD_USAGE_UNKNOWN : "unpriced";
 }
 
 const SECTION_HEADING =
@@ -111,8 +112,8 @@ export function BoardUsageChip({ inView }: { readonly inView: BoardUsageInView }
           ) : null}
           {inView.partialCount > 0 ? (
             <p className="text-[11px]/[1.5] text-pretty text-muted-foreground">
-              {inView.partialCount} {inView.partialCount === 1 ? "card has" : "cards have"}{" "}
-              unpriced steps or no usage reported, so the total is a lower bound.
+              {inView.partialCount} {inView.partialCount === 1 ? "card has" : "cards have"} unpriced
+              steps or no usage reported, so the total is a lower bound.
             </p>
           ) : null}
         </div>
@@ -130,14 +131,14 @@ export function BoardGroupUsageButton({
   group,
   stageLabelOf,
   onOpenCard,
-  trigger,
+  variant = "face",
 }: {
   readonly shells: ReadonlyArray<BoardCardShell>;
   readonly group: BoardCardShell;
   readonly stageLabelOf: (card: BoardCardShell) => string;
   readonly onOpenCard?: ((cardId: string) => void) | undefined;
-  /** What the button shows; the figure itself by default. */
-  readonly trigger?: (figure: string) => ReactNode;
+  /** `face` is the bare figure on a group card; `header` reads "$4.71 spent". */
+  readonly variant?: "face" | "header";
 }) {
   const [path, setPath] = useState<ReadonlyArray<BoardCardShell>>([]);
   const total = boardGroupUsage(shells, String(group.cardId)).total;
@@ -161,7 +162,16 @@ export function BoardGroupUsageButton({
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => event.stopPropagation()}
       >
-        {trigger === undefined ? figure.text : trigger(figure.text)}
+        {variant === "header" ? (
+          <>
+            <span className="font-mono text-[11.5px] font-semibold text-foreground">
+              {figure.text}
+            </span>
+            <span className="font-sans text-[11.5px] font-medium text-muted-foreground">spent</span>
+          </>
+        ) : (
+          figure.text
+        )}
       </PopoverTrigger>
       <PopoverPopup align="start" className="w-[384px] p-0">
         <div

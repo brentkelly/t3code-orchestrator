@@ -2,7 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { BoardCardUsageSummary } from "@t3tools/contracts";
 
-import { formatBoardTokens, formatBoardUsageCost, isBoardUsageEmphasized } from "./boardUsageFormat";
+import {
+  formatBoardTokens,
+  formatBoardUsageCost,
+  isBoardUsageEmphasized,
+} from "./boardUsageFormat";
 
 const usage = (overrides: Partial<BoardCardUsageSummary> = {}): BoardCardUsageSummary => ({
   tokens: 1200,

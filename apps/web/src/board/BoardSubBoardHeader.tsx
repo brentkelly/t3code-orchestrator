@@ -132,13 +132,7 @@ export function BoardSubBoardHeader({
         onOpenCard={onOpenCardUsage}
         shells={shells}
         stageLabelOf={stageLabelOf}
-        trigger={(figure) => (
-          <>
-            <span className="h-3.5 w-px bg-border" />
-            <span className="font-mono text-[11.5px] font-semibold text-foreground">{figure}</span>
-            <span className="font-sans text-[11.5px] font-medium text-muted-foreground">spent</span>
-          </>
-        )}
+        variant="header"
       />
       <span className="flex-1" />
       {/* The chart is drawn from the group's PLANS, so the toggle

@@ -77,7 +77,10 @@ describe("usage signals", () => {
   });
 
   it("falls back to the turn's model, then the thread's, when usage names none", () => {
-    assert.strictEqual(usageSignalOf(records(), turn({ turnTokenUsage: undefined }))?.model, "claude-sonnet-reported");
+    assert.strictEqual(
+      usageSignalOf(records(), turn({ turnTokenUsage: undefined }))?.model,
+      "claude-sonnet-reported",
+    );
     assert.strictEqual(
       usageSignalOf(records(), turn({ turnTokenUsage: undefined, model: undefined }))?.model,
       "selected",
@@ -119,7 +122,11 @@ describe("usage signals", () => {
     assert.strictEqual(
       usageSignalOf(
         records({
-          lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
+          lineage: {
+            parentThreadId: parent,
+            relationshipToParent: "subagent",
+            rootThreadId: parent,
+          },
         }),
         turn(),
       )?.delegatedFromThreadId,
@@ -128,11 +135,17 @@ describe("usage signals", () => {
   });
 
   it("counts a provider turn only once it has finished", () => {
-    assert.isNull(finishedProviderTurnOf(stored("provider-turn.updated", turn({ status: "running" }))));
+    assert.isNull(
+      finishedProviderTurnOf(stored("provider-turn.updated", turn({ status: "running" }))),
+    );
     for (const status of ["completed", "interrupted", "failed", "cancelled"]) {
       assert.isNotNull(finishedProviderTurnOf(stored("provider-turn.updated", turn({ status }))));
     }
-    assert.isNull(finishedProviderTurnOf(stored("run.updated", { id: RunId.make("run-1"), status: "completed" })));
+    assert.isNull(
+      finishedProviderTurnOf(
+        stored("run.updated", { id: RunId.make("run-1"), status: "completed" }),
+      ),
+    );
   });
 
   it.effect("adds usage to a batch only when asked, and never during the warm-up", () => {

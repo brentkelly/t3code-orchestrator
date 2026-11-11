@@ -152,8 +152,10 @@ function sortValue(card: BoardCardShell, sort: BoardListSort, shells: Shells): n
 
 /** Siblings by tokens or cost. A card with no known figure sorts last in both
     directions; ties keep the outline's order. */
-export function sortBoardListSiblings(cards: Shells, sort: BoardListSort, shells: Shells): Shells {
-  const values = new Map(cards.map((card) => [card.cardId, sortValue(card, sort, shells)] as const));
+function sortBoardListSiblings(cards: Shells, sort: BoardListSort, shells: Shells): Shells {
+  const values = new Map(
+    cards.map((card) => [card.cardId, sortValue(card, sort, shells)] as const),
+  );
   return cards.toSorted((left, right) => {
     const a = values.get(left.cardId) ?? null;
     const b = values.get(right.cardId) ?? null;
@@ -219,7 +221,9 @@ export function boardListRows(input: {
   const rows: Array<BoardListRow> = [];
   const walk = (parentId: string, depth: number) => {
     const siblings = tree.children.get(parentId) ?? [];
-    for (const card of sort === null ? siblings : sortBoardListSiblings(siblings, sort, tree.shells)) {
+    for (const card of sort === null
+      ? siblings
+      : sortBoardListSiblings(siblings, sort, tree.shells)) {
       if (!keep(card)) continue;
       const id = String(card.cardId);
       const kids = tree.children.get(id) ?? [];

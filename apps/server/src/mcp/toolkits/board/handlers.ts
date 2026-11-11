@@ -355,11 +355,11 @@ const requireCallerCard = (
  * gets `card-not-found`, and the handler still has the key to answer with after a delete.
  */
 /** The card's usage as the read tools report it (T3O-77). */
-const describeUsage = (
-  detail: Pick<BoardCardDetail, "usage" | "usageHistoryPartial"> | null,
-) => ({
+const describeUsage = (detail: Pick<BoardCardDetail, "usage" | "usageHistoryPartial"> | null) => ({
   summary:
-    detail === null ? null : boardCardUsageSummaryFromRows(detail.usage, detail.usageHistoryPartial),
+    detail === null
+      ? null
+      : boardCardUsageSummaryFromRows(detail.usage, detail.usageHistoryPartial),
   rows: detail?.usage ?? [],
 });
 

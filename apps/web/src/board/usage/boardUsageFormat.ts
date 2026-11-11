@@ -11,6 +11,9 @@ import {
   type ProviderDriverKind,
 } from "@t3tools/contracts";
 
+// oxlint-disable-next-line t3code/no-em-dash-copy -- the design's figure for "nothing known", not prose
+export const BOARD_USAGE_UNKNOWN = "—";
+
 export interface BoardUsageFigure {
   /** The figure as drawn: `≈$1.84+`, `—` or `no usage`. */
   readonly text: string;
@@ -40,7 +43,7 @@ export function formatBoardUsd(costUsd: number): string {
 
 /** `1.24M`, `12.4k`, `812`. */
 export function formatBoardTokens(tokens: number | null): string {
-  if (tokens === null) return "—";
+  if (tokens === null) return BOARD_USAGE_UNKNOWN;
   if (tokens >= 1e6) return `${(tokens / 1e6).toFixed(2)}M`;
   if (tokens >= 1e3) return `${(tokens / 1e3).toFixed(1)}k`;
   return String(tokens);
@@ -58,12 +61,12 @@ export function formatBoardUsageCost(
   options: { readonly steps?: BoardUsageFigureSteps; readonly noUsageWord?: boolean } = {},
 ): BoardUsageFigure {
   if (usage == null) {
-    return { text: "—", known: false, tooltip: "No usage recorded yet." };
+    return { text: BOARD_USAGE_UNKNOWN, known: false, tooltip: "No usage recorded yet." };
   }
   if (usage.costKnown !== true) {
     const nothingReported = usage.tokens === 0;
     return {
-      text: nothingReported && options.noUsageWord === true ? "no usage" : "—",
+      text: nothingReported && options.noUsageWord === true ? "no usage" : BOARD_USAGE_UNKNOWN,
       known: false,
       tooltip: nothingReported
         ? "The provider reported no token usage. Not counted, and not $0."

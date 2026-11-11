@@ -86,7 +86,11 @@ describe("a finished turn's board usage", () => {
       priceBoardUsageTurn(
         rates,
         "listed-model",
-        complete({ inputTokens: 2_000_000, cachedInputTokens: 1_000_000, cacheCreationTokens: 1_000_000 }),
+        complete({
+          inputTokens: 2_000_000,
+          cachedInputTokens: 1_000_000,
+          cacheCreationTokens: 1_000_000,
+        }),
       ).costUsd,
     ).toBeCloseTo(0.1 + 2, 9);
   });

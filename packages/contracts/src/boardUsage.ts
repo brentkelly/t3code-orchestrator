@@ -1,12 +1,7 @@
 /**
- * T3o: a card's token usage and cost (T3O-77). The board stores one row per card, step,
- * thread, provider and model, priced once when each provider turn finishes; the shell
- * carries a bounded per-card summary and the card detail carries the rows.
- *
- * A turn's price has one of four sources. `override` (a user price) is exact, `listPriced`
- * (the LiteLLM table) is an estimate, and `unpriced` (no rate) and `noUsage` (the provider
- * reported nothing) leave the figure partial. `reported` is kept for providers that send
- * their own cost; none do today.
+ * T3o: a card's token usage and cost (T3O-77). Each finished turn is priced once: a user
+ * price (`override`) is exact, the LiteLLM table (`listPriced`) is an estimate, and
+ * `unpriced` or `noUsage` turns leave the figure a lower bound.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -92,7 +87,7 @@ export type BoardUsageRowTotals = Pick<
   | "turnsNoUsage"
 >;
 
-export const boardUsageRowTokens = (
+const boardUsageRowTokens = (
   row: Pick<
     BoardCardUsageRow,
     "uncachedInputTokens" | "cachedInputTokens" | "cacheCreationTokens" | "outputTokens"
@@ -152,7 +147,8 @@ export function boardCardUsageSummaryFromRows(
   }
   total.partial ||= historyPartial;
   const ranked = [...byProvider.entries()].sort(
-    ([a, left], [b, right]) => right.costUsd - left.costUsd || right.tokens - left.tokens || (a < b ? -1 : 1),
+    ([a, left], [b, right]) =>
+      right.costUsd - left.costUsd || right.tokens - left.tokens || (a < b ? -1 : 1),
   );
   const kept = ranked.slice(0, BOARD_USAGE_SHELL_PROVIDERS_MAX - 1);
   const rest = ranked.slice(BOARD_USAGE_SHELL_PROVIDERS_MAX - 1);

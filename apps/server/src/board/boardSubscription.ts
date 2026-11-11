@@ -175,10 +175,12 @@ const cardUsageResync = (
   queries.boardAllCardUsage().pipe(
     Effect.mapError(toSnapshotError("Failed to load the board's card usage.")),
     Effect.map((byCard) =>
-      Array.from(
-        byCard,
-        ([cardId, usage]): BoardShellStreamItem => ({ kind: "card-usage", sequence, cardId, usage }),
-      ),
+      Array.from(byCard, ([cardId, usage]): BoardShellStreamItem => ({
+        kind: "card-usage",
+        sequence,
+        cardId,
+        usage,
+      })),
     ),
   );
 

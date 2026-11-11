@@ -115,7 +115,9 @@ const setup = (
     yield* waitOnline(env.connections);
     const feed = yield* makeWorkerSignalFeed.pipe(
       Effect.provideService(WorkerConnections, env.connections),
-      recorder === undefined ? (effect) => effect : Effect.provideService(BoardUsageRecorder, recorder),
+      recorder === undefined
+        ? (effect) => effect
+        : Effect.provideService(BoardUsageRecorder, recorder),
     );
     const fileSystem = yield* FileSystem.FileSystem;
     const digest = yield* Digest.Digest;
@@ -222,53 +224,58 @@ describe("the remote thread gateway", () => {
     ),
   );
 
-  it.effect("a worker's finished turn is priced here, beside the cursor, and never reaches the supervisor", () =>
-    inCentral(
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        const recorder = yield* makeBoardUsageRecorder.pipe(
-          Effect.provideService(
-            BoardUsagePricing,
-            BoardUsagePricing.of({
-              currentRates: Effect.succeed({
-                table: parseRateTable({
-                  "gpt-5-codex": { input_cost_per_token: 1e-6, output_cost_per_token: 1e-6 },
+  it.effect(
+    "a worker's finished turn is priced here, beside the cursor, and never reaches the supervisor",
+    () =>
+      inCentral(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const recorder = yield* makeBoardUsageRecorder.pipe(
+            Effect.provideService(
+              BoardUsagePricing,
+              BoardUsagePricing.of({
+                currentRates: Effect.succeed({
+                  table: parseRateTable({
+                    "gpt-5-codex": { input_cost_per_token: 1e-6, output_cost_per_token: 1e-6 },
+                  }),
+                  overrides: new Map(),
                 }),
-                overrides: new Map(),
               }),
-            }),
-          ),
-        );
-        const threadId = ThreadId.make("thread-usage");
-        const cardId = BoardCardId.make("card-usage");
-        yield* sql`
+            ),
+          );
+          const threadId = ThreadId.make("thread-usage");
+          const cardId = BoardCardId.make("card-usage");
+          yield* sql`
           INSERT INTO board_card_thread_links (thread_id, card_id, role, linked_at, worker_id)
           VALUES (${threadId}, ${cardId}, ${"review@1"}, ${"2026-01-01T00:00:00.000Z"}, ${WORKER_ID})`;
-        const { threads, feed } = yield* setup(new Map(), recorder);
-        const changes = yield* recorder.subscribeChanges;
-        const signals = yield* feed.subscribeSignals;
-        yield* threads.emit({
-          type: "usage-recorded",
-          threadId,
-          providerTurnId: "turn-1",
-          driver: "codex",
-          model: "gpt-5-codex",
-          delegatedFromThreadId: null,
-          usage: { usageStatus: "complete", inputTokens: 1_000_000, outputTokens: 500_000 },
-        });
-        yield* threads.emit(turnEnded(threadId, "run-1"));
+          const { threads, feed } = yield* setup(new Map(), recorder);
+          const changes = yield* recorder.subscribeChanges;
+          const signals = yield* feed.subscribeSignals;
+          yield* threads.emit({
+            type: "usage-recorded",
+            threadId,
+            providerTurnId: "turn-1",
+            driver: "codex",
+            model: "gpt-5-codex",
+            delegatedFromThreadId: null,
+            usage: { usageStatus: "complete", inputTokens: 1_000_000, outputTokens: 500_000 },
+          });
+          yield* threads.emit(turnEnded(threadId, "run-1"));
 
-        assert.strictEqual(Option.getOrThrow(yield* Stream.runHead(changes)), cardId);
-        const rows = yield* sql<{ readonly micro: number; readonly step: string }>`
+          assert.strictEqual(Option.getOrThrow(yield* Stream.runHead(changes)), cardId);
+          const rows = yield* sql<{ readonly micro: number; readonly step: string }>`
           SELECT cost_micro_usd AS micro, step_id AS step FROM board_card_usage
           WHERE card_id = ${cardId}`;
-        assert.deepStrictEqual(rows, [{ micro: 1_500_000, step: "review@1" }]);
-        // The supervisor hears the turn end, and never the usage before it.
-        assert.strictEqual(Option.getOrThrow(yield* Stream.runHead(signals)).signal.type, "turn-ended");
-        const store = yield* BoardRelayStore;
-        assert.strictEqual(yield* store.signalCursor(WORKER_ID), 2);
-      }),
-    ),
+          assert.deepStrictEqual(rows, [{ micro: 1_500_000, step: "review@1" }]);
+          // The supervisor hears the turn end, and never the usage before it.
+          assert.strictEqual(
+            Option.getOrThrow(yield* Stream.runHead(signals)).signal.type,
+            "turn-ended",
+          );
+          const store = yield* BoardRelayStore;
+          assert.strictEqual(yield* store.signalCursor(WORKER_ID), 2);
+        }),
+      ),
   );
 
   it.effect("after a dropped connection, the missed signals arrive once, from the cursor", () =>

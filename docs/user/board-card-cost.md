@@ -24,16 +24,16 @@ usage by step.
 
 ## Reading the figure
 
-| Figure    | Means                                                                              |
-| --------- | ---------------------------------------------------------------------------------- |
-| `$1.84`   | Exact: every priced turn used a price you set.                                     |
-| `≈$1.84`  | At least part of it is priced from the public model price table.                   |
-| `$1.84+`  | A lower bound: some turns had no price, or the provider reported no usage.         |
-| `—`       | Nothing is known yet. It is never shown as `$0`.                                   |
-| `so far`  | A step is still running. The figure moves once each time a turn finishes.         |
+| Figure   | Means                                                                      |
+| -------- | -------------------------------------------------------------------------- |
+| `$1.84`  | Exact: every priced turn used a price you set.                             |
+| `≈$1.84` | At least part of it is priced from the public model price table.           |
+| `$1.84+` | A lower bound: some turns had no price, or the provider reported no usage. |
+| `—`      | Nothing is known yet. It is never shown as `$0`.                           |
+| `so far` | A step is still running. The figure moves once each time a turn finishes.  |
 
 Providers that do not report token usage (Cursor and Pi, and Grok and other ACP agents for now)
-count as *no usage*, which makes the figure partial. So does work a card did on a worker before
+count as _no usage_, which makes the figure partial. So does work a card did on a worker before
 the board started recording usage.
 
 Each turn is priced when it finishes, so changing a price later does not change what past cards

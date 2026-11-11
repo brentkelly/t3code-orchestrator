@@ -231,10 +231,9 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     // T3o: usage rides only the signal stream a central asks it of, so the todo log's
     // wire entries keep the todo signals an older central decodes.
     readTodoLog: (after, upTo) =>
-      local.readTodoLog(after, upTo).pipe(
-        Stream.map(withoutUsage),
-        Stream.mapError(toWireReadError),
-      ),
+      local
+        .readTodoLog(after, upTo)
+        .pipe(Stream.map(withoutUsage), Stream.mapError(toWireReadError)),
     subscribeTodoLog: Stream.unwrap(local.subscribeTodoLog).pipe(Stream.map(withoutUsage)),
     subscribeMcpRelay: (central, caller) =>
       relay.subscribe(central, caller).pipe(Stream.mapError(refused("subscribeMcpRelay"))),

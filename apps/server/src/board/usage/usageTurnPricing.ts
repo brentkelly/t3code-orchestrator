@@ -36,9 +36,7 @@ const ZERO: UsageTokenTotals = {
  * and output: the ledger does not split its cache. A turn that reported nothing, or
  * `unavailable`, is a no-usage turn and makes the figure partial.
  */
-export function boardUsageTurnTotals(
-  usage: BoardGatewayTurnUsage | null,
-): UsageTokenTotals | null {
+export function boardUsageTurnTotals(usage: BoardGatewayTurnUsage | null): UsageTokenTotals | null {
   if (usage === null || usage.usageStatus === "unavailable") return null;
   if (
     usage.inputTokens === undefined &&

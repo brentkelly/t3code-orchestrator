@@ -89,7 +89,12 @@ describe("applyBoardShellStreamItem", () => {
     const cardId = BoardCardId.make("card-1");
     const held = { ...SNAPSHOT, cards: [{ cardId } as BoardCardShell] };
     const usage = { tokens: 10, costUsd: 0.5, costKnown: true, providers: [] };
-    const next = applyBoardShellStreamItem(held, { kind: "card-usage", sequence: 3, cardId, usage });
+    const next = applyBoardShellStreamItem(held, {
+      kind: "card-usage",
+      sequence: 3,
+      cardId,
+      usage,
+    });
     expect(next?.cards[0]?.usage).toEqual(usage);
     expect(next?.snapshotSequence).toBe(10);
   });

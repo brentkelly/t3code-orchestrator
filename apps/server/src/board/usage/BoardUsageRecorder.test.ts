@@ -28,7 +28,11 @@ import { boardStackEngine, makeBoardStackTestLayerWithoutTail } from "../boardSt
 import { BoardThreadTail, BoardThreadTailLive } from "../boardThreadTail.ts";
 import { BoardUsagePricing } from "../ports/BoardUsagePricing.ts";
 import type { UsageSignal } from "../ThreadGateway.ts";
-import { BOARD_USAGE_BACKFILL_MARKER, BoardUsageRecorder, BoardUsageRecorderLive } from "./BoardUsageRecorder.ts";
+import {
+  BOARD_USAGE_BACKFILL_MARKER,
+  BoardUsageRecorder,
+  BoardUsageRecorderLive,
+} from "./BoardUsageRecorder.ts";
 
 const t0 = "2026-01-01T00:00:00.000Z";
 const instance = ProviderInstanceId.make("codex");
@@ -173,9 +177,15 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
         Effect.gen(function* () {
           const tail = yield* BoardThreadTail;
           yield* writeTurn(threadId, "turn-once", "running", null);
-          yield* writeTurn(threadId, "turn-once", "completed", { input: 1_000_000, output: 100_000 });
+          yield* writeTurn(threadId, "turn-once", "completed", {
+            input: 1_000_000,
+            output: 100_000,
+          });
           // The engine rewrites a finished turn in place; it must not count twice.
-          yield* writeTurn(threadId, "turn-once", "completed", { input: 1_000_000, output: 100_000 });
+          yield* writeTurn(threadId, "turn-once", "completed", {
+            input: 1_000_000,
+            output: 100_000,
+          });
           yield* tail.drain;
         }),
       );
@@ -230,7 +240,11 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
         delegatedFromThreadId: threadId,
         usage: { usageStatus: "complete", inputTokens: 1_000_000, outputTokens: 0 },
       };
-      const stray: UsageSignal = { ...signal, threadId: ThreadId.make("thread-nobody"), delegatedFromThreadId: null };
+      const stray: UsageSignal = {
+        ...signal,
+        threadId: ThreadId.make("thread-nobody"),
+        delegatedFromThreadId: null,
+      };
       yield* withRecorder(
         Effect.gen(function* () {
           const recorder = yield* BoardUsageRecorder;
