@@ -350,6 +350,12 @@ export interface ThreadGatewayShape {
   readonly pendingTurnStartAt: (
     threadId: ThreadId,
   ) => Effect.Effect<string | null, ThreadReadError>;
+  /** Whether a subagent under this thread holds a live approval, by
+      upstream's rule. Lazy and not part of `threadState`, which hot paths read.
+      Best-effort across a worker: one that cannot answer reads as false. */
+  readonly subagentAwaitingApproval: (
+    threadId: ThreadId,
+  ) => Effect.Effect<boolean, ThreadReadError>;
 
   /** Every project, deleted ones included. */
   readonly projects: () => Effect.Effect<ReadonlyArray<BoardProject>, ThreadReadError>;

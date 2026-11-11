@@ -335,6 +335,7 @@ const makeLiveGatewayRpc = (
     latestAssistantMessage: (threadId) => call({ _tag: "latestAssistantMessage", threadId }),
     lastSignalAt: (threadId) => call({ _tag: "lastSignalAt", threadId }),
     pendingTurnStartAt: (threadId) => call({ _tag: "pendingTurnStartAt", threadId }),
+    subagentAwaitingApproval: (threadId) => call({ _tag: "subagentAwaitingApproval", threadId }),
     projects: call({ _tag: "projects" }),
     project: (projectId) => call({ _tag: "project", projectId }),
     todoLogHead: call({ _tag: "todoLogHead" }),

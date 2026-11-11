@@ -170,6 +170,7 @@ export const makeThreadGatewayRouter = (deps: ThreadGatewayRouterDeps): ThreadGa
     latestAssistantMessage: routedRead((gateway) => gateway.latestAssistantMessage),
     lastSignalAt: routedRead((gateway) => gateway.lastSignalAt),
     pendingTurnStartAt: routedRead((gateway) => gateway.pendingTurnStartAt),
+    subagentAwaitingApproval: routedRead((gateway) => gateway.subagentAwaitingApproval),
 
     // Best-effort per worker: removed and unreachable workers' threads are left out, so one offline
     // worker never stalls the release sweep. Fails only when no worker named answered, so a single

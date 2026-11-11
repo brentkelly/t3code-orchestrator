@@ -22,6 +22,7 @@ import {
   type BoardCardShell,
   type BoardCardThreadShell,
   type BoardLabel,
+  type BoardThreadStateSource,
   type BoardProjectImportCandidatesInput,
   type BoardProjectImportInput,
   type BoardProjectStageConfigShell,
@@ -34,12 +35,16 @@ import {
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
-import { boardThreadStateSource } from "@t3tools/shared/boardThreadState";
+import {
+  type BoardThreadShellFields,
+  boardThreadStateSource,
+} from "@t3tools/shared/boardThreadState";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import type { PendingSubagentRequest } from "./models.ts";
 import {
   addBoardWorker,
   dismissBoardWorkerSetup,
@@ -219,28 +224,49 @@ function liveCardThreadIds(
 function withDerivedThreadFields(
   card: BoardCardShell,
   threadById: ThreadShellLookup,
-  cardThreads?: ReadonlyArray<BoardCardThreadShell> | undefined,
+  cardThreads: ReadonlyArray<BoardCardThreadShell> | undefined,
+  subagentRequests: ReadonlyMap<ThreadId, PendingSubagentRequest>,
 ): BoardCardShell {
   const threads = liveCardThreadIds(card, cardThreads).map((threadId) => {
     const thread = threadById(threadId);
-    return thread === undefined ? undefined : boardThreadStateSource(thread);
+    return thread === undefined
+      ? undefined
+      : boardThreadStateSourceWithSubagents(thread, subagentRequests);
   });
-  const { threadState, awaitingInput, waitingOnBackground } = deriveBoardCardThreadState(threads);
+  const { threadState, awaitingInput, waitingOnBackground, awaitingSubagent } =
+    deriveBoardCardThreadState(threads);
   if (
     card.threadState === threadState &&
     card.awaitingInput === awaitingInput &&
-    (card.waitingOnBackground ?? false) === waitingOnBackground
+    (card.waitingOnBackground ?? false) === waitingOnBackground &&
+    (card.awaitingSubagent ?? false) === awaitingSubagent
   ) {
     return card;
   }
   // The key is omitted when false, matching the server's shell.
-  const { waitingOnBackground: _previous, ...rest } = card;
+  const { waitingOnBackground: _previous, awaitingSubagent: _previousSubagent, ...rest } = card;
   return {
     ...rest,
     threadState,
     awaitingInput,
     ...(waitingOnBackground ? { waitingOnBackground: true } : {}),
+    ...(awaitingSubagent ? { awaitingSubagent: true } : {}),
   };
+}
+
+const NO_SUBAGENT_REQUESTS: ReadonlyMap<ThreadId, PendingSubagentRequest> = new Map();
+
+/** A thread's board state source, flagged when upstream's subagent-request map
+    (`pendingSubagentRequestsAtom`) says something under it awaits approval
+   . Only approvals count: the coordinator answers child questions. */
+export function boardThreadStateSourceWithSubagents(
+  thread: BoardThreadShellFields & { readonly id: ThreadId },
+  subagentRequests: ReadonlyMap<ThreadId, PendingSubagentRequest>,
+): BoardThreadStateSource {
+  const source = boardThreadStateSource(thread);
+  return subagentRequests.get(thread.id) === "approval"
+    ? { ...source, subagentAwaitingApproval: true }
+    : source;
 }
 
 // ── Column ordering ────────────────────────────────────────────────────
@@ -311,6 +337,7 @@ function pushColumn(
 export function withBoardThreadFields(
   board: BoardShellSnapshot,
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+  subagentRequests: ReadonlyMap<ThreadId, PendingSubagentRequest> = NO_SUBAGENT_REQUESTS,
 ): BoardShellSnapshot {
   if (board.cards.length === 0) return board;
   const threadsById = new Map(threads.map((thread) => [thread.id, thread]));
@@ -320,6 +347,7 @@ export function withBoardThreadFields(
       card,
       (threadId) => threadsById.get(threadId),
       board.cardThreads,
+      subagentRequests,
     );
     if (next !== card) changed = true;
     return next;
@@ -546,6 +574,11 @@ export function createBoardEnvironmentAtoms<R, ER>(
     readonly boardSnapshotValueAtom: (
       environmentId: EnvironmentId,
     ) => Atom.Atom<BoardShellSnapshot | null>;
+    /** Upstream's parent→subagent-request map. Cached upstream, so
+        it keeps its identity across streaming ticks. */
+    readonly pendingSubagentRequestsAtom: (
+      environmentId: EnvironmentId,
+    ) => Atom.Atom<ReadonlyMap<ThreadId, PendingSubagentRequest>>;
   },
 ) {
   /** The board, with thread-derived card fields overlaid from the live thread
@@ -559,6 +592,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
       return withBoardThreadFields(
         board,
         Option.match(shell.snapshot, { onNone: () => [], onSome: (value) => value.threads }),
+        get(options.pendingSubagentRequestsAtom(environmentId)),
       );
     }).pipe(Atom.withLabel(`environment-board:${environmentId}`)),
   );

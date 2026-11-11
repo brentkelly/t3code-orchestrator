@@ -36,6 +36,9 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   run, the composer drawer that holds an agent's question, the sidebar's Input row, mobile's
   Awaiting Input pill.
   These were blue before, which read as "still working" — the opposite of what they mean.
+  A subagent's permission prompt counts too (T3O-73): a card thread whose `delegate_task` child
+  waits on an approval reads "Needs permission", by upstream's own subagent-request rule, because
+  the parent agent cannot answer it. A child's question does not: the parent agent answers those.
 - **Blocked is amber, never blue.** It matches the card modal's blocked callout, which already used
   it.
 - **A held merge is amber, and the pill does not spin.** A card whose merge hit conflicts is blocked

@@ -17,8 +17,10 @@ import {
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderDriverKind,
   ProviderThreadId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2DomainEvent,
   type ProjectSettingsOverrides,
@@ -139,6 +141,162 @@ const withoutAt = (signals: ReadonlyArray<ThreadSignal>) =>
       ? { ...signal, at: "" }
       : signal,
   );
+
+/**
+ * A thread as its projection holds it: written straight to the store,
+ * since a subagent's lineage and an app-owned task record are only ever written
+ * by a running delegation, which this stack has no provider for.
+ */
+const projectThread = Effect.fn("projectThread")(function* (input: {
+  readonly tag: string;
+  readonly parent?: ThreadId;
+  readonly root?: ThreadId;
+  readonly creationSource?: "mcp" | "provider";
+  /** The run's status; absent means the thread never ran. */
+  readonly run?: "running" | "completed";
+  readonly request?: "permission" | "user_input";
+  /** App-owned tasks this thread delegated, by child thread. */
+  readonly delegates?: ReadonlyArray<{
+    readonly child: ThreadId;
+    readonly status: "running" | "completed";
+    readonly origin?: "app_owned" | "provider_native";
+  }>;
+}) {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const now = at("2026-01-01T00:00:00.000Z");
+  const driver = ProviderDriverKind.make("codex");
+  const providerInstanceId = modelSelection.instanceId;
+  const threadId = ThreadId.make(`thread-subagent-${input.tag}`);
+  const runId = RunId.make(`run-subagent-${input.tag}`);
+  const rootNodeId = NodeId.make(`node-subagent-${input.tag}`);
+  const event = (suffix: string) => EventId.make(`evt-subagent-${input.tag}-${suffix}`);
+  yield* store.apply({
+    id: event("created"),
+    type: "thread.created",
+    threadId,
+    occurredAt: now,
+    payload: {
+      createdBy: "agent",
+      creationSource: input.creationSource ?? "mcp",
+      id: threadId,
+      projectId,
+      title: input.tag,
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: {
+        parentThreadId: input.parent ?? null,
+        relationshipToParent: input.parent === undefined ? null : "subagent",
+        rootThreadId: input.root ?? input.parent ?? threadId,
+      },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+  } as unknown as OrchestrationV2DomainEvent);
+  if (input.run === undefined) return threadId;
+  const run = {
+    id: runId,
+    threadId,
+    ordinal: 1,
+    providerInstanceId,
+    modelSelection,
+    providerThreadId: null,
+    userMessageId: MessageId.make(`msg-subagent-${input.tag}`),
+    rootNodeId,
+    activeAttemptId: null,
+    status: input.run,
+    requestedAt: now,
+    startedAt: now,
+    completedAt: input.run === "running" ? null : now,
+    checkpointId: null,
+    contextHandoffId: null,
+  };
+  yield* store.apply({
+    id: event("run"),
+    type: "run.created",
+    threadId,
+    runId,
+    nodeId: rootNodeId,
+    driver,
+    providerInstanceId,
+    occurredAt: now,
+    payload: run,
+  } as unknown as OrchestrationV2DomainEvent);
+  if (input.request !== undefined) {
+    yield* store.apply({
+      id: event("request"),
+      type: "runtime-request.updated",
+      threadId,
+      nodeId: rootNodeId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: RuntimeRequestId.make(`request-subagent-${input.tag}`),
+        nodeId: rootNodeId,
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: input.request,
+        status: "pending",
+        responseCapability: {
+          type: "live",
+          providerSessionId: ProviderSessionId.make(`ps-subagent-${input.tag}`),
+        },
+        createdAt: now,
+        resolvedAt: null,
+      },
+    } as unknown as OrchestrationV2DomainEvent);
+  }
+  for (const [index, task] of (input.delegates ?? []).entries()) {
+    const id = NodeId.make(`node-subagent-${input.tag}-task-${index}`);
+    yield* store.apply({
+      id: event(`task-${index}`),
+      type: "subagent.updated",
+      threadId,
+      runId,
+      nodeId: id,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id,
+        threadId,
+        runId,
+        parentNodeId: rootNodeId,
+        origin: task.origin ?? "app_owned",
+        createdBy: "agent",
+        driver,
+        providerInstanceId,
+        providerThreadId: null,
+        childThreadId: task.child,
+        nativeTaskRef: null,
+        prompt: "Do the work",
+        title: `task ${index}`,
+        model: null,
+        status: task.status,
+        result: null,
+        startedAt: now,
+        completedAt: task.status === "running" ? null : now,
+        updatedAt: now,
+      },
+    } as unknown as OrchestrationV2DomainEvent);
+  }
+  return threadId;
+});
+
+const childOf = (parentTag: string, childTag: string) => ({
+  parent: ThreadId.make(`thread-subagent-${parentTag}`),
+  child: ThreadId.make(`thread-subagent-${childTag}`),
+});
 
 it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
   "ThreadGatewayV2 contract",
@@ -849,6 +1007,75 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         assert.isFalse(
           yield* threads.armLimitRecovery({ commandId: boardCommandId("limit-arm"), threadId }),
         );
+      }),
+    );
+
+    it.effect("a delegated child awaiting approval holds its parent for a human", () =>
+      Effect.gen(function* () {
+        yield* ensureProject;
+        const threads = yield* LocalThreadGateway;
+        const awaiting = (tag: string) =>
+          threads.subagentAwaitingApproval(ThreadId.make(`thread-subagent-${tag}`));
+
+        // An app-owned child on a live run, held on a permission prompt.
+        const yes = childOf("yes", "yes-child");
+        yield* projectThread({ tag: "yes-child", parent: yes.parent, run: "running", request: "permission" });
+        yield* projectThread({ tag: "yes", run: "completed", delegates: [{ child: yes.child, status: "running" }] });
+        assert.isTrue(yield* awaiting("yes"));
+        // The child itself has no subagent of its own waiting.
+        assert.isFalse(yield* awaiting("yes-child"));
+
+        // A child's question goes to the coordinator, not the human.
+        const asks = childOf("asks", "asks-child");
+        yield* projectThread({ tag: "asks-child", parent: asks.parent, run: "running", request: "user_input" });
+        yield* projectThread({ tag: "asks", run: "completed", delegates: [{ child: asks.child, status: "running" }] });
+        assert.isFalse(yield* awaiting("asks"));
+
+        // A prompt left behind by a run that ended can never be answered.
+        const dead = childOf("dead", "dead-child");
+        yield* projectThread({ tag: "dead-child", parent: dead.parent, run: "completed", request: "permission" });
+        yield* projectThread({ tag: "dead", run: "completed", delegates: [{ child: dead.child, status: "running" }] });
+        assert.isFalse(yield* awaiting("dead"));
+
+        // Provider-native subagents ask on their parent, which already reads it.
+        const native = childOf("native", "native-child");
+        yield* projectThread({
+          tag: "native-child",
+          parent: native.parent,
+          creationSource: "provider",
+          run: "running",
+          request: "permission",
+        });
+        yield* projectThread({
+          tag: "native",
+          run: "completed",
+          delegates: [{ child: native.child, status: "running", origin: "provider_native" }],
+        });
+        assert.isFalse(yield* awaiting("native"));
+
+        // A grandchild through a nested delegation holds the root too.
+        const nested = childOf("nested", "nested-child");
+        const grandchild = ThreadId.make("thread-subagent-nested-grandchild");
+        yield* projectThread({
+          tag: "nested-grandchild",
+          parent: nested.child,
+          root: nested.parent,
+          run: "running",
+          request: "permission",
+        });
+        yield* projectThread({
+          tag: "nested-child",
+          parent: nested.parent,
+          run: "running",
+          delegates: [{ child: grandchild, status: "running" }],
+        });
+        yield* projectThread({ tag: "nested", run: "completed", delegates: [{ child: nested.child, status: "running" }] });
+        assert.isTrue(yield* awaiting("nested"));
+
+        // A thread that never delegated, and one that does not exist.
+        yield* projectThread({ tag: "alone", run: "running" });
+        assert.isFalse(yield* awaiting("alone"));
+        assert.isFalse(yield* awaiting("missing"));
       }),
     );
 

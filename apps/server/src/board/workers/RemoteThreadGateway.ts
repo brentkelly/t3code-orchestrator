@@ -54,6 +54,7 @@ export type RemoteThreadGatewayShape = Pick<
   | "latestAssistantMessage"
   | "lastSignalAt"
   | "pendingTurnStartAt"
+  | "subagentAwaitingApproval"
 >;
 
 export interface RemoteThreadGatewayDeps {
@@ -310,5 +311,11 @@ export const makeRemoteThreadGateway = (
     lastSignalAt: (threadId) => read("lastSignalAt", (rpc) => rpc.gateway.lastSignalAt(threadId)),
     pendingTurnStartAt: (threadId) =>
       read("pendingTurnStartAt", (rpc) => rpc.gateway.pendingTurnStartAt(threadId)),
+    // Best-effort: a worker older than this call cannot decode it, and
+    // an unreachable one cannot answer; false is the behaviour before it existed.
+    subagentAwaitingApproval: (threadId) =>
+      read("subagentAwaitingApproval", (rpc) => rpc.gateway.subagentAwaitingApproval(threadId)).pipe(
+        Effect.orElseSucceed(() => false),
+      ),
   };
 };

@@ -934,6 +934,35 @@ describe("withBoardThreadFields", () => {
     expect(woken.cards[0]).not.toHaveProperty("waitingOnBackground");
   });
 
+  it("turns a card violet while a subagent under its thread awaits approval", () => {
+    // The parent ended its turn with the delegate running in the background.
+    const parent = threadShell({
+      pendingBackgroundTasks: [{ taskId: "delegate-1", kind: "subagent" as const }],
+    });
+    const board = snapshot({ cards: [linked] });
+    const waiting = withBoardThreadFields(board, [parent], new Map([[threadId, "approval"]]));
+    expect(waiting.cards[0]).toMatchObject({
+      threadState: "waiting",
+      awaitingInput: false,
+      awaitingSubagent: true,
+    });
+    expect(waiting.cards[0]).not.toHaveProperty("waitingOnBackground");
+
+    // The coordinator answers a child's question, so it does not wait on a human.
+    const asking = withBoardThreadFields(board, [parent], new Map([[threadId, "user_input"]]));
+    expect(asking.cards[0]?.threadState).toBe("working");
+    expect(asking.cards[0]?.waitingOnBackground).toBe(true);
+
+    // Answered: the map clears and the key goes away with it.
+    const answered = withBoardThreadFields(
+      { ...board, cards: waiting.cards },
+      [parent],
+      new Map(),
+    );
+    expect(answered.cards[0]).not.toHaveProperty("awaitingSubagent");
+    expect(answered.cards[0]?.threadState).toBe("working");
+  });
+
   it("leaves a card with no live link at rest, and the board itself untouched", () => {
     const board = snapshot({ cards: [cardShell("card-1")] });
     const next = withBoardThreadFields(board, [

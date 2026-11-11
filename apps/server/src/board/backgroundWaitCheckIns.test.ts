@@ -179,6 +179,34 @@ it.effect("a wait that never ends escalates to a human once the ladder is spent"
   ),
 );
 
+it.effect("a subagent awaiting approval holds every check-in, charge and escalation", () => {
+  const held = new Set<string>();
+  return withGovernor({ ...fixture(), subagentsAwaitingApproval: held }, (h) =>
+    Effect.gen(function* () {
+      const threadId = yield* startWaiting(h);
+      held.add(String(threadId));
+      const maxAttempts = stateOf(yield* h.board)!.maxAttempts;
+      // Far past every free check-in and the ceiling that would escalate.
+      for (let sweep = 0; sweep < 3 + maxAttempts + 2; sweep++) yield* after(h, 30);
+      const waiting = stateOf(yield* h.board);
+      assert.strictEqual(waiting?.status, "running");
+      assert.strictEqual(waiting?.stallCount, 0);
+      assert.strictEqual(waiting?.stageEntryRecoveries, 0);
+      assert.strictEqual(checkInsOf(yield* h.commands), 0);
+      assert.strictEqual(stallNudgesOf(yield* h.commands), 0);
+
+      // Answered: the wait restarts, so the first check-in is +5 from now.
+      held.delete(String(threadId));
+      yield* after(h, 1);
+      yield* after(h, 4);
+      assert.strictEqual(checkInsOf(yield* h.commands), 0, "nothing before +5 after the answer");
+      yield* after(h, 1);
+      assert.strictEqual(checkInsOf(yield* h.commands), 1);
+      assert.strictEqual(stateOf(yield* h.board)?.stallCount, 0);
+    }),
+  );
+});
+
 it.effect("a commit mid-wait restarts the schedule and the stall streak", () => {
   // The branch's newest commit, read lazily so the agent can commit mid-test.
   let committedAt = "";

@@ -73,6 +73,7 @@ export interface WorkerGatewayRpcOf<E> {
   ) => Effect.Effect<BoardAssistantMessage | null, E>;
   readonly lastSignalAt: (threadId: ThreadId) => Effect.Effect<string | null, E>;
   readonly pendingTurnStartAt: (threadId: ThreadId) => Effect.Effect<string | null, E>;
+  readonly subagentAwaitingApproval: (threadId: ThreadId) => Effect.Effect<boolean, E>;
   readonly projects: Effect.Effect<ReadonlyArray<BoardProject>, E>;
   readonly project: (projectId: ProjectId) => Effect.Effect<BoardProjectDetail | null, E>;
   readonly subscribeSignals: (
