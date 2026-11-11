@@ -2297,7 +2297,7 @@ it.effect("a board rule whose action row is lost fails instead of launching a th
 );
 
 it.effect("upsert keeps an omitted board rule, clears a null one, and validates rules", () =>
-  withService(({ service }) =>
+  withService(({ service, secretsByRef }) =>
     Effect.gen(function* () {
       const saved = (overrides: Record<string, unknown>) =>
         webhookTaskInput({ schedule: boardRuleSchedule, ...overrides }).pipe(
@@ -2348,6 +2348,21 @@ it.effect("upsert keeps an omitted board rule, clears a null one, and validates 
             }),
             "A board rule cannot coalesce deliveries. Remove the coalesce key.",
           );
+          // A refused rule leaves a secretRef unused, so the corrected save can still take it.
+          const ref = "secret-ref:00000000000000000000000000000003";
+          secretsByRef.set(ref, "s3cret");
+          const refSchedule = {
+            type: "webhook",
+            signature: { ...boardRuleSchedule.signature, secret: undefined, secretRef: ref },
+          };
+          assert.equal(
+            yield* refusal({
+              schedule: { ...refSchedule, dedupe: { coalesceKey: "{{body.group}}" } },
+              boardAction: boardRuleAction,
+            }),
+            "A board rule cannot coalesce deliveries. Remove the coalesce key.",
+          );
+          yield* saved({ schedule: refSchedule, boardAction: boardRuleAction });
           assert.equal(
             yield* refusal({
               boardAction: {

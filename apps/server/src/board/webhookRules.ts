@@ -119,7 +119,6 @@ export const resolveUpsertBoardAction = Effect.fn("BoardWebhookRules.resolveUpse
   context: {
     readonly taskId: ScheduledTaskId;
     readonly schedule: ScheduledTask["schedule"];
-    readonly hasSecret: boolean;
   },
 ) {
   const fail = (message: string) => new ScheduledTaskError({ message, taskId: context.taskId });
@@ -139,7 +138,8 @@ export const resolveUpsertBoardAction = Effect.fn("BoardWebhookRules.resolveUpse
   }
   if (context.schedule.type !== "webhook")
     return yield* fail("Board rules need a webhook trigger.");
-  if (!context.hasSecret) {
+  // Runs before the upsert consumes a secretRef; the upsert refuses a signature with no secret.
+  if (context.schedule.signature == null) {
     return yield* fail("A board rule needs a signature check with a signing secret.");
   }
   if (context.schedule.dedupe?.coalesceKey !== undefined) {

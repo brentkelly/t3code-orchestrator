@@ -1381,6 +1381,11 @@ export const layer = Layer.effect(
           : input.schedule.type === "once"
             ? { type: "once", runAt: iso(DateTime.makeUnsafe(input.schedule.runAt)) }
             : input.schedule;
+      // T3o: validate the board rule before a secretRef is consumed; a rule stores its sentinel prompt (T3O-78).
+      const board = yield* BoardWebhookRules.resolveUpsertBoardAction(sql, input, {
+        taskId: id,
+        schedule,
+      });
       const webhook =
         input.schedule.type === "webhook"
           ? yield* Effect.gen(function* () {
@@ -1428,12 +1433,6 @@ export const layer = Layer.effect(
         isSameSchedule(existingTask.schedule, schedule);
       if (!scheduleUnchanged)
         yield* requireFutureOnce({ enabled: input.enabled, schedule }, now, id);
-      // T3o: validate the board rule; a rule stores its sentinel prompt (T3O-78).
-      const board = yield* BoardWebhookRules.resolveUpsertBoardAction(sql, input, {
-        taskId: id,
-        schedule,
-        hasSecret: webhook.secret !== null,
-      });
       const task: ScheduledTask = {
         id,
         title: input.title,
