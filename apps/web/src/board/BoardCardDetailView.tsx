@@ -56,6 +56,7 @@ import {
   type BoardSplitRecommendation,
   isLiveBoardCardThreadLink,
   type BoardProjectExecutionConfig,
+  boardStalledWords,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Debouncer } from "@tanstack/react-pacer";
@@ -183,6 +184,8 @@ import {
   resolveBoardStepRecovery,
   type BoardStepRecovery,
 } from "./boardStepRecovery";
+
+const providerDisabledWords = boardStalledWords("provider-disabled-for-project", null, undefined);
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
     apply inside this pure view. */
@@ -416,7 +419,7 @@ export interface BoardCardDetailGroup {
 export interface BoardCardDetailViewProps {
   readonly environmentId: EnvironmentId;
   /** Why the live step stalled, from the card's shell (drives the
-      provider-not-on-worker panel). */
+      provider-stall panels). */
   readonly stalledReason?: BoardCardStepStalledReason | undefined;
   /** What the card's shell says of its work and its worker, for the
       Worker offline / Worker removed panel. */
@@ -2149,6 +2152,13 @@ function InfoSection({
         shell={props.workerShell}
         stalledReason={props.stalledReason}
       />
+      {/* T3O-74: not a worker matter, so not in the worker row, which a board
+          with no workers never renders. */}
+      {props.stalledReason === "provider-disabled-for-project" ? (
+        <span className="rounded-md bg-warning/10 px-2 py-1.5 text-warning-foreground">
+          {providerDisabledWords.label}. {providerDisabledWords.detail}
+        </span>
+      ) : null}
       <div>Created · {formatRelativeTimeLabel(props.detail.card.createdAt)}</div>
       {base.retargeted && base.effective !== null ? (
         // Derived, never stored: the stated base and actual cut point disagree
@@ -2904,6 +2914,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onOpenChange={setModelsOpen}
                 open={modelsOpen}
                 overrides={card.modelOverrides}
+                projectId={card.projectId}
                 rows={modelRows}
                 stepRunning={props.stepRunning === true}
               />
@@ -3099,6 +3110,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onBackToThread={() => setPane("thread")}
                 onSetRoundModel={props.onSetReviewRoundModel}
                 phaseRuntimeMode={props.reviewPhaseRuntimeMode}
+                projectId={card.projectId}
                 onResume={props.onResumeReview}
                 onRuling={onReviewStage ? props.onReviewRuling : undefined}
                 onReopenStep={props.onReopenReviewStep}

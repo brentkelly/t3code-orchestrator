@@ -2304,6 +2304,11 @@ const BOARD_STEP_STALLED_REASONS = [
   // runs the step elsewhere or on another provider. Clears when the card is
   // pinned to a worker that has it, its model changes, or the instance appears.
   "provider-not-on-worker",
+  // The step's provider instance is turned off for the card's project,
+  // refused by the server that would spawn it before any thread exists.
+  // Clears when the card's model changes, or on Continue once the provider
+  // is turned back on for the project.
+  "provider-disabled-for-project",
   // The card's worker was removed from the board, or the card
   // was force-moved off a worker it could not reach, while this step ran or
   // was parked there. Its thread was stopped if the worker answered, and its
@@ -4190,7 +4195,7 @@ function boardShortClock(iso: string | null | undefined): string | null {
  * The chip words for a `stalled` step, by reason: the board-waiting readings say
  * when, the rest say a human is needed. Keeps one status rather than adding more.
  */
-function boardStalledWords(
+export function boardStalledWords(
   reason: BoardCardStepStalledReason,
   retryAt: string | null,
   nowMs: number | undefined,
@@ -4231,6 +4236,12 @@ function boardStalledWords(
         label: "Provider missing",
         detail:
           "This step's provider isn't on the card's worker. The step hasn't started. Move the card to a worker that has it, or pick a model the worker offers.",
+      };
+    case "provider-disabled-for-project":
+      return {
+        label: "Provider disabled",
+        detail:
+          "This step's provider is turned off for the card's project. The step hasn't started. Turn it on in the project's settings and press Continue, or change this card's model.",
       };
     case "worker-removed":
       return {

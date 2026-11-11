@@ -671,6 +671,7 @@ export function BoardPipelineSection() {
   // this page streams and the provider lists don't depend on.
   const workers = useBoardWorkersCardView(environmentId ?? ("" as EnvironmentId));
   const serverProviders = [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)];
+  // Stages serve every project, so they follow machine settings; a project-off pick stalls per card.
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
   );

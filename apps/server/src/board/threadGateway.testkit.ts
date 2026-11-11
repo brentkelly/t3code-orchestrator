@@ -146,6 +146,9 @@ export interface FakeThreadGatewayOptions {
   readonly threads?: ReadonlyMap<string, BoardThreadState>;
   /** Refuse every spawn — a thread the engine will not create. */
   readonly rejectSpawn?: boolean;
+  /** Refuse a spawn on these provider instances, as a server whose project
+      settings turn them off does (T3O-74). */
+  readonly providerDisabled?: ReadonlyArray<string>;
   /** Runs before every call is recorded and applied. */
   readonly onCall?: (call: ThreadGatewayCall) => Effect.Effect<void>;
   readonly latestAssistantMessage?: (threadId: ThreadId) => BoardAssistantMessage | null;
@@ -240,6 +243,14 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
           yield* record({ type: "thread.spawn", ...input });
           if (options.rejectSpawn === true) {
             return yield* refuse("spawn", input.threadId, "Refusing to create the thread.");
+          }
+          if (options.providerDisabled?.includes(input.modelSelection.instanceId) === true) {
+            return yield* new ThreadCommandRefusedError({
+              command: "thread.create",
+              threadId: input.threadId,
+              detail: "The provider is turned off for this project.",
+              reason: "provider-disabled",
+            });
           }
           yield* Ref.update(records, (current) =>
             new Map(current).set(String(input.threadId), {

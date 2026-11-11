@@ -20,6 +20,7 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL,
   ProjectId,
   type RepositoryIdentity,
+  type ServerSettings,
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
@@ -529,6 +530,12 @@ export function withGovernor(
     /** Reject every `thread.create`, so a test can drive the spawn-failure path
         (a thread the engine refuses to create) without a provider double. */
     readonly rejectThreadCreate?: boolean;
+    /** Provider instances turned off for every project: a spawn on one is
+        refused with the provider-disabled reason. */
+    readonly providerDisabled?: ReadonlyArray<string>;
+    /** Server settings beyond the board's: project overrides, the
+        environment's defaults. */
+    readonly serverSettings?: Partial<ServerSettings>;
     /** The card detail's CI pass rows can't be read. */
     readonly ciPassesUnreadable?: boolean;
     /** What a branch pull-request lookup answers. `undefined` (the default) is
@@ -740,6 +747,7 @@ export function withGovernor(
       })),
       ...(input.initialShells === undefined ? {} : { threads: input.initialShells }),
       ...(input.rejectThreadCreate === true ? { rejectSpawn: true } : {}),
+      ...(input.providerDisabled === undefined ? {} : { providerDisabled: input.providerDisabled }),
       onCall: recordCommand,
       latestAssistantMessage: (threadId) => {
         const text = threadMessages.get(String(threadId));
@@ -826,8 +834,9 @@ export function withGovernor(
     let boardSettings = input.settings;
     const settingsStub = {
       getSettings: Effect.sync(() => ({
+        ...DEFAULT_SERVER_SETTINGS,
+        ...input.serverSettings,
         board: boardSettings,
-        textGenerationModelSelection: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
       })),
     } as unknown as ServerSettingsService["Service"];
 
