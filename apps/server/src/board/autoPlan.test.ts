@@ -7,6 +7,8 @@ import {
   BOARD_AUTO_PLAN_INSTRUCTION,
   BOARD_AUTO_PLAN_OFF_INSTRUCTION,
   boardAutoPlanInstruction,
+  boardAutoPlanOffInstruction,
+  ThreadId,
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
   boardCardStepState,
@@ -15,6 +17,7 @@ import {
   type BoardCardGroup,
   type BoardCardStepState,
   type BoardPlan,
+  type BoardState,
   type BoardStepCompletion,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -22,7 +25,8 @@ import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 
 import { ThreadCommandRefusedError } from "./ThreadGateway.ts";
-import { aliveThread } from "./threadGateway.testkit.ts";
+import type { BoardThreadState } from "./ThreadGateway.ts";
+import { aliveThread, fakeThreadState } from "./threadGateway.testkit.ts";
 
 import {
   cardMoved,
@@ -39,6 +43,7 @@ import {
   userInputResolved,
   withGovernor,
   type Harness,
+  type HarnessCommand,
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
@@ -920,4 +925,369 @@ it.effect(
       }),
     );
   },
+);
+
+// ── Auto-plan after the agent marked planning finished (T3O-80) ──────
+
+/** The test clock starts at the epoch, so the agent's first completion predates it and its
+    second one follows the reopen stamp. */
+const FIRST_FINISH = "1969-12-31T00:00:00.000Z";
+const SECOND_FINISH = "1970-01-02T00:00:00.000Z";
+
+const planningCompleted = (id: BoardCardId, sequence: number, completedAt: string) =>
+  ({
+    type: "board.card-step-completed",
+    sequence,
+    payload: {
+      cardId: id,
+      completion: {
+        cardId: id,
+        stepId: PLANNING,
+        outcome: "succeeded",
+        summary: "planned",
+        payload: null,
+        threadId: null,
+        completedAt,
+      },
+    },
+  }) as unknown as HarnessEvent;
+
+/**
+ * A card whose planning agent marked the step finished and kept working: the step is
+ * `succeeded`, the card still in Planning, and the thread shell is whatever `shell` says.
+ */
+const finishedPlanning = (
+  h: Harness,
+  id: BoardCardId,
+  card: BoardCard,
+  shell: (threadId: string) => BoardThreadState,
+) =>
+  Effect.gen(function* () {
+    yield* h.pumpDomain(cardMoved(card, "sprint", "planning", 1));
+    const threadId = boardCardStepState(yield* h.board, id)!.threadId!;
+    yield* Ref.update(h.shells, (shells) => new Map([...shells, [threadId, shell(threadId)]]));
+    yield* h.pumpDomain(planningCompleted(id, 2, FIRST_FINISH));
+    const finished = yield* h.board;
+    assert.strictEqual(boardCardStepState(finished, id)?.status, "succeeded");
+    assert.strictEqual(cardStage(finished, id), BOARD_SEED_STAGE_IDS.planning);
+    return threadId;
+  });
+
+/** The agent finishing again, after the reopen. */
+const completedAgain = (id: BoardCardId, sequence: number) =>
+  planningCompleted(id, sequence, SECOND_FINISH);
+
+const reopenedText = (autoBuild: boolean) => boardAutoPlanInstruction(autoBuild, { reopened: true });
+
+const sendsOf = (commands: ReadonlyArray<HarnessCommand>, text: string) =>
+  commands.filter((command) => command.type === "thread.send" && command.text === text);
+
+const answersOf = (commands: ReadonlyArray<HarnessCommand>, text: string) =>
+  commands.filter(
+    (command) => command.type === "thread.answer-pending-input" && command.text === text,
+  );
+
+const autoPlanNotes = (commands: ReadonlyArray<HarnessCommand>) =>
+  commands.flatMap((command) =>
+    command.type === "board.card.record-note" && command.kind === "card-auto-planned"
+      ? [command.detail]
+      : [],
+  );
+
+it.effect(
+  "Auto-plan turned on after planning was marked finished waits for the turn, then approves and builds",
+  () => {
+    const card = planningCard("late", { autoBuildSetting: true });
+    return withGovernor(
+      {
+        board: { cards: [card], plans: [plan("late", "one", 0)], nextCardNumberByProject: {} },
+        settings,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const id = BoardCardId.make("late");
+          const threadId = yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
+
+          yield* setAutomation(h, id, { autoPlan: true }, 3);
+          const reopened = yield* h.board;
+          const state = boardCardStepState(reopened, id)!;
+          assert.strictEqual(state.status, "running");
+          assert.isString(state.reopenedAt);
+          assert.strictEqual(state.lastNudgeAt, state.reopenedAt);
+          assert.isFalse(state.humanInLoop);
+          assert.strictEqual(cardOf(reopened.cards, "late")?.autoPlan?.endedAt, null);
+          // Nothing mid-turn: no send, no answer, no interrupt, and no approval yet.
+          const midTurn = yield* h.commands;
+          assert.isFalse(
+            midTurn.some(
+              (command) =>
+                command.type === "thread.send" ||
+                command.type === "thread.answer-pending-input" ||
+                command.type === "thread.interrupt",
+            ),
+          );
+          assert.strictEqual(cardStage(reopened, id), BOARD_SEED_STAGE_IDS.planning);
+
+          // The turn ends without a completion: the reopened prompt is the nudge, sent once.
+          yield* Ref.update(
+            h.shells,
+            (shells) => new Map([...shells, [threadId, fakeThreadState(threadId)]]),
+          );
+          yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-live"));
+          assert.lengthOf(sendsOf(yield* h.commands, reopenedText(true)), 1);
+          const delivered = boardCardStepState(yield* h.board, id)!;
+          assert.strictEqual(delivered.status, "running");
+          assert.notStrictEqual(delivered.lastNudgeAt, delivered.reopenedAt);
+          assert.strictEqual(delivered.stallCount, 0);
+
+          // The agent finishes again: that is the real finish, approved and built.
+          yield* h.pumpDomain(completedAgain(id, 4));
+          assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.building);
+        }),
+    );
+  },
+);
+
+it.effect("a re-completion in the same turn is approved with nothing sent", () => {
+  const card = planningCard("quick", { autoBuildSetting: true });
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("quick", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("quick");
+        yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
+        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* h.pumpDomain(completedAgain(id, 4));
+        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.building);
+        assert.lengthOf(sendsOf(yield* h.commands, reopenedText(true)), 0);
+      }),
+  );
+});
+
+it.effect("with Auto-build off the re-completed plan waits at the gate", () => {
+  const card = planningCard("gate");
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("gate", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("gate");
+        yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
+        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* h.pumpDomain(completedAgain(id, 4));
+        const after = yield* h.board;
+        assert.strictEqual(cardStage(after, id), BOARD_SEED_STAGE_IDS.planning);
+        assert.strictEqual(cardOf(after.cards, "gate")?.autoPlan?.endedAt, null);
+      }),
+  );
+});
+
+it.effect("a pending question is answered with the prompt at once, and not sent again", () => {
+  const card = planningCard("asking", { autoBuildSetting: true });
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("asking", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("asking");
+        const threadId = yield* finishedPlanning(h, id, card, (thread) =>
+          aliveThread(thread, { awaitingUserInput: true }),
+        );
+        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        assert.lengthOf(answersOf(yield* h.commands, reopenedText(true)), 1);
+        const answered = boardCardStepState(yield* h.board, id)!;
+        assert.notStrictEqual(answered.lastNudgeAt, answered.reopenedAt);
+
+        yield* Ref.update(
+          h.shells,
+          (shells) => new Map([...shells, [threadId, fakeThreadState(threadId)]]),
+        );
+        yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-live"));
+        assert.lengthOf(sendsOf(yield* h.commands, reopenedText(true)), 0);
+      }),
+  );
+});
+
+it.effect("a question raised later on the reopened step is answered, not parked", () => {
+  const card = planningCard("later", { autoBuildSetting: true });
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("later", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("later");
+        const threadId = yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
+        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* Ref.update(
+          h.shells,
+          (shells) =>
+            new Map([...shells, [threadId, aliveThread(threadId, { awaitingUserInput: true })]]),
+        );
+        yield* h.pumpRuntime(userInputRequested(ThreadId.make(threadId)));
+        assert.lengthOf(answersOf(yield* h.commands, reopenedText(true)), 1);
+        const after = yield* h.board;
+        assert.strictEqual(boardCardStepState(after, id)?.status, "running");
+        assert.strictEqual(cardOf(after.cards, "later")?.autoPlan?.endedAt, null);
+      }),
+  );
+});
+
+it.effect("a thread between turns but running background work counts as active", () => {
+  const card = planningCard("bg");
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("bg", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("bg");
+        yield* finishedPlanning(h, id, card, (thread) =>
+          fakeThreadState(thread, { backgroundWork: "working" }),
+        );
+        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        const state = boardCardStepState(yield* h.board, id)!;
+        assert.strictEqual(state.status, "running");
+        assert.isString(state.reopenedAt);
+      }),
+  );
+});
+
+it.effect("a finished thread keeps the setting, gets no prompt, and the plan waits", () => {
+  const card = planningCard("done", { autoBuildSetting: true });
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("done", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("done");
+        yield* finishedPlanning(h, id, card, (thread) => fakeThreadState(thread));
+        const before = (yield* h.commands).length;
+        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        const after = yield* h.board;
+        assert.strictEqual(boardCardStepState(after, id)?.status, "succeeded");
+        assert.strictEqual(cardStage(after, id), BOARD_SEED_STAGE_IDS.planning);
+        assert.isTrue(cardOf(after.cards, "done")?.autoPlanSetting);
+        assert.isUndefined(cardOf(after.cards, "done")?.autoPlan);
+        const issued = (yield* h.commands).slice(before);
+        assert.isFalse(
+          issued.some(
+            (command) =>
+              command.type === "thread.send" ||
+              command.type === "thread.answer-pending-input" ||
+              command.type === "board.card.mark-auto-plan",
+          ),
+        );
+        assert.deepStrictEqual(autoPlanNotes(issued), [
+          "Auto-plan is on, but planning had already finished, so nothing was sent. The plan waits for your approval.",
+        ]);
+      }),
+  );
+});
+
+it.effect("turning Auto-plan off while reopened sends the reopened off text", () => {
+  const card = planningCard("off");
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("off", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("off");
+        yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
+        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* setAutomation(h, id, { autoPlan: false }, 4);
+        assert.lengthOf(
+          sendsOf(yield* h.commands, boardAutoPlanOffInstruction({ reopened: true })),
+          1,
+        );
+        assert.isTrue(boardCardStepState(yield* h.board, id)?.humanInLoop);
+      }),
+  );
+});
+
+it.effect("a group turning Auto-plan on never reopens a child's finished planning", () => {
+  const group = planningCard("grp", { group: { ...autoPlanGroup, autoPlan: false } });
+  const child = planningCard("kid", { parentCardId: BoardCardId.make("grp") });
+  return withGovernor(
+    {
+      board: { cards: [group, child], plans: [plan("kid", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("kid");
+        yield* finishedPlanning(h, id, child, (thread) => aliveThread(thread));
+        let updated: BoardCard | undefined;
+        yield* Ref.update(h.model, (current) => ({
+          ...current,
+          board: {
+            ...current.board!,
+            cards: current.board!.cards.map((card) => {
+              if (card.id !== BoardCardId.make("grp")) return card;
+              updated = { ...card, group: { ...card.group!, autoPlan: true } };
+              return updated;
+            }),
+          },
+        }));
+        yield* h.pumpDomain({
+          type: "board.card-updated",
+          sequence: 3,
+          payload: { cardId: updated!.id, card: updated!, automationChanged: { group: true } },
+        } as unknown as HarnessEvent);
+        const after = yield* h.board;
+        assert.strictEqual(boardCardStepState(after, id)?.status, "succeeded");
+        assert.isUndefined(cardOf(after.cards, "kid")?.autoPlan);
+      }),
+  );
+});
+
+it.effect("boot reconcile hands a reopened step its prompt instead of settling it", () =>
+  Effect.gen(function* () {
+    const card = planningCard("boot", { autoBuildSetting: true });
+    let seeded: { board: BoardState; threadId: string } | undefined;
+    yield* withGovernor(
+      {
+        board: { cards: [card], plans: [plan("boot", "one", 0)], nextCardNumberByProject: {} },
+        settings,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const id = BoardCardId.make("boot");
+          const threadId = yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
+          yield* setAutomation(h, id, { autoPlan: true }, 3);
+          seeded = { board: yield* h.board, threadId };
+        }),
+    );
+    const { board, threadId } = seeded!;
+    // The server restarts while the reopened turn had ended undelivered.
+    yield* withGovernor(
+      {
+        board,
+        settings,
+        initialShells: new Map([[threadId, fakeThreadState(threadId)]]),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const id = BoardCardId.make("boot");
+          yield* h.reactor.drain;
+          const after = yield* h.board;
+          assert.strictEqual(boardCardStepState(after, id)?.status, "running");
+          assert.strictEqual(cardStage(after, id), BOARD_SEED_STAGE_IDS.planning);
+          assert.lengthOf(sendsOf(yield* h.commands, reopenedText(true)), 1);
+        }),
+    );
+  }),
 );

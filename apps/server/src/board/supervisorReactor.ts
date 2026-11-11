@@ -7439,6 +7439,9 @@ const make = Effect.gen(function* () {
   const recordReopenedDelivery = Effect.fn("board-supervisor-recordReopenedDelivery")(function* (
     state: BoardCardStepState,
   ) {
+    // Strictly after the stamp, so a delivery in the reopen's own millisecond still counts.
+    const now = yield* nowIso;
+    const reopenedMs = state.reopenedAt === undefined ? Number.NaN : Date.parse(state.reopenedAt);
     return yield* dispatchOptional({
       type: "board.card.check-in-step",
       commandId: yield* commandId("auto-plan-reopened-delivered"),
@@ -7446,7 +7449,10 @@ const make = Effect.gen(function* () {
       stepId: state.stepId,
       charged: false,
       progressed: false,
-      createdAt: yield* nowIso,
+      createdAt:
+        Number.isNaN(reopenedMs) || Date.parse(now) > reopenedMs
+          ? now
+          : new Date(reopenedMs + 1).toISOString(),
     });
   });
 

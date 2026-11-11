@@ -26,8 +26,8 @@ import {
   boardCardAutoMergeGaveUp,
   boardCardAutoBuildDue,
   BOARD_AUTOMATION_BOARD_WIDE_MERGE_REASON,
-  resolveBoardCardAutomation,
   resolveBoardCardAutomationIn,
+  boardCardPlanningFinished,
   isBoardCardAutoMergeSoft,
   boardStageBeforeBuild,
   boardModelSelectionOfOverride,
@@ -2844,16 +2844,34 @@ describe("automation (T3O-38)", () => {
       expect(at(BOARD_SEED_STAGE_IDS.building).autoBuild.lockReason).toBe("Building now.");
       expect(at(BOARD_SEED_STAGE_IDS.review).autoBuild.lockReason).toBe("Already built.");
       expect(at(BOARD_SEED_STAGE_IDS.done).autoMerge.locked).toBe(false);
-      // A planning run that already finished locks Auto-plan while still in Planning.
+      // A planning run that already finished leaves Auto-plan switchable while in
+      // Planning, so a still-working thread can be handed over.
       const card = waiting({ stage: BOARD_SEED_STAGE_IDS.planning });
-      const finished = resolveBoardCardAutomation({
-        stages: BOARD_SEED_STAGES,
-        lookup: () => undefined,
-        card,
-        boardWideAutoMerge: false,
-        planningFinished: true,
+      const succeeded = decodeStepState({
+        cardId: card.id,
+        stepId: BOARD_SEED_STAGE_IDS.planning,
+        stepLabel: null,
+        attempt: 1,
+        stallCount: 0,
+        lastNudgeAt: null,
+        prompt: "Plan it.",
+        providerInstanceId: "codex",
+        model: "gpt-5-codex",
+        mode: "plan",
+        humanInLoop: true,
+        maxAttempts: 3,
+        timeoutMs: 600_000,
+        threadId: null,
+        status: "succeeded",
+        slotHeld: false,
+        startedAt: null,
+        updatedAt: NOW,
       });
-      expect(finished.autoPlan.lockReason).toBe("Planning is finished.");
+      const board = { ...boardWith([card]), stepStates: [succeeded] };
+      expect(boardCardPlanningFinished(board, card)).toBe(true);
+      expect(
+        resolveBoardCardAutomationIn({ board, card, boardWideAutoMerge: false }).autoPlan,
+      ).toMatchObject({ locked: false, lockReason: null });
     });
   });
 
