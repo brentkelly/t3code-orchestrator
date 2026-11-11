@@ -3,6 +3,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   CommandId,
   EMPTY_BOARD_STATE,
+  EventId,
   ThreadId,
   type BoardCard,
   type BoardCardPullRequest,
@@ -70,8 +71,10 @@ const recorded = (
   card: BoardCard,
   transition: "linked" | "unlinked" | "state-changed" | "updated",
   previous?: BoardCardPullRequest,
+  eventId = "event-1",
 ) =>
   ({
+    eventId,
     type: "board.card-pull-request-recorded",
     payload: {
       cardId: card.id,
@@ -84,6 +87,7 @@ const recorded = (
 
 const threadLinked = (card: BoardCard, threadId: string) =>
   ({
+    eventId: `event-linked-${threadId}`,
     type: "board.card-thread-linked",
     payload: { cardId: card.id, threadId: ThreadId.make(threadId), role: "x", card },
   }) as unknown as Extract<BoardEvent, { type: "board.card-thread-linked" }>;
@@ -198,7 +202,7 @@ describe("cardThreadPullRequestActions", () => {
 describe("syncCardThreadPullRequests", () => {
   const unlinkCommandId = Effect.succeed(CommandId.make("server:board-pr-unlink:test"));
 
-  it.effect("links with a stable command id, so a PR a human unlinked is not put back", () =>
+  it.effect("a redelivered event does not put back a PR a human unlinked", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeThreadGateway();
       const card = cardWith([link("t-review", "review@1")], { pullRequest: pr(7) });
@@ -214,15 +218,38 @@ describe("syncCardThreadPullRequests", () => {
       yield* sync;
       assert.deepEqual((yield* fake.pullRequestLinks).get("t-review"), []);
       const linkIds = (yield* fake.calls).map((call) => call.commandId);
-      assert.deepEqual(linkIds, [
-        cardThreadPullRequestLinkCommandId(ThreadId.make("t-review"), {
-          host: "github.com",
-          repository: "acme/repo",
-          number: 7,
-        }),
-        linkIds[0],
-      ]);
+      const id = cardThreadPullRequestLinkCommandId(
+        ThreadId.make("t-review"),
+        EventId.make("event-1"),
+      );
+      assert.deepEqual(linkIds, [id, id]);
     }),
+  );
+
+  it.effect(
+    "the card's PR goes back on its threads when it returns after the board unlinked it",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeThreadGateway();
+        const withPr = cardWith([link("t-review", "review@1")], { pullRequest: pr(7) });
+        const withoutPr = cardWith(withPr.threadLinks, { pullRequest: null });
+        const run = (event: Parameters<typeof syncCardThreadPullRequests>[0]["event"]) =>
+          syncCardThreadPullRequests({
+            board: EMPTY_BOARD_STATE,
+            event,
+            threads: fake.gateway,
+            unlinkCommandId: Effect.succeed(
+              CommandId.make(`server:board-pr-unlink:${event.eventId}`),
+            ),
+          });
+        yield* run(recorded(withPr, "linked", undefined, "event-1"));
+        yield* run(recorded(withoutPr, "unlinked", pr(7), "event-2"));
+        assert.deepEqual((yield* fake.pullRequestLinks).get("t-review"), []);
+        yield* run(recorded(withPr, "linked", undefined, "event-3"));
+        assert.deepEqual((yield* fake.pullRequestLinks).get("t-review"), [
+          "github.com/acme/repo#7",
+        ]);
+      }),
   );
 
   it.effect("a refused link is logged and the other threads still get theirs", () =>

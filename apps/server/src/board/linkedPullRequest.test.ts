@@ -523,9 +523,12 @@ describe("the card's pull request on its threads (T3O-75)", () => {
           const link = (yield* h.commands).find(
             (command) => command.type === "thread.pull-request.link",
           );
+          const recordedEvent = (yield* h.decided).at(-1)!;
           assert.equal(
             link?.type === "thread.pull-request.link" ? link.commandId : undefined,
-            "server:board-pr-link:t-review:github.com/acme/repo#75",
+            "eventId" in recordedEvent
+              ? `server:board-pr-link:t-review:${recordedEvent.eventId}`
+              : "no event id",
           );
 
           yield* h.reactor.linkPullRequest(reviewCard().id, null);
@@ -554,6 +557,7 @@ describe("the card's pull request on its threads (T3O-75)", () => {
             threadLinks: [...card.threadLinks, threadLink("t-review-2", "review@2")],
           };
           yield* h.pumpDomain({
+            eventId: "event-thread-linked",
             type: "board.card-thread-linked",
             sequence: 50,
             payload: {

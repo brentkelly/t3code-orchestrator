@@ -433,9 +433,10 @@ export const BoardCardThreadLink = Schema.Struct({
   /** The board finished with this still-alive thread: it stays on
       the card as history but no longer runs anything. Absent while live. */
   retiredAt: Schema.optionalKey(IsoDateTime),
-  /** The card's round when the thread was linked: its `pullRequestHistory`
-      length then. Absent on links written before rounds were stamped, which
-      read as round 0 (`boardCardThreadLinkRound`). */
+  /** The count of the card's retired pull requests (`pullRequestHistory`
+      length) when the thread was linked. A round that ends with no PR retires
+      none, so it shares its stamp with the next. Absent on links written
+      before stamping, which read as 0 (`boardCardThreadLinkRound`). */
   round: Schema.optionalKey(NonNegativeInt),
 });
 export type BoardCardThreadLink = typeof BoardCardThreadLink.Type;

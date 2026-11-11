@@ -152,15 +152,14 @@ const sameKey = (left: ThreadPullRequestKey, right: ThreadPullRequestKey) =>
   left.repository.toLowerCase() === right.repository.toLowerCase() &&
   left.number === right.number;
 
-/** Stable per thread and pull request: a repeat is the engine's no-op, so a
-    link a human removed from the thread is never put back. */
+/** Stable per thread and board event: a redelivered event is the engine's
+    no-op, so a link a human removed is not put back until the card's PR
+    itself changes again (a new event, so a new id). */
 export function cardThreadPullRequestLinkCommandId(
   threadId: ThreadId,
-  pullRequest: ThreadPullRequestKey,
+  eventId: SyncEvent["eventId"],
 ): CommandId {
-  return CommandId.make(
-    `server:board-pr-link:${threadId}:${pullRequest.host}/${pullRequest.repository}#${pullRequest.number}`,
-  );
+  return CommandId.make(`server:board-pr-link:${threadId}:${eventId}`);
 }
 
 /**
@@ -191,7 +190,7 @@ export const syncCardThreadPullRequests = Effect.fn("board.syncCardThreadPullReq
       const call =
         action.kind === "link"
           ? input.threads.linkPullRequest({
-              commandId: cardThreadPullRequestLinkCommandId(action.threadId, action.pullRequest),
+              commandId: cardThreadPullRequestLinkCommandId(action.threadId, input.event.eventId),
               threadId: action.threadId,
               host,
               repository,
