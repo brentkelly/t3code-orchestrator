@@ -346,10 +346,9 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
       }),
     );
 
-    // Cursor and ACP can restart a turn but not steer one: the engine answers their steer by
-    // interrupting the agent's turn and starting it over, so the board queues it instead. The
-    // stack holds no live session, so the engine refuses any steer it is sent; a steer the
-    // board did try shows as its `:queued` fallback (T3O-72).
+    // Cursor and ACP only restart a turn, so the board queues their steer. With no live session
+    // the engine refuses every steer, so a tried steer shows as its `:queued` fallback, and an
+    // accepted steer goes untested here (T3O-72).
     it.effect("a steer is tried only on a provider that steers a running turn in place", () =>
       Effect.gen(function* () {
         const threads = yield* LocalThreadGateway;

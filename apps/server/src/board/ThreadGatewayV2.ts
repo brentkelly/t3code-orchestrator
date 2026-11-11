@@ -529,7 +529,6 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
   const projectRows = yield* ProjectStore.ProjectStoreV2;
   const projectService = yield* ProjectService.ProjectService;
   const eventSink = yield* EventSink.EventSinkV2;
-  const orchestrator = yield* Orchestrator.OrchestratorV2;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const crypto = yield* SecureRandom.SecureRandom;
   const path = yield* Path.Path;
@@ -558,20 +557,11 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
   const restartContinuationPending = (shell: OrchestrationV2ThreadShell) => {
     const runId = shell.latestRunId;
     if (shell.activeRunId !== null || runId === null) return Effect.succeed(false);
-    // Upstream's effect id, keyed by the run alone: the keyed lookup first spares the run read
-    // on every idle thread, where a continuation is rarely pending.
+    // Upstream's effect id and pending test (Orchestrator's awaitsRestartContinuation): one keyed
+    // read, since a continuation is only ever written for a run the restart cut.
     return effectOutbox.get(`effect:restart-continuation:${runId}`).pipe(
-      Effect.flatMap((effect) =>
-        Option.isNone(effect)
-          ? Effect.succeed(false)
-          : projections.getThreadRecords(shell.id, ["runs"], { runIds: [runId] }).pipe(
-              Effect.flatMap((records) => {
-                const run = records.runs.find((candidate) => candidate.id === runId);
-                return run !== undefined && ThreadManagement.isTerminalRunStatus(run.status)
-                  ? orchestrator.restartContinuationPending(run)
-                  : Effect.succeed(false);
-              }),
-            ),
+      Effect.map(
+        Option.exists((effect) => effect.status === "pending" || effect.status === "running"),
       ),
       Effect.orElseSucceed(() => false),
     );
