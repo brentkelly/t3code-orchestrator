@@ -1674,7 +1674,7 @@ function BoardExternalRefChip({
   readonly onOpen: ((url: string) => void) | undefined;
 }) {
   const className =
-    "inline-flex h-[18px] max-w-60 shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground";
+    "inline-flex h-[18px] max-w-60 shrink-0 items-center gap-1 rounded-md bg-muted px-1.75 text-board-11 font-medium text-muted-foreground";
   const text = <span className="truncate">{externalRef.id}</span>;
   return (
     <BoardHint label={`${externalRef.system}: ${externalRef.id}`}>
