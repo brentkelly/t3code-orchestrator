@@ -370,6 +370,47 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
     }),
   );
 
+  it.effect("T3O-78: create stores an external reference no other live card holds", () =>
+    Effect.gen(function* () {
+      const ref = { system: "github-issue", id: "org/repo#7", url: "https://x/7" };
+      const holder = makeCard({ id: "card-holder", key: "CARD-3", externalRef: ref });
+      const event = yield* decide(
+        { ...createCommand({ cardId: "card-new" }), externalRef: ref },
+        makeReadModel({}),
+      );
+      assert.deepStrictEqual(
+        event.type === "board.card-created" ? event.payload.externalRef : null,
+        ref,
+      );
+      // Board-wide: a holder in another project still takes the reference.
+      const elsewhere = { ...holder, projectId: otherProjectId };
+      const refused = yield* decideFail(
+        { ...createCommand({ cardId: "card-new" }), externalRef: ref },
+        makeReadModel({ board: seededBoard([elsewhere]) }),
+      );
+      assert.include(String(refused.message), "CARD-3");
+      // An archived holder does not.
+      yield* decide(
+        { ...createCommand({ cardId: "card-new" }), externalRef: ref },
+        makeReadModel({ board: seededBoard([{ ...holder, archivedAt: NOW }]) }),
+      );
+      // Update: setting a taken reference is refused; the holder may re-set its own.
+      const other = makeCard({ id: "card-other", key: "CARD-4" });
+      const update = (cardId: string) =>
+        ({
+          type: "board.card.update",
+          commandId: CommandId.make(`cmd-ref-${cardId}`),
+          cardId: BoardCardId.make(cardId),
+          externalRef: ref,
+          createdAt: NOW,
+        }) as const;
+      const board = makeReadModel({ board: seededBoard([holder, other]) });
+      const taken = yield* decideFail(update("card-other"), board);
+      assert.include(String(taken.message), "CARD-3");
+      yield* decide(update("card-holder"), board);
+    }),
+  );
+
   // ── Stage moves ──────────────────────────────────────────────────────
 
   it.effect("allows adjacent moves in both directions without override", () =>
