@@ -430,6 +430,66 @@ it.effect("t3o-22: a review loop that CONVERGES still advances the card", () =>
   }),
 );
 
+/** A round whose one improvement was fixed past the reviewed SHA and upheld. */
+const fixedImprovementRound = (round: number) => [
+  reviewCompletion(`review@${round}`, {
+    reviewedSha: `c0ffee${round}`,
+    findings: [
+      {
+        id: `i${round}`,
+        severity: "improvement",
+        file: "src/x.ts",
+        line: 1,
+        title: "could be better",
+        detail: "",
+      },
+    ],
+  }),
+  reviewCompletion(`triage@${round}`, {
+    fixedSha: `f1xed0${round}`,
+    dispositions: [{ findingId: `i${round}`, action: "fixed", note: "" }],
+  }),
+  reviewCompletion(`adjudicate@${round}`, {
+    verdicts: [{ findingId: `i${round}`, verdict: "fix-upheld", note: "" }],
+    anotherRound: false,
+  }),
+];
+
+it.effect("T3O-64: the reactor records round 4's settling mode when it selects its review", () =>
+  Effect.gen(function* () {
+    const commands = yield* reconcileCommandObjects({
+      board: {
+        cards: [
+          {
+            ...reviewCard,
+            reviewOverrides: {
+              rounds: 5,
+              stopAfterRound: null,
+              roundModels: {},
+              runThroughRound: null,
+              carriedFindings: {},
+              stuckWaivedThrough: null,
+              roundModes: {},
+            },
+          },
+        ],
+        stepStates: [reviewStepState("adjudicate@3")],
+        stepCompletions: [1, 2, 3].flatMap(fixedImprovementRound),
+        nextCardNumberByProject: {},
+      },
+    });
+    const select = commands.find(
+      (command) => command.type === "board.card.select-step" && command.stepId === "review@4",
+    );
+    assert.isDefined(select);
+    assert.deepStrictEqual((select as { reviewRoundMode?: unknown }).reviewRoundMode, {
+      round: 4,
+      mode: { kind: "settling", sinceSha: "c0ffee3" },
+    });
+    assert.include((select as { prompt: string }).prompt, "This is a settling round.");
+  }),
+);
+
 it.effect("t3o-22: a stopped loop holds even with budget remaining", () =>
   Effect.gen(function* () {
     const types = yield* reconcileCommands({
