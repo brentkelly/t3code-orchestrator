@@ -21,7 +21,9 @@ restarts the agent threads that do the work.
 
 T3o is not published to any registry. `npx t3@latest`, the desktop installers and the package-manager
 recipes under [Installation](#installation) all give you **upstream**, without the board. To run T3o you
-build it from this checkout.
+build it from this checkout, on a tagged release from
+[Releases](https://github.com/brentkelly/t3code-orchestrator/releases) (`t3o<T3 Code version>.<n>`).
+Once installed as a service, `pnpm run t3o-update` moves it to the latest release.
 
 ### Requirements
 
@@ -77,7 +79,7 @@ journalctl -u t3o.service -n 200 --no-pager | grep -i 'Pairing URL'
 Do **not** use upstream's `t3 service install` here. It runs `npm install t3@<version>` against the public
 registry, and would serve upstream's build against this fork's data — no board, and no error to say so.
 
-Flags, redeploying after a pull, running without systemd, and troubleshooting:
+Flags, updating to a new release, running without systemd, and troubleshooting:
 [docs/t3o/install.md](./docs/t3o/install.md).
 
 ## Installation

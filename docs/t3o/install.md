@@ -1,8 +1,9 @@
 # Installing and deploying T3o
 
-T3o is a fork of T3 Code and is published nowhere. There is no `npx`, no installer and no package
-registry — you clone this repository, build it, and point a service at the build. This page is the long
-form of the fork section in [`README.md`](../../README.md).
+T3o is a fork of T3 Code, released as tagged source on
+[GitHub Releases](https://github.com/brentkelly/t3code-orchestrator/releases). There is no `npx`, no
+installer and no package registry — you clone this repository, check out a release, build it, and point
+a service at the build. This page is the long form of the fork section in [`README.md`](../../README.md).
 
 Upstream's own background-service instructions ([docs/user/background-service.md](../user/background-service.md))
 do not apply. `t3 service install` runs `npm install t3@<version>` from the public registry
@@ -11,22 +12,29 @@ data directory: no board, no warning, and a database written by a build that has
 
 ## Prerequisites
 
-| Need                         | Why                                                                                    |
-| ---------------------------- | -------------------------------------------------------------------------------------- |
-| Node.js `^24.13.1`           | `engines.node`. Distro packages are older; see the note below on installing it.        |
-| pnpm 11.10.0                 | The workspace uses pnpm catalogs. npm and yarn cannot resolve `catalog:` versions.     |
-| `build-essential`, `python3` | `node-pty` has no Linux prebuild and compiles on install.                              |
-| `rsync`                      | The service install copies the build out of the worktree with it.                      |
-| `git`                        | Checkpointing, worktrees and every board branch operation shell out to it.             |
-| systemd + `sudo`             | Only for the service. You can run the build by hand without either.                    |
-| A provider CLI               | Claude, Codex, Cursor, Grok or OpenCode, authenticated as the user running the server. |
+| Need                         | Why                                                                                     |
+| ---------------------------- | --------------------------------------------------------------------------------------- |
+| Node.js 24.10 or newer       | The server's `engines`. Distro packages are older; see the note below on installing it. |
+| pnpm 11.10.0                 | The workspace uses pnpm catalogs. npm and yarn cannot resolve `catalog:` versions.      |
+| `build-essential`, `python3` | `node-pty` has no Linux prebuild and compiles on install.                               |
+| `rsync`                      | The service install copies the build out of the worktree with it.                       |
+| `git`                        | Checkpointing, worktrees and every board branch operation shell out to it.              |
+| systemd + `sudo`             | Only for the service. You can run the build by hand without either.                     |
+| A provider CLI               | Claude, Codex, Cursor, Grok or OpenCode, authenticated as the user running the server.  |
 
 ## Install
 
 ```bash
+git clone https://github.com/brentkelly/t3code-orchestrator.git t3o && cd t3o
+git checkout "$(git tag --list 't3o*' --sort=-v:refname | head -1)"  # the latest release
 corepack enable pnpm     # or: npm install -g pnpm@11.10.0
 pnpm install
+pnpm run install-t3o-service
 ```
+
+Releases are tagged `t3o<T3 Code version>.<n>`: `t3o0.1.8.2` is the second T3o release built on
+T3 Code 0.1.8. Settings → About shows both versions. To follow every change instead, stay on the `t3o`
+branch; that is the development path, and it moves daily.
 
 Install Node system-wide (NodeSource, or the official tarball into `/usr/local`) if this machine will run
 the service. The unit's `ExecStart` is written with `process.execPath` — the absolute path of the `node`
@@ -155,7 +163,60 @@ The default bind is `127.0.0.1`. To reach it from another machine, put a reverse
 rather than moving the bind to `0.0.0.0` — the server is designed to sit behind one, and `--host` exists
 mainly for the proxy-less local case.
 
-## Redeploy after a pull
+## Update to a new release
+
+```bash
+pnpm run t3o-update              # move the service to the latest release
+pnpm run t3o-update --check      # report only; exits 10 when a newer release exists (cron-friendly)
+pnpm run t3o-update --to <tag>   # install a specific release
+```
+
+Run it in your clone, from a shell on the server (over SSH, say), not from a terminal or agent inside
+T3o: the update stops the service, which would kill the command running inside it. It refuses when it
+can tell.
+
+It reads the port, address, data directory and Node from the installed unit, checks out the release
+(the clone ends up on a detached HEAD; `git switch t3o` goes back to tracking the branch), runs
+`pnpm install`, then the release's own `install-t3o-service`. `sudo` prompts, and agent turns in flight
+are interrupted when the service restarts. It only ever moves forward: when what is running is already
+the release, newer, or a dev build, it says so and does nothing. `--force` installs the target anyway.
+
+Going back to an older release with `--to <tag> --force` is supported, but database migrations are not
+reversed. Back up `<home>/userdata` first.
+
+If an update fails, it prints what is actually running and the command that puts the previous version
+back. Nothing is rolled back automatically.
+
+`--unit <name>` picks another unit (default `t3o`); one clone can serve several, and each update covers
+one.
+
+When a newer release is out, Settings → About says so. That check is made by the browser viewing the
+page, which asks GitHub's API directly about once every six hours.
+
+### Existing installs, once
+
+An install from before releases has no `t3o-update` yet. Move it onto a release by hand once:
+
+```bash
+git fetch origin --tags && git checkout <tag> && pnpm install && pnpm run install-t3o-service
+```
+
+Pass the same `--home`, `--port`, `--host` and `--unit` flags you installed with. From then on,
+`pnpm run t3o-update`.
+
+### Without systemd
+
+`t3o-update` needs the systemd install. Update by hand instead:
+
+```bash
+git fetch origin --tags && git checkout <tag> && pnpm install && node scripts/t3o-service.mjs sync
+```
+
+then restart your server.
+
+### Tracking the `t3o` branch
+
+For development builds, stay on the branch and redeploy after each pull:
 
 ```bash
 git pull
@@ -164,11 +225,13 @@ pnpm run install-t3o-service
 ```
 
 The build runs first, while the old version keeps serving; the unit is stopped only for the sync and
-restart. That window is a few seconds, but agent turns in flight are still interrupted, so pick a quiet
-moment.
+restart. Agent turns in flight are still interrupted, so pick a quiet moment. Migrations — upstream's and
+the board's — run at startup, and if the upgrade changed a native dependency the app directory's npm
+install re-runs on its own.
 
-Nothing else is needed. Migrations — upstream's and the board's — run at startup, and if the upgrade
-changed a native dependency the app directory's npm install re-runs on its own.
+The install waits up to two minutes for the restarted server to answer, and fails with its status and a
+`journalctl` hint if it crash-loops instead. Like `t3o-update`, it refuses to run from inside the unit
+it would restart.
 
 ## Running without systemd
 
