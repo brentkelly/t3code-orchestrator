@@ -588,6 +588,30 @@ describe("resolveBoardStageExecution with a project config", () => {
     ).not.toHaveProperty("prompt", "Project build");
   });
 
+  it("T3O-64: passes the settling keys through, an explicit null meaning off", () => {
+    const { delta } = resolve({
+      stages: {
+        settings: { review: { settleAfterRound: null, settleBelowFindings: 4 } },
+      },
+    });
+    expect(delta.overrides).toEqual({ review: { settleAfterRound: null, settleBelowFindings: 4 } });
+    const review = resolveBoardStageExecution(
+      DEFAULT_BOARD_SETTINGS,
+      BOARD_SEED_STAGE_IDS.review,
+      delta,
+    );
+    if (!isBoardReviewStageExecution(review)) throw new Error("review member expected");
+    expect(review.settleAfterRound).toBeNull();
+    expect(review.settleBelowFindings).toBe(4);
+    const { delta: invalid } = resolve({
+      stages: { settings: { review: { settleBelowFindings: 1 } } },
+    });
+    expect(invalid.overrides).toEqual({});
+    expect(invalid.warnings).toEqual(
+      expect.arrayContaining([expect.stringContaining("review.settleBelowFindings: invalid")]),
+    );
+  });
+
   it("re-applies the forced invariants over the project's values", () => {
     const { delta: config } = resolve({
       stages: {
