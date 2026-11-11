@@ -15,6 +15,14 @@ import * as NodeUtil from "node:util";
 import { selectCliRuntimeExternalDependencies } from "./lib/cli-external-packages.ts";
 import { applyPnpmPatches, readPatchedDependencies } from "./lib/pnpm-patches.ts";
 import { gitconfigAdvice, installGitShims, uninstallGitShims } from "./lib/t3o-git-shims.ts";
+import {
+  INSIDE_UNIT_MESSAGE,
+  STAMP_FILE,
+  computeStamp,
+  probeHost,
+  runningInsideUnit,
+  writeStamp,
+} from "./lib/t3o-release.ts";
 
 const repoRoot = NodeURL.fileURLToPath(new URL("..", import.meta.url));
 const user = NodeOS.userInfo().username;
@@ -279,6 +287,9 @@ if (command === "status") {
   process.exit(0);
 }
 
+// Stopping the unit would kill this script mid-install and leave the service down.
+if (runningInsideUnit(values.unit)) fail(INSIDE_UNIT_MESSAGE);
+
 if (command === "uninstall") {
   const displaced = readState()?.displaced;
 
@@ -328,17 +339,65 @@ const distDir = NodePath.join(repoRoot, "apps/server/dist");
  */
 function buildBundle() {
   if (!values["no-build"]) {
-    console.log("[t3o-service] Building (vp run --filter t3 build)...");
+    // A file rather than an env var: vp runs tasks in a clean env, and a file the web
+    // config reads is a tracked task input. `vp pack` cleans dist, so it is copied in after.
+    const stamp = computeStamp(repoRoot);
+    writeStamp(NodePath.join(repoRoot, "apps/web/.t3o-release.json"), stamp);
+    console.log(`[t3o-service] Building T3o ${stamp.version} (vp run --filter t3 build)...`);
     run(NodePath.join(repoRoot, "node_modules/.bin/vp"), ["run", "--filter", "t3", "build"], {
       cwd: repoRoot,
     });
+    writeStamp(NodePath.join(distDir, STAMP_FILE), stamp);
+    assertBundleCarries(stamp.commit);
   }
 
-  for (const asset of ["bin.mjs", "t3oGitCredential.mjs", "client/index.html"]) {
+  for (const asset of ["bin.mjs", "t3oGitCredential.mjs", "client/index.html", STAMP_FILE]) {
     if (!NodeFS.existsSync(NodePath.join(distDir, asset))) {
       fail(`missing build asset apps/server/dist/${asset}. Drop --no-build and try again.`);
     }
   }
+}
+
+/** A cached web build would show a stale version in Settings → About. */
+function assertBundleCarries(commit) {
+  const assetsDir = NodePath.join(distDir, "client/assets");
+  const carries = NodeFS.readdirSync(assetsDir)
+    .filter((file) => file.endsWith(".js"))
+    .some((file) => NodeFS.readFileSync(NodePath.join(assetsDir, file), "utf8").includes(commit));
+  if (!carries) {
+    fail(`the web bundle does not carry the build stamp (${commit}). Was apps/web built?`);
+  }
+}
+
+/**
+ * `Type=simple` with `Restart=on-failure` means systemctl succeeds even for a crash loop,
+ * so wait for the server to answer. The first start after a sync runs migrations.
+ */
+async function waitHealthy() {
+  const url = `http://${probeHost(values.host)}:${values.port}/`;
+  const restartsBaseline = capture("systemctl", ["show", "-p", "NRestarts", "--value", unitName]);
+  const deadline = Date.now() + 120_000;
+  console.log(`[t3o-service] Waiting for ${url} to answer...`);
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(2_000) });
+      if (response.ok) return;
+    } catch {
+      // not listening yet
+    }
+    const state = capture("systemctl", ["show", "-p", "ActiveState", "--value", unitName]);
+    const restarts = capture("systemctl", ["show", "-p", "NRestarts", "--value", unitName]);
+    if (state === "failed" || restarts !== restartsBaseline) {
+      unhealthy(state === "failed" ? "it failed to start" : "it is crash-looping");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  unhealthy(`${url} did not answer within 120s`);
+}
+
+function unhealthy(reason) {
+  run("systemctl", ["status", unitName, "--no-pager", "-n", "30"], { allowFailure: true });
+  fail(`${unitName} is not healthy: ${reason}. See: journalctl -u ${unitName} -n 200 --no-pager`);
 }
 
 /** Publish the built tree into the app directory. The service must be stopped. */
@@ -382,8 +441,12 @@ function installShimsOrThrow() {
   if (advice !== null) console.log(`\n${advice}\n`);
 }
 
+/** `activating` and a pending auto-restart still hold the tree, so only these two are safe. */
+const isStopped = () =>
+  ["inactive", "failed"].includes(capture("systemctl", ["is-active", unitName]));
+
 if (command === "sync") {
-  if (capture("systemctl", ["is-active", unitName]) === "active") {
+  if (!isStopped()) {
     fail(
       `${unitName} is running and would be reading these files. Use \`pnpm run install-t3o-service\`, which stops it first.`,
     );
@@ -398,7 +461,8 @@ if (command === "sync") {
 buildBundle();
 
 // A running service must not be reading the tree while --delete walks it.
-const wasActive = capture("systemctl", ["is-active", unitName]) === "active";
+const unitExisted = NodeFS.existsSync(unitPath);
+const wasActive = !isStopped();
 if (wasActive) {
   console.log(`[t3o-service] Stopping ${unitName} for the sync...`);
   run("sudo", ["systemctl", "stop", unitName]);
@@ -456,7 +520,12 @@ if (foreignHolder?.unit) {
 }
 
 run("sudo", ["systemctl", "enable", unitName]);
-run("sudo", ["systemctl", wasActive || values.takeover ? "restart" : "start", unitName]);
+run("sudo", [
+  "systemctl",
+  unitExisted || wasActive || values.takeover ? "restart" : "start",
+  unitName,
+]);
+await waitHealthy();
 
 console.log(
   [
@@ -468,6 +537,6 @@ console.log(
     "Pairing URL (printed once at startup):",
     `  journalctl -u ${unitName} -n 200 --no-pager | grep -i 'Pairing URL'`,
     "",
-    "After the next code change: pnpm run install-t3o-service",
+    "Update to a new release: pnpm run t3o-update",
   ].join("\n"),
 );

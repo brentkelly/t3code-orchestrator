@@ -50,6 +50,8 @@ node_modules/
 
 # T3o: `node scripts/t3o-pack.mjs` output — installable tarballs, never committed.
 dist-npm/
+# T3o: build stamp `scripts/t3o-service.mjs` writes for the web build.
+apps/web/.t3o-release.json
 
 .claude/worktrees/
 # pnpm content-addressable store; never belongs in the repo.

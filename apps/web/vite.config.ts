@@ -21,6 +21,8 @@ import {
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
+// T3o: release stamp define; see vite/t3oReleaseDefine.ts.
+import { t3oReleaseDefine } from "./vite/t3oReleaseDefine";
 import { warmBundledDevPlugin } from "./vite/warmBundledDev";
 
 const repoEnv = loadRepoEnv();
@@ -320,6 +322,8 @@ export default defineConfig(() => {
       "import.meta.env.T3CODE_FEATURE_SECRETS": JSON.stringify(configuredFeatureSecrets),
       "import.meta.env.VITE_RELEASE_CHANNEL": JSON.stringify(configuredReleaseChannel),
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
+      // T3o: the release stamp shown in Settings → About.
+      ...t3oReleaseDefine(),
     },
     resolve: {
       tsconfigPaths: true,

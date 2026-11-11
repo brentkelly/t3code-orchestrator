@@ -31,6 +31,8 @@ import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import { AboutVersionTitle } from "./AboutVersionTitle";
+// T3o: release version in About; see components/t3o/T3oReleaseInfo.tsx.
+import { T3oReleaseDescription, T3oReleaseInfo } from "../t3o/T3oReleaseInfo";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { MobileAppSettingsRow } from "./MobileAppSettingsRow";
 import {
@@ -2085,8 +2087,9 @@ export function AboutSettingsPanel() {
           <>
             <SettingsRow
               id={searchableSetting("app-version").id}
-              title={<AboutVersionTitle />}
-              description="Current version of the application."
+              // T3o: the T3o release and its T3 Code base, plus a newer-release notice.
+              title={<T3oReleaseInfo />}
+              description={<T3oReleaseDescription />}
             />
           </>
         )}
