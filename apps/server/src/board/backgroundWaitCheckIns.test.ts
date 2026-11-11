@@ -224,6 +224,30 @@ it.effect("a subagent approval answered before a check-in is due restarts the wa
   );
 });
 
+it.effect("a hold released after charged check-ins resumes one interval out", () => {
+  const held = new Set<string>();
+  return withGovernor({ ...fixture(), subagentsAwaitingApproval: held }, (h) =>
+    Effect.gen(function* () {
+      const threadId = yield* startWaiting(h);
+      yield* after(h, 5);
+      yield* after(h, 10);
+      yield* after(h, 15);
+      yield* after(h, 30);
+      assert.strictEqual(checkInsOf(yield* h.commands), 4);
+
+      held.add(String(threadId));
+      yield* after(h, 30);
+      yield* after(h, 30);
+      held.delete(String(threadId));
+      yield* after(h, 1);
+      yield* after(h, 29);
+      assert.strictEqual(checkInsOf(yield* h.commands), 4, "nothing before one interval");
+      yield* after(h, 1);
+      assert.strictEqual(checkInsOf(yield* h.commands), 5, "one interval after the release");
+    }),
+  );
+});
+
 it.effect("a commit mid-wait restarts the schedule and the stall streak", () => {
   // The branch's newest commit, read lazily so the agent can commit mid-test.
   let committedAt = "";

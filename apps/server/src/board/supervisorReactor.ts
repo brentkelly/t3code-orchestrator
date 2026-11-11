@@ -207,6 +207,7 @@ import {
   BOARD_STEP_USAGE_LIMIT_RESUME_NUDGE,
   boardBackgroundCheckInCharged,
   boardBackgroundCheckInDueMs,
+  boardBackgroundWaitResumedSinceMs,
   boardBackgroundCheckInNudge,
   boardOfflineCreditMs,
   boardRecoveryNudge,
@@ -9832,7 +9833,7 @@ const make = Effect.gen(function* () {
     }
     // A subagent waits on a human's approval: the agent cannot answer
     // it, so no check-in, charge or escalation while it holds. Once answered,
-    // the wait restarts so the next check-in is a full interval away. Read
+    // the wait resumes one ladder step from now, keeping its place. Read
     // ahead of the due gate, or a hold answered between check-ins goes unseen.
     if (yield* subagentAwaitingApproval(state.threadId)) {
       if (wait.heldForHuman !== true) backgroundWaits.set(key, { ...wait, heldForHuman: true });
@@ -9840,8 +9841,12 @@ const make = Effect.gen(function* () {
       return true;
     }
     if (wait.heldForHuman === true) {
+      const resumedSinceMs = boardBackgroundWaitResumedSinceMs({
+        nowMs: input.nowMs,
+        checkInsSent: wait.checkInsSent,
+      });
       backgroundWaits.set(key, {
-        since: input.now,
+        since: DateTime.formatIso(DateTime.makeUnsafe(resumedSinceMs)),
         checkInsSent: wait.checkInsSent,
         checkInOutstanding: false,
         progressed: wait.progressed,

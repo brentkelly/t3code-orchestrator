@@ -2617,7 +2617,17 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   });
   const selectedThread =
     props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
-    initialBoardCardThreadId(props.stages, card.stage, card.threadLinks, awaitingThreadAtOpen);
+    initialBoardCardThreadId(
+      props.stages,
+      card.stage,
+      card.threadLinks,
+      // Once answered, the pane follows the stage default again.
+      props.threadLinks.some(
+        (link) => link.threadId === awaitingThreadAtOpen && link.subagentAwaitingApproval === true,
+      )
+        ? awaitingThreadAtOpen
+        : null,
+    );
   // A group's Planning pane is the Thread pane pinned to its planning
   // thread; the Thread pill still lists every thread, planning included.
   const planStageId = boardStageWithRole(stageStateOf(props.stages), "plan")?.stageId ?? null;
