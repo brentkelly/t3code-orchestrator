@@ -202,7 +202,7 @@ type ThreadShellLookup = (threadId: ThreadId) => OrchestrationV2ThreadShell | un
 
 /** Every live-linked thread id of a card. Falls back to `activeThreadId` when
     `boardCardThreads` has not arrived, so the aggregate degrades rather than empties. */
-function liveCardThreadIds(
+export function liveCardThreadIds(
   card: BoardCardShell,
   cardThreads: ReadonlyArray<BoardCardThreadShell> | undefined,
 ): ReadonlyArray<ThreadId> {

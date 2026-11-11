@@ -9,13 +9,14 @@ import {
   type BoardCardShell,
   type BoardNotificationSettings,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardCardNotificationReason,
   boardCardWaitAlreadyAlerted,
   createBoardCardNotificationGate,
   type BoardCardNotificationObservation,
+  type BoardCardNotificationReason,
   type BoardCardThreadAlertState,
 } from "./boardCardNotifications.logic";
 
@@ -95,7 +96,7 @@ describe("boardCardNotificationReason", () => {
     ],
     [
       "CI stopped for a human",
-      shell("ci", { ci: { phase: "stopped" } as BoardCardShell["ci"] }),
+      shell("ci", { ci: { phase: "stopped" } as NonNullable<BoardCardShell["ci"]> }),
       "waiting:ci-stopped:ci",
     ],
     ["a held build", shell("building", { held: true }), "needsHuman:held:building"],
@@ -157,7 +158,7 @@ describe("boardCardNotificationReason", () => {
     expect(reasonOf(ready)).toBe("readyForMerge:ready:merge");
     expect(reasonOf(ready, { autoMergeArmed: true })).toBeNull();
     expect(
-      reasonOf(shell("merge", { hasPr: true, ci: { phase: "running" } as BoardCardShell["ci"] })),
+      reasonOf(shell("merge", { hasPr: true, ci: { phase: "running" } as NonNullable<BoardCardShell["ci"]> })),
     ).toBeNull();
     expect(reasonOf(shell("merge", { hasPr: true, stepConflictFix: true }))).toBeNull();
     expect(reasonOf(shell("merge", { hasPr: true, threadState: "working" }))).toBeNull();
@@ -319,15 +320,25 @@ describe("boardCardWaitAlreadyAlerted", () => {
     upstreamSkips: false,
     ...overrides,
   });
-  const reason = (key: "input" | "permission" | "held" | "stopped" | "approval") =>
-    ({ category: "waiting", reason: key, key, title: key }) as const;
-  const base = {
+  const reason = (
+    key: "input" | "permission" | "held" | "stopped" | "approval",
+  ): BoardCardNotificationReason => ({ category: "waiting", reason: key, key, title: key });
+  type Rest = Omit<Parameters<typeof boardCardWaitAlreadyAlerted>[0], "reason" | "threads">;
+  const base: Rest = {
     card: { awaitingInput: true, stepAwaiting: null },
     upstreamAlertsOn: true,
     boardConnected: true,
-  } as const;
+  };
 
-  it.each([
+  it.each<
+    [
+      string,
+      BoardCardNotificationReason,
+      ReadonlyArray<BoardCardThreadAlertState>,
+      Rest,
+      boolean,
+    ]
+  >([
     ["a live question the thread raised", reason("input"), [thread()], base, true],
     ["a guest request", reason("input"), [thread({ status: "request" })], base, true],
     [
