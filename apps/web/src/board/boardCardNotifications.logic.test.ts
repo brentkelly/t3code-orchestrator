@@ -258,6 +258,33 @@ describe("createBoardCardNotificationGate", () => {
     ]);
   });
 
+  it("keeps a wait accepted at the baseline quiet when the thread's idle time is unknown", () => {
+    const gate = createBoardCardNotificationGate();
+    const held = observe(shell("building", { held: true }));
+    run(gate, [held]);
+    expect(run(gate, [held], T0 + 1_000)).toMatchObject({ fired: [], cleared: [] });
+    expect(run(gate, [held], T0 + 1_000 + BOARD_ATTENTION_SETTLE_MS)).toMatchObject({
+      fired: [],
+      cleared: [],
+    });
+  });
+
+  it("keeps a raised wait quiet when the thread's idle time stops being known", () => {
+    const gate = createBoardCardNotificationGate();
+    run(gate, [observe(shell("building"))]);
+    const card = shell("building", { held: true });
+    expect(
+      run(gate, [observe(card, { threadIdleSince: iso(T0) })], T0 + BOARD_ATTENTION_SETTLE_MS)
+        .fired,
+    ).toHaveLength(1);
+    const later = T0 + BOARD_ATTENTION_SETTLE_MS + 1_000;
+    expect(run(gate, [observe(card)], later)).toMatchObject({ fired: [], cleared: [] });
+    expect(run(gate, [observe(card)], later + BOARD_ATTENTION_SETTLE_MS)).toMatchObject({
+      fired: [],
+      cleared: [],
+    });
+  });
+
   it("uses the thread's idle time when it is known", () => {
     const gate = createBoardCardNotificationGate();
     run(gate, [observe(shell("building"))]);

@@ -240,6 +240,8 @@ interface CardMemory {
     /** When it was computed: a reason computed inside the grace is stale once it ends. */
     readonly at: number;
     readonly reason: BoardCardNotificationReason | null;
+    /** The graceless reason, read only while the thread's idle time is unknown. */
+    readonly raw: BoardCardNotificationReason | null;
   } | null;
 }
 
@@ -300,18 +302,26 @@ export function createBoardCardNotificationGate() {
         // time; the moment this notifier first saw the wait is the only settle guard.
         let firstSeenKey = prior?.firstSeenKey ?? null;
         let firstSeenAt = prior?.firstSeenAt ?? now;
+        const cached = prior?.cache;
         let idle = observation.threadIdleSince;
+        let raw: BoardCardNotificationReason | null = null;
         if (idle === null) {
-          const raw = boardCardNotificationReason({ ...observation, threadIdleSince: null, now });
+          raw =
+            cached != null && sameInput(cached.input, observation)
+              ? cached.raw
+              : boardCardNotificationReason({ ...observation, threadIdleSince: null, now });
           const rawKey = raw?.key ?? null;
           if (rawKey !== firstSeenKey) {
             firstSeenKey = rawKey;
             firstSeenAt = now;
           }
-          // The baseline accepts what is already there rather than waiting it out.
-          idle = rawKey === null || silent ? null : new Date(firstSeenAt).toISOString();
+          // Only a wait the gate has not yet accepted settles: the baseline, or a key
+          // already raised, would otherwise clear and re-fire once the grace ends.
+          idle =
+            rawKey === null || silent || rawKey === (prior?.key ?? null)
+              ? null
+              : new Date(firstSeenAt).toISOString();
         }
-        const cached = prior?.cache;
         const reusable =
           cached != null &&
           cached.idle === idle &&
@@ -342,7 +352,7 @@ export function createBoardCardNotificationGate() {
           firstSeenKey,
           firstSeenAt,
           mergeVisitAlerted,
-          cache: reusable ? cached : { input: observation, idle, at: now, reason },
+          cache: reusable ? cached : { input: observation, idle, at: now, reason, raw },
         });
       }
       for (const [cardId, prior] of memory) {
