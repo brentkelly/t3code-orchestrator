@@ -147,7 +147,7 @@ export const resolveUpsertBoardAction = Effect.fn("BoardWebhookRules.resolveUpse
   }
   if (registeredRunner === null) return yield* fail(NOT_RUNNING);
   // A kept rule is not re-checked: a later label delete must not lock every other edit.
-  // The run path already skips what has gone.
+  // The run path skips deleted labels and stages outside the span.
   if (input.boardAction === undefined) return { boardAction, prompt: BOARD_RULE_PROMPT };
   const refusal = yield* registeredRunner
     .validate({ projectId: input.projectId, action: boardAction })

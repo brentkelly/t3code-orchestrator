@@ -326,10 +326,12 @@ export const makeBoardWebhookRunner = Effect.gen(function* () {
     board: BoardState,
     actor: BoardActivityActor,
   ) {
+    // A stored stage can fall outside the span later (a rearrangement or project change).
+    const span = boardWebhookStageSpan(board, card.projectId);
     const stages =
       onlyInStages ??
       boardWebhookDefaultArchiveStages(board, card.projectId).map((stage) => stage.stageId);
-    if (!stages.includes(card.stage)) {
+    if (!stages.includes(card.stage) || !span.some((open) => open.stageId === card.stage)) {
       return `Skipped: ${card.key} is in ${stageLabel(board, card.stage)}`;
     }
     const createdAt = yield* nowIso;

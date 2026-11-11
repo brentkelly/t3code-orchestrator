@@ -187,6 +187,28 @@ it.layer(makeBoardStackTestLayer("t3o-webhook-actions-2-"))("guards", (it) => {
         createdAt,
       });
       assert.strictEqual(yield* run(issueEvent("closed")), "Skipped: HOO-1 is in Planning");
+      // A stored rule naming a stage outside the span still never archives started work.
+      yield* engine.dispatch({
+        type: "board.card.move",
+        commandId: CommandId.make("cmd-to-building"),
+        cardId,
+        toStage: BoardStageId.make("building"),
+        override: true,
+        createdAt,
+      });
+      const archiveInBuilding: BoardWebhookAction = {
+        externalRef: githubIssueBoardWebhookAction().externalRef,
+        rules: [
+          {
+            filters: [],
+            action: { kind: "archive", onlyInStages: [BoardStageId.make("building")] },
+          },
+        ],
+      };
+      assert.strictEqual(
+        yield* run(issueEvent("closed"), { action: archiveInBuilding }),
+        "Skipped: HOO-1 is in Building",
+      );
       yield* engine.dispatch({
         type: "board.card.move",
         commandId: CommandId.make("cmd-to-backlog"),
