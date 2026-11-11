@@ -6,6 +6,8 @@
  */
 import {
   boardReviewDismissals,
+  boardReviewNextRoundMode,
+  boardReviewRoundModeOf,
   boardReviewRoundResolution,
   composeBoardReviewFollowUpPrompt,
   isBoardReviewStuckRoundWaived,
@@ -30,6 +32,7 @@ import {
   boardModelSelectionOfOverride,
   type RuntimeMode,
   type BoardReviewPhaseId,
+  type BoardReviewRoundMode,
   type BoardStageExecutionReview,
   type BoardStepCompletion,
 } from "@t3tools/contracts";
@@ -167,6 +170,7 @@ function reviewLoopDecision(input: {
     completions: input.completions,
   });
   const carriedFindings = overrides?.carriedFindings ?? {};
+  const roundModes = overrides?.roundModes ?? {};
 
   const runPhase = (
     phase: BoardReviewPhaseId,
@@ -174,6 +178,13 @@ function reviewLoopDecision(input: {
     carried: ReadonlyArray<BoardReviewFollowUpFinding>,
   ): BoardStagePlan => {
     const phaseConfig = review.phases[phase];
+    // A round's review decides its mode; the select-step that starts it records a settling
+    // one, and every later phase of the round reads that record.
+    const mode: BoardReviewRoundMode =
+      phase === "review"
+        ? boardReviewNextRoundMode({ round, completions: input.completions, review, overrides })
+        : boardReviewRoundModeOf(overrides, round);
+    const recordMode = phase === "review" && mode.kind === "settling" && !(String(round) in roundModes);
     return {
       kind: "run",
       round,
@@ -195,6 +206,7 @@ function reviewLoopDecision(input: {
         ciFinding: input.ciFinding?.round === round ? input.ciFinding : null,
         carried,
         dismissals: boardReviewDismissals(carriedFindings, round),
+        mode,
       }),
       model: resolvePhaseModel({
         phase,
@@ -215,6 +227,7 @@ function reviewLoopDecision(input: {
       // the base tip fresh when it starts and carries it forward for the
       // round's later steps.
       recordBaseTip: phase === "review",
+      ...(recordMode ? { reviewRoundMode: { round, mode } } : {}),
     };
   };
 
@@ -242,6 +255,7 @@ function reviewLoopDecision(input: {
         findings,
         dismissals: boardReviewDismissals(carriedFindings, round),
         draftPullRequests: review.draftPullRequests,
+        mode: boardReviewRoundModeOf(overrides, round),
       }),
       model: resolvePhaseModel({
         phase: basePhase,
@@ -317,7 +331,7 @@ function reviewLoopDecision(input: {
     // walk, the completion handler and this executor share one definition.
     // A malformed record is never read as "no findings": it halts the
     // loop `blocked`, where the pane offers the Reopen that repairs it.
-    const resolution = boardReviewRoundResolution({ round, done, carriedFindings });
+    const resolution = boardReviewRoundResolution({ round, done, carriedFindings, roundModes });
     switch (resolution.kind) {
       case "run":
         return resolution.phase === "retriage" || resolution.phase === "readjudicate"

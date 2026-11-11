@@ -585,6 +585,7 @@ it.effect("a re-planned review round cuts no worktree on a card whose move faile
               runThroughRound: PositiveInt.make(2),
               carriedFindings: {},
               stuckWaivedThrough: null,
+              roundModes: {},
             },
           };
           yield* h.pumpDomain({

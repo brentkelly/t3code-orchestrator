@@ -118,6 +118,7 @@ const overrides = (patch: Partial<BoardCardReviewOverrides>): BoardCardReviewOve
   runThroughRound: null,
   carriedFindings: {},
   stuckWaivedThrough: null,
+  roundModes: {},
   ...patch,
 });
 
