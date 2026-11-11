@@ -599,17 +599,33 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly text: string;
     readonly attachments: ReadonlyArray<ChatAttachment>;
+    readonly delivery?: "queue" | "steer";
   }) {
-    yield* run({
-      type: "message.dispatch",
-      commandId: input.commandId,
-      threadId: input.threadId,
-      messageId: yield* freshMessageId,
-      text: input.text,
-      attachments: input.attachments,
-      dispatchMode: { type: "start_immediately" },
-      ...BOARD_AUTHOR,
-    });
+    const dispatch = (commandId: CommandId, steer: boolean) =>
+      freshMessageId.pipe(
+        Effect.flatMap((messageId) =>
+          run({
+            type: "message.dispatch",
+            commandId,
+            threadId: input.threadId,
+            messageId,
+            text: input.text,
+            attachments: input.attachments,
+            dispatchMode: { type: "start_immediately" },
+            // `steer`, never `auto`: `auto` may resolve to an interrupt-restart of the agent's turn.
+            ...(steer ? { deliveryIntent: "steer" as const } : {}),
+            ...BOARD_AUTHOR,
+          }),
+        ),
+      );
+    if (input.delivery !== "steer") return yield* dispatch(input.commandId, false);
+    // A provider that can't steer, or a run not yet started, refuses it: queue it instead.
+    yield* dispatch(input.commandId, true).pipe(
+      Effect.catchTags({
+        ThreadCommandRefusedError: () =>
+          dispatch(CommandId.make(`${input.commandId}:queued`), false),
+      }),
+    );
   });
 
   const gateway: LocalThreadGatewayShape = {

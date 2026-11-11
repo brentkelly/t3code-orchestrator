@@ -220,7 +220,9 @@ it.effect(
         assert.ok(
           (yield* h.commands).some(
             (command) =>
-              command.type === "thread.send" && command.text === BOARD_AUTO_PLAN_OFF_INSTRUCTION,
+              command.type === "thread.send" &&
+              command.text === BOARD_AUTO_PLAN_OFF_INSTRUCTION &&
+              command.delivery === "steer",
           ),
         );
       }),

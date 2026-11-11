@@ -258,6 +258,28 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
       }),
     );
 
+    // A steer joins a running provider turn; with none to join (the stack never starts one),
+    // the instruction still lands, queued, rather than failing the send (T3O-72).
+    it.effect("a steer the engine refuses falls back to a queued board turn", () =>
+      Effect.gen(function* () {
+        const threadId = yield* spawn("steered");
+        const threads = yield* LocalThreadGateway;
+        const before = yield* head;
+        yield* threads.send({
+          commandId: boardCommandId("recover-turn"),
+          threadId,
+          text: "Stop the plan review now.",
+          attachments: [],
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          delivery: "steer",
+        });
+        assert.deepStrictEqual(withoutAt(signalsOf(yield* loggedSince(before))), [
+          { type: "turn-requested", threadId, byBoard: true, at: "" },
+        ]);
+      }),
+    );
+
     it.effect("an interrupt reaches the engine, and one with no run is refused", () =>
       Effect.gen(function* () {
         const threadId = yield* spawn("interrupted");

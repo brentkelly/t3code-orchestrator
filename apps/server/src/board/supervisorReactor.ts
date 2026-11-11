@@ -1071,6 +1071,8 @@ const make = Effect.gen(function* () {
      * forces full-access" invariant true at every dispatch.
      */
     readonly runtimeMode: BoardCardStepState["runtimeMode"];
+    /** `steer` for an instruction that is moot once the running turn ends. */
+    readonly delivery?: "steer";
   }) {
     yield* logged(
       "thread.send",
@@ -1081,6 +1083,7 @@ const make = Effect.gen(function* () {
         attachments: [],
         runtimeMode: input.runtimeMode,
         interactionMode: "default",
+        ...(input.delivery === undefined ? {} : { delivery: input.delivery }),
       }),
     );
   });
@@ -1784,6 +1787,7 @@ const make = Effect.gen(function* () {
       threadId: state.threadId,
       text: BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
       runtimeMode: state.runtimeMode,
+      delivery: "steer",
     });
   });
 
@@ -7641,6 +7645,7 @@ const make = Effect.gen(function* () {
           threadId: state.threadId,
           text: BOARD_AUTO_PLAN_OFF_INSTRUCTION,
           runtimeMode: state.runtimeMode,
+          delivery: "steer",
         });
       }
     }
