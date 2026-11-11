@@ -235,7 +235,7 @@ describe("BoardCardContent (D7)", () => {
     // Not just the badge: the fill, the border and the ring all go violet,
     // so "where am I needed" is answerable across a whole column at a glance.
     expect(awaiting).toContain("border-attention/55");
-    expect(awaiting).toContain("color-mix(in_srgb,var(--attention)_7%,var(--card))");
+    expect(awaiting).toContain("bg-board-attention-tint");
     expect(awaiting).not.toContain("border-border");
 
     const calm = renderToStaticMarkup(

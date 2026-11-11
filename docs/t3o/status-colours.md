@@ -27,7 +27,7 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   dot, a satisfied dependency edge, a review round that closed clean. A working state in green was
   the single biggest source of misreading on the board, because a card mid-build looked finished.
 - **Every running indicator is blue.** Spinners take a blue track and head —
-  `border-[color-mix(in_srgb,var(--info)_25%,transparent)] border-t-info-foreground` — rather than
+  `border-board-spinner-track border-t-info-foreground` — rather than
   the neutral grey they used to wear. Running pills are `bg-info/12 text-info-foreground`, not the
   neutral `bg-accent`.
 - **Every "waiting on you" state is violet.** Input-needed and Needs-permission chips (a thread
