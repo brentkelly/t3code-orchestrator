@@ -87,8 +87,9 @@
 /* Tokens that mix element-scoped variables (--card, --primary, --border) stay inline so
    they resolve on the element, exactly as the arbitrary values they replace did. */
 @theme inline {
-  /* #f59e0b is the board's own amber. --warning is Tailwind v4's oklch amber-500, a
-     slightly different colour, so these tints keep the hex rather than drift. */
+  /* #f59e0b is the board's own amber; --warning (oklch amber-500) differs slightly, so the
+     blocked tints and rings keep the hex to stay pixel-identical. Borders and fills follow
+     --warning, so a custom warning theme splits from these: accepted until one source wins. */
   --color-board-warning-tint: color-mix(in srgb, #f59e0b 9%, var(--card));
   --color-board-warning-tint-dark: color-mix(in srgb, #f59e0b 11%, var(--color-board-card-dark));
   --color-board-warning-tile: color-mix(in srgb, var(--warning) 7%, var(--card));
