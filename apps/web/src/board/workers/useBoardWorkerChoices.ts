@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-65): what the Worker field needs for one project — the board's
+ * T3o: what the Worker field needs for one project — the board's
  * workers, the Pin to rows with their load, the project's name as the rows say
  * it, and Set up on worker.
  */

@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - git runs this on every fetch and push, so it
 // stays plain synchronous Node with no Effect runtime to boot.
 /**
- * T3o (T3O-58): git credential helper and `gh` shim over the gitenv file, so terminals,
+ * T3o: git credential helper and `gh` shim over the gitenv file, so terminals,
  * scripts and CI pick the same GitHub token T3 does. Built to `dist/t3oGitCredential.mjs`;
  * `scripts/t3o-service.mjs` installs the `t3-git-credential` and `gh` shims that run it.
  * See docs/t3o/gitenv.md.

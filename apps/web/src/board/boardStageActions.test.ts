@@ -12,7 +12,7 @@ import {
   isBoardStageManuallySelectable,
 } from "./boardStageActions";
 
-// The global pipeline: CI only joins a project's (T3O-44).
+// The global pipeline: CI only joins a project's.
 const stages = BOARD_SEED_STAGES.filter((stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.ci);
 
 describe("boardStagePrimaryAction", () => {
@@ -292,7 +292,7 @@ describe("boardStagePrimaryAction", () => {
 });
 
 /**
- * The caret beside the forward button (t3o-07, D8). The offer stands on a full
+ * The caret beside the forward button. The offer stands on a full
  * conjunction, so each test below falsifies exactly ONE clause: a caret that
  * appears under a condition it cannot honour is a button that silently does
  * nothing, which is the failure mode the whole feature replaces.

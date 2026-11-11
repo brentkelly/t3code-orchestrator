@@ -33,7 +33,7 @@ export function BoardSubBoardPlanStrip({
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly chartOpen: boolean;
   readonly onOpenChild: (childCardId: string) => void;
-  /** The final review banner describes an integration branch (T3O-29), so
+  /** The final review banner describes an integration branch, so
       only an own-branch group shows it. */
   readonly ownBranch: boolean;
 }) {

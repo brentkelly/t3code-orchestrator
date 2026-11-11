@@ -277,7 +277,7 @@ function SeverityTriple({
   readonly nitpick: number;
 }) {
   // Three bare numbers are meaningless to anyone who has not read the spec —
-  // the tooltip spells them out (t3o-06 verification).
+  // the tooltip spells them out.
   return (
     <BoardHint label={`${critical} critical · ${improvement} improvements · ${nitpick} nitpicks`}>
       <span
@@ -329,7 +329,7 @@ function SummaryItem({ item }: { readonly item: BoardCardSummaryItem }) {
       // rendered by the card itself) so its segments can stretch the card.
       return null;
     case "review-advanced":
-      // Neutral: not a pass, and not a call for a human (T3O-51).
+      // Neutral: not a pass, and not a call for a human.
       return (
         <span className="text-[10.5px] font-medium text-muted-foreground">
           Advanced past stuck round {item.round}
@@ -410,7 +410,7 @@ export function BoardCardMetaRow({
   worker,
 }: {
   readonly meta: BoardCardMeta;
-  /** The worker chip (T3O-65), at the row's right end; null on a board with
+  /** The worker chip, at the row's right end; null on a board with
       one worker. */
   readonly worker?: BoardCardWorkerChip | null | undefined;
 }) {
@@ -444,7 +444,7 @@ export function BoardCardMetaRow({
       {meta.prNumber === undefined ? null : (
         <MetaCount
           icon={PullRequestGlyph.pullRequest}
-          // A draft is neutral (T3O-12): not running, not done, not blocked —
+          // A draft is neutral: not running, not done, not blocked —
           // the board marks it ready when the card reaches Ready for merge.
           tint={meta.prDraft ? "text-muted-foreground" : "text-info-foreground"}
           title={
@@ -465,7 +465,7 @@ export function BoardCardMetaRow({
         </BoardHint>
       ) : null}
       {worker == null ? null : (
-        // Never a status colour (T3O-65): worker trouble goes in the notice
+        // Never a status colour: worker trouble goes in the notice
         // slot. Solid when the card is bound to its worker, dashed while it
         // follows the default and hasn't started.
         <BoardHint label={worker.tooltip}>
@@ -484,7 +484,7 @@ export function BoardCardMetaRow({
   );
 }
 
-// ── Thread todo strip (t3o-18, D4/D5) ──────────────────────────────────
+// ── Thread todo strip ──────────────────────────────────
 
 /**
  * One pip per stored todo item, coloured by that item's real status, since agents
@@ -525,7 +525,7 @@ export function BoardTodoPips({
   );
 }
 
-/** "13m" / "2h" on the item the agent is currently on (D6). Elapsed is anchored
+/** "13m" / "2h" on the item the agent is currently on. Elapsed is anchored
     to the moment the in-progress item's TEXT changed, so reordering and
     insertion do not reset it. */
 function todoElapsedLabel(startedAt: string | undefined): string | null {

@@ -1,5 +1,5 @@
 /**
- * General grouping in the decider (T3O-27, D12): nesting to any depth, the
+ * General grouping in the decider: nesting to any depth, the
  * derived group stage, Deferred, revert-on-empty, headings, regrouping, cross-
  * group dependencies and the target lock.
  */

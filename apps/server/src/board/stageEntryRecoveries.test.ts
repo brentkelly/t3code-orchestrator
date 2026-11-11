@@ -92,7 +92,7 @@ const critical: BoardReviewFinding = {
 };
 
 /** Each phase's payload has its own required shape, and a `succeeded`
-    completion whose payload does not parse to it halts the loop (T3O-14) —
+    completion whose payload does not parse to it halts the loop —
     which would silently end these tests one phase early. */
 const phasePayload = (stepId: string): string => {
   if (stepId.startsWith("review@")) {
@@ -235,8 +235,8 @@ it.effect(
           const thread = liveThread(yield* board);
           yield* Ref.set(shells, shellsFor([[String(thread), idleThreadShell(String(thread))]]));
 
-          // First recovery: within budget, so the step is RETRIED. Since T3O-22
-          // (D7) a retry waits its backoff rung, so both outcomes now wear the
+          // First recovery: within budget, so the step is RETRIED. A
+          // retry waits its backoff rung, so both outcomes now wear the
           // `stalled` status and the REASON is what tells them apart — waiting
           // to retry, with a time, versus recovery having given up with none.
           yield* pumpRuntime(turnCompleted(thread));

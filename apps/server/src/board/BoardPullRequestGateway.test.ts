@@ -114,7 +114,7 @@ function makeGateway(
     readonly detail?: PullRequestDetail;
     readonly runActionFails?: boolean;
     readonly runActionError?: unknown;
-    /** `remote.origin.url` (T3O-24). Absent is a checkout with no origin. */
+    /** `remote.origin.url`. Absent is a checkout with no origin. */
     readonly originUrl?: string;
   } = {},
 ) {
@@ -551,7 +551,7 @@ describe("boardTitleWithoutWipPrefix (T3O-12)", () => {
   });
 });
 
-// T3O-24: in a fork the project identity names `upstream` — upstream's
+// In a fork the project identity names `upstream` — upstream's
 // resolver prefers it on purpose — while the board pushes to and opens its
 // pull requests on `origin`. Every operation has to reach the fork.
 describe("BoardPullRequestGateway in a fork (T3O-24)", () => {

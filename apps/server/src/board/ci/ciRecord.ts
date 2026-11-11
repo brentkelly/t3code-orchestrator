@@ -1,5 +1,5 @@
 /**
- * What a CI record does to the card and its pass rows (T3O-44). Pure: the
+ * What a CI record does to the card and its pass rows. Pure: the
  * decider calls it for `board.card.record-ci` and folds the result into one
  * `board.card-ci-recorded` event.
  */
@@ -52,7 +52,7 @@ export function decideBoardCiRecord(
         return refuse(`Card '${card.key}' is not in CI, so no CI pass can start.`);
       }
       if (action.steps.length === 0) return refuse("A CI pass needs at least one step.");
-      // T3O-59: a fix's re-run only follows a pass still being fixed; one a
+      // A fix's re-run only follows a pass still being fixed; one a
       // human stopped or restarted meanwhile stays as they left it.
       if (action.fixThreadId !== null && current?.phase !== "fixing") {
         return refuse(
@@ -120,8 +120,8 @@ export function decideBoardCiRecord(
         current.runId !== action.runId ||
         isBoardCiPassSettledPhase(current.phase)
       ) {
-        // A late report from a pass already superseded, held or stopped
-        // (T3O-59): its row still takes the step, the card does not.
+        // A late report from a pass already superseded, held or stopped:
+        // its row still takes the step, the card does not.
         return done({ ci: current, ciLastOutcome: card.ciLastOutcome });
       }
       if (action.index >= current.steps.length) {
@@ -130,7 +130,7 @@ export function decideBoardCiRecord(
       const steps = current.steps.map((step, index) =>
         index === action.index ? boardCardCiSteps([action.step])[0]! : step,
       );
-      // T3O-61: the card heads with its pass's first failing step.
+      // The card heads with its pass's first failing step.
       const headline = current.headline ?? action.step.headline;
       return done({
         ci: {
@@ -145,7 +145,7 @@ export function decideBoardCiRecord(
 
     case "finish-pass": {
       const live = current !== null && current.runId === action.runId;
-      // T3O-59: Stop CI and Retry run beside the serial worker, so a finish can
+      // Stop CI and Retry run beside the serial worker, so a finish can
       // arrive for a pass already settled or replaced. Its row settles; the
       // card's pass is left alone.
       const settledAlready = live && isBoardCiPassSettledPhase(current.phase);
@@ -211,7 +211,7 @@ export function decideBoardCiRecord(
       if (current === null || current.runId !== action.runId) {
         return refuse(`Pass ${action.runId} is not this card's current CI pass.`);
       }
-      // T3O-59: a late failure of a pass already held or stopped starts no fix.
+      // A late failure of a pass already held or stopped starts no fix.
       if (current.phase !== "running") {
         return refuse(`Pass ${action.runId} is ${current.phase}, so no fix can start on it.`);
       }

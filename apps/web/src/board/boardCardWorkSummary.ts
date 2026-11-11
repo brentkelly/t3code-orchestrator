@@ -1,5 +1,5 @@
 /**
- * The card modal's Summary pane (T3O-5): a derived recap of how the work
+ * The card modal's Summary pane: a derived recap of how the work
  * went — verdict, review, build, PR — from `board.subscribeCard` plus the
  * stage list. Not an LLM write-up, not a second Review pane.
  */
@@ -67,7 +67,7 @@ export interface BoardCardWorkSummaryBuild {
   /** The build completion's plain summary: the lead's fallback when the
       payload is absent or unreadable (legacy cards, failed builds). */
   readonly summary: string | null;
-  /** The structured payload (T3O-21), checks sorted with `fail` first. */
+  /** The structured payload, checks sorted with `fail` first. */
   readonly structured: BoardBuildSummaryPayload | null;
   /** Bullets across every area, and how many areas hold them. */
   readonly changeCount: number;
@@ -131,7 +131,7 @@ export function boardCardHasSummaryPane(input: {
   readonly stage: BoardStageId;
   readonly stepCompletions: ReadonlyArray<BoardStepCompletion>;
   readonly card: Pick<BoardCard, "pullRequest" | "pullRequestHistory">;
-  /** How many planning decisions the card has logged (T3O-32). */
+  /** How many planning decisions the card has logged. */
   readonly decisionCount?: number;
 }): boolean {
   const role = stageRoleOf(input.stages, input.stage);
@@ -189,7 +189,7 @@ function deriveVerdict(input: {
   // Done win; Blocked, pushed above, still outranks them.
   if (input.role !== "done") {
     if (input.loopStatus === "stuck") {
-      // Violet, and only in Code review (T3O-51): the one way out of that
+      // Violet, and only in Code review: the one way out of that
       // stage is a human's call.
       if (input.role === "review") {
         candidates.push({ label: boardReviewHeldLabel("stuck"), tone: "attention" });

@@ -43,7 +43,7 @@ export function boardActivityActorFor(
   return stamps.get(String(commandId)) ?? BOARD_SYSTEM_ACTOR;
 }
 
-/** The agent actor for an MCP tool call (D11). The display name and accent are
+/** The agent actor for an MCP tool call. The display name and accent are
     resolved client-side from the provider instance, so a renamed instance
     relabels its own history rather than freezing a stale label on the row. */
 export function boardAgentActor(input: {
@@ -58,7 +58,7 @@ export function boardAgentActor(input: {
   };
 }
 
-/** The human actor (D11). `name` is frozen on the row at write time, so it stays
+/** The human actor. `name` is frozen on the row at write time, so it stays
     correct after the project's git config changes. */
 export function boardHumanActor(name: string): BoardActivityActor {
   return {

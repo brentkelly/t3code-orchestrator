@@ -30,7 +30,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
  */
 export const BOARD_WORKER_PROTOCOL_VERSION = 2;
 
-/** The oldest protocol a worker may speak and still be used (D16). */
+/** The oldest protocol a worker may speak and still be used. */
 export const BOARD_WORKER_PROTOCOL_FLOOR = 1;
 
 /**
@@ -59,7 +59,7 @@ export const BoardWorkerLabel = TrimmedNonEmptyString.check(
   Schema.isMaxLength(BOARD_WORKER_LABEL_MAX_LENGTH),
 );
 
-/** A registered worker (D19). The registry lives in the board read model (D8). */
+/** A registered worker. The registry lives in the board read model. */
 export const BoardWorker = Schema.Struct({
   id: EnvironmentId,
   label: BoardWorkerLabel,
@@ -226,7 +226,7 @@ export function canBeDefaultBoardWorker(worker: BoardWorkerView): boolean {
   return worker.status.state === "online";
 }
 
-// ── Commands and events (the registry, D8) ─────────────────────────────
+// ── Commands and events (the registry) ─────────────────────────────
 
 /**
  * Internal: dispatched only after the credential exchange succeeded, so the board holds
@@ -282,7 +282,7 @@ export function compareBoardWorkers(left: BoardWorker, right: BoardWorker): numb
   return compareCodeUnits(left.label, right.label) || compareCodeUnits(left.id, right.id);
 }
 
-// ── Project ↔ worker mapping (D20) ─────────────────────────────────────
+// ── Project ↔ worker mapping ─────────────────────────────────────
 
 /**
  * Prefers the checkout's own remote over the canonical one, so a fork stays distinct
@@ -420,7 +420,7 @@ export const BOARD_WORKERS_WS_METHODS = {
 } as const;
 
 /**
- * How the central server gets its own session on a worker (D19): a one-time
+ * How the central server gets its own session on a worker: a one-time
  * token the client minted on the worker (`POST /api/auth/pairing-token`), or
  * a pairing link the human pasted from `t3 pair`.
  */
@@ -492,7 +492,7 @@ export const BoardWorkerRemovePreviewCard = Schema.Struct({
 export type BoardWorkerRemovePreviewCard = typeof BoardWorkerRemovePreviewCard.Type;
 
 /**
- * What removing a worker would do to its cards (T3O-66, D22): the cards with
+ * What removing a worker would do to its cards: the cards with
  * no worktree yet move to the default worker; the ones with a worktree or a
  * running step need moving by hand, and hold until they are. Archived cards
  * are not listed.
@@ -591,7 +591,7 @@ export const BOARD_WORKERS_RPCS = [
 ] as const;
 
 /**
- * Scopes, spread into `BOARD_RPC_SCOPES`. No new scope tier (D19): a worker's
+ * Scopes, spread into `BOARD_RPC_SCOPES`. No new scope tier: a worker's
  * reads are thread-shell reads, managing workers is a board write, cloning is
  * a source-control write, and the board's own session holds all three.
  */

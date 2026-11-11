@@ -154,7 +154,7 @@ export const attachBoardDatabase = Effect.fn("attachBoardDatabase")(function* ()
 });
 
 /**
- * Move a pre-t3o-26 database's board tables, ledger COPIED with them, from `main` into `boards`
+ * Move a legacy database's board tables, ledger COPIED with them, from `main` into `boards`
  * exactly as they stand, so a partially migrated database keeps its high-water mark (an empty
  * ledger would replay one-time seeds). Re-runnable: each target is dropped on entry, since a
  * relocation that died partway leaves some tables already created.

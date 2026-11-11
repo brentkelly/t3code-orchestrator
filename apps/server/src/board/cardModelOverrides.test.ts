@@ -117,7 +117,7 @@ describe("per-card model overrides reach the spawn (t3o-29)", () => {
   it.effect("an override naming no access level leaves the stage's posture alone", () =>
     Effect.gen(function* () {
       // An override says only what it changes. The build stage resolves to
-      // `auto` (t3o-21, D2), and naming a model must not quietly move it.
+      // `auto`, and naming a model must not quietly move it.
       const card = buildCard({ id: "card-1", modelOverrides: { [building]: opus } });
       const step = yield* spawnedStep([card], card);
       assert.strictEqual(step.runtimeMode, "auto");
@@ -270,7 +270,7 @@ describe("per-card model overrides reach the spawn (t3o-29)", () => {
       assert.strictEqual(step.providerInstanceId, String(reviewOverride.instanceId));
       assert.strictEqual(step.runtimeMode, "approval-required");
       // ...and it is unmistakably the re-entry conversation, not a fresh run:
-      // no prompt injected, human-in-the-loop forced (D7).
+      // no prompt injected, human-in-the-loop forced.
       assert.strictEqual(step.humanInLoop, true);
       assert.strictEqual(step.prompt, "");
     }),

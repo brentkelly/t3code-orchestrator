@@ -204,7 +204,7 @@ export function BoardListView(props: BoardListViewProps) {
   const archiveCard = useAtomCommand(boardEnvironment.archiveCard);
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
 
-  // Session-scoped view state: none of it is worth a reload (D9).
+  // Session-scoped view state: none of it is worth a reload.
   const [anchorId, setAnchorId] = useState<string | null>(null);
   const [over, setOver] = useState<DropTarget | null>(null);
   const [startedDialog, setStartedDialog] = useState<{

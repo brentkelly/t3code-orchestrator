@@ -124,7 +124,7 @@ describe("migration 020: nullable step label + frozen stage label", () => {
       yield* insertLegacyRow;
       yield* Migration020;
 
-      // The projector upserts on card_id (one live step per card, D4). A
+      // The projector upserts on card_id (one live step per card). A
       // rebuild that lost the PRIMARY KEY would silently turn that into an
       // append and duplicate every step transition.
       yield* sql`

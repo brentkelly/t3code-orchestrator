@@ -1,5 +1,5 @@
 /**
- * Migration 044 (T3O-56): the board's history moves from upstream's log into
+ * Migration 044: the board's history moves from upstream's log into
  * its own, in order, with receipts and watermarks renumbered into the board's
  * sequence space — and running it twice changes nothing.
  */

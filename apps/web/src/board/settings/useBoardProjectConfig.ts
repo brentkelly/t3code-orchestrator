@@ -1,5 +1,5 @@
 /**
- * T3o: one project's config for its settings page (T3O-49) — the shell delta
+ * T3o: one project's config for its settings page — the shell delta
  * the board already holds, plus the full delta (prompts, step bodies,
  * "last changed by") fetched whenever the shell's version moves.
  */

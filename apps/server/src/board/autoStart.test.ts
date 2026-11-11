@@ -127,9 +127,9 @@ it.effect("starts an armed card when its last dependency reaches Done", () =>
       yield* deliver(h, cardMoved(blocker("dep", DONE), BUILDING, DONE, 1));
 
       assert.strictEqual(stageOf(yield* board, "waiter"), BUILDING);
-      // Auto-build is a lasting setting (T3O-38): the move does not spend it.
+      // Auto-build is a lasting setting: the move does not spend it.
       assert.strictEqual(armOf(yield* board, "waiter"), true);
-      // An ORDINARY forward move, the one a human's Begin build makes (D3):
+      // An ORDINARY forward move, the one a human's Begin build makes:
       // no `override`, so the decider's every gate still applies and nothing
       // downstream can tell an auto-started card from a dragged one.
       const [move] = moveTypes(yield* h.commands);
@@ -182,7 +182,7 @@ it.effect("fires when the blocking card is ARCHIVED rather than finished", () =>
   withGovernor(setup([armedCard({ dependsOn: ["dep"] }), blocker("dep", BUILDING)]), (h) =>
     Effect.gen(function* () {
       const { board } = h;
-      // t3o-13 D1: archiving means the work is not happening, so a gate
+      // Archiving means the work is not happening, so a gate
       // waiting on it is a deadlock. An armed card must clear it too.
       // The card the decider emits already carries its `archivedAt` — the
       // projector upserts the payload card whole.
@@ -416,7 +416,7 @@ it.effect("an auto-started card with no free slot queues honestly", () =>
         assert.strictEqual(stageOf(yield* board, "waiter"), BUILDING);
         yield* deliverAutoStart(h, "waiter", 3);
 
-        // Nothing downstream is special-cased for an auto-start (D3): with the
+        // Nothing downstream is special-cased for an auto-start: with the
         // only slot taken the card sits `Queued #n` like any other, which is
         // the honest answer.
         assert.strictEqual(stepStatus(yield* board, BoardCardId.make("waiter")), "queued");
@@ -424,7 +424,7 @@ it.effect("an auto-started card with no free slot queues honestly", () =>
   ),
 );
 
-// ── Automation toggles (T3O-38) ───────────────────────────────────────────
+// ── Automation toggles ───────────────────────────────────────────
 
 const armEdit = (card: BoardCard, sequence: number) =>
   ({

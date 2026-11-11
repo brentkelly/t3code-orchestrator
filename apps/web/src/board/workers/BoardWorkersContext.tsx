@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-65): the board's worker summary for every card surface below the
+ * T3o: the board's worker summary for every card surface below the
  * board page — the worker chip, the move notices, the worker field — so a
  * local-only board's cards read one empty summary rather than each
  * subscribing.

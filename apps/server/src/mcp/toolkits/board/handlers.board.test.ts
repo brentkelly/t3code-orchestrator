@@ -121,7 +121,7 @@ const SupervisorLinkStub = Layer.effect(
 const makeLayer = (prefix: string) =>
   makeBoardStackTestLayer(prefix).pipe(
     // The create tool reads (and may assign) the project's key prefix from
-    // board settings (D14) — an in-memory settings runtime is enough.
+    // board settings — an in-memory settings runtime is enough.
     Layer.provideMerge(ServerSettings.layerTest()),
     // On top, so the stub links through the same engine the handlers write to.
     (base) => SupervisorLinkStub.pipe(Layer.provideMerge(base)),
@@ -1522,7 +1522,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
         .pipe(withScope(orphanThread));
       // The key carries the project's acronym, not the compiled-in default:
       // "Project A" -> PA, the same prefix the client would assign, so agent-
-      // and human-created cards share one key namespace (D14).
+      // and human-created cards share one key namespace.
       assert.strictEqual(created.key, "PA-2");
       const listed = yield* boardHandlers
         .board_list_cards({ stage: BoardStageId.make("sprint") })
@@ -1564,9 +1564,9 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
   it.effect("board_create_card can create directly into any stage, Building included (D10)", () =>
     Effect.gen(function* () {
       yield* seed();
-      // BOARD_CREATABLE_STAGES is deleted (D10): a card may be created into any
+      // BOARD_CREATABLE_STAGES is deleted: a card may be created into any
       // stage, so a create straight into Building succeeds. The auto-execute
-      // warning is a create-dialog concern (AC16), not a handler-level refusal.
+      // warning is a create-dialog concern, not a handler-level refusal.
       const created = yield* boardHandlers
         .board_create_card({
           projectId,

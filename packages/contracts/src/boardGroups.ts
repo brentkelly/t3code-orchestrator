@@ -72,7 +72,7 @@ function isBoardCardGroup(board: BoardState, card: BoardCard): boolean {
 }
 
 /**
- * The plan row a split child owns (T3O-27): a copy of the plan it was cut
+ * The plan row a split child owns: a copy of the plan it was cut
  * from, so it counts as planned on its own. Shared by both projections and
  * mirrored by migration 051, so replay equals rehydration.
  */
@@ -172,7 +172,7 @@ export function isBoardCardSelfOrAncestor(
 }
 
 /**
- * Whether work has started on a leaf (D6): it reached the build stage, or it
+ * Whether work has started on a leaf: it reached the build stage, or it
  * still owns a branch from having been there. A group is never started — its
  * children are.
  */
@@ -194,8 +194,7 @@ function boardGroupPlacedStage(board: BoardState, stageId: BoardStageId): BoardS
 }
 
 /** The settings a card takes when it first becomes a group. An own-branch
-    group auto-merges its children into that branch unless told otherwise
-    (T3O-38). */
+    group auto-merges its children into that branch unless told otherwise. */
 export function defaultBoardCardGroup(
   board: BoardState,
   card: Pick<BoardCard, "stage">,
@@ -318,7 +317,7 @@ export function boardGroupTargetLockReason(board: BoardState, card: BoardCard): 
 }
 
 /**
- * Why cards can't arrive under `parent` (T3O-28): an integration branch lives
+ * Why cards can't arrive under `parent`: an integration branch lives
  * in one repository, so every card landing on one must share the project of
  * the group that owns it. `arriving` is every card that would sit there,
  * subtrees included. Null when they may, or when they land on trunk.
@@ -337,7 +336,7 @@ export function boardGroupProjectRefusal(
 }
 
 /** Why a group can't take its own integration branch because its subtree
-    spans projects (T3O-28), or null when it can. */
+    spans projects, or null when it can. */
 export function boardGroupOwnTargetProjectRefusal(
   board: BoardState,
   card: BoardCard,
@@ -350,7 +349,7 @@ export function boardGroupOwnTargetProjectRefusal(
 }
 
 /**
- * Whether a card counts as PLANNED (T3O-27): it owns a plan row. A split child
+ * Whether a card counts as PLANNED: it owns a plan row. A split child
  * owns a copy of the plan it was cut from, so this needs no parent special case.
  */
 export function isBoardCardPlanned(board: BoardState, cardId: BoardCardId): boolean {
@@ -462,7 +461,7 @@ export function boardShellDescendantIds(
 }
 
 /**
- * A new phase (T3O-29): a group's deferred cards move out to a fresh sibling
+ * A new phase: a group's deferred cards move out to a fresh sibling
  * group, a heading created next to it, and land in that group's Backlog. One
  * rule set shared by the board's dialog and `board_new_phase`, which both
  * compose it from create, move-cards and move.
@@ -482,7 +481,7 @@ export type BoardNewPhasePlan =
       readonly cardStage: BoardStageId;
     };
 
-/** Where a card created with no stage lands (T3O-53): Planning under a parent
+/** Where a card created with no stage lands: Planning under a parent
     group that has started, so it joins the running work instead of stalling
     the group in Backlog; otherwise the project's first stage. */
 export function boardCreateDefaultStage(

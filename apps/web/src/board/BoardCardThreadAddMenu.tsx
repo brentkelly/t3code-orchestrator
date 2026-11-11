@@ -11,7 +11,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover"
 import { boardStageLabelMidSentence } from "./boardCardThreadMenu";
 import { BoardPickerSearchBody, type BoardPickerOption } from "./BoardSearchAddPicker";
 
-/** The adopt list's server search (T3O-41): told the query as it is typed. */
+/** The adopt list's server search: told the query as it is typed. */
 export interface BoardAdoptSearch {
   readonly onQueryChange: (query: string) => void;
   /** Whether the adopt list is showing, so its card-thread read mounts only then. */

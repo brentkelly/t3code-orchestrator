@@ -145,7 +145,7 @@ function stageStateOf(
     stages,
     nextCardNumberByProject: {},
     // The stage helpers read a project's switches and overrides, which the
-    // shell carries; prompts and step bodies they never read (T3O-49).
+    // shell carries; prompts and step bodies they never read.
     ...(projectStageConfigs === undefined
       ? {}
       : {
@@ -205,11 +205,11 @@ function boardDropIndexIn(columnEl: Element, y: number): number {
 function BoardPage({
   scope = ROOT_BOARD_SCOPE,
 }: {
-  /** Which board this mount is (t3o-25, D1): the root board, or one parent's
+  /** Which board this mount is: the root board, or one parent's
       sub-board. The scope is data — the surface below is the same code. */
   readonly scope?: BoardScope;
 } = {}) {
-  // T3O-71: the board server this device nominated, or the primary environment.
+  // The board server this device nominated, or the primary environment.
   const board = useBoardEnvironment();
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
@@ -325,8 +325,8 @@ function useBoardLiveColumns({
     return { columns: decorated, parentKeyById: parents, cardKeyById: keyById };
   })();
   // Every live shell, flat: the attention derivations fold over it, and
-  // the sub-board's plan strip resolves this parent's children out of it
-  // (t3o-29, D1). The FULL columns, not the scoped ones: a child is filtered
+  // the sub-board's plan strip resolves this parent's children out of it.
+  // The FULL columns, not the scoped ones: a child is filtered
   // out of what renders, never out of what the client knows.
   const allCards = Object.values(columns).flat();
   // Group rules read across every project, as the server's do: `?project=` and
@@ -339,7 +339,7 @@ function useBoardLiveColumns({
     return elsewhere.length === 0 ? allCards : [...allCards, ...elsewhere];
   })();
   // When each card's thread last went quiet, plus the clock that ticks once
-  // when a grace expires (T3O-29). Both feed `boardCardAttention`, which
+  // when a grace expires. Both feed `boardCardAttention`, which
   // withholds the "Needs a human" chips until the card has been still for
   // `BOARD_ATTENTION_SETTLE_MS`.
   const { threadIdleSinceByCard, now: attentionNow } = useBoardAttentionSettle({
@@ -427,22 +427,22 @@ function useBoardPageModel({
   const setColumnCollapsed = useBoardUiStore((state) => state.setColumnCollapsed);
   const setDetailMaximisedCardId = useBoardUiStore((state) => state.setDetailMaximisedCardId);
 
-  // The user-defined stage list drives column order and labels (D13); falls
+  // The user-defined stage list drives column order and labels; falls
   // back to the compiled seeds until the first shell snapshot arrives.
   const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
 
   const orderedStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
-  // Each project's delta (T3O-49): which stages its cards use.
+  // Each project's delta: which stages its cards use.
   const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
-  // Board settings (t3o-07): the per-project key prefix used when creating a
+  // Board settings: the per-project key prefix used when creating a
   // card. Read once here and threaded down, rather than subscribed per card.
   const boardSettings = useBoardSettings((settings) => settings.board);
   // The confirmations a group drag or the Deferred column opens.
   const [startingGroupId, setStartingGroupId] = useState<string | null>(null);
   const [phaseGroupId, setPhaseGroupId] = useState<string | null>(null);
-  // The sub-board's dependency chart (t3o-29, D6). Ephemeral: the page
+  // The sub-board's dependency chart. Ephemeral: the page
   // remounts per navigation, and persisted board UI state has already caused
-  // a navigation bug in this codebase (D9).
+  // a navigation bug in this codebase.
   const [subBoardChartOpen, setSubBoardChartOpen] = useState(false);
   // Stays the same object across a clone's progress ticks, so those don't
   // rebuild the queue or re-render the columns.
@@ -450,14 +450,14 @@ function useBoardPageModel({
   // The strip's thread title and state are joined from the thread shells the
   // client already holds; nothing is duplicated onto the wire.
   const cardThreadsByCard = useAtomValue(boardEnvironment.cardThreadsByCardAtom(environmentId));
-  // Which cards have their extra threads revealed. In-memory and session-scoped
-  // (D9): a collapse preference has near-zero value across reloads, and persisted
+  // Which cards have their extra threads revealed. In-memory and session-scoped:
+  // a collapse preference has near-zero value across reloads, and persisted
   // board UI state has already caused a navigation bug in this codebase.
   const [expandedThreadCards, setExpandedThreadCards] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [peekedColumns, setPeekedColumns] = useState<ReadonlySet<string>>(() => new Set());
-  // The top bar's filter box (T3O-16). Local state, not a search param: this is
+  // The top bar's filter box. Local state, not a search param: this is
   // per-keystroke typing state, and routing every character would re-run route
   // matching for a filter nobody wants to deep-link or land back on.
   const queryKey = boardScopeQueryKey(scope);
@@ -468,7 +468,7 @@ function useBoardPageModel({
   const [dragOver, setDragOver] = useState<BoardDragOver | null>(null);
   const [dragOpenedRail, setDragOpenedRail] = useState<BoardStageId | null>(null);
   const [dragTip, setDragTip] = useState<string | null>(null);
-  // T3o (T3O-19): a drag out of Planning with no plan written waits for the
+  // T3o: a drag out of Planning with no plan written waits for the
   // human to confirm it, exactly as the detail pane's move does. The drop is
   // held as the card it landed before, not as a column order: the column can
   // change while the dialog is open, so the order is rebuilt on confirm.
@@ -508,16 +508,16 @@ function useBoardPageModel({
   const labelsById = indexBoardLabels(labelCatalogue);
   const stageState = stageStateOf(orderedStages, projectStageConfigs);
   const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
-  // The merge-role stage, for the armed-and-quiet `Auto` glyph (T3O-38, D13):
+  // The merge-role stage, for the armed-and-quiet `Auto` glyph:
   // an armed card in Building looks normal because it is, so the glyph is
   // offered only where the merge is actually imminent.
   const mergeStageId = boardStageWithRole(stageState, "merge")?.stageId ?? null;
   const doneStageId = boardStageWithRole(stageState, "done")?.stageId ?? null;
-  /** Collapse state keys on `(scope, stageId)` (D1); the defaults are
+  /** Collapse state keys on `(scope, stageId)`; the defaults are
       `boardScopeColumnCollapsedByDefault`'s. */
   const collapseKeyOf = (stageId: string) => boardScopeCollapseKey(scope, stageId);
 
-  // The board-wide arm (T3O-38, D2) — the third arming condition, and the one
+  // The board-wide arm — the third arming condition, and the one
   // the card shell cannot carry, since the SQL snapshot producer cannot see
   // settings. ORed into the glyph in the column exactly as `BoardCardDetail`
   // ORs it into the modal chip.
@@ -529,7 +529,7 @@ function useBoardPageModel({
       : false;
 
   const allProjects = Option.getOrNull(shellState.snapshot)?.projects ?? [];
-  // A project's Board colour is its icon colour (T3O-4), read from the live
+  // A project's Board colour is its icon colour, read from the live
   // shell snapshot so an icon change in project settings recolours its cards
   // without a reload. Keyed once here and threaded down, not looked up per card.
   const accentByProject = new Map(
@@ -552,7 +552,7 @@ function useBoardPageModel({
     scopeProjectId !== null && isBoardProjectHidden(boardSettings, scopeProjectId);
 
   // "Needs a human", derived client-side from the shell + stage list with no
-  // extra payload (t3o-27's split approval is one of its reasons). The card
+  // extra payload (a split approval is one of its reasons). The card
   // face turns this into a border, a fill tint and one chip.
   const attentionFor = (card: BoardCardShell) => {
     // Spread only where there is a timestamp to carry — a card whose thread
@@ -573,7 +573,7 @@ function useBoardPageModel({
       threadIdleSince: threadIdleSinceByCard.get(String(card.cardId)),
       now: attentionNow,
     });
-  // T3O-52: a finished card still holding its worktree — the amber `Worktree
+  // A finished card still holding its worktree — the amber `Worktree
   // kept` notice. Here because the "finished" half needs the done-role stage
   // and `reclaimWorktreeOnDone`, which the shell cannot carry (its SQL producer
   // cannot see settings).
@@ -601,7 +601,7 @@ function useBoardPageModel({
     stages: orderedStages,
     now: attentionNow,
   });
-  // Nearest wins (T3O-28): a card's own override, else its parent group's
+  // Nearest wins: a card's own override, else its parent group's
   // settings, else — top-level only — the board-wide default.
   const autoMergeArmedByCard = boardShellAutoMergeArmedByCard({
     shells: allCards,
@@ -609,7 +609,7 @@ function useBoardPageModel({
   });
   const autoMergeArmedFor = (card: BoardCardShell) =>
     autoMergeArmedByCard.get(String(card.cardId)) === true;
-  // The card face's Auto-build chip (T3O-38): a card waiting in the stage
+  // The card face's Auto-build chip: a card waiting in the stage
   // before build that will start itself.
   const beforeBuildStageId = boardStageBeforeBuild(stageState)?.stageId ?? null;
   const autoBuildArmedFor = (card: BoardCardShell) =>
@@ -633,7 +633,7 @@ function useBoardPageModel({
   const parentShell =
     scope.kind === "sub-board" ? (findBoardCard(columns, scope.parentCardId)?.card ?? null) : null;
 
-  // ── Groups (T3O-29) ────────────────────────────────────────────────
+  // ── Groups ────────────────────────────────────────────────
   // A group card's face, folded once per board render over the shells the
   // client already holds: no group adds a field to the wire.
   const groupVmByCard = (() => {
@@ -653,7 +653,7 @@ function useBoardPageModel({
   })();
   const groupFor = (card: BoardCardShell) => groupVmByCard.get(String(card.cardId)) ?? null;
   const parentGroup = parentShell === null ? null : boardShellGroup(groupShells, parentShell);
-  // Where a new card lands by default: Planning inside a started group (T3O-53).
+  // Where a new card lands by default: Planning inside a started group.
   const defaultCreateStageId = boardCreateDefaultStage(
     stageState,
     parentGroup?.started === true,
@@ -728,7 +728,7 @@ function useBoardPageModel({
     return {
       awaitingInput,
       running: threadState === "working",
-      // A failed thread is stopped for the winner rule (t3o-10).
+      // A failed thread is stopped for the winner rule.
       stopped: threadState === "stopped" || threadState === "failed" || threadState === "none",
     };
   };
@@ -746,7 +746,7 @@ function useBoardPageModel({
   // ordering substrate so a drop anchors into the real column.
   const scopedColumns = filterBoardColumnsByScope(columns, scope);
 
-  // Every live card, as the per-project stage helpers read them (T3O-43).
+  // Every live card, as the per-project stage helpers read them.
   const pipelineView = { stages: orderedStages, projectStageConfigs, cards: everyCard };
   // The projects whose pipelines this view draws: the scoped project, a
   // sub-board's parent's and its children's (a child may sit in another
@@ -780,8 +780,8 @@ function useBoardPageModel({
   const pipelineColumnById = new Map(
     pipelineColumns.map((column) => [String(column.stage.stageId), column]),
   );
-  // The columns this SCOPE renders (t3o-25, D1; T3O-29): every stage the
-  // projects in view use (T3O-43) on the root board; Deferred and then those
+  // The columns this SCOPE renders: every stage the
+  // projects in view use on the root board; Deferred and then those
   // stages inside a group.
   const renderedStages = boardScopeStages(
     pipelineColumns.map((column) => column.stage),
@@ -795,7 +795,7 @@ function useBoardPageModel({
     (projectId) => projectTitleById.get(projectId) ?? "its project",
   );
 
-  // Auto-collapse empty stages (T3O-40). A peek opens an auto-folded column
+  // Auto-collapse empty stages. A peek opens an auto-folded column
   // for this mounted board only; it never touches `collapsedByStage`.
   const autoCollapseEmpty = boardSettings.display.autoCollapseEmptyStages;
   // A peek ends once its column holds cards (or the setting or scope changes),
@@ -1165,7 +1165,7 @@ function EnvironmentBoard({
     source: FoundCard,
   ) => {
     const isGroup = isBoardGroupShell(groupShells, source.card);
-    // Dropping a group on Building is the start gesture (T3O-29): it opens
+    // Dropping a group on Building is the start gesture: it opens
     // a confirmation rather than moving anything yet.
     if (isGroup && targetStage === buildStageId && source.stage !== buildStageId) {
       setStartingGroupId(String(source.card.cardId));
@@ -1278,7 +1278,7 @@ function EnvironmentBoard({
     setDragTip(null);
   };
 
-  // Client-side pre-validation of a drop (T3O-29): a refused column is
+  // Client-side pre-validation of a drop: a refused column is
   // outlined and never `preventDefault`s, so the browser shows a no-drop
   // cursor, and a tooltip at the pointer says why.
   const dropRefusalFor = (active: BoardDrag, stage: BoardStageId): string | null => {
@@ -1363,14 +1363,14 @@ function EnvironmentBoard({
   const stepCard = (direction: BoardCardStep) => {
     const target = direction === -1 ? neighbours.prev : neighbours.next;
     if (target === null) return;
-    // A step is the one card change that carries fullscreen with it (D5).
+    // A step is the one card change that carries fullscreen with it.
     // Read non-reactively: the board does not re-render when the sheet above
     // it is maximised.
     const store = useBoardUiStore.getState();
     store.setDetailMaximisedCardId(
       boardCardMaximisedAfterStep(store.detailMaximisedCardId, selectedCardId, target.cardId),
     );
-    // `replace`, not push (D4): reading ten cards in a row must not bury the
+    // `replace`, not push: reading ten cards in a row must not bury the
     // board under ten history entries. Back closes the sheet to where the
     // reading started. Clicking a card on the board still pushes.
     patchSearch((previous) => ({ ...previous, card: target.cardId }), { replace: true });
@@ -1384,7 +1384,7 @@ function EnvironmentBoard({
           onStep: stepCard,
         };
 
-  /** The stack affordance on a split parent's face (t3o-25, AC2): clicking it
+  /** The stack affordance on a split parent's face: clicking it
       drills into that parent's sub-board. */
   const handleOpenSubBoard = (card: BoardCardShell) => openSubBoard(card.cardId);
 
@@ -1399,7 +1399,7 @@ function EnvironmentBoard({
 
   const openCreate = (stage: BoardStageId) => setCreateStage(stage);
 
-  // ── Archive (t3o-13, D7) ────────────────────────────────────────────
+  // ── Archive ────────────────────────────────────────────
   // Archived cards are off the live shell by design, so they need a place to
   // be seen and restored from — otherwise archiving is a one-way door.
   const handleRestoreCard = (cardId: BoardCardId) => {
@@ -1435,7 +1435,7 @@ function EnvironmentBoard({
   };
 
   const addProjects = (() => {
-    // A sub-board creates into its parent's project, nothing else (t3o-25);
+    // A sub-board creates into its parent's project, nothing else;
     // the root board follows its own `?project` scope.
     const parentProjectId = parentShell?.projectId ?? null;
     const inScope =
@@ -1617,7 +1617,7 @@ function EnvironmentBoard({
           <div
             className={cn(
               "flex min-h-0 flex-1 items-start gap-2.5 overflow-auto px-3 sm:px-5",
-              // Reserved unconditionally (T3O-34, D5): no card comes to rest
+              // Reserved unconditionally: no card comes to rest
               // under the corner menu, and collapsing it does not reflow the
               // columns under the user's cursor.
               BOARD_UTILITY_MENU_RESERVED_SPACE,
@@ -1861,18 +1861,16 @@ function EnvironmentBoard({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [goUpOneLevel, scope.kind]);
-  // Fullscreen rides the store so it survives a STEP between cards (T3O-37,
-  // D5), and the store names the card it belongs to, so a card that opens any
-  // other way opens windowed whether or not it passed through "no card open"
-  // on the way in. This effect only has to forget the card once the sheet is
-  // gone, so that re-opening that same card later starts windowed too.
+  // Fullscreen rides the store so it survives a STEP between cards, and the store names the
+  // card it belongs to, so a card that opens any other way opens windowed whether or not it
+  // passed through "no card open" on the way in. This effect only has to forget the card once
+  // the sheet is gone, so that re-opening that same card later starts windowed too.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the board UI store forgets fullscreen once the URL (which back/forward also edits) drops the card.
   useEffect(() => {
     if (selectedCardId === null) setDetailMaximisedCardId(null);
   }, [selectedCardId, setDetailMaximisedCardId]);
   // Opening a card URL selects the card and brings it into view: expand its
-  // column if collapsed, scroll the row into place. The detail pane that
-  // opens from this selection is t3o-06's.
+  // column if collapsed, scroll the row into place.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands the column and scrolls the DOM row into view for a card URL.
   useEffect(() => {
     const cardId = search.card;
@@ -1917,7 +1915,7 @@ function EnvironmentBoard({
     setColumnCollapsed,
     stageState,
   ]);
-  // Cross-scope deep links resolve to the right board (t3o-25, AC4): a child
+  // Cross-scope deep links resolve to the right board: a child
   // card's URL opened over the root board — or over the wrong sub-board —
   // navigates into its parent's sub-board with the sheet selection intact,
   // and a top-level card's URL opened inside a sub-board goes back up.
@@ -1934,7 +1932,7 @@ function EnvironmentBoard({
       openRootBoard(cardId, { replace: true });
     }
   }, [columns, openRootBoard, openSubBoard, scope, search.card]);
-  // Dead sub-board links resolve UP (t3o-25, D3): a URL naming a card with no
+  // Dead sub-board links resolve UP: a URL naming a card with no
   // children lands on the root board with that card's sheet open; a card that
   // does not exist at all lands on the bare root board. Gated on the first
   // snapshot so an empty pre-connection board is never mistaken for either.
@@ -1948,7 +1946,7 @@ function EnvironmentBoard({
       openRootBoard(undefined, { replace: true });
     }
   }, [liveColumns, openRootBoard, scope, snapshotArrived]);
-  // The command palette's board actions (T3O-29): published while this board
+  // The command palette's board actions: published while this board
   // is mounted, cleared when it goes.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- command palette registry entries, held while this board is mounted.
   useEffect(() => {

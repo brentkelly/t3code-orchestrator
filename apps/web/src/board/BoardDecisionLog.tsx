@@ -1,5 +1,5 @@
 /**
- * The Summary pane's decision log (T3O-32): every decision a planning session
+ * The Summary pane's decision log: every decision a planning session
  * recorded, unclear first. Unclear rows wear violet because they wait on a
  * human's review (docs/t3o/status-colours.md); important ones a neutral
  * outline.

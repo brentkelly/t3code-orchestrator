@@ -8,7 +8,7 @@ export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   // Every existing row is a `progress` or `input-requested` note whose kind no
-  // longer exists (D13). Dropping the table drops them, which is the intent.
+  // longer exists. Dropping the table drops them, which is the intent.
   yield* sql`DROP TABLE IF EXISTS boards.board_card_activity`;
 
   yield* sql`

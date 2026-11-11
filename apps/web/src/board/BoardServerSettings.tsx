@@ -1,5 +1,5 @@
 /**
- * T3o board server (T3O-71). Settings → Board's "Board server" picker, and the notice every board
+ * T3o board server. Settings → Board's "Board server" picker, and the notice every board
  * surface shows when the nominated server is not reachable. The setting is a per-device client
  * setting: a desktop app paired with the central board server nominates it here, and from then on
  * the board, its card detail and Settings → Board all read that server.

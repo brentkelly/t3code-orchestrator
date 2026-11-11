@@ -1,5 +1,5 @@
 /**
- * T3o: plan review (T3O-39) — the one place the server resolves a card's plan
+ * T3o: plan review — the one place the server resolves a card's plan
  * review from Settings and composes the instructions its planning agent gets.
  * The MCP handlers (propose, complete, context) and the supervisor reactor
  * (respawn and nudge prompts) all read through here, so they cannot disagree.
@@ -85,7 +85,7 @@ export function planReviewInstructions(input: {
 }
 
 /**
- * Whether a new `succeeded` completion replaces the pinned one (T3O-50): only
+ * Whether a new `succeeded` completion replaces the pinned one: only
  * when a late plan review reopened the step after that completion was recorded.
  * Everywhere else D4's pin holds. The decider and the MCP reply both read it.
  */

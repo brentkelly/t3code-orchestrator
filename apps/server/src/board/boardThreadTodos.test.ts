@@ -106,7 +106,7 @@ const appendPlan = (
 ) =>
   Effect.gen(function* () {
     yield* writeStackPlan(threadId, id, plan, createdAt);
-    // The todo cache follows upstream's log on its own tail (T3O-56).
+    // The todo cache follows upstream's log on its own tail.
     yield* drainBoardThreadTail;
   });
 
@@ -197,7 +197,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
       assert.strictEqual((yield* cardThreads(cardId))[0]!.todoStartedAt, at(1));
 
       // Rewording the in-progress item is indistinguishable from moving on, so
-      // it resets — wrong, harmless, and rare (D6).
+      // it resets — wrong, harmless, and rare.
       yield* appendPlan(
         linkedThread,
         "ac7-3",
@@ -227,7 +227,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
       assert.strictEqual((yield* methods.boardThreadTodo(linkedThread))?.advancedAt, at(1));
 
       // A revision that neither ticks an item nor changes the current one is not
-      // progress — a frozen list reads exactly like no list (D16).
+      // progress — a frozen list reads exactly like no list.
       yield* appendPlan(
         linkedThread,
         "d16-2",
@@ -337,7 +337,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
       const engine = yield* boardStackEngine;
       const methods = yield* BoardQueries;
 
-      // A human drag: the dispatch boundary stamps the actor first (D11).
+      // A human drag: the dispatch boundary stamps the actor first.
       const moveCommandId = nextCommandId();
       stampBoardActivityActor(moveCommandId, boardHumanActor("brent"));
       yield* engine.dispatch({
@@ -363,7 +363,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
         splitRationale: null,
         createdAt: at(3),
       });
-      // Excluded from the rail (D12): a reorder is not a milestone.
+      // Excluded from the rail: a reorder is not a milestone.
       yield* engine.dispatch({
         type: "board.card.reorder",
         commandId: nextCommandId(),

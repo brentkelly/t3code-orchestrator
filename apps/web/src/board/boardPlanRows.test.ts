@@ -1,5 +1,5 @@
 /**
- * T3o plan rows and the dependency chart's layout (t3o-29). Pure logic, no
+ * T3o plan rows and the dependency chart's layout. Pure logic, no
  * DOM: the panel and the sub-board both render from these, so the ordering,
  * the blocker rule, the three post-materialisation row states and the wave
  * layout are all pinned here rather than through markup.
@@ -169,7 +169,7 @@ describe("deriveBoardPlanRows", () => {
   });
 
   it("does not count an archived or deleted sibling as a blocker", () => {
-    // t3o-13 D1: an archived dependency no longer gates, and a plan whose card
+    // An archived dependency no longer gates, and a plan whose card
     // was deleted has nothing left to wait for. Showing either as a blocker
     // would have the panel claim a hold the decider would not enforce.
     const { rows } = deriveBoardPlanRows({
@@ -235,7 +235,7 @@ describe("deriveBoardPlanRows", () => {
         shell("c2", BOARD_SEED_STAGE_IDS.building, { awaitingInput: true }),
         shell("c3", BOARD_SEED_STAGE_IDS.building, { queued: true }),
         shell("c4", BOARD_SEED_STAGE_IDS.building, { stalled: true }),
-        // T3O-16: blocked mid-turn on a permission prompt — not working, and
+        // Blocked mid-turn on a permission prompt — not working, and
         // the row says so rather than spinning.
         shell("c5", BOARD_SEED_STAGE_IDS.building, {
           stepRunning: true,
@@ -456,7 +456,7 @@ describe("boardPlanGraphLayout", () => {
   });
 
   it("tints a node for a child that asked a question or wants permission", () => {
-    // T3O-16: the graph and the row list beside it read the same violet.
+    // The graph and the row list beside it read the same violet.
     const { rows } = deriveBoardPlanRows({
       plans: [plan("a", 0), plan("b", 1), plan("c", 2)],
       children: [

@@ -122,7 +122,7 @@ const makeBoardThreadTail = Effect.gen(function* () {
   }
 
   yield* Effect.forkScoped(Stream.runForEach(live, apply));
-  // T3o (T3O-63): the workers' todo signals are applied by their feed, with
+  // T3o: the workers' todo signals are applied by their feed, with
   // its own cursor; their changes reach board clients here all the same.
   const feed = yield* Effect.serviceOption(WorkerSignalFeed);
   if (Option.isSome(feed)) {

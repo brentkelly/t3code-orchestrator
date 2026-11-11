@@ -379,7 +379,7 @@ describe("deriveBoardCardReviewSummary", () => {
     assert.strictEqual(summary?.issuesRejected, 0);
   });
 
-  // T3O-2: the tally skipped the double-encoded round entirely, so the card
+  // The tally skipped the double-encoded round entirely, so the card
   // showed round 1's counts under a round-2 header.
   it("t3o-2: tallies a round whose payload arrived double-encoded", () => {
     const doubled = deriveBoardCardReviewSummary({
@@ -549,7 +549,7 @@ describe("boardReviewRoundsStarted / effectiveBoardReviewRounds", () => {
   });
 
   it("has no ceiling and defaults to the stage setting", () => {
-    // T3O-39, D4: the round ceiling is gone. A budget a human typed into the
+    // The round ceiling is gone. A budget a human typed into the
     // stepper is a number they can see, and denying it bought nothing.
     assert.strictEqual(
       effectiveBoardReviewRounds({
@@ -616,7 +616,7 @@ const decodeReviewSummary = Schema.decodeSync(BoardCardReviewSummary);
 describe("replay equals rehydration for a pre-t3o-22 log", () => {
   it("decodes a card payload written before this spec to null overrides", () => {
     // Migration 025's `review_overrides` column defaults to NULL, so a
-    // rehydrated pre-t3o-22 row reads null. A from-empty replay of the same
+    // rehydrated legacy row reads null. A from-empty replay of the same
     // log must reach the identical card, which is what this default buys.
     const legacy = {
       id: "card-1",
@@ -639,17 +639,17 @@ describe("replay equals rehydration for a pre-t3o-22 log", () => {
       updatedAt: "2026-08-27T00:00:00.000Z",
     };
     assert.strictEqual(decodeBoardCard(legacy).reviewOverrides, null);
-    // t3o-29 AC8, the identical guarantee one spec later: migration 029's
+    // The identical guarantee for model overrides: migration 029's
     // `model_overrides` column also defaults to NULL, so the same payload must
     // decode to null overrides rather than an empty map — `{}` and `null` would
     // make a replayed card and a rehydrated one compare unequal.
     assert.strictEqual(decodeBoardCard(legacy).modelOverrides, null);
-    // T3O-5 AC5, the same guarantee for the per-card base branch: migration
+    // The same guarantee for the per-card base branch: migration
     // 036's `base_branch` column defaults to NULL, and a card created before
     // this spec genuinely HAD no base branch, so replaying its payload must
     // reach null — "follow the project default" — rather than any branch name.
     assert.strictEqual(decodeBoardCard(legacy).baseBranch, null);
-    // T3O-80: migration 057's `merge_strategy` defaults to NULL, so an older
+    // Migration 057's `merge_strategy` defaults to NULL, so an older
     // payload replays to "follow the default".
     assert.strictEqual(decodeBoardCard(legacy).mergeStrategy, null);
   });
@@ -726,7 +726,7 @@ describe("boardStepPayloadDefect", () => {
   });
 
   it("accepts an already-stringified payload, which is what agents send", () => {
-    // Storage unwraps one level (T3O-2), so the check has to read the same way
+    // Storage unwraps one level, so the check has to read the same way
     // or it would reject exactly the payloads that fix made readable.
     assert.isNull(
       boardStepPayloadDefect({
@@ -758,7 +758,7 @@ describe("boardStepPayloadDefect", () => {
   });
 
   it("asks nothing of a step outside the review loop", () => {
-    // Every other step's payload is opaque to the board (D8), so a building
+    // Every other step's payload is opaque to the board, so a building
     // step that reports nothing structured is a perfectly ordinary success.
     assert.isNull(boardStepPayloadDefect({ stepId: "building", payload: null }));
     assert.isNull(boardStepPayloadDefect({ stepId: "planning", payload: '"done"' }));
@@ -768,7 +768,7 @@ describe("boardStepPayloadDefect", () => {
 describe("an unreadable loop is held (T3O-14)", () => {
   it("counts as an ending that never passed", () => {
     // It always ended the loop without a pass — the executor has refused to
-    // converge on an unreadable payload since t3o-16 — but it was missing from
+    // converge on an unreadable payload — but it was missing from
     // this list, so the one ending that needs a human MOST was the only one the
     // column card never flagged.
     assert.isTrue(isBoardReviewLoopHeld("unreadable"));

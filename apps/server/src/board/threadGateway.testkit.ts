@@ -58,7 +58,7 @@ export interface FakeThreadInput {
   readonly settlementDecided?: boolean;
   readonly worktreePath?: string | null;
   readonly modelSelection?: ModelSelection | null;
-  /** The latest run failed on a provider usage limit (T3O-59). */
+  /** The latest run failed on a provider usage limit. */
   readonly usageLimit?: BoardThreadUsageLimit | null;
 }
 
@@ -118,7 +118,7 @@ export const fakeThreadState = (
 export const aliveThread = (threadId: string, input: FakeThreadInput = {}) =>
   fakeThreadState(threadId, { sessionStatus: "running", activeTurnRef: "turn-live", ...input });
 
-/** A thread as a server restart leaves it (t3o-10): the session is marked
+/** A thread as a server restart leaves it: the session is marked
     `error` while the killed turn's ref LINGERS — the stale ref is the point
     of the fixture, it is what used to read as alive. */
 export const failedThread = (
@@ -161,7 +161,7 @@ interface FakeRecord extends BoardThreadRecord {
 export interface FakeThreadGateway {
   readonly gateway: LocalThreadGatewayShape;
   readonly layer: Layer.Layer<ThreadGateway>;
-  /** The same gateway as a server's own threads (T3O-63). */
+  /** The same gateway as a server's own threads. */
   readonly localLayer: Layer.Layer<LocalThreadGateway>;
   /** Every call, in order, refused ones included. */
   readonly calls: Effect.Effect<ReadonlyArray<ThreadGatewayCall>>;

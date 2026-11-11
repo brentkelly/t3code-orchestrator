@@ -132,12 +132,12 @@ it.effect("D1: submitting a held build card selects one unattended submit step",
         assert.strictEqual(state?.stepId, BOARD_SUBMIT_STEP_ID);
         assert.strictEqual(state?.stepLabel, "Submit for merge");
         assert.strictEqual(state?.prompt, "Push and open the PR.");
-        // The submit step's OWN model and limits, not the build's (D1/D3).
+        // The submit step's OWN model and limits, not the build's.
         assert.strictEqual(state?.providerInstanceId, "claude");
         assert.strictEqual(state?.model, "opus");
         assert.strictEqual(state?.maxAttempts, 2);
         assert.strictEqual(state?.timeoutMs, 60_000);
-        // Unattended machinery (D10): there is no conversation to have about
+        // Unattended machinery: there is no conversation to have about
         // pushing a branch.
         assert.strictEqual(state?.humanInLoop, false);
         // It needs the worktree it is pushing from.
@@ -451,7 +451,7 @@ it.effect("says why the card stayed when a gate closes while the submit step is 
 
         // The move is refused, so the card stays put — and it SAYS so, with the
         // decider's own sentence, rather than leaving a fresh pull request and
-        // a card that quietly did not move (D6).
+        // a card that quietly did not move.
         assert.strictEqual(cardStage(yield* board, cardId), "building");
         const notes = (yield* decided).filter((event) => event.type === "board.card-note-recorded");
         assert.strictEqual(notes.length, 1);

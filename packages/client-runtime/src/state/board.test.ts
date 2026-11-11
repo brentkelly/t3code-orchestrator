@@ -1,5 +1,5 @@
 /**
- * T3o board client state (t3o-04): shell-delta reduction over the bounded
+ * T3o board client state: shell-delta reduction over the bounded
  * `BoardCardShell`, client-side re-derivation of the thread-derived fields,
  * and the fractional-order planning veneer.
  */
@@ -40,7 +40,7 @@ import {
 import { v2Now, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
-/** A fixed clock for the queue derivation (T3O-19): the schedule filter needs
+/** A fixed clock for the queue derivation: the schedule filter needs
     a "now", and a test that read the wall clock would be a test that drifts. */
 const NOW_MS = Date.parse(NOW);
 const projectId = ProjectId.make("project-1");
@@ -1034,7 +1034,7 @@ describe("board column ordering", () => {
   });
 });
 
-// Columns are now keyed dynamically by stage id (t3o-15): only stages that
+// Columns are now keyed dynamically by stage id: only stages that
 // hold cards get a key, and callers read `columns[id] ?? []` for the rest.
 const columnsOf = (cards: ReadonlyArray<BoardCardShell>): BoardStageColumns => {
   const columns: Record<string, BoardCardShell[]> = {};

@@ -73,7 +73,7 @@ export const BoardPlacementLive = Layer.effect(
 );
 
 /**
- * Whether a step can start on a worker now (D20). `offline` holds silently (the
+ * Whether a step can start on a worker now. `offline` holds silently (the
  * worker's own notice says why), `no-checkout` holds as queued, and
  * `provider-missing` stalls amber for a human. This server always qualifies.
  */

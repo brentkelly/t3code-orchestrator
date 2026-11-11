@@ -24,9 +24,9 @@ export type BoardCardSummaryItem =
   | {
       readonly kind: "round";
       readonly current: number;
-      /** Absent when the producer could not see the budget (t3o-22, D7). */
+      /** Absent when the producer could not see the budget. */
       readonly max: number | undefined;
-      /** How the loop stands (t3o-22, D7). `round-cap`/`stopped` are the two
+      /** How the loop stands. `round-cap`/`stopped` are the two
           that must not read as a pass — the row tints every pip and flags the
           card, because the counts alone are identical to a converged loop's. */
       readonly outcome: BoardReviewLoopOutcome | undefined;
@@ -46,7 +46,7 @@ export type BoardCardSummaryItem =
       readonly disputed: number;
       readonly escalated: number;
     }
-  /** A human advanced the card past a stuck review round (T3O-51): not a
+  /** A human advanced the card past a stuck review round: not a
       pass, and not a call for a human either — just the record. */
   | {
       readonly kind: "review-advanced";
@@ -99,7 +99,7 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
           kind: "round",
           current: card.roundCurrent ?? 0,
           max: card.roundMax,
-          // The shell carries the outcome UNRESOLVED (t3o-22, D7): `running`
+          // The shell carries the outcome UNRESOLVED: `running`
           // there means the ledger's rounds are accounted for, not that the
           // loop is still going. Settling it here — the one place — is what
           // keeps a snapshot and a `card-review` delta from disagreeing.
@@ -150,7 +150,7 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
 
     case "merge":
       // PR state and check summary. The PR number itself rides the meta row
-      // (`boardCardMeta`); a check summary has no data source until t3o-11.
+      // (`boardCardMeta`); a check summary has no data source yet.
       if (card.reviewOutcome === "advanced" && card.reviewAdvancedRound !== undefined) {
         items.push({
           kind: "review-advanced",
@@ -185,13 +185,13 @@ export interface BoardCardMeta {
   /** How many other cards this one waits on. */
   readonly dependencyCount: number;
   /** Agent threads attached to the card — its own, plus any running on the
-      plans stacked under it once sub-boards materialise (D12). */
+      plans stacked under it once sub-boards materialise. */
   readonly threadCount: number;
   /** Stacked plan cards, else the count of attached plan documents. */
   readonly planCount: number;
-  /** The linked pull request, absent until PR detection lands (t3o-11). */
+  /** The linked pull request, absent until PR detection lands. */
   readonly prNumber: number | undefined;
-  /** Whether that pull request is an open draft (T3O-12) — the Draft tag. */
+  /** Whether that pull request is an open draft — the Draft tag. */
   readonly prDraft: boolean;
   /** Whether the brief carries a picture — the one right-aligned indicator. */
   readonly briefHasImage: boolean;
@@ -200,8 +200,8 @@ export interface BoardCardMeta {
 }
 
 export function boardCardMeta(card: BoardCardShell, threadCount: number): BoardCardMeta {
-  // `planTotal` is the sub-board's count of stacked plan cards (D12) and
-  // outranks `planCount`, the card's own attached plan documents (t3o-08) —
+  // `planTotal` is the sub-board's count of stacked plan cards and
+  // outranks `planCount`, the card's own attached plan documents —
   // a parent card counts its children, not the plan it was built from.
   const planCount = card.planTotal ?? card.planCount ?? 0;
   const prNumber = positive(card.prNumber) ? card.prNumber : undefined;

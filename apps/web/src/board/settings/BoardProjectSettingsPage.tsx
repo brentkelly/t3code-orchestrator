@@ -1,5 +1,5 @@
 /**
- * T3o: Settings → Board → Projects → <project> (T3O-49): the project's
+ * T3o: Settings → Board → Projects → <project>: the project's
  * differences from the global pipeline, in three deep-linkable tabs —
  * Pipeline (switches and overrides), CI (steps and fix agent) and Import &
  * export (`t3o.json`). Controls need the settings-write scope.

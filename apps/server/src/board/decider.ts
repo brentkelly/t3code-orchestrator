@@ -147,28 +147,28 @@ import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
 
 export type { BoardCommand };
 
-/** Label commands (t3o-06a) aggregate on the label, not the card — they carry
+/** Label commands aggregate on the label, not the card — they carry
     `labelId` instead of `cardId`. Keyed on the `board.label.` prefix. */
 type BoardLabelCommand = Extract<BoardCommand, { type: `board.label.${string}` }>;
 function isBoardLabelCommand(command: BoardCommand): command is BoardLabelCommand {
   return command.type.startsWith("board.label.");
 }
 
-/** Stage-aggregate commands (t3o-15) aggregate on the stage — they carry
+/** Stage-aggregate commands aggregate on the stage — they carry
     `stageId` instead of `cardId`. Keyed on the `board.stage.` prefix. */
 type BoardStageCommand = Extract<BoardCommand, { type: `board.stage.${string}` }>;
 function isBoardStageCommand(command: BoardCommand): command is BoardStageCommand {
   return command.type.startsWith("board.stage.");
 }
 
-/** Worker-registry commands (T3O-62) aggregate on the worker — they carry a
+/** Worker-registry commands aggregate on the worker — they carry a
     worker id and no card. Keyed on the `board.worker.` prefix. */
 type BoardWorkerCommand = Extract<BoardCommand, { type: `board.worker.${string}` }>;
 function isBoardWorkerCommand(command: BoardCommand): command is BoardWorkerCommand {
   return command.type.startsWith("board.worker.");
 }
 
-/** Project commands (T3O-43) aggregate on the project: a project's
+/** Project commands aggregate on the project: a project's
     `t3o.json` stage config. Keyed on the `board.project.` prefix. */
 type BoardProjectCommand = Extract<BoardCommand, { type: `board.project.${string}` }>;
 function isBoardProjectCommand(command: BoardCommand): command is BoardProjectCommand {
@@ -203,7 +203,7 @@ export function boardDecidedEvents(decided: BoardDecision): ReadonlyArray<Planne
 
 /**
  * Aggregate ref for a board command — every board command aggregates on its
- * card (D9). Called from `commandToAggregateRef` in the upstream engine
+ * card. Called from `commandToAggregateRef` in the upstream engine
  * behind the `isBoardCommand` predicate.
  */
 export function boardCommandAggregateRef(command: BoardCommand): {
@@ -237,7 +237,7 @@ function withoutPendingDiscard(worktree: BoardCard["worktree"]): BoardCard["work
   return rest;
 }
 
-/** A pending auto-plan request marked spent (T3O-32): the plan was approved,
+/** A pending auto-plan request marked spent: the plan was approved,
     the card left planning before it arrived, or the run stopped being driven
     by the board. Anything else is untouched. */
 
@@ -271,7 +271,7 @@ function requireActiveBoardCard(input: {
 
 /**
  * The card's live step state, required to exist and match the command's
- * `stepId` (t3o-10). The reactor is the only dispatcher of the step-lifecycle
+ * `stepId`. The reactor is the only dispatcher of the step-lifecycle
  * commands and always acts on the card's one current step, so a mismatch is a
  * bug (a stale command for a superseded step), rejected rather than applied.
  */
@@ -319,7 +319,7 @@ function findDependencyCycle(input: {
   readonly edgeTo: BoardCardId;
   readonly path: ReadonlyArray<BoardCardId>;
 } | null {
-  // Tree-wide (T3O-27): a group waits for its children and they wait on its
+  // Tree-wide: a group waits for its children and they wait on its
   // dependencies, so a new edge can close a cycle that skips `cardId` itself.
   const before = boardTreeDependencyGraph(input.board.cards);
   const after = boardTreeDependencyGraph(
@@ -355,7 +355,7 @@ function dependencyTreeRefusal(input: {
 }
 
 /**
- * The dependency graph across the whole tree (T3O-27): every live card's
+ * The dependency graph across the whole tree: every live card's
  * inherited `dependsOn` (its own plus every ancestor group's, which hold it
  * back), plus an edge from each group to its live children, because a group
  * is done only once they are. Cycle checks run over this.
@@ -630,7 +630,7 @@ const validateBaseBranch = Effect.fn("validateBaseBranch")(function* (input: {
 });
 
 /**
- * The card's live plan-role step, or null (plan review, T3O-39). Plan review
+ * The card's live plan-role step, or null (plan review). Plan review
  * only ever acts on this: a running step of the stage with the plan role.
  */
 function livePlanReviewStep(board: BoardState, cardId: BoardCardId): BoardCardStepState | null {
@@ -642,7 +642,7 @@ function livePlanReviewStep(board: BoardState, cardId: BoardCardId): BoardCardSt
 }
 
 /**
- * The plan step a card's own toggle may start a late review on (T3O-50), with
+ * The plan step a card's own toggle may start a late review on, with
  * the state it starts from. A live step starts as it is; a paused one resumes,
  * as `resume-step` would; a step that settled `succeeded` with no review is
  * reopened on its thread. Failed or blocked steps belong to the recovery ladder.
@@ -676,7 +676,7 @@ function latePlanReviewStep(
   };
 }
 
-/** Start the plan review on the live plan step (plan review, T3O-39). */
+/** Start the plan review on the live plan step (plan review). */
 const planReviewStartedEvent = Effect.fn("planReviewStartedEvent")(function* (input: {
   readonly command: BoardCardCommand;
   readonly state: BoardCardStepState;
@@ -706,7 +706,7 @@ const planReviewStartedEvent = Effect.fn("planReviewStartedEvent")(function* (in
   return event;
 });
 
-/** The step with its plan review cleared (plan review, T3O-39). */
+/** The step with its plan review cleared (plan review). */
 function clearedPlanReviewState(state: BoardCardStepState, at: string): BoardCardStepState {
   const { planReviewStartedAt: _startedAt, planReviewRounds: _rounds, ...rest } = state;
   return { ...rest, updatedAt: at };
@@ -783,7 +783,7 @@ const validateReviewOverrides = Effect.fn("validateReviewOverrides")(function* (
   return isEmptyBoardCardReviewOverrides(normalised) ? null : normalised;
 });
 
-/** Event base for label events (t3o-06a): aggregates on the label. Separate
+/** Event base for label events: aggregates on the label. Separate
     from `makeBoardEventBase` rather than parametrised so the card call sites
     stay untouched. */
 const makeBoardLabelEventBase = Effect.fn("makeBoardLabelEventBase")(function* (input: {
@@ -823,7 +823,7 @@ function inheritedBoardWorkerPin(
   return workerId !== null && isKnownBoardWorker(board, workerId) ? workerId : null;
 }
 
-/** Event base for worker-registry events (T3O-62): aggregates on the worker. */
+/** Event base for worker-registry events: aggregates on the worker. */
 const makeBoardWorkerEventBase = Effect.fn("makeBoardWorkerEventBase")(function* (input: {
   readonly workerId: BoardWorkerId;
   readonly occurredAt: string;
@@ -843,7 +843,7 @@ const makeBoardWorkerEventBase = Effect.fn("makeBoardWorkerEventBase")(function*
   };
 });
 
-/** Event base for stage events (t3o-15): aggregates on the stage. */
+/** Event base for stage events: aggregates on the stage. */
 const makeBoardStageEventBase = Effect.fn("makeBoardStageEventBase")(function* (input: {
   readonly stageId: BoardStageId;
   readonly occurredAt: string;
@@ -995,14 +995,14 @@ function boardCardReviewSummary(
   });
 }
 
-/** The round a card's review loop is stuck on (T3O-51), or null. */
+/** The round a card's review loop is stuck on, or null. */
 function boardCardStuckReviewRound(board: BoardState, card: BoardCard): number | null {
   const summary = boardCardReviewSummary(board, card.id, card.reviewOverrides);
   return summary?.outcome === "stuck" ? summary.roundCurrent : null;
 }
 
 /**
- * Keep the server-only carry fields (T3O-51) through a client's override
+ * Keep the server-only carry fields through a client's override
  * write, whatever the client sent — including `reviewOverrides: null`. Only
  * `board.card.set-review-carry` writes them.
  */
@@ -1028,7 +1028,7 @@ export interface BoardDecisionContext {
       `boardCommandNeedsBrief` holds. */
   readonly brief?: string | null;
   /** Every project the environment knows, for the existence check a command
-      naming a project makes (T3O-56). Loaded only when
+      naming a project makes. Loaded only when
       `boardCommandNeedsProjects` holds. */
   readonly projects?: ReadonlyArray<BoardProjectRef>;
   /** The thread a link or unlink names, or null when it does not exist.
@@ -1113,8 +1113,8 @@ function requireBoardStage(
     : Effect.succeed(stage);
 }
 
-/** Whether a command needs `BoardDecisionContext` loaded before it is decided
-    (T3O-53): an update that edits the brief incrementally or guards it with a
+/** Whether a command needs `BoardDecisionContext` loaded before it is decided:
+    an update that edits the brief incrementally or guards it with a
     version. */
 export function boardCommandNeedsBrief(command: BoardCommand): command is BoardCardUpdateCommand {
   return (
@@ -1296,7 +1296,7 @@ const resolveCardUpdateEdits = Effect.fn("resolveCardUpdateEdits")(function* (in
   };
 });
 
-// ── Groups (T3O-27, D12) ───────────────────────────────────────────────
+// ── Groups ───────────────────────────────────────────────
 
 /** Ends a card's round of work: its pull request retires into the history
     and the floor rises over everything it has seen, so a merged link from a
@@ -1337,10 +1337,9 @@ function holdsOnlyIntegrationSlice(board: BoardState, card: BoardCard): boolean 
 }
 
 /**
- * The own Automation toggles a backward move turns off (T3O-38, T3O-24 D4,
- * D7): from Building or later back to before it disarms Auto-build; back into
- * Planning or earlier disarms Auto-plan. Only a toggle that is effectively on
- * is written off, so an inheriting card that was off stays inheriting.
+ * The own Automation toggles a backward move turns off: from Building or later back to before
+ * it disarms Auto-build; back into Planning or earlier disarms Auto-plan. Only a toggle that is
+ * effectively on is written off, so an inheriting card that was off stays inheriting.
  */
 function backwardMoveDisarms(
   board: BoardState,
@@ -1396,7 +1395,7 @@ function movedGroupSettings(input: {
   if (build !== null && toStage === build.stageId) return { ...group, started: true };
   if (done !== null && toStage === done.stageId) return { ...group, integrated: true };
   if (!isBoardStageAtOrAfterBuild(board, toStage)) {
-    // Placing the heading. Begun stays begun (T3O-38): only the group's
+    // Placing the heading. Begun stays begun: only the group's
     // Auto-build switch stops its children starting.
     return { ...group, placed: toStage };
   }
@@ -1418,7 +1417,7 @@ const groupConversionEvents = Effect.fn("groupConversionEvents")(function* (inpu
   const { board, command, card } = input;
   // The leaf's resolved Auto-plan / Auto-build seed the group its children
   // inherit, and leave the card; its own Auto-merge stays, as the group's own
-  // merge (T3O-38). Children landing on an ancestor's integration branch
+  // merge. Children landing on an ancestor's integration branch
   // merge with their auto-build, as migration 055 backfilled.
   const resolved = resolveBoardCardAutomationIn({ board, card, boardWideAutoMerge: false });
   const nextCard: BoardCard = {
@@ -1562,7 +1561,7 @@ const deriveGroupEvents = Effect.fn("deriveGroupEvents")(function* (input: {
   const laneFor = (card: BoardCard) =>
     build === null ? null : boardNextStageId(board, build.stageId, card.projectId);
   // A child moved into build by a human or the group cascade begins its parent
-  // group (T3O-38); a child's own Auto-build start does not, so it never
+  // group; a child's own Auto-build start does not, so it never
   // starts its siblings.
   const begins =
     command.type === "board.card.move" &&
@@ -1656,12 +1655,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 }: {
   readonly command: BoardCommand;
   readonly readModel: BoardReadModel;
-  /** Loaded by the engine before deciding: the brief (T3O-53), and the
-      project and thread lookups that used to ride the v1 read model (T3O-56). */
+  /** Loaded by the engine before deciding: the brief, and the
+      project and thread lookups that used to ride the v1 read model. */
   readonly context?: BoardDecisionContext;
 }): Effect.fn.Return<
   // Archive and unarchive decide several events at once — the card's own,
-  // plus a `blocked` re-flag per affected dependent (t3o-13, D5). The engine
+  // plus a `blocked` re-flag per affected dependent. The engine
   // already appends an array inside one transaction, and each event carries
   // its own `aggregateId`, so a command may touch more than one card.
   BoardDecision,
@@ -1693,7 +1692,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               createParent !== undefined && boardCardGroupOf(board, createParent)?.started === true,
               command.projectId,
             ));
-      // Deferred (T3O-27) is a system stage outside the stage list, open only
+      // Deferred is a system stage outside the stage list, open only
       // inside a group.
       if (isBoardDeferredStage(stage)) {
         if (command.parentCardId === undefined) {
@@ -1705,7 +1704,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       } else if (boardStageById(board, stage) === null) {
         return yield* invariant(command, `Stage '${stage}' does not exist.`);
       } else {
-        // T3O-43: only into a stage the card's project uses.
+        // Only into a stage the card's project uses.
         const refusal = boardCardMoveRefusal(
           board,
           { stage, projectId: command.projectId },
@@ -1722,7 +1721,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         existing: [],
       });
 
-      // Child create (t3o-25, T3O-27): any live card may take a child, at any
+      // Child create: any live card may take a child, at any
       // depth and across projects, unless it is a leaf already being built.
       // A leaf taking its first child becomes a group in the same decision.
       const parent = createParent;
@@ -1737,7 +1736,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         if (refusal !== null) return yield* invariant(command, refusal);
       }
 
-      // Initial dependencies (t3o-06): dedupe and require each to exist. A
+      // Initial dependencies: dedupe and require each to exist. A
       // cycle is impossible at create — a brand-new card has no dependents, so
       // no existing edge can reach it — which is why create needs only the
       // existence check while `board.card.update` also gates cycles.
@@ -1748,7 +1747,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           return yield* invariant(command, `Dependency '${dependencyId}' does not exist.`);
         }
         // Dependencies may cross groups, but never run along the card's own
-        // ancestry (T3O-27).
+        // ancestry.
         const treeRefusal = dependencyTreeRefusal({
           board,
           dependent: {
@@ -1761,7 +1760,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         if (treeRefusal !== null) return yield* invariant(command, treeRefusal);
       }
 
-      // Dependency blocking is unconditional from the `build` role onward (D11):
+      // Dependency blocking is unconditional from the `build` role onward:
       // a card cannot be created directly into a build-or-later stage while it
       // has unmet dependencies, exactly as it cannot be moved there.
       if (isBoardStageAtOrAfterBuild(board, stage)) {
@@ -1782,7 +1781,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         }
       }
 
-      // The per-card base branch (T3O-5, D1/D4). A sub-board child inherits its
+      // The per-card base branch. A sub-board child inherits its
       // parent's integration branch and never consults its own field, so a base
       // stored on one would be dead data no resolver reads — reject rather than
       // keep a read model that lies about what the card will branch from.
@@ -1796,7 +1795,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               )
             : yield* validateBaseBranch({ command, proposed: command.baseBranch });
 
-      // The worker pin (T3O-65, D20): a registered worker, or absent to follow
+      // The worker pin: a registered worker, or absent to follow
       // the default. A hand-created child copies its parent's pin unless the
       // dialog picked one, exactly as a materialised child does.
       if (
@@ -1827,7 +1826,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           parentCardId: command.parentCardId ?? null,
           doneStageId: boardStageWithRole(board, "done")?.stageId ?? null,
         });
-      // A heading (T3O-27) is born a group and stays one while empty.
+      // A heading is born a group and stays one while empty.
       const heading =
         command.heading === true
           ? defaultBoardCardGroup(board, { stage }, { heading: true })
@@ -1839,7 +1838,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         if (refusal !== null) return yield* invariant(command, refusal);
       }
       // The parent becoming a group is part of this decision: its first child
-      // turns it from a leaf into a group (T3O-27).
+      // turns it from a leaf into a group.
       const becomesGroup =
         parent !== undefined && boardCardGroupOf(board, parent) === null
           ? yield* groupConversionEvents({ board, command, card: parent })
@@ -1858,19 +1857,19 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           key: `${keyPrefix}-${cardNumber}`,
           cardNumber,
           labels,
-          // Body lives in `board_card_bodies` (D8); omit the key when no brief
+          // Body lives in `board_card_bodies`; omit the key when no brief
           // was given, matching the payload's key-optional shape.
           ...(command.brief === undefined ? {} : { brief: command.brief }),
-          // A hand-created child (t3o-25) carries its parent exactly as a
+          // A hand-created child carries its parent exactly as a
           // materialised one does; it just has no source plan.
           ...(command.parentCardId === undefined ? {} : { parentCardId: command.parentCardId }),
           // Key-optional like `brief`: absent IS "follow the project default",
-          // which is what every pre-spec event decodes to (T3O-5, D1).
+          // which is what every pre-spec event decodes to.
           ...(baseBranch === null ? {} : { baseBranch }),
-          // The scheduled start (T3O-19, D1), key-optional for the same reason:
+          // The scheduled start, key-optional for the same reason:
           // absent IS "start as soon as the pipeline reaches it". No validation
-          // beyond the schema's instant — a PAST time is legal and means "now"
-          // (D6), so there is nothing here to reject.
+          // beyond the schema's instant — a PAST time is legal and means "now",
+          // so there is nothing here to reject.
           ...(command.scheduledStartAt === undefined
             ? {}
             : { scheduledStartAt: command.scheduledStartAt }),
@@ -1888,7 +1887,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       return becomesGroup.length === 0 ? created : [created, ...becomesGroup];
     }
 
-    // T3O-33: move a card to another project before it has ever been built.
+    // Move a card to another project before it has ever been built.
     // The key is REISSUED against the target project's prefix and counter —
     // the card id never changes, so the open modal, its attachments (keyed by
     // card id), its labels, its brief and its dependencies all survive.
@@ -1930,7 +1929,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         case undefined:
           break;
       }
-      // T3O-43: the target project must use the stage the card sits in, or the
+      // The target project must use the stage the card sits in, or the
       // card would land in a column that project's pipeline does not have.
       if (
         !isBoardDeferredStage(card.stage) &&
@@ -1954,7 +1953,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         projectId: command.projectId,
         key: `${keyPrefix}-${cardNumber}`,
         cardNumber,
-        // The pin does NOT survive (D5). `release/2.0` almost certainly does
+        // The pin does NOT survive. `release/2.0` almost certainly does
         // not exist in the new repository and would fail at
         // `ensureLocalBaseBranch` hours later at provisioning; `null` means
         // "follow this project's default", resolved live.
@@ -1980,7 +1979,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       };
     }
 
-    // T3O-44: the board's own move is decided exactly like a human's, less
+    // The board's own move is decided exactly like a human's, less
     // CI's human move rules.
     case "board.card.pipeline-move":
     case "board.card.move": {
@@ -1997,14 +1996,14 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (!toDeferred && boardStageById(board, command.toStage) === null) {
         return yield* invariant(command, `Stage '${command.toStage}' does not exist.`);
       }
-      // A stage this card's project does not use (T3O-43) is refused even with
+      // A stage this card's project does not use is refused even with
       // override; the shared predicate is the drag layer's tooltip too.
       const projectRefusal = boardCardMoveRefusal(board, card, command.toStage, {
         override: true,
         pipeline: pipelineMove,
       });
       if (projectRefusal !== null) return yield* invariant(command, projectRefusal);
-      // Deferred (T3O-27): a parking lot inside a group, just before the
+      // Deferred: a parking lot inside a group, just before the
       // first stage. Cards enter it from anywhere unstarted, and leave it for
       // any stage before build; further needs override, like any other skip.
       if (toDeferred) {
@@ -2030,7 +2029,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           );
         }
       }
-      // A group's own moves (T3O-27): its stage is derived from its children,
+      // A group's own moves: its stage is derived from its children,
       // so a human move only places it before build, or starts it.
       const group = boardCardGroupOf(board, card);
       const buildStageForDeferred = boardStageWithRole(board, "build");
@@ -2096,7 +2095,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         !isBoardStageAtOrAfterBuild(board, card.stage) &&
         isBoardStageAtOrAfterBuild(board, command.toStage)
       ) {
-        // A group's dependencies hold back every card inside it (T3O-27).
+        // A group's dependencies hold back every card inside it.
         const unmet = unmetBoardCardDependencies({
           board,
           dependsOn: boardCardInheritedDependsOn(board, card),
@@ -2113,7 +2112,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         }
       }
 
-      // A stuck review loop (T3O-51) leaves the review stage forward only by a
+      // A stuck review loop leaves the review stage forward only by a
       // human's Advance, which takes responsibility for the code as it stands:
       // the waiver lands in this same event, so nothing re-plans in between.
       // Any other mover — an agent, automation, a worker — is refused.
@@ -2172,7 +2171,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         ...card,
         stage: command.toStage,
         orderKey: nextOrderKey,
-        // Leaving planning spends an auto-plan request (T3O-32): the card can
+        // Leaving planning spends an auto-plan request: the card can
         // be in planning only once per request, so any move ends it.
         ...endBoardCardAutoPlan(card, command.createdAt),
         ...disarmed.settings,
@@ -2187,13 +2186,13 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           cards: board.cards,
         }),
         ...(startsNewRound ? retireBoardCardPullRequest(card) : {}),
-        // CI state (T3O-44) belongs to the CI stage: a card leaving it carries
+        // CI state belongs to the CI stage: a card leaving it carries
         // none, and one entering it starts clean.
         ...(card.stage === BOARD_SEED_STAGE_IDS.ci || command.toStage === BOARD_SEED_STAGE_IDS.ci
           ? { ci: null }
           : {}),
         ...(command.toStage === BOARD_SEED_STAGE_IDS.ci ? { ciLastOutcome: null } : {}),
-        // T3O-49: a person moving the card starts its CI round trips again.
+        // A person moving the card starts its CI round trips again.
         ...(command.type === "board.card.move" && command.cause === "human"
           ? { ciRoundTrips: 0 }
           : {}),
@@ -2221,7 +2220,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         },
       };
       // A move across the done-role boundary changes what this card means as a
-      // DEPENDENCY (t3o-13, D5): dependents' stored `blocked` would otherwise
+      // DEPENDENCY: dependents' stored `blocked` would otherwise
       // go stale — met on entering Done, unmet again on being dragged back out
       // — exactly the staleness the archive/unarchive paths already re-flag.
       const crossesDone =
@@ -2263,7 +2262,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       ];
     }
 
-    // T3O-27: the one regrouping primitive. Grouping alone never touches git;
+    // The one regrouping primitive. Grouping alone never touches git;
     // the reactor sees ordinary card updates.
     case "board.card.move-cards": {
       if (command.cardIds.length === 0 || command.cardIds[0] !== command.cardId) {
@@ -2412,7 +2411,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         }
       }
       // Dependencies may cross groups, but never along a card's own ancestry,
-      // and never into a cycle through a group (T3O-27).
+      // and never into a cycle through a group.
       const affectedIds = new Set<BoardCardId>(
         roots.flatMap((root) => [
           root.id,
@@ -2514,7 +2513,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             `Every card under '${card.key}' has already merged, so its own branch would have nothing to integrate.`,
           );
         }
-        // A leaf whose work was cancelled to make it a parent (T3O-28) still
+        // A leaf whose work was cancelled to make it a parent still
         // holds that work's checkout until it is reclaimed; its branch must not
         // be mistaken for an integration branch.
         if (card.worktree?.status === "ready" || card.worktree?.status === "provisioning") {
@@ -2524,8 +2523,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           );
         }
       }
-      // Own branch turns children's auto-merge on and Inherit turns it off
-      // (T3O-38) — only on a real target change, and only when this command
+      // Own branch turns children's auto-merge on and Inherit turns it off —
+      // only on a real target change, and only when this command
       // does not set auto-merge itself, so a full-settings save keeps a choice.
       const transitionMerge =
         command.autoMerge === undefined &&
@@ -2596,8 +2595,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const nextCard: BoardCard = {
         ...card,
         ...nextSettings,
-        // A hold about a merge that is no longer going to happen is a stale
-        // label (T3O-38 auto-merge, D10).
+        // A hold about a merge that is no longer going to happen is a stale label.
         autoMergeHold: mergeTurnedOff ? null : card.autoMergeHold,
         updatedAt: command.createdAt,
       };
@@ -2671,12 +2669,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 
       const nextLabels = yield* resolveCardUpdateLabels({ board, card, command });
 
-      // Brief and dependency edits, whole-value or incremental (T3O-53).
+      // Brief and dependency edits, whole-value or incremental.
       const edits = yield* resolveCardUpdateEdits({ board, card, command, context });
       const proposedDependsOn = edits.dependsOn;
 
       // The review-loop overrides are validated and normalised before the card
-      // is built (t3o-22, D3/D5), so an invalid budget rejects the whole
+      // is built, so an invalid budget rejects the whole
       // command rather than landing a half-applied edit.
       const reviewOverrides =
         command.reviewOverrides === undefined
@@ -2702,7 +2700,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             ? null
             : yield* validateModelOverrides({ board, command, proposed: command.modelOverrides });
 
-      // The base branch (T3O-5, D1/D4). Rejected outright on a sub-board child,
+      // The base branch. Rejected outright on a sub-board child,
       // which resolves its parent's integration branch whatever its own field
       // says — storing one would be a read model that lies about what the card
       // branches from. `null` clears the pin back to the project default.
@@ -2720,8 +2718,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 
       const dependsOn = proposedDependsOn ?? card.dependsOn;
 
-      // Plan review (T3O-39). Turning it off is always accepted and stops a
-      // running review; changing its rounds mid-review tells the agent (T3O-50).
+      // Plan review. Turning it off is always accepted and stops a
+      // running review; changing its rounds mid-review tells the agent.
       const planReviewStep = livePlanReviewStep(board, card.id);
       const planReviewRunning =
         planReviewStep !== null && planReviewStep.planReviewStartedAt !== undefined;
@@ -2748,7 +2746,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         card.planReview?.enabled !== false;
       // Turned on after the plan was posted: nothing will propose again to
       // start it, so the update does, and the reactor sends the instructions.
-      // Even after the step finished or was paused (T3O-50): the toggle is a
+      // Even after the step finished or was paused: the toggle is a
       // request for the review, so it reopens or resumes the step.
       const lateReviewStep =
         !planReviewRunning &&
@@ -2762,7 +2760,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 
       const mergeStrategy =
         command.mergeStrategy === undefined ? card.mergeStrategy : command.mergeStrategy;
-      // A forge refusal of the old strategy is a permanent hold (T3O-80), so
+      // A forge refusal of the old strategy is a permanent hold, so
       // picking another one must release it or an armed card stays parked.
       const mergeStrategyChanged = mergeStrategy !== card.mergeStrategy;
 
@@ -2792,7 +2790,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         reviewOverrides,
         modelOverrides,
         baseBranch,
-        // The scheduled start (T3O-19, D1). Absent leaves it, `null` clears the
+        // The scheduled start. Absent leaves it, `null` clears the
         // hold, an instant sets it. Nothing to validate: a past time is legal
         // and means "now", and the supervisor owns what setting one DOES to a
         // running step — the decider only records the intent.
@@ -2814,16 +2812,16 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ...(edits.brief === undefined ? {} : { brief: edits.brief }),
           card: nextCard,
           // Says the edit TOUCHED the schedule, not what it is — the card
-          // already carries the value (T3O-19, D3). The supervisor acts only on
+          // already carries the value. The supervisor acts only on
           // an edit that named the field, so an unrelated edit to a parked card
           // never resumes it.
           ...(command.scheduledStartAt === undefined
             ? {}
             : { scheduledStartAt: command.scheduledStartAt }),
-          // Says the edit TOUCHED the model overrides (T3O-65): the supervisor
+          // Says the edit TOUCHED the model overrides: the supervisor
           // restarts a provider-stalled step on Change model, and only then.
           ...(command.modelOverrides === undefined ? {} : { modelOverridesEdited: true as const }),
-          // Says a strategy change RELEASED an auto-merge hold (T3O-80). That
+          // Says a strategy change RELEASED an auto-merge hold. That
           // hold was the retry, so the supervisor re-attempts the merge now;
           // a card that never held stays under the arrival rules.
           ...(mergeStrategyChanged && card.autoMergeHold !== null
@@ -2894,7 +2892,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               : [];
       if (proposedDependsOn === undefined)
         return stopped.length === 0 ? updated : [updated, ...stopped];
-      // A group's dependencies hold back every card inside it (T3O-27).
+      // A group's dependencies hold back every card inside it.
       const cards = board.cards.map((candidate) =>
         candidate.id === card.id ? nextCard : candidate,
       );
@@ -2919,7 +2917,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Thread '${command.threadId}' does not exist or is deleted and cannot be linked.`,
         );
       }
-      // One thread, one card (D9): a live or retired link anywhere — archived
+      // One thread, one card: a live or retired link anywhere — archived
       // cards included — owns the thread. Tombstoned links don't own anything
       // (their thread is deleted, which the existence check above rejects).
       const owner = board.cards.find((candidate) =>
@@ -2927,7 +2925,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           (link) => link.threadId === command.threadId && link.tombstonedAt === null,
         ),
       );
-      // Relinking a thread this card retired brings it back in place (T3O-41).
+      // Relinking a thread this card retired brings it back in place.
       const retired =
         owner?.id === card.id
           ? card.threadLinks.find(
@@ -2989,8 +2987,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         );
       }
 
-      // A deleted thread's link becomes a tombstone rather than vanishing
-      // (D9): a card whose triage thread was deleted must say so. Absent
+      // A deleted thread's link becomes a tombstone rather than vanishing:
+      // a card whose triage thread was deleted must say so. Absent
       // counts as deleted — link-thread requires existence, so a linked
       // thread missing from the read model can only have been deleted.
       const thread = context?.thread;
@@ -3036,7 +3034,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Thread link '${command.threadId}' on card '${command.cardId}' is no longer live.`,
         );
       }
-      // A deleted thread tombstones exactly as an unlink would (D9).
+      // A deleted thread tombstones exactly as an unlink would.
       const thread = context?.thread;
       const threadDeleted = thread === undefined || thread === null || thread.deleted;
       const tombstonedAt = threadDeleted ? command.createdAt : null;
@@ -3149,7 +3147,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (card.archivedAt !== null) {
         return yield* invariant(command, `Card '${command.cardId}' is already archived.`);
       }
-      // A confirmed group archive (T3O-28, decision 14): the whole subtree,
+      // A confirmed group archive (decision 14): the whole subtree,
       // for good.
       if (command.confirmCardKey !== undefined) {
         if (boardCardGroupOf(board, card) === null) {
@@ -3213,7 +3211,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         }
         return events;
       }
-      // Archiving the supervisor of running work strands it (t3o-23, D7). A
+      // Archiving the supervisor of running work strands it. A
       // parent whose children are all done/archived archives normally.
       {
         const unfinished = boardCardUnfinishedChildren(board, card.id);
@@ -3231,7 +3229,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         archivedAt: command.createdAt,
         updatedAt: command.createdAt,
       };
-      // Dependencies survive the archive (D1) — nothing rewrites `dependsOn`
+      // Dependencies survive the archive — nothing rewrites `dependsOn`
       // — but they stop gating, so dependents that were waiting on this card
       // unblock in the same commit.
       const archived: PlannedBoardEvent = {
@@ -3258,7 +3256,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (card.archivedAt === null) {
         return yield* invariant(command, `Card '${command.cardId}' is not archived.`);
       }
-      // A group archived with its subtree (T3O-28) comes back with it: every
+      // A group archived with its subtree comes back with it: every
       // descendant archived in that same instant. Cards, plans and history
       // return; the discarded branch work does not.
       const restoring: Array<BoardCard> = [card];
@@ -3361,7 +3359,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           payload: { cardId: member.id, card: nextCard },
         });
       }
-      // Restoring re-arms the gate the archive released (D1/D5): dependents
+      // Restoring re-arms the gate the archive released: dependents
       // that these cards block again are re-flagged alongside them.
       for (const member of restoring) {
         const changed = cards.find((candidate) => candidate.id === member.id)!;
@@ -3445,7 +3443,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // Archived cards delete too (the archive sheet is where "never coming
       // back" gets decided), so this requires existence, not activity.
       const card = yield* requireBoardCard({ board, command });
-      // A parent deletes only after its children are gone (t3o-23, D7):
+      // A parent deletes only after its children are gone:
       // cascading N cards, branches and worktrees off one confirm is the
       // destructive surprise the dialog exists to prevent, and each child
       // delete already rewrites sibling edges and reclaims its own state.
@@ -3516,7 +3514,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           },
         });
       }
-      // Cards inside a group that held the edge lose it too (T3O-27).
+      // Cards inside a group that held the edge lose it too.
       edited.push(
         ...(yield* boardReflagBlockedEvents({
           board,
@@ -3676,7 +3674,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       };
     }
 
-    // ── Stage aggregate (t3o-15, D2/D3/D9) ───────────────────────────────
+    // ── Stage aggregate ───────────────────────────────
 
     case "board.stage.create": {
       if (boardStageById(board, command.stageId) !== null) {
@@ -3689,7 +3687,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         orderKey: command.orderKey,
         createdAt: command.createdAt,
         updatedAt: command.createdAt,
-        // T3O-49: a stage made for one project is off for every other.
+        // A stage made for one project is off for every other.
         projectId: command.forProjectId ?? null,
         defaultForProjects: command.forProjectId === undefined,
       };
@@ -3825,8 +3823,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           "Continuous integration can't be removed; switch it off per project instead.",
         );
       }
-      // Refused if the stage holds ANY card, archived included (D9). The error
-      // names the count; t3o-13's archive view is how the user clears them.
+      // Refused if the stage holds ANY card, archived included. The error
+      // names the count; the archive view is how the user clears them.
       const held = board.cards.filter((card) => card.stage === command.stageId).length;
       if (held > 0) {
         return yield* invariant(
@@ -3843,7 +3841,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         type: "board.stage-deleted" as const,
         payload: { stageId: command.stageId },
       };
-      // T3O-49: no project's delta keeps a switch or override for it.
+      // No project's delta keeps a switch or override for it.
       return [deleted, ...(yield* pruneDeletedStage(board, command, command.stageId))];
     }
 
@@ -3873,7 +3871,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         current.stepId === command.stepId &&
         !isBoardTerminalStepStatus(current.status);
       // A planning thread the card kept when it left Planning unfinished
-      // (T3O-19) may still record its own step: its interview runs on after the
+      // may still record its own step: its interview runs on after the
       // move, and a finished plan must not read as unfinished on re-entry.
       const keptMatch = isKeptStepThread(board, card, command.stepId, command.threadId);
       const recordable = liveMatch || keptMatch;
@@ -3920,7 +3918,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               threadId: command.threadId,
               completedAt: command.createdAt,
             };
-      // Plan review (T3O-39): the first succeeded completion of the live plan
+      // Plan review: the first succeeded completion of the live plan
       // step, with review on and not yet started, starts the review instead of
       // completing. The tool tells the agent to run it and call again.
       // Idempotent re-emits, kept threads and other outcomes are never gated.
@@ -3964,7 +3962,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ...(reviewSummary === undefined ? {} : { reviewSummary }),
           // The reactor ignores a completion whose step already settled — right
           // for an idempotent retry, wrong for a repair, because the record the
-          // stage executor reads just changed (T3O-14).
+          // stage executor reads just changed.
           ...(repairsDefect ? { repaired: true } : {}),
           ...(planReviewFinished === undefined ? {} : { planReviewFinished }),
         },
@@ -4047,7 +4045,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         );
       }
       // A locked plan means the card's plans are materialised to .plans/ at
-      // Building entry (t3o-12); re-proposing over them would silently drop the
+      // Building entry; re-proposing over them would silently drop the
       // handover, so it is refused as a whole (edit the files).
       if (boardCardPlans(board, command.cardId).some((plan) => plan.locked)) {
         return yield* invariant(
@@ -4130,7 +4128,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           body: plan.body,
         };
       });
-      // The agent's advice for the split gate (T3O-31), each omitted field
+      // The agent's advice for the split gate, each omitted field
       // filled from the shared fallback rules so the stored value is whole.
       const splitRecommendation =
         splitRationale === null
@@ -4159,7 +4157,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ...(splitRecommendation === undefined ? {} : { splitRecommendation }),
         },
       };
-      // Plan review (T3O-39): the first proposal on the live plan step, with
+      // Plan review: the first proposal on the live plan step, with
       // review on, starts the review in the same decision. The tool result
       // hands the agent its instructions.
       const reviewStep =
@@ -4179,7 +4177,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 
     case "board.plan.write": {
       yield* requireActiveBoardCard({ board, command });
-      // Frozen after approval, exactly as re-proposal is (t3o-23, D7) — and,
+      // Frozen after approval, exactly as re-proposal is — and,
       // like it, only by LIVE children.
       if (boardCardChildren(board, command.cardId).some((child) => child.archivedAt === null)) {
         return yield* invariant(
@@ -4237,7 +4235,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         if (state !== null && !isBoardTerminalStepStatus(state.status) && !planning) {
           return yield* invariant(
             command,
-            // `boardRunLabel` is the shared rule (t3o-19, D4): the step's own
+            // `boardRunLabel` is the shared rule: the step's own
             // label, or the stage label when the step has none — so the gate
             // names the run the same way every other reader does.
             `Card '${card.key}' has a live step ('${boardRunLabel(
@@ -4299,7 +4297,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         );
       }
       // A child whose plan is only a brief lands in the first stage to be
-      // planned on its own (T3O-31); a planned one lands on the floor.
+      // planned on its own; a planned one lands on the floor.
       const backlog = boardProjectFirstStageId(board, card.projectId);
       const recommendation = boardSplitRecommendationOf(board, card);
       const settings = {
@@ -4308,8 +4306,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         ...(command.autoPlan === undefined ? {} : { autoPlan: command.autoPlan }),
         ...(command.autoMerge === undefined ? {} : { autoMerge: command.autoMerge }),
       };
-      // The graph is agent-authored and therefore re-validated at the gate
-      // (D12) — propose checked it on ingest, but the gate is where a human
+      // The graph is agent-authored and therefore re-validated at the gate —
+      // propose checked it on ingest, but the gate is where a human
       // commits to it.
       const cycle = findProposedPlanCycle(
         plans.map((plan) => ({ key: plan.planId, dependsOn: plan.dependsOn })),
@@ -4329,7 +4327,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       let nextNumber = board.nextCardNumberByProject[card.projectId] ?? 1;
       // Appended at the bottom of the floor column in ordinal order; each key
       // feeds the next so siblings sort in plan order. The column is this
-      // parent's sub-board (T3O-27) — the only place a child renders — not
+      // parent's sub-board — the only place a child renders — not
       // the root board's floor stage, which a child never appears in.
       const orderKeysByStage = new Map<BoardStageId, Array<string>>();
       const nextOrderKey = (stage: BoardStageId) => {
@@ -4342,7 +4340,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         keys.push(orderKey);
         return orderKey;
       };
-      // A child runs where its parent is bound (T3O-65, D20) — its pin, or
+      // A child runs where its parent is bound — its pin, or
       // the worker holding its worktree — and can be re-pinned after.
       const inheritedPin = inheritedBoardWorkerPin(board, boardCardBoundWorkerId(card));
       const childIdByPlan = new Map<BoardPlanId, BoardCardId>();
@@ -4374,7 +4372,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             cardNumber,
             labels: card.labels,
             // The plan BODY becomes the child's brief — by pointer, because
-            // bodies never ride the read model (D8); the SQL projector copies
+            // bodies never ride the read model; the SQL projector copies
             // it inside the same transaction.
             briefFromPlanId: plan.planId,
             ...(planned ? {} : { briefOnly: true }),
@@ -4460,9 +4458,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           lastError: null,
           reclaimBlockedReason: null,
         },
-        // The worktree binds the card to the worker it is cut on (T3O-65,
-        // D20), so placement is recorded in the same event: the card's pin, or
-        // the default. From here only a move changes it.
+        // The worktree binds the card to the worker it is cut on, so placement is recorded in
+        // the same event: the card's pin, or the default. From here only a move changes it.
         placedWorkerId: boardCardEffectiveWorkerId(card, board.defaultWorkerId),
         updatedAt: command.createdAt,
       };
@@ -4483,13 +4480,13 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     }
 
     case "board.card.record-integration-branch": {
-      // A split parent's integration branch now exists on disk (t3o-23, D5) —
+      // A split parent's integration branch now exists on disk —
       // the reactor created it off the plans-approved event and reports back,
       // same effect-then-record discipline as record-worktree. `branch-only`:
       // real branch, no worktree until the parent's own review entry.
       const card = yield* requireActiveBoardCard({ board, command });
       // `failed` is a retry; `reclaimed` is a second-round split whose old
-      // branch was deleted at Done (t3o-23, D5). A live slice — branch-only,
+      // branch was deleted at Done. A live slice — branch-only,
       // provisioning, ready — must not be overwritten behind its own back.
       if (
         card.worktree !== null &&
@@ -4778,7 +4775,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     }
 
     case "board.card.set-review-carry": {
-      // The review loop's server-only fields (T3O-51), written together so a
+      // The review loop's server-only fields, written together so a
       // round is opened, a stuck round waived and a ruling carried in one
       // event — never a waiver that lands after the move it was for.
       const card = yield* requireActiveBoardCard({ board, command });
@@ -4799,7 +4796,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       ) {
         return yield* invariant(command, `Review carry for card '${card.id}' carries no changes.`);
       }
-      // The same clamp a client's request gets (T3O-39, D5): only the next
+      // The same clamp a client's request gets: only the next
       // round can be asked for.
       if (command.runThroughRound !== undefined && command.runThroughRound > roundsStarted + 1) {
         return yield* invariant(
@@ -4886,7 +4883,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     }
 
     case "board.card.record-decisions": {
-      // The decision log (T3O-32). Append-only: a planning session records
+      // The decision log. Append-only: a planning session records
       // what it decided, and a correction is a newer entry, not an edit.
       const card = yield* requireActiveBoardCard({ board, command });
       if (command.decisions.length === 0) {
@@ -4924,7 +4921,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 
     case "board.card.mark-auto-plan": {
       // Auto-planning applies to a leaf that is being planned and has no split
-      // waiting on a human (T3O-32, decision 7). A group plans through its
+      // waiting on a human (decision 7). A group plans through its
       // children, and a pending split already has its plans.
       const card = yield* requireActiveBoardCard({ board, command });
       const planStage = boardStageWithRole(board, "plan");
@@ -4982,7 +4979,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           card: {
             ...card,
             ...endBoardCardAutoPlan(card, command.createdAt),
-            // A human stopped the run (T3O-38): Auto-plan goes off with it, so
+            // A human stopped the run: Auto-plan goes off with it, so
             // the card is planned with them from here. No automation marker —
             // the supervisor caused this and owns its consequences.
             ...(command.turnOff === true ? { autoPlanSetting: false } : {}),
@@ -5053,7 +5050,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     }
 
     case "board.card.reclaim-worktree": {
-      // Reclaim runs at archive (D6/D15), so the card is usually archived —
+      // Reclaim runs at archive, so the card is usually archived —
       // requireBoardCard, not requireActiveBoardCard.
       const card = yield* requireBoardCard({ board, command });
       if (card.worktree === null) {
@@ -5077,7 +5074,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         return yield* invariant(command, `Card '${command.cardId}' worktree is already reclaimed.`);
       }
       // `removed`: the service deleted a clean-and-pushed tree — the worktree
-      // is gone, path returns to null (reverse state, D6). `blocked`: the
+      // is gone, path returns to null (reverse state). `blocked`: the
       // service refused because deleting would lose work; the card keeps its
       // worktree and records why, never silently discarding uncommitted work.
       const reason = command.reason ?? null;
@@ -5118,7 +5115,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ...(command.outcome === "removed" && command.hookWarning !== undefined
             ? { hookWarning: command.hookWarning }
             : {}),
-          // T3O-52 (D5): the rail gets one row per distinct refusal, not one
+          // The rail gets one row per distinct refusal, not one
           // per attempt — a kept worktree is re-checked on every card open.
           reasonChanged:
             command.outcome === "blocked" && card.worktree.reclaimBlockedReason !== blockedReason,
@@ -5132,7 +5129,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 
     case "board.card.select-step": {
       const selecting = yield* requireActiveBoardCard({ board, command });
-      // T3O-59: a Stop or hold that settles the pass between the reactor's
+      // A Stop or hold that settles the pass between the reactor's
       // begin-fix and this command must win; no agent starts on a held pass.
       if (
         selecting.stage === BOARD_SEED_STAGE_IDS.ci &&
@@ -5144,7 +5141,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${command.cardId}' has its CI pass ${selecting.ci.phase}; no step can start on it.`,
         );
       }
-      // One step at a time (D4): a new step cannot be selected while the card's
+      // One step at a time: a new step cannot be selected while the card's
       // current step is still live. A terminal step is done and may be
       // superseded — that is how a re-entry starts after the last step settled.
       const current = boardCardStepState(board, command.cardId);
@@ -5154,30 +5151,30 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${command.cardId}' already has a live step '${current.stepId}' (${current.status}); settle it before selecting another.`,
         );
       }
-      // The reactor resolved and froze the stage's execution config (D12); the
+      // The reactor resolved and froze the stage's execution config; the
       // decider stamps it onto the run row verbatim.
       const state: BoardCardStepState = {
         cardId: command.cardId,
         stepId: command.stepId,
         stepLabel: command.stepLabel,
         stageLabel: command.stageLabel,
-        // A fresh step starts its own count (T3O-12, D5). `attempt` used to
+        // A fresh step starts its own count. `attempt` used to
         // carry the stage entry's cumulative total so the ceiling could be read
         // off it; the ceiling now counts recoveries, so this is once again just
         // "invocations of THIS step" and comparable with `maxAttempts`.
         attempt: 1,
-        // A fresh step (t3o-17): no stalls yet and no nudge to measure progress
+        // A fresh step: no stalls yet and no nudge to measure progress
         // against — consecutive stalls are per-step.
         stallCount: 0,
-        // The stage entry's recovery total IS carried across step replacement
-        // (T3O-12, D4): an intra-stage continuation (t3o-16's next review
-        // phase) passes `priorRecoveries` so the runaway ceiling survives the
-        // row being replaced; a genuine stage entry omits it and resets to 0.
+        // The stage entry's recovery total IS carried across step replacement:
+        // an intra-stage continuation (the next review phase) passes `priorRecoveries` so the
+        // runaway ceiling survives the row being replaced; a genuine stage entry omits it and
+        // resets to 0.
         stageEntryRecoveries: command.priorRecoveries ?? 0,
-        // Resting value (t3o-34, D3): only read while the step is
+        // Resting value: only read while the step is
         // `awaiting-input`, and a fresh step never is.
         awaitingReason: "question",
-        // …and the same for the loud half (T3O-22, D10): a fresh step has not
+        // …and the same for the loud half: a fresh step has not
         // stalled, so it carries no reason and no retry time. Setting them here
         // rather than letting them ride is what stops a re-entered stage
         // inheriting the previous entry's "resuming 2:50am".
@@ -5185,8 +5182,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         retryAt: null,
         queuedBy: null,
         lastNudgeAt: null,
-        // No human has typed into a fresh step, so no free turn-ending is owed
-        // (T3O-17, D3).
+        // No human has typed into a fresh step, so no free turn-ending is owed.
         humanTurnAt: null,
         prompt: command.prompt,
         providerInstanceId: command.providerInstanceId,
@@ -5197,15 +5193,15 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         humanInLoop: command.humanInLoop,
         maxAttempts: command.maxAttempts,
         timeoutMs: command.timeoutMs,
-        // Measured or carried by the reactor (t3o-24, D1); stamped verbatim
+        // Measured or carried by the reactor; stamped verbatim
         // like every other frozen field.
         baseTipAtRoundStart: command.baseTipAtRoundStart,
         threadId: null,
-        // A fresh step has not stopped for any reason yet (t3o-30, D2).
+        // A fresh step has not stopped for any reason yet.
         lastError: null,
         status: "pending",
         slotHeld: false,
-        // A fresh step carries no cap override (t3o-33): forcing one step past
+        // A fresh step carries no cap override: forcing one step past
         // the ceiling never bleeds into the step after it.
         forceStart: false,
         startedAt: null,
@@ -5223,7 +5219,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     }
 
     case "board.card.start-stage-thread": {
-      // On-demand kickoff (D7): validate the card is active and emit the
+      // On-demand kickoff: validate the card is active and emit the
       // request event the supervisor reactor reacts to. The reactor decides
       // first-entry-vs-re-entry and whether the stage auto-executes.
       const card = yield* requireActiveBoardCard({ board, command });
@@ -5278,10 +5274,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             ...current,
             status: "running",
             threadId: command.threadId,
-            // Only a build-mode step holds a concurrency slot (D5); a plan-mode
+            // Only a build-mode step holds a concurrency slot; a plan-mode
             // step runs read-only with no worktree and no slot.
             slotHeld: current.mode === "build",
-            // The override is spent the moment it lands (t3o-33): it named THIS
+            // The override is spent the moment it lands: it named THIS
             // admission, and leaving it set would silently force the card's next
             // step past the cap too.
             forceStart: false,
@@ -5297,7 +5293,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             updatedAt: command.createdAt,
           }
         : current.status === "queued"
-          ? // Re-recording which limit holds an already-queued step (T3O-65)
+          ? // Re-recording which limit holds an already-queued step
             // touches only that: a resumed step waits queued on its own
             // thread, and dropping it would spawn a fresh one on admission.
             { ...current, queuedBy: command.queuedBy ?? null, updatedAt: command.createdAt }
@@ -5306,7 +5302,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               status: "queued",
               threadId: null,
               slotHeld: false,
-              // Which limit holds it (T3O-65); absent keeps plain "Queued".
+              // Which limit holds it; absent keeps plain "Queued".
               queuedBy: command.queuedBy ?? null,
               startedAt: null,
               updatedAt: command.createdAt,
@@ -5411,7 +5407,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         ...current,
         attempt: charge ? (command.progressed ? 1 : current.attempt + 1) : current.attempt,
         stallCount: charge ? (command.progressed ? 0 : current.stallCount) + 1 : current.stallCount,
-        // The runaway ceiling's counter (T3O-12, D4): a recovery — a nudge, an
+        // The runaway ceiling's counter: a recovery — a nudge, an
         // escalation, or a spawn failure — is the ONLY thing that spends it.
         stageEntryRecoveries: charge
           ? current.stageEntryRecoveries + 1
@@ -5420,7 +5416,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         slotHeld: command.escalateToHuman ? false : current.slotHeld,
         threadId: command.threadId,
         lastError: command.lastError ?? null,
-        // Why it stalled and when it next tries (T3O-22, D10). Both are
+        // Why it stalled and when it next tries. Both are
         // REPLACED, never merged, for the same reason `lastError` is: a nudge
         // that puts the step back to running must not leave the card promising a
         // retry that has already happened.
@@ -5597,7 +5593,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     case "board.card.retune-step": {
       yield* requireActiveBoardCard({ board, command });
       const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
-      // Slot, worktree and thread are untouched (D5) — only the frozen
+      // Slot, worktree and thread are untouched — only the frozen
       // human-in-the-loop stance changes, so drop-monitoring honours the new
       // value.
       const state: BoardCardStepState = {
@@ -5625,7 +5621,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // status are untouched: this records who is driving, not what is running.
       const state: BoardCardStepState =
         command.at === null
-          ? // The free ending has been spent (T3O-17, D3). Nothing else moves:
+          ? // The free ending has been spent. Nothing else moves:
             // the ladder was already reset when the turn was recorded.
             { ...current, humanTurnAt: null, updatedAt: command.createdAt }
           : {
@@ -5683,10 +5679,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       };
     }
 
-    // ── Worker registry (T3O-62, D19) ────────────────────────────────
+    // ── Worker registry ────────────────────────────────
     // Keyed on the worker, never a card. What happens to cards placed on a
-    // removed worker belongs to the removal fallback (D22), not here.
-    // T3O-49: a project's delta, edited in Settings or imported.
+    // removed worker belongs to the removal fallback, not here.
+    // A project's delta, edited in Settings or imported.
     case "board.project.set-stage-switch":
     case "board.project.set-stage-override":
     case "board.project.set-ci-steps":
@@ -5722,7 +5718,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         payload: { worker },
       };
       // A server added back with the same environment id reattaches the cards
-      // its removal left holding (T3O-66, D22): they are placed there again.
+      // its removal left holding: they are placed there again.
       const reattached: PlannedBoardEvent[] = [];
       for (const card of board.cards) {
         if (card.placementOrphaned?.workerId !== worker.id) continue;
@@ -5865,7 +5861,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             : `Card '${card.key}''s last move failed; retry it or move it to another worker.`,
         );
       }
-      // A card with a worktree is bound to its worker (D20): changing that is a
+      // A card with a worktree is bound to its worker: changing that is a
       // move, which checks the work is pushed first. A pin that lands where the
       // worktree already is changes nothing about where the card runs.
       if (boardCardHoldsWorktree(card)) {
@@ -5946,7 +5942,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           return yield* invariant(command, `Card '${card.key}' is already moving.`);
         }
         const live = boardCardStepState(board, card.id);
-        // A force-move (T3O-66) leaves a worker the board can't reach, where a
+        // A force-move leaves a worker the board can't reach, where a
         // step may still read as running: the supervisor stalls it off this
         // event, and it continues on the new worker.
         if (
@@ -5994,7 +5990,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           return yield* invariant(command, `Card '${card.key}' is not moving.`);
         }
         if (step.phase === "retired" || step.phase === "abandoned") {
-          // `abandoned` (T3O-66): a force-move off a worker the board can't
+          // `abandoned`: a force-move off a worker the board can't
           // reach leaves the old worktree there untouched — the event records
           // it — and is otherwise the same: the card is unassigned.
           recorded = move;
@@ -6043,7 +6039,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             updatedAt: command.createdAt,
           };
         } else if (step.phase === "restarted") {
-          // A force-move with nothing on the remote (T3O-66): the card's branch
+          // A force-move with nothing on the remote: the card's branch
           // is forgotten, so its next build cuts a fresh one from the base on
           // the new worker. The move is over; the card waits there.
           recorded = move;
@@ -6116,12 +6112,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 });
 
 /**
- * Decide a board command (D8): the command's own events, then — for the
+ * Decide a board command: the command's own events, then — for the
  * commands that can change a child — the derived stages of every affected
- * group, in the same transaction (T3O-27).
+ * group, in the same transaction.
  */
 /**
- * The follow-up commands a compound group flow carries (T3O-27/28): the cards
+ * The follow-up commands a compound group flow carries: the cards
  * a new heading or a cancelled card adopts, and where New phase lands them.
  * Decided in the same decision as the command itself, so the flow lands whole
  * or not at all.

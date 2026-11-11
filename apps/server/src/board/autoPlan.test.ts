@@ -46,7 +46,7 @@ const PLANNING = String(BOARD_SEED_STAGE_IDS.planning);
 const settings = settingsWith({
   building: [codexStep],
   planning: codexStep,
-  // The real planning interview is human-in-the-loop (t3o-34).
+  // The real planning interview is human-in-the-loop.
   planningHumanInLoop: true,
   globalMaxConcurrent: 3,
 });

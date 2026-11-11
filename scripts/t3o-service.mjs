@@ -350,7 +350,7 @@ function publishBuild() {
 }
 
 /**
- * The git credential helper and gh shims over <home>/userdata/gitenv (T3O-58). The gitconfig
+ * The git credential helper and gh shims over <home>/userdata/gitenv. The gitconfig
  * is never edited: the lines to add are printed when they are missing.
  */
 // Runs while the service is stopped, so a failure here warns rather than leaving it down.

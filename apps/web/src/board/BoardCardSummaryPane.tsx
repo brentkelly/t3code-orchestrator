@@ -127,7 +127,7 @@ export function BoardCardSummaryPane({
   buildPending = false,
 }: {
   readonly summary: BoardCardWorkSummary;
-  /** The card's decision log section (T3O-32), when it has one. */
+  /** The card's decision log section, when it has one. */
   readonly decisionLog?: React.ReactNode;
   /** No build has finished yet: the pane is here for the decision log. */
   readonly buildPending?: boolean;

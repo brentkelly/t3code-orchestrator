@@ -1,5 +1,5 @@
 /**
- * The dependency chart's box (t3o-29).
+ * The dependency chart's box.
  *
  * The layout arithmetic is pinned in `boardPlanRows.test.ts`; the one thing
  * only the component can get wrong is how its box behaves as a flex item,

@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-63): the worker side's gateway RPCs and its half of the MCP relay.
+ * T3o: the worker side's gateway RPCs and its half of the MCP relay.
  */
 import {
   AuthOrchestrationOperateScope,

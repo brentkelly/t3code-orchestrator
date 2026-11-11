@@ -52,7 +52,7 @@ export interface BoardStagedAttachment {
   readonly progress: number;
   readonly error: string | null;
   readonly upload: BoardPendingUpload | null;
-  /** Epoch millis the upload landed, null until it has (T3O-26). The draft
+  /** Epoch millis the upload landed, null until it has. The draft
       ages each reference against this, not against its own save clock. */
   readonly uploadedAt: number | null;
 }
@@ -283,7 +283,7 @@ export function useBoardBriefAttachments(input: {
     setNotice(null);
   });
 
-  /** Seed rows from a restored draft's references (T3O-26). A no-op when
+  /** Seed rows from a restored draft's references. A no-op when
       rows are already staged: those are this session's, and still hold their
       real bytes, live previews and in-flight uploads. */
   const hydrate = useStableCallback((attachments: ReadonlyArray<BoardCardDraftAttachment>) => {
@@ -435,7 +435,7 @@ function StagedImageThumb(props: {
   );
 }
 
-/** A row restored from a draft (T3O-26): the bytes are gone, so the tile
+/** A row restored from a draft: the bytes are gone, so the tile
     renders from the pending upload's signed URL. No progress bar and no
     retry — there is nothing local left to retry with; remove and attach
     again. A URL that never resolves degrades to the empty tile. */
@@ -464,7 +464,7 @@ function HydratedImageThumb(props: {
   );
 }
 
-/** A staged row that lost its local bytes to a reload (T3O-26): all it has
+/** A staged row that lost its local bytes to a reload: all it has
     left is the pending upload the thumbnail renders from. */
 type BoardHydratedAttachment = BoardStagedAttachment & { readonly upload: BoardPendingUpload };
 

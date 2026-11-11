@@ -19,7 +19,7 @@ export interface BoardTodoThreadState {
 
 export type BoardCardProgressBlock =
   | { readonly kind: "none" }
-  /** Sub-board plan progress (D12) — the parent card's children. */
+  /** Sub-board plan progress — the parent card's children. */
   | { readonly kind: "subcards"; readonly items: ReadonlyArray<BoardCardSummaryItem> }
   /** The review ledger — rounds, severities, issue tallies. */
   | { readonly kind: "review"; readonly items: ReadonlyArray<BoardCardSummaryItem> }
@@ -109,7 +109,7 @@ export function boardCardShellThreadState(card: BoardCardShell): BoardTodoThread
   return {
     awaitingInput: card.awaitingInput,
     running: card.threadState === "working",
-    // A failed thread is stopped for the winner rule (t3o-10): it is not
+    // A failed thread is stopped for the winner rule: it is not
     // running, and there is nothing more coming from it.
     stopped:
       card.threadState === "stopped" ||

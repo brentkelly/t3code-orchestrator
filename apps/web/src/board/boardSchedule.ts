@@ -138,7 +138,7 @@ function atNextHour(nowMs: number, hour: number): Date {
 
 /**
  * What the popover is offering, derived from where the card's work actually
- * stands (D13). Four situations, and the copy has to be honest about each —
+ * stands. Four situations, and the copy has to be honest about each —
  * most of all `live`, where setting a time STOPS the agent, and the control
  * must say so before the click rather than after.
  */

@@ -180,9 +180,8 @@ describe("deriveBoardReviewLoop", () => {
     expect(loop.rounds[0]?.unreadablePhase).toBe("review");
   });
 
-  // T3O-14 round 2: a broken triage/adjudicate/sync record used to advance the
-  // pane's loop as silently as it advanced the executor's, so the one state the
-  // board cannot repair by itself had no surface and no Reopen.
+  // A broken triage/adjudicate/sync record must not advance the pane's loop
+  // silently: it is the one state the board cannot repair, so it needs Reopen.
   it("names the broken phase whichever one recorded the unreadable payload", () => {
     const loop = deriveBoardReviewLoop(
       [completion("review@1", review([finding("nitpick")])), completion("triage@1", "{not json")],
@@ -198,7 +197,7 @@ describe("deriveBoardReviewLoop", () => {
     expect(loop.rounds[0]?.findings).toHaveLength(1);
   });
 
-  // T3O-2: the pane is where the loss was visible — a round that ran to a
+  // The pane is where the loss was visible — a round that ran to a
   // clean conclusion rendered as "Recorded a payload nothing can read", with
   // its findings, dispositions and verdicts all dropped, because the agent had
   // stringified the payload before handing it to the tool.

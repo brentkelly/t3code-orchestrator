@@ -1,5 +1,5 @@
 /**
- * The board's narrow view of upstream's `ProjectSetupScriptRunner` (T3O-45).
+ * The board's narrow view of upstream's `ProjectSetupScriptRunner`.
  * Upstream's module defines the tag beside its implementation, and importing it
  * loads `terminal/Manager.ts` and every provider driver. Board code depends on
  * this port instead; only `BoardSetupScriptRunner.live.ts` imports upstream.

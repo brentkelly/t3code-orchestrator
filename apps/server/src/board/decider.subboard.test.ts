@@ -1,5 +1,5 @@
 /**
- * Sub-board decider invariants (t3o-23): the approve gate's validation matrix
+ * Sub-board decider invariants: the approve gate's validation matrix
  * and materialisation shape, the plan freeze, the parent's move/delete/archive
  * lockdown, the materialisation-floor stage restriction, and the
  * integration-branch record.
@@ -260,7 +260,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         // Sibling order keys sort in plan order.
         assert.ok(String(first.payload.orderKey) < String(second.payload.orderKey));
 
-        // The parent does not move (t3o-28, D1): approving answers "is this the
+        // The parent does not move: approving answers "is this the
         // right split", and it stays in planning for the human to walk forward.
         assert.ok(approved!.type === "board.plans-approved");
         expect(approved.payload.childCardIds).toEqual([
@@ -307,7 +307,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
     it.effect("leaves a parent already sitting in the build-role stage where it is", () =>
       Effect.gen(function* () {
         // Approving from build is still legal (a card built conversationally can
-        // be split before its build starts in earnest) and, since t3o-28, the
+        // be split before its build starts in earnest) and the
         // event shape no longer depends on where the parent stands.
         const events = yield* decideEvents(
           approve(),
@@ -325,10 +325,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
 
     it.effect("does not clear the parent's blocked flag — it crosses no build boundary", () =>
       Effect.gen(function* () {
-        // Pre-t3o-28 the approval cleared `blocked` because it WAS the crossing
-        // into build and re-ran the dependency gate on the way. It no longer
-        // crosses anything, so the flag is left exactly as it stands and the
-        // D11 gate has its say when the parent actually enters build.
+        // Approval no longer crosses into build or re-runs the dependency gate, so the flag is
+        // left exactly as it stands and the D11 gate has its say when the parent actually
+        // enters build.
         const events = yield* decideEvents(
           approve(),
           makeReadModel(makeBoard({ parent: { blocked: true } })),
@@ -339,7 +338,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
-    // ── The pending-split forward-move gate (t3o-27) ─────────────────────
+    // ── The pending-split forward-move gate ─────────────────────
 
     it.effect("pins an unapproved split in place — every forward move refused, drag included", () =>
       Effect.gen(function* () {
@@ -502,7 +501,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       "allows a second-round re-approval once the first round's children are all archived",
       () =>
         Effect.gen(function* () {
-          // A merged parent dragged back and re-approved (t3o-23, D5): the first
+          // A merged parent dragged back and re-approved: the first
           // round's children are archived (finished-and-gone), so they neither
           // freeze the plans nor block re-approval — the reclaimed-slice branch
           // machinery would otherwise be unreachable.
@@ -571,15 +570,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         const approved = events.find((event) => event.type === "board.plans-approved");
         assert.ok(approved?.type === "board.plans-approved");
         // Its parent already has its own branch, so the nested split inherits
-        // it rather than stacking a second integration review (T3O-31).
+        // it rather than stacking a second integration review.
         expect(approved.payload.card.group?.target).toBe("inherit");
       }),
     );
 
     it.effect("approves a split whose parent still has unmet dependencies (t3o-28, D1)", () =>
       Effect.gen(function* () {
-        // Pre-t3o-28 this was refused, because approval WAS the crossing into
-        // build and ran the D11 gate on the way. Approval crosses nothing now:
+        // Approval crosses nothing, so it runs no dependency gate:
         // planning a split while a dependency is outstanding is ordinary work,
         // and the gate has its say when the parent tries to enter build.
         const blocker = makeCard({ id: "card-blocker", key: "T3-100", stage: "backlog" });
@@ -662,8 +660,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         );
         assert.include(String(failure), "live step");
         // The step's own label when it has one; the stage label otherwise
-        // (t3o-19 D4 leaves `stepLabel` null everywhere but the review loop, and
-        // the message used to read "('null', running)").
+        // (`stepLabel` is null everywhere but the review loop).
         assert.include(String(failure), "('Building', running)");
         const labelled = yield* decideFail(
           approve(),
@@ -768,9 +765,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
 
     it.effect("lets the parent walk UP TO the build stage while children wait (t3o-28, D2)", () =>
       Effect.gen(function* () {
-        // The move that begins the whole sub-board. Pre-t3o-28 the pin refused
-        // it, which was survivable only because approval had already parked the
-        // parent in build; now it is the human's Begin build.
+        // The move that begins the whole sub-board: the human's Begin build.
         const events = yield* decideEvents(
           moveCommand({ cardId: "card-parent", toStage: "building" }),
           makeReadModel(
@@ -808,7 +803,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       Effect.gen(function* () {
         // A child dragged back out of Done leaves the parent ahead of reality:
         // sitting in review with an unfinished child. The reactor's correction —
-        // back to the build-role stage — must land. Under t3o-28's ceiling this
+        // back to the build-role stage — must land. Under the ceiling this
         // needs no carve-out: the target IS the ceiling, not past it.
         const readModel = makeReadModel(
           makeBoard({
@@ -971,7 +966,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         );
         assert.include(String(failure), "only while no live branch exists");
 
-        // A second-round split (t3o-23, D5): the old branch was deleted at
+        // A second-round split: the old branch was deleted at
         // Done, the slice reads `reclaimed`, and a fresh record is admitted.
         const secondRound = yield* decideEvents(
           record,
@@ -1035,7 +1030,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   },
 );
 
-// ── Child create (t3o-25): the drill-in's create preset ─────────────────
+// ── Child create: the drill-in's create preset ─────────────────
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   "sub-board child create (t3o-25)",
@@ -1187,7 +1182,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   },
 );
 
-// ── Dependency scope (T3O-10, T3O-27): dependencies cross groups ──
+// ── Dependency scope: dependencies cross groups ──
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   "dependency scope (T3O-10)",

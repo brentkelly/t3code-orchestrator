@@ -1,5 +1,5 @@
 /**
- * T3o board command feedback (t3o-06). One place that turns a rejected board
+ * T3o board command feedback. One place that turns a rejected board
  * command into a human sentence — the decider's invariant rejections carry a
  * `detail` string (the unmet dependency, the cycle-closing edge, the label
  * cap), and that is what the user needs to see, not a generic failure.
@@ -156,7 +156,7 @@ export function describeBoardReviewRoundOutcome(
 }
 
 /**
- * The sentence "Remove worktree" leaves on the card (T3O-52), or null when it
+ * The sentence "Remove worktree" leaves on the card, or null when it
  * did what was asked — the banner disappearing is the acknowledgement.
  */
 export function describeBoardRemoveWorktreeOutcome(
@@ -176,7 +176,7 @@ export function describeBoardRemoveWorktreeOutcome(
 }
 
 /**
- * The sentence "Check again" on a kept worktree leaves on the card (T3O-52),
+ * The sentence "Check again" on a kept worktree leaves on the card,
  * or null when the worktree went — the banner disappearing says that. A
  * repeat refusal writes nothing to the card, so without this the banner would
  * look exactly as it did before the click.
@@ -201,7 +201,7 @@ export function describeBoardCheckWorktreeOutcome(
   }
 }
 
-/** The toast "Skip CI" leaves (T3O-44). `stageLabel` names where it went. */
+/** The toast "Skip CI" leaves. `stageLabel` names where it went. */
 export function describeBoardSkipCiOutcome(
   result: BoardSkipCiResult,
   cardKey: string,

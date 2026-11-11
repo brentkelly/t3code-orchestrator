@@ -109,7 +109,7 @@ export const boardThreadStateFromShell = (
     awaitingUserInput: source.hasPendingUserInput,
     awaitingPermission: isThreadAwaitingPermission(source),
     backgroundWork: source.backgroundLiveness ?? null,
-    // An active run, or a question someone can still answer (t3o-10, D1). A
+    // An active run, or a question someone can still answer. A
     // failed latest run is dead whatever else the shell still says.
     alive: shell.status !== "failed" && (shell.activeRunId !== null || source.hasPendingUserInput),
     waitingOnBackground: deriveBoardCardThreadState(source).waitingOnBackground,
@@ -317,8 +317,8 @@ export const makeSignalReader = () => {
         // A run cancelled without leaving the queue was never a turn (steered, deleted, or dropped
         // with the thread). A queued run that FAILED to start is a turn that never began, read below.
         if (wasQueued && run.status === "cancelled") return [];
-        // A run that failed without ever starting is a turn that never began
-        // (t3o-30, D2) — workspace preparation, or the provider refusing it.
+        // A run that failed without ever starting is a turn that never began —
+        // workspace preparation, or the provider refusing it.
         if (outcome === "failed" && run.startedAt === null) {
           return [
             {
@@ -362,7 +362,7 @@ export const makeSignalReader = () => {
               ? [{ type: "input-requested", threadId: event.threadId }]
               : [];
           }
-          // Only an ANSWER resumes a parked step (t3o-34, D5): a question that
+          // Only an ANSWER resumes a parked step: a question that
           // was cancelled or expired is still unanswered.
           return firstTime(`input-closed:${request.id}`)
             ? [
@@ -921,7 +921,7 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
   return gateway;
 });
 
-/** The gateway onto this server's own threads (T3O-63): what the router and
+/** The gateway onto this server's own threads: what the router and
     the worker side build on. */
 export const LocalThreadGatewayV2Live = Layer.effect(LocalThreadGateway, makeThreadGatewayV2);
 

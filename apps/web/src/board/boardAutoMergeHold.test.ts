@@ -88,7 +88,7 @@ describe("boardAutoMergeBanner (T3O-38, D12)", () => {
   });
 
   it("goes RED once it stays put until a human acts", () => {
-    // The same split the stalled banner has had since t3o-30: red on a card
+    // The same split as the stalled banner: red on a card
     // counting down to its own retry would be the loudest thing on screen
     // saying the opposite of the card's own pill.
     const banner = boardAutoMergeBanner({ ...base, retryAt: null });

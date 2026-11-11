@@ -98,7 +98,7 @@ describe("boardCardModelRows (t3o-29, D1)", () => {
 
   it("falls back to the workspace access level when the parent names none", () => {
     const buildRow = rowFor(build, { key: "T3O-41", modelOverrides: { [build]: opus } });
-    // The build stage resolves to `auto` by default (t3o-21, D2).
+    // The build stage resolves to `auto` by default.
     expect(buildRow?.inheritedRuntimeMode).toBe("auto");
   });
 });

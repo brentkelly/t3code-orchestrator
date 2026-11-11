@@ -14,7 +14,7 @@ export function BoardCardStepFailure(props: {
   /** The provider's error text, or null for a stall with no recorded reason —
       recovery exhausting its budget, which the sentence covers instead. */
   readonly error: string | null;
-  /** Whether the BOARD will start this step again by itself (T3O-22) —
+  /** Whether the BOARD will start this step again by itself —
       `boardStallIsWaiting` off the same shell field the card face's chip reads,
       so the board and the open modal cannot disagree about whether anything is
       coming. */

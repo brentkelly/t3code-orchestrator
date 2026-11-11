@@ -1,4 +1,4 @@
-// T3o: per-project config deltas (T3O-49) — normalization, comparison and
+// T3o: per-project config deltas — normalization, comparison and
 // the edits each settings command makes. Pure, so the server's config
 // service, the decider and the web read one answer.
 import {
@@ -70,7 +70,7 @@ function normalizePatch(
 }
 
 /**
- * A delta with nothing that changes anything (T3O-49): switches equal to the
+ * A delta with nothing that changes anything: switches equal to the
  * stage's default, switches on stages that can't be switched, overrides
  * equal to global (prompts excepted) and ids the board doesn't know are
  * dropped. `extraStages` are stages an import is about to create.

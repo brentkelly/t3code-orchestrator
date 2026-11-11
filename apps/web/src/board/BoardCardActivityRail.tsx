@@ -57,7 +57,7 @@ import { useBoardWorkersState } from "./workers/BoardWorkersContext";
 import { boardWorkerLabel } from "./workers/cardWorker";
 import { BoardHint } from "./BoardHint";
 
-/** How the rail resolves an agent's display name and accent (D11): from the
+/** How the rail resolves an agent's display name and accent: from the
     thread's `ProviderInstanceId`, which is exactly where "Claude Opus 4.8" and
     its accent already come from. Resolved at RENDER time, not frozen on the row,
     so renaming or recolouring a provider instance relabels its whole history. */
@@ -149,10 +149,10 @@ function ActivityIcon({
     case "card-pull-request-ready":
       return <PullRequestGlyph.pullRequest className={className} />;
     // Auto-planning approving a plan is a board-driven move, so it stays
-    // neutral like the other notes that explain one (T3O-32).
+    // neutral like the other notes that explain one.
     case "card-auto-planned":
       return <FastForwardIcon className={className} />;
-    // T3O-52: a kept worktree is a cleanup that is blocked — amber; a removal
+    // A kept worktree is a cleanup that is blocked — amber; a removal
     // is disk given back, which claims nothing and stays neutral.
     case "card-worktree-kept":
       return <HardDriveIcon className={cn(className, "text-warning-foreground")} />;
@@ -160,16 +160,16 @@ function ActivityIcon({
       return <HardDriveIcon className={className} />;
     case "card-edited":
       return <PencilIcon className={className} />;
-    // T3O-20: a check-in on a background wait claims nothing — neutral.
+    // A check-in on a background wait claims nothing — neutral.
     case "card-step-checked-in":
       return <HourglassIcon className={className} />;
-    // T3O-65: choosing a worker and each step of a move claim nothing — a
+    // Choosing a worker and each step of a move claim nothing — a
     // failed move is the one amber row, because only a human can retry it.
     case "card-worker-pinned":
       return <ServerIcon className={className} />;
     case "card-worker-moved":
       return <ArrowRightLeftIcon className={className} />;
-    // T3O-66: a worker removed under the card. Holding for a move is amber —
+    // A worker removed under the card. Holding for a move is amber —
     // only a human can move it; falling back or reattaching claims nothing.
     case "card-worker-removal":
       return payload?.removalOutcome === "orphaned" ? (
@@ -177,7 +177,7 @@ function ActivityIcon({
       ) : (
         <ServerIcon className={className} />
       );
-    // T3O-44: a passing pass is done, so green; a send-back is a hold only a
+    // A passing pass is done, so green; a send-back is a hold only a
     // fresh review round clears, so amber; the rest claim nothing.
     case "card-ci-pass-finished":
       return payload?.ciOutcome === "passed" ? (
@@ -193,7 +193,7 @@ function ActivityIcon({
       return <TriangleAlertIcon className={cn(className, "text-warning-foreground")} />;
     case "card-ci-stopped":
       return <PauseIcon className={cn(className, "text-attention-foreground")} />;
-    // T3O-39: plan review rows claim nothing about the work — neutral.
+    // Plan review rows claim nothing about the work — neutral.
     case "plan-review-started":
     case "plan-review-stopped":
     case "plan-review-rounds-changed":
@@ -258,7 +258,7 @@ function StepOutcomeIcon({ outcome }: { readonly outcome: BoardStepOutcome }) {
   }
 }
 
-/** The `card-edited` sentence (T3O-53): each part the edit changed, in one
+/** The `card-edited` sentence: each part the edit changed, in one
     line — "appended to the brief and added dependency T3O-4". */
 function describeCardEdit(payload: BoardCardActivityEntry["payload"]): string {
   const dependencies = (verb: string, keys: ReadonlyArray<string>) =>
@@ -286,11 +286,11 @@ function describeCardEdit(payload: BoardCardActivityEntry["payload"]): string {
 function activitySentence(
   entry: BoardCardActivityEntry,
   stages: ReadonlyArray<BoardStageDefinition>,
-  /** Project titles by id, for the T3O-33 row. A project the client cannot name
+  /** Project titles by id, for the set-project row. A project the client cannot name
       (deleted, or another environment's) falls back to the reissued key alone,
       which is still a true sentence. */
   projectNames: ReadonlyMap<string, string> | undefined,
-  /** A worker's name for the T3O-65 rows. */
+  /** A worker's name for the placement rows. */
   workerName: (workerId: BoardWorkerId) => string,
 ): ReactNode {
   const payload = entry.payload;
@@ -469,7 +469,7 @@ function activitySentence(
     case "card-worktree-removed": {
       const removed =
         payload.forced === true ? <>removed the worktree (forced)</> : <>removed the worktree</>;
-      // T3O-23: the remove script failed and the removal went ahead. A failure,
+      // The remove script failed and the removal went ahead. A failure,
       // so red like a failed worktree; not amber, because nothing is held.
       return payload.hookWarning === undefined ? (
         removed
@@ -662,9 +662,9 @@ export function BoardCardActivityRail({
   readonly entries: ReadonlyArray<BoardCardActivityEntry>;
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly agents?: BoardActivityAgentLookup | undefined;
-  /** Open the card's CI tab, from any CI row (T3O-44). */
+  /** Open the card's CI tab, from any CI row. */
   readonly onOpenCi?: (() => void) | undefined;
-  /** Project titles by id (T3O-33), for the one row that names a project. */
+  /** Project titles by id, for the one row that names a project. */
   readonly projectNames?: ReadonlyMap<string, string> | undefined;
 }) {
   const groups = groupBoardActivity(entries);

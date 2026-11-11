@@ -28,12 +28,12 @@ export type BoardPlanRowPlan = Pick<
     card face's queue indicator exists to avoid. */
 export type BoardPlanRowTone = "done" | "blocked" | "active" | "idle" | "gone";
 
-/** The three states a row can be in (D4). A plan outlives the card cut from
+/** The three states a row can be in. A plan outlives the card cut from
     it: `missing` is a deleted child, `archived` one that was filed away. */
 export type BoardPlanRowState = "live" | "archived" | "missing";
 
 /** The live half of a row, absent unless the child is on the board. Archived
-    cards leave the shell snapshot (D15), so an archived child has a
+    cards leave the shell snapshot, so an archived child has a
     `BoardCardChildRef` and no shell — which is exactly why this is null for
     both `archived` and `missing`. */
 export interface BoardPlanRowLive {
@@ -45,7 +45,7 @@ export interface BoardPlanRowLive {
       threads have all died goes dark here exactly as it does there. */
   readonly working: boolean;
   readonly awaitingInput: boolean;
-  /** A thread is blocked on a permission prompt (T3O-16) — the card face's
+  /** A thread is blocked on a permission prompt — the card face's
       `permission` reason, read the same way. */
   readonly awaitingPermission: boolean;
   readonly queued: boolean;
@@ -71,7 +71,7 @@ export interface BoardPlanRow {
   readonly title: string;
   readonly state: BoardPlanRowState;
   /** The child's key, retained for an archived child too, so the pairing
-      survives the card (D4). */
+      survives the card. */
   readonly key: string | null;
   readonly stage: BoardStageId | null;
   readonly stageLabel: string | null;

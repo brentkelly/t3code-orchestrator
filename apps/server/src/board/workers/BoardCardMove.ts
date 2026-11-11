@@ -1,7 +1,7 @@
 /**
  * Moving a card to another worker. Only the git remote crosses, so a move is
  * refused while a step runs or the source holds unpushed work, and the branch must
- * be on the remote before the source worktree is retired. A force-move (D22)
+ * be on the remote before the source worktree is retired. A force-move
  * continues from the remote branch without touching an unreachable source.
  */
 import {

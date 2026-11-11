@@ -150,12 +150,12 @@ export const exchangeWorkerCredential = Effect.fn("WorkerCredential.exchange")(f
 
 const BOARD_SESSION_LABEL_PREFIX = "T3o board (";
 
-/** The label the board's session carries on the worker (D19). */
+/** The label the board's session carries on the worker. */
 export function boardSessionLabel(centralLabel: string): string {
   return `${BOARD_SESSION_LABEL_PREFIX}${centralLabel})`;
 }
 
-/** Whether a session on this server is one a board was given (D19). */
+/** Whether a session on this server is one a board was given. */
 export function isBoardSessionLabel(label: string): boolean {
   return label.startsWith(BOARD_SESSION_LABEL_PREFIX) && label.endsWith(")");
 }

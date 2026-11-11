@@ -1,5 +1,5 @@
 /**
- * Board columns under a group drag (T3O-29): a refused column never accepts a
+ * Board columns under a group drag: a refused column never accepts a
  * drop — no `preventDefault`, so the browser shows its no-drop cursor — and a
  * sub-board's empty early columns start as rails until a human says otherwise.
  */

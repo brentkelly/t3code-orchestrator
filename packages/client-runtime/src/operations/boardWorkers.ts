@@ -1,5 +1,5 @@
 /**
- * T3o board workers — client operations (T3O-62, D19).
+ * T3o board workers — client operations.
  *
  * Each is one `board.workers.*` RPC on the BOARD server. Minting the one-time
  * pairing token on the worker itself is a different call, on a different
@@ -26,7 +26,7 @@ export const repairBoardWorker = (input: BoardWorkersRepairInput) =>
 export const removeBoardWorker = (input: BoardWorkerIdInput) =>
   request(BOARD_WORKERS_WS_METHODS.remove, input);
 
-/** What removing a worker would do to its cards (T3O-66), for the confirm. */
+/** What removing a worker would do to its cards, for the confirm. */
 export const previewBoardWorkerRemoval = (input: BoardWorkerIdInput) =>
   request(BOARD_WORKERS_WS_METHODS.removePreview, input);
 

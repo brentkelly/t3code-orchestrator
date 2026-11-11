@@ -26,12 +26,12 @@ export function BoardCardPlanPane({
   readonly plans: ReadonlyArray<BoardPlanWithBody>;
   readonly cardKey: string;
   readonly onBackToThread: () => void;
-  /** Materialised child cards (t3o-23), paired to plans by `sourcePlanId`. */
+  /** Materialised child cards, paired to plans by `sourcePlanId`. */
   readonly childCards?: ReadonlyArray<BoardCardChildRef>;
   readonly stages?: ReadonlyArray<BoardStageDefinition>;
-  /** Present while a split is pending: opens the split gate (T3O-31). */
+  /** Present while a split is pending: opens the split gate. */
   readonly onReviewSplit?: (() => void) | undefined;
-  /** Open one child inside this card's sub-board (t3o-25, AC4); absent keeps
+  /** Open one child inside this card's sub-board; absent keeps
       the chips informational. */
   readonly onOpenChild?: ((childCardId: string) => void) | undefined;
 }) {

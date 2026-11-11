@@ -1,5 +1,5 @@
 /**
- * The decision log and ancestor context through the board tools (T3O-32):
+ * The decision log and ancestor context through the board tools:
  * `board_record_decisions`, `board_get_card_context.ancestors` nearest first,
  * `board_get_plan` reading an ancestor's plan, and `board_auto_plan`'s
  * approval gate.

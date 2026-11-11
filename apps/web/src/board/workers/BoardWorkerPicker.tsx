@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-65, prototype 4.1–4.3): the Worker field's picker: "Follow default
+ * T3o (prototype 4.1–4.3): the Worker field's picker: "Follow default
  * ({worker})", or Pin to a worker. Each row says the worker's load, or why it
  * can't be picked, and a worker with no checkout of the project offers Set up
  * on worker inline. Shared by the create dialog and the card's details column.

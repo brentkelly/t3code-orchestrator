@@ -53,7 +53,7 @@ export interface BoardColumnDragProps {
   readonly dragHeight: number;
   readonly onColumnDragOver: (stage: BoardStageId, event: DragEvent<HTMLElement>) => void;
   readonly onColumnDrop: (stage: BoardStageId, event: DragEvent<HTMLElement>) => void;
-  /** A drag over a REFUSED column (T3O-29): never `preventDefault`ed, so the
+  /** A drag over a REFUSED column: never `preventDefault`ed, so the
       browser shows its no-drop cursor; the page shows why at the pointer. */
   readonly onRefusedDragOver?:
     | ((stage: BoardStageId, refusal: string, event: DragEvent<HTMLElement>) => void)
@@ -65,23 +65,23 @@ export interface BoardColumnDragProps {
   /** Keyboard reorder (Ctrl/Cmd+ArrowUp/Down on a focused card): the pointer
       drag's keyboard analogue, moving the card one visible slot in its column. */
   readonly onCardReorder: (card: BoardCardShell, direction: -1 | 1) => void;
-  /** Why the card being dragged cannot land here (T3O-29), or null. A refused
+  /** Why the card being dragged cannot land here, or null. A refused
       column draws a dashed outline and never accepts the drop. */
   readonly dropRefusal?: string | null | undefined;
 }
 
 export interface BoardColumnProps extends BoardColumnDragProps {
   readonly stage: BoardStageId;
-  /** Whether this column IS the merge-role stage (T3O-38, D13). Only there
+  /** Whether this column IS the merge-role stage. Only there
       does an armed card wear the grey `Auto` glyph — everywhere else an armed
       card is an ordinary card and should look like one. */
   readonly atMergeStage?: boolean | undefined;
-  /** Each card's resolved auto-merge arm (T3O-28), read with `atMergeStage`
+  /** Each card's resolved auto-merge arm, read with `atMergeStage`
       to draw the `Auto` glyph. */
   readonly autoMergeArmedFor?: ((card: BoardCardShell) => boolean) | undefined;
-  /** Whether each card waits for its Auto-build (T3O-38), for the card's chip. */
+  /** Whether each card waits for its Auto-build, for the card's chip. */
   readonly autoBuildArmedFor?: ((card: BoardCardShell) => boolean) | undefined;
-  /** The column's display label from the read-model stage list (D13). */
+  /** The column's display label from the read-model stage list. */
   readonly label: string;
   readonly cards: ReadonlyArray<BoardCardShell>;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -89,11 +89,11 @@ export interface BoardColumnProps extends BoardColumnDragProps {
   readonly queueSlots: ReadonlyMap<string, BoardQueueInfo>;
   readonly selectedCardId: string | null;
   /** Projects new cards may be created in; empty hides the add button, which
-      also only shows on creation stages (t3o-06a). */
+      also only shows on creation stages. */
   readonly addProjects: ReadonlyArray<BoardAddProject>;
-  /** Resolves a project's icon colour (T3O-4); hash fallback when null. */
+  /** Resolves a project's icon colour; hash fallback when null. */
   readonly accentNameFor: (projectId: ProjectId) => ProjectIconColor | null;
-  /** Resolves a sub-board child's parent key for its chip (t3o-23). */
+  /** Resolves a sub-board child's parent key for its chip. */
   readonly parentKeyFor: (cardId: string) => string | undefined;
   /** Why a card is waiting on a human, or null (`boardCardAttention`), and the
       same for its children — both resolved by the page, which holds the stage
@@ -107,29 +107,29 @@ export interface BoardColumnProps extends BoardColumnDragProps {
   /** Whether the card is parked at the merge role with no pull request. Resolved
       by the page, which holds the thread shells its settle grace joins across. */
   readonly noPullRequestFor: (card: BoardCardShell) => boolean;
-  /** T3O-52: why a finished card kept its worktree, or null
+  /** Why a finished card kept its worktree, or null
       (`boardCardWorktreeKept`). Resolved by the page, which holds the settings. */
   readonly worktreeKeptFor: (card: BoardCardShell) => string | null;
-  /** T3O-43: the note for a card whose project no longer uses this stage. */
+  /** The note for a card whose project no longer uses this stage. */
   readonly stageGoneFor?: ((card: BoardCardShell) => string | null) | undefined;
-  /** T3O-49: which projects in view use this stage; drives the partial icon. */
+  /** Which projects in view use this stage; drives the partial icon. */
   readonly coverage?: BoardStageCoverage | undefined;
-  /** T3O-49: "N of M projects · only X" when only some projects in view use it. */
+  /** "N of M projects · only X" when only some projects in view use it. */
   readonly partialTitle?: string | null | undefined;
-  /** T3O-49: no project in view uses this stage any more; a card still sits in it. */
+  /** No project in view uses this stage any more; a card still sits in it. */
   readonly removed?: boolean | undefined;
-  /** T3O-49: the single project in view, so the header can link to its settings. */
+  /** The single project in view, so the header can link to its settings. */
   readonly settingsProjectId?: ProjectId | null | undefined;
-  /** Thread todo lists for one card (t3o-18) — built once by the page and read
+  /** Thread todo lists for one card — built once by the page and read
       per card, so the column adds no state of its own. */
   readonly todosFor: (cardId: string) => BoardCardTodoContext;
   readonly onSetCollapsed: (stage: BoardStageId, collapsed: boolean) => void;
   readonly onSelectCard: (card: BoardCardShell) => void;
-  /** Opens the create dialog onto this column's stage (t3o-06). */
+  /** Opens the create dialog onto this column's stage. */
   readonly onRequestCreate: (stage: BoardStageId) => void;
-  /** Drill into a group's board (t3o-25, T3O-29), at any depth. */
+  /** Drill into a group's board, at any depth. */
   readonly onOpenSubBoard?: ((card: BoardCardShell) => void) | undefined;
-  /** A group card's face (T3O-29), or null for a leaf. */
+  /** A group card's face, or null for a leaf. */
   readonly groupFor?: ((card: BoardCardShell) => BoardGroupCardVm | null) | undefined;
   /** A line under the header, e.g. the Deferred column's rule. */
   readonly hint?: string | undefined;
@@ -242,7 +242,7 @@ function ExpandedColumn(props: BoardColumnProps) {
     hint,
     headerAction,
   } = props;
-  // Cards may be created only into Backlog, Sprint or Planning (t3o-06a); the
+  // Cards may be created only into Backlog, Sprint or Planning; the
   // add affordance is absent from the other five columns entirely.
   const canAdd = addProjects.length > 0;
 

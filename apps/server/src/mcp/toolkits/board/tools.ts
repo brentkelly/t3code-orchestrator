@@ -176,7 +176,7 @@ const BoardCardContext = Schema.Struct({
   /** Proposed plans on this card, in order (metadata only; fetch a body with
       board_get_plan). */
   plans: Schema.Array(BoardPlan),
-  /** The card's Activity rail (D10), chronological: a deterministic,
+  /** The card's Activity rail, chronological: a deterministic,
       actor-attributed projection of the board's own event log — created, moved,
       plans proposed, plan written, step completed, input requested, archived,
       unarchived, worktree failed. Structured, not prose. */
@@ -307,7 +307,7 @@ const BoardCompleteStepTool = Tool.make("board_complete_step", {
   description:
     "Report that your work on this stage is finished. Planning with plan review on: the first succeeded call after your plan is posted is not recorded; it replies completed: false with the review's instructions instead, so run the review and call again. THIS IS THE COMPLETION CONTRACT: the board considers the work done ONLY when you call this. If you finish your work but never call it, the board cannot tell you apart from an agent that crashed, and your work will be treated as failed and retried. Call it exactly once, at the very end, with outcome 'succeeded' when the work is done, 'blocked' when you need something you cannot get yourself, or 'failed' when you could not complete it; include a summary (max 2 KiB) and optional structured payload (max 16 KiB serialised). Triage and adjudicate steps (triage@N, retriage@N, adjudicate@N, readjudicate@N) cannot complete 'blocked': triage fixes or rejects each finding with its reasoning, and the adjudicator hands a finding to a human with the `escalated` verdict. OMIT stepId: the board resolves the work you were assigned from your own thread. Pass one only if your prompt explicitly gave you a stepId (stages that run several steps, such as the code review loop, always do), and then pass exactly that string; any other value is rejected. A review-loop step (review@N, triage@N, adjudicate@N, retriage@N, readjudicate@N, sync@N) or the Build stage's step may only succeed with the exact payload its prompt asked for: a succeeded call with a missing or malformed one is REFUSED rather than recorded, so complete with outcome 'failed' instead when you cannot produce it. Never put the payload inside the summary: it is a separate argument, and a summary carrying serialised call markup is rejected. Retry-safe: a repeat call with the same stepId re-returns a recorded 'succeeded' outcome unchanged, UNLESS that record's payload is unreadable, in which case your call repairs it; after a 'failed' or 'blocked' report, a later call on the live step records your new outcome (that is how a recovered retry reports success). Your card is resolved from your thread.",
   parameters: Schema.Struct({
-    /** Omitted means "the live step of my thread" (D3). Only a stage
+    /** Omitted means "the live step of my thread". Only a stage
         that runs several steps states one, and only then is it passed back. */
     stepId: Schema.optional(TrimmedNonEmptyString),
     outcome: BoardStepOutcome,

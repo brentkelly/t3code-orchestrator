@@ -54,7 +54,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   runtimeMode: "auto",
   humanInLoop: false,
   maxAttempts: 3,
-  // Well past any backoff rung this fixture waits out (T3O-22, D7): with a
+  // Well past any backoff rung this fixture waits out: with a
   // one-minute timeout the 30s tick's timeout sweep would fire while the step
   // sat waiting for its rung and re-park it, testing the sweep rather than the
   // restart recovery this is about.

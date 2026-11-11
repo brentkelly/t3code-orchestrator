@@ -65,7 +65,7 @@ describe("describeBoardRefreshOutcome", () => {
   });
 });
 
-// T3O-52: a repeat refusal writes nothing to the card, so the banner alone
+// A repeat refusal writes nothing to the card, so the banner alone
 // cannot show that Check again ran.
 describe("describeBoardCheckWorktreeOutcome", () => {
   it("names the refusal when the worktree is still kept", () => {

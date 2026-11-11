@@ -63,7 +63,7 @@ function BoardCardChat({
 }) {
   const threadRef = scopeThreadRef(environmentId, threadId);
   const inShell = useThreadShell(threadRef) !== null;
-  // The shell keeps only the newest settled threads; older ones are read on demand (T3O-41).
+  // The shell keeps only the newest settled threads; older ones are read on demand.
   const rows = useBoardCardThreadRows(environmentId, inShell ? NO_THREAD_IDS : [threadId]);
   const presence = boardCardChatPresence({ threadId, inShell, rows });
 
@@ -175,21 +175,21 @@ export function BoardCardThreadPane({
   readonly onUnlinkThread: (threadId: ThreadId) => void;
   readonly maximised: boolean;
   readonly onToggleMaximised: () => void;
-  /** Each live-linked thread's cached todo list (t3o-18, D3/D5). The modal
+  /** Each live-linked thread's cached todo list. The modal
       always shows what is STORED — unlike the card strip, which hides a finished
       list on a stopped thread — so a thread that succeeded still reads `5/5`
       here. */
   readonly threadTodos?: ReadonlyMap<ThreadId, BoardCardThreadShell> | undefined;
-  /** The card's place in the build queue (t3o-33), or null when it is not
+  /** The card's place in the build queue, or null when it is not
       queued. */
   readonly queueInfo?: BoardQueueInfo | null | undefined;
   readonly queueForceStartPending?: boolean | undefined;
   readonly onQueueForceStart?: (() => void) | undefined;
-  /** Docked at the end of the thread, e.g. the split gate (T3O-31). */
+  /** Docked at the end of the thread, e.g. the split gate. */
   readonly footer?: ReactNode;
 }) {
   // A new blank thread becomes the card's most-recently-linked live thread, so
-  // selecting it opens its ChatView (which focuses the composer on mount, D3).
+  // selecting it opens its ChatView (which focuses the composer on mount).
   const createBlankThreadAndSelect = () => {
     void onCreateBlankThread().then((threadId) => {
       if (threadId !== null) onSelectThread(threadId);
@@ -284,7 +284,7 @@ export function BoardCardThreadPane({
                         />
                       </BoardHint>
                     ) : isBoardCardAwaitingPermission(link) ? (
-                      // Blocked on a permission prompt (T3O-16): as answerable
+                      // Blocked on a permission prompt: as answerable
                       // as a question, so the same violet, not the idle glyph.
                       <BoardHint label="Waiting for permission">
                         <span
@@ -318,7 +318,7 @@ export function BoardCardThreadPane({
                       {link.title ?? "Deleted thread"}
                     </span>
                     {(() => {
-                      // Per-tab todo counts (t3o-18): the point of tabs is choosing
+                      // Per-tab todo counts: the point of tabs is choosing
                       // between threads, and "3/9" answers that better than a title.
                       const todo = threadTodos?.get(link.threadId);
                       const total = todo?.todoTotal ?? 0;

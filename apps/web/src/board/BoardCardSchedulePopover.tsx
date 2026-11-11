@@ -81,7 +81,7 @@ export function BoardCardSchedulePopover({
       <PopoverTrigger
         aria-label={scheduledStartAt === null ? copy.emptyTip : copy.title}
         className={cn(
-          // Neutral, never coloured (D10). A scheduled card is not running, not
+          // Neutral, never coloured. A scheduled card is not running, not
           // done and not waiting on a human; and it is not amber either,
           // because amber's job is "this will never move until someone acts"
           // and a scheduled card moves on its own.

@@ -31,7 +31,7 @@ export function BoardSectionHeading({
   );
 }
 
-/** A sidebar section that opens on its header (T3O-38): collapsed by default,
+/** A sidebar section that opens on its header: collapsed by default,
     the header carrying a one-line summary of what is inside. */
 export function BoardCollapsibleSection({
   title,
@@ -82,10 +82,10 @@ export interface BoardDependencyEntry {
   readonly stage: BoardStageId;
   /** False only when the id resolves to no card at all — rendered as an
       unknown reference, never hidden. An ARCHIVED dependency is known: it is
-      a real card, resolved from the detail (t3o-13, D4), and reads as
+      a real card, resolved from the detail, and reads as
       archived rather than as a dangling id. */
   readonly known: boolean;
-  /** Archived dependencies no longer gate the dependent card (t3o-13, D1),
+  /** Archived dependencies no longer gate the dependent card,
       so they are shown as archived rather than by stage. */
   readonly archived: boolean;
 }
@@ -101,11 +101,11 @@ export function BoardDependencySection({
 }: {
   readonly dependencies: ReadonlyArray<BoardDependencyEntry>;
   readonly options: ReadonlyArray<BoardPickerOption>;
-  /** The read-model stage list, for resolving a dependency's stage label (D13). */
+  /** The read-model stage list, for resolving a dependency's stage label. */
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly onAdd: (cardId: BoardCardId) => void;
   readonly onRemove: (cardId: BoardCardId) => void;
-  /** Collapsible behind a chevron and a summary (T3O-39): starts closed with
+  /** Collapsible behind a chevron and a summary: starts closed with
       no dependencies and open with some. Adding one opens it. Remount per
       card (a `key`) so the open state does not carry over. */
   readonly collapsible?: boolean;

@@ -180,7 +180,7 @@ const effectiveMergeStrategy = Effect.fn("board_get_card.effectiveMergeStrategy"
 
 /** Resolve the services every board tool needs. */
 const boardToolDeps = Effect.gen(function* () {
-  // Every board tool acts for the calling thread's card (D3); `McpToolAccess`
+  // Every board tool acts for the calling thread's card; `McpToolAccess`
   // has already refused a caller that is not a T3 thread.
   const scope = yield* McpInvocationContext.McpInvocationContext.pipe(
     Effect.flatMap((current) => McpInvocationContext.requireThreadScope(current, "Board tools")),
@@ -880,7 +880,7 @@ export const boardHandlers = {
     const activity = yield* deps.board
       .boardCardActivity(card.id)
       .pipe(Effect.mapError(internalError));
-    // Per-thread todo summaries (D13): what a restarted agent — or a
+    // Per-thread todo summaries: what a restarted agent — or a
     // second thread on the same card — actually wanted from the progress notes
     // this replaces.
     const threads = yield* deps.board
@@ -1293,7 +1293,7 @@ export const boardHandlers = {
       ...(input.mergeStrategy === undefined ? {} : { mergeStrategy: input.mergeStrategy }),
       createdAt: yield* nowIso,
     };
-    // Stamps the agent actor (D11) via the deps-aware dispatch.
+    // Stamps the agent actor via the deps-aware dispatch.
     yield* dispatch(deps, create);
     // Read back the allocated key.
     const after = yield* readBoardState(deps);

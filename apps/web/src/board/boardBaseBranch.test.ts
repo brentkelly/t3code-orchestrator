@@ -1,6 +1,6 @@
 /**
- * The two picker decisions that can be wrong in a way nothing else catches
- * (T3O-5, D12/D16): what a click STORES, and which row reads as current.
+ * The two picker decisions that can be wrong in a way nothing else catches:
+ * what a click STORES, and which row reads as current.
  */
 import type { VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";

@@ -44,7 +44,7 @@ describe("boardQueueInfo", () => {
     expect(detail).not.toContain("of 3 agents");
   });
 
-  // A force start deliberately runs over the limit (t3o-33). "4 of 3" reads as
+  // A force start deliberately runs over the limit. "4 of 3" reads as
   // a bug, so past the ceiling the sentence stops being a fraction.
   it("reports the limit rather than a nonsense fraction once over the cap", () => {
     expect(boardQueueInfo({ slot: slot(2, 2), running: 4, cap: 3 })!.detail).toContain(
@@ -52,7 +52,7 @@ describe("boardQueueInfo", () => {
     );
   });
 
-  // T3O-32: the queue is one board-wide line for every stage's step, so a card
+  // The queue is one board-wide line for every stage's step, so a card
   // waiting for a review or planning slot showed "Queued for build" and named
   // work it was not about to do. No string here may name a stage.
   it("never names a stage, at any position in the queue", () => {

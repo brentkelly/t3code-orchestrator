@@ -97,12 +97,12 @@ export type HarnessCommand = BoardCommand | ThreadGatewayCall;
 
 export const NOW = "2026-01-01T00:00:00.000Z";
 export const projectId = ProjectId.make("project-1");
-/** A SECOND project on the same server (T3O-33): a card changing project needs
+/** A SECOND project on the same server: a card changing project needs
     somewhere to go, and the reactor spawns the restarted thread against the
     card's new `projectId`. Inert for every other suite. */
 export const otherProjectId = ProjectId.make("project-2");
 
-/** The single build step a stage runs, in the t3o-15 stage-owned model: the
+/** The single build step a stage runs, in the stage-owned model: the
     provider instance the frozen run row spawns on, and the prompt the stage
     injects on first entry. `settingsWith` folds it into a Building stage's
     `BoardStageExecution`. */
@@ -130,7 +130,7 @@ export const readyWorktree = (id: string): BoardCardWorktree => ({
 /** A thread mid-turn: what boot reconcile must read as ALIVE. */
 export const aliveThreadShell = (threadId: string): BoardThreadState => aliveThread(threadId);
 
-/** A thread as a server restart leaves it (t3o-10): the session is marked
+/** A thread as a server restart leaves it: the session is marked
     `error` while the killed turn's ref LINGERS. The stale ref is the whole
     point of the fixture — it is what used to read as alive. */
 export const failedThreadShell = (
@@ -146,7 +146,7 @@ export const failedThreadShell = (
 
 /** A thread between turns: the agent has stopped, nothing is pending. What a
     board thread looks like the moment its turn ends — and therefore the moment
-    a release the decider refused mid-turn can finally land (t3o-13). */
+    a release the decider refused mid-turn can finally land. */
 export const idleThreadShell = (
   threadId: string,
   /** Which provider instance the thread runs on. */
@@ -164,37 +164,37 @@ export const makeBoardCard = (input: {
   readonly pullRequest?: BoardCardPullRequest | null;
   readonly pullRequestHistory?: ReadonlyArray<BoardCardPullRequest>;
   readonly pullRequestFloor?: number | null;
-  /** The card's scheduled start (T3O-19). Absent is unscheduled, which is what
+  /** The card's scheduled start. Absent is unscheduled, which is what
       every fixture written before it reads as. */
   readonly scheduledStartAt?: string | null;
-  /** The card's auto-start arm (T3O-24). Absent is unarmed. */
+  /** The card's auto-start arm. Absent is unarmed. */
   readonly autoStart?: boolean;
   readonly autoPlanSetting?: boolean | null;
   readonly autoBuildSetting?: boolean | null;
   readonly autoMergeSetting?: boolean | null;
-  /** The per-card auto-merge arm (T3O-38, D3). */
+  /** The per-card auto-merge arm. */
   readonly autoMerge?: boolean;
-  /** A recorded auto-merge hold (T3O-38, D4) — the state a refused armed
+  /** A recorded auto-merge hold — the state a refused armed
       merge leaves behind. */
   readonly autoMergeHold?: BoardCard["autoMergeHold"];
-  /** Where the card is pinned and placed (T3O-65). Absent follows the default
+  /** Where the card is pinned and placed. Absent follows the default
       and has never run, as every fixture written before workers reads. */
   readonly pinnedWorkerId?: BoardCard["pinnedWorkerId"];
   readonly placedWorkerId?: BoardCard["placedWorkerId"];
   readonly workerMove?: BoardCard["workerMove"];
   readonly placementOrphaned?: BoardCard["placementOrphaned"];
-  /** The card's CI entry and last CI outcome (T3O-44). */
+  /** The card's CI entry and last CI outcome. */
   readonly ci?: BoardCard["ci"];
   readonly ciLastOutcome?: BoardCard["ciLastOutcome"];
   readonly ciRoundTrips?: number;
-  /** The card's own merge strategy (T3O-80). Absent follows the default. */
+  /** The card's own merge strategy. Absent follows the default. */
   readonly mergeStrategy?: BoardCard["mergeStrategy"];
-  /** The cards this one waits on (t3o-13). Absent is nothing. */
+  /** The cards this one waits on. Absent is nothing. */
   readonly dependsOn?: ReadonlyArray<string>;
-  /** The sub-board parent this card is a child of (t3o-23). Absent is
+  /** The sub-board parent this card is a child of. Absent is
       top-level, which every fixture written before sub-boards reads as. */
   readonly parentCardId?: string | null;
-  /** The card's human-in-the-loop OVERRIDE (t3o-15, D5). Absent is `null` — no
+  /** The card's human-in-the-loop OVERRIDE. Absent is `null` — no
       override, so the step takes its stage's stance. */
   readonly humanInLoop?: boolean | null;
 }): BoardCard => ({
@@ -221,7 +221,7 @@ export const makeBoardCard = (input: {
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: (input.scheduledStartAt ?? null) as BoardCard["scheduledStartAt"],
-  // `autoStart` / `autoMerge` are the pre-T3O-38 spellings of an own
+  // `autoStart` / `autoMerge` are the legacy spellings of an own
   // Auto-build / Auto-merge on.
   autoPlanSetting: input.autoPlanSetting ?? null,
   autoBuildSetting: input.autoBuildSetting ?? (input.autoStart === true ? true : null),
@@ -307,12 +307,12 @@ const buildingStageExecution = (
   submit: { ...DEFAULT_BOARD_BUILD_STAGE_EXECUTION.submit, ...input.submit },
 });
 
-/** The Planning stage configured to auto-execute (t3o-15): `plan` mode, so its
+/** The Planning stage configured to auto-execute: `plan` mode, so its
     run holds no concurrency slot and needs no worktree — the shape a card
     dropped into an auto-executing Planning column runs under. */
 const planningStageExecution = (
   step: TestBuildStep,
-  /** The planning interview's real stance (t3o-34): asking IS the job there, so
+  /** The planning interview's real stance: asking IS the job there, so
       the suites that drive a stopped planning agent need it on. */
   humanInLoop = false,
   autoAdvance = false,
@@ -339,14 +339,14 @@ export const settingsWith = (input: {
   readonly building: ReadonlyArray<TestBuildStep>;
   readonly globalMaxConcurrent: number;
   readonly perInstance?: Record<string, number | null>;
-  /** Per-worker limits (T3O-65). Absent is none: `local` inherits the two
+  /** Per-worker limits. Absent is none: `local` inherits the two
       fields above, as a settings file written before workers does. */
   readonly workers?: BoardConcurrencySettings["workers"];
   /** Pass a step to make Planning auto-execute too — the plan-mode counterpart
       of `building`, for the suites that drive a card into Planning. */
   readonly planning?: TestBuildStep;
   /** Run the Planning step human-in-the-loop, as the real planning interview
-      does (t3o-34). */
+      does. */
   readonly planningHumanInLoop?: boolean;
   /** Whether Planning auto-advances on a successful run. Defaults to off, what
       the stage ships with. */
@@ -355,14 +355,14 @@ export const settingsWith = (input: {
       conflict prompt). Absent leaves it at the compiled-in defaults, which is
       what a board nobody has configured actually resolves to. */
   readonly merge?: Partial<BoardStageExecutionMerge>;
-  /** Overrides for the Code review stage's config (T3O-12: `draftPullRequests`).
+  /** Overrides for the Code review stage's config (`draftPullRequests`).
       Absent leaves it at the compiled-in defaults. */
   readonly review?: Partial<BoardStageExecutionReview>;
   /** Whether a card reaching Done with a merged pull request has its worktree
       reclaimed there rather than at archive. Defaults to the shipped default
       (on), so a suite that says nothing exercises what users actually run. */
   readonly reclaimWorktreeOnDone?: boolean;
-  /** Overrides for the Build stage's `submit` step (t3o-07): the prompt, model
+  /** Overrides for the Build stage's `submit` step: the prompt, model
       and limits behind "Submit for merge — no review". Absent leaves the
       compiled-in defaults. */
   readonly submit?: Partial<BoardStepExecution>;
@@ -370,7 +370,7 @@ export const settingsWith = (input: {
       Defaults to on (what the stage ships with); a suite proving the DIRECTED
       advance ignores it switches it off. */
   readonly buildAutoAdvance?: boolean;
-  /** Auto-archive of idle Done cards (T3O-77). Absent is the shipped default:
+  /** Auto-archive of idle Done cards. Absent is the shipped default:
       off, 7 days. */
   readonly autoArchiveDone?: boolean;
   readonly autoArchiveAfterDays?: number;
@@ -443,15 +443,15 @@ export type Harness = {
   readonly decided: Effect.Effect<ReadonlyArray<HarnessEvent>>;
   /** Every merge the reactor asked the forge for, in order. */
   readonly mergeAttempts: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
-  /** The merge method of each attempt, in the same order (T3O-80). */
+  /** The merge method of each attempt, in the same order. */
   readonly mergeMethods: Effect.Effect<ReadonlyArray<string>>;
-  /** Every structured refusal probe the reactor made (T3O-38, D6). */
+  /** Every structured refusal probe the reactor made. */
   readonly mergeStateProbes: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
-  /** Every mark-ready request the reactor made (T3O-12), in order. */
+  /** Every mark-ready request the reactor made, in order. */
   readonly markReadyCalls: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
-  /** Every pull request the reactor asked the forge to close (T3O-28), in order. */
+  /** Every pull request the reactor asked the forge to close, in order. */
   readonly closePullRequestCalls: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
-  /** T3o (T3O-48): every pull request lookup, with whether it was FORCED — so a
+  /** T3o: every pull request lookup, with whether it was FORCED — so a
       test can tell a human's "Check again" from the automatic cached refresh. */
   readonly pullRequestLookups: Effect.Effect<ReadonlyArray<{ readonly forced: boolean }>>;
   /** Every number lookup (`get`), with the number asked for. */
@@ -461,25 +461,25 @@ export type Harness = {
   /** Every worktree path the reactor removed, in order. */
   readonly removedWorktrees: Effect.Effect<ReadonlyArray<string>>;
   /** Every thread that actually SETTLED, as opposed to every settle the reactor
-      asked for (t3o-13). The two differ exactly when the decider's guard refuses
+      asked for. The two differ exactly when the decider's guard refuses
       — a thread mid-turn — which is the failure the release sweep exists for, so
       an assertion about settling has to read this rather than `commands`. */
   readonly settledThreads: Effect.Effect<ReadonlySet<string>>;
-  /** Move a branch tip in the stubbed driver (t3o-24): what
+  /** Move a branch tip in the stubbed driver: what
       `rev-parse refs/heads/<ref>` answers from now on. Every unset ref answers
       the stub's historic "main", so existing fixtures never read stale. */
   readonly setBaseTip: (ref: string, tip: string) => void;
   /** End the `unbornBranch` fixture: the human made a first commit, so the
-      repository now answers like any other (T3O-15). */
+      repository now answers like any other. */
   readonly makeFirstCommit: () => void;
   /** Replace the board settings the reactor reads from now on — what flipping
       a switch in the Settings pane does. */
   readonly setBoardSettings: (settings: BoardSettings) => void;
-  /** Flip what the durability probe finds from now on (T3O-52) — a kept
+  /** Flip what the durability probe finds from now on — a kept
       worktree whose work later reaches the remote. */
   readonly setWorktreeUndurable: (undurable: boolean) => void;
   /** Every `git` argv the reactor ran, in order. A test asserting that a
-      remote-only base was MATERIALISED (T3O-5, D7) has nowhere else to read it:
+      remote-only base was MATERIALISED has nowhere else to read it:
       `git branch develop origin/develop` leaves no trace on the card. */
   readonly gitInvocations: Effect.Effect<ReadonlyArray<ReadonlyArray<string>>>;
 };
@@ -517,7 +517,7 @@ export function withGovernor(
         what the reactor's base-branch probes really see when a project's
         workspace root is not a git checkout. */
     readonly notAGitRepo?: boolean;
-    /** A repository with no commits yet (T3O-15): HEAD is a symbolic ref to
+    /** A repository with no commits yet: HEAD is a symbolic ref to
         this branch, which does not exist, so `symbolic-ref HEAD` answers it and
         every other probe fails as git really does. `makeFirstCommit` ends it. */
     readonly unbornBranch?: string;
@@ -530,13 +530,13 @@ export function withGovernor(
     /** Reject every `thread.create`, so a test can drive the spawn-failure path
         (a thread the engine refuses to create) without a provider double. */
     readonly rejectThreadCreate?: boolean;
-    /** The card detail's CI pass rows can't be read (T3O-57). */
+    /** The card detail's CI pass rows can't be read. */
     readonly ciPassesUnreadable?: boolean;
     /** What a branch pull-request lookup answers. `undefined` (the default) is
         "no pull request"; a `detail` string makes the lookup FAIL, which is a
         different answer the reactor must not confuse with "there is none". */
     readonly pullRequest?: BoardFoundPullRequest | { readonly failWith: string } | null;
-    /** T3o (T3O-48): the same answer, read afresh on every lookup, for a test
+    /** T3o: the same answer, read afresh on every lookup, for a test
         whose point is that the answer CHANGED between two of them — a pull
         request opened after the board was last told there was none. Takes
         precedence over `pullRequest` when both are given. */
@@ -549,12 +549,12 @@ export function withGovernor(
         `pullRequestOf` so fixtures that only care about the forge's one
         answer stay as they are. `null` is "this number is gone". */
     readonly pullRequestByNumber?: BoardFoundPullRequest | { readonly failWith: string } | null;
-    /** The repository every project's shell reports (T3O-18) — what a linked
+    /** The repository every project's shell reports — what a linked
         pull request is checked against. Defaults to `github.com/acme/repo`,
         the repository the pull-request fixtures live on; `null` is a project
         with no recognised remote. */
     readonly projectRepository?: RepositoryIdentity | null;
-    /** The project's `remote.origin.url` (T3O-24). Absent is a checkout
+    /** The project's `remote.origin.url`. Absent is a checkout
         whose identity already is its origin; a fork sets this to its own
         repository while `projectRepository` names upstream. */
     readonly projectOriginUrl?: string;
@@ -576,16 +576,16 @@ export function withGovernor(
      * detail. Once the script runs out, `mergeFailure` governs.
      */
     readonly mergeOutcomes?: ReadonlyArray<string | null>;
-    /** Which KIND of refusal `mergeFailure` / `mergeOutcomes` describe
-        (T3O-47). `undefined` is the host's own "no" — the case every fixture
+    /** Which KIND of refusal `mergeFailure` / `mergeOutcomes` describe.
+        `undefined` is the host's own "no" — the case every fixture
         written before this option existed means — and is the only one the
         reactor answers with a merge-state probe. */
     readonly mergeRefusal?: BoardPullRequestRefusal;
-    /** What the structured refusal probe answers (T3O-38, D7). `undefined`
+    /** What the structured refusal probe answers. `undefined`
         makes the probe FAIL, which is what an unsupported provider does and
         what the reactor must read as "unclassifiable" — the plain ladder. */
     readonly mergeState?: BoardMergeState;
-    /** T3o (T3O-12): the same answer, read afresh on every probe, for a test
+    /** T3o: the same answer, read afresh on every probe, for a test
         whose checks CHANGE between two probes — a failed check a CI fix's
         push turned into a pending one. Takes precedence over `mergeState`. */
     readonly mergeStateOf?: () => BoardMergeState;
@@ -606,18 +606,18 @@ export function withGovernor(
         can drive the reclaim refusal — the case where the checkout holds work
         that exists nowhere else and must NOT be deleted to save disk. */
     readonly worktreeDirty?: boolean;
-    /** Make the durability probe find the worktree's commits nowhere else
-        (T3O-52, D1): no remote ref contains HEAD and two commits are unmerged.
+    /** Make the durability probe find the worktree's commits nowhere else:
+        no remote ref contains HEAD and two commits are unmerged.
         Durable by default, since that is what a merged card looks like. */
     readonly worktreeUndurable?: boolean;
-    /** What `git worktree list --porcelain` answers for the orphan sweep
-        (T3O-52, D4). Empty by default: no registered worktrees. */
+    /** What `git worktree list --porcelain` answers for the orphan sweep.
+        Empty by default: no registered worktrees. */
     readonly registeredWorktrees?: string;
-    /** Runs inside the durability probe, at its dirty check (T3O-52): the
+    /** Runs inside the durability probe, at its dirty check: the
         window in which the board can change under a reclaim already decided
         on. Gets the read model to change it. */
     readonly duringDurabilityProbe?: (model: Ref.Ref<BoardReadModel>) => Effect.Effect<void>;
-    /** The cached todo state per thread id (t3o-18): the reactor reads
+    /** The cached todo state per thread id: the reactor reads
         `advancedAt` for the stall-reset / timeout-liveness signal. Absent
         threads answer "no list". */
     readonly threadTodos?: ReadonlyMap<string, { readonly advancedAt: string | null }>;
@@ -630,30 +630,30 @@ export function withGovernor(
     /** Thread ids whose message should be dated BEFORE the step started, i.e.
         text the agent wrote in an earlier turn and has not added to since. */
     readonly staleThreadMessages?: ReadonlySet<string>;
-    /** When each thread last produced OUTPUT (T3O-12, D1): the timeout sweep's
+    /** When each thread last produced OUTPUT: the timeout sweep's
         liveness life sign. An absent thread answers null — "no life sign" —
         which is what every fixture written before this signal existed reads as,
         so none of them change behaviour. */
     readonly threadSignals?: ReadonlyMap<string, string>;
-    /** When a turn was REQUESTED on each thread and has not started yet
-        (T3O-18): the message a human sent while the previous turn was still
+    /** When a turn was REQUESTED on each thread and has not started yet:
+        the message a human sent while the previous turn was still
         finishing. An absent thread answers null — "nothing outstanding" — which
         is what every fixture written before this signal existed reads as. */
     readonly threadPendingTurnStarts?: ReadonlyMap<string, string>;
-    /** A `ServerConfig` layer (t3o-32): with one, a build/plan spawn stages
+    /** A `ServerConfig` layer: with one, a build/plan spawn stages
         the card's brief images from `<stateDir>/board/attachments`; without
         one the reactor stages nothing, as the other tests expect. */
     readonly serverConfig?: Layer.Layer<ServerConfig.ServerConfig>;
-    /** The worktree retirer (T3O-23), over the stubbed git driver. By default
+    /** The worktree retirer, over the stubbed git driver. By default
         the real one with nothing running and no remove scripts, so it only
         removes — what every fixture written before it expects. */
     readonly worktreeRetirer?: Layer.Layer<WorktreeRetirer, never, GitVcsDriver.GitVcsDriver>;
-    /** The board's gateway over the harness's own threads (T3O-63): a router
+    /** The board's gateway over the harness's own threads: a router
         that also reaches a worker. Absent: the threads are the fake alone. */
     readonly gateway?: (local: LocalThreadGatewayShape) => ThreadGatewayShape;
-    /** Where the supervisor spawns each card's threads (T3O-63). */
+    /** Where the supervisor spawns each card's threads. */
     readonly placement?: BoardPlacementShape;
-    /** Where cards' git runs (T3O-64), built from this harness's own local
+    /** Where cards' git runs, built from this harness's own local
         workspace services. By default every card is local. */
     readonly workspaces?: (local: LocalBoardWorkspaceDeps) => BoardWorkspacesShape;
   },
@@ -837,7 +837,7 @@ export function withGovernor(
     // card whose tree is dirty did not.
     const removedWorktrees = yield* Ref.make<ReadonlyArray<string>>([]);
     let worktreeUndurable = input.worktreeUndurable === true;
-    // Movable branch tips for the rev-parse stub (t3o-24) — a plain map, so a
+    // Movable branch tips for the rev-parse stub — a plain map, so a
     // test can slide a base tip between pumps without an Effect.
     const baseTips = new Map<string, string>();
     let unbornBranch = input.unbornBranch;
@@ -852,7 +852,7 @@ export function withGovernor(
       // so the cleanup at Done silently did nothing in every test that reached
       // it — which is why nothing in these suites asserted that it fires.
       resolvePrimaryRemoteName: () => Effect.succeed("origin"),
-      // The orphan sweep's base for a worktree no card names (T3O-52, D4).
+      // The orphan sweep's base for a worktree no card names.
       resolveDefaultBranchName: () => Effect.succeed("main"),
       statusDetails: () =>
         Effect.succeed({
@@ -891,14 +891,14 @@ export function withGovernor(
               : { stdout: "", stderr: "fatal: no commits yet", exitCode: 128 },
           );
         }
-        // A `rev-parse refs/heads/<ref>` answers the movable tip fixture
-        // (t3o-24): `setBaseTip` moves it mid-test, and an unset ref answers
+        // A `rev-parse refs/heads/<ref>` answers the movable tip fixture:
+        // `setBaseTip` moves it mid-test, and an unset ref answers
         // the stub's historic "main" so nothing existing reads differently.
         const ref = request.args?.find((arg) => arg.startsWith("refs/heads/"));
         if (request.args?.[0] === "rev-parse" && ref !== undefined) {
           const name = ref.slice("refs/heads/".length);
           // A branch the fixture says is absent answers as git really does:
-          // exit 1, nothing on stdout (T3O-5, D7). `createdBranches` is what a
+          // exit 1, nothing on stdout. `createdBranches` is what a
           // `git branch <name> <start>` in this same stub added, so
           // materialising a remote-only base actually makes it present.
           if (input.missingBranches?.includes(name) === true && !createdBranches.has(name)) {
@@ -917,7 +917,7 @@ export function withGovernor(
             ? Effect.succeed({ stdout: "remote-tip", stderr: "", exitCode: 0 })
             : Effect.succeed({ stdout: "", stderr: "", exitCode: 1 });
         }
-        // The reclaim durability probe (T3O-52, D1). `status --porcelain` is
+        // The reclaim durability probe. `status --porcelain` is
         // the dirty check; the ancestry, remote-containment and unmerged-count
         // reads answer "durable" unless the fixture says otherwise.
         if (request.args?.[0] === "status" && request.args[1] === "--porcelain") {
@@ -1016,7 +1016,7 @@ export function withGovernor(
     // Every refusal probe, so a test can assert the happy path costs ONE forge
     // call and that a hard hold is never re-probed.
     const mergeStateProbes = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
-    // T3o (T3O-48): see `pullRequestLookups`.
+    // T3o: see `pullRequestLookups`.
     const pullRequestLookups = yield* Ref.make<ReadonlyArray<{ readonly forced: boolean }>>([]);
     const pullRequestGets = yield* Ref.make<
       ReadonlyArray<{ readonly number: number; readonly forced: boolean }>
@@ -1163,7 +1163,7 @@ export function withGovernor(
         // are replayed: re-projecting a card-carrying trigger would clobber the recipe snapshot.
         const projectExternal = (event: BoardEvent) =>
           event.type === "board.card-step-completed" ||
-          // Same reason (t3o-33): the override lands on the step row through
+          // Same reason: the override lands on the step row through
           // the projection, and `schedule` reads it from there. Pumping the
           // event without folding it in would test a row that never carried
           // the flag.
@@ -1176,12 +1176,12 @@ export function withGovernor(
           // from the model. The projector upserts the payload's card, so a fixture must build
           // the event from the card it currently holds.
           event.type === "board.card-updated" ||
-          // And a pin (T3O-65): a client command whose card the placement
+          // And a pin: a client command whose card the placement
           // pass re-reads from the model.
           event.type === "board.card-worker-pinned" ||
-          // And plan review turned on late (T3O-39): a card edit's second
+          // And plan review turned on late: a card edit's second
           // event, read back as the step's started review; and its rounds
-          // changed mid-review (T3O-50).
+          // changed mid-review.
           event.type === "board.plan-review-started" ||
           event.type === "board.plan-review-rounds-changed"
             ? Ref.get(model).pipe(
@@ -1278,7 +1278,7 @@ export const cardMoved = (
     },
   }) as unknown as HarnessEvent;
 
-/** The "Begin build" gate (D18): Ready → Building carrying the provisioned card. */
+/** The "Begin build" gate: Ready → Building carrying the provisioned card. */
 export const movedToBuilding = (card: BoardCard, sequence: number): HarnessEvent =>
   cardMoved(card, "ready", "building", sequence);
 
@@ -1309,7 +1309,7 @@ export const stepCompleted = (
     },
   }) as unknown as HarnessEvent;
 
-/** A human's force-start request as the decider emits it (t3o-33): the whole
+/** A human's force-start request as the decider emits it: the whole
     step row with the override set. The pump projects it into the model before
     the reactor observes it, exactly as the projection pipeline does in
     production, so `schedule` reads a row that really carries `forceStart`. */
@@ -1320,7 +1320,7 @@ export const forceStartRequested = (state: BoardCardStepState, sequence: number)
     payload: { cardId: state.cardId, state: { ...state, forceStart: true } },
   }) as unknown as HarnessEvent;
 
-/** A turn being INTERRUPTED on a thread (T3O-23) — what the Stop button emits,
+/** A turn being INTERRUPTED on a thread — what the Stop button emits,
     and the signal that parks a board-run step. The board's own interrupts emit
     exactly the same signal, which is why the reactor filters them by thread.
     `_sequence` is kept so call sites read like the board events beside them. */
@@ -1329,7 +1329,7 @@ export const turnInterruptRequested = (threadId: ThreadId, _sequence?: number): 
   threadId,
 });
 
-/** A parked step sent back to the build queue (T3O-23) — the shape
+/** A parked step sent back to the build queue — the shape
     `board.card.requeue-step` decides, as it reaches the reactor's domain
     stream. Mirrors `forceStartRequested`: the client's own command is covered
     at the decider, and this is how its EVENT reaches a live reactor. */
@@ -1350,7 +1350,7 @@ export const stepRequeued = (state: BoardCardStepState, sequence: number): Harne
     },
   }) as unknown as HarnessEvent;
 
-/** A card edit as the decider emits it (T3O-19): the whole card, plus the
+/** A card edit as the decider emits it: the whole card, plus the
     key that says the edit TOUCHED the schedule. That key is what the reactor
     reads to tell a schedule edit from a title edit, so a helper that omitted it
     would drive a path production never takes. */
@@ -1369,8 +1369,8 @@ export const cardScheduleUpdated = (
     },
   }) as unknown as HarnessEvent;
 
-/** A human flipping the card's human-in-the-loop toggle (t3o-15, D5/D6), and
-    the shape the reactor's own Stop flip re-enters as (T3O-17). The engine
+/** A human flipping the card's human-in-the-loop toggle, and
+    the shape the reactor's own Stop flip re-enters as. The engine
     double applies a decided event to the read model but does not feed it back
     onto the domain stream, so a test that wants the retune leg pumps this. */
 export const cardHumanInLoopUpdated = (
@@ -1388,7 +1388,7 @@ export const cardHumanInLoopUpdated = (
     },
   }) as unknown as HarnessEvent;
 
-/** A HUMAN starting a turn on a thread — typing into the composer (T3O-17).
+/** A HUMAN starting a turn on a thread — typing into the composer.
     `byBoard: false` is the whole point: it is what tells this apart from the
     board's own nudge. */
 export const humanTurnStartRequested = (
@@ -1397,7 +1397,7 @@ export const humanTurnStartRequested = (
   at: string = NOW,
 ): ThreadSignal => ({ type: "turn-requested", threadId, byBoard: false, at });
 
-/** The BOARD's own nudge starting a turn (T3O-17, D2). It must NOT read as a
+/** The BOARD's own nudge starting a turn. It must NOT read as a
     human steering, or the recovery ladder could never reach its ceiling. */
 export const boardTurnStartRequested = (
   threadId: ThreadId,
@@ -1415,7 +1415,7 @@ export const cardTitleUpdated = (card: BoardCard, sequence: number): HarnessEven
     payload: { cardId: card.id, card: { ...card, title: `${card.title} (edited)` } },
   }) as unknown as HarnessEvent;
 
-/** An edit that TOUCHED the auto-merge toggle (T3O-38). The marker is what
+/** An edit that TOUCHED the auto-merge toggle. The marker is what
     the reactor keys the fire-on-toggle on, so a helper that only set the
     card's field would prove nothing. */
 export const cardAutoMergeUpdated = (
@@ -1495,7 +1495,7 @@ export const turnCompleted = (threadId: ThreadId, turnId?: string): ThreadSignal
   turnRef: turnId,
 });
 
-/** A structured question being ANSWERED (t3o-34, D5). It is raised from inside a
+/** A structured question being ANSWERED. It is raised from inside a
     running turn and answering it only resolves the deferred that turn is blocked
     on, so no turn ever starts — this is the only signal a board sees.
     `answered` is what tells it from a cancellation (`userInputCancelled`). */
@@ -1513,7 +1513,7 @@ export const userInputCancelled = (threadId: ThreadId): ThreadSignal => ({
   answered: false,
 });
 
-/** An ORDINARY agent question (t3o-18, D13): what every provider raises when it
+/** An ORDINARY agent question: what every provider raises when it
     asks a human, with no board tool call behind it. */
 export const userInputRequested = (threadId: ThreadId): ThreadSignal => ({
   type: "input-requested",
@@ -1529,7 +1529,7 @@ export const cardStage = (board: BoardState, cardId: BoardCardId): BoardStageId 
 
 /**
  * Flip a card's own Automation toggles the way `board.card.set-automation`
- * does (T3O-38): the card is written into the model, then the decider's event
+ * does: the card is written into the model, then the decider's event
  * is delivered to the reactor.
  */
 export const setAutomation = (

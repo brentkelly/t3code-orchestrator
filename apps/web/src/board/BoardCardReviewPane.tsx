@@ -51,7 +51,7 @@ const PHASE_NAMES: Record<BoardReviewPhaseId | BoardReviewFollowUpPhase, string>
 
 /** How the pane names a phase whose payload it cannot read. Short agent nouns
     rather than `PHASE_NAMES`' step titles, because these read inside a
-    sentence: "the triager reported success but…" (T3O-14). */
+    sentence: "the triager reported success but…". */
 const UNREADABLE_PHASE_NAMES: Record<BoardReviewStepPhase, string> = {
   review: "reviewer",
   triage: "triager",
@@ -102,7 +102,7 @@ const VERDICT_WORDS: Record<NonNullable<BoardReviewLoopFinding["verdict"]>, stri
 
 /** A finding's row: severity chip, title and file, then where it stands. The
     latest pass leads; a finding the adjudicator overruled keeps its earlier
-    passes one click away (T3O-51). */
+    passes one click away. */
 function FindingRow({ entry }: { readonly entry: BoardReviewLoopFinding }) {
   const { finding } = entry;
   const [showPasses, setShowPasses] = useState(false);
@@ -174,10 +174,10 @@ function FindingRow({ entry }: { readonly entry: BoardReviewLoopFinding }) {
 }
 
 /** A phase as the pane shows it: the walk's status, or `stopped` when its
-    step stalled (T3O-13). */
+    step stalled. */
 type ShownPhaseStatus = BoardReviewPhaseStatus | "stopped";
 
-/** The review phase's shared step badge (T3O-44). A skipped phase wears the
+/** The review phase's shared step badge. A skipped phase wears the
     cancelled dash; a stopped one stays a plain number, as amber is the pill's. */
 const PHASE_BADGE: Record<ShownPhaseStatus, BoardStepBadgeState> = {
   done: "passed",
@@ -194,7 +194,7 @@ function phaseNote(
   status: ShownPhaseStatus,
 ): string {
   // Its step stalled before it finished — or before it ever had a thread, as a
-  // failed spawn leaves it — so nothing is working on it (T3O-13).
+  // failed spawn leaves it — so nothing is working on it.
   if (status === "stopped") return "Stopped. Nothing is running this phase.";
   const { counts, severities, findings } = round;
   const blocking = severities.critical + severities.improvement;
@@ -225,7 +225,7 @@ function phaseNote(
     if (status === "running") return "Answering the overruled findings: fix it or argue again.";
     const fixed = answered.filter((f) => f.retriage === "fixed").length;
     const argued = answered.filter((f) => f.retriage === "rejected").length;
-    // Only a record from before T3O-55 can hold a re-triage escalation.
+    // Only a legacy record can hold a re-triage escalation.
     const escalated = answered.filter((f) => f.retriage === "escalated").length;
     return `${fixed} fixed, ${argued} argued again${escalated > 0 ? `, ${escalated} escalated to you` : ""}.`;
   }
@@ -297,9 +297,8 @@ function roundBadge(
       };
     case "unreadable":
       // Amber, like every other held ending (docs/t3o/status-colours.md:
-      // blocked is amber). It was destructive red until T3O-14, which made
-      // `unreadable` a held outcome — so the column card started flagging it
-      // amber and the pane would otherwise have painted the same fact red.
+      // blocked is amber). `unreadable` is a held outcome, and the column card
+      // flags it amber too.
       return {
         label: "Unreadable",
         className: "border-amber-500/45 bg-amber-500/14 text-amber-700 dark:text-amber-300",
@@ -489,7 +488,7 @@ function statusPill(
             ? "Sync base"
             : PHASE_NAMES[loop.next.phase];
       // A stalled step is not "waiting to run": nothing will run it until
-      // someone acts (T3O-13). Amber, as the card's own "Needs a human" chip
+      // someone acts. Amber, as the card's own "Needs a human" chip
       // is — a stop with no question to answer is not violet
       // (docs/t3o/status-colours.md).
       if (stalled)
@@ -653,7 +652,7 @@ function NoConvergenceBlock({
 }
 
 /**
- * The block a STUCK loop puts above its rounds (T3O-51): what triage and the
+ * The block a STUCK loop puts above its rounds: what triage and the
  * adjudicator still disagree on, side by side, and the three rulings a human
  * can make. Every action applies to all the listed findings at once.
  */
@@ -992,10 +991,10 @@ export function BoardCardReviewPane({
       a record — either way a non-terminal loop's pill must not claim to be
       running or waiting. */
   readonly offStage?: boolean | undefined;
-  /** The card's live step has stalled (T3O-13): the walk's next phase is owed
+  /** The card's live step has stalled: the walk's next phase is owed
       but nothing is running it, so it must not read as running or waiting. */
   readonly stalled?: boolean | undefined;
-  /** The card's own review-loop settings (t3o-22, D2), or null. */
+  /** The card's own review-loop settings, or null. */
   readonly overrides?: BoardCardReviewOverrides | null | undefined;
   /** The highest round the loop has STARTED, resolved by the caller — which is
       the only layer that can see the card's live step. The `−` button's floor,
@@ -1006,7 +1005,7 @@ export function BoardCardReviewPane({
       for a concurrency slot. The `−` floor needs it because the decider counts
       a live step of ANY status, and the ledger alone cannot see one. */
   readonly stepActive?: boolean | undefined;
-  /** Run one more review round (T3O-39, D6). Distinct from `onSetRounds`: the
+  /** Run one more review round. Distinct from `onSetRounds`: the
       round it buys is resolved server-side from the ledger, so resuming can
       neither shrink a budget the user already raised nor leave the stop it
       would otherwise terminate on again. */
@@ -1021,12 +1020,12 @@ export function BoardCardReviewPane({
   /** The review phase's EFFECTIVE access level, resolved by the caller — what
       a round without its own shows and inherits. */
   readonly phaseRuntimeMode?: RuntimeMode | undefined;
-  /** Move the card on despite a loop that never converged (D8). */
+  /** Move the card on despite a loop that never converged. */
   readonly onAdvance?: (() => void) | undefined;
-  /** Rule on a stuck loop's findings and run another round (T3O-51). */
+  /** Rule on a stuck loop's findings and run another round. */
   readonly onRuling?: ((ruling: BoardReviewCarryRuling, note: string | null) => void) | undefined;
-  /** Send a round's review back because its recorded payload cannot be read
-      (T3O-14). Absent leaves the halt visible but unfixable from here. */
+  /** Send a round's review back because its recorded payload cannot be read.
+      Absent leaves the halt visible but unfixable from here. */
   readonly onReopenStep?: ((stepId: string) => void) | undefined;
   readonly onBackToThread: () => void;
   /** Deep-link into a phase's thread; absent when the pane has no thread pane
@@ -1063,7 +1062,7 @@ export function BoardCardReviewPane({
   // turns on: these carry a converged loop's round counts and the opposite
   // meaning, so the pane must never let them read as a pass.
   const held = isBoardReviewLoopHeld(loop.status);
-  // The one broken record the recovery block names and reopens (T3O-14).
+  // The one broken record the recovery block names and reopens.
   const unreadableStepId = loop.unreadableStepId;
   const unreadablePhase = unreadablePhaseOf(loop);
   // A started round can never be removed. A control gate only, never fed back

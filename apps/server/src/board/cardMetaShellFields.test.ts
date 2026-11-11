@@ -702,7 +702,7 @@ it.layer(makeTestLayer("t3o-card-schedule-"))("scheduled start, column to shell 
         scheduledStartAt: null,
         createdAt,
       });
-      // Absent, not null (D8): an unscheduled card's shell is byte-for-byte
+      // Absent, not null: an unscheduled card's shell is byte-for-byte
       // what it was before this field existed, which is what keeps the
       // per-card budget and the linear snapshot growth unchanged.
       const cleared = yield* shellCard;
@@ -732,7 +732,7 @@ it.layer(makeTestLayer("t3o-card-auto-merge-"))(
 
         // Nothing yet: an unheld, unarmed card is byte-for-byte what it was
         // before these three keys existed, which is what keeps the per-card
-        // budget and the linear snapshot growth unchanged (D14).
+        // budget and the linear snapshot growth unchanged.
         const quiet = yield* shellCard;
         assert.isFalse(quiet !== undefined && "autoMergeHeldSince" in quiet);
         assert.isFalse(quiet !== undefined && "autoMergeGaveUp" in quiet);
@@ -803,7 +803,7 @@ it.layer(makeTestLayer("t3o-card-auto-merge-"))(
         assert.strictEqual(delta.autoMergeSetting, hard?.autoMergeSetting);
         assert.strictEqual(delta.autoPlanPending, hard?.autoPlanPending);
 
-        // Disarming clears the hold (D10) and, with it, both hold keys — the
+        // Disarming clears the hold and, with it, both hold keys — the
         // reverse state a one-way door would have missed.
         yield* engine.dispatch({
           type: "board.card.set-automation",
@@ -902,7 +902,7 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
             cardId,
             outcome: "removed",
             forced: true,
-            // T3O-23: the remove script failed, and the removal went ahead.
+            // The remove script failed, and the removal went ahead.
             hookWarning: 'Remove script "park" exited with code 1',
             createdAt,
           });

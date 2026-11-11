@@ -49,7 +49,7 @@ export function resolveBoardThreadStageRestart(input: {
   readonly autoExecute: boolean;
   readonly stageLabel: string;
   readonly runInFlight: boolean;
-  /** Whether the card's live step has given up (t3o-17, D3). */
+  /** Whether the card's live step has given up. */
   readonly stalled: boolean;
   /** Non-null when start-stage-thread would be refused for unmet deps. */
   readonly blockedReason?: string | null;

@@ -100,7 +100,7 @@ const expectedCard = {
   updatedAt: createdAt,
 } as const;
 
-// The shell carries the bounded BoardCardShell (t3o-04), never the full
+// The shell carries the bounded BoardCardShell, never the full
 // aggregate above. Spelled out literally — building it through
 // makeBoardCardShell would make the assertion tautological.
 const expectedCardShell = {
@@ -114,7 +114,7 @@ const expectedCardShell = {
   blocked: false,
   dependencyCount: 0,
   hasBrief: false,
-  // Null on every live shell — archived cards leave the snapshot (D15).
+  // Null on every live shell — archived cards leave the snapshot.
   archivedAt: null,
   hasPr: false,
   attachmentCount: 0,
@@ -133,7 +133,7 @@ const expectedCardShell = {
   briefHasImage: false,
   planCount: 0,
   // planTotal / planDone stay absent: derived client-side from the children
-  // the shell already carries (t3o-23, D6), never produced by the server.
+  // the shell already carries, never produced by the server.
 } as const;
 
 it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking skeleton", (it) => {
@@ -155,20 +155,20 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
           // The migration seeds the catalogue on every board; a card created
           // without labels carries none, but the seeds are present.
           labels: BOARD_SEED_LABELS,
-          // The eight compiled stages are seeded too (D2), and a from-empty
-          // replay reproduces the same list (AC18).
+          // The eight compiled stages are seeded too, and a from-empty
+          // replay reproduces the same list.
           stages: BOARD_SEED_STAGES,
           nextCardNumberByProject: { [projectId]: 2 },
         });
 
         // Shell snapshot carries the bounded card shell to every connecting
-        // client — never the full aggregate (t3o-04, D7).
+        // client — never the full aggregate.
         const shell = yield* snapshotQuery.getBoardSnapshot();
         assert.deepStrictEqual(shell.cards, [expectedCardShell]);
 
         // Replaying the board's own log from a truly empty read model must land
         // on the same board state. The project's event is in upstream's log; the
-        // board log holds board events and nothing else (T3O-56).
+        // board log holds board events and nothing else.
         const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
         assert.deepStrictEqual(
           events.map((event) => event.type),
@@ -228,7 +228,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         });
       }
 
-      // Post-t3o-19 shape: a stage with no steps.
+      // A stage with no steps.
       yield* engine.dispatch({
         type: "board.card.select-step",
         commandId: CommandId.make("cmd-select-unstepped"),
@@ -238,8 +238,8 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         stageLabel: "Planning",
         ...frozen,
       });
-      // Post-t3o-19 shape: the review loop, which genuinely has steps — and,
-      // since t3o-24, a recorded round-start base tip (AC7: the tip must
+      // The review loop, which genuinely has steps, and a recorded
+      // round-start base tip (the tip must
       // survive replay/rehydration identically, which the deep-equality below
       // pins for both the null and the recorded shape).
       yield* engine.dispatch({
@@ -275,7 +275,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         { stepId: "review@1", stepLabel: "Review · round 1", stageLabel: "Code review" },
         { stepId: "building", stepLabel: "Building", stageLabel: null },
       ]);
-      // The recorded round-start tip rehydrates from its column (t3o-24, AC7);
+      // The recorded round-start tip rehydrates from its column;
       // the rows that recorded none stay null.
       const tips = new Map(
         (rehydrated.board?.stepStates ?? []).map((state) => [
@@ -438,7 +438,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
   );
 
   // Labels round-trip through the join table and the shell, and a from-empty
-  // replay reproduces them identically (t3o-06a). The decider sees the seeded
+  // replay reproduces them identically. The decider sees the seeded
   // catalogue (the migration seeds it), so a create tagged with the feature
   // seed label validates.
   it.effect("persists card labels through the join and replays them identically", () =>
@@ -473,7 +473,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
     }),
   );
 
-  // The auto-merge arm and its hold (T3O-38): two columns migration 043 adds,
+  // The auto-merge arm and its hold: two columns migration 043 adds,
   // whose decoding defaults must match the column defaults or a from-empty
   // replay of a log written before this spec diverges from a rehydration.
   it.effect("persists the auto-merge arm and hold, and replays them identically", () =>
@@ -633,7 +633,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-empty-test-"))(
         assert.deepStrictEqual(rehydrated.board, replayed.board);
 
         // And the orchestration shell carries nothing board-shaped at all: the
-        // board rides its own subscription (T3O-57).
+        // board rides its own subscription.
         const shell = yield* snapshotQuery.getShellSnapshot();
         assert.isFalse("cards" in shell);
         assert.isFalse("boardLabels" in shell);

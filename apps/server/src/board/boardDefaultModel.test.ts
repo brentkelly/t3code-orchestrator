@@ -63,7 +63,7 @@ it.effect("a stage with no model of its own runs on the board's default", () =>
       Effect.gen(function* () {
         yield* pumpDomain(movedToPlanning(1));
 
-        // Frozen onto the run row (D12), so the pair is resolved once at entry
+        // Frozen onto the run row, so the pair is resolved once at entry
         // rather than re-read while the card runs.
         const state = boardCardStepState(yield* board, cardId);
         assert.strictEqual(state?.providerInstanceId, BOARD_DEFAULT.instanceId);
@@ -82,7 +82,7 @@ it.effect("the app's text-generation selection still governs when no default is 
       Effect.gen(function* () {
         yield* pumpDomain(movedToPlanning(1));
 
-        // The pre-t3o-30 behaviour, kept underneath: nobody who never sets a
+        // The fallback behaviour, kept underneath: nobody who never sets a
         // board default sees their cards move.
         const state = boardCardStepState(yield* board, cardId);
         assert.strictEqual(

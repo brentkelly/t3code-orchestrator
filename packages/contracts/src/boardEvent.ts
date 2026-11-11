@@ -45,9 +45,9 @@ export const BoardAggregateKind = Schema.Literals([
   "card",
   "label",
   "stage",
-  // T3O-62: a registered worker, and the board's default-worker choice.
+  // A registered worker, and the board's default-worker choice.
   "worker",
-  // T3O-43: a project's t3o.json stage config.
+  // A project's t3o.json stage config.
   "project",
 ]);
 export type BoardAggregateKind = typeof BoardAggregateKind.Type;

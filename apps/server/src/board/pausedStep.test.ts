@@ -205,8 +205,9 @@ it.effect("a human stop still parks the card when an escalation won the ordering
       Effect.gen(function* () {
         const threadId = ThreadId.make("thread-lost-stop");
 
-        // The reverse interleaving: both streams merge into one worker with no ordering guarantee, so
-        // `turn.completed` can arrive BEFORE the interrupt, and with no ladder budget left would escalate.
+        // The reverse interleaving: both streams merge into one worker with no ordering
+        // guarantee, so `turn.completed` can arrive BEFORE the interrupt, and with no ladder
+        // budget left would escalate.
         yield* pumpRuntime(turnCompleted(threadId));
         assert.strictEqual(stepStatus(yield* board, BoardCardId.make("lost-stop")), "stalled");
 
@@ -426,7 +427,7 @@ it.effect("Resume continues a paused PLANNING conversation rather than restartin
         );
         const running = boardCardStepState(yield* board, BoardCardId.make("plan"));
         assert.strictEqual(running?.status, "running");
-        // A plan-mode step holds no slot at all (D5), so the only thing Resume
+        // A plan-mode step holds no slot at all, so the only thing Resume
         // has to get right here is the CONVERSATION.
         assert.strictEqual(running?.mode, "plan");
         assert.strictEqual(yield* slots.heldTotal, 0);
@@ -552,7 +553,7 @@ it.effect("slot accounting returns to zero across park → resume → settle", (
   ),
 );
 
-// ── T3O-76: a stop pauses, and leaves the card's stance alone ─────────────
+// ── A stop pauses, and leaves the card's stance alone ─────────────
 
 /** The card override on the live read model, which is what the next stage
     entry and every resumed step read. */
@@ -567,8 +568,8 @@ it.effect("stopping an unattended step pauses it and leaves the card unattended 
 
       yield* pumpDomain(turnInterruptRequested(threadId, 2));
 
-      // T3O-17 used to flip the card to human-in-the-loop here. Only the
-      // card's own toggle sets that now; a Stop pauses and nothing else.
+      // Only the card's own toggle sets human-in-the-loop; a Stop pauses and
+      // nothing else.
       const stopped = yield* board;
       assert.strictEqual(stepStatus(stopped, BoardCardId.make("handover")), "paused");
       assert.isNull(cardHumanInLoop(stopped, "handover"));
@@ -634,8 +635,9 @@ it.effect("ticking human-in-the-loop on a stopped card does not put the agent ba
       yield* pumpDomain(turnInterruptRequested(threadId, 2));
       const turnsBefore = turnsOf(yield* commands).length;
 
-      // The human ticks the card's toggle after pressing Stop. The stance turn must not be sent into
-      // the stopped thread: its `turn-requested` signal would resume the step against the Stop.
+      // The human ticks the card's toggle after pressing Stop. The stance turn must not be sent
+      // into the stopped thread: its `turn-requested` signal would resume the step against the
+      // Stop.
       const card = (yield* board).cards.find(
         (candidate) => candidate.id === BoardCardId.make("no-restart"),
       );
@@ -682,8 +684,9 @@ it.effect("switching the stance of a step parked on a question still puts it bac
         const turnsBefore = turnsOf(yield* commands).length;
         yield* pumpDomain(cardHumanInLoopUpdated(card!, false, 2));
 
-        // The stance turn carries the answer into the thread, and its `turn-requested` signal resumes
-        // the step. The sweep does not recover an `awaiting-input` step, so without it this stays parked.
+        // The stance turn carries the answer into the thread, and its `turn-requested` signal
+        // resumes the step. The sweep does not recover an `awaiting-input` step, so without it
+        // this stays parked.
         const turns = turnsOf(yield* commands);
         assert.strictEqual(turns.length, turnsBefore + 1);
         const stance = turns.at(-1)!;
@@ -776,7 +779,7 @@ it.effect("the stance override reaches a step outside the build stage (T3O-17)",
       settings: settingsWith({
         building: [codexStep],
         planning: codexStep,
-        // The real planning interview runs with a human in the loop (t3o-34),
+        // The real planning interview runs with a human in the loop,
         // which is what makes an override at this stage meaningful at all.
         planningHumanInLoop: true,
         globalMaxConcurrent: 3,

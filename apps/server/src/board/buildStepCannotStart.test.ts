@@ -103,8 +103,8 @@ it.effect("a parked card is not re-failed by every later scheduling pass", () =>
         yield* pumpDomain(movedToBuilding(child, 1));
         assert.strictEqual(worktreeFailures(yield* decided, "pla-10").length, 1);
 
-        // Another card entering Building runs a scheduling pass. Before T3O-15
-        // the still-pending child re-failed into a second identical row here.
+        // Another card entering Building runs a scheduling pass; the still-pending
+        // child must not re-fail into a second identical row here.
         yield* pumpDomain(movedToBuilding(card("other"), 2));
         assert.strictEqual(worktreeFailures(yield* decided, "pla-10").length, 1);
       }),

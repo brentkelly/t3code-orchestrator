@@ -1,6 +1,6 @@
 /**
- * A planning card moved on before its plan is written keeps its planning thread
- * (T3O-19). Before this change, the move unlinked the thread and interrupted its
+ * A planning card moved on before its plan is written keeps its planning thread.
+ * Before this change, the move unlinked the thread and interrupted its
  * turn, and moving the card back started a brand-new interview from scratch.
  */
 import {

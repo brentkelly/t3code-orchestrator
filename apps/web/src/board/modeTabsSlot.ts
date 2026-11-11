@@ -41,7 +41,7 @@ export function shouldSidebarHostModeTabs({
   readonly pathname: string;
 }): boolean {
   // Below `md` the sidebar is a sheet and the brand is hidden, so there is no
-  // header to host anything (D9).
+  // header to host anything.
   if (isMobile) return false;
   if (!sidebarVisible) return false;
   if (!locationHasModeTabs(pathname)) return false;

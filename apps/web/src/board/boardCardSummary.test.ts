@@ -1,6 +1,6 @@
 /**
- * T3o stage-specific card summary (t3o-06). Pure logic, no DOM: each stage
- * renders its documented variant from `BoardCardShell` fields ALONE (D7), and
+ * T3o stage-specific card summary. Pure logic, no DOM: each stage
+ * renders its documented variant from `BoardCardShell` fields ALONE, and
  * a field with no data source yet contributes nothing (no-speculative-
  * inventory) — the variant degrades to the base card, never to empty slots.
  */
@@ -209,8 +209,8 @@ describe("boardCardMeta", () => {
   });
 
   it("prefers a sub-board's stacked plan cards over the card's own plan documents", () => {
-    // `planTotal` is the parent's count of children (D12); `planCount` is the
-    // card's own attached plans (t3o-08). A parent counts its children.
+    // `planTotal` is the parent's count of children; `planCount` is the
+    // card's own attached plans. A parent counts its children.
     expect(boardCardMeta(shell("building", { planCount: 1, planTotal: 6 }), 0).planCount).toBe(6);
     expect(boardCardMeta(shell("planning", { planCount: 1 }), 0).planCount).toBe(1);
   });

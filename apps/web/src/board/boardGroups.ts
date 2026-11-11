@@ -340,7 +340,7 @@ export function boardDropRefusal(input: {
 }): string | null {
   const { shells, stages, card, toStage } = input;
   if (toStage === card.stage) return null;
-  // A stage the card's project does not use (T3O-43): the decider's own
+  // A stage the card's project does not use: the decider's own
   // sentence, so the tooltip and the refusal never drift.
   const pipelineRefusal = boardCardMoveRefusal(
     { stages: stages.stages, projectStageConfigs: stages.projectStageConfigs, cards: shells },
@@ -526,7 +526,7 @@ export function boardGroupSettingsVm(
 }
 
 /** Whether a group's popup draws the leaf action area (Merge, review controls,
-    View PR) rather than Open board alone (T3O-37): from Code review on, an
+    View PR) rather than Open board alone: from Code review on, an
     own-branch group is reviewing and merging its own pull request. */
 export function boardGroupUsesCardActions(input: {
   readonly ownBranch: boolean;

@@ -1,5 +1,5 @@
 /**
- * Board migration 031 (t3o-26): the board projector's watermark table, carried
+ * Board migration 031: the board projector's watermark table, carried
  * over from upstream's `projection_state` when that table still exists.
  *
  * Upstream's migration 063 (v0.1.3) drops `main.projection_state`, so on a fresh

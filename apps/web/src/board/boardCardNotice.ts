@@ -26,16 +26,16 @@ export type BoardCardNotice =
   | { readonly kind: "attention"; readonly attention: BoardCardNoticeAttention }
   | { readonly kind: "conflicts"; readonly fix: BoardConflictFixInfo }
   | { readonly kind: "auto-merge"; readonly pill: BoardAutoMergePill }
-  /** T3o (T3O-48): parked at the merge role with nothing to merge. */
+  /** T3o: parked at the merge role with nothing to merge. */
   | { readonly kind: "no-pull-request" }
   | { readonly kind: "blocked"; readonly dependencyCount: number }
-  /** T3O-52: a finished card still holding its worktree, and why. */
+  /** A finished card still holding its worktree, and why. */
   | { readonly kind: "worktree-kept"; readonly reason: string }
-  /** T3O-43: the card's project no longer uses the stage it sits in. */
+  /** The card's project no longer uses the stage it sits in. */
   | { readonly kind: "stage-gone"; readonly note: string }
-  /** T3O-65: the card is moving to another worker, or its move failed. */
+  /** The card is moving to another worker, or its move failed. */
   | { readonly kind: "worker-move"; readonly move: BoardCardMoveNotice }
-  /** T3O-66: the card's worker was removed, or is offline. */
+  /** The card's worker was removed, or is offline. */
   | { readonly kind: "worker"; readonly trouble: BoardCardWorkerTrouble };
 
 /** The one notice a card header shows, or null when it has nothing to say. */
@@ -52,32 +52,32 @@ export function boardCardNotice(input: {
       role onward. */
   readonly blocked: boolean;
   readonly dependencyCount: number;
-  /** T3O-52: why a finished card kept its worktree, or null when it has not
+  /** Why a finished card kept its worktree, or null when it has not
       (`boardCardWorktreeKept`, resolved by the board page). */
   readonly worktreeKeptReason?: string | null | undefined;
-  /** T3O-43: why the card's stage is no longer in its project's pipeline. */
+  /** Why the card's stage is no longer in its project's pipeline. */
   readonly stageGone?: string | null | undefined;
-  /** T3O-65: Moving (blue) or Move failed (amber), or null. */
+  /** Moving (blue) or Move failed (amber), or null. */
   readonly workerMove?: BoardCardMoveNotice | null | undefined;
-  /** T3O-66: Worker removed or Worker offline (`boardCardWorkerTrouble`). */
+  /** Worker removed or Worker offline (`boardCardWorkerTrouble`). */
   readonly workerTrouble?: BoardCardWorkerTrouble | null | undefined;
-  /** The attention chip is the step's Provider missing stall (T3O-65), which
+  /** The attention chip is the step's Provider missing stall, which
       ranks with the worker notices rather than among the generic chips. */
   readonly providerMissing?: boolean | undefined;
 }): BoardCardNotice | null {
   const attention = input.attention;
-  // The card's worker comes first (T3O-66): removed, then offline — one
+  // The card's worker comes first: removed, then offline — one
   // value, which `boardCardWorkerTrouble` already ranks — then a step whose
   // provider the worker doesn't have.
   if (input.workerTrouble != null) return { kind: "worker", trouble: input.workerTrouble };
   if (input.providerMissing === true && attention !== null) return { kind: "attention", attention };
-  // A permission prompt is as answerable as a question (T3O-16), so it takes
+  // A permission prompt is as answerable as a question, so it takes
   // the same carve-out.
   if (attention !== null && (attention.reason === "input" || attention.reason === "permission")) {
     return { kind: "attention", attention };
   }
   // A card mid-move, or whose move failed, can do nothing else until the move
-  // lands or a human retries it (T3O-65): that is the one thing worth saying.
+  // lands or a human retries it: that is the one thing worth saying.
   if (input.workerMove != null) return { kind: "worker-move", move: input.workerMove };
   // A conflict fix RUNS and a hold WAITS; the server never records both, and a
   // running agent is the more specific claim if they somehow collide.

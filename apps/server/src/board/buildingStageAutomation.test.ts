@@ -1,5 +1,5 @@
 /**
- * Building stage automation through the live reactor. The invariant (D18): the board never moves
+ * Building stage automation through the live reactor. The invariant: the board never moves
  * a card across a stage boundary on its own except Building to Code review on build-step success.
  * Live-only gates (provider kill, server restart, real repositories) are not asserted here.
  */
@@ -142,7 +142,7 @@ it.effect("D18: a Ready card is never swept into Building while other cards buil
         assert.strictEqual(stepStatus(yield* board, builder), "running");
 
         // ...yet the Ready card is untouched: no step, no slot, still Ready.
-        // Nothing auto-advances a Ready card into Building (D18).
+        // Nothing auto-advances a Ready card into Building.
         assert.strictEqual(stepStatus(yield* board, resting), null);
         assert.strictEqual(cardStage(yield* board, resting), "ready");
         assert.strictEqual(yield* slots.heldTotal, 1);
@@ -208,7 +208,7 @@ it.effect("D11: at maxConcurrent 2, two cards build and the rest queue in order"
 
         const after = yield* board;
         // Exactly two run (the first two by drag order); the rest hold in the
-        // queue — the Building column IS the queue (D11).
+        // queue — the Building column IS the queue.
         assert.strictEqual(stepStatus(after, BoardCardId.make("card-a")), "running");
         assert.strictEqual(stepStatus(after, BoardCardId.make("card-b")), "running");
         assert.strictEqual(stepStatus(after, BoardCardId.make("card-c")), "queued");

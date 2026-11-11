@@ -329,7 +329,7 @@ it.effect("v2's limit resume leaves a step parked on a question alone", () =>
   ),
 );
 
-// ── The generic retry ladder (T3O-22, D7/D12) ──────────────────────────────
+// ── The generic retry ladder ──────────────────────────────
 
 it.effect("a non-limit stall climbs 2, 4, 8 minutes, releasing its slot between rungs", () =>
   withGovernor(unattended, (harness) =>

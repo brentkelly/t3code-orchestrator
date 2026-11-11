@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 
-/** The review slice (t3o-22, D7) — carried as a group, never field by field.
+/** The review slice — carried as a group, never field by field.
     The counts and the outcome describe ONE loop, so a half-carried slice would
     blend one round's tallies with another's verdict. */
 const REVIEW_SHELL_FIELDS = [
@@ -32,7 +32,7 @@ const REVIEW_SHELL_FIELDS = [
   "reviewUnreviewedFixes",
 ] as const satisfies ReadonlyArray<keyof BoardCardShell>;
 
-/** The stall slice (T3O-22, D10) — carried as a group for the same reason
+/** The stall slice — carried as a group for the same reason
     the review slice is: the reason and the retry time describe ONE stop, and
     half of them left behind would put a stale "resuming 2:50am" under a card
     that is running again. */
@@ -59,7 +59,7 @@ function preserveAbsentShellFields(
   // ends, so "still stalled with no reason" means the producer could not see step state.
   const carryStall =
     next.stalled && next.stalledReason === undefined && existing.stalledReason !== undefined;
-  // Which limit holds a queued card (T3O-65) rides only `card-queued` and the
+  // Which limit holds a queued card rides only `card-queued` and the
   // snapshot, so under a card still queued, a delta without it means "carry".
   const carryQueuedBy =
     next.queued && next.queuedBy === undefined && existing.queuedBy !== undefined;
@@ -106,7 +106,7 @@ export function applyBoardShellStreamItem(
   if (item.kind === "snapshot") return item.snapshot;
   if (snapshot === null) return null;
   if (item.kind === "card-threads") return applyBoardShellStreamEvent(snapshot, item);
-  // T3O-62: the worker summary carries runtime status the board log never
+  // The worker summary carries runtime status the board log never
   // sees, so its sequence is only the board head: a fresh read, unguarded.
   if (item.kind === "workers") return applyBoardShellStreamEvent(snapshot, item);
   if (item.sequence <= snapshot.snapshotSequence) return snapshot;
@@ -133,7 +133,7 @@ export function applyBoardShellStreamEvent(
         existing === undefined || existing.queued === event.card.queued
           ? event.card
           : { ...event.card, queued: existing.queued };
-      // `stalled` (t3o-17, D3) is derived from step state the same way, so a
+      // `stalled` is derived from step state the same way, so a
       // card-carrying delta rests it at false too — preserve the last known
       // value so a drag never blanks a stalled badge.
       const withStalled =
@@ -152,7 +152,7 @@ export function applyBoardShellStreamEvent(
         existing === undefined || existing.held === withStepRunning.held
           ? withStepRunning
           : { ...withStepRunning, held: existing.held };
-      // `stepAwaiting` (t3o-34, D4) comes off the same slice and rests at null
+      // `stepAwaiting` comes off the same slice and rests at null
       // on a card-carrying delta, so preserve it too — otherwise renaming a card
       // that is waiting on an answer clears the badge that says so.
       const withStepAwaiting =
@@ -166,7 +166,7 @@ export function applyBoardShellStreamEvent(
         existing === undefined || existing.stepConflictFix === withStepAwaiting.stepConflictFix
           ? withStepAwaiting
           : { ...withStepAwaiting, stepConflictFix: existing.stepConflictFix };
-      // `stepChecksFix` (T3O-12) likewise: a card-carrying delta omits it, so
+      // `stepChecksFix` likewise: a card-carrying delta omits it, so
       // the last known value stands until the next `card-stalled`.
       const withConflictFix =
         existing?.stepChecksFix === true && withConflictFixOnly.stepChecksFix === undefined
@@ -232,10 +232,10 @@ export function applyBoardShellStreamEvent(
         // and this delta is the only thing that ever clears the chip.
         const stripped = { ...card };
         for (const field of STALL_SHELL_FIELDS) delete stripped[field];
-        // Key-optional and authoritative here too (T3O-12): absent means false.
+        // Key-optional and authoritative here too: absent means false.
         delete stripped.stepChecksFix;
         // Every emitter of this delta leaves the step out of the queue, so the
-        // limit that held it goes with it (T3O-65).
+        // limit that held it goes with it.
         if (!event.queued) delete stripped.queuedBy;
         return {
           ...stripped,
@@ -253,7 +253,7 @@ export function applyBoardShellStreamEvent(
       return { ...snapshot, cards: nextCards };
     }
     case "card-plans": {
-      // The card's plan set was replaced (t3o-08) — the authoritative live
+      // The card's plan set was replaced — the authoritative live
       // change of the footer's plan count. A no-op for a card we do not hold.
       const nextCards = Arr.map(cards, (card) =>
         card.cardId === event.cardId && card.planCount !== event.planCount
@@ -263,7 +263,7 @@ export function applyBoardShellStreamEvent(
       return { ...snapshot, cards: nextCards };
     }
     case "card-review": {
-      // A review phase completed (t3o-22, D7) — the authoritative live change
+      // A review phase completed — the authoritative live change
       // of the card face's round pips, severity chip and convergence flag. A
       // no-op for a card we do not hold. Applied as a whole slice, and cleared
       // as a whole when the summary is null.
@@ -302,7 +302,7 @@ export function applyBoardShellStreamEvent(
       return { ...snapshot, cards: nextCards };
     }
     case "card-threads": {
-      // The card's whole live link set, replaced wholesale (t3o-18, D3): the set
+      // The card's whole live link set, replaced wholesale: the set
       // changes for three different reasons — a todo revision, a link, an unlink
       // — and a replace is idempotent under all three.
       const others = snapshot.cardThreads.filter((entry) => entry.cardId !== event.cardId);
@@ -320,7 +320,7 @@ export function applyBoardShellStreamEvent(
         cardThreads: snapshot.cardThreads.filter((entry) => entry.cardId !== event.cardId),
       };
     case "label-upserted": {
-      // Catalogue delta (t3o-06a): the whole board's label vocabulary rides
+      // Catalogue delta: the whole board's label vocabulary rides
       // once. A recolour arrives here and repaints every chip that references
       // the id, with no card deltas. Delete/undelete are upserts carrying
       // `deletedAt` set/cleared — the label stays in the catalogue.
@@ -333,8 +333,8 @@ export function applyBoardShellStreamEvent(
       return { ...snapshot, labels: nextLabels };
     }
     case "stage-upserted": {
-      // Stage aggregate delta (t3o-15): the whole stage list rides so the board
-      // reads column order and labels from it (D13). Create / rename / reorder
+      // Stage aggregate delta: the whole stage list rides so the board
+      // reads column order and labels from it. Create / rename / reorder
       // all arrive here; kept in canonical `compareBoardStages` order.
       const stages = snapshot.stages;
       // Spread-then-sort: Hermes (mobile) has no `Array#toSorted`.
@@ -348,7 +348,7 @@ export function applyBoardShellStreamEvent(
       return { ...snapshot, stages: nextStages };
     }
     case "workers":
-      // The whole worker summary, replaced wholesale (T3O-62).
+      // The whole worker summary, replaced wholesale.
       return { ...snapshot, workers: event.state };
     case "stage-removed": {
       const stages = snapshot.stages;
@@ -358,7 +358,7 @@ export function applyBoardShellStreamEvent(
       };
     }
     case "project-stage-config": {
-      // A project's delta replaced (T3O-49), plus any stage rows a T3O-43
+      // A project's delta replaced, plus any stage rows a legacy
       // payload wrote and dropped, in one delta.
       const dropped = new Set<string>(event.deletedStageIds);
       const upserted = new Map<string, (typeof event.upserts)[number]>(

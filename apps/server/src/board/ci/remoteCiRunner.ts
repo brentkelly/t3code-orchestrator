@@ -1,5 +1,5 @@
 /**
- * A CI pass on a placed worker (D21): the worker runs the steps in the
+ * A CI pass on a placed worker: the worker runs the steps in the
  * card's worktree there and streams each step's progress back over its
  * gateway (`boardWorker.gateway.runCi`). Interrupting the pass closes the
  * stream, which interrupts the worker's run and kills its process group.

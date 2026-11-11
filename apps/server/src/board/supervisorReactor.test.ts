@@ -53,7 +53,7 @@ const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
 const cardId = BoardCardId.make("card-1");
 
-// The single step id per stage is the stage id (t3o-15, D1): a card in Building
+// The single step id per stage is the stage id: a card in Building
 // runs a step keyed "building", and its completion is keyed the same.
 const stepId = String(BoardStageId.make("building"));
 
@@ -110,7 +110,7 @@ const card: BoardCard = {
   updatedAt: NOW,
 };
 
-// The frozen execution config (t3o-15, D12) the Building stage stamped onto the
+// The frozen execution config the Building stage stamped onto the
 // run row at entry: an unattended build-mode step on codex.
 const runningState: BoardCardStepState = {
   cardId,
@@ -167,7 +167,7 @@ function readModel(board: BoardState): BoardOrchestrationReadModel {
 
 const aliveShell: BoardThreadState = aliveThread("thread-1", { activeTurnRef: "turn-1" });
 
-/** The shape a server restart leaves behind (t3o-10): the orphaned session is
+/** The shape a server restart leaves behind: the orphaned session is
     marked `error`, and the id of the turn that died with the process is still
     on the thread. */
 const restartOrphanShell: BoardThreadState = failedThread("thread-1");
@@ -465,7 +465,7 @@ it.effect("boot: a running step whose thread is gone is recovered (respawned)", 
     });
     assert.include(types, "board.card.recover-step");
     // A gone thread is respawned, not nudged into the void — through the
-    // governor when the backoff rung arrives (T3O-22, D7), which is also what
+    // governor when the backoff rung arrives, which is also what
     // gets the step its slot back.
     assert.include(types, "thread.spawn");
     assert.notInclude(types, "thread.send");
@@ -532,8 +532,8 @@ it.effect(
         // no shell → thread gone, but escalation must not respawn/nudge it
       });
       // D3 gate: the step is parked stalled (its badge is the human-facing
-      // signal — t3o-18 D13 deleted `board.card.request-input`, so the question
-      // itself now goes to the server log)...
+      // signal; `board.card.request-input` is gone, so the question
+      // itself goes to the server log)...
       assert.notInclude(types, "board.card.request-input");
       assert.include(types, "board.card.recover-step");
       // ...and the agent is NOT driven (no turn), so recovery never loops.
@@ -563,7 +563,7 @@ it.effect("boot: a step that completed while the server was down is settled and 
       },
     });
     assert.include(types, "board.card.settle-step");
-    // Every step succeeded → board-driven Building → Code review advance (D18).
+    // Every step succeeded → board-driven Building → Code review advance.
     assert.include(types, "board.card.pipeline-move");
   }),
 );
@@ -608,7 +608,7 @@ it.effect("boot: a session upstream marked `error` is dead even with a stale act
     // The thread still EXISTS, so recovery drives the thread it has rather than
     // respawning — which is upstream's own instruction on that error ("Send a
     // new message to continue"). It goes out when the backoff rung arrives
-    // (T3O-22, D7) rather than on the spot.
+    // rather than on the spot.
     assert.include(types, "thread.send");
     assert.notInclude(types, "thread.spawn");
   }),

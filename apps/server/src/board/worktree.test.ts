@@ -38,7 +38,7 @@ const GitLayer = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfigLayer),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
-// T3O-23: reclaim and forced removal retire through the real retirer; no
+// Reclaim and forced removal retire through the real retirer; no
 // threads, no survivors and no remove scripts, so it only removes.
 const TestLayer = worktreeRetirerTestLayer().pipe(Layer.provideMerge(GitLayer));
 
@@ -251,7 +251,7 @@ it.effect("returns null when a plan card's parent has no branch yet", () =>
   }),
 );
 
-// T3O-52 D1: one rule — clean AND durable — with reasons that carry evidence.
+// One rule — clean AND durable — with reasons that carry evidence.
 const decisionCases: ReadonlyArray<{
   readonly name: string;
   readonly input: Parameters<typeof boardCardWorktreeReclaimDecision>[0];
@@ -440,7 +440,7 @@ it.effect("entering Building creates the card's branch and worktree", () =>
   ).pipe(Effect.provide(TestLayer)),
 );
 
-// ── gh's default repository (T3O-24) ───────────────────────────────────
+// ── gh's default repository ───────────────────────────────────
 
 const ghDefaultCases: ReadonlyArray<{
   readonly name: string;
@@ -689,7 +689,7 @@ it.effect("re-provisioning after a partial attempt reuses the existing worktree,
   ).pipe(Effect.provide(TestLayer)),
 );
 
-// ── Reclaim under the durability rule (T3O-52, D1) ────────────────────
+// ── Reclaim under the durability rule ────────────────────
 
 /** A project with a bare `origin` holding its base branch, and a card
     worktree cut from it. */

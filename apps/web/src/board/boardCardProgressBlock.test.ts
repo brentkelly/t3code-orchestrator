@@ -1,5 +1,5 @@
 /**
- * T3o card progress block (t3o-18, D5/D7/D8).
+ * T3o card progress block.
  *
  * The precedence — review > subcards > todos — is the rule that decides what a
  * split parent shows once it reaches code review, and this is the one place the

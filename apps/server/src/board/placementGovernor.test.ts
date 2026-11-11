@@ -458,7 +458,7 @@ it.effect("an offline worker holds its cards without spawning anything", () =>
       (h) =>
         Effect.gen(function* () {
           yield* h.pumpDomain(cardMoved(inPlanning(sprint), "sprint", "planning", 1));
-          // Held queued for its worker (T3O-66), which the card shows as
+          // Held queued for its worker, which the card shows as
           // Worker offline.
           assert.strictEqual((yield* step(h, "card-1"))?.status, "queued");
           assert.strictEqual((yield* step(h, "card-1"))?.queuedBy, "worker-offline");

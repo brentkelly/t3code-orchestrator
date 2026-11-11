@@ -24,10 +24,10 @@ export interface BoardCardModelRowSpec {
   readonly label: string;
   readonly note: string;
   /** The model this row inherits with no override set — the parent card's when
-      it has one (D4), else the workspace's. Null when nothing has named one. */
+      it has one, else the workspace's. Null when nothing has named one. */
   readonly inheritedModel: BoardModelSelection | null;
   /** The parent card's key when the inherited value comes from the parent
-      rather than the workspace, so the row can say so (D5). */
+      rather than the workspace, so the row can say so. */
   readonly inheritedFromCardKey: string | null;
   readonly inheritedRuntimeMode: RuntimeMode;
 }
@@ -48,7 +48,7 @@ export function boardCardModelRows(input: {
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly boardSettings: BoardSettings;
   readonly parentCard: Pick<BoardCard, "key" | "modelOverrides"> | null;
-  /** The card's project's overrides (T3O-43/49). */
+  /** The card's project's overrides. */
   readonly projectConfig?: BoardProjectExecutionConfig | null | undefined;
 }): ReadonlyArray<BoardCardModelRowSpec> {
   const rows: BoardCardModelRowSpec[] = [];

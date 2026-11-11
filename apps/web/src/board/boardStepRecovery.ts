@@ -32,7 +32,7 @@ export function resolveBoardStepRecovery(input: {
   /** False on a group card: its stage is derived from its children, so a hand
       move is not a way out. */
   readonly handMoves?: boolean;
-  /** The card has a live CI entry (T3O-44): it leaves CI by passing or by
+  /** The card has a live CI entry: it leaves CI by passing or by
       Skip CI, never by a move. */
   readonly ciEntryLive?: boolean;
 }): BoardStepRecovery | null {
@@ -56,8 +56,8 @@ export function resolveBoardStepRecovery(input: {
 
 /** How the Review pane shows a phase — not always what the ledger walk says.
     The walk calls the owed phase `running` because it is next, but off the
-    review stage nobody is in it (T3O-3), and when its step has stalled nothing
-    is running it either (T3O-13). */
+    review stage nobody is in it, and when its step has stalled nothing
+    is running it either. */
 export function boardReviewPhaseShownStatus(
   status: BoardReviewPhaseStatus,
   context: { readonly offStage: boolean; readonly stalled: boolean },

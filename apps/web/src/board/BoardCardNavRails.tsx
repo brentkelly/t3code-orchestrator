@@ -55,8 +55,8 @@ function BoardCardNavRail(props: {
   readonly target: BoardCardNavTarget;
   readonly onStep: () => void;
 }) {
-  // Naming the column only when the step leaves this one keeps the common case
-  // — the next card down — reading as short as it did (T3O-44).
+  // Naming the column only when the step leaves this one keeps the common case —
+  // the next card down — reading as short as it did.
   const stage = props.target.stageLabel === null ? "" : ` in ${props.target.stageLabel}`;
   const label = `${props.target.key} · ${props.target.title}${stage}  ( ${props.side === "left" ? "← or K" : "→ or J"} )`;
   return (

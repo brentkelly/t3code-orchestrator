@@ -57,7 +57,7 @@ it.effect("a step-state row written before 037 reads a recovery total of 0", () 
       readonly stage_entry_recoveries: number;
     }>`SELECT attempt, stage_entry_recoveries FROM board_card_step_state`;
     assert.strictEqual(rows.length, 1);
-    // Not backfilled from `attempt` (D8): the card's blown counter is exactly
+    // Not backfilled from `attempt`: the card's blown counter is exactly
     // what has to go away, so it starts over at zero and the card stops being
     // falsely escalated the moment the server restarts.
     assert.strictEqual(rows[0]?.attempt, 45);

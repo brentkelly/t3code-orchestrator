@@ -1,5 +1,5 @@
 /**
- * T3O-43/49 — auto-advance walks the card's own project's pipeline. A
+ * Auto-advance walks the card's own project's pipeline. A
  * role-less stage one project switches off is skipped for that project's
  * cards only; every other project still stops there.
  */

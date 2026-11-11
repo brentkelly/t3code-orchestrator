@@ -82,8 +82,8 @@ export interface BoardAutoMergeBanner {
   readonly reason: string;
   /** `Held 12m · attempt 5 of 8 · 3 of 5 checks green`. */
   readonly meta: string;
-  /** Amber while the board will end the wait itself, red once it will not
-      (D12) — the treatment the stalled banner already uses. */
+  /** Amber while the board will end the wait itself, red once it will not —
+       the treatment the stalled banner already uses. */
   readonly tone: "warning" | "destructive";
 }
 

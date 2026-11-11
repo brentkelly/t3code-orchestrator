@@ -107,7 +107,7 @@ export function detail(
 }
 
 /** A parent with `childCount` plans, and one materialised child per plan from
-    `archivedFrom` onward marked archived (t3o-29). */
+    `archivedFrom` onward marked archived. */
 export function splitDetail(options: {
   readonly childCount: number;
   readonly archivedFrom?: number;

@@ -229,8 +229,8 @@ const createCommand = (input: {
   readonly brief?: string;
   readonly dependsOn?: ReadonlyArray<string>;
   /** An explicit position, as a caller that means one sends. Absent — the
-      shape every real caller now sends — leaves the placement to the decider
-      (T3O-27), so the default test path is the production path. */
+      shape every real caller now sends — leaves the placement to the decider,
+      so the default test path is the production path. */
   readonly orderKey?: string;
   readonly parentCardId?: string;
   readonly scheduledStartAt?: string;
@@ -452,7 +452,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
     }),
   );
 
-  // ── Blocked derivation is build-role-keyed, not Ready-keyed (D11) ─────
+  // ── Blocked derivation is build-role-keyed, not Ready-keyed ─────
 
   it.effect("does not block on unmet dependencies before the build role (D11)", () =>
     Effect.gen(function* () {
@@ -465,7 +465,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
       const board: BoardState = { cards: [dependency, card], nextCardNumberByProject: {} };
 
       // sprint -> planning: before the build role, unmet dependencies do not
-      // block. Ready is now an ordinary pre-build stage (D3/D11), so the block
+      // block. Ready is now an ordinary pre-build stage, so the block
       // boundary is the `build`-role stage, not the "Ready" anchor.
       const early = yield* decide(
         moveCommand({ cardId: "card-1", toStage: "planning" }),
@@ -488,7 +488,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         assert.strictEqual(atReady.payload.card.blocked, false);
       }
       // Entry into the build role itself with an unmet dependency is refused
-      // outright (D11) — covered by the "rejects moving a card ... past Ready"
+      // outright — covered by the "rejects moving a card ... past Ready"
       // test below.
     }),
   );
@@ -621,7 +621,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
 
   // ── Dependency cycles ────────────────────────────────────────────────
 
-  // ── Per-card review-loop overrides (t3o-22, D3/D5) ───────────────────
+  // ── Per-card review-loop overrides ───────────────────
   //
   // The floor is the whole point: the pane's `−` is disabled below it, but the
   // client is not the guard. A stale pane must not be able to drop the budget
@@ -747,7 +747,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
     }),
   );
 
-  // ── T3O-51: the server-only carry fields and the Advance waiver ──────
+  // ── The server-only carry fields and the Advance waiver ──────
 
   const stuckStep = (stepId: string, payload: unknown) => ({
     cardId: BoardCardId.make("card-a"),
@@ -1113,7 +1113,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
     }),
   );
 
-  // ── Per-card model overrides (t3o-29, D1) ────────────────────────────
+  // ── Per-card model overrides ────────────────────────────
 
   const setModelOverrides = (modelOverrides: BoardCard["modelOverrides"]) =>
     ({
@@ -1140,7 +1140,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
       assert.deepStrictEqual(event.payload.card.modelOverrides, {
         [BOARD_SEED_STAGE_IDS.building]: opusOverride,
       });
-      // T3O-65: the marker that lets Change model restart a provider stall.
+      // The marker that lets Change model restart a provider stall.
       assert.strictEqual(event.payload.modelOverridesEdited, true);
     }),
   );
@@ -1637,7 +1637,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
     }),
   );
 
-  // ── Retired links (T3O-41) ───────────────────────────────────────────
+  // ── Retired links ───────────────────────────────────────────
 
   const retiredLink = {
     threadId: ThreadId.make("thread-1"),
@@ -2023,7 +2023,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
       if (reflag.type !== "board.card-updated") return;
       assert.strictEqual(reflag.payload.card.blocked, false);
       // The edge survives the archive — that is what makes unarchive a true
-      // inverse (D1).
+      // inverse.
       assert.deepStrictEqual(reflag.payload.card.dependsOn, [BoardCardId.make("card-dep")]);
     }),
   );
@@ -2182,8 +2182,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         createdAt: NOW,
         updatedAt: NOW,
       };
-      // A two-plan card in Planning for board.plans.approve. Since t3o-28 (D1)
-      // approval materialises the children and moves NOTHING, so this fixture
+      // A two-plan card in Planning for board.plans.approve. Approval
+      // materialises the children and moves NOTHING, so this fixture
       // now proves the negative like every other entry.
       const splitCard = makeCard({ id: "card-split", stage: "planning" });
       const splitPlans: ReadonlyArray<BoardPlan> = ["s1", "s2"].map((key, index) => ({
@@ -2197,9 +2197,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         createdAt: NOW,
         updatedAt: NOW,
       }));
-      // Worktree lifecycle fixtures (t3o-09): each succeeds and none emits a
+      // Worktree lifecycle fixtures: each succeeds and none emits a
       // move — worktree provisioning is gated on Building but never advances a
-      // stage (D18).
+      // stage.
       const buildingCard = makeCard({ id: "card-building", stage: "building" });
       const provisioningCard = makeCard({
         id: "card-provisioning",
@@ -2278,11 +2278,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
       const resumeCard = makeCard({ id: "card-resume", stage: "building" });
       const settleCard = makeCard({ id: "card-settle", stage: "building" });
       // reopen-step only accepts a settled step whose recorded payload cannot
-      // be read (T3O-14), so the catalog's card carries exactly that record.
+      // be read, so the catalog's card carries exactly that record.
       const reopenCard = makeCard({ id: "card-reopen", stage: BOARD_SEED_STAGE_IDS.review });
-      // set-project only accepts a card that has never been built (T3O-33).
+      // set-project only accepts a card that has never been built.
       const projectCard = makeCard({ id: "card-project", stage: "ready" });
-      // mark-auto-plan only accepts a leaf in planning (T3O-32).
+      // mark-auto-plan only accepts a leaf in planning.
       const autoPlanCard = makeCard({ id: "card-auto-plan", stage: "planning" });
       const autoPlanningCard = {
         ...makeCard({ id: "card-auto-planning", stage: "planning" }),
@@ -2296,7 +2296,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         sizeBytes: 1024,
         addedAt: NOW,
       };
-      // An empty heading (T3O-27), for the group-settings command.
+      // An empty heading, for the group-settings command.
       const groupCard = {
         ...makeCard({ id: "card-group", stage: "sprint" }),
         group: defaultBoardCardGroup(
@@ -2347,19 +2347,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
             // force-start-step only accepts a step actually queued for a slot.
             makeStepState("card-force-start", "queued"),
             makeStepState("card-await", "running"),
-            // pause-step only accepts a step with a turn to stop (T3O-23).
+            // pause-step only accepts a step with a turn to stop.
             makeStepState("card-pause", "running"),
-            // requeue-step only accepts a PARKED step (T3O-23).
+            // requeue-step only accepts a PARKED step.
             makeStepState("card-requeue", "paused"),
             makeStepState("card-recover", "running"),
-            // resume-step only accepts a stalled step (t3o-17, D3).
+            // resume-step only accepts a stalled step.
             makeStepState("card-resume", "stalled"),
             makeStepState("card-settle", "running"),
             // complete-step validates against the card's LIVE step, so the
             // catalog's completion needs one to succeed against.
             makeStepState("card-ready", "running", "build"),
           ],
-          // T3O-62: a registered worker for the registry commands to act on.
+          // A registered worker for the registry commands to act on.
           workers: [
             {
               id: EnvironmentId.make("env-worker-a"),
@@ -2526,9 +2526,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           labelId: BoardLabelId.make("label-archived"),
           createdAt: NOW,
         },
-        // Agent write-path commands (t3o-08) all aggregate on the card and
-        // never emit a move. `board.card.report-progress` and
-        // `board.card.request-input` were deleted by t3o-18 (D13).
+        // Agent write-path commands all aggregate on the card and
+        // never emit a move.
         "board.card.complete-step": {
           type: "board.card.complete-step",
           commandId: CommandId.make("cmd-step"),
@@ -2563,7 +2562,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           body: "new body",
           createdAt: NOW,
         },
-        // The split approval (t3o-23, t3o-28 D1): materialises the children
+        // The split approval: materialises the children
         // and leaves the parent's stage alone.
         "board.plans.approve": {
           type: "board.plans.approve",
@@ -2571,7 +2570,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           cardId: BoardCardId.make("card-split"),
           createdAt: NOW,
         },
-        // Records the integration branch the reactor created (t3o-23, D5) —
+        // Records the integration branch the reactor created —
         // a worktree-slice write, never a move.
         "board.card.record-integration-branch": {
           type: "board.card.record-integration-branch",
@@ -2581,7 +2580,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           baseRefName: "main",
           createdAt: NOW,
         },
-        // Moves the RECORDED base after a retarget rebase (T3O-5, D6) — a
+        // Moves the RECORDED base after a retarget rebase — a
         // worktree-slice write on a live branch, never a move.
         "board.card.record-base-ref": {
           type: "board.card.record-base-ref",
@@ -2608,7 +2607,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         // The card starts with no hold, so recording one is a real change and
         // clears the decider's no-op guard. It writes one card field and can
         // emit no move.
-        // T3O-51: the review loop's server-only carry fields.
+        // The review loop's server-only carry fields.
         "board.card.set-review-carry": {
           type: "board.card.set-review-carry",
           commandId: CommandId.make("cmd-set-review-carry"),
@@ -2687,7 +2686,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           },
           createdAt: NOW,
         },
-        // An explicit link (T3O-18): one card field, never a move.
+        // An explicit link: one card field, never a move.
         "board.card.set-linked-pull-request": {
           type: "board.card.set-linked-pull-request",
           commandId: CommandId.make("cmd-link-pr"),
@@ -2717,9 +2716,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           outcome: "removed",
           createdAt: NOW,
         },
-        // Step-lifecycle commands (t3o-10) record step state on the card and
+        // Step-lifecycle commands record step state on the card and
         // never move a stage — the board-driven Building → Review advance
-        // rides board.card.move, gated like every other transition (D18).
+        // rides board.card.move, gated like every other transition.
         "board.card.select-step": {
           type: "board.card.select-step",
           commandId: CommandId.make("cmd-select"),
@@ -2791,7 +2790,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           outcome: "succeeded",
           createdAt: NOW,
         },
-        // Mid-run human-in-the-loop retune (D5/D6): retunes a live step's
+        // Mid-run human-in-the-loop retune: retunes a live step's
         // stance, emits board.card-step-retuned — never a move.
         "board.card.retune-step": {
           type: "board.card.retune-step",
@@ -2801,7 +2800,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           humanInLoop: true,
           createdAt: NOW,
         },
-        // A human's own turn on a live step (T3O-17): records the free
+        // A human's own turn on a live step: records the free
         // turn-ending it buys, emits board.card-step-steered — never a move.
         "board.card.note-human-turn": {
           type: "board.card.note-human-turn",
@@ -2811,7 +2810,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           at: NOW,
           createdAt: NOW,
         },
-        // A background-wait check-in (T3O-20): bookkeeping on the live step,
+        // A background-wait check-in: bookkeeping on the live step,
         // emits board.card-step-checked-in — never a move.
         "board.card.check-in-step": {
           type: "board.card.check-in-step",
@@ -2822,7 +2821,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           progressed: false,
           createdAt: NOW,
         },
-        // On-demand kickoff (D7): emits board.card-stage-thread-requested for
+        // On-demand kickoff: emits board.card-stage-thread-requested for
         // the card's CURRENT stage — never a move.
         "board.card.start-stage-thread": {
           type: "board.card.start-stage-thread",
@@ -2830,7 +2829,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           cardId: BoardCardId.make("card-ready"),
           createdAt: NOW,
         },
-        // Stage-aggregate commands (D2/D9): they mutate the stage list, never a
+        // Stage-aggregate commands: they mutate the stage list, never a
         // card, so they cannot emit a card move. Every fixture targets an empty,
         // non-role seed stage so its invariant is satisfied.
         "board.stage.create": {
@@ -3021,7 +3020,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
     }),
   );
 
-  // ── Stage reorder across the Build boundary (t3o-15, D9) ─────────────
+  // ── Stage reorder across the Build boundary ─────────────
 
   const reorderStage = (stageId: string, orderKey: string) =>
     ({
@@ -3076,14 +3075,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
       }),
   );
 
-  // ── Creation stages (t3o-15, D10) ────────────────────────────────────
+  // ── Creation stages ────────────────────────────────────
 
   it.effect("accepts a create into any stage — BOARD_CREATABLE_STAGES is deleted (D10)", () =>
     Effect.gen(function* () {
       // A card (with no unmet dependencies) may be created directly into any
       // stage, Building and Done included — Mode, not a creation allow-list,
       // governs what entry does. The auto-execute warning is a create-dialog
-      // concern (AC16), not a decider refusal.
+      // concern, not a decider refusal.
       for (const stage of [
         "backlog",
         "sprint",
@@ -3105,7 +3104,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
     }),
   );
 
-  // ── Labels (t3o-06a) ─────────────────────────────────────────────────
+  // ── Labels ─────────────────────────────────────────────────
 
   it.effect("creates a card with valid labels and rejects an unknown label", () =>
     Effect.gen(function* () {
@@ -3144,7 +3143,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
     }),
   );
 
-  // ── Incremental labels (T3O-68) ──────────────────────────────────────
+  // ── Incremental labels ──────────────────────────────────────
 
   const labelUpdate = (fields: {
     readonly labels?: ReadonlyArray<string>;
@@ -3289,7 +3288,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
     }),
   );
 
-  // ── Brief and dependencies at creation (t3o-06) ──────────────────────
+  // ── Brief and dependencies at creation ──────────────────────
 
   it.effect("carries a brief through the created payload; body is not in the read model", () =>
     Effect.gen(function* () {
@@ -3541,7 +3540,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
     }),
   );
 
-  // ── Agent write path (t3o-08) ────────────────────────────────────────
+  // ── Agent write path ────────────────────────────────────────
 
   const cardReadModel = (overrides?: Partial<BoardState>) =>
     makeReadModel({
@@ -3597,7 +3596,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
 
   const validReviewPayload = { reviewedSha: "abc123", findings: [] };
 
-  // ── T3O-14: idempotency is conditional on VALIDITY ───────────────────
+  // ── Idempotency is conditional on VALIDITY ───────────────────
 
   it.effect("board_complete_step repairs a succeeded review step nothing can read", () =>
     Effect.gen(function* () {
@@ -3666,7 +3665,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
     }),
   );
 
-  // ── T3O-14: the explicit reopen affordance ───────────────────────────
+  // ── The explicit reopen affordance ───────────────────────────
 
   it.effect("board_reopen_step sends a broken round back as failed so it runs again", () =>
     Effect.gen(function* () {
@@ -3777,9 +3776,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         splitRationale === undefined ? (plans.length >= 2 ? SPLIT_WHY : null) : splitRationale,
       createdAt: NOW,
     }) as const;
-
-  // t3o-18 (D13) deleted `board.card.report-progress` and `board.card.request-input`,
-  // so the test that recorded them as card activity is gone with them.
 
   // A live step for card-1, matching the step id the completion names —
   // complete-step validates the agent's stepId against it.
@@ -4083,7 +4079,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
       }),
   );
 
-  // ── Per-card base branch (T3O-5, D1/D4/D5) ───────────────────────────
+  // ── Per-card base branch ───────────────────────────
 
   const updateBase = (cardId: string, baseBranch: string | null): BoardCommand => ({
     type: "board.card.update",
@@ -4194,10 +4190,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
       }
     }),
   );
-  // ── Arriving in Done (T3O-15) ────────────────────────────────────────
+  // ── Arriving in Done ────────────────────────────────────────
   // Done is read newest-first, so a card that finishes lands on top of it.
   // Every other column keeps taking the card's own key — inside Building that
-  // key is queue priority (D11), and an advance must not reshuffle the queue.
+  // key is queue priority, and an advance must not reshuffle the queue.
 
   const movedOrderKey = (event: { readonly type: string; readonly payload: unknown }) => {
     assert.strictEqual(event.type, "board.card-moved");
@@ -4526,7 +4522,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
       assert.deepStrictEqual(column, made);
     }),
   );
-  // ── Scheduled starts (T3O-19) ─────────────────────────────────────────────
+  // ── Scheduled starts ─────────────────────────────────────────────
 
   describe("scheduled starts (T3O-19, D1)", () => {
     const AT = "2026-03-04T09:00:00.000Z";

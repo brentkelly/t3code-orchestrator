@@ -25,22 +25,22 @@ import { ReviewLoopExecutor } from "./reviewLoopExecutor.ts";
 
 /**
  * The execution parameters a stage executor plans over, assembled by the
- * reactor from the stage definition and its resolved settings config (D4/D12).
- * `model` is already resolved to a concrete provider-instance + model pair
- * (D12), so the executor stays pure and never reaches for a global default.
+ * reactor from the stage definition and its resolved settings config.
+ * `model` is already resolved to a concrete provider-instance + model pair,
+ * so the executor stays pure and never reaches for a global default.
  */
 export interface BoardStageExecutorConfig {
-  /** The stage's single step id (D1) — the stage id itself. A multi-step
-      executor (t3o-16) mints its own round-scoped step ids and ignores this. */
+  /** The stage's single step id — the stage id itself. A multi-step
+      executor mints its own round-scoped step ids and ignores this. */
   readonly stepId: string;
   /** The stage's display label. A single-step executor plans a run with NO
-      step identity (t3o-19, D4), so this is the STAGE's name, not a step's;
+      step identity, so this is the STAGE's name, not a step's;
       it is frozen onto the run row as `stageLabel` and is what the preamble
       prints. A multi-step executor mints its own per-step labels. */
   readonly stageLabel: string;
   readonly prompt: string;
   readonly model: BoardModelSelection;
-  /** The resolved agent authority for the run (t3o-21). The reactor resolves
+  /** The resolved agent authority for the run. The reactor resolves
       it (never derives it from `mode`) and freezes it onto the run row. */
   readonly runtimeMode: RuntimeMode;
   /**
@@ -91,7 +91,7 @@ export interface BoardStageRunState {
    * that carries an old submit completion".
    */
   readonly settledStepId: string | null;
-  /** Every CI step that failed in the pass (T3O-44/57), in step order, when
+  /** Every CI step that failed in the pass, in step order, when
       the reactor is asking the CI executor what follows a failed pass; null
       otherwise. Reactor-resolved from the pass record, because the output
       tail never rides the card. Never empty when present. */
@@ -100,7 +100,7 @@ export interface BoardStageRunState {
   readonly ciIssues?: ReadonlyArray<BoardCiFixIssue>;
 }
 
-/** A failed CI step, as the fix agent needs to see it (T3O-44). */
+/** A failed CI step, as the fix agent needs to see it. */
 export interface BoardCiFailure {
   readonly runId: string;
   readonly stepName: string;
@@ -109,9 +109,9 @@ export interface BoardCiFailure {
   readonly exitCode: number | null;
   readonly tail: string;
   readonly logPath: string | null;
-  /** What the step reported in its result file (T3O-49). */
+  /** What the step reported in its result file. */
   readonly result?: BoardCiStepResult | null;
-  /** What failed and why, as the runner read it (T3O-61). */
+  /** What failed and why, as the runner read it. */
   readonly headline?: BoardCiHeadline | null;
 }
 
@@ -128,7 +128,7 @@ export type BoardStagePlan =
       readonly stepLabel: string | null;
       readonly prompt: string;
       readonly model: BoardModelSelection;
-      /** The agent authority this step runs under (t3o-21). A single-step
+      /** The agent authority this step runs under. A single-step
           executor echoes the stage config; the review loop resolves it
           per phase. */
       readonly runtimeMode: RuntimeMode;
@@ -152,10 +152,10 @@ export type BoardStagePlan =
       readonly advanceToRole?: BoardStageRole;
     }
   | { readonly kind: "escalate"; readonly question: string }
-  /** Run the stage's CI steps from the top (T3O-44): the board runs them
+  /** Run the stage's CI steps from the top: the board runs them
       itself, no agent. */
   | { readonly kind: "ci-pass" }
-  /** A CI agent step reported (T3O-49): record its verdict, then carry on
+  /** A CI agent step reported: record its verdict, then carry on
       with the pass, or treat a failed verdict as the pass's failure. */
   | {
       readonly kind: "ci-agent-done";
@@ -163,7 +163,7 @@ export type BoardStagePlan =
       readonly index: number;
       readonly verdict: BoardCiAgentStepPayload | null;
     }
-  /** Stop the card in CI for a human (T3O-57): fix attempts used up, the
+  /** Stop the card in CI for a human: fix attempts used up, the
       fix agent couldn't fix something, or its verdict was unreadable. */
   | {
       readonly kind: "ci-stop";
@@ -179,8 +179,8 @@ export interface BoardStagePlanInput {
 }
 
 /**
- * The one question the reactor asks a stage: what runs next, or are we done?
- * (D15). Pure over its inputs — no SQL client, no git, no thread handles.
+ * The one question the reactor asks a stage: what runs next, or are we done?.
+ * Pure over its inputs — no SQL client, no git, no thread handles.
  */
 export interface BoardStageExecutor {
   planNext(input: BoardStagePlanInput): BoardStagePlan;
@@ -201,11 +201,11 @@ export const SimpleStageExecutor: BoardStageExecutor = {
       round: runState.round,
       stepId: config.stepId,
       // No step identity: this stage has exactly one step and naming it would
-      // just echo the stage (t3o-19, D4).
+      // just echo the stage.
       stepLabel: null,
       prompt: config.prompt,
       // A single-step stage has one run, so the card's override governs it
-      // outright (t3o-29): the model when it names one, and the access level
+      // outright: the model when it names one, and the access level
       // only when it names that too — an override says what it changes and
       // nothing more.
       model:
@@ -216,7 +216,7 @@ export const SimpleStageExecutor: BoardStageExecutor = {
       timeoutMs: config.timeoutMs,
       maxAttempts: config.maxAttempts,
       // A single-step stage runs no review rounds; the row keeps whatever tip
-      // the card last recorded (t3o-24).
+      // the card last recorded.
       recordBaseTip: false,
     };
   },
@@ -257,7 +257,7 @@ export function stageExecutorForRole(role: BoardStageRole | null): BoardStageExe
 }
 
 /**
- * The executor for a stage (T3O-44): by role, except the CI stage, which holds
+ * The executor for a stage: by role, except the CI stage, which holds
  * no role and runs scripts, so it is keyed by its execution member's kind.
  */
 export function stageExecutorFor(

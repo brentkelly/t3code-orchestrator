@@ -1,5 +1,5 @@
 /**
- * The board's narrow view of upstream's `TerminalManager` (T3O-45): importing
+ * The board's narrow view of upstream's `TerminalManager`: importing
  * `terminal/Manager.ts` loads every provider driver. Board code depends on this
  * port; only `BoardTerminals.live.ts` imports upstream.
  */

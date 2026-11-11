@@ -1,5 +1,5 @@
 /**
- * Collapsing repeated Activity rows (T3O-35).
+ * Collapsing repeated Activity rows.
  *
  * The rule these pin down: a run collapses only when every row in it would read
  * the same, it keeps its newest member, and its identity is the OLDEST member —

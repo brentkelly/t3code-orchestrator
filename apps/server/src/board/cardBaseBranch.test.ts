@@ -385,7 +385,7 @@ describe("retargeting a card whose branch already exists (T3O-5, D10)", () => {
   );
 
   it.effect("AC11: a top-level card whose base merely MOVED still plans no sync", () =>
-    // t3o-24's scope is deliberately untouched: a top-level card's base moving
+    // Scope is deliberately narrow: a top-level card's base moving
     // is the universal condition of trunk development, reviewed at the human's
     // discretion. Widening that would change behaviour for every card.
     withGovernor({ board: boardWith(merge, null), settings }, (h) =>

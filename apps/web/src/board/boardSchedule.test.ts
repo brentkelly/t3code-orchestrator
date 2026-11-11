@@ -85,7 +85,7 @@ describe("datetime-local round trip", () => {
     const iso = at({ day: 5, hour: 8, minute: 30 });
     const value = isoToLocalInputValue(iso);
     expect(value).toBe("2026-03-05T08:30");
-    // Only the INSTANT crosses the wire (D12), which is what makes a time set
+    // Only the INSTANT crosses the wire, which is what makes a time set
     // on a laptop read correctly on a phone in another zone.
     expect(localInputValueToIso(value)).toBe(iso);
   });
@@ -148,7 +148,7 @@ describe("boardScheduleCopy", () => {
     expect(copy.note).toContain("planning and approval still need you");
   });
 
-  // The one that matters (D13): setting a time on a working card STOPS it, and
+  // The one that matters: setting a time on a working card STOPS it, and
   // the control has to say so before the click rather than after.
   it("says out loud that scheduling a working card stops the agent", () => {
     const copy = boardScheduleCopy("live", "Building");

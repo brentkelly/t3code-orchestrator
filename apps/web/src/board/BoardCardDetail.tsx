@@ -128,7 +128,7 @@ import {
   describeBoardCommandFailure,
   describeBoardSkipCiOutcome,
   describeBoardMergeOutcome,
-  // T3o: the forced re-check's answer (T3O-48).
+  // T3o: the forced re-check's answer.
   describeBoardRefreshOutcome,
   describeBoardRemoveWorktreeOutcome,
   describeBoardReviewRoundOutcome,
@@ -182,11 +182,11 @@ export function BoardCardDetail({
 }: {
   readonly environmentId: EnvironmentId;
   readonly cardId: BoardCardId;
-  /** Step to the card before/after this one on the board (T3O-37, T3O-44), or
+  /** Step to the card before/after this one on the board, or
       null when the board has no visible neighbours to step to. */
   readonly nav?: BoardCardNav | null | undefined;
   readonly onClose: () => void;
-  /** Navigate into a parent's sub-board (t3o-25), optionally with a card's
+  /** Navigate into a parent's sub-board, optionally with a card's
       sheet open there — wired to the child sheet's "part of" chip and the
       parent plan pane's child chips. */
   readonly onOpenSubBoard?: ((parentCardId: string, cardId?: string) => void) | undefined;
@@ -194,7 +194,7 @@ export function BoardCardDetail({
   const detail = useAtomValue(boardEnvironment.cardDetailValueAtom({ environmentId, cardId }));
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
   const allStages = useAtomValue(boardEnvironment.stageListAtom(environmentId));
-  // T3O-43/49: the card's own project's pipeline.
+  // The card's own project's pipeline.
   const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
   const pipelineCardProjectId = detail?.card.projectId ?? null;
   const pipelineCardStage = detail?.card.stage ?? null;
@@ -207,7 +207,7 @@ export function BoardCardDetail({
         );
   const projectExecutionConfig =
     pipelineCardProjectId === null ? null : (projectStageConfigs[pipelineCardProjectId] ?? null);
-  // T3O-65: the board's workers, for the queue's reason.
+  // The board's workers, for the queue's reason.
   const workersState = useAtomValue(boardEnvironment.workersAtom(environmentId));
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
 
@@ -223,11 +223,11 @@ export function BoardCardDetail({
   const approvePlans = useAtomCommand(boardEnvironment.approvePlans);
   const linkThread = useAtomCommand(boardEnvironment.linkThread);
   const unlinkThread = useAtomCommand(boardEnvironment.unlinkThread);
-  // T3O-33: moving the card to another project. Its own command rather than a
+  // Moving the card to another project. Its own command rather than a
   // field on `board.card.update` — it reissues the key, clears the base pin and
   // restarts the stage, none of which is a partial edit.
   const setCardProject = useAtomCommand(boardEnvironment.setCardProject);
-  // Brief attachments (t3o-32): an attach failure is shown on the staged row
+  // Brief attachments: an attach failure is shown on the staged row
   // itself, so it opts out of the shared toast.
   const attachCardFile = useAtomCommand(boardEnvironment.attachCardFile, { reportFailure: false });
   const detachCardFile = useAtomCommand(boardEnvironment.detachCardFile);
@@ -253,7 +253,7 @@ export function BoardCardDetail({
   const mergeCardPullRequest = useAtomCommand(boardEnvironment.mergeCardPullRequest, {
     reportFailure: false,
   });
-  // T3o (T3O-18): "Link one". A refusal renders inline under the input.
+  // T3o: "Link one". A refusal renders inline under the input.
   const linkCardPullRequest = useAtomCommand(boardEnvironment.linkCardPullRequest, {
     reportFailure: false,
   });
@@ -262,19 +262,19 @@ export function BoardCardDetail({
   const submitCardForMerge = useAtomCommand(boardEnvironment.submitCardForMerge, {
     reportFailure: false,
   });
-  // "Another review round" / "Request review" (T3O-39). Same reason again:
+  // "Another review round" / "Request review". Same reason again:
   // every refusal is a normal answer with its own wording.
   const requestReviewRound = useAtomCommand(boardEnvironment.requestReviewRound, {
     reportFailure: false,
   });
-  // "Skip CI" (T3O-44). A refusal is an answer, toasted below.
+  // "Skip CI". A refusal is an answer, toasted below.
   const skipCi = useAtomCommand(boardEnvironment.skipCi, { reportFailure: false });
   const retryCi = useAtomCommand(boardEnvironment.retryCi, { reportFailure: false });
   const sendBackCi = useAtomCommand(boardEnvironment.sendBackCi, { reportFailure: false });
   const stopCi = useAtomCommand(boardEnvironment.stopCi, { reportFailure: false });
   const [skippingCi, setSkippingCi] = useState(false);
   const createCard = useAtomCommand(boardEnvironment.createCard);
-  // "Remove worktree" (T3O-52). Same reason again: a refusal is an answer.
+  // "Remove worktree". Same reason again: a refusal is an answer.
   const removeCardWorktree = useAtomCommand(boardEnvironment.removeCardWorktree, {
     reportFailure: false,
   });
@@ -295,15 +295,15 @@ export function BoardCardDetail({
   // fast-forward take several seconds — so the button can say "Merging…" and
   // refuse a second click that would re-enter a merge already in flight.
   const [merging, setMerging] = useState(false);
-  // T3o (T3O-48): set across the "Check again" round trip, so the button spins
+  // T3o: set across the "Check again" round trip, so the button spins
   // and a second click cannot re-enter a lookup already in flight.
   const [checkingForPullRequest, setCheckingForPullRequest] = useState(false);
-  // T3O-52: the kept-worktree banner's two round trips.
+  // The kept-worktree banner's two round trips.
   const [checkingWorktree, setCheckingWorktree] = useState(false);
   const [removingWorktree, setRemovingWorktree] = useState(false);
 
   const snapshot = Option.getOrNull(shellState.snapshot);
-  // The board rides its own subscription (T3O-57), cards' thread state derived.
+  // The board rides its own subscription, cards' thread state derived.
   const board = useAtomValue(boardEnvironment.boardAtom(environmentId));
   // Refresh trigger: the card detail opening. One of the moments the answer
   // plausibly changed AND is about to be read — the Merge button's condition is
@@ -322,12 +322,12 @@ export function BoardCardDetail({
   const labelsById = indexBoardLabels(catalogue);
   const stageState: BoardState = { cards: [], stages, nextCardNumberByProject: {} };
   const boardSettings = useBoardSettings((settings) => settings.board);
-  // Persisting a newly derived key prefix for the target project (T3O-33), the
+  // Persisting a newly derived key prefix for the target project, the
   // same write the create dialog makes on a project's first card.
   const updateSettings = useUpdateBoardSettings();
   // Full settings + providers resolve the default model for a blank thread — the
   // same resolution a Threads-view "new thread" uses, so a card-started blank
-  // thread lands on the app's default model, not a board-specific one (D3).
+  // thread lands on the app's default model, not a board-specific one.
   const allSettings = useBoardSettings();
   const serverProviders = useBoardServerProviders();
 
@@ -364,16 +364,16 @@ export function BoardCardDetail({
       disagree. No `now` is passed: the chip's settle grace must not delay this. */
   const stepHeld =
     cardShell !== undefined && boardCardAttention({ card: cardShell, stages })?.reason === "held";
-  /** Whether the card's live step has given up (t3o-17, D3) — the failure
+  /** Whether the card's live step has given up — the failure
       banner's gate and the reason a non-auto-executing stage still offers a
-      restart (t3o-30, D3). */
+      restart. */
   const stepStalled = cardShell?.stalled === true;
-  /** Whether a human stopped the card's live step (T3O-23) — the paused
+  /** Whether a human stopped the card's live step — the paused
       banner's gate. Read off the same shell field the card face's neutral chip
       reads, so the board and the open modal cannot disagree about it. */
   const stepPausedByHuman = cardShell?.stepAwaiting === "paused";
 
-  // Resolved server-side (t3o-13, D4): the shell snapshot drops archived
+  // Resolved server-side: the shell snapshot drops archived
   // cards, so resolving here would render every archived dependency as an
   // unknown id. `detail.dependencies` is already in `dependsOn` order and
   // omits only ids with no card left at all.
@@ -403,7 +403,7 @@ export function BoardCardDetail({
     (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
   );
   const existingDependencyIds = new Set<string>(card === null ? [] : [card.id, ...card.dependsOn]);
-  // Dependencies cross groups (T3O-27); the card's own ancestors and
+  // Dependencies cross groups; the card's own ancestors and
   // descendants are refused, so they are not offered.
   const relatedCardIds = new Set<string>(
     card === null
@@ -436,7 +436,7 @@ export function BoardCardDetail({
                 }),
           }));
 
-  // The child's parent, resolved for the sheet's "part of" chip (t3o-25). An
+  // The child's parent, resolved for the sheet's "part of" chip. An
   // archived parent is off the live shell and its sub-board would redirect
   // straight back out — no chip rather than a dead door.
   const parentShell =
@@ -451,11 +451,11 @@ export function BoardCardDetail({
   // children leave the snapshot; the Plans panel reads `detail.children` for those.
   const childShells = card === null ? [] : shells.filter((shell) => shell.parentCardId === card.id);
 
-  // T3o (T3O-63): the worker each thread lives on, for where it opens.
+  // T3o: the worker each thread lives on, for where it opens.
   const workers = useAtomValue(boardEnvironment.workersAtom(environmentId));
   // "today" in a move divider is measured from when the card was opened.
   const [openedAt] = useState(() => Date.now());
-  // The group archive confirmation (T3O-29): a group always warns.
+  // The group archive confirmation: a group always warns.
   const [archiveGroupOpen, setArchiveGroupOpen] = useState(false);
   // Older settled threads are not in the shell; read them so they are named, not "deleted".
   const missingThreadIds = cardThreadIdsMissingFromShell(
@@ -464,7 +464,7 @@ export function BoardCardDetail({
   );
   const offShellThreads = useBoardCardThreadRows(environmentId, missingThreadIds);
   const shellThreads = snapshot?.threads ?? [];
-  // T3O-65: "Moved from {worker}" above the first thread after each move.
+  // "Moved from {worker}" above the first thread after each move.
   const movedFrom = boardThreadMoveDividers({
     links: card?.threadLinks ?? [],
     moves: (detail?.activity ?? []).flatMap((entry) =>
@@ -509,13 +509,13 @@ export function BoardCardDetail({
     },
   );
 
-  // Agent display names and accents for the Activity rail (t3o-18, D11). Resolved
+  // Agent display names and accents for the Activity rail. Resolved
   // at render time from the provider instance list the app already holds, so a
   // renamed or recoloured instance relabels its own history rather than freezing
   // a stale label on every row it ever wrote.
   const providerEntries = deriveProviderInstanceEntries(serverProviders ?? []);
-  // Resolve an override's model slug to its display name for the header pill
-  // (t3o-29, D7), the same lookup the popover's placeholder uses — so the pill,
+  // Resolve an override's model slug to its display name for the header pill,
+  // the same lookup the popover's placeholder uses — so the pill,
   // its tooltip and the popover all name a model the same way.
   const resolveModelDisplayName = (override: BoardCardStageModelOverride): string => {
     const option = getCustomModelOptionsByInstance(
@@ -538,7 +538,7 @@ export function BoardCardDetail({
     accentColor: (instanceId) => providerEntryById.get(instanceId)?.accentColor,
   };
 
-  // Each live-linked thread's cached todo list (t3o-18, D3), off the same shell
+  // Each live-linked thread's cached todo list, off the same shell
   // array the column cards read — the modal opens no extra subscription.
   const threadTodos: ReadonlyMap<ThreadId, BoardCardThreadShell> = new Map(
     (board?.cardThreads ?? [])
@@ -546,7 +546,7 @@ export function BoardCardDetail({
       .map((entry) => [entry.threadId, entry]),
   );
 
-  // The shell holds only the newest settled threads; the rest come from search (T3O-41).
+  // The shell holds only the newest settled threads; the rest come from search.
   const [adoptQuery, setAdoptQuery] = useState("");
   const adoptSearchRead = useBoardAdoptThreadSearch(
     environmentId,
@@ -617,10 +617,10 @@ export function BoardCardDetail({
   // card, so waiting for it to leave the queue could stick forever. The request
   // is durable on the step row, so asking again is harmless.
   const [forceStartPending, setForceStartPending] = useState(false);
-  // T3O-23: the Resume button's in-flight guard, so a second press cannot queue
+  // The Resume button's in-flight guard, so a second press cannot queue
   // the same step twice.
   const [resumePending, setResumePending] = useState(false);
-  // T3O-19: a forward move out of Planning with no plan written, held until the
+  // A forward move out of Planning with no plan written, held until the
   // human confirms it.
   const [unplannedMove, setUnplannedMove] = useState<BoardStageId | null>(null);
 
@@ -650,7 +650,7 @@ export function BoardCardDetail({
 
   const projectName = snapshot?.projects.find((project) => project.id === card.projectId)?.title;
 
-  // ── Project (T3O-33) ───────────────────────────────────────────────────
+  // ── Project ───────────────────────────────────────────────────
   // The lock comes from the SAME predicate the decider refuses on, so the row
   // and the rejection cannot disagree. `detail.children` carries archived
   // children too, as the server's count does.
@@ -737,7 +737,7 @@ export function BoardCardDetail({
       : null;
 
   /** Patch the card's review overrides, preserving the fields not being set.
-      One write shape for all three controls (D8) — there is no second
+      One write shape for all three controls — there is no second
       command. */
   const patchReviewOverrides = (patch: Partial<BoardCardReviewOverrides>) =>
     runCommand(
@@ -761,7 +761,7 @@ export function BoardCardDetail({
     BOARD_SEED_STAGE_IDS.review,
     projectExecutionConfig,
   );
-  // The board-wide auto-merge default (T3O-38, D2/D3). Resolved off the
+  // The board-wide auto-merge default. Resolved off the
   // MERGE-ROLE stage, not off a stage literally named "Ready for merge": the
   // role is what the server reads, and keying on the name would silently
   // disagree with it on a renamed pipeline.
@@ -826,16 +826,16 @@ export function BoardCardDetail({
         stageLabel: boardStageLabel(stages, card.stage),
         error: detail?.stepError ?? null,
         // Amber and "waiting to resume" rather than red and "stopped" when the
-        // board is going to restart it itself (T3O-22) — read off the same shell
+        // board is going to restart it itself — read off the same shell
         // field the card face's chip reads, so the two cannot disagree.
         waiting: boardStallIsWaiting(cardShell?.stalledReason),
       }
     : null;
-  /** What the paused banner renders (T3O-23). Mutually exclusive with
+  /** What the paused banner renders. Mutually exclusive with
       `stepFailure` by construction: `paused` and `stalled` are different step
       statuses and a card has one live step. */
   const stepPaused = stepPausedByHuman ? { stageLabel: boardStageLabel(stages, card.stage) } : null;
-  /** The kept-worktree banner (T3O-52, D5): the card is finished — archived, or
+  /** The kept-worktree banner: the card is finished — archived, or
       in Done with `reclaimWorktreeOnDone` on — and still holds its worktree. */
   const worktreeKept =
     card.worktree !== null &&
@@ -869,14 +869,14 @@ export function BoardCardDetail({
   /** Whether ANY step is live on the card — running, queued, or parked
       (stalled, awaiting input, paused). The decider's one-step-at-a-time
       invariant reads exactly this set, so the button that is disabled by it
-      (T3O-39, D9) must read the same set and not just "running". */
+       must read the same set and not just "running". */
   const stepLive =
     cardShell?.stepRunning === true ||
     cardShell?.queued === true ||
     cardShell?.stalled === true ||
     (cardShell?.stepAwaiting ?? null) !== null;
 
-  /** "Another review round" / "Request review" (T3O-39, D6). One RPC behind
+  /** "Another review round" / "Request review". One RPC behind
       both the rail button and the pane's "Run round N+1": the server writes
       the override, records why, and moves the card, in that order. */
   const onRequestReviewRound = (carry?: {
@@ -896,7 +896,7 @@ export function BoardCardDetail({
     });
   };
 
-  /** Retry CI, Stop CI (T3O-59) and "Send back to review anyway" (T3O-49). */
+  /** Retry CI, Stop CI and "Send back to review anyway". */
   const onCiAction = (action: "retry" | "stop" | "send-back") => {
     const run = action === "retry" ? retryCi : action === "stop" ? stopCi : sendBackCi;
     const failed = {
@@ -986,15 +986,15 @@ export function BoardCardDetail({
     );
   };
 
-  // Restart is a server command (D2): the reactor runs the stage's configured
+  // Restart is a server command: the reactor runs the stage's configured
   // prompt through the same envelope the automatic trigger uses, so the two
-  // entry points cannot drift. Failure logs and stops (D4).
+  // entry points cannot drift. Failure logs and stops.
   const restartStage = () => {
     setFeedback(null);
     runCommand(startStageThread({ environmentId, input: { cardId: card.id } }));
   };
 
-  // "New blank thread" (D3): a real server thread with no first turn, linked so
+  // "New blank thread": a real server thread with no first turn, linked so
   // its agent resolves the card through `board_get_card_context`. Returns the id
   // so the pane can select it (opening its composer). Failure logs and stops.
   const createBlankThread = async (): Promise<ThreadId | null> => {
@@ -1055,7 +1055,7 @@ export function BoardCardDetail({
     buildStage !== null &&
     (!isBoardStageAtOrAfterBuild(stageState, card.stage) || card.stage === buildStage.stageId);
 
-  // What the split gate shows (T3O-31). A proposal made before T3O-31 has no
+  // What the split gate shows. An older proposal has no
   // stored recommendation, so it falls back to the server's rule.
   const firstStage = boardStagesInOrder(stageState)[0] ?? null;
   const splitGate =
@@ -1080,7 +1080,7 @@ export function BoardCardDetail({
   const moveStage = (toStage: BoardStageId) => {
     const targetColumn = (board?.cards ?? []).filter((shell) => shell.stage === toStage);
     // Every column but Done takes the card at the bottom. Done takes it at
-    // the top, and the server places it there (T3O-15) — this sends no key
+    // the top, and the server places it there — this sends no key
     // at all rather than a second implementation of the same rule.
     const toDone = toStage === boardStageWithRole(stageState, "done")?.stageId;
     runCommand(
@@ -1098,7 +1098,7 @@ export function BoardCardDetail({
     );
   };
 
-  // The group popup (T3O-29): Open board, the group's note, its settings and
+  // The group popup: Open board, the group's note, its settings and
   // the archive warning, all from the shells the board already holds.
   const groupShells = board?.cards ?? EMPTY_SHELL_CARDS;
   const groupStats =
@@ -1115,7 +1115,7 @@ export function BoardCardDetail({
           onArchive: () => setArchiveGroupOpen(true),
           ownBranch: boardShellGroup(groupShells, cardShell)?.target === "own",
         };
-  // The Automation section (T3O-38). A done or archived card has nothing left
+  // The Automation section. A done or archived card has nothing left
   // to automate, so it gets none.
   const automationGroup = groupView === null || cardShell === undefined ? null : cardShell;
   const automation =
@@ -1144,7 +1144,7 @@ export function BoardCardDetail({
     boardShellAutoMergeArmedByCard({ shells: groupShells, boardWide: boardWideAutoMerge }).get(
       String(card.id),
     ) === true;
-  // A group's child can be parked in Deferred (T3O-29).
+  // A group's child can be parked in Deferred.
   const parentIsGroup =
     card.parentCardId !== null && groupShells.some((shell) => shell.cardId === card.parentCardId);
 
@@ -1373,7 +1373,7 @@ export function BoardCardDetail({
         });
       }}
       onCheckForPullRequest={() => {
-        // T3o (T3O-48): `force`, so the answer is not the cached one that
+        // T3o: `force`, so the answer is not the cached one that
         // produced the empty state being questioned.
         setFeedback(null);
         setCheckingForPullRequest(true);
@@ -1528,15 +1528,15 @@ export function BoardCardDetail({
       reviewRoundsStarted={reviewRoundsRecorded}
       reviewStepActive={cardShell?.stepRunning === true || cardShell?.queued === true}
       onSetReviewRounds={(rounds) => patchReviewOverrides({ rounds })}
-      // The way out of a phase that recorded a payload nothing can read
-      // (T3O-14). The pane hands back the halted step's own id — any of the
+      // The way out of a phase that recorded a payload nothing can read.
+      // The pane hands back the halted step's own id — any of the
       // four phases can be the broken one — and the server refuses a readable
       // record, so a stale pane cannot discard work that actually landed.
       onReopenReviewStep={(stepId) =>
         runCommand(reopenStep({ environmentId, input: { cardId: card.id, stepId } }))
       }
       // The pane's "Run round N+1" and the rail's "Another review round" are
-      // the same verb (T3O-39, D6), so they are the same call: the server
+      // the same verb, so they are the same call: the server
       // resolves the round from the ledger, writes the override before it
       // moves the card, and there is no client-side patch to keep in agreement.
       onResumeReview={() => onRequestReviewRound()}

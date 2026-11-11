@@ -89,7 +89,7 @@ export default Effect.gen(function* () {
     `;
   }
 
-  // Frozen execution config on the step-state row (D12). NOT NULL columns added
+  // Frozen execution config on the step-state row. NOT NULL columns added
   // with defaults, as SQLite requires; every real row is written with resolved
   // values, so the defaults never surface in the read model.
   yield* sql`ALTER TABLE board_card_step_state ADD COLUMN prompt TEXT NOT NULL DEFAULT ''`;
@@ -99,10 +99,10 @@ export default Effect.gen(function* () {
   yield* sql`ALTER TABLE board_card_step_state ADD COLUMN human_in_loop INTEGER NOT NULL DEFAULT 0`;
   yield* sql`ALTER TABLE board_card_step_state ADD COLUMN timeout_ms INTEGER NOT NULL DEFAULT 0`;
 
-  // The card-level recipe snapshot is replaced by the frozen run row (D1).
+  // The card-level recipe snapshot is replaced by the frozen run row.
   yield* sql`ALTER TABLE board_cards DROP COLUMN recipe_snapshot`;
 
-  // Per-card human-in-the-loop override on the Build stage (D6). Nullable —
+  // Per-card human-in-the-loop override on the Build stage. Nullable —
   // NULL means untouched (the effective value is computed from the build
   // stage's settings and whether the card has a plan).
   yield* sql`ALTER TABLE board_cards ADD COLUMN human_in_loop INTEGER`;

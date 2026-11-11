@@ -229,7 +229,7 @@ export const localBoardWorkspaceDeps = Effect.gen(function* () {
 });
 
 /**
- * Each card's workspace where the board places it (D20). A worker with
+ * Each card's workspace where the board places it. A worker with
  * no checkout of the card's project yields a workspace whose `checkoutPath` is
  * null, which every caller already reads as "no checkout there".
  */

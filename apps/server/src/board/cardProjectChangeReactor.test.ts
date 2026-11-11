@@ -216,7 +216,7 @@ it.effect("names the abandoned thread to the release sweep", () =>
   }),
 );
 
-// The thread RECORDS are history (D2): a planning thread's real output is the
+// The thread RECORDS are history: a planning thread's real output is the
 // plan, and that lives on the card. Only a running agent is broken by the move.
 it.effect("keeps the thread record rather than deleting it", () =>
   Effect.gen(function* () {

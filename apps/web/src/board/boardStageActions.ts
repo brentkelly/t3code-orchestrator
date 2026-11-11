@@ -64,7 +64,7 @@ export type BoardStagePrimaryAction =
 
 /** What the merge-role stage's button needs to know beyond the stage list. */
 export interface BoardStagePrimaryActionContext {
-  /** The card has a CI entry (T3O-44): only passing or Skip CI moves it on. */
+  /** The card has a CI entry: only passing or Skip CI moves it on. */
   readonly ciEntryLive?: boolean;
   /** The card's pull request state, or null when it has none. Only `open` puts
       a Merge button on the card: a merged or closed PR has nothing left to
@@ -89,9 +89,8 @@ export interface BoardStagePrimaryActionContext {
 }
 
 /**
- * A secondary action offered BESIDE the primary one, behind a caret (t3o-07,
- * D8). A list, not a nullable, so a second entry is a list entry rather than a
- * second shape — the popover is already a list.
+ * A secondary action offered BESIDE the primary one, behind a caret. A list, not a nullable, so
+ * a second entry is a list entry rather than a second shape — the popover is already a list.
  */
 export type BoardStageSecondaryAction = {
   readonly kind: "submit-no-review";
@@ -188,12 +187,12 @@ export function boardStagePrimaryAction(
       disabledReason: disabled ? (context.conflictFixReason ?? "Resolving conflicts…") : null,
     };
   }
-  // The stage list is already the card's own project's pipeline (T3O-43).
+  // The stage list is already the card's own project's pipeline.
   const next = boardCiAwareNextStageId(stages, stageId, context?.ciEntryLive === true);
   if (next === null) return null;
   const nextStage = stages.find((stage) => stage.stageId === next);
   if (nextStage === undefined) return null;
-  // Crossing into the build role is the "Begin build" human gate (D11).
+  // Crossing into the build role is the "Begin build" human gate.
   if (effectiveBoardStageRole(nextStage) === "build") {
     return { kind: "move", label: "Begin build", toStage: next, emphasised: true };
   }

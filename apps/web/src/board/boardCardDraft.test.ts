@@ -1,5 +1,5 @@
 /**
- * The new-card draft rules (T3O-26): what counts as a draft, and how a stored
+ * The new-card draft rules: what counts as a draft, and how a stored
  * one is mapped back onto a board that has moved on since it was saved.
  */
 import {
@@ -204,7 +204,7 @@ describe("restoreBoardCardDraft — stage", () => {
 
 describe("restoreBoardCardDraft — project, dependencies and labels", () => {
   it("keeps dependencies that still exist, including ones in another project", () => {
-    // A cross-project edge is legal (T3O-33, D3) and the picker offers those
+    // A cross-project edge is legal and the picker offers those
     // cards, so restoring a draft must not drop what it let the user choose.
     const restored = restore(
       draftOf({

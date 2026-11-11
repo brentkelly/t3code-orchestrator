@@ -1,7 +1,7 @@
-// T3o: agent write-path activity log (t3o-08) — progress notes and
+// T3o: agent write-path activity log — progress notes and
 // human-input requests an agent emits over MCP. Append-only, card-scoped,
 // read on demand by board_get_card_context; bodies never enter the read
-// model (D8). One table for both kinds, discriminated by `kind`.
+// model. One table for both kinds, discriminated by `kind`.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

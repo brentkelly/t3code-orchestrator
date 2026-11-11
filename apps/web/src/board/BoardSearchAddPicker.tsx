@@ -54,7 +54,7 @@ export function BoardPickerSearchBody({
   readonly placeholder: string;
   readonly options: ReadonlyArray<BoardPickerOption>;
   readonly onPick: (id: string) => void;
-  /** For a caller that searches beyond `options` as the user types (T3O-41). */
+  /** For a caller that searches beyond `options` as the user types. */
   readonly onQueryChange?: ((query: string) => void) | undefined;
   readonly pending?: boolean | undefined;
 }) {

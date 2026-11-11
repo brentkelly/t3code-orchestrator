@@ -1,5 +1,5 @@
 /**
- * Recursive integration branches and the destructive group flows (T3O-28),
+ * Recursive integration branches and the destructive group flows,
  * against the LIVE reactor: a nested own-branch group cuts its branch from the
  * outer one, children base on the nearest own branch, sync-base fires at every
  * level, and a confirmed group archive discards the subtree's branch work.

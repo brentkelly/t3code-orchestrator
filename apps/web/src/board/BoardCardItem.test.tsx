@@ -110,7 +110,7 @@ describe("BoardCardContent (D7)", () => {
   });
 
   it("wears the plan bar with its drill-in chip on a split parent, at every stage before review", () => {
-    // The prototype's treatment (t3o-25): a segment bar — one flex segment per
+    // The prototype's treatment: a segment bar — one flex segment per
     // child, coloured done/started/pending — with the "N/M plans" chip beside
     // it. No footer "N cards" button, and the row shows outside Building too.
     const html = renderToStaticMarkup(
@@ -919,7 +919,7 @@ describe("held review loop chip suppression", () => {
     expect(offHtml).toContain("No convergence");
   });
 
-  // T3o (T3O-48): a card parked at Ready for merge with no pull request goes
+  // T3o: a card parked at Ready for merge with no pull request goes
   // nowhere on its own, and the board face said nothing about it.
   it("wears an amber `No PR` chip at the merge stage with nothing to merge", () => {
     const parked = shell("merge");

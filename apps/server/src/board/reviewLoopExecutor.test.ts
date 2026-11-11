@@ -121,7 +121,7 @@ const overrides = (patch: Partial<BoardCardReviewOverrides>): BoardCardReviewOve
   ...patch,
 });
 
-// ── T3O-51 fixtures: binding adjudication, re-triage and the stuck stop ──
+// ── Fixtures: binding adjudication, re-triage and the stuck stop ──
 
 const t3o51 = {
   triage: (round: number, actions: Record<string, "fixed" | "rejected">, fixedSha = "sha-review") =>
@@ -447,8 +447,7 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     const capped = plan(cappedRound(1), oneRound);
     // Nothing converged: the reviewer raised a critical and the budget simply
     // ran out. `advanceStage` is gated on `succeeded`, so `blocked` is what
-    // keeps the card in Code review with its findings — the t3o-16 D8
-    // guarantee that PR #40 inverted.
+    // keeps the card in Code review with its findings.
     expect(capped).toEqual({ kind: "complete", outcome: "blocked" });
   });
 
@@ -538,7 +537,7 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     expect(review2.model).toEqual(opus);
 
     // ...while round 2's TRIAGE keeps its own configured model. Escalating the
-    // reviewer and re-modelling the author are different decisions (D4).
+    // reviewer and re-modelling the author are different decisions.
     const triage2 = plan(
       [...cappedRound(1), completion("review@2", reviewPayload([finding("critical", "f2")]))],
       exec,
@@ -710,10 +709,10 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
       readonly completions: ReadonlyArray<BoardStepCompletion>;
       readonly rounds: number;
       readonly stopAfterRound: number | null;
-      /** T3O-39: the card's request for one more round, which both copies of
+      /** The card's request for one more round, which both copies of
           the walk must honour identically. Omitted means none. */
       readonly runThroughRound?: number | null;
-      /** T3O-51: the server-written carry fields. */
+      /** The server-written carry fields. */
       readonly carriedFindings?: BoardCardReviewOverrides["carriedFindings"];
       readonly stuckWaivedThrough?: number | null;
     }> = [
@@ -765,7 +764,7 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
         rounds: 5,
         stopAfterRound: null,
       },
-      // T3O-14 round 2: the same halt on the phases that are not `review`.
+      // The same halt on the phases that are not `review`.
       {
         name: "unreadable triage payload",
         completions: [
@@ -791,7 +790,7 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
         rounds: 5,
         stopAfterRound: null,
       },
-      // t3o-24: recorded sync steps walk the same gate rounds in both copies.
+      // Recorded sync steps walk the same gate rounds in both copies.
       {
         name: "gate round due after a sync, past the budget",
         completions: [
@@ -823,7 +822,7 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
         rounds: 1,
         stopAfterRound: null,
       },
-      // T3O-39: a request for one more round must move BOTH copies off the
+      // A request for one more round must move BOTH copies off the
       // convergence arm, or the pane reports `converged` while the executor
       // dispatches round N+1.
       {
@@ -884,7 +883,7 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
         completions: scenario.completions,
         // The budget the executor actually runs to, resolved the same way the
         // pane resolves the number it passes this walk — so `runThroughRound`
-        // flooring the budget (D2) is part of what the differential checks.
+        // flooring the budget is part of what the differential checks.
         maxRounds: effectiveBoardReviewRounds({
           configured: scenario.rounds,
           overrides: cardOverrides,
@@ -1283,7 +1282,7 @@ describe("another review round after convergence (T3O-39, D1/D2/D3)", () => {
     );
     expect(requested.kind === "run" && requested.model).toEqual(opusRound);
     // Triage keeps its configured per-phase model: escalating the reviewer and
-    // re-modelling the author are different decisions (t3o-22, D4).
+    // re-modelling the author are different decisions.
     const atTriage = plan(
       [cleanRound(1), completion("review@2", reviewPayload([finding("critical")]))],
       undefined,
@@ -1347,7 +1346,7 @@ describe("sync-base and the gate round (t3o-24, D2/D3)", () => {
     const unheld = plan(cleanRound(1), undefined, overrides({ stopAfterRound: 3 }), null, true);
     expect(unheld.kind === "run" && unheld.stepId).toBe("sync@1");
     // A fresh base at the stopped round still converges — the stop never held
-    // a passing loop (t3o-22, D5 unchanged).
+    // a passing loop (D5 unchanged).
     expect(plan(cleanRound(1), undefined, overrides({ stopAfterRound: 1 }))).toEqual({
       kind: "complete",
       outcome: "succeeded",
@@ -1381,7 +1380,7 @@ describe("sync-base and the gate round (t3o-24, D2/D3)", () => {
     // owes a gate round the cap must not stop.
     const result = plan([...cleanRound(1), syncDone(1)], reviewExec({ rounds: 1 }));
     expect(result.kind === "run" && result.stepId).toBe("review@2");
-    // A review phase STARTS a round: the reactor re-measures the tip (D1).
+    // A review phase STARTS a round: the reactor re-measures the tip.
     expect(result.kind === "run" && result.recordBaseTip).toBe(true);
   });
 

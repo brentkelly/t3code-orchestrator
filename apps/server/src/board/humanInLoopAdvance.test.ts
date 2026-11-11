@@ -80,7 +80,7 @@ it.effect("a human-in-the-loop build stays put when Building's auto-advance is o
   ),
 );
 
-// A drag-back re-entry conversation (D7) is always human-in-the-loop with no
+// A drag-back re-entry conversation is always human-in-the-loop with no
 // prompt. It finishes the stage exactly as any other step does: a human who
 // talked the work through to `board_complete_step` wants the card moved on, and
 // a stage that should hold for them ships with `autoAdvance` off.

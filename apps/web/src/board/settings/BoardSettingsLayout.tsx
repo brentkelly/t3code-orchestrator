@@ -1,5 +1,5 @@
 /**
- * T3o: Settings → Board as a layout (T3O-49): General and one page
+ * T3o: Settings → Board as a layout: General and one page
  * per project, under `/settings/board/`. The sub-nav lists the board's
  * projects; a blue dot marks one whose committed `t3o.json` differs from its
  * pipeline (known once General or the project's Import tab has looked).

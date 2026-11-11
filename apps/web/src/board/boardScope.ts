@@ -21,7 +21,7 @@ export type BoardScope =
 export const ROOT_BOARD_SCOPE: BoardScope = { kind: "root" };
 
 /** Whether one card belongs on a scope's board: top-level cards on the root
-    board, one parent's children on its sub-board (D1). */
+    board, one parent's children on its sub-board. */
 export function isBoardCardInScope(
   card: Pick<BoardCardShell, "parentCardId">,
   scope: BoardScope,
@@ -46,7 +46,7 @@ export function filterBoardColumnsByScope(
   ) as BoardStageColumns;
 }
 
-/** The Deferred column (T3O-29): a system stage, never in the board's stage
+/** The Deferred column: a system stage, never in the board's stage
     list, drawn only on a sub-board. */
 export const BOARD_DEFERRED_STAGE: BoardStageDefinition = {
   stageId: BOARD_DEFERRED_STAGE_ID,
@@ -59,7 +59,7 @@ export const BOARD_DEFERRED_STAGE: BoardStageDefinition = {
 };
 
 /** The stages a scope renders: every stage on the root board; Deferred and
-    then every stage inside a group (T3O-29), since an inherit group's
+    then every stage inside a group, since an inherit group's
     children run the whole pipeline. */
 export function boardScopeStages(
   stages: ReadonlyArray<BoardStageDefinition>,
@@ -92,7 +92,7 @@ export function boardScopeColumnCollapsedByDefault(input: {
   );
 }
 
-/** Whether the auto-collapse setting folds this column (T3O-40): on, and empty. */
+/** Whether the auto-collapse setting folds this column: on, and empty. */
 export function boardColumnAutoFolded(input: {
   readonly autoCollapseEmpty: boolean;
   readonly cardCount: number;
@@ -131,7 +131,7 @@ export function boardDragOpenedRail<S extends string>(input: {
 }
 
 /**
- * Where a column's collapse toggle goes (T3O-40). On an auto-folded column it
+ * Where a column's collapse toggle goes. On an auto-folded column it
  * only opens or ends a transient peek, so `collapsedByStage` is never written
  * for it; on any other column it is the stored manual choice.
  */
@@ -166,8 +166,8 @@ export function livePeekedColumns(input: {
 }
 
 /**
- * The collapse-store key for one column in one scope (D1): the bare stage id
- * on the root board — every persisted pre-t3o-25 entry keeps meaning exactly
+ * The collapse-store key for one column in one scope: the bare stage id
+ * on the root board — every persisted legacy entry keeps meaning exactly
  * what it meant — and a `sub/<parent>/<stage>` composite inside a sub-board,
  * so a collapsed root Backlog collapses nothing anywhere else.
  */
@@ -175,7 +175,7 @@ export function boardScopeCollapseKey(scope: BoardScope, stageId: string): strin
   return scope.kind === "root" ? stageId : `sub/${scope.parentCardId}/${stageId}`;
 }
 
-/** Which board's filter text a scope reads (T3O-29). */
+/** Which board's filter text a scope reads. */
 export function boardScopeQueryKey(scope: BoardScope): string {
   return scope.kind === "root" ? "root" : `sub/${scope.parentCardId}`;
 }
@@ -196,7 +196,7 @@ export function resolveSubBoardEntry(
 ): SubBoardEntry {
   const parent = cards.find((card) => card.cardId === parentCardId);
   if (parent === undefined) return { kind: "redirect-root" };
-  // An empty heading is still a group (T3O-29): its board is where cards go.
+  // An empty heading is still a group: its board is where cards go.
   const isGroup =
     parent.group !== undefined || cards.some((card) => card.parentCardId === parentCardId);
   return isGroup ? { kind: "sub-board" } : { kind: "redirect-parent-sheet" };

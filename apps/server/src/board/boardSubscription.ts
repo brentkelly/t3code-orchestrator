@@ -56,8 +56,8 @@ export const boardStreamWindowDeltas = Effect.fnUntraced(function* (
   deps: {
     readonly queries: Pick<BoardQueriesShape, "boardCardThreads" | "boardCardIdForThread">;
     readonly latestSequence: Effect.Effect<number>;
-    /** The worker summary, re-sent after a window that changed the registry
-        (T3O-62). Absent in suites that are not about workers. */
+    /** The worker summary, re-sent after a window that changed the registry.
+        Absent in suites that are not about workers. */
     readonly workersState?: Effect.Effect<BoardWorkersState>;
   },
 ) {
@@ -167,7 +167,7 @@ export const subscribeBoard: (
   const workers = yield* BoardWorkers;
   const todoChanges = yield* threadTail.subscribeTodoChanges;
 
-  // T3O-62: the worker summary is runtime state as much as log state, so it
+  // The worker summary is runtime state as much as log state, so it
   // rides beside the log's deltas as a whole-state `workers` item, stamped
   // with the board head and applied unguarded (like `card-threads`).
   const workersItem = (state: BoardWorkersState) =>

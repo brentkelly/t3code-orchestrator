@@ -38,7 +38,7 @@ export class BoardPullRequestGatewayError extends Schema.TaggedError<BoardPullRe
         a missing approval, an unmergeable branch. Shown verbatim on the card,
         so the user reads the host's reason rather than a paraphrase of it. */
     detail: Schema.String,
-    /** T3o (T3O-47): set by `merge`, which is the only caller whose next move
+    /** T3o: set by `merge`, which is the only caller whose next move
         depends on it. Absent on a read, where there is nothing to decide. */
     refusal: Schema.optional(Schema.Literals(["host", "blocked", "unavailable"])),
   },
@@ -83,7 +83,7 @@ function failureDetail(error: unknown): string {
 }
 
 /**
- * A draft title with its `WIP:` / `[WIP]` marker taken off (T3O-12) — how
+ * A draft title with its `WIP:` / `[WIP]` marker taken off — how
  * Forgejo and Gitea mark a pull request ready, since neither has a ready
  * action. Null when nothing would be left of the title, which no host takes.
  * A title without the marker comes back unchanged.
@@ -97,7 +97,7 @@ export function boardTitleWithoutWipPrefix(title: string): string | null {
 
 /** A pull request as the board addresses it. `repository` is resolved here
     rather than carried on the card: it is the project's `origin` remote
-    (T3O-24, see `boardRepository.ts`), and a card that predates the field
+    (see `boardRepository.ts`), and a card that predates the field
     would otherwise be unmergeable. */
 export interface BoardPullRequestRef {
   readonly projectId: ProjectId;
@@ -121,7 +121,7 @@ function vcsStatusOf(summary: PullRequestSummary): BoardFoundPullRequest {
 
 /**
  * A pull request as the board reads it: the VCS status shape, plus when it
- * merged or closed (T3O-24) — what tells a pull request this card opened from
+ * merged or closed — what tells a pull request this card opened from
  * one an earlier card left on the same branch name. Absent where the host
  * does not report it.
  */
@@ -179,7 +179,7 @@ export class BoardPullRequestGateway extends Context.Service<
       input: BoardPullRequestRef,
     ) => Effect.Effect<"readied" | "not-draft", BoardPullRequestGatewayError>;
     /**
-     * Close an open pull request without merging it (T3O-28) — archiving a
+     * Close an open pull request without merging it — archiving a
      * group, or cancelling a started card's work. Reads the forge LIVE first
      * and acts only on an open one, so it is idempotent: a pull request that
      * is already closed or merged comes back `not-open` with no write.
@@ -188,7 +188,7 @@ export class BoardPullRequestGateway extends Context.Service<
       input: BoardPullRequestRef,
     ) => Effect.Effect<"closed" | "not-open", BoardPullRequestGatewayError>;
     /**
-     * The repository the board's pull requests live on (T3O-24): the
+     * The repository the board's pull requests live on: the
      * project's `origin`, falling back to its identity. Null when the project
      * has neither. Every other operation here addresses this one, so a pull
      * request linked to a card is checked against it too.

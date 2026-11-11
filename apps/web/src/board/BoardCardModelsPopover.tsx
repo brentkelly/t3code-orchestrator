@@ -67,7 +67,7 @@ export function BoardCardModelsPopover({
       defaults. The decider normalises an emptied map to null too, so a Reset
       and a clear-the-last-row land in the same state. */
   readonly onChange: (next: BoardCardModelOverrides | null) => void;
-  /** Whether a step is in flight, for the "applies to the next run" note (D6).
+  /** Whether a step is in flight, for the "applies to the next run" note.
       Deliberately does NOT disable the controls: setting the model for the next
       round while this one runs is the common intent, not a mistake. */
   readonly stepRunning: boolean;
@@ -77,7 +77,7 @@ export function BoardCardModelsPopover({
   // provider list it pulls in costs nothing until the popover is opened.
   const settings = useBoardSettings();
   const ownProviders = useBoardServerProviders();
-  // T3O-65: and the instance ids only workers have, so a card can pick a model
+  // And the instance ids only workers have, so a card can pick a model
   // its worker offers.
   const workers = useBoardWorkersState();
   const serverProviders = [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)];
@@ -136,7 +136,7 @@ export function BoardCardModelsPopover({
               <ModelRow
                 ariaLabel={`${row.label} model for this card`}
                 getModelOptions={getModelOptions}
-                // An override is a model PLUS what it changes (D2): with no
+                // An override is a model PLUS what it changes: with no
                 // model there is nowhere to keep an access level, so the
                 // section stays hidden until one is picked — the same rule the
                 // per-round drawer follows.

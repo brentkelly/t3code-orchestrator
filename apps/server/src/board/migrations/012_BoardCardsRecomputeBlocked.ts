@@ -4,7 +4,7 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-/** Stages at Ready or beyond, where unmet dependencies block (D18). Inlined
+/** Stages at Ready or beyond, where unmet dependencies block. Inlined
     rather than imported: a migration must keep behaving the way it did the day
     it ran, even if the stage list later changes. */
 const READY_OR_BEYOND = ["ready", "building", "review", "merge", "done"] as const;

@@ -1,5 +1,5 @@
 /**
- * ANSI colour in CI logs (T3O-60): the 16 basic SGR colours and bold become
+ * ANSI colour in CI logs: the 16 basic SGR colours and bold become
  * theme classes; every other escape (cursor moves, 256-colour and true colour,
  * backgrounds, OSC titles and links) is stripped. A colour carries across
  * lines, so a block is read with one running state.

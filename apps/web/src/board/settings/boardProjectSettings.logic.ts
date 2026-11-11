@@ -1,5 +1,5 @@
 /**
- * T3o: pure helpers for Settings → Board → Projects → <project> (T3O-49) —
+ * T3o: pure helpers for Settings → Board → Projects → <project> —
  * the CI step editor's edits and their parallel rules, the switch states the
  * Pipeline tab shows, and the import summary chips.
  */

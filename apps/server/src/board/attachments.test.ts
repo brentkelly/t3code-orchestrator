@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Brief attachment storage (t3o-32): names, paths, the claim from a pending
+ * Brief attachment storage: names, paths, the claim from a pending
  * upload into the card's folder, the manifest a thread pulls, and the image
  * staging a spawn pushes.
  */

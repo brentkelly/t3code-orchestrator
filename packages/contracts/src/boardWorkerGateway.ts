@@ -139,7 +139,7 @@ export const BoardGatewaySignal = Schema.Union([
     type: Schema.Literal("input-resolved"),
     threadId: ThreadId,
     answered: Schema.Boolean,
-    // Absent from workers older than T3O-38, which never answer for the board.
+    // Absent from older workers, which never answer for the board.
     byBoard: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.Struct({ type: Schema.Literal("session-started"), threadId: ThreadId }),
@@ -342,7 +342,7 @@ export const BOARD_GATEWAY_CALL_RESULTS = {
 } as const satisfies Record<BoardGatewayCall["_tag"], Schema.Top>;
 
 /**
- * A CI pass run on the worker holding the card's worktree (T3O-44, D21). The
+ * A CI pass run on the worker holding the card's worktree. The
  * shapes mirror `BoardCiStepDefinition` and `BoardCiPassStep` in `board.ts`,
  * which this file cannot import.
  */
@@ -358,9 +358,9 @@ export const BoardWorkerRunCiInput = Schema.Struct({
     }),
   ),
   /** The pass index of `steps[0]`, so a later segment's log files don't
-      overwrite an earlier one's (T3O-49). */
+      overwrite an earlier one's. */
   indexOffset: Schema.optionalKey(NonNegativeInt),
-  /** False runs every step even after a failure (T3O-57). An older worker
+  /** False runs every step even after a failure. An older worker
       ignores it and stops at the first failure. */
   stopOnFailure: Schema.optionalKey(Schema.Boolean),
 });
@@ -380,7 +380,7 @@ const WireCiStepResult = Schema.Struct({
   ),
 });
 
-/** `BoardCiHeadline` (T3O-61) with loose strings: the board clamps them, so
+/** `BoardCiHeadline` with loose strings: the board clamps them, so
     a worker's long reason can't fail the whole stream's decode. */
 const WireCiHeadline = Schema.Struct({
   what: Schema.String,
@@ -407,7 +407,7 @@ export const BoardWorkerCiProgress = Schema.Union([
       tail: Schema.String,
       parallel: Schema.optionalKey(Schema.Boolean),
       result: Schema.optionalKey(WireCiStepResult),
-      /** `BoardCiProgress` (T3O-60). */
+      /** `BoardCiProgress`. */
       progress: Schema.optionalKey(
         Schema.Struct({
           message: Schema.NullOr(Schema.String),
@@ -425,19 +425,19 @@ export const BoardWorkerCiProgress = Schema.Union([
     failedIndex: Schema.NullOr(NonNegativeInt),
     /** Why the pass could not run, when `result` is "unavailable". */
     detail: Schema.optional(Schema.String),
-    /** Every step ran (T3O-57). Absent, from an older worker, reads false. */
+    /** Every step ran. Absent, from an older worker, reads false. */
     ranAll: Schema.optionalKey(Schema.Boolean),
-    /** The pass could not run because of the worker's machine (T3O-59). */
+    /** The pass could not run because of the worker's machine. */
     machine: Schema.optionalKey(Schema.Boolean),
-    /** The failed step's exit code, when `result` is "failed" (T3O-59). */
+    /** The failed step's exit code, when `result` is "failed". */
     exitCode: Schema.optionalKey(Schema.NullOr(Schema.Int)),
-    /** The failed step's headline (T3O-61): a machine one holds the card. */
+    /** The failed step's headline: a machine one holds the card. */
     headline: Schema.optionalKey(WireCiHeadline),
   }),
 ]);
 export type BoardWorkerCiProgress = typeof BoardWorkerCiProgress.Type;
 
-/** Most bytes one chunk of a CI log read carries (T3O-60). */
+/** Most bytes one chunk of a CI log read carries. */
 export const BOARD_CI_LOG_CHUNK_BYTES = 1024 * 1024;
 
 /**
@@ -456,7 +456,7 @@ export const BoardCiLogItem = Schema.Union([
 ]);
 export type BoardCiLogItem = typeof BoardCiLogItem.Type;
 
-/** A CI step log read on the worker holding the card's worktree (T3O-60).
+/** A CI step log read on the worker holding the card's worktree.
     The worker resolves `<worktreePath>/.t3/ci/<runId>/<index>.log` itself. */
 export const BoardWorkerReadCiLogInput = Schema.Struct({
   worktreePath: TrimmedNonEmptyString,
@@ -478,9 +478,9 @@ export const BOARD_WORKER_GATEWAY_WS_METHODS = {
   subscribeMcpRelay: "boardWorker.subscribeMcpRelay",
   mcpRelayRespond: "boardWorker.mcpRelayRespond",
   stageAttachments: "boardWorker.stageAttachments",
-  /** T3O-44: run a card's CI steps in its worktree, streaming progress. */
+  /** Run a card's CI steps in its worktree, streaming progress. */
   runCi: "boardWorker.gateway.runCi",
-  /** T3O-60: read, and optionally follow, one CI step's log. */
+  /** Read, and optionally follow, one CI step's log. */
   readCiLog: "boardWorker.gateway.readCiLog",
 } as const;
 
@@ -540,7 +540,7 @@ export const BOARD_WORKER_GATEWAY_RPCS = [
 
 /** Thread reads stream at the thread-shell tier. Calls start, steer and read
     threads, so they sit at the operate tier with the relay and staging —
-    scopes the board's own session already holds (D19). */
+    scopes the board's own session already holds. */
 export const BOARD_WORKER_GATEWAY_RPC_SCOPES = {
   [M.call]: AuthOrchestrationOperateScope,
   [M.subscribeSignals]: AuthOrchestrationReadScope,

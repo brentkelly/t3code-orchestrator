@@ -244,7 +244,7 @@ export function boardWorkerCheckoutWarning(input: {
     : `${worker.label} has no checkout of ${input.projectName}. The card waits until it is set up there. Set up on worker or pick another.`;
 }
 
-// ── Queue reasons (D11, prototype notice copy) ─────────────────────────
+// ── Queue reasons (prototype notice copy) ─────────────────────────
 
 /** What a queued card is waiting on, ready for `boardQueueInfo`. */
 export type BoardQueueReason =
@@ -295,7 +295,7 @@ export function boardQueueReason(input: {
       return { kind: "board", running, limit: input.concurrency.globalMaxConcurrent };
     }
     case "worker-offline":
-      // The card's Worker offline notice says it (T3O-66).
+      // The card's Worker offline notice says it.
       return null;
     case "setup": {
       const setup = setupOf(input.state, workerId, input.card.projectId);
@@ -310,7 +310,7 @@ export function boardQueueReason(input: {
   }
 }
 
-// ── Worker trouble (T3O-66, D22; prototype 6) ──────────────────────────
+// ── Worker trouble (prototype 6) ──────────────────────────
 
 /** Whether the board can't run anything on a worker now. `connecting` is a
     first dial, over in seconds, and is not trouble; a redial of a worker
@@ -576,7 +576,7 @@ export function boardThreadMoveDividers(input: {
   return dividers;
 }
 
-// ── Model pickers (D10) ────────────────────────────────────────────────
+// ── Model pickers ────────────────────────────────────────────────
 
 /**
  * Provider instances only workers have, shaped like this server's own for the

@@ -30,7 +30,7 @@ export function BoardCardWorkerRow(props: {
   readonly card: BoardCard;
   /** The live step's stall reason, from the card's shell. */
   readonly stalledReason?: BoardCardStepStalledReason | undefined;
-  /** What the card's shell says of its work, for Worker offline (T3O-66). */
+  /** What the card's shell says of its work, for Worker offline. */
   readonly shell?:
     | Pick<
         BoardCardShell,
@@ -98,7 +98,7 @@ export function BoardCardWorkerRow(props: {
   return (
     <div className="flex flex-col gap-1 py-1">
       {trouble === null ? null : (
-        // Worker removed or Worker offline (T3O-66): amber, with the one way
+        // Worker removed or Worker offline: amber, with the one way
         // out — a force-move from the pushed branch.
         <div className="flex flex-col gap-1.5 rounded-md bg-warning/10 px-2 py-1.5 text-warning-foreground">
           <span className="font-semibold">{trouble.panelTitle}</span>

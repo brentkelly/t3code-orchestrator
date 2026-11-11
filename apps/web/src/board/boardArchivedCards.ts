@@ -1,5 +1,5 @@
 /**
- * The archive sheet's selection rule (t3o-13, D7), kept apart from the sheet
+ * The archive sheet's selection rule, kept apart from the sheet
  * component so it can be read and tested without pulling the web runtime
  * graph in behind it.
  */

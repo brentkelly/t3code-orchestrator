@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-62): the Workers and Project checkouts sections of Settings →
+ * T3o: the Workers and Project checkouts sections of Settings →
  * Board. Project checkouts appears only once the board has a worker besides
  * this server: a local-only board's settings read exactly as before.
  */

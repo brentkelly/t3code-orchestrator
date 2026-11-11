@@ -117,17 +117,17 @@ export function ModelRow(props: {
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
   onChange: (selection: ModelSelection) => void;
-  /** Reasoning/effort selections for the chosen model, and the setter (t3o-21).
+  /** Reasoning/effort selections for the chosen model, and the setter.
       Rendered inside the composer's combined controls menu; hidden when no
       model is picked. */
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
   onModelOptionsChange: (options: ReadonlyArray<ProviderOptionSelection> | undefined) => void;
-  /** The stage/phase agent authority (t3o-21) — the user's, in the same menu
+  /** The stage/phase agent authority — the user's, in the same menu
       as the model's traits, exactly like the chat composer. */
   runtimeMode: RuntimeMode;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
   /** Hide the access-level section — the card's per-round review override
-      (t3o-22, D4) has nowhere to keep one until a model is picked. */
+       has nowhere to keep one until a model is picked. */
   hideRuntimeMode?: boolean;
   /**
    * What the trigger reads with nothing picked. Override rows name what they

@@ -49,7 +49,7 @@ const planningBoard = (
   id: string,
   messages: Map<string, string>,
   stale?: ReadonlySet<string>,
-  /** Turns REQUESTED on a thread and not yet started (T3O-18). Handed over by
+  /** Turns REQUESTED on a thread and not yet started. Handed over by
       reference like `messages`, because the thread id only exists once the
       harness has spawned it. */
   pendingTurnStarts?: Map<string, string>,
@@ -522,7 +522,7 @@ const seededStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepState
   runtimeMode: "auto",
   humanInLoop: true,
   maxAttempts: 3,
-  // Well past any backoff rung this fixture waits out (T3O-22, D7): with a
+  // Well past any backoff rung this fixture waits out: with a
   // one-minute timeout the 30s tick's timeout sweep would fire while the step
   // sat waiting for its rung and re-park it, testing the sweep rather than the
   // restart recovery this is about.
@@ -619,8 +619,8 @@ it.effect(
         Effect.gen(function* () {
           yield* reactor.drain;
           // Recovery, not a park on the human: the attempt is charged and the
-          // step is waiting to retry rather than waiting on a person. Since
-          // T3O-22 (D7) the nudge itself goes out when the backoff rung arrives.
+          // step is waiting to retry rather than waiting on a person. The
+          // nudge itself goes out when the backoff rung arrives.
           const recovered = boardCardStepState(yield* board, BoardCardId.make("restart"));
           assert.strictEqual(recovered?.status, "stalled");
           assert.strictEqual(recovered?.stalledReason, "waiting-retry");

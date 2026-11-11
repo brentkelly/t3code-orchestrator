@@ -111,7 +111,7 @@ it.effect("t3o-22 D6: a card edit is a no-op for a stage whose step already succ
         yield* pumpDomain(movedToBuilding(buildingCard("card-1", "m"), 1));
         // The build succeeds and the card auto-advances out of Building.
         yield* pumpDomain(stepCompleted(cardId, "succeeded", 2));
-        // The one automatic crossing (D18) has happened.
+        // The one automatic crossing has happened.
         assert.strictEqual((yield* board).cards[0]?.stage, BOARD_SEED_STAGE_IDS.review);
 
         yield* pumpDomain(

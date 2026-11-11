@@ -115,7 +115,7 @@ describe("normalization and version", () => {
       },
     });
     expect(normalized.stageSwitches).toEqual({ sprint: false });
-    // T3O-57: `maxRoundTrips` is no longer a CI key, so a stored one is dropped.
+    // `maxRoundTrips` is no longer a CI key, so a stored one is dropped.
     expect(normalized.overrides.ci).toEqual({ autoExecute: false });
     // A prompt override is kept even when it matches: it pins the text.
     expect(normalized.overrides.building).toHaveProperty("prompt");

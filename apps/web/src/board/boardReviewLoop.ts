@@ -51,7 +51,7 @@ export interface BoardReviewLoopFinding {
   readonly dispositionNote: string;
   readonly verdict: BoardReviewVerdict | null;
   readonly verdictNote: string;
-  /** The second pass, when the adjudicator overruled triage (T3O-51). */
+  /** The second pass, when the adjudicator overruled triage. */
   readonly retriage: BoardReviewRetriageAction | null;
   readonly retriageNote: string;
   readonly reverdict: BoardReviewVerdict | null;
@@ -61,7 +61,7 @@ export interface BoardReviewLoopFinding {
   readonly carriedFrom: number | null;
 }
 
-/** A finding a human ruled not an issue, at or before this round (T3O-51). */
+/** A finding a human ruled not an issue, at or before this round. */
 export interface BoardReviewLoopDismissal {
   readonly findingId: string;
   readonly title: string;
@@ -87,20 +87,20 @@ export type BoardReviewRoundOutcome =
   | "changes-requested"
   /** One of the round's phases recorded a payload nothing can read. */
   | "unreadable"
-  /** A dispute survived the round's second pass (T3O-51). */
+  /** A dispute survived the round's second pass. */
   | "stuck";
 
 export interface BoardReviewLoopRound {
   readonly round: number;
   readonly outcome: BoardReviewRoundOutcome;
   readonly reviewMalformed: boolean;
-  /** The human's ruling carried INTO this round (T3O-51): `fix` opens it
+  /** The human's ruling carried INTO this round: `fix` opens it
       with must-fix findings. */
   readonly carriedRuling: { readonly fromRound: number; readonly note: string | null } | null;
   /** Findings a human dismissed by this round. */
   readonly dismissals: ReadonlyArray<BoardReviewLoopDismissal>;
   /** The round's phase whose payload the board cannot read, when the loop
-      halted on it — what the Reopen affordance names and repairs (T3O-14).
+      halted on it — what the Reopen affordance names and repairs.
       `reviewMalformed` stays beside it because a broken REVIEW is the one that
       also leaves the round's later phases unsummoned. */
   readonly unreadablePhase: BoardReviewStepPhase | null;
@@ -118,7 +118,7 @@ export interface BoardReviewLoopRound {
     readonly escalated: number;
   };
   /** The round's phases in order. The follow-ups appear only when they ran or
-      are due (T3O-51). */
+      are due. */
   readonly phases: ReadonlyArray<BoardReviewLoopPhase>;
   /** The round's most recent phase completion, for the head's timestamp. */
   readonly completedAt: string | null;
@@ -138,14 +138,14 @@ export interface BoardReviewLoop {
   /** The phase the loop runs next, while it still runs. */
   readonly next: { readonly phase: BoardReviewStepPhase; readonly round: number } | null;
   readonly status: BoardReviewLoopStatus;
-  /** What a stuck loop stopped on (T3O-51); empty otherwise. */
+  /** What a stuck loop stopped on; empty otherwise. */
   readonly stuckFindings: ReadonlyArray<BoardReviewStuckFinding>;
   /** The stuck (or advanced-past) round's fixes no review has read. */
   readonly unreviewedFixes: number;
   /** Set when the adjudicator ended the loop: nothing new was raised. */
   readonly convergedBy: "adjudicator" | null;
   /** The step id the loop halted `unreadable` on, null otherwise — the record
-      the pane's Reopen sends back (T3O-14). */
+      the pane's Reopen sends back. */
   readonly unreadableStepId: string | null;
   readonly totals: {
     readonly raised: number;
@@ -171,13 +171,13 @@ export function hasBoardReviewSteps(completions: ReadonlyArray<BoardStepCompleti
 export function deriveBoardReviewLoop(
   completions: ReadonlyArray<BoardStepCompletion>,
   maxRounds: number,
-  /** The card's stop-after-round, if it set one (t3o-22, D5). */
+  /** The card's stop-after-round, if it set one. */
   stopAfterRound: number | null = null,
   /** The card's run-through-round, if a human asked a settled loop for one
-      more pass (T3O-39, D13). Without it the pane reports `converged` while
+      more pass. Without it the pane reports `converged` while
       the executor is dispatching round N+1. */
   runThroughRound: number | null = null,
-  /** The card's server-written carry fields (T3O-51). */
+  /** The card's server-written carry fields. */
   carry: {
     readonly carriedFindings: Readonly<Record<string, BoardReviewCarry>>;
     readonly stuckWaivedThrough: number | null;

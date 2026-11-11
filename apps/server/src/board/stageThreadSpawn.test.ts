@@ -156,7 +156,7 @@ it.effect("a build-mode spawn failure gives the slot back, so the next card stil
   ),
 );
 
-// T3O-24: the gh pin used to run only while provisioning a worktree, so a card
+// The gh pin used to run only while provisioning a worktree, so a card
 // whose worktree was already ready never got it. Every build-mode spawn pins.
 it.effect("a build spawn into an already-ready worktree pins gh's default repository", () =>
   withGovernor(
@@ -374,9 +374,9 @@ it.effect("a step completing after the card left its stage does not spawn on the
   ),
 );
 
-/** The signal the gateway raises when a requested turn never starts (t3o-30,
-    D2) — the CLI is missing, the session will not spawn. It is the ONLY signal
-    the board gets: no turn ran, so no turn completes. */
+/** The signal the gateway raises when a requested turn never starts: the CLI is
+    missing, the session will not spawn. It is the ONLY signal the board gets: no
+    turn ran, so no turn completes. */
 const turnStartFailed = (threadId: ThreadId, detail: string, _sequence?: number): ThreadSignal => ({
   type: "turn-start-failed",
   threadId,

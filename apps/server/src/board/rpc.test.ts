@@ -1,5 +1,5 @@
 /**
- * T3o board RPC handlers (t3o-04): `board.subscribeCard` against the real
+ * T3o board RPC handlers: `board.subscribeCard` against the real
  * engine and projection tables — scope rejection, initial detail frame,
  * re-emission on card change without any shell snapshot involvement, and
  * the missing-card failure.
@@ -136,7 +136,7 @@ const supervisorStub: SupervisorReactorShape = {
     }),
   resolvePullRequestLink: () =>
     Effect.succeed({ outcome: "refused", detail: "Not used by the RPC." } as const),
-  // T3o (T3O-18): number 404 stands in for a pull request the forge does not
+  // T3o: number 404 stands in for a pull request the forge does not
   // know, so a test can see the refusal travel back unchanged.
   linkPullRequest: (cardId, target) =>
     Effect.sync(() => {
@@ -150,7 +150,7 @@ const supervisorStub: SupervisorReactorShape = {
     }),
   refreshPullRequest: (cardId, options) =>
     Effect.sync(() => {
-      // T3o (T3O-48): the forced re-check is recorded distinctly, so a test can
+      // T3o: the forced re-check is recorded distinctly, so a test can
       // tell a human's "Check again" from the automatic on-open refresh.
       supervisorCalls.refresh.push(
         options?.force === true ? `${String(cardId)}:force` : String(cardId),
@@ -256,7 +256,7 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-test-"))("board.subscribeCard", (i
   );
 });
 
-// T3o (T3O-48): the forced re-check has to survive the wire. The automatic
+// T3o: the forced re-check has to survive the wire. The automatic
 // triggers must stay on the cached path — a burst of card opens costing one
 // forge call is what makes the refresh free — and a human's "Check again" must
 // not be answered out of that same cache.
@@ -304,7 +304,7 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-refresh-test-"))(
   },
 );
 
-// T3O-52 (D5): a forced removal destroys uncommitted work, so it needs the
+// A forced removal destroys uncommitted work, so it needs the
 // operate scope — reading a board must never be enough to empty a checkout.
 it.layer(makeBoardRpcTestLayer("t3o-board-rpc-remove-worktree-test-"))(
   "board.removeCardWorktree",
@@ -331,7 +331,7 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-remove-worktree-test-"))(
   },
 );
 
-// T3O-59: Stop CI rides Retry CI's method, so it is human-only and needs the
+// Stop CI rides Retry CI's method, so it is human-only and needs the
 // operate scope the same way; an old client's bare `{ cardId }` is a retry.
 it.layer(makeBoardRpcTestLayer("t3o-board-rpc-ci-action-test-"))("board.retryCi", (it) => {
   it.effect("rejects Stop CI from a session with only the read scope", () =>
@@ -390,7 +390,7 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-check-worktree-test-"))(
   },
 );
 
-// T3O-18: "Link one" writes the card's pull request, so it needs the operate
+// "Link one" writes the card's pull request, so it needs the operate
 // scope; the server parses what was typed, and a refusal reaches the card as
 // the supervisor worded it.
 it.layer(makeBoardRpcTestLayer("t3o-board-rpc-link-pr-test-"))(

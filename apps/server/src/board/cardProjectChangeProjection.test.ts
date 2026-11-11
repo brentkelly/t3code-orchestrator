@@ -131,7 +131,7 @@ it.layer(makeTestLayer("t3o-board-project-1b-"))("a card carrying a base-branch 
       const readModel = yield* snapshotQuery.getCommandReadModel();
       const card = readModel.board?.cards.find((candidate) => candidate.id === highCardId);
       // `release/2.0` almost certainly does not exist in Beta's repository and
-      // would fail at `ensureLocalBaseBranch` hours later at provisioning (D5).
+      // would fail at `ensureLocalBaseBranch` hours later at provisioning.
       assert.strictEqual(card?.baseBranch, null);
     }),
   );

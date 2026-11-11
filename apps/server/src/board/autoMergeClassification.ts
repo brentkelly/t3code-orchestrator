@@ -61,7 +61,7 @@ export function classifyBoardAutoMergeRefusal(state: BoardMergeState): BoardAuto
       case "behind":
         return { classification: "behind", detail, headSha };
       // A conflict never reaches here in practice — `mergeCardPullRequest`
-      // routes it to the conflict-fix step before any probe runs (D8) — but a
+      // routes it to the conflict-fix step before any probe runs — but a
       // forge that reports one anyway is structural, not transient.
       case "conflict":
       case "draft":
@@ -77,7 +77,7 @@ export function classifyBoardAutoMergeRefusal(state: BoardMergeState): BoardAuto
 }
 
 /** The verdict for a refusal the probe could not classify at all — an
-    unsupported provider, or a probe that itself failed. Always soft (D7). */
+    unsupported provider, or a probe that itself failed. Always soft. */
 export const UNCLASSIFIED_AUTO_MERGE_VERDICT: BoardAutoMergeVerdict = {
   classification: "soft",
   detail: null,

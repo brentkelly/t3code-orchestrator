@@ -251,7 +251,7 @@ it.layer(makeBoardStackTestLayer("t3o-board-engine-"))("BoardEngine", (it) => {
       yield* engine.dispatch(createProject("retired"));
       yield* engine.dispatch(createCard("retired-1"));
       const cursor = yield* engine.boardEngine.latestSequence;
-      // A board that ran T3O-22's cooldowns has these in its permanent log.
+      // A board that ran the old cooldowns has these in its permanent log.
       yield* sql`
         INSERT INTO boards.board_events (
           event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,

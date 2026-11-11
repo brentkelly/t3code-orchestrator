@@ -161,7 +161,7 @@ describe("BoardPlansPanel", () => {
   });
 
   it("shows no final review for a group that inherits its parent's branch", () => {
-    // T3O-34: an inheriting group has no integration branch to review.
+    // An inheriting group has no integration branch to review.
     const html = render({ ownBranch: false, branch: null });
     expect(html).not.toContain("Final review");
     expect(html).not.toContain("integration branch pending");
@@ -178,7 +178,7 @@ describe("BoardPlansPanel", () => {
 });
 
 /**
- * A done row carries no tint (t3o-36): completion is a check in place of the
+ * A done row carries no tint: completion is a check in place of the
  * stage dot, so the rail reads down its left edge without colour doing the
  * work. #1 is the done row in the fixture; #2 and #3 are not.
  */

@@ -1,8 +1,8 @@
 /**
- * The board database attach and the legacy relocation (t3o-26 P1).
+ * The board database attach and the legacy relocation.
  *
  * The relocation is the one piece of this phase that touches a user's existing
- * data, so it is tested against the shape a real pre-t3o-26 database has: board
+ * data, so it is tested against the shape a real legacy database has: board
  * tables and their indexes sitting in `main`, with rows in them.
  */
 import { assert, describe, it } from "@effect/vitest";
@@ -21,7 +21,7 @@ import {
   resolveBoardDatabasePath,
 } from "./boardDatabase.ts";
 
-/** A pre-t3o-26 layout: board tables in `main`, with data and an index. */
+/** The legacy layout: board tables in `main`, with data and an index. */
 const seedLegacyLayout = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`

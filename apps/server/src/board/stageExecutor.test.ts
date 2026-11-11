@@ -61,7 +61,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       kind: "run",
       round: 1,
       stepId: "building",
-      // No step identity (t3o-19, D4): the stage runs one step, so naming it
+      // No step identity: the stage runs one step, so naming it
       // would just echo the stage.
       stepLabel: null,
       prompt: "Implement the card's brief.",
@@ -165,7 +165,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       kind: "run",
       round: 2,
       stepId: "triage",
-      // A single-step stage plans NO step identity (t3o-19, D4) — the stage's
+      // A single-step stage plans NO step identity — the stage's
       // own label would only echo itself in the prompt.
       stepLabel: null,
       prompt: "Assess it.",
@@ -267,7 +267,7 @@ describe("per-card model overrides (t3o-29)", () => {
 });
 
 /**
- * The build executor (t3o-07, D4/D5). Pure over its run state, like everything
+ * The build executor. Pure over its run state, like everything
  * else in this file: what it decides is "did the SUBMIT step just settle?", and
  * nothing else about the card can answer that question for it.
  */

@@ -176,7 +176,7 @@ export const runRelayedBoardTool = Effect.fn("BoardMcpRelay.runRelayedBoardTool"
     }
     const name = request.toolName as BoardToolName;
 
-    // Authorised twice (D3): linked to a card, and placed on THIS worker. A
+    // Authorised twice: linked to a card, and placed on THIS worker. A
     // write naming another card is bound the same way in its handler
     // (`refuseOtherWorkersCard`), so one worker never acts on another's cards.
     const queries = yield* BoardQueries;

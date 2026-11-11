@@ -119,7 +119,7 @@ describe("boardCiFace", () => {
     expect(face.chip).toEqual({ label: "Fixing", tone: "info" });
     expect(face.detail).toBe("Check failed · fix 1 of 2");
     expect(face.fixSegment).toBe("fixing");
-    // T3O-57: with an issue count, the fix leads with it.
+    // With an issue count, the fix leads with it.
     const counted = (fixIssues: number) =>
       boardCiFace(ci({ phase: "fixing", fixAttempts: 1, fixIssues, steps: [] }), NOW_MS).detail;
     expect(counted(3)).toBe("Fix 1 of 2 · 3 issues");
@@ -161,7 +161,7 @@ describe("boardCiFace", () => {
     const held = boardCiFace(ci({ phase: "held", steps: [step("Test", "cancelled")] }), NOW_MS);
     expect(held.chip).toEqual({ label: "Can't run", tone: "warning" });
     expect(held.detail).toBe("CI couldn't finish this pass");
-    // T3O-59: a held pass says why, and a machine problem says so.
+    // A held pass says why, and a machine problem says so.
     const machine = boardCiFace(
       ci({
         phase: "held",
@@ -320,7 +320,7 @@ describe("formatting", () => {
 
   it("reads a step's nearing limit, its silence, progress and log file name (T3O-60)", () => {
     const startedAt = "2026-01-01T00:00:00.000Z";
-    // T3O-68: the limit shows only once it matters, from 85% of it.
+    // The limit shows only once it matters, from 85% of it.
     const minutesAgo = (minutes: number) => new Date(NOW_MS - minutes * 60_000).toISOString();
     expect(boardCiStepLimit({ startedAt, timeoutMinutes: 60 }, NOW_MS)).toBeNull();
     expect(

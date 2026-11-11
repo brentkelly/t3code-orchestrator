@@ -40,12 +40,12 @@ import type { BoardStageExecutor, BoardStagePlan, BoardStagePlanInput } from "./
  * A payload parse result. `absent`/`malformed` are kept distinct from a valid
  * empty findings list: a review round with a VALID empty findings list has
  * converged, while a malformed or missing payload must NEVER be read as "no
- * findings" (D4) — it fails, so the loop cannot converge on a broken reviewer.
+ * findings" — it fails, so the loop cannot converge on a broken reviewer.
  */
 export type ParsedPayload<A> = { readonly ok: true; readonly value: A } | { readonly ok: false };
 
 /** Whether a recorded phase's payload is one nothing can read — the executor's
-    half of the walk's identical check (T3O-14). */
+    half of the walk's identical check. */
 function unreadableStep(completion: BoardStepCompletion): boolean {
   return (
     boardStepPayloadDefect({ stepId: completion.stepId, payload: completion.payload }) !== null
@@ -79,7 +79,7 @@ function resolvePhaseModel(input: {
   readonly cardOverride: BoardCardStageModelOverride | null;
 }): BoardModelSelection {
   if (input.phase === "review") {
-    // Narrowest first (t3o-29, D3): the round the user named, then the card's
+    // Narrowest first: the round the user named, then the card's
     // standing choice, then the configured phase model. The card override sits
     // BELOW the round override so escalating one round still wins, and ABOVE
     // the phase config so setting it on the card actually takes effect.
@@ -97,7 +97,7 @@ function resolvePhaseModel(input: {
  * The access level a phase runs under: the round override's when this is the
  * review phase and the override names one, else the phase config's. The
  * review stage is always build-mode (resolveBoardStageExecution forces it), so
- * an unset level defaults to `auto` (t3o-21).
+ * an unset level defaults to `auto`.
  */
 function resolvePhaseRuntimeMode(input: {
   readonly phase: BoardReviewPhaseId;
@@ -105,7 +105,7 @@ function resolvePhaseRuntimeMode(input: {
   readonly roundOverride: BoardReviewRoundOverride | undefined;
   readonly cardOverride: BoardCardStageModelOverride | null;
 }): RuntimeMode {
-  // Same ladder as the model (t3o-29, D3), and independently resolved: an
+  // Same ladder as the model, and independently resolved: an
   // override that names a model but no access level inherits the level from
   // the next rung down rather than dragging its own absence with it.
   const override =
@@ -125,11 +125,11 @@ function reviewLoopDecision(input: {
   readonly review: BoardStageExecutionReview;
   readonly config: BoardStagePlanInput["config"];
   readonly completions: ReadonlyArray<BoardStepCompletion>;
-  /** The card's own review-loop settings (t3o-22, D2), or null for a card that
+  /** The card's own review-loop settings, or null for a card that
       never touched them — in which case the stage config governs outright. */
   readonly overrides: BoardCardReviewOverrides | null;
   /** The card's in-flight step id, so the budget floor counts a round that has
-      STARTED but not yet recorded anything (D3). */
+      STARTED but not yet recorded anything. */
   readonly liveStepId: string | null;
   /**
    * Whether the card's base moved since `baseTipAtRoundStart` (always false for a top-level
@@ -140,11 +140,11 @@ function reviewLoopDecision(input: {
   /** The card's recorded base branch, for the sync prompt; null when the card
       has no worktree slice (in which case `baseStale` is false anyway). */
   readonly baseRefName: string | null;
-  /** The base a human RETARGETED the card at (T3O-5, D10), when that differs
+  /** The base a human RETARGETED the card at, when that differs
       from `baseRefName`; null for the ordinary tip-moved staleness. Read only
       to word the sync prompt — the rebase mechanics are identical either way. */
   readonly baseRetargetedTo: string | null;
-  /** The failure CI sent the card back with (T3O-44), surfaced as must-fix
+  /** The failure CI sent the card back with, surfaced as must-fix
       in the round the send-back opened and no other. */
   readonly ciFinding?: {
     readonly stepName: string | null;
@@ -154,7 +154,7 @@ function reviewLoopDecision(input: {
 }): BoardStagePlan {
   const { review, config, overrides } = input;
   const done = succeededReviewSteps(input.completions);
-  // The budget the loop actually runs to (D3): the card's override when it has
+  // The budget the loop actually runs to: the card's override when it has
   // one, floored at the highest round already started so a since-lowered budget
   // can never strand a round mid-flight, and capped at the ceiling.
   const rounds = effectiveBoardReviewRounds({
@@ -178,7 +178,7 @@ function reviewLoopDecision(input: {
       kind: "run",
       round,
       stepId: reviewStepId(phase, round),
-      // A genuine step identity (t3o-19, D4): the review loop is the one stage
+      // A genuine step identity: the review loop is the one stage
       // that runs several, so its prompts keep the full step vocabulary and
       // state the step id outright.
       stepLabel: reviewStepLabel(phase, round),
@@ -190,7 +190,7 @@ function reviewLoopDecision(input: {
         rounds: Math.max(rounds, round),
         prompt: phaseConfig.prompt,
         draftPullRequests: review.draftPullRequests,
-        // A card CI sent back (T3O-44) carries the failure into the round it
+        // A card CI sent back carries the failure into the round it
         // opened only, so later rounds can converge once triage fixed it.
         ciFinding: input.ciFinding?.round === round ? input.ciFinding : null,
         carried,
@@ -211,14 +211,14 @@ function reviewLoopDecision(input: {
       }),
       timeoutMs: phaseConfig.timeoutMs,
       maxAttempts: phaseConfig.maxAttempts,
-      // Only a review phase STARTS a round (t3o-24, D1): the reactor records
+      // Only a review phase STARTS a round: the reactor records
       // the base tip fresh when it starts and carries it forward for the
       // round's later steps.
       recordBaseTip: phase === "review",
     };
   };
 
-  // A follow-up pass (T3O-51): re-triage or re-adjudicate inside the round,
+  // A follow-up pass: re-triage or re-adjudicate inside the round,
   // on just the findings the adjudicator overruled. Machinery like sync, but
   // it runs as the phase it follows up — that phase's prompt, model and
   // limits — since it is the same job asked again.
@@ -308,14 +308,14 @@ function reviewLoopDecision(input: {
   };
 
   for (let round = 1; ; round++) {
-    // A gate round (t3o-24, D3) is owed by the previous round's recorded sync
+    // A gate round is owed by the previous round's recorded sync
     // step and runs whatever the budget says — it is a gate, not a negotiation
     // — so only a budget round is stopped by the cap.
     const gateRound = round > 1 && done.get(reviewStepId("sync", round - 1)) !== undefined;
     if (round > rounds && !gateRound) break;
     // The round's phases, second pass and stuck rule live in contracts so the
     // walk, the completion handler and this executor share one definition.
-    // A malformed record is never read as "no findings" (D4): it halts the
+    // A malformed record is never read as "no findings": it halts the
     // loop `blocked`, where the pane offers the Reopen that repairs it.
     const resolution = boardReviewRoundResolution({ round, done, carriedFindings });
     switch (resolution.kind) {
@@ -326,13 +326,13 @@ function reviewLoopDecision(input: {
       case "unreadable":
         return { kind: "complete", outcome: "blocked" };
       case "continue":
-        // The user asked the loop to hold after this round (t3o-22, D5),
+        // The user asked the loop to hold after this round,
         // checked before the budget because a stop outranks rounds that merely
         // remain. Otherwise the next round re-reads the branch.
         if (overrides?.stopAfterRound === round) return { kind: "complete", outcome: "blocked" };
         continue;
       case "stuck": {
-        // A dispute survived the second pass (T3O-51): stop for a human,
+        // A dispute survived the second pass: stop for a human,
         // ahead of the stop and the budget, until a human passes the round.
         if (!isBoardReviewStuckRoundWaived(overrides?.stuckWaivedThrough, round)) {
           return { kind: "complete", outcome: "blocked" };
@@ -355,7 +355,7 @@ function reviewLoopDecision(input: {
   return { kind: "complete", outcome: "blocked" };
 }
 
-// The phase prompt composition (D6/D7) — round header, prior-payload pointer,
+// The phase prompt composition — round header, prior-payload pointer,
 // the user's per-phase intent, then the loop protocol — lives in contracts
 // (`boardEnvelope.ts`, `composeBoardReviewPhasePrompt`) so the settings UI
 // shows each phase exactly the system text that wraps its editable prompt.
@@ -374,15 +374,15 @@ export const ReviewLoopExecutor: BoardStageExecutor = {
       review,
       config: input.config,
       completions: input.completions,
-      // The card's own loop settings (t3o-22, D2) ride the card the reactor
+      // The card's own loop settings ride the card the reactor
       // already passes, so the seam needs no new input field.
       overrides: input.card.reviewOverrides,
       liveStepId: input.runState.liveStepId,
-      // Reactor-measured (t3o-24, D1): pure planNext cannot rev-parse.
+      // Reactor-measured: pure planNext cannot rev-parse.
       baseStale: input.runState.baseStale,
       baseRefName: input.card.worktree?.baseRefName ?? null,
       baseRetargetedTo: input.runState.baseRetargetedTo,
-      // A card CI sent back (T3O-44) carries the failure into the round the
+      // A card CI sent back carries the failure into the round the
       // send-back opened.
       ciFinding:
         input.card.ciLastOutcome?.kind === "sent-back" &&

@@ -609,7 +609,7 @@ function stageBoardState(stages: ReadonlyArray<BoardStageDefinition>): BoardStat
   return { cards: [], stages, nextCardNumberByProject: {} };
 }
 
-/** Client mirror of the decider's order rules (D3, T3O-49): an order that
+/** Client mirror of the decider's order rules: an order that
     breaks them is refused server-side, so don't offer it. */
 function orderKeepsSpine(stages: ReadonlyArray<BoardStageDefinition>): boolean {
   return boardStageOrderViolation(stages) === null;
@@ -625,7 +625,7 @@ export function BoardPipelineSection() {
   );
   const stages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
   const ordered = boardStagesInOrder(stageBoardState(stages));
-  // T3O-49: which projects use each stage, and which run CI.
+  // Which projects use each stage, and which run CI.
   const projectStageConfigs = useAtomValue(
     boardEnvironment.projectStageConfigsAtom(environmentId ?? ("" as EnvironmentId)),
   );
@@ -665,7 +665,7 @@ export function BoardPipelineSection() {
   // ProviderModelPicker context (shared across every stage row).
   const settings = useBoardSettings();
   const ownProviders = useBoardServerProviders();
-  // T3O-65: and the instance ids only workers have — a recipe names an id, and
+  // And the instance ids only workers have — a recipe names an id, and
   // it resolves on the worker the card runs on.
   // The card view keeps the same object across a clone's progress ticks, which
   // this page streams and the provider lists don't depend on.
@@ -683,7 +683,7 @@ export function BoardPipelineSection() {
     update({ board: { pipeline: setBoardStageExecution(board, stageId, patch) } });
   };
 
-  // The workspace default (t3o-30, D1) — what every stage below that names no
+  // The workspace default — what every stage below that names no
   // model of its own actually runs on.
   const defaultModel = board.defaultModel;
   const inheritedModelName =
@@ -734,7 +734,7 @@ export function BoardPipelineSection() {
     void setStageDefault({ environmentId, input: { stageId: stage.stageId, on } });
   };
 
-  // T3O-49: a new stage lands just before CI, never between CI and merge.
+  // A new stage lands just before CI, never between CI and merge.
   // "For one project" makes it off by default and on for that project.
   const onAddStage = (forProjectId: ProjectId | null) => {
     if (environmentId === null) return;
@@ -792,7 +792,7 @@ export function BoardPipelineSection() {
             });
           }}
           // The default carries no access level: a stage's own posture is a
-          // per-stage decision (t3o-21) and every stage already names one, so
+          // per-stage decision and every stage already names one, so
           // there is nothing here for a default to fill in.
           hideRuntimeMode
           runtimeMode="approval-required"
@@ -866,7 +866,7 @@ export function BoardPipelineSection() {
 }
 
 /**
- * A `ModelRow`'s inheritance props (t3o-30, D1). With a name to inherit the row
+ * A `ModelRow`'s inheritance props. With a name to inherit the row
  * shows it as the placeholder and is no longer required; with nothing to inherit
  * it keeps the required-field language it had before there was a default.
  */
@@ -883,9 +883,9 @@ function StageAccordionRow(props: {
   stage: BoardStageDefinition;
   index: number;
   exec: BoardStageExecution;
-  /** The projects with CI steps (T3O-49). */
+  /** The projects with CI steps. */
   ciProjects: ReadonlyArray<BoardCiProject>;
-  /** Which visible projects use the stage (T3O-49). */
+  /** Which visible projects use the stage. */
   coverage: BoardStageProjectCoverage;
   projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
   onSetDefault: (on: boolean) => void;
@@ -910,7 +910,7 @@ function StageAccordionRow(props: {
   const isReview = isBoardReviewStageExecution(exec);
   const isMerge = isBoardMergeStageExecution(exec);
   // CI is a seed stage with no role, but it is the board's own: it is never
-  // renamed, reordered or removed here (T3O-44).
+  // renamed, reordered or removed here.
   const isCi = isBoardCiStageExecution(exec);
   const fixed = isCi || stage.stageId === BOARD_SEED_STAGE_IDS.ci;
   const switchable = role === null && !fixed;
@@ -1105,7 +1105,7 @@ interface BoardCiProject {
   readonly active: boolean;
 }
 
-/** T3O-49: a stage's default for projects, and the projects it applies to.
+/** A stage's default for projects, and the projects it applies to.
     Each chip opens that project's Pipeline tab. */
 function StageProjectsRow(props: {
   stage: BoardStageDefinition;
@@ -1214,7 +1214,7 @@ function RemoveStageButton(props: { disabled: boolean; onDelete: () => void }) {
   );
 }
 
-/** T3O-49: a new stage for every project, or made for one (off for the rest). */
+/** A new stage for every project, or made for one (off for the rest). */
 function AddStageChooser(props: {
   projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
   onAdd: (forProjectId: ProjectId | null) => void;
@@ -1264,7 +1264,7 @@ function AddStageChooser(props: {
 }
 
 /**
- * The Continuous integration stage's body (T3O-44). The board runs the steps
+ * The Continuous integration stage's body. The board runs the steps
  * itself; what is configured here is the fix agent that runs when one fails.
  * The steps belong to each project's t3o.json, so they are listed, not edited.
  */
@@ -1443,7 +1443,7 @@ function MergeStageBody(props: {
           card: { key: PREVIEW_CARD_KEY, title: PREVIEW_CARD_TITLE, stage: stage.stageId },
           stageLabel: stage.label,
           // One step in this stage, so the run carries no step identity
-          // (t3o-19, D4) and the preview shows no `Step:` line.
+          // and the preview shows no `Step:` line.
           step: { stepLabel: null },
         })}
         postamble={boardStepPostamble({
@@ -1529,7 +1529,7 @@ function SimpleStageBody(props: {
               card: { key: PREVIEW_CARD_KEY, title: PREVIEW_CARD_TITLE, stage: stage.stageId },
               stageLabel: stage.label,
               // This stage runs one step, so the run carries no step identity
-              // (t3o-19, D4) and the preview shows no `Step:` line — exactly
+              // and the preview shows no `Step:` line — exactly
               // what the agent will see.
               step: { stepLabel: null },
             })}
@@ -1670,7 +1670,7 @@ function SimpleStageBody(props: {
 }
 
 /**
- * Plan review defaults (T3O-39), on the plan-role stage. The default prompt is
+ * Plan review defaults, on the plan-role stage. The default prompt is
  * never written into settings: Reset and an untouched prompt both store null.
  */
 function PlanReviewSettingsBlock(props: {
@@ -1765,7 +1765,7 @@ function SubmitStepBlock(props: {
           step: { stepLabel: BOARD_SUBMIT_STEP_LABEL },
         })}
         postamble={boardStepPostamble({
-          // Machinery, and always unattended whatever the card's stance (D10).
+          // Machinery, and always unattended whatever the card's stance.
           humanInLoop: false,
           role: "build",
           step: { stepId: BOARD_SUBMIT_STEP_ID, stepLabel: BOARD_SUBMIT_STEP_LABEL },
@@ -1965,7 +1965,7 @@ function ReviewStageBody(props: {
                     boardReviewPhasePreamble({ phase: phaseId, round: 1, rounds: exec.rounds }),
                   ].join("\n\n")}
                   postamble={[
-                    // The draft line (T3O-12) is the envelope's, not the
+                    // The draft line is the envelope's, not the
                     // user's, so it rides the preview rather than the prompt.
                     ...(boardDraftPullRequestLine({
                       draftPullRequests: exec.draftPullRequests,
@@ -1975,7 +1975,7 @@ function ReviewStageBody(props: {
                     boardStepPostamble({
                       // The review stage's role is fixed — `resolveBoardStageExecution`
                       // coerces this stage to the review member — and the loop
-                      // always runs unattended (D2/D6).
+                      // always runs unattended.
                       humanInLoop: false,
                       role: "review",
                       step: {

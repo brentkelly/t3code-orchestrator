@@ -619,7 +619,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
         })
         .pipe(Effect.mapError((cause) => actionError("internal", cause.message)));
       // Stop what was running there, so it doesn't go on spending tokens for
-      // a board that no longer uses it (D22). Best effort, and only while the
+      // a board that no longer uses it. Best effort, and only while the
       // worker answers; the supervisor stalls those steps and frees their
       // slots off the removal event either way.
       if (Option.isSome(rpc)) {

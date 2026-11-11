@@ -370,7 +370,7 @@ export function boardGroupAutomationEffects(input: {
 }
 
 /**
- * The card face's Auto-build chip (T3O-38): neutral, because a card that
+ * The card face's Auto-build chip: neutral, because a card that
  * starts itself is not running, not done and asking nothing of anyone. Yields
  * to a schedule pill, which names a concrete moment.
  */

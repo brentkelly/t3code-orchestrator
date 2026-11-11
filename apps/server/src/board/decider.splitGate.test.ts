@@ -1,5 +1,5 @@
 /**
- * The split gate (T3O-31): Planned vs Needs-planning children, the agent's
+ * The split gate: Planned vs Needs-planning children, the agent's
  * recommended group settings and their fallback rules, and approval applying
  * the human's final settings without starting anything.
  */

@@ -1,5 +1,5 @@
 /**
- * A worker's board git operations over the central server's connection (D21).
+ * A worker's board git operations over the central server's connection.
  * The worker refusing, or not having the call, is a `BoardWorkerGitError`; the
  * worker offline or dropping mid-call is `WorkerUnavailable`; anything that won't
  * decode is a `BoardWorkerGitError`, so a repeating fault is never retried.

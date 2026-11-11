@@ -36,7 +36,7 @@ export const BoardWorkspaceProvisionedWorktree = Schema.Struct({
 });
 export type BoardWorkspaceProvisionedWorktree = typeof BoardWorkspaceProvisionedWorktree.Type;
 
-/** Cutting a split parent's integration branch (D12). `create-failed` is git
+/** Cutting a split parent's integration branch. `create-failed` is git
     itself failing on a repository that is otherwise fine. */
 export const BoardWorkspaceIntegrationBranch = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("ready"), pushed: Schema.Boolean }),
@@ -45,7 +45,7 @@ export const BoardWorkspaceIntegrationBranch = Schema.Union([
 export type BoardWorkspaceIntegrationBranch = typeof BoardWorkspaceIntegrationBranch.Type;
 
 /**
- * What the durability probe found (T3O-52, D1). `durable`, `unmergedCount`
+ * What the durability probe found. `durable`, `unmergedCount`
  * and the changed paths drive the reclaim decision; `unpushedCount` and
  * `hasUpstream` are the detail a move-refusal screen shows.
  */
@@ -65,7 +65,7 @@ export const BoardWorkspaceDurability = Schema.Struct({
   /** Whether the checked-out branch tracks a remote branch. */
   hasUpstream: Schema.Boolean,
   /** The newest of those commits, at most `BOARD_UNPUSHED_COMMITS_MAX`, for the
-      move refusal to list (T3O-65). Empty from a worker that predates it. */
+      move refusal to list. Empty from a worker that predates it. */
   unpushedCommits: Schema.Array(
     Schema.Struct({ sha: TrimmedNonEmptyString, subject: Schema.String }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
@@ -96,7 +96,7 @@ export type BoardWorkspaceWorktree = typeof BoardWorkspaceWorktree.Type;
 export const BoardWorkspaceBranchCleanup = Schema.Struct({
   remoteDeleted: Schema.Boolean,
   localDeleted: Schema.Boolean,
-  /** No remote to delete from. A pre-T3O-26 worker omits it; false keeps a
+  /** No remote to delete from. An older worker omits it; false keeps a
       group discard retrying rather than settling with a remote copy alive. */
   remoteAbsent: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   skippedReason: Schema.NullOr(Schema.String),
@@ -410,7 +410,7 @@ export type BoardWorkerGitSuccess<Method extends BoardWorkerGitMethod> = Rpc.Suc
  * Each operation's scope, which the worker's handler checks. Reads sit at the thread-read tier;
  * anything that writes to the repository — a ref, a worktree, a branch, a
  * merge, even a fetch's remote-tracking refs — at source-control write. The
- * board's own session holds both (D19).
+ * board's own session holds both.
  */
 export const BOARD_WORKER_GIT_RPC_SCOPES = {
   [M.resolveDefaultBranch]: AuthOrchestrationReadScope,

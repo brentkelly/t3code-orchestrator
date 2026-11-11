@@ -1,5 +1,5 @@
 /**
- * T3O-44/57 — CI records through the real seams: decider, event store, SQL
+ * CI records through the real seams: decider, event store, SQL
  * projection, the card detail's pass rows, the activity rail and the
  * rehydrated read model.
  */
@@ -159,7 +159,7 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-"))("a CI pass", (it) => {
         detail!.card.ci,
       );
 
-      // T3O-57: Stop on failure saves to the project's CI config, and a pass
+      // Stop on failure saves to the project's CI config, and a pass
       // started with it off carries that, its fix's issue count, and a stop
       // with the fix thread on its row.
       yield* engine.dispatch({
@@ -314,7 +314,7 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-leave-"))("a card leaving CI", (i
       assert.strictEqual(detail!.ciPasses[0]!.outcome, "cancelled");
       assert.isNull(detail!.card.ci);
 
-      // T3O-49: a send-back counts a round trip; the board's own move keeps
+      // A send-back counts a round trip; the board's own move keeps
       // the count, and a human's move starts it again.
       const queries = yield* BoardQueries;
       const roundTrips = () =>

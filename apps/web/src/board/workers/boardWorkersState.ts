@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-62): the web's reads and the one client-side action behind the
+ * T3o: the web's reads and the one client-side action behind the
  * Workers settings.
  */
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
@@ -21,7 +21,7 @@ export class WorkerEnvironmentNotConnected extends Schema.TaggedError<WorkerEnvi
 
 /**
  * Mint a one-time pairing token on a worker environment with THIS client's
- * session there, for the board server to spend (D19). The token is labelled
+ * session there, for the board server to spend. The token is labelled
  * as the board's session, so the worker's Authorized clients list names it.
  */
 export const mintWorkerPairingToken = createRuntimeCommand(connectionAtomRuntime, {

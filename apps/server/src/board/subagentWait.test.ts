@@ -118,7 +118,7 @@ it.effect(
     ),
 );
 
-// A human-in-the-loop run keeps its pre-T3O-20 handling of a monitor: the human
+// A human-in-the-loop run keeps its own handling of a monitor: the human
 // is the pacing, so the step parks on them rather than starting a wait.
 it.effect("a human-in-the-loop turn that ends with a monitor running parks on the human", () =>
   withGovernor(

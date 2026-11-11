@@ -1,5 +1,5 @@
 /**
- * The List view's surface (T3O-30): the board's top bar with the List tab
+ * The List view's surface: the board's top bar with the List tab
  * active, the same `?project` scope as the root board, the outline, and the
  * card popup over it (`?card`). Board-owned and full-bleed, like the board.
  */

@@ -29,7 +29,7 @@ export interface BoardConflictFixInfo {
 export function boardConflictFix(input: {
   /** `BoardCardShell.stepConflictFix`: a live conflict fix, running or queued. */
   readonly live: boolean;
-  /** `BoardCardShell.stepChecksFix` (T3O-12): a live CI fix. The merge is held
+  /** `BoardCardShell.stepChecksFix`: a live CI fix. The merge is held
       the same way, so it wears the same amber pill and banner with its own
       words. */
   readonly checks?: boolean | undefined;
@@ -65,7 +65,7 @@ export function boardConflictFix(input: {
   };
 }
 
-/** The CI-fix story (T3O-12): the merge was refused for failing checks and an
+/** The CI-fix story: the merge was refused for failing checks and an
     agent is fixing them. */
 function boardChecksFix(queued: boolean): BoardConflictFixInfo {
   return queued

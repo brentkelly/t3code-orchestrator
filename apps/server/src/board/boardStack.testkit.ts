@@ -118,7 +118,7 @@ export const makeBoardStackTestLayer = (prefix: string) =>
   BoardRuntimeLive.pipe(
     Layer.provideMerge(ThreadGatewayV2Live),
     Layer.provideMerge(orchestrationStack(prefix)),
-    // T3O-62: a local-only board, for the subscription.
+    // A local-only board, for the subscription.
     Layer.provideMerge(BoardWorkersLocalOnlyTest),
   );
 

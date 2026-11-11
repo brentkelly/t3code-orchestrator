@@ -19,7 +19,7 @@ export interface BoardQueueInfo {
   readonly headline: string;
   /** Why it is waiting, and that nobody has to do anything about it. */
   readonly detail: string;
-  /** Waiting for its worker's checkout (T3O-65): no limit to start past. */
+  /** Waiting for its worker's checkout: no limit to start past. */
   readonly waitingForCheckout?: boolean;
 }
 
@@ -42,7 +42,7 @@ export function boardQueueInfo(input: {
   readonly slot: BoardQueueSlot | undefined;
   readonly running: number;
   readonly cap: number;
-  /** Which limit holds the card, on a board with workers (T3O-65); absent or
+  /** Which limit holds the card, on a board with workers; absent or
       null keeps the one-worker copy. */
   readonly reason?: BoardQueueReason | null | undefined;
 }): BoardQueueInfo | null {

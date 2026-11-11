@@ -1,5 +1,5 @@
 /**
- * Triage and adjudication never wait on a human (T3O-55), against the LIVE
+ * Triage and adjudication never wait on a human, against the LIVE
  * reactor. A question from one of those steps is answered by the board once
  * per attempt; one it cannot answer, or a second, is interrupted and recovered
  * through the stall ladder — never parked `awaiting-input`.

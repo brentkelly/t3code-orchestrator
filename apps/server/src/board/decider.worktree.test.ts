@@ -166,7 +166,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
     it.effect("the human move into Building does not itself create a worktree", () =>
       Effect.gen(function* () {
         // A card sitting in Ready with no worktree — the planning-and-Ready
-        // life it has led so far is worktree-free (D6).
+        // life it has led so far is worktree-free.
         const card = makeCard({ id: "card-1", stage: "ready", worktree: null });
         const move = {
           type: "board.card.move",
@@ -221,7 +221,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         }),
     );
 
-    // ── record / fail ────────────────────────────────────────────────────
+    // ── Record / fail ────────────────────────────────────────────────────
 
     it.effect("recording a ready worktree sets the path and status", () =>
       Effect.gen(function* () {
@@ -392,7 +392,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
-    // ── a second round of work ───────────────────────────────────────────
+    // ── A second round of work ───────────────────────────────────────────
 
     const mergedPr = (number: number) =>
       ({
@@ -812,7 +812,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
-    // T3O-24: card keys get reused, so a card's branch can carry a pull request
+    // Card keys get reused, so a card's branch can carry a pull request
     // an earlier card merged months before this one existed.
     describe("a pull request that closed before the card existed", () => {
       const BEFORE = "2025-09-09T10:00:00Z";
@@ -948,7 +948,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
-    // T3O-52 (D5): the rail rows a refusal once per distinct reason, and a
+    // The rail rows a refusal once per distinct reason, and a
     // human's forced removal is marked as such.
     const keptCard = (reclaimBlockedReason: string | null) =>
       makeCard({
@@ -1021,7 +1021,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
-    // ── T3O-5, D6: record-base-ref moves a completed retarget's recorded base ──
+    // ── Record-base-ref moves a completed retarget's recorded base ──
 
     const recordBaseRef = (cardId: string, baseRefName: string) =>
       ({

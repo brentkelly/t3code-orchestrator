@@ -65,7 +65,7 @@ export function WorkersSection(props: {
 }) {
   const { environmentId } = props;
   const workers = useBoardWorkers(environmentId);
-  // The board server's own row, which is the primary unless this device nominated another (T3O-71).
+  // The board server's own row, which is the primary unless this device nominated another.
   const boardServer = useEnvironment(environmentId);
   const boardLabel = boardServer?.label ?? "this board";
   const localVersion = boardServer?.serverConfig?.environment.serverVersion ?? null;
@@ -360,7 +360,7 @@ function WorkerMenu(props: {
 /**
  * The remove confirmation (1.11): the cards removal affects, from the board
  * server — those with no worktree yet move to the default worker, and those
- * with work there hold until they are moved (D22).
+ * with work there hold until they are moved.
  */
 function RemoveWorkerDialog(props: {
   readonly environmentId: EnvironmentId;

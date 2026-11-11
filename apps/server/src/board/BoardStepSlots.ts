@@ -21,7 +21,7 @@ export interface BoardSlotKey {
   readonly providerInstanceId: ProviderInstanceId;
 }
 
-/** Resolved caps for one admission attempt (D11): the board-wide ceiling on
+/** Resolved caps for one admission attempt: the board-wide ceiling on
     total running steps, the worker's own ceiling, and this instance's cap on
     that worker. `null` is "no limit of that kind". */
 export interface BoardConcurrencyLimit {

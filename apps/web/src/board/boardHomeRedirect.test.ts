@@ -35,7 +35,7 @@ describe("createColdStartHomeRedirect", () => {
   it("hands the flag to the first authenticated resolution, wherever it lands", () => {
     // The first-run flow: boot at `/` before the environment is paired, detour
     // through `/pair`, and let pairing land the user on the board by its own
-    // rule (D2). That landing is the cold start — so "go home" afterwards has
+    // rule. That landing is the cold start — so "go home" afterwards has
     // to mean threads, the invariant docs/user/board-navigation.md promises.
     const redirect = createColdStartHomeRedirect({ bootPathname: "/" });
     expect(redirect.shouldRedirectHome("/", "requires-auth")).toBe(false);

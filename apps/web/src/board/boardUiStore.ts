@@ -87,27 +87,27 @@ interface BoardUiState {
       collapsed root column does not collapse inside every sub-board. Missing keys
       fall back to `isBoardColumnCollapsed`'s default. */
   collapsedByStage: Partial<Record<string, boolean>>;
-  /** The board's floating corner menu, collapsed to a single chevron
-      (T3O-34, D6). Persisted: a user who quieted that corner expects it to
+  /** The board's floating corner menu, collapsed to a single chevron.
+      Persisted: a user who quieted that corner expects it to
       stay quiet across reloads. */
   utilityMenuCollapsed: boolean;
 }
 
 interface BoardUiStore extends BoardUiState {
-  /** Whether the thread sidebar's header is currently holding the mode tabs
-      (T3O-34, D8). Transient — it is a measurement of this client's live
+  /** Whether the thread sidebar's header is currently holding the mode tabs.
+      Transient — it is a measurement of this client's live
       layout, not a preference, so it is deliberately outside `partialize`. */
   sidebarHostsModeTabs: boolean;
   /** The card whose sheet is fullscreen. Lives here, not in the sheet, so a step
       (which remounts the sheet) can hand it on; naming the card keeps fullscreen
       from leaking into a card opened any other way. Not persisted. */
   detailMaximisedCardId: string | null;
-  /** Each board's filter text (T3O-29), keyed by `boardScopeQueryKey`: the
+  /** Each board's filter text, keyed by `boardScopeQueryKey`: the
       root board and every sub-board keep their own. Transient — typing state,
       not a preference. */
   queryByBoard: Partial<Record<string, string>>;
   setBoardQuery: (boardKey: string, query: string) => void;
-  /** What the mounted board offers the command palette (T3O-29): drill into
+  /** What the mounted board offers the command palette: drill into
       the selected group, go up a level. Transient, and empty off the board,
       so the palette never subscribes to the board itself. */
   paletteActions: ReadonlyArray<BoardPaletteAction>;
@@ -164,7 +164,7 @@ export function migratePersistedBoardUiState(persistedState: unknown): BoardUiSt
         : "threads",
     lastLocationByMode,
     collapsedByStage,
-    // A blob persisted before T3O-34 has no such field; the menu opens.
+    // An older persisted blob has no such field; the menu opens.
     utilityMenuCollapsed: candidate.utilityMenuCollapsed === true,
   };
 }

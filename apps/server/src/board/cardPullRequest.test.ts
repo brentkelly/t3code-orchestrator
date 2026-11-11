@@ -45,7 +45,7 @@ const openPr: VcsStatusChangeRequest = {
   state: "open",
 };
 
-/** A refused merge, as the host reports it afterwards (T3O-47). `mergeFailure`
+/** A refused merge, as the host reports it afterwards. `mergeFailure`
     only makes the merge fail; this is what the board reads to decide what to do
     about it. */
 const refusal = (input: {
@@ -85,7 +85,7 @@ const cardInMerge = (): BoardCard =>
   });
 
 /** A running step in the merge stage — what a human gets by restarting the
-    stage thread by hand. The step id IS the stage id (t3o-15, D1). */
+    stage thread by hand. The step id IS the stage id. */
 const runningMergeStep = (cardId: BoardCardId): BoardCardStepState => ({
   cardId,
   stepId: String(BOARD_SEED_STAGE_IDS.merge),
@@ -271,7 +271,7 @@ describe("card ↔ pull request link", () => {
     );
   });
 
-  // T3o (T3O-48): "Check again" is a human asking whether the answer they were
+  // T3o: "Check again" is a human asking whether the answer they were
   // just given is still true. Answering that out of the cache that produced it
   // — or out of the failure backoff — is a button that does nothing.
   describe("the forced re-check", () => {
@@ -1131,7 +1131,7 @@ describe("merging a card's pull request", () => {
       (h) =>
         Effect.gen(function* () {
           // The advance names no position, so the decider gives it the top of
-          // Done (T3O-15) — the card that just merged is the one you read
+          // Done — the card that just merged is the one you read
           // first, not one buried under a month of finished work.
           const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
           assert.equal(result.outcome, "merged");
@@ -1152,15 +1152,14 @@ describe("merging a card's pull request", () => {
         pullRequest: openPr,
         mergeFailure: "GitHub returned an error: At least 1 approving review is required.",
         // A refusal the detail cannot explain; failing CI starts a fix of its
-        // own (T3O-12).
+        // own.
         mergeState: refusal({}),
       },
       (h) =>
         Effect.gen(function* () {
           const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
           assert.equal(result.outcome, "refused");
-          // The user reads the forge's own reason, not one the board guessed
-          // (T3O-67).
+          // The user reads the forge's own reason, not one the board guessed.
           assert.strictEqual(
             result.outcome === "refused" ? result.detail : "",
             "The forge refused the merge: GitHub returned an error: At least 1 approving review is required.",
@@ -1193,7 +1192,7 @@ describe("merging a card's pull request", () => {
             (command) => command.type === "board.card.start-stage-thread",
           );
           assert.equal(started.length, 1);
-          // …and the step it starts is STAMPED as a conflict fix (T3O-9), which
+          // …and the step it starts is STAMPED as a conflict fix, which
           // is what makes "this card's merge is held" a persisted fact rather
           // than a client-side guess at a running merge-stage step.
           yield* h.pumpDomain(stageThreadRequested(cardInMerge(), 1));
@@ -1487,7 +1486,7 @@ describe("merging a card's pull request", () => {
           const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
           assert.equal(result.outcome, "refused");
           // The probe's failure is passed on, not dressed up as a forge that
-          // gave no reason (T3O-8).
+          // gave no reason.
           assert.equal(
             result.outcome === "refused" ? result.detail : "",
             "The forge refused the merge, and asking it why failed: No provider is registered. The forge said: the host refused",
@@ -1670,7 +1669,7 @@ describe("merging a card's pull request", () => {
               false,
               "the conflict fix runs unattended so its success can complete the merge",
             );
-            // A SECOND fix wears the label as well (T3O-9) — the stamp is per
+            // A SECOND fix wears the label as well — the stamp is per
             // conflict, not per stage entry, so the pill and the modal banner
             // come back for it exactly as they did the first time.
             assert.strictEqual(step.stepLabel, BOARD_CONFLICT_STEP_LABEL);
@@ -1709,8 +1708,8 @@ describe("merging a card's pull request", () => {
               true,
               "a hand-started merge-stage thread must stay human-in-the-loop",
             );
-            // …and it carries NO step identity (t3o-19, D4), so nothing derives
-            // a live conflict fix from it (T3O-9). This is the case the old
+            // …and it carries NO step identity, so nothing derives
+            // a live conflict fix from it. This is the case the old
             // `stepRunning` inference called a conflict fix: a running step at
             // the merge stage that is a conversation, not a fix.
             assert.strictEqual(step.stepLabel, null);
@@ -1763,7 +1762,7 @@ describe("merging a card's pull request", () => {
             // again, so the card stays put — and the thread must be released.
             yield* h.pumpDomain(mergeStepCompleted(card.id, 1));
 
-            // Retired, not unlinked (T3O-41): it stays on the card as history.
+            // Retired, not unlinked: it stays on the card as history.
             const retired = (yield* h.commands).filter(
               (command) =>
                 command.type === "board.card.retire-thread" &&
@@ -1874,7 +1873,7 @@ describe("branch cleanup at Done", () => {
             // branch is the only place the work exists. It is not deleted.
             assert.equal((yield* h.board).cards[0]!.pullRequest?.state, "open");
             assert.equal(branchCleanupNotes(yield* h.commands).length, 0);
-            // The CHECKOUT may go, though (T3O-52, D2): the open pull request's
+            // The CHECKOUT may go, though: the open pull request's
             // branch is on the remote, so removing it loses nothing.
             assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
           }),
@@ -2024,7 +2023,7 @@ describe("branch cleanup at Done", () => {
     "re-attempts a refused reclaim at boot, and says nothing new if it is refused again",
     () =>
       Effect.gen(function* () {
-        // T3O-52 (D4): a refusal no longer retires a card from the boot sweep —
+        // A refusal no longer retires a card from the boot sweep —
         // a tree that has since become clean or durable must be collected. A
         // repeat of the SAME refusal dispatches nothing, so a kept card costs
         // no event and no rail row per boot.

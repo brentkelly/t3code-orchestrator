@@ -59,7 +59,7 @@ export type BoardWorktreeOwner = "self" | "central";
 
 /** Kept in the private git dir, so it never dirties status and goes with the
     worktree. No marker means this server's own board. It names no central
-    server: a worker serves one board (D19), and naming the session would orphan
+    server: a worker serves one board, and naming the session would orphan
     every checkout on a re-pair. */
 const CENTRAL_OWNER_MARKER = "t3o-board-owner";
 
@@ -232,7 +232,7 @@ export function makeLocalBoardWorkspace(
     );
 
   /**
-   * Make sure `base` names a local branch (D7), fetching and creating it from
+   * Make sure `base` names a local branch, fetching and creating it from
    * `<remote>/<base>` when needed: every reader re-qualifies a recorded base as a
    * local ref and fails silently on a remote one. Idempotent; a raced creation is
    * re-checked, not fatal.
@@ -339,7 +339,7 @@ export function makeLocalBoardWorkspace(
    * Provision a card's worktree from its branch on the REMOTE:
    * the branch is fetched and its local copy created from, or fast-forwarded
    * to, the remote one, so the worktree carries exactly what was pushed.
-   * Nothing is copied worker to worker (D21).
+   * Nothing is copied worker to worker.
    */
   const provisionWorktreeFromRemoteBranch: BoardWorkspace["provisionWorktreeFromRemoteBranch"] =
     Effect.fn("LocalBoardWorkspace.provisionWorktreeFromRemoteBranch")(function* ({
@@ -432,7 +432,7 @@ export function makeLocalBoardWorkspace(
     withGit(pinBoardWorktreeGhDefault(worktreePath));
 
   /** The latest commit time (strict ISO 8601) of a commit unique to the
-      card's OWN branch, or null on any error or no such commit (D4).
+      card's OWN branch, or null on any error or no such commit.
       Scoped with `--not <base>` so a base sync fast-forwarding a sibling's
       merge into the branch is not read as this agent's heartbeat. */
   const branchHeartbeat: BoardWorkspace["branchHeartbeat"] = ({ worktreePath, baseRefName }) =>
@@ -498,7 +498,7 @@ export function makeLocalBoardWorkspace(
   });
 
   /**
-   * Cut a split parent's integration branch from `base` and push it (D12), so
+   * Cut a split parent's integration branch from `base` and push it, so
    * a child placed on another worker can cut its own branch from the remote.
    * Idempotent on retry: an existing branch is the desired state, and a raced
    * sibling's creation is re-checked rather than treated as fatal.

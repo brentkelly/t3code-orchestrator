@@ -1,5 +1,5 @@
 /**
- * Board migration 061 (T3O-49): the stage default column, the CI pass
+ * Board migration 061: the stage default column, the CI pass
  * snapshot columns, re-keyed duplicate order keys, and stages moved out from
  * between CI and the merge stage.
  */
@@ -24,7 +24,7 @@ it.effect("adds the columns and puts every stage in one valid order", () =>
       yield* step;
     }
     const at = "2026-01-01T00:00:00.000Z";
-    // Three T3O-43 project stages added after review share a key, and one was
+    // Three legacy project stages added after review share a key, and one was
     // added after CI.
     yield* sql`
       INSERT INTO board_stages (stage_id, label, role, order_key, created_at, updated_at, project_id)

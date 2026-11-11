@@ -172,7 +172,7 @@ it.effect("restarts a planning step parked on a question — the reported no-op"
       ),
       "the restarted thread is linked to the card",
     );
-    // The superseded run stays on the card as a retired past thread (T3O-41):
+    // The superseded run stays on the card as a retired past thread:
     // the board no longer supervises it, but its history is not lost.
     const superseded = outcome.card.threadLinks.find((entry) => entry.threadId === oldThread);
     assert.isDefined(superseded?.retiredAt, "the superseded planning thread is retired");
@@ -317,7 +317,7 @@ it.effect("drops a request for a stage that runs nothing — no promptless threa
 
 it.effect("abandons a stalled step on a stage that runs nothing, without spawning a thread", () =>
   Effect.gen(function* () {
-    // Restart is offered on any stalled step (t3o-30 D3), including stages that
+    // Restart is offered on any stalled step, including stages that
     // do not auto-execute and have no prompt. The click must clear the stall
     // rather than succeed and leave it in place.
     const backlog = String(BOARD_SEED_STAGE_IDS.backlog);

@@ -77,7 +77,7 @@ export interface WorkerRpc {
   /** The worker's own threads, its signals, the MCP relay and attachment
       staging. */
   readonly gateway: WorkerGatewayRpc;
-  /** One named board git or forge operation, run on the worker (D21).
+  /** One named board git or forge operation, run on the worker.
       A refusal carries the worker's `BoardWorkerGitError` as its `cause`. */
   readonly git: <Method extends BoardWorkerGitMethod>(
     method: Method,

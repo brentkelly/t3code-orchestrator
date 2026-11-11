@@ -79,7 +79,7 @@ function ArchivedCardList({
 
   const cards = boardArchivedCardsInScope(snapshot?.cards ?? [], scopeProjectId);
 
-  // Resolves a card id to a key for the parent badge (t3o-25, AC6): live
+  // Resolves a card id to a key for the parent badge: live
   // parents come from the board's own key map, an archived parent from the
   // very list this sheet is rendering. An id neither can name (the parent was
   // purged) simply shows no badge.
@@ -123,7 +123,7 @@ function ArchivedCardList({
                     ? undefined
                     : parentKeyOf(String(card.parentCardId));
                 return parentKey === undefined ? null : (
-                  // A sub-board child names its parent (t3o-25, AC6) — the
+                  // A sub-board child names its parent — the
                   // archive flattens every board into one list, so without
                   // this the child reads as a stray top-level card.
                   <BoardHint label={`Part of ${parentKey}'s sub-board`}>
@@ -138,7 +138,7 @@ function ArchivedCardList({
                 {card.title}
               </span>
               {card.worktreeReady === true ? (
-                // T3O-52: archive is the guaranteed cleanup point, so an
+                // Archive is the guaranteed cleanup point, so an
                 // archived card still holding a worktree is always flagged.
                 // Amber: its cleanup is blocked. Open the card to act on it.
                 <BoardHint
@@ -207,7 +207,7 @@ export function BoardArchivedCardsSheet({
   scopeProjectId,
 }: {
   readonly environmentId: EnvironmentId;
-  /** Live card ids → keys, from the board (t3o-25): resolves an archived
+  /** Live card ids → keys, from the board: resolves an archived
       child's badge when its parent is still on the live board. */
   readonly liveCardKeyById: ReadonlyMap<string, string>;
   /** Purge the card outright — always behind this sheet's own confirmation. */
@@ -252,7 +252,7 @@ export function BoardArchivedCardsSheet({
 
 /**
  * The sheet's scrolling body. Upstream's `SheetPanel` was removed as unused in v0.0.45, so the
- * board keeps its own copy (T3O-54).
+ * board keeps its own copy.
  */
 function SheetBody({ children }: { children: ReactNode }) {
   return (

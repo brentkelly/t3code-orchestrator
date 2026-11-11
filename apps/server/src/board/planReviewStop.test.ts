@@ -1,5 +1,5 @@
 /**
- * Plan review (T3O-39) in the supervisor: turning a running review off sends
+ * Plan review in the supervisor: turning a running review off sends
  * the planning thread a wrap-up turn, except into a step a human paused.
  */
 import {

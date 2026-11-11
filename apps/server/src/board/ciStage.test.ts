@@ -1281,7 +1281,7 @@ it.effect("a pass whose record can't be read is held, never passed", () =>
   }),
 );
 
-// ── T3O-59: a pass never wedges ──────────────────────────────────────────
+// ── A pass never wedges ──────────────────────────────────────────
 
 type RecordCiAction = Extract<HarnessCommand, { type: "board.card.record-ci" }>["action"];
 

@@ -47,10 +47,10 @@ export function BoardSubBoardHeader({
       once the parent leaves the board, when the D3 redirect is imminent). */
   readonly parentShell: BoardCardShell | null;
   readonly accentName: ProjectIconColor | null;
-  /** The parent's own sheet lives on the ROOT board (D2) — clicking the
+  /** The parent's own sheet lives on the ROOT board — clicking the
       title goes there with the sheet open. */
   readonly onOpenParentCard: () => void;
-  /** The dependency chart's toggle (t3o-29): the button lives here, in the
+  /** The dependency chart's toggle: the button lives here, in the
       header row, and the chart itself renders below in
       `BoardSubBoardPlanStrip` — so the state is the page's, not ours. */
   readonly chartOpen: boolean;
@@ -59,7 +59,7 @@ export function BoardSubBoardHeader({
   readonly shells: ReadonlyArray<BoardCardShell>;
   readonly stages: BoardState;
   readonly attentionFor: (card: BoardCardShell) => BoardCardAttention | null;
-  /** Settings → Board → Pipeline merges every card (T3O-38). */
+  /** Settings → Board → Pipeline merges every card. */
   readonly boardWideAutoMerge: boolean;
 }) {
   const detail = useAtomValue(

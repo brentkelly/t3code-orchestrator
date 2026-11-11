@@ -13,12 +13,12 @@ export interface BoardSearch {
   readonly project?: string;
   /** Deep-linked card: selected and scrolled into view on open. */
   readonly card?: string;
-  /** Show only stalled cards (t3o-17, D3): the "find every stalled card"
+  /** Show only stalled cards: the "find every stalled card"
       affordance. Absent / false means show everything. */
   readonly stalled?: boolean;
 }
 
-/** Shared with the sub-board route (t3o-25) — the two scopes are the same
+/** Shared with the sub-board route — the two scopes are the same
     surface, so their search params must stay one grammar. */
 export function validateBoardSearch(search: Record<string, unknown>): BoardSearch {
   const nonEmpty = (value: unknown): string | undefined =>

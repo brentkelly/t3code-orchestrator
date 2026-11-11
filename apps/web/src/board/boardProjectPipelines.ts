@@ -1,5 +1,5 @@
 /**
- * T3o per-project pipelines on the board (T3O-43/49): which columns a view
+ * T3o per-project pipelines on the board: which columns a view
  * draws when its projects switch stages on or off, which projects each
  * column covers. Pure functions over the read model
  * the page already holds; coverage is computed once per render.

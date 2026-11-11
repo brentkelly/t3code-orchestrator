@@ -35,7 +35,7 @@ import {
 
 const codex = ProviderInstanceId.make("codex");
 
-/** A step a human force-started (t3o-33) on a card that also carries a
+/** A step a human force-started on a card that also carries a
     schedule — the one state in which the gate's `forceStart` bypass is
     reachable. */
 const forcedQueuedStep = (id: string): BoardCardStepState => ({
@@ -133,7 +133,7 @@ it.effect(
           assert.strictEqual(state?.status, "pending");
           assert.strictEqual(state?.slotHeld, false);
           assert.strictEqual(yield* slots.heldTotal, 0);
-          // The gate sits BEFORE `ensureWorktree` (D2): a card scheduled for
+          // The gate sits BEFORE `ensureWorktree`: a card scheduled for
           // tomorrow morning must not hold a checkout overnight, nor cut its
           // branch from a base that will have moved by the time it runs.
           const card = (yield* board).cards.find(
@@ -284,7 +284,7 @@ it.effect("a card whose schedule is in the past is admitted the moment it is set
     Effect.gen(function* () {
       yield* pumpDomain(movedToBuilding(scheduledCard({ id: "past", scheduledStartAt: PAST }), 1));
 
-      // A past time means "now" (D6): the picker refuses none, and the card
+      // A past time means "now": the picker refuses none, and the card
       // must not sit holding a pill for a moment that has already gone.
       const card = (yield* board).cards.find(
         (candidate) => candidate.id === BoardCardId.make("past"),
@@ -501,7 +501,7 @@ it.effect("a manual resume clears the time, so the card is not re-paused later",
 
       // The human went back to the thread and typed. They have overtaken the
       // decision they made earlier, so the 9pm resume must not become a 9pm
-      // re-pause of work they restarted at 3pm (D6).
+      // re-pause of work they restarted at 3pm.
       yield* pumpDomain(humanTurnStartRequested(threadId, 3));
 
       const card = (yield* board).cards.find(

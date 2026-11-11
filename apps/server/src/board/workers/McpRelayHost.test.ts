@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-63): the worker's half of the MCP relay, on its own.
+ * T3o: the worker's half of the MCP relay, on its own.
  */
 import {
   AuthSessionId,

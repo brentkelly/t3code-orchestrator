@@ -78,7 +78,7 @@ export function BoardModeTabs({
 }: {
   readonly mode: WorkspaceMode;
   readonly className?: string;
-  /** Which of the control's two homes this mount is (T3O-34, D7). The top-bar
+  /** Which of the control's two homes this mount is. The top-bar
       copy stands down while the thread sidebar's header is holding the tabs;
       the sidebar copy is the one doing the holding. */
   readonly placement?: "topbar" | "sidebar";

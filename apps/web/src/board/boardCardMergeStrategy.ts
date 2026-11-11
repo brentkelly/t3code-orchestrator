@@ -1,5 +1,5 @@
 /**
- * The words for a card's merge strategy override (T3O-80): the kebab row's
+ * The words for a card's merge strategy override: the kebab row's
  * value, the header pill and its tooltip, and the popover's options. One place,
  * so the row, the pill and the popover cannot disagree about the same card.
  */

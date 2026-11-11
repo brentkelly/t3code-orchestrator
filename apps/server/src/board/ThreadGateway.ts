@@ -91,21 +91,21 @@ export interface BoardThreadState {
   readonly activeTurnRef: string | null;
   /** A structured question is waiting on a human. */
   readonly awaitingUserInput: boolean;
-  /** A permission prompt someone can still answer (T3O-16). */
+  /** A permission prompt someone can still answer. */
   readonly awaitingPermission: boolean;
-  /** Work the agent left running after its turn ended (T3O-20). */
+  /** Work the agent left running after its turn ended. */
   readonly backgroundWork: "working" | "monitoring" | null;
-  /** An active turn, or a pending question nobody's session has killed
-      (t3o-10, D1): the supervisor's "still doing live work". */
+  /** An active turn, or a pending question nobody's session has killed:
+      the supervisor's "still doing live work". */
   readonly alive: boolean;
-  /** Between turns, needs no human, background work running (T3O-20). */
+  /** Between turns, needs no human, background work running. */
   readonly waitingOnBackground: boolean;
   /** The engine's own "can this be settled automatically" policy, evaluated
-      now (t3o-13). */
+      now. */
   readonly autoSettleCandidate: boolean;
   readonly worktreePath: string | null;
   readonly modelSelection: ModelSelection | null;
-  /** The latest run failed on a provider usage limit (T3O-59), or null. */
+  /** The latest run failed on a provider usage limit, or null. */
   readonly usageLimit: BoardThreadUsageLimit | null;
 }
 
@@ -144,14 +144,13 @@ export const deletedThreadState = (threadId: ThreadId, projectId: ProjectId): Bo
 
 /**
  * What `threadState` answers for a thread on a worker the board cannot reach
- * right now (T3O-63): neither alive nor dead. Never read as a thread that is
- * gone — a worker the board merely cannot see may well still be running it
- * (D22).
+ * right now: neither alive nor dead. Never read as a thread that is
+ * gone — a worker the board merely cannot see may well still be running it.
  */
 export const UNKNOWN_THREAD_STATE = "unknown" as const;
 export type UnknownThreadState = typeof UNKNOWN_THREAD_STATE;
 
-/** The cheap per-thread facts the release sweep pre-filters on (t3o-13). */
+/** The cheap per-thread facts the release sweep pre-filters on. */
 export interface BoardThreadRecord {
   readonly threadId: ThreadId;
   readonly deleted: boolean;
@@ -256,12 +255,12 @@ export interface ThreadSpawnInput {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   /** Null runs the thread in the project root with no worktree of its own
-      (planning, D6); otherwise the thread runs in `worktreePath` on it. */
+      (planning); otherwise the thread runs in `worktreePath` on it. */
   readonly branch: string | null;
   readonly worktreePath: string;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
-  /** The worker to spawn on (T3O-63); absent means this server. */
+  /** The worker to spawn on; absent means this server. */
   readonly workerId?: EnvironmentId;
   /** A card's brief files to copy onto that worker before the thread starts,
       by name and path on this server. Ignored for a local spawn, whose
@@ -310,14 +309,14 @@ export interface ThreadGatewayShape {
   readonly settle: (input: ThreadSettleInput) => Effect.Effect<void, ThreadCommandError>;
   readonly delete: (input: ThreadTargetInput) => Effect.Effect<void, ThreadCommandError>;
   /** Have the engine resume this thread itself once its usage-limit window
-      reopens, whatever the user's global auto-resume setting (T3O-59). True
+      reopens, whatever the user's global auto-resume setting. True
       when recovery is armed with auto-resume afterwards; false when the
       thread is not limited, or the provider named no reset time to wait for. */
   readonly armLimitRecovery: (
     input: ThreadTargetInput,
   ) => Effect.Effect<boolean, ThreadCommandError>;
   /** Answer every question of the thread's pending structured user-input
-      request with `text` (T3O-38). False when nothing is pending, or the
+      request with `text`. False when nothing is pending, or the
       provider cannot take the answer — the caller then sends a turn instead. */
   readonly answerPendingInput: (
     input: ThreadAnswerInput,
@@ -342,10 +341,9 @@ export interface ThreadGatewayShape {
   readonly latestAssistantMessage: (
     threadId: ThreadId,
   ) => Effect.Effect<BoardAssistantMessage | null, ThreadReadError>;
-  /** When the thread last produced output — message or activity (T3O-12). */
+  /** When the thread last produced output — message or activity. */
   readonly lastSignalAt: (threadId: ThreadId) => Effect.Effect<string | null, ThreadReadError>;
-  /** When a turn that has been requested but not started was asked for
-      (T3O-18). */
+  /** When a turn that has been requested but not started was asked for. */
   readonly pendingTurnStartAt: (
     threadId: ThreadId,
   ) => Effect.Effect<string | null, ThreadReadError>;
@@ -375,7 +373,7 @@ export class ThreadGateway extends Context.Service<ThreadGateway, ThreadGatewayS
   "t3/board/ThreadGateway",
 ) {}
 
-// ── This server's own threads (T3O-63) ─────────────────────────────────
+// ── This server's own threads ─────────────────────────────────
 
 /** The signals one position of the thread log produced, in order. */
 export interface ThreadSignalBatch {
@@ -385,7 +383,7 @@ export interface ThreadSignalBatch {
 
 /**
  * The gateway onto THIS server's threads. On a central server `ThreadGateway`
- * is a router over this one and every worker's (T3O-63); a worker serves this
+ * is a router over this one and every worker's; a worker serves this
  * one to the central server, never the router, so it only ever hands out its
  * own threads.
  */

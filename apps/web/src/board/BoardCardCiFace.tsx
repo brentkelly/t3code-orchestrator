@@ -42,7 +42,7 @@ export const BOARD_CI_CHIP_CLASS: Record<BoardCiChipTone, string> = {
   success: "bg-success/15 text-success-foreground",
   neutral: "bg-muted text-muted-foreground",
   warning: "bg-warning/12 text-warning-foreground",
-  // Violet: waiting on a human (T3O-49's "Stopped for you").
+  // Violet: waiting on a human ("Stopped for you").
   attention: "bg-attention/13 text-attention-foreground",
 };
 

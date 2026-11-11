@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-63): the router's batch read across this server and its workers.
+ * T3o: the router's batch read across this server and its workers.
  *
  * The worker is in process (`distributed.testkit.ts`) behind the fake
  * transport; the thread links and the worker registry are rows in a real

@@ -1,5 +1,5 @@
 /**
- * The Automation section's decisions (T3O-38): the header summary, the source
+ * The Automation section's decisions: the header summary, the source
  * tag, what a locked row shows, and what a group flip does to its children.
  */
 import {

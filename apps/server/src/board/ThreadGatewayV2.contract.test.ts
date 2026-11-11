@@ -636,7 +636,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
       }),
     );
 
-    // T3O-12: the timeout sweep's life sign moves with the agent's output, here
+    // The timeout sweep's life sign moves with the agent's output, here
     // a todo list rewritten deep in a turn that writes no prose.
     it.effect("the last signal moves with the thread's activity", () =>
       Effect.gen(function* () {
@@ -666,7 +666,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
       }),
     );
 
-    // T3O-18: a turn exists from the moment it is asked for, and is pending
+    // A turn exists from the moment it is asked for, and is pending
     // until it runs. Without this, the previous turn's completion parks a step
     // whose human has already sent the next message.
     it.effect("a requested turn is pending until it runs, and not once it is gone", () =>

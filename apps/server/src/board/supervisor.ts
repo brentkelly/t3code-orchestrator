@@ -19,7 +19,7 @@ import type {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 
-// The prompt envelope (D5) moved to contracts (`boardEnvelope.ts`) so the
+// The prompt envelope moved to contracts (`boardEnvelope.ts`) so the
 // settings UI renders exactly the text that wraps a stage's editable prompt;
 // re-exported here so the reactor and the supervisor tests keep their one
 // import site for the decision logic.
@@ -37,7 +37,7 @@ export {
  */
 const BOARD_OUTPUT_SIGNAL_MAX_WINDOWS = 8;
 
-/** Whether the thread-output life sign still shields this step (T3O-12, D9).
+/** Whether the thread-output life sign still shields this step.
     A step whose `startedAt` is unreadable cannot have its age measured, so the
     shield holds — the conservative direction, and the same reading the sweep
     gives every other missing timestamp. */
@@ -116,13 +116,13 @@ export function recoveryDecision(input: {
    * `stallCount`.
    */
   readonly progressedSinceLastNudge: boolean;
-  /** The stage entry's total RECOVERIES so far (D5, re-pointed by T3O-12 D4),
+  /** The stage entry's total RECOVERIES so far,
       summed across its steps by the reactor. This recovery is one more, so the
       ceiling is checked against `stageEntryRecoveries + 1`. */
   readonly stageEntryRecoveries: number;
   /** The ceiling `stageEntryRecoveries` is checked against. Named for what it
       bounds; the settings key it is resolved from keeps the older, now
-      imprecise name `maxInvocationsPerStageEntry` (T3O-12, D6). */
+      imprecise name `maxInvocationsPerStageEntry`. */
   readonly maxRecoveriesPerStageEntry: number;
   /**
    * Whether the stopped turn ended with a question for a human. Recovery is unattended by
@@ -138,7 +138,7 @@ export function recoveryDecision(input: {
   const nextStageRecoveries = input.stageEntryRecoveries + 1;
   const escalateManually = `How should I proceed: retry it again, switch to a different provider, or do you want to take it over manually?`;
 
-  // Planned steps never reach here, which is the whole of T3O-12's D4.
+  // Planned steps never reach here.
   const ceiling = recoveryCeilingCrossed({
     stallCount: nextStallCount,
     maxAttempts: input.stepState.maxAttempts,
@@ -194,8 +194,8 @@ export function boardRecoveryNudge(input: {
       outstanding-work reminder appears from the third onward. */
   readonly stallCount: number;
   readonly endedWithQuestion: boolean;
-  /** The step being nudged. Triage and adjudication never ask a human
-      (T3O-55), so theirs says to decide instead. */
+  /** The step being nudged. Triage and adjudication never ask a human,
+      so theirs says to decide instead. */
   readonly stepId?: string;
 }): string {
   const decides = input.stepId !== undefined && boardReviewQuestionAnswer(input.stepId) !== null;
@@ -246,7 +246,7 @@ export function boardBackgroundCheckInDueMs(input: {
   return input.sinceMs + (offsets.at(-1) ?? 0) + beyond * BOARD_BACKGROUND_CHECK_IN_INTERVAL_MS;
 }
 
-/** Whether a check-in spends the recovery budget (T3O-20). The scheduled ones
+/** Whether a check-in spends the recovery budget. The scheduled ones
     in the first half hour are free; every one after that is charged like a
     recovery, so a background job that never finishes reaches a human at the
     existing ceilings — about three hours at the default `maxAttempts` of 5. */
@@ -311,7 +311,7 @@ export function reconcileStepDecision(input: {
 }): BoardReconcileDecision {
   if (input.hasSucceeded) return { kind: "advance" };
   if (input.status === "stalled") {
-    // Recovery gave up here (t3o-17, D3): the step is non-terminal so boot
+    // Recovery gave up here: the step is non-terminal so boot
     // reconciliation must keep re-reading it, but supervision does not drive it
     // — it stops until a human acts. Leave it exactly as it is (no recover, no
     // slot restore: a stalled step already released its slot, D4).
@@ -339,14 +339,14 @@ export function reconcileStepDecision(input: {
     // Never started, holds no slot — not a death to recover but work to place.
     // A fresh schedule pass re-offers it to the governor (re-admit if a slot is
     // now free, otherwise re-queue), so a step queued when the server went down
-    // is not mistaken for a stall and never burns a recovery attempt (D11).
+    // is not mistaken for a stall and never burns a recovery attempt.
     return { kind: "reschedule" };
   }
   // completing: the agent reported done but settle did not land — re-drive.
   return { kind: "recover" };
 }
 
-// ── Offline workers (T3O-66, D22) ──────────────────────────────────────────
+// ── Offline workers ──────────────────────────────────────────
 
 /** A stretch of time a worker was out of the board's reach, in epoch millis. */
 export interface BoardOfflineInterval {
@@ -371,15 +371,15 @@ export function boardOfflineCreditMs(
   return credit;
 }
 
-// ── Concurrency governor (t3o-11, D11) ─────────────────────────────────────
+// ── Concurrency governor ─────────────────────────────────────
 
 /** One card's step competing for a slot. Everything the ordering branches on
-    is a scalar off the read model (D8) — no thread shells, no SQL. */
+    is a scalar off the read model — no thread shells, no SQL. */
 export interface BoardQueueCandidate {
   readonly cardId: BoardCardId;
   readonly stepId: string;
   readonly providerInstanceId: ProviderInstanceId;
-  /** The card's stage position in board order (D2): the reactor resolves it
+  /** The card's stage position in board order: the reactor resolves it
       from the read-model stage list, since stages are user-defined and no
       longer a compiled array. */
   readonly stageOrder: number;

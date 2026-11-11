@@ -1,5 +1,5 @@
 /**
- * T3o: server-side title search for the card's "Adopt an existing thread" picker (T3O-41). The shell
+ * T3o: server-side title search for the card's "Adopt an existing thread" picker. The shell
  * keeps only the newest settled threads, so the picker cannot find older ones in the snapshot.
  * Rows are read here and never mounted, so search results do not leak into the sidebar.
  */
@@ -35,7 +35,7 @@ const olderSettledBefore = Atom.family((environmentId: EnvironmentId) =>
 );
 
 const search = createThreadSearchResultsAtomFamily({
-  // A thread belongs to one card (D9), so the server leaves every card thread out of the rows.
+  // A thread belongs to one card, so the server leaves every card thread out of the rows.
   getSearchAtom: (environmentId, input) =>
     input.olderSettledBefore === undefined
       ? orchestrationEnvironment.threadSearch({ environmentId, input })
@@ -95,7 +95,7 @@ export function useBoardAdoptKnownCardThreadIds(
 
 /**
  * The threads the picker offers: the card's project, not archived, from the shell and the search,
- * and not linked to any card — a thread belongs to one card (D9), so offering one that is would
+ * and not linked to any card — a thread belongs to one card, so offering one that is would
  * only produce a refused command. `linkedElsewhere` is every card-thread id the client knows of;
  * the search rows already leave card threads out on the server.
  */

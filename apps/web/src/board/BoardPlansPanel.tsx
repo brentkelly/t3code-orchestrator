@@ -46,7 +46,7 @@ export function BoardPlansPanel({
       has cut it. */
   readonly integrationBranch: string | null;
   /** Whether the card integrates on a branch of its own. An inheriting group
-      (T3O-34) has no integration branch, so it has no final review to state. */
+       has no integration branch, so it has no final review to state. */
   readonly ownBranch?: boolean | undefined;
   /** Open one child inside this parent's sub-board. Absent leaves the rows
       informational. */
@@ -54,7 +54,7 @@ export function BoardPlansPanel({
   /** Open the sub-board itself, no sheet — the header's Board button. */
   readonly onOpenSubBoard?: (() => void) | undefined;
 }) {
-  // Ephemeral by design (D6): the modal remounts per card, so there is no
+  // Ephemeral by design: the modal remounts per card, so there is no
   // state to strand and no persisted key scheme to maintain.
   const [chartOpen, setChartOpen] = useState(false);
   const final = boardPlanFinalReview({

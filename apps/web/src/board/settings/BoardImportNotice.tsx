@@ -1,5 +1,5 @@
 /**
- * T3o: committed `t3o.json` files waiting to import (T3O-49). The notice
+ * T3o: committed `t3o.json` files waiting to import. The notice
  * lives at the top of Settings → Board and, slim, on the project's page;
  * it never interrupts the board. "No thanks" remembers the file's blob sha,
  * so the notice returns only when the committed file changes.

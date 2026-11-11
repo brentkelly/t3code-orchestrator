@@ -1,6 +1,6 @@
 // T3o: card body storage (brief, plan text, …), following the
 // checkpoint_diff_blobs precedent for large payloads — bodies never enter
-// the read model (D8), they are written by the board projector and read on
+// the read model, they are written by the board projector and read on
 // demand.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";

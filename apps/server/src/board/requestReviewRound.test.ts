@@ -171,7 +171,8 @@ it.effect("D6: the card arriving back in review runs round 2, and does not bounc
         yield* reactor.drain;
 
         // The move's arrival re-enters the review stage. With the override already on the card the
-        // executor plans round 2; without it the loop reads converged and the card goes back to Ready.
+        // executor plans round 2; without it the loop reads converged and the card goes back to
+        // Ready.
         yield* pumpDomain(cardMovedBack(cardOf(yield* board), 20));
 
         assert.strictEqual(boardCardStepState(yield* board, cardId)?.stepId, "review@2");
@@ -206,7 +207,7 @@ it.effect("D6: a converged card already in review is not moved, and replans in p
           0,
         );
 
-        // The edit's own arrival is what re-plans a settled stage (t3o-22, D6).
+        // The edit's own arrival is what re-plans a settled stage.
         yield* pumpDomain(cardUpdated(cardOf(yield* board), 20));
         assert.strictEqual(boardCardStepState(yield* board, cardId)?.stepId, "review@2");
       }),
@@ -412,7 +413,7 @@ it.effect("refuses a card that does not exist", () =>
   ),
 );
 
-// ── T3O-51: a stuck loop takes a ruling, never a plain request ───────────────
+// ── A stuck loop takes a ruling, never a plain request ───────────────
 
 const stuckCompletion = (stepId: string, payload: unknown) => ({
   cardId,

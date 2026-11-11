@@ -36,7 +36,7 @@ export interface BoardMergeChecks {
   /** The names of the checks counted in `pending`, same contract. */
   readonly running: ReadonlyArray<string>;
   /** Every check's verdict, up to `BOARD_MERGE_STATE_MAX_LISTED_CHECKS`, so a
-      CI forge step can filter by name (T3O-49). Absent from older workers. */
+      CI forge step can filter by name. Absent from older workers. */
   readonly verdicts?: ReadonlyArray<BoardCheckVerdict>;
 }
 
@@ -52,10 +52,10 @@ export interface BoardMergeState {
   readonly blockedReason: BoardMergeBlockReason | null;
   readonly checks: BoardMergeChecks;
   /** The head commit the checks above describe. A new sha means new CI, which
-      is what resets the board's retry ladder (T3O-38, D9). Null where the host
+      is what resets the board's retry ladder. Null where the host
       reported none. */
   readonly headSha: string | null;
-  /** True when the token was refused the checks (T3O-8), so the zero counts
+  /** True when the token was refused the checks, so the zero counts
       above are "could not look". Nothing may then be concluded from a green
       rollup, least of all a missing approval. */
   readonly checksUnread: boolean;
@@ -70,7 +70,7 @@ export const BOARD_MERGE_STATE_MAX_NAMED_CHECKS = 4;
     because it crosses the worker wire on every forge poll. */
 const BOARD_MERGE_STATE_MAX_LISTED_CHECKS = 500;
 
-/** How much of the forge's own refusal text a card will show (T3O-67). Bounded
+/** How much of the forge's own refusal text a card will show. Bounded
     for the same reason as the check names: it is persisted on the card and
     rendered in a banner, and a forge error can run to paragraphs. */
 export const BOARD_MERGE_FORGE_TEXT_MAX_LENGTH = 300;
@@ -132,7 +132,7 @@ function checksOf(detail: PullRequestDetail): BoardMergeChecks {
 }
 
 /**
- * The checks a CI forge step's `only` patterns select (T3O-49), counted and
+ * The checks a CI forge step's `only` patterns select, counted and
  * named from the full verdict list. A worker that sends no list leaves only
  * the bounded name lists to filter, so its counts are a best effort.
  */
@@ -194,7 +194,7 @@ export function boardMergeStateOf(detail: PullRequestDetail): BoardMergeState {
 
 /**
  * The state of a pull request the forge could not describe but git proved
- * conflicting (T3O-8) — see `probeLocalMergeConflict`. Nothing was read from
+ * conflicting — see `probeLocalMergeConflict`. Nothing was read from
  * the forge, so the checks are unread and there is no head sha.
  */
 export const LOCAL_CONFLICT_MERGE_STATE: BoardMergeState = {

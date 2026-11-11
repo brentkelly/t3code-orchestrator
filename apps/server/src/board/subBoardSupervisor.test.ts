@@ -1,8 +1,8 @@
 /**
- * Sub-board supervisor behaviour (t3o-23, D4): a split parent in the
+ * Sub-board supervisor behaviour: a split parent in the
  * build-role stage spawns nothing while its children are unfinished, and
  * advances to the next stage in order when the last child finishes — by
- * reaching Done, or by being archived (an archived child counts as done, D6).
+ * reaching Done, or by being archived (an archived child counts as done).
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -92,7 +92,7 @@ const parentCard = (): BoardCard => ({
     id: "card-parent",
     stage: "building",
     orderKey: "a",
-    // The split's branch-only integration branch (D5): real branch, no
+    // The split's branch-only integration branch: real branch, no
     // worktree until the parent's own review entry.
     worktree: { ...readyWorktree("card-parent"), path: null, status: "branch-only" },
   }),
@@ -140,7 +140,7 @@ it.effect(
           yield* pumpDomain(movedToBuilding(parentCard(), 1));
           const after = yield* board;
           // No step selected, no slot held: the parent builds THROUGH its
-          // children (D4), so the build stage's auto-execute must not touch it.
+          // children, so the build stage's auto-execute must not touch it.
           assert.strictEqual(stepStatus(after, parentId), null);
           assert.strictEqual(yield* slots.heldTotal, 0);
           assert.strictEqual(cardStage(after, parentId), "building");
@@ -277,7 +277,7 @@ it.effect("counts an archived child as finished and advances the parent (D6)", (
       }),
   ),
 );
-// ── The cascade (t3o-28, D3) ───────────────────────────────────────────
+// ── The cascade ───────────────────────────────────────────
 
 it.effect("starts every unblocked child when the PARENT arrives at the build stage", () =>
   withGovernor(
@@ -374,7 +374,7 @@ it.effect("starts nothing while the parent is still short of the build stage", (
   withGovernor(
     {
       // The children are materialised and unblocked, but the human has not
-      // pressed Begin build. Approval is not a start signal (D1).
+      // pressed Begin build. Approval is not a start signal.
       board: {
         cards: [
           { ...parentCard(), stage: BoardStageId.make("planning") },
@@ -548,7 +548,7 @@ it.effect("starts the children when a split is APPROVED on a parent already at b
 // ── A child's human-in-the-loop stance ─────────────────────────────────
 
 /** The shipped Build stage defaults: a card WITHOUT a plan pauses for a human,
-    one WITH a plan runs unattended (D6). The harness turns both off, so this
+    one WITH a plan runs unattended. The harness turns both off, so this
     re-arms the one that bit: a materialised child owns no `board_plans` row
     (its plan became its brief), and read as plan-less it would pause. */
 const settingsPausingPlanless = (): BoardSettings => {
@@ -614,7 +614,7 @@ it.effect(
           const state = boardCardStepState(yield* board, childId);
           assert.isNotNull(state);
           // The whole point of the sub-board: dependency resolution → build →
-          // PR → merge with no human in between (t3o-28, D3). A materialised
+          // PR → merge with no human in between. A materialised
           // child owns its plan, so the plan-less pause does not apply.
           assert.strictEqual(state!.humanInLoop, false);
         }),
@@ -695,7 +695,7 @@ const mergeRefusedNotes = (commands: ReadonlyArray<HarnessCommand>) =>
     (command) => command.type === "board.card.record-note" && command.kind === "card-merge-refused",
   );
 
-/** Every auto-merge hold the reactor recorded (T3O-38, D4), in order. */
+/** Every auto-merge hold the reactor recorded, in order. */
 const autoMergeHolds = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.flatMap((command) =>
     command.type === "board.card.record-auto-merge-hold" ? [command.hold] : [],
@@ -828,8 +828,8 @@ it.effect("holds a merge the forge REFUSES, and shows the forge's reason on the 
       pullRequest: openPr,
       mergeFailure: "GitHub returned an error: At least 1 approving review is required.",
       // Every check green and the host still says no. The detail cannot say
-      // why, so the board does not guess (T3O-67). (Failing CI starts a fix
-      // instead — T3O-12.)
+      // why, so the board does not guess. (Failing CI starts a fix
+      // instead.)
       mergeState: probeState({ passed: 3, mergeable: "mergeable" }),
     },
     (h) =>
@@ -890,7 +890,7 @@ it.effect("does not merge a child a human pulled BACK out of Done", () =>
       Effect.gen(function* () {
         // A backward drag is an UNDO. Answering it by immediately re-merging on
         // the forge is both surprising and irreversible, so the hook takes
-        // forward arrivals only — the same condition the t3o-24 crossing gate
+        // forward arrivals only — the same condition the crossing gate
         // applies just above it.
         yield* h.pumpDomain(cardMoved(childAtMerge("card-one"), DONE, MERGE, 1));
         assert.deepStrictEqual(yield* h.mergeAttempts, []);
@@ -1041,7 +1041,7 @@ it.effect("still waits for Begin build on a split that has NOT begun", () =>
   withGovernor(
     {
       // Parent parked at the floor, every child still on the floor — nobody has
-      // pressed Begin build, so approval alone must start nothing (t3o-28 D1).
+      // pressed Begin build, so approval alone must start nothing.
       board: {
         cards: [
           parentParkedAtFloor(),

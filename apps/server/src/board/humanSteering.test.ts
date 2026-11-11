@@ -327,7 +327,7 @@ it.effect("a step steered and then silent past its timeout is still nudged by th
       Effect.gen(function* () {
         yield* reactor.sweep;
 
-        // The hang detector survives the steer (D6). The sweep never sees a
+        // The hang detector survives the steer. The sweep never sees a
         // `turn.completed`, so a guard on `humanTurnAt` down here would mean
         // the free ending was never spent and this agent was never caught.
         const after = boardCardStepState(yield* board, sweepCardId);

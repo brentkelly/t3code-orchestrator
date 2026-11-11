@@ -32,12 +32,12 @@ export const BOARD_ENVELOPE_QUESTION_MECHANISM =
 export const BOARD_ENVELOPE_MOVE_GUARD =
   "Never move the card between stages yourself; finish your work and the board or a human moves the card on.";
 
-/** The decision log (T3O-32), stated on every planning run, attended or
+/** The decision log, stated on every planning run, attended or
     not, so the log exists however the plan was reached. */
 export const BOARD_ENVELOPE_DECISION_LOG =
   "Before you call board_propose_plans, record every decision this planning session made with board_record_decisions: what was asked, what was decided, a one-line reason and who decided (agent, or human when the user answered). Flag a call you were not sure about as unclear, and a call that shapes the work as important.";
 
-/** What an auto-planned run is told (T3O-32, T3O-38): no more questions.
+/** What an auto-planned run is told: no more questions.
     Rides the postamble of a fresh auto-plan run and is the steering turn sent
     into a live planning thread, followed by what happens to the plan — use
     `boardAutoPlanInstruction`. */
@@ -52,7 +52,7 @@ export function boardAutoPlanInstruction(autoBuild: boolean): string {
     : `${BOARD_AUTO_PLAN_INSTRUCTION} Your plan will be presented to the user for approval, so make each call the way you would defend it in review.`;
 }
 
-/** Sent into a planning thread when Auto-plan is turned off mid-run (T3O-38). */
+/** Sent into a planning thread when Auto-plan is turned off mid-run. */
 export const BOARD_AUTO_PLAN_OFF_INSTRUCTION =
   "The user is back: Auto-plan is off. You may ask questions again, and it is fine to end a turn waiting on an answer. Your plan will be presented to the user for approval.";
 
@@ -68,7 +68,7 @@ export const BOARD_ENVELOPE_PLAN_DELIVERABLE = [
   "In a split, mark each plan planned: true when it is a full implementation plan, or planned: false when it is a brief that still needs planning, and pass recommendedAutoBuild and recommendedMergeTarget: every child fully planned → auto-build on with its own branch; an epic breakdown → auto-build off, inherit; already inside a group with its own branch → prefer inherit.",
 ].join(" ");
 
-/** The `build` role's deliverable contract (T3O-21): the structured payload
+/** The `build` role's deliverable contract: the structured payload
     the Summary pane renders. Forced here, not in the editable Build prompt, so
     no user rewrite can drop it — the completion handler refuses a succeeded
     build without it. */
@@ -81,24 +81,23 @@ export const BOARD_ENVELOPE_BUILD_DELIVERABLE = [
   "Wrap code identifiers in backticks. If you cannot produce the payload, complete with outcome failed instead.",
 ].join(" ");
 
-/** The frozen execution config a spawn needs, read off the step-state run row
-    (D12). */
+/** The frozen execution config a spawn needs, read off the step-state run row. */
 export interface ComposeStepPromptStep {
   /** The completion ledger key. Always present — the ledger needs it even for a
       stage with no steps — but stated to the agent only when `stepLabel` is
-      non-null (t3o-19, D3/D4). */
+      non-null. */
   readonly stepId: string;
-  /** The step's label, or null when this stage has no steps (t3o-19, D4). The
+  /** The step's label, or null when this stage has no steps. The
       presence of the identity IS the signal; there is no separate flag. */
   readonly stepLabel: string | null;
   readonly prompt: string;
-  /** Frozen human-in-the-loop stance (D5): governs the postamble. */
+  /** Frozen human-in-the-loop stance: governs the postamble. */
   readonly humanInLoop: boolean;
-  /** An auto-planned planning run (T3O-32). */
+  /** An auto-planned planning run. */
   readonly autoPlan?: boolean;
   /** With `autoPlan`: Auto-build is on, so the plan is approved and built. */
   readonly autoBuild?: boolean;
-  /** The plan review this step is running (plan review, T3O-39): set once a
+  /** The plan review this step is running (plan review): set once a
       review has started, so a respawned or nudged thread resumes it. */
   readonly planReview?: { readonly instructions: string };
 }
@@ -111,26 +110,26 @@ export interface ComposeStepPromptInput {
     /** Null when it could not be resolved, so the envelope says nothing rather than
         interpolating placeholder English as a branch name. */
     readonly baseBranch?: string | null;
-    /** The card's pull request. Only an explicitly LINKED one (T3O-18) is
+    /** The card's pull request. Only an explicitly LINKED one is
         stated: its head may be another branch than the card's own worktree,
         and the review prompt otherwise tells the agent to open a pull request
         on the card's branch. */
     readonly pullRequest?: Pick<BoardCardPullRequest, "number" | "headBranch" | "linked"> | null;
   };
-  /** The stage's human label, frozen onto the run row at stage entry (t3o-19,
-      D5). Null on a legacy row that predates the freeze, where the stage id is
+  /** The stage's human label, frozen onto the run row at stage entry.
+      Null on a legacy row that predates the freeze, where the stage id is
       the only name available. */
   readonly stageLabel: string | null;
   readonly step: ComposeStepPromptStep;
   /** The stage's effective role: keys the deliverable postamble segment. */
   readonly role: BoardStageRole | null;
-  /** The Code review stage's open-as-draft setting (T3O-12). Only a
+  /** The Code review stage's open-as-draft setting. Only a
       `build`-role step reads it: a build agent, or a skill it calls, may open
       the pull request before the review loop does. */
   readonly draftPullRequests?: boolean;
 }
 
-/** How the agent is told to name its step on the completion call (t3o-19, D3).
+/** How the agent is told to name its step on the completion call.
     A stage with no steps names none: `stepId` is optional on the tool and the
     board resolves the caller's live step from its thread. */
 function completionCall(step: Pick<ComposeStepPromptStep, "stepId" | "stepLabel">): string {
@@ -147,7 +146,7 @@ export function boardStepPreamble(
     readonly step: Pick<ComposeStepPromptStep, "stepLabel"> & {
       readonly stepId?: string | undefined;
     };
-    /** The stage's effective role (T3O-5, D9): only a `plan`-role step gets the
+    /** The stage's effective role: only a `plan`-role step gets the
         project-root caveat on the base-branch line. */
     readonly role?: BoardStageRole | null;
   },
@@ -159,7 +158,7 @@ export function boardStepPreamble(
     step.stepLabel === null ? `Stage: ${stage}.` : `Stage: ${stage}. Step: ${step.stepLabel}.`,
     ...boardBaseBranchLines({ baseBranch: card.baseBranch ?? null, role: input.role ?? null }),
     ...boardLinkedPullRequestLines(card.pullRequest ?? null),
-    // A review step reads with fresh eyes (T3O-51): earlier rounds' findings
+    // A review step reads with fresh eyes: earlier rounds' findings
     // and rulings are triage's and the adjudicator's to weigh, not the
     // reviewer's, so the pointer stops at the brief.
     parseReviewStepId(step.stepId ?? "")?.phase === "review"
@@ -199,14 +198,14 @@ function boardLinkedPullRequestLines(
   ];
 }
 
-/** Regrouping needs a human (T3O-27): an unattended run has no one to confirm
+/** Regrouping needs a human: an unattended run has no one to confirm
     it, so it never regroups. */
 export const BOARD_ENVELOPE_REGROUP_GUARD =
   "Do not regroup cards (move them between groups, indent, outdent, group them, or change a group's settings) without a human's explicit confirmation.";
 
 /** An unattended run carries the `/unattended` stance. The completion sentence is the only
     place a `stepId` is named, and only on a stepped stage. */
-/** What a step does when it is truly blocked (T3O-55), as one sentence.
+/** What a step does when it is truly blocked, as one sentence.
     Triage and adjudication never reach a human that way: triage fixes or
     rejects each finding, and only the adjudicator escalates one. */
 export function boardBlockedInstruction(stepId: string): string {
@@ -226,7 +225,7 @@ export function boardStepPostamble(input: {
   readonly humanInLoop: boolean;
   readonly role: BoardStageRole | null;
   readonly step: Pick<ComposeStepPromptStep, "stepId" | "stepLabel">;
-  /** An auto-planned planning run (T3O-32). */
+  /** An auto-planned planning run. */
   readonly autoPlan?: boolean;
   /** With `autoPlan`: the plan is approved and built without a human. */
   readonly autoBuild?: boolean;
@@ -235,8 +234,8 @@ export function boardStepPostamble(input: {
   const call = completionCall(step);
   const stance = input.humanInLoop
     ? [
-        // Human-in-the-loop envelopes carry no progress instruction (t3o-17
-        // AC 6's asymmetry): these runs are not stall-supervised and the human
+        // Human-in-the-loop envelopes carry no progress instruction:
+        // these runs are not stall-supervised and the human
         // is already in the conversation.
         `This is a human-in-the-loop run: ask me anything you need directly, and it is fine to end a turn waiting on my answer.`,
         `When the work is done, call ${call}.`,
@@ -246,7 +245,7 @@ export function boardStepPostamble(input: {
         step.stepLabel === null
           ? `When the work is done, call ${call}. That is the ONLY way to finish; ending your turn any other way is treated as a failure and recovered.`
           : `When this step is finished, call ${call}. That is the ONLY way to finish; ending your turn any other way is treated as a failure and recovered.`,
-        // No todo-list ask (T3O-22): Claude Code dropped its todo tools on
+        // No todo-list ask: Claude Code dropped its todo tools on
         // Claude 5-era models, so asking for one made agents report a missing
         // tool. The supervisor still reads a plan tool when a provider emits one.
         `Commit as you go: the supervisor watches for new commits and activity to tell a productive long job from a wedged one, and a run that shows neither will be nudged and eventually escalated.`,
@@ -265,8 +264,8 @@ export function boardStepPostamble(input: {
 }
 
 /**
- * The full run prompt (D5): preamble + body + postamble. An empty body is a
- * re-entry (D7) — a clean conversational thread with just the orientation and
+ * The full run prompt: preamble + body + postamble. An empty body is a
+ * re-entry — a clean conversational thread with just the orientation and
  * the human-in-the-loop stance.
  */
 export function composeStepPrompt(input: ComposeStepPromptInput): string {
@@ -278,8 +277,8 @@ export function composeStepPrompt(input: ComposeStepPromptInput): string {
     ...(input.step.autoPlan === true ? { autoPlan: true } : {}),
     ...(input.step.autoBuild === true ? { autoBuild: true } : {}),
   });
-  // The build draft line (T3O-12) rides on the body, so an empty-body
-  // re-entry (D7) stays the clean conversational thread it is.
+  // The build draft line rides on the body, so an empty-body
+  // re-entry stays the clean conversational thread it is.
   const body = input.step.prompt;
   const draftLine =
     input.role === "build" && input.draftPullRequests === true
@@ -298,7 +297,7 @@ export function fillPlanReviewRounds(prompt: string, rounds: number): string {
   return prompt.replaceAll("{rounds}", String(rounds));
 }
 
-/** The fixed lead of the plan-review instructions (plan review, T3O-39). */
+/** The fixed lead of the plan-review instructions (plan review). */
 export function planReviewInstructionsLead(rounds: number): string {
   const roundWord = rounds === 1 ? "round" : "rounds";
   return `Plan review is on for this card: up to ${rounds} ${roundWord} of adversarial review, run inside this thread.`;
@@ -328,7 +327,7 @@ export function planReviewInstructionsClosing(input: {
 }
 
 /**
- * The plan-review instructions (plan review, T3O-39): a fixed lead, the user's
+ * The plan-review instructions (plan review): a fixed lead, the user's
  * editable prompt with `{rounds}` filled in, and a fixed closing that comes
  * after it and wins over it. The closing carries the board mechanics, so no
  * rewrite of the prompt can remove them.
@@ -348,22 +347,22 @@ export function composePlanReviewInstructions(input: {
 }
 
 /** Leads the turn sent when a human turns plan review on after the plan was
-    posted (plan review, T3O-39). The review instructions follow it. */
+    posted (plan review). The review instructions follow it. */
 export const BOARD_PLAN_REVIEW_LATE_START_LEAD =
   "Plan review was turned on after you posted the plan. Review the plan you proposed now, as below.";
 
-/** Leads the turn sent when a human changes a running plan review's rounds
-    (T3O-50). Only the agent knows how many it has run, so it decides. */
+/** Leads the turn sent when a human changes a running plan review's rounds.
+    Only the agent knows how many it has run, so it decides. */
 export function boardPlanReviewRoundsChangedLead(rounds: number): string {
   return `The plan review limit is now ${rounds} ${rounds === 1 ? "round" : "rounds"} in total. If you have already run ${rounds} or more, stop reviewing: summarise what the reviews found, re-propose the plan with board_propose_plans if it changed, and finish as normal. Otherwise continue until you reach ${rounds}, as below.`;
 }
 
 /** The turn sent into a planning thread when a human turns its running plan
-    review off (plan review, T3O-39). */
+    review off (plan review). */
 export const BOARD_PLAN_REVIEW_STOP_INSTRUCTION =
   "Stop the plan review now: summarise what the reviews found so far, re-propose the plan with board_propose_plans if it changed, and finish as normal.";
 
-/** A review phase's system preamble (D6/D7): the round header, plus — for any
+/** A review phase's system preamble: the round header, plus — for any
     phase past the very first review — the pointer to the prior phases'
     payloads. */
 export function boardReviewPhasePreamble(input: {
@@ -373,7 +372,7 @@ export function boardReviewPhasePreamble(input: {
 }): string {
   const { phase, round, rounds } = input;
   const header = `Code review, ${BOARD_REVIEW_PHASE_LABELS[phase]} phase, round ${round} of up to ${rounds}.`;
-  // The reviewer is fresh-eyes on every round (T3O-51): only triage and the
+  // The reviewer is fresh-eyes on every round: only triage and the
   // adjudicator read the history.
   const priorContext =
     phase !== "review"
@@ -382,7 +381,7 @@ export function boardReviewPhasePreamble(input: {
   return priorContext.length > 0 ? `${header}\n${priorContext}` : header;
 }
 
-/** The rule that keeps the adjudicator consistent across rounds (T3O-51). */
+/** The rule that keeps the adjudicator consistent across rounds. */
 const BOARD_REVIEW_ADJUDICATOR_CONSISTENCY =
   "A finding ruled rejection-justified in an earlier round stays settled unless later commits changed the code it concerns; overturning it requires naming that change in your note.";
 
@@ -401,7 +400,7 @@ function boardReviewFindingLine(finding: {
 }
 
 /** The human's dismissals, listed to the reviewer, triage and the adjudicator
-    as final rulings (T3O-51). Empty when there are none. */
+    as final rulings. Empty when there are none. */
 function boardReviewDismissalsBlock(input: {
   readonly phase: BoardReviewPhaseId | BoardReviewFollowUpPhase;
   readonly dismissals: ReadonlyArray<BoardReviewCarriedFinding & { readonly round: number }>;
@@ -420,7 +419,7 @@ function boardReviewDismissalsBlock(input: {
   return [rule, ...lines].join("\n");
 }
 
-/** The carried "fix" findings a round must resolve (T3O-51), for triage and
+/** The carried "fix" findings a round must resolve, for triage and
     the adjudicator. The reviewer is not told: the board adds them itself. */
 function boardReviewCarriedBlock(input: {
   readonly phase: BoardReviewPhaseId;
@@ -469,25 +468,25 @@ export function boardReviewPhaseProtocol(input: {
   }
 }
 
-/** A follow-up pass's forced machine contract (T3O-51). */
+/** A follow-up pass's forced machine contract. */
 function boardReviewFollowUpProtocol(phase: BoardReviewFollowUpPhase): string {
   return phase === "retriage"
     ? `To finish this step, complete with a succeeded outcome and a JSON payload { fixedSha, dispositions: [{ findingId, action: "fixed" | "rejected", note }] }, with a disposition for every listed id. ${BOARD_REVIEW_TRIAGE_NEVER_ASKS}`
     : `To finish this step, complete with a succeeded outcome and a JSON payload { verdicts: [{ findingId, verdict, note }], anotherRound }, with a verdict for every listed id, where \`verdict\` is one of fix-upheld, fix-incomplete, fix-absent, rejection-justified, rejection-unjustified, escalated. Set \`anotherRound\` to false only if this round raised nothing new beyond points already settled; the system ignores false if a blocking fix landed. ${BOARD_REVIEW_ADJUDICATOR_ESCALATION}`;
 }
 
-/** Triage's forced never-ask rule (T3O-55). It sits in the machine contract,
+/** Triage's forced never-ask rule. It sits in the machine contract,
     not the editable prompt, so it holds for a custom prompt too. */
 const BOARD_REVIEW_TRIAGE_NEVER_ASKS =
   "Triage never stops for a human: never ask a question, raise a user-input request, or complete blocked. Every finding is fixed or rejected. Reject a finding that falls outside this card's brief, or needs a product or scope decision, saying so; this outranks any instruction above to reject only with concrete evidence, and the adjudicator decides whether a human is needed. Complete failed only if your tooling is broken: failed re-runs the step.";
 
-/** The adjudicator's escalation rule (T3O-55): the only way a review finding
+/** The adjudicator's escalation rule: the only way a review finding
     reaches a human. */
 const BOARD_REVIEW_ADJUDICATOR_ESCALATION =
   "Rule on every finding yourself. The `escalated` verdict hands a finding to a human and stops the loop; it does not send the finding back to triage. Use it only on a rejected blocking finding, and only when there is a genuine reason you cannot decide: a product or scope call the card's brief does not settle, or a risk only the owner can accept. Uncertainty or difficulty is not a reason: weigh the evidence and rule. Its note must say why a human is needed. Judge a scope or product rejection against the card's brief, not the code. Escalation is the only way to reach a human: never ask a question, raise a user-input request, or complete blocked.";
 
 /**
- * Compose a follow-up pass's prompt (T3O-51): re-triage or re-adjudicate,
+ * Compose a follow-up pass's prompt: re-triage or re-adjudicate,
  * inside the same round, on just the findings the adjudicator overruled. It
  * reuses the triage or adjudicate phase's own prompt, behind a fixed
  * preamble naming the findings.
@@ -551,22 +550,22 @@ export function composeBoardReviewFollowUpPrompt(input: {
     .join("\n\n");
 }
 
-/** How to open a draft on each forge, and what to do around it (T3O-12).
+/** How to open a draft on each forge, and what to do around it.
     Written per forge, because the agent — not the board — opens the pull
     request. */
 const boardDraftPullRequestHow = (sayWhere: string) =>
   `\`gh pr create --draft\` on GitHub, \`glab mr create --draft\` on GitLab, and on Forgejo or Gitea a title that starts with \`WIP: \`. If the pull request already exists, leave its draft state alone. If the forge refuses a draft (some plans do not offer them), open a normal pull request instead and ${sayWhere}. Never mark the pull request ready for review yourself. The board does that once the review converges.`;
 
-/** The review phase's open-as-draft instruction (T3O-12). It outranks any
+/** The review phase's open-as-draft instruction. It outranks any
     skill's own default (such as /pullrequest opening a ready one). */
 export const BOARD_DRAFT_PULL_REQUEST_OPEN = `Open this card's pull request as a DRAFT, whatever any skill or workflow you use would do by default: ${boardDraftPullRequestHow("say so in your summary")}`;
 
-/** The build stage's draft line (T3O-12). Conditional, because a build step
+/** The build stage's draft line. Conditional, because a build step
     need not open a pull request at all — the review phase opens one if it
     did not. */
 export const BOARD_DRAFT_PULL_REQUEST_BUILD = `If you open this card's pull request, yourself or through a skill such as /pullrequest, open it as a DRAFT, whatever that skill would do by default: ${boardDraftPullRequestHow("record it as a `shortcut` note in your payload")}`;
 
-/** The line every later loop step carries while drafts are on (T3O-12): the
+/** The line every later loop step carries while drafts are on: the
     fix commits the loop pushes must not start the repository's full CI. */
 export const BOARD_DRAFT_PULL_REQUEST_KEEP =
   "If the pull request is a draft, leave it as a draft; the board marks it ready. If it is not a draft, do not convert it to one.";
@@ -592,12 +591,12 @@ export function composeBoardReviewPhasePrompt(input: {
   readonly rounds: number;
   readonly prompt: string;
   readonly draftPullRequests?: boolean;
-  /** The CI failure that sent the card back (T3O-44): a must-fix finding for
+  /** The CI failure that sent the card back: a must-fix finding for
       the review and triage of the round that follows. */
   readonly ciFinding?: { readonly stepName: string | null; readonly finding: string } | null;
-  /** Findings a human carried into this round as must-fix (T3O-51). */
+  /** Findings a human carried into this round as must-fix. */
   readonly carried?: ReadonlyArray<BoardReviewFollowUpFinding>;
-  /** Findings a human ruled not issues, at or before this round (T3O-51). */
+  /** Findings a human ruled not issues, at or before this round. */
   readonly dismissals?: ReadonlyArray<BoardReviewCarriedFinding & { readonly round: number }>;
 }): string {
   const ci =
@@ -636,7 +635,7 @@ export function composeBoardSyncPhasePrompt(input: {
   /** Set when a human retargeted the card and it differs from `baseRefName`; null means
       the same base whose tip moved. Only the opening sentence differs between the two. */
   readonly retargetedTo?: string | null;
-  /** Drafts are on (T3O-12): the rebase's force-push must leave the draft be. */
+  /** Drafts are on: the rebase's force-push must leave the draft be. */
   readonly draftPullRequests?: boolean;
 }): string {
   const retargeted =
@@ -685,7 +684,7 @@ function boardSyncPhaseMechanics(): string {
 }
 
 /**
- * A CI agent step's body (T3O-49): the board's prefix — where the card is in
+ * A CI agent step's body: the board's prefix — where the card is in
  * CI and what ran before — then the project's own prompt, then how to report.
  * Nothing is forbidden: the prompt decides whether the agent may change code.
  */
@@ -736,7 +735,7 @@ export function composeBoardCiAgentStepPrompt(input: {
   ].join("\n");
 }
 
-/** A failed CI step, as the fix agent sees it (T3O-44/57). */
+/** A failed CI step, as the fix agent sees it. */
 export interface BoardCiFixFailure {
   readonly stepName: string;
   readonly command: string;
@@ -744,12 +743,12 @@ export interface BoardCiFixFailure {
   readonly exitCode: number | null;
   readonly tail: string;
   readonly logPath: string | null;
-  /** What the step reported in its result file (T3O-49). */
+  /** What the step reported in its result file. */
   readonly result?: {
     readonly summary: string | null;
     readonly failures: ReadonlyArray<unknown>;
   } | null;
-  /** What failed and why, as the runner read it (T3O-61). */
+  /** What failed and why, as the runner read it. */
   readonly headline?: {
     readonly what: string;
     readonly why: string;
@@ -777,7 +776,7 @@ function lastLinesWithin(tail: string, budget: number): string {
 }
 
 /**
- * The board-owned lines that close every CI fix prompt (T3O-57): guard rails
+ * The board-owned lines that close every CI fix prompt: guard rails
  * and the completion contract. Not editable; Settings shows them after the
  * project's fix prompt.
  */

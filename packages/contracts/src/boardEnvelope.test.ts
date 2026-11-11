@@ -41,7 +41,7 @@ const promptFor = (input: {
   readonly role: "plan" | "build" | null;
   readonly humanInLoop: boolean;
   readonly prompt?: string;
-  /** Default null: every stage but the review loop has no steps (t3o-19, D4). */
+  /** Default null: every stage but the review loop has no steps. */
   readonly stepLabel?: string | null;
 }): string =>
   composeStepPrompt({
@@ -192,7 +192,7 @@ describe("decision log and auto-plan (T3O-32)", () => {
       role: "plan",
     });
     expect(auto).toContain(BOARD_AUTO_PLAN_INSTRUCTION);
-    // Without Auto-build the plan waits for the user (T3O-38).
+    // Without Auto-build the plan waits for the user.
     expect(auto).toContain(boardAutoPlanInstruction(false));
     expect(auto).not.toContain("approved and built automatically");
     expect(promptFor({ role: "plan", humanInLoop: false })).not.toContain(
@@ -271,7 +271,7 @@ describe("boardStepPreamble", () => {
     expect(preamble).not.toContain("attempt");
   });
 
-  // t3o-19 AC 2: a stage with no steps says nothing about steps. The old
+  // A stage with no steps says nothing about steps. The old
   // preamble rendered `Stage: building. Step: Building.` — a tautology, since
   // a single-step stage's step label WAS its stage label.
   it("renders no Step: line for a stage with no steps", () => {
@@ -284,7 +284,7 @@ describe("boardStepPreamble", () => {
     expect(preamble).not.toContain("Step:");
   });
 
-  // t3o-19 AC 2/3: names the stage by its LABEL. A custom stage's id is a
+  // Names the stage by its LABEL. A custom stage's id is a
   // UUID, so printing the id put `Stage: 3f2a1b9c-…` into its system prompt.
   it("names the stage by its label, not its id", () => {
     const preamble = boardStepPreamble({
@@ -296,7 +296,7 @@ describe("boardStepPreamble", () => {
     expect(preamble).not.toContain("3f2a1b9c");
   });
 
-  // A row written before the stage label was frozen (t3o-19, D7: history is
+  // A row written before the stage label was frozen (history is
   // never rewritten) has only the stage id to fall back on.
   it("falls back to the stage id when no stage label was frozen", () => {
     const preamble = boardStepPreamble({
@@ -546,7 +546,7 @@ describe("review phase envelope", () => {
         prompt: "Rewritten from scratch.",
       });
       // The protocol owns the PAYLOAD; the envelope owns the tool call and the
-      // step id (t3o-19, D6), so a review agent is not told the id twice.
+      // step id, so a review agent is not told the id twice.
       expect(prompt).not.toContain("board_complete_step");
       expect(prompt).toContain("succeeded outcome");
     }
@@ -605,7 +605,7 @@ describe("review phase envelope", () => {
     expect(review).toContain("<Severity> (<i>/<N>): <title>");
     expect(review).toContain("**Suggested fix:**");
     // High-level summary in the review body. No re-review status table: the
-    // reviewer reads no earlier rounds (T3O-51).
+    // reviewer reads no earlier rounds.
     expect(review).toContain("## High-level summary");
     expect(review).not.toContain("Status of round-");
     // The forced protocol stays free of this craft — it is not enforced.

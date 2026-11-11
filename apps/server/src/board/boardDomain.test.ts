@@ -115,11 +115,11 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
       const atReady = yield* snapshotQuery.getCommandReadModel();
       const cardOneAtReady = atReady.board?.cards.find((card) => card.id === cardOne);
       assert.strictEqual(cardOneAtReady?.stage, "ready");
-      // Ready is an ordinary pre-build stage now (D11): dependency blocking is
+      // Ready is an ordinary pre-build stage now: dependency blocking is
       // derived only from the build role onward, so an unmet dependency does
       // not block a card sitting at Ready.
       assert.strictEqual(cardOneAtReady?.blocked, false);
-      // The brief body never enters the read model, only its ref (D8).
+      // The brief body never enters the read model, only its ref.
       assert.strictEqual(cardOneAtReady?.briefRef, "brief");
 
       // Link a real thread, delete the thread, unlink: tombstone, not
@@ -145,7 +145,7 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
         role: "planning",
         createdAt: t0,
       });
-      // The board snapshot names the live link (t3o-04); the thread-derived
+      // The board snapshot names the live link; the thread-derived
       // state rests at "none", for the client to derive from its thread shells.
       const shellLinked = yield* snapshotQuery.getBoardSnapshot();
       const cardOneShell = shellLinked.cards?.find((card) => card.cardId === cardOne);
@@ -183,7 +183,7 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
       assert.strictEqual(cardOneUnlinked?.activeThreadId, null);
       assert.strictEqual(cardOneUnlinked?.threadState, "none");
 
-      // A retired link (T3O-41) stays on the card, round-trips through the
+      // A retired link stays on the card, round-trips through the
       // table, and is not the card's active thread.
       const retiredThreadId = ThreadId.make("thread-retired");
       yield* engine.dispatch({

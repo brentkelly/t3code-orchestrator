@@ -1,5 +1,5 @@
 /**
- * Pure transforms for the Board settings panel (t3o-07). Kept out of the
+ * Pure transforms for the Board settings panel. Kept out of the
  * component so the map/array mutations that back the whole-map patches — where
  * a wrong merge silently corrupts a recipe or strands a project override — are
  * unit-tested directly.

@@ -79,7 +79,7 @@ const seedBoard = Effect.gen(function* () {
     createdAt,
   });
   // Adding the dependency to a card already in the build role re-derives its
-  // blocked flag (D11) without refusing — refusal is only on entry into build.
+  // blocked flag without refusing — refusal is only on entry into build.
   yield* engine.dispatch({
     type: "board.card.update",
     commandId: CommandId.make("cmd-add-dependency"),
@@ -122,12 +122,12 @@ it.layer(makeTestLayer("t3o-board-archive-1-"))("archiving a depended-on card", 
       yield* engine.dispatch(archiveDependency);
 
       const shell = yield* snapshotQuery.getBoardSnapshot();
-      // The archived card leaves the live board (D15)…
+      // The archived card leaves the live board…
       assert.deepStrictEqual(
         cardsOf(shell).map((card) => card.cardId),
         [dependentId],
       );
-      // …and the card that was waiting on it is free (D1/D5).
+      // …and the card that was waiting on it is free.
       assert.strictEqual(cardsOf(shell)[0]?.blocked, false);
 
       const readModel = yield* snapshotQuery.getCommandReadModel();
@@ -152,8 +152,7 @@ it.layer(makeTestLayer("t3o-board-archive-2-"))("moving past a released gate", (
       const engine = yield* seedBoard;
       yield* engine.dispatch(archiveDependency);
 
-      // Before t3o-13 this rejected forever: an archived dependency could
-      // never reach `done`, so the gate could never open.
+      // An archived dependency never reaches `done`, so this must not wait on it.
       yield* engine.dispatch({
         type: "board.card.move",
         commandId: CommandId.make("cmd-move-building"),

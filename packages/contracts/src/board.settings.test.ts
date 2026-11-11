@@ -41,7 +41,7 @@ const PROJECT = ProjectId.make("project-1");
 describe("board settings defaults", () => {
   it("decodes an empty file to a working default pipeline", () => {
     const settings = decodeSettings({});
-    // Building ships auto-executing in build mode (D4) — a working pipeline out
+    // Building ships auto-executing in build mode — a working pipeline out
     // of an empty file.
     expect(settings.pipeline[BOARD_SEED_STAGE_IDS.building]).toEqual(
       DEFAULT_BOARD_PIPELINE[BOARD_SEED_STAGE_IDS.building],
@@ -63,7 +63,7 @@ describe("board settings defaults", () => {
       lifecycle: { archiveAfterDays: 21, worktreeRetention: "reclaim-on-archive" },
     });
     expect(settings.lifecycle.reclaimWorktreeOnDone).toBe(DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE);
-    // The old `archiveAfterDays` must not switch auto-archive on (T3O-77).
+    // The old `archiveAfterDays` must not switch auto-archive on.
     expect(settings.lifecycle.autoArchiveDone).toBe(false);
     expect(settings.lifecycle.autoArchiveAfterDays).toBe(7);
   });
@@ -228,7 +228,7 @@ describe("board settings round-trip", () => {
 
 describe("resolveBoard* helpers", () => {
   it("resolves a stage's execution config, or the all-defaults config when the stage has none", () => {
-    // The resolver fills the effective access level (t3o-21): a build-mode
+    // The resolver fills the effective access level: a build-mode
     // stage defaults to `auto` (never the old forced `full-access`).
     expect(
       resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.building),

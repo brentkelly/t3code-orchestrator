@@ -1,5 +1,5 @@
 /**
- * T3o board UI store (t3o-05): collapse defaults and persisted-state
+ * T3o board UI store: collapse defaults and persisted-state
  * sanitisation.
  */
 import { BOARD_SEED_STAGE_IDS } from "@t3tools/contracts";
@@ -27,7 +27,7 @@ function resetStore() {
 
 describe("isBoardColumnCollapsed", () => {
   it("collapses the first column by default and nothing else", () => {
-    // The default is now the read-model first stage (t3o-15), not a hard-coded
+    // The default is now the read-model first stage, not a hard-coded
     // "backlog": the first stage collapses, every later one stays open.
     expect(isBoardColumnCollapsed({}, BOARD_SEED_STAGE_IDS.backlog, true)).toBe(true);
     expect(isBoardColumnCollapsed({}, BOARD_SEED_STAGE_IDS.sprint, false)).toBe(false);
@@ -145,7 +145,7 @@ describe("modeForHref", () => {
     expect(modeForHref("/settings/board")).toBeNull();
     expect(modeForHref("/pair")).toBeNull();
     expect(modeForHref("/connect")).toBeNull();
-    // T3O-50: a redirect into project settings, and the full-page usage view.
+    // A redirect into project settings, and the full-page usage view.
     expect(modeForHref("/projects/github.com%2Fzeald%2Fcore.agent.advisor")).toBeNull();
     expect(modeForHref("/usage")).toBeNull();
     // The first-run gate replaces a thread view's location with onboarding.

@@ -44,7 +44,7 @@ const childCard = (stage: string): BoardCard => ({
 });
 
 /** The settled last step of a converged review loop, carrying the tip its
-    round started from (t3o-24, D1). Recorded at "main" it is FRESH (the stub's
+    round started from. Recorded at "main" it is FRESH (the stub's
     rev-parse answers "main"); recorded anywhere else it is STALE. */
 const settledReviewStep = (tip: string): BoardCardStepState => ({
   cardId: childId,
@@ -331,7 +331,7 @@ it.effect(
           );
           assert.strictEqual(stepStatus(yield* board, parentId), "abandoned");
 
-          // The child finishing again re-advances the parent (t3o-23 D4). An
+          // The child finishing again re-advances the parent. An
           // externally-pumped move is not folded into the harness model, so
           // reflect the child's new stage there first, as the projection
           // pipeline would have before the reactor observed the event.

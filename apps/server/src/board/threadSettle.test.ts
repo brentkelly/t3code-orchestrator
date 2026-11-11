@@ -502,7 +502,7 @@ it.effect("boot reconcile settles the threads finished while nothing was asking"
           },
         ],
         // The interview finished: an unfinished one the card kept stays in the
-        // inbox (T3O-19).
+        // inbox.
         stepCompletions: [
           {
             cardId: BoardCardId.make("card-1"),

@@ -291,7 +291,7 @@ describe("makeSignalReader", () => {
   it("reads a queued run steered in, deleted or archived away as neither a Stop nor a turn end", () => {
     // Promote-to-steer, a queue delete and an archive all cancel the queued run
     // under the human's own command id, never started — the shape a start-up
-    // Stop has. Seeing it queued first is what tells them apart (T3O-76).
+    // Stop has. Seeing it queued first is what tells them apart.
     for (const created of ["run.created", "run.updated"]) {
       const read = makeSignalReader();
       read(stored(created, run("queued", null, { queuePosition: 1 }), CLIENT_COMMAND_ID));

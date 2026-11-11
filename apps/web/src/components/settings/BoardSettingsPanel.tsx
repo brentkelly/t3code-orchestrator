@@ -66,7 +66,7 @@ function useProviderInstanceIds(): ReadonlyArray<string> {
   ];
 }
 
-/** Settings → Board → General (T3O-49): the board server, display, the
+/** Settings → Board → General: the board server, display, the
     project list with its import notices, the global pipeline, concurrency, workers and
     lifecycle.
     The layout resolves the board server first. */
@@ -341,7 +341,7 @@ function ConcurrencySection({
 }
 
 /**
- * Concurrency, per worker once the board has any (T3O-65, D11). A local-only
+ * Concurrency, per worker once the board has any. A local-only
  * board keeps the section exactly as it was, unless a per-worker override for
  * this server outlived the workers.
  */

@@ -24,13 +24,13 @@ import {
   type BoardRequestReviewRoundInput,
   type BoardCardWorkerMoveAnswer,
   type BoardCardWorkerMoveRequest,
-  // T3o: the refresh's own payload (T3O-48).
+  // T3o: the refresh's own payload.
   type BoardRefreshCardPullRequestInput,
   type BoardLinkCardPullRequestInput,
   type BoardClientCommand,
   type BoardSubscribeBoardInput,
   type BoardSubscribeCardInput,
-  // T3o (T3O-49): project config RPCs.
+  // T3o: project config RPCs.
   type BoardProjectConfigInput,
   type BoardProjectImportCandidatesInput,
   type BoardProjectImportInput,
@@ -150,11 +150,11 @@ export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
         Option.getOrElse(yield* Effect.serviceOption(SourceControlDrivers), () => []),
       ),
     }),
-    // T3O-62: worker management, and the worker side's handshake.
+    // Worker management, and the worker side's handshake.
     ...(yield* boardWorkerRpcHandlers(deps.currentSession)),
-    // T3O-63: the worker side's thread gateway, MCP relay and staging.
+    // The worker side's thread gateway, MCP relay and staging.
     ...workerGatewayRpcHandlers(deps.currentSession),
-    // T3O-64: the named git and forge operations, for a central server
+    // The named git and forge operations, for a central server
     // whose cards run here.
     ...boardWorkerGitCallRpcHandlers(deps.currentSession, workspaces),
   };
@@ -225,7 +225,7 @@ function makeBoardRpcHandlers(
 
   return {
     /**
-     * The board's bounded summary, then its live deltas (t3o-26 D4, T3O-57) —
+     * The board's bounded summary, then its live deltas —
      * see `boardSubscription.ts` for the resume rules.
      */
     [BOARD_WS_METHODS.subscribeBoard]: (input: BoardSubscribeBoardInput) =>
@@ -237,11 +237,11 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * A client board command (T3O-57). The human actor is stamped first: this
-     * RPC is the transport that knows a person is on the other end (t3o-18).
+     * A client board command. The human actor is stamped first: this
+     * RPC is the transport that knows a person is on the other end.
      */
     [BOARD_WS_METHODS.dispatchCommand]: (input: BoardClientCommand) => {
-      // T3O-49: a person's move, whatever the client said; it resets the
+      // A person's move, whatever the client said; it resets the
       // card's CI round trips.
       const command: BoardClientCommand =
         input.type === "board.card.move" ? { ...input, cause: "human" } : input;
@@ -262,7 +262,7 @@ function makeBoardRpcHandlers(
     },
 
     /**
-     * Stage and project config commands (T3O-49), at the settings-write tier.
+     * Stage and project config commands, at the settings-write tier.
      * The actor is always this human, whatever the client sent.
      */
     [BOARD_WS_METHODS.dispatchSettingsCommand]: (command: BoardSettingsClientCommand) =>
@@ -307,11 +307,11 @@ function makeBoardRpcHandlers(
         }),
       ),
 
-    /** T3O-58: each project's GitHub token source and check, when Settings asks. */
+    /** Each project's GitHub token source and check, when Settings asks. */
     [BOARD_WS_METHODS.projectTokenStatus]: (_input: Record<string, never>) =>
       authorized(BOARD_WS_METHODS.projectTokenStatus, services.projectTokenStatus),
 
-    /** The archive page's cards (t3o-13), read when the page opens. */
+    /** The archive page's cards, read when the page opens. */
     [BOARD_WS_METHODS.getArchivedCards]: (_input: Record<string, never>) =>
       authorized(
         BOARD_WS_METHODS.getArchivedCards,
@@ -339,7 +339,7 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * "No PR linked · Link one" on the card detail (T3O-18). The input is sent
+     * "No PR linked · Link one" on the card detail. The input is sent
      * as typed; the server owns the parsing, so the card and the agent tools
      * accept exactly the same names for a pull request.
      */
@@ -391,7 +391,7 @@ function makeBoardRpcHandlers(
         deps.boardSupervisor.requestReviewRound(input.cardId, input.carry),
       ),
 
-    /** Skip CI (T3O-44): a human's override, so what it records carries the
+    /** Skip CI: a human's override, so what it records carries the
         human, like a drag. */
     [BOARD_WS_METHODS.skipCi]: (input: BoardCardPullRequestActionInput) =>
       authorized(
@@ -399,7 +399,7 @@ function makeBoardRpcHandlers(
         deps.boardSupervisor.skipCi(input.cardId, services.stampActor),
       ),
 
-    /** Retry CI, Stop CI (T3O-59) and "Send back to review anyway" (T3O-49):
+    /** Retry CI, Stop CI and "Send back to review anyway":
         human-only, like Skip CI; no agent tool reaches them. */
     [BOARD_WS_METHODS.retryCi]: (input: BoardCiActionInput) =>
       authorized(
@@ -410,7 +410,7 @@ function makeBoardRpcHandlers(
       authorized(BOARD_WS_METHODS.ciSendBack, deps.boardSupervisor.ciSendBack(input.cardId)),
 
     /**
-     * "Remove worktree" on a finished card that kept one (T3O-52, D5). The
+     * "Remove worktree" on a finished card that kept one. The
      * human confirmed at a dialog naming what is lost; the branch survives.
      */
     [BOARD_WS_METHODS.removeCardWorktree]: (input: BoardCardPullRequestActionInput) =>
@@ -419,7 +419,7 @@ function makeBoardRpcHandlers(
         deps.boardSupervisor.forceRemoveWorktree(input.cardId),
       ),
 
-    /** "Check again" on a card that kept its worktree (T3O-52): operate, like
+    /** "Check again" on a card that kept its worktree: operate, like
         removal, because a durable checkout is removed by it. */
     [BOARD_WS_METHODS.checkCardWorktree]: (input: BoardCardPullRequestActionInput) =>
       authorized(
@@ -427,14 +427,14 @@ function makeBoardRpcHandlers(
         deps.boardSupervisor.checkWorktree(input.cardId),
       ),
 
-    /** The Move dialog (T3O-65): check, move, or ask the agent to push. A
-        move is a human act (D18), so each step it records carries the human. */
+    /** The Move dialog: check, move, or ask the agent to push. A
+        move is a human act, so each step it records carries the human. */
     [BOARD_WS_METHODS.cardWorkerMove]: (input: BoardCardWorkerMoveRequest) =>
       authorized(
         BOARD_WS_METHODS.cardWorkerMove,
         Effect.suspend((): Effect.Effect<BoardCardWorkerMoveAnswer> => {
           if (input.action === "ask-push") return services.mover.askAgentToPush(input.cardId);
-          // T3O-66: a force-move off an offline or removed worker, and its
+          // A force-move off an offline or removed worker, and its
           // restart-from-base confirmation.
           const force = { force: input.force, restartFromBase: input.restartFromBase };
           if (input.action === "move") {
@@ -453,7 +453,7 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * Attach a pending upload to the card's brief (t3o-32, K2). Copy first,
+     * Attach a pending upload to the card's brief (K2). Copy first,
      * record second: the file lands in the card's folder, then the internal
      * `board.card.attach` command is dispatched; a refused dispatch deletes
      * the copy again so disk and record never disagree.
@@ -540,7 +540,7 @@ function makeBoardRpcHandlers(
       ),
 
     /**
-     * Drop a brief attachment (t3o-32): record first, then the file. A file
+     * Drop a brief attachment: record first, then the file. A file
      * that fails to delete is logged and left for a manual tidy — the record
      * is gone, which is what the user asked for.
      */
@@ -596,7 +596,7 @@ function makeBoardRpcHandlers(
         }).pipe(Effect.mapError(toAttachmentError)),
       ),
 
-    /** One CI step's log, followed while it runs (T3O-60): `ci/ciLog.ts`. */
+    /** One CI step's log, followed while it runs: `ci/ciLog.ts`. */
     [BOARD_WS_METHODS.readCiLog]: (input: BoardReadCiLogInput) =>
       Stream.unwrap(
         authorized(
@@ -662,7 +662,7 @@ function makeBoardRpcHandlers(
   };
 }
 
-// ── The human dispatch boundary (t3o-18, D11) ──────────────────────────
+// ── The human dispatch boundary ──────────────────────────
 
 /**
  * Stamp the human actor on a command from `board.dispatchCommand`, the only transport that
@@ -685,7 +685,7 @@ export function boardActorStamp(deps: {
         .boardCardDetail(cardId)
         .pipe(Effect.catchCause(() => Effect.succeed(null)));
       if (detail === null) return BOARD_HUMAN_ACTOR_FALLBACK_NAME;
-      // Cacheable until the card MOVES project (T3O-33), which the stamp
+      // Cacheable until the card MOVES project, which the stamp
       // below invalidates — it is the same call path, so the eviction cannot
       // be missed.
       projectId = detail.card.projectId;
@@ -707,7 +707,7 @@ export function boardActorStamp(deps: {
 }
 
 /**
- * A human's name for a project (T3O-49, extracted from `boardActorStamp`):
+ * A human's name for a project (extracted from `boardActorStamp`):
  * the project's git `user.name`, cached per project, falling back to "You".
  * Read from this server's checkout when it has one, else from `cardId`'s
  * worker; with neither, the fallback.

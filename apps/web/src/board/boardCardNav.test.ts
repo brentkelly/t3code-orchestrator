@@ -1,5 +1,5 @@
 /**
- * Card-to-card navigation (T3O-37, T3O-44): neighbour resolution across the
+ * Card-to-card navigation: neighbour resolution across the
  * board's columns, and which keystrokes ask for a step.
  */
 import type { BoardCardShell, BoardStageId } from "@t3tools/contracts";

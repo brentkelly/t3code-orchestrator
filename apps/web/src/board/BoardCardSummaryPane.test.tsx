@@ -1,5 +1,5 @@
 /**
- * The Summary pane (T3O-5, T3O-21), rendered to static markup from a derived
+ * The Summary pane, rendered to static markup from a derived
  * recap — the pane is a pure function of that recap plus its click handlers,
  * so these pin which sections a given recap shows.
  */

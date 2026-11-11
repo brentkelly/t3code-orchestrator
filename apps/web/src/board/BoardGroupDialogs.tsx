@@ -209,7 +209,7 @@ export function BoardNewPhaseDialog({
   );
 }
 
-/** What archiving a group throws away (T3O-28, decision 14), read off the
+/** What archiving a group throws away (decision 14), read off the
     subtree's shells: children still building, pull requests open, and the
     branches the cleanup deletes, remote copies included. */
 export function boardGroupArchiveLosses(

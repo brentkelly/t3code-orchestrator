@@ -215,7 +215,7 @@ export const makeThreadGatewayRouter = (deps: ThreadGatewayRouterDeps): ThreadGa
       return ids;
     }),
 
-    // Worktree retirement on a worker is T3O-64's: worktrees are this server's.
+    // Worktree retirement on a worker is not routed: worktrees are this server's.
     threadsInWorktree: local.threadsInWorktree,
     projects: local.projects,
     project: local.project,

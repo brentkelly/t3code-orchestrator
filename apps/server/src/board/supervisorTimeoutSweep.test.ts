@@ -30,7 +30,7 @@ import { aliveThread, fakeThreadState } from "./threadGateway.testkit.ts";
 
 /** One day before the TestClock epoch: decisively past any sane timeout, and —
     read as a `startedAt` — decisively past the output-signal shield ceiling
-    (T3O-12, D9) too. */
+     too. */
 const OVERDUE = "1969-12-31T00:00:00.000Z";
 /** Exactly the TestClock "now": a maximally fresh life sign. */
 const FRESH = "1970-01-01T00:00:00.000Z";
@@ -100,17 +100,17 @@ const boardWithStep = (step: BoardCardStepState): BoardState => ({
   nextCardNumberByProject: {},
 });
 
-/** A cached todo whose list last advanced at `at` — the t3o-18 liveness signal
+/** A cached todo whose list last advanced at `at` — the liveness signal
     that replaced the deleted `board_report_progress` watermark. */
 const todoAdvancedAt = (at: string) => new Map([[String(threadId), { advancedAt: at }]]);
 
-/** The thread's last OUTPUT — its newest assistant message or activity row
-    (T3O-12, D1). The life sign the sweep never had. */
+/** The thread's last OUTPUT — its newest assistant message or activity row.
+    The life sign the sweep never had. */
 const threadSignalAt = (at: string) => new Map([[String(threadId), at]]);
 
 const attemptOf = (board: BoardState): number => boardCardStepState(board, cardId)?.attempt ?? -1;
 
-/** A human answering the step thread's permission prompt (T3O-16), as the
+/** A human answering the step thread's permission prompt, as the
     thread gateway signals it to the reactor. */
 const approvalAnswered = (id: ThreadId): ThreadSignal => ({
   type: "approval-responded",
@@ -239,7 +239,7 @@ it.effect("a human-in-the-loop run is exempt from the timeout sweep", () =>
 );
 
 // A thread blocked on a permission prompt emits nothing, so every life sign
-// reads dead — but the agent is waiting on a human, not hung (T3O-16).
+// reads dead — but the agent is waiting on a human, not hung.
 it.effect("T3O-16: a thread waiting on a permission prompt is never swept", () =>
   withGovernor(
     {
@@ -257,7 +257,7 @@ it.effect("T3O-16: a thread waiting on a permission prompt is never swept", () =
   ),
 );
 
-// Approval is a life sign (T3O-16). A prompt that outlives the output-signal
+// Approval is a life sign. A prompt that outlives the output-signal
 // ceiling leaves every other life sign stale, so without this the first sweep
 // after the human approves would nudge the agent seconds into real work.
 it.effect("T3O-16: the sweep after a long permission prompt is approved does not nudge", () =>
@@ -279,7 +279,7 @@ it.effect("T3O-16: the sweep after a long permission prompt is approved does not
   ),
 );
 
-// The stamp must trail approval by a sweep, not a window (T3O-16). Stamped at
+// The stamp must trail approval by a sweep, not a window. Stamped at
 // the epoch, still held at +50s, approved, then swept at +70s: against a 60s
 // timeout a stamp that only advanced once per window (still the epoch) reads
 // the step overdue and nudges the agent seconds into real work.
@@ -330,7 +330,7 @@ it.effect("T3O-16: a prompt answered before the step looked overdue does not nud
   ),
 );
 
-// A stamp belongs to the step that earned it (T3O-16). Stamped while held, the
+// A stamp belongs to the step that earned it. Stamped while held, the
 // step leaves running and a sweep passes; when a step runs on the thread again
 // the old stamp must not shield it.
 it.effect("T3O-16: a permission stamp is dropped once its step leaves running", () =>
@@ -474,7 +474,7 @@ it.effect("a build step whose card has no worktree is recovered on the clock alo
   ),
 );
 
-// ── The same branch scope resets `stallCount` (t3o-10, D4) ────────────
+// ── The same branch scope resets `stallCount` ────────────
 //
 // `resolveProgressedSinceLastNudge` reads the identical signal and is what
 // clears the stall counter, so a card nudged correctly could still have its

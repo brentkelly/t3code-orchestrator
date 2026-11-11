@@ -1,5 +1,5 @@
 /**
- * T3O-23: the `runOnWorktreeRemove` flag and the reclaim's `hookWarning`.
+ * The `runOnWorktreeRemove` flag and the reclaim's `hookWarning`.
  * Both are new optional fields on data already stored, so what matters is
  * that the new shape round-trips and the old shape still decodes.
  */

@@ -64,7 +64,7 @@ it.effect("maxConcurrent 1 runs two same-instance cards strictly sequentially", 
         assert.strictEqual(stepStatus(after, BoardCardId.make("card-a")), "running");
         assert.strictEqual(stepStatus(after, BoardCardId.make("card-b")), "queued");
 
-        // card-a finishes → the freed slot goes to the queued card-b (D11).
+        // card-a finishes → the freed slot goes to the queued card-b.
         yield* pumpDomain(stepCompleted(BoardCardId.make("card-a"), "succeeded", 3));
         const promoted = yield* board;
         assert.strictEqual(stepStatus(promoted, BoardCardId.make("card-b")), "running");
@@ -165,7 +165,7 @@ it.effect("no slot leaks across success, failure, crash/death, and abandonment",
         const running = boardCardStepState(yield* board, BoardCardId.make("crash"));
         assert.strictEqual(running?.status, "running");
         // The thread is gone (never added to the shells map) → turn.completed
-        // with no completion is death → recovery parks it (T3O-22, D7) and the
+        // with no completion is death → recovery parks it and the
         // slot goes back. The respawn happens when the rung arrives, through the
         // ordinary queue, which is where the slot is re-acquired.
         yield* pumpRuntime(turnCompleted(running!.threadId!));

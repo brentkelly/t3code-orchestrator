@@ -1,8 +1,8 @@
 /**
  * The board's gateway onto one worker's threads. Board projects map to the
- * worker checkout with the same repository grouping key (D20); thread ids match.
+ * worker checkout with the same repository grouping key; thread ids match.
  * An unreachable worker fails every call except `threadState`, which answers
- * `unknown`: a thread the board cannot see is not a thread that is gone (D22).
+ * `unknown`: a thread the board cannot see is not a thread that is gone.
  */
 import {
   boardRepositoryGroupingKey,
@@ -68,7 +68,7 @@ export interface RemoteThreadGatewayDeps {
 
 /** The card's files didn't reach the worker, so its spawn was never sent.
     Kept apart from a `WorkerRpcError` on the spawn call itself, which may
-    have left a thread behind (D22). */
+    have left a thread behind. */
 export class CardFilesNotStaged extends Schema.TaggedError<CardFilesNotStaged>()(
   "CardFilesNotStaged",
   { cause: Schema.Defect() },

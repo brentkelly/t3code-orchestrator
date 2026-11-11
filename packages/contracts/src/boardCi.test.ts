@@ -1,5 +1,5 @@
 /**
- * The Continuous integration stage's contracts (T3O-44/57): the seed stage and
+ * The Continuous integration stage's contracts: the seed stage and
  * seed-only detection, when CI is active for a project, how the CI member
  * resolves, the human move rules around CI, and a failed pass's fix issues.
  */

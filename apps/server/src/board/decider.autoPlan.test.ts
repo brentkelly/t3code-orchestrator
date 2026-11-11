@@ -1,5 +1,5 @@
 /**
- * Auto-planning and the decision log in the decider (T3O-32): which cards can
+ * Auto-planning and the decision log in the decider: which cards can
  * be marked for auto-planning, how a request is spent, and how recorded
  * decisions get their ids.
  */
@@ -353,7 +353,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   },
 );
 
-// ── Automation toggles (T3O-38) ─────────────────────────────────────────
+// ── Automation toggles ─────────────────────────────────────────
 
 const setAutomation = (
   settings: { autoPlan?: boolean | null; autoBuild?: boolean | null; autoMerge?: boolean | null },
