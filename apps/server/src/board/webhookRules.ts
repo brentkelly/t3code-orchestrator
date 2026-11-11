@@ -146,6 +146,9 @@ export const resolveUpsertBoardAction = Effect.fn("BoardWebhookRules.resolveUpse
     return yield* fail("A board rule cannot coalesce deliveries. Remove the coalesce key.");
   }
   if (registeredRunner === null) return yield* fail(NOT_RUNNING);
+  // A kept rule is not re-checked: a later label delete must not lock every other edit.
+  // The run path already skips what has gone.
+  if (input.boardAction === undefined) return { boardAction, prompt: BOARD_RULE_PROMPT };
   const refusal = yield* registeredRunner
     .validate({ projectId: input.projectId, action: boardAction })
     .pipe(Effect.mapError((error) => fail(error.message)));

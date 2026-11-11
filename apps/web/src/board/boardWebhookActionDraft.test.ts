@@ -15,6 +15,23 @@ describe("board rule drafts", () => {
     });
   });
 
+  it("round-trips filter values with edge spaces, line breaks or a leading quote", () => {
+    const action = {
+      externalRef: { system: "github-issue", idTemplate: "{{body.issue.number}}" },
+      rules: [
+        {
+          filters: [
+            { path: "body.action", op: "equals", value: " closed " },
+            { path: "body.title", op: "startsWith", value: "a\nb" },
+            { path: "body.label", op: "notEquals", value: '"quoted"' },
+          ],
+          action: { kind: "archive" },
+        },
+      ],
+    } as const;
+    expect(parseBoardWebhookActionDraft(boardWebhookActionDraft(action))).toEqual({ action });
+  });
+
   it("names the rule and line a person must fix", () => {
     const draft = {
       system: "github-issue",

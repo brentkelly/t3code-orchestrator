@@ -54,14 +54,30 @@ export function emptyBoardRuleDraft(kind: BoardRuleKind = "create"): BoardRuleDr
   };
 }
 
+/** A value the line format would trim or split is written as a JSON string. */
+const formatFilterValue = (value: string) =>
+  value !== value.trim() || /[\r\n]/.test(value) || value.startsWith('"')
+    ? JSON.stringify(value)
+    : value;
+
 function formatWebhookFilterLines(filters: ReadonlyArray<ScheduledTaskWebhookFilter>) {
   return filters
     .map((filter) =>
       filter.op === "exists"
         ? `${filter.path} exists`
-        : `${filter.path} ${filter.op} ${filter.op === "in" ? filter.value.join(", ") : filter.value}`,
+        : `${filter.path} ${filter.op} ${filter.op === "in" ? filter.value.join(", ") : formatFilterValue(filter.value)}`,
     )
     .join("\n");
+}
+
+function parseFilterValue(raw: string): string | null {
+  if (!raw.startsWith('"')) return raw;
+  try {
+    const value: unknown = JSON.parse(raw);
+    return typeof value === "string" ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 export function boardWebhookActionDraft(action: BoardWebhookAction): BoardWebhookActionDraft {
@@ -102,11 +118,16 @@ function parseFilterLines(
         error: `Filter line ${index + 1} needs a path, an operator (${[...KNOWN_OPS].join(", ")}) and a value.`,
       };
     }
+    const value =
+      op === "in" || op === "exists" ? (match[3] ?? "") : parseFilterValue(match[3] ?? "");
+    if (value === null) {
+      return { error: `Filter line ${index + 1} has a quoted value that is not closed.` };
+    }
     drafts.push({
       id: `line-${index}`,
       path: match[1]!,
       op: op as ScheduledTaskWebhookFilter["op"],
-      value: match[3] ?? "",
+      value,
     });
   }
   return parseWebhookFilterDrafts(drafts);

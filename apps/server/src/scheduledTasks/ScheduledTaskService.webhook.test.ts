@@ -2297,7 +2297,7 @@ it.effect("a board rule whose action row is lost fails instead of launching a th
 );
 
 it.effect("upsert keeps an omitted board rule, clears a null one, and validates rules", () =>
-  withService(({ service, secretsByRef }) =>
+  withService(({ service, secretsByRef, sql }) =>
     Effect.gen(function* () {
       const saved = (overrides: Record<string, unknown>) =>
         webhookTaskInput({ schedule: boardRuleSchedule, ...overrides }).pipe(
@@ -2372,6 +2372,15 @@ it.effect("upsert keeps an omitted board rule, clears a null one, and validates 
             }),
             "Rule 2 names Building.",
           );
+          // A stored rule the board no longer accepts (a deleted label) still lets omitted saves through.
+          const stale = {
+            ...boardRuleAction,
+            rules: [...boardRuleAction.rules, ...boardRuleAction.rules],
+          };
+          const current = yield* saved({ boardAction: boardRuleAction });
+          yield* BoardWebhookRules.saveBoardAction(sql, current.id, stale);
+          const renamed = yield* saved({ title: "Renamed", prompt: BOARD_RULE_PROMPT });
+          assert.deepEqual(renamed.boardAction, stale);
         }),
       );
     }),
