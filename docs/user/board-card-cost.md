@@ -1,0 +1,52 @@
+# What a card cost
+
+The board adds up what every agent thread on a card spent — planning, the build, each CI fix and
+every review, triage and adjudicate round — and prices it. Work a thread hands to a
+`delegate_task` child counts toward the same card and step.
+
+## Where to see it
+
+- **The card's Summary pane** has a **Usage** section at every stage. It opens to the total; open
+  it for a bar by stage, and a table you can switch between **By stage** (each round on its own
+  row) and **By model**. Whether it starts open is remembered on this device.
+- **A card in Done** shows its total at the right of its footer. Before Done the face stays as it
+  was; the figure leaves the face if the card is moved back out of Done.
+- **A group** in Done shows the total of everything under it, nested groups included. Click the
+  figure for each child's share. Inside a group's board the header shows the same total at any
+  stage.
+- **The board header** shows what the cards in view cost. It follows the filter and the project
+  scope; click it for a split by column and by provider.
+- **The List view** has sortable **Tokens** and **Cost** columns, a cost filter (over the
+  threshold, or cards with partial data) and a total for what is listed.
+
+Agents can read the same figures: `board_get_card` and `board_get_card_context` return a card's
+usage by step.
+
+## Reading the figure
+
+| Figure    | Means                                                                              |
+| --------- | ---------------------------------------------------------------------------------- |
+| `$1.84`   | Exact: every priced turn used a price you set.                                     |
+| `≈$1.84`  | At least part of it is priced from the public model price table.                   |
+| `$1.84+`  | A lower bound: some turns had no price, or the provider reported no usage.         |
+| `—`       | Nothing is known yet. It is never shown as `$0`.                                   |
+| `so far`  | A step is still running. The figure moves once each time a turn finishes.         |
+
+Providers that do not report token usage (Cursor and Pi, and Grok and other ACP agents for now)
+count as *no usage*, which makes the figure partial. So does work a card did on a worker before
+the board started recording usage.
+
+Each turn is priced when it finishes, so changing a price later does not change what past cards
+cost.
+
+## Setting prices
+
+The board prices turns with the prices on the **Usage** page of the server that hosts the board,
+including any custom prices under **Model prices** there; see [Usage](./usage.md). A price you set
+counts as exact. The Usage section's note on a partial total links to that page.
+
+## The highlight threshold
+
+A Done card that cost at least **Settings → Board → Highlight cards costing over** ($5 unless you
+change it) shows its figure in full ink, and the List's **Over** filter uses the same amount. It
+applies to everyone using the board.
