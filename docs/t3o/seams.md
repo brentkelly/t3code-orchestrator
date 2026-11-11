@@ -767,6 +767,7 @@ integration is `T3O-63`.
   `unnecessaryTypeofType`, `prefer-catch-tags` and the knip export check: every finding in fork
   code is fixed, none deferred. The old override blocks are unchanged, apart from moving with
   `tsconfig.effect.json` and pointing at `T3O-67`, the real backlog card (`T3O-75` never existed).
+  `T3O-69` later removed them, bar the four `shadcn/*` rules.
 - **Removed upstream helpers.** Plan mode left upstream, so the board model row drops
   `planModeEnabled`. `shouldLoadNextBranchPageAfterScroll` went with upstream's move to Legend
   List; the board's branch picker keeps its own copy in `boardBaseBranch.ts`, with its tests.

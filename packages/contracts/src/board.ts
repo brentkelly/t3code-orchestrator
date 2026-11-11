@@ -1092,7 +1092,7 @@ export type BoardCardWorkerMove = typeof BoardCardWorkerMove.Type;
 
 /**
  * A card whose worker was removed while it had work there (T3O-66, D22): a
- * worktree, or a step running. The card holds with "Worker removed — move this
+ * worktree, or a step running. The card holds with "Worker removed: move this
  * card" until it is moved, or the worker is added back. The label is kept
  * because the removed worker is no longer in the board's worker list.
  */
