@@ -839,7 +839,7 @@ const make = Effect.gen(function* () {
       if (root !== null && !isFilesystemRoot(root, path)) roots.push(root);
     }
     // T3o: the board removes its card worktrees itself, through the retirer.
-    const boardKept = yield* boardKeptWorktrees(sql, (target) => path.resolve(target));
+    const boardKept = yield* boardKeptWorktrees(sql, fs, path);
     const worktreePathReason = Effect.fn("StorageCleanup.worktreePathReason")(function* (
       worktreePath: string,
     ) {
@@ -930,7 +930,7 @@ const make = Effect.gen(function* () {
       };
       yield* Effect.gen(function* () {
         if (!(yield* fs.exists(worktreePath))) return;
-        if (boardKept(worktreePath)) return keep("a board card uses it"); // T3o: see boardKept.
+        if (yield* boardKept(worktreePath)) return keep("a board card uses it"); // T3o: see boardKept.
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
         if (members.length > 1 && worktreeOwner(members) === undefined)
           return keep(`shared by ${members.length} threads`);

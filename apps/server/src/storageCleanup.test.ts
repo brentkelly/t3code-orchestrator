@@ -25,6 +25,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "./config.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import { CENTRAL_OWNER_MARKER } from "./board/workspace/LocalBoardWorkspace.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as Settings from "./serverSettings.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
@@ -2314,23 +2315,35 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
-  it.live.each(["a board card records it", "the board cannot be read"] as const)(
-    "keeps an inactive worktree when %s",
-    (scenario) =>
-      runCleanupTest(
-        Effect.gen(function* () {
-          const fixture = yield* cleanupFixture();
-          fixture.setBoardWorktreePaths(
-            scenario === "a board card records it" ? [fixture.worktree] : "unreadable",
-          );
-          const report = yield* fixture.service.runNow;
-          expect(report.entries[0]).toMatchObject({
-            outcome: "kept",
-            reason: "A board card uses it",
-          });
-          expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
-        }),
-      ),
+  it.live.each([
+    "a board card records it",
+    "the board cannot be read",
+    "a central board provisioned it here",
+  ] as const)("keeps an inactive worktree when %s", (scenario) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setBoardWorktreePaths(
+          scenario === "a board card records it"
+            ? [fixture.worktree]
+            : scenario === "the board cannot be read"
+              ? "unreadable"
+              : [],
+        );
+        if (scenario === "a central board provisioned it here") {
+          // A worker's card worktree: nothing in its database names it once its threads go.
+          const dotGit = yield* fixture.fs.readFileString(`${fixture.worktree}/.git`);
+          const gitDir = dotGit.replace(/^gitdir:\s*/, "").trim();
+          yield* fixture.fs.writeFileString(`${gitDir}/${CENTRAL_OWNER_MARKER}`, "central\n");
+        }
+        const report = yield* fixture.service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "A board card uses it",
+        });
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+      }),
+    ),
   );
   it.live("still removes a worktree when measuring its size fails", () =>
     runCleanupTest(

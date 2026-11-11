@@ -61,7 +61,7 @@ export type BoardWorktreeOwner = "self" | "central";
     worktree. No marker means this server's own board. It names no central
     server: a worker serves one board, and naming the session would orphan
     every checkout on a re-pair. */
-const CENTRAL_OWNER_MARKER = "t3o-board-owner";
+export const CENTRAL_OWNER_MARKER = "t3o-board-owner";
 
 /** How long a staleness check waits on the remote before reading what it has. */
 const BASE_TIP_FETCH_TIMEOUT_MS = 15_000;
