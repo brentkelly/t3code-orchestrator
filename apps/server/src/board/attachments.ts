@@ -40,6 +40,7 @@ import {
   parseAttachmentUuid,
   parseThreadSegmentFromAttachmentId,
   PENDING_ATTACHMENT_THREAD_SEGMENT,
+  resolveAttachmentPath,
   resolveAttachmentPathById,
 } from "../attachmentStore.ts";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
@@ -572,5 +573,30 @@ export const stageBoardCardImagesAsPending = Effect.fn("board-attachments-stage-
       if (copied) staged.push(pending.attachment);
     }
     return staged;
+  },
+);
+
+/**
+ * Remove the pending copies a spawn staged, whatever became of the spawn.
+ * Upstream's claim copies into thread scope and leaves the pending source for
+ * a client's retry; the board restages on every spawn, so a copy left here
+ * would only wait for the 24h sweep (and every Continue would add a set).
+ */
+export const discardStagedBriefAttachments = Effect.fn("board-attachments-discard-staged")(
+  function* (input: {
+    readonly attachmentsDir: string;
+    readonly attachments: ReadonlyArray<ChatAttachment>;
+  }) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* Effect.forEach(
+      input.attachments,
+      (attachment) => {
+        const target = resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment });
+        return target === null
+          ? Effect.void
+          : fileSystem.remove(target, { force: true }).pipe(Effect.ignore);
+      },
+      { discard: true },
+    );
   },
 );

@@ -26,6 +26,7 @@ import {
   sanitizeBoardAttachmentName,
   selectBriefAttachmentsForTurn,
   spawnPushesBriefImages,
+  discardStagedBriefAttachments,
   stageBoardCardImagesAsPending,
 } from "./attachments.ts";
 
@@ -459,6 +460,8 @@ describe("the one push (K4)", () => {
         NodeFS.readFileSync(NodePath.join(attachmentsDir, `${png?.id}.png`), "utf8"),
         "png",
       );
+      yield* discardStagedBriefAttachments({ attachmentsDir, attachments: staged });
+      assert.deepStrictEqual(NodeFS.readdirSync(attachmentsDir), []);
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
   );

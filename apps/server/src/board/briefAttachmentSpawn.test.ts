@@ -108,12 +108,12 @@ it.effect("a planning spawn carries the brief's images as pending uploads", () =
           );
           const [pdf, png] = attachments;
           assert.match(String(png?.id), /^pending-/);
-          // The staged copies are real pending uploads in upstream's directory,
-          // so the gateway's intake claims them into thread scope.
-          assert.isTrue(
+          // The gateway has claimed its own copies by the time the spawn
+          // returns, so the staged pending sources are gone, not left to the sweep.
+          assert.isFalse(
             NodeFS.existsSync(NodePath.join(storage.stateDir, "attachments", `${png?.id}.png`)),
           );
-          assert.isTrue(
+          assert.isFalse(
             NodeFS.existsSync(NodePath.join(storage.stateDir, "attachments", `${pdf?.id}.pdf`)),
           );
         }),
@@ -145,6 +145,30 @@ it.effect("a card with only non-image files spawns with them as files", () =>
             spawn.attachments.map((attachment) => [attachment.type, attachment.name]),
             [["file", "spec.pdf"]],
           );
+        }),
+    );
+    NodeFS.rmSync(storage.baseDir, { recursive: true, force: true });
+  }),
+);
+
+it.effect("a spawn refused as provider-disabled leaves no staged copies behind", () =>
+  Effect.gen(function* () {
+    const storage = seedStorage(["spec.pdf"]);
+    yield* withGovernor(
+      {
+        board: { cards: [cardWith("planning", [document])], nextCardNumberByProject: {} },
+        settings: settingsWith({
+          building: [codexStep],
+          planning: codexStep,
+          globalMaxConcurrent: 3,
+        }),
+        serverConfig: storage.serverConfig,
+        providerDisabled: [codexStep.providerInstanceId],
+      },
+      ({ pumpDomain }) =>
+        Effect.gen(function* () {
+          yield* pumpDomain(cardMoved(cardWith("planning", [document]), "sprint", "planning", 1));
+          assert.deepStrictEqual(NodeFS.readdirSync(NodePath.join(storage.stateDir, "attachments")), []);
         }),
     );
     NodeFS.rmSync(storage.baseDir, { recursive: true, force: true });

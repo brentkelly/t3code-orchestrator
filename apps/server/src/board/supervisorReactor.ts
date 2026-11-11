@@ -205,6 +205,7 @@ import {
   removeBoardCardAttachmentsDir,
   resolveBoardCardAttachmentPath,
   spawnPushesBriefImages,
+  discardStagedBriefAttachments,
   stageBoardCardImagesAsPending,
 } from "./attachments.ts";
 import { BoardPlacement, boardPlacementGate } from "./workers/BoardPlacement.ts";
@@ -1713,6 +1714,17 @@ const make = Effect.gen(function* () {
             ),
     });
 
+  const discardSpawnAttachments = (attachments: ReadonlyArray<ChatAttachment>) =>
+    Option.match(serverConfig, {
+      onNone: () => Effect.void,
+      onSome: (config) =>
+        attachments.length === 0
+          ? Effect.void
+          : withFileServices(
+              discardStagedBriefAttachments({ attachmentsDir: config.attachmentsDir, attachments }),
+            ),
+    });
+
   // T3O-65 (D20): the board's workers as placement sees them — absent on a
   // local-only harness, where every card runs here.
   const placement = yield* Effect.serviceOption(BoardPlacement);
@@ -1878,6 +1890,7 @@ const make = Effect.gen(function* () {
     // mid-call may have created the thread: it is linked and run as spawned,
     // so the worker's reconcile when it is back watches it if it is alive and
     // recovers the step if it isn't — never a second agent in the worktree.
+    const attachments = remoteWorker === null ? yield* stageSpawnAttachments(card) : [];
     const spawned = yield* threads
       .spawn({
         commandId: yield* commandId("spawn-thread"),
@@ -1897,7 +1910,7 @@ const make = Effect.gen(function* () {
         // The brief's attachments on a build/plan spawn (t3o-32, K4). A worker
         // gets none: its gateway sends no attachments, so central copies would
         // only be orphaned; its thread reads the files staged there instead.
-        attachments: remoteWorker === null ? yield* stageSpawnAttachments(card) : [],
+        attachments,
         ...(remoteWorker === null
           ? {}
           : { workerId: remoteWorker, stageAttachments: stagedBriefFiles(card) }),
@@ -1913,6 +1926,8 @@ const make = Effect.gen(function* () {
                 cause: Cause.pretty(cause),
               }).pipe(Effect.as(spawnFailureLeft(cause))),
         ),
+        // The gateway claimed its own copies, or the spawn never got that far.
+        Effect.ensuring(discardSpawnAttachments(attachments)),
       );
     if (spawned === "none") return null;
     if (spawned === "worker-offline") return "worker-offline" as const;
