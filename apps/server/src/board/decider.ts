@@ -99,6 +99,7 @@ import {
   sortBoardCardThreadLinks,
   unmetBoardCardDependencies,
   type BoardCard,
+  type BoardCardExternalRef,
   type BoardCardEditSummary,
   type BoardCardUpdateCommand,
   type BoardCardReviewSummary,
@@ -295,6 +296,25 @@ function requireLiveStepState(input: {
 }
 
 /** Move and start-stage-thread name unmet deps the same way: `KEY "title"`. */
+/** Board-wide, so a card that changed project still guards its reference. Archived cards
+    do not hold one: restoring a duplicate is the caller's to refuse. */
+function externalRefTakenRefusal(
+  board: BoardState,
+  ref: BoardCardExternalRef,
+  cardId: BoardCardId,
+): string | null {
+  const holder = board.cards.find(
+    (card) =>
+      card.id !== cardId &&
+      card.archivedAt === null &&
+      card.externalRef?.system === ref.system &&
+      card.externalRef.id === ref.id,
+  );
+  return holder === undefined
+    ? null
+    : `Card '${holder.key}' already tracks ${ref.system} '${ref.id}'.`;
+}
+
 function formatUnmetDependencies(board: BoardState, unmet: ReadonlyArray<BoardCardId>): string {
   return unmet
     .map((dependencyId) => {
@@ -1750,6 +1770,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         proposed: command.labels ?? [],
         existing: [],
       });
+      if (command.externalRef !== undefined) {
+        const refusal = externalRefTakenRefusal(board, command.externalRef, command.cardId);
+        if (refusal !== null) return yield* invariant(command, refusal);
+      }
 
       // Child create: any live card may take a child, at any
       // depth and across projects, unless it is a leaf already being built.
@@ -1906,6 +1930,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           // Key-optional like `baseBranch`: absent IS "follow the default".
           ...(pinnedWorkerId === null ? {} : { pinnedWorkerId }),
           ...(command.mergeStrategy === undefined ? {} : { mergeStrategy: command.mergeStrategy }),
+          ...(command.externalRef === undefined ? {} : { externalRef: command.externalRef }),
           ...(heading === null ? {} : { group: heading }),
           dependsOn,
           stage,
@@ -2698,6 +2723,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       }
 
       const nextLabels = yield* resolveCardUpdateLabels({ board, card, command });
+      if (command.externalRef !== undefined && command.externalRef !== null) {
+        const refusal = externalRefTakenRefusal(board, command.externalRef, card.id);
+        if (refusal !== null) return yield* invariant(command, refusal);
+      }
 
       // Brief and dependency edits, whole-value or incremental.
       const edits = yield* resolveCardUpdateEdits({ board, card, command, context });

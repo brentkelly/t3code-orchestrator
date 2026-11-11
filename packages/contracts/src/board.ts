@@ -4846,6 +4846,9 @@ export const BoardCardCreateCommand = Schema.Struct({
   pinnedWorkerId: Schema.optional(BoardWorkerId),
   /** The card's own merge strategy. Absent follows the default. */
   mergeStrategy: Schema.optional(BoardMergeStrategy),
+  /** The outside item this card tracks, such as a webhook's GitHub issue. The decider
+      refuses one a live card already carries. */
+  externalRef: Schema.optional(BoardCardExternalRef),
   createdAt: IsoDateTime,
 });
 export type BoardCardCreateCommand = typeof BoardCardCreateCommand.Type;
@@ -6236,6 +6239,8 @@ export const BoardCardCreatedPayload = Schema.Struct({
   /** The card's merge strategy at birth. Absent follows the default,
       the same null migration 057's column defaults to. */
   mergeStrategy: Schema.optionalKey(BoardMergeStrategy),
+  /** Key-optional: absent is no reference, the null the column defaults to. */
+  externalRef: Schema.optionalKey(BoardCardExternalRef),
   /** The decider has no SQL client, so the payload names the plan and the SQL projector
       copies its body in the same transaction. Replay-safe because approval freezes the plans.
       Mutually exclusive with `brief`. */

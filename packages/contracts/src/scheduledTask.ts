@@ -17,6 +17,8 @@ import {
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "./orchestrationV2.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
+// T3o: a webhook task's optional board rule (T3O-78).
+import { makeBoardWebhookActionSchema } from "./boardWebhookAction.ts";
 
 const TimeOfDay = TrimmedNonEmptyString.check(
   Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/),
@@ -149,6 +151,10 @@ export const ScheduledTaskWebhookFilter = Schema.Union([
 export type ScheduledTaskWebhookFilter = typeof ScheduledTaskWebhookFilter.Type;
 export type ScheduledTaskWebhookFilterOp = ScheduledTaskWebhookFilter["op"];
 
+// T3o: board rules reuse the webhook filter schema (T3O-78).
+export const BoardWebhookAction = makeBoardWebhookActionSchema(ScheduledTaskWebhookFilter);
+export type BoardWebhookAction = typeof BoardWebhookAction.Type;
+
 const ScheduledTaskWebhookFilters = Schema.Array(ScheduledTaskWebhookFilter)
   .check(Schema.isMaxLength(MAX_WEBHOOK_FILTERS))
   .annotate({
@@ -263,6 +269,8 @@ export const ScheduledTask = Schema.Struct({
   webhook: Schema.optional(ScheduledTaskWebhookEndpoint),
   /** Why the task cannot run regardless of `enabled`, such as a managed policy refusing webhooks. */
   blockedByPolicy: Schema.optionalKey(Schema.String),
+  // T3o: present on a webhook task that is a board rule (T3O-78).
+  boardAction: Schema.optional(BoardWebhookAction),
 });
 export type ScheduledTask = typeof ScheduledTask.Type;
 
@@ -294,6 +302,8 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   createdBy: Schema.optional(OrchestrationV2Actor),
   creationSource: Schema.optional(OrchestrationV2CreationSource),
+  // T3o: omitted keeps the stored board rule, null clears it (T3O-78).
+  boardAction: Schema.optional(Schema.NullOr(BoardWebhookAction)),
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 
