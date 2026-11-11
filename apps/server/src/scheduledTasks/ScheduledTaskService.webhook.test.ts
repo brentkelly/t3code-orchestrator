@@ -5,6 +5,7 @@ import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
   BOARD_RULE_PROMPT,
+  type BoardWebhookAction,
   type ManagedPolicyDocument,
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliveryId,
@@ -2202,7 +2203,7 @@ it.effect("filters run before replay and coalescing without claiming ignored del
 });
 
 // T3o: board rules (T3O-78).
-const boardRuleAction = {
+const boardRuleAction: BoardWebhookAction = {
   externalRef: { system: "github-pr", idTemplate: "{{body.pull_request.url}}" },
   rules: [
     { filters: [], action: { kind: "create", titleTemplate: "PR {{body.pull_request.url}}" } },

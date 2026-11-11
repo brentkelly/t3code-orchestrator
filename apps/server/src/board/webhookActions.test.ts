@@ -270,7 +270,7 @@ it.layer(makeBoardStackTestLayer("t3o-webhook-actions-3-"))("rule details", (it)
       const fresh = (yield* card)!;
       assert.strictEqual(fresh.title.length, BOARD_WEBHOOK_TITLE_MAX_CHARS);
       assert.isFalse(fresh.title.includes("\n"));
-      assert.deepStrictEqual(fresh.labels, ["label-feature"]);
+      assert.deepStrictEqual(fresh.labels.map(String), ["label-feature"]);
       const queries = yield* BoardQueries;
       // A null body renders empty, leaving the provenance line alone.
       assert.strictEqual(
