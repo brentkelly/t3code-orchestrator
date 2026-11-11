@@ -45,6 +45,11 @@ import {
   BoardStageExecutionReview,
   DEFAULT_BOARD_REVIEW_PHASE_PROMPT,
   RETIRED_BOARD_REVIEW_PHASE_PROMPTS,
+  BoardStageExecutionBuild,
+  DEFAULT_BOARD_TRIAGE_PHASE_PROMPT,
+  RETIRED_BOARD_TRIAGE_PHASE_PROMPTS,
+  DEFAULT_BOARD_SUBMIT_PROMPT,
+  RETIRED_BOARD_SUBMIT_PROMPTS,
   BoardLabelId,
   BoardLabelName,
   boardAppendOrderKey,
@@ -3153,18 +3158,42 @@ describe("boardCardAutoArchiveDue (T3O-77)", () => {
   });
 });
 
-describe("review phase prompt saved as an old default", () => {
+describe("default prompt saved as an old default", () => {
   const decodeReview = Schema.decodeUnknownSync(BoardStageExecutionReview);
-  const reviewPrompt = (prompt: string) =>
-    decodeReview({ kind: "review", phases: { review: { prompt } } }).phases.review.prompt;
+  const decodeBuild = Schema.decodeUnknownSync(BoardStageExecutionBuild);
+  const cases = [
+    {
+      name: "review phase",
+      retired: RETIRED_BOARD_REVIEW_PHASE_PROMPTS,
+      current: DEFAULT_BOARD_REVIEW_PHASE_PROMPT,
+      decoded: (prompt: string) =>
+        decodeReview({ kind: "review", phases: { review: { prompt } } }).phases.review.prompt,
+    },
+    {
+      name: "triage phase",
+      retired: RETIRED_BOARD_TRIAGE_PHASE_PROMPTS,
+      current: DEFAULT_BOARD_TRIAGE_PHASE_PROMPT,
+      decoded: (prompt: string) =>
+        decodeReview({ kind: "review", phases: { triage: { prompt } } }).phases.triage.prompt,
+    },
+    {
+      name: "submit",
+      retired: RETIRED_BOARD_SUBMIT_PROMPTS,
+      current: DEFAULT_BOARD_SUBMIT_PROMPT,
+      decoded: (prompt: string) => decodeBuild({ kind: "build", submit: { prompt } }).submit.prompt,
+    },
+  ];
 
-  it("upgrades every retired default verbatim and keeps an edited prompt", () => {
-    expect(RETIRED_BOARD_REVIEW_PHASE_PROMPTS.length).toBe(2);
-    for (const retired of RETIRED_BOARD_REVIEW_PHASE_PROMPTS) {
-      expect(reviewPrompt(retired)).toBe(DEFAULT_BOARD_REVIEW_PHASE_PROMPT);
-    }
-    expect(RETIRED_BOARD_REVIEW_PHASE_PROMPTS).not.toContain(DEFAULT_BOARD_REVIEW_PHASE_PROMPT);
-    const edited = `${RETIRED_BOARD_REVIEW_PHASE_PROMPTS[0]} Also check the docs.`;
-    expect(reviewPrompt(edited)).toBe(edited);
-  });
+  it.each(cases)(
+    "$name: upgrades every retired default verbatim and keeps an edited prompt",
+    ({ retired, current, decoded }) => {
+      expect(retired.length).toBeGreaterThan(0);
+      for (const prompt of retired) {
+        expect(decoded(prompt)).toBe(current);
+      }
+      expect(retired).not.toContain(current);
+      const edited = `${retired[0]} Also check the docs.`;
+      expect(decoded(edited)).toBe(edited);
+    },
+  );
 });
