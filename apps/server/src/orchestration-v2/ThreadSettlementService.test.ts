@@ -31,6 +31,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
@@ -563,6 +564,7 @@ interface HarnessOptions {
   ) => Effect.Effect<void>;
   readonly onCloseIdle?: () => Effect.Effect<void>;
   readonly currentThreads?: ReadonlyArray<OrchestrationV2AppThread>;
+  readonly boardCardThreadIds?: ReadonlyArray<string>;
 }
 
 const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options: HarnessOptions) {
@@ -705,6 +707,13 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     Layer.succeed(ServerSettings.ServerSettingsService, serverSettings),
     Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
+    // Only the board's card-thread check reads SQL here; it binds the thread id.
+    Layer.succeed(SqlClient.SqlClient, ((_strings: TemplateStringsArray, ...values: unknown[]) =>
+      Effect.succeed(
+        values.some((value) => options.boardCardThreadIds?.includes(String(value)))
+          ? [{ found: 1 }]
+          : [],
+      )) as unknown as SqlClient.SqlClient),
     FileSystem.layerNoop({
       exists: (path) =>
         options.unreadablePaths?.includes(path)
@@ -1500,6 +1509,31 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           assert.strictEqual(run.threadId, worktree.id);
           assert.strictEqual(run.worktreePath, "/worktrees/thread");
           assert.strictEqual(run.trigger, "settle");
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("skips the settle script for a board card thread but still closes its terminals", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const card = appThread("card-thread", "settled", "/worktrees/card");
+        const plain = appThread("plain-thread", "settled", "/worktrees/plain");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads: [card, plain],
+          existingWorktreePaths: ["/worktrees/card", "/worktrees/plain"],
+          boardCardThreadIds: [card.id],
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(card));
+          yield* fixture.publishEvent(settledEvent(plain));
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: card.id });
+          const run = yield* Queue.take(fixture.scriptRuns);
+          assert.strictEqual(run.threadId, plain.id);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

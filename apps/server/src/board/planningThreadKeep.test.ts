@@ -478,6 +478,8 @@ describe("the planning-thread rules", () => {
     const card = linked(PLANNING);
     assert.strictEqual(keptPlanningThreadId(board([card]), card), thread);
     assert.isNull(keptPlanningThreadId(board([card]), { ...card, stage: READY }));
+    const reclaimed = { ...card, worktree: { status: "reclaimed" } } as unknown as typeof card;
+    assert.isNull(keptPlanningThreadId(board([reclaimed]), reclaimed));
     const finished = board([card], {
       stepCompletions: [
         {

@@ -32,6 +32,7 @@ const card = (input: {
   readonly stage: string;
   readonly links: ReadonlyArray<BoardCardThreadLink>;
   readonly archived?: boolean;
+  readonly worktree?: Partial<NonNullable<BoardCard["worktree"]>>;
 }): BoardCard =>
   ({
     id: BoardCardId.make("card-1"),
@@ -53,7 +54,7 @@ const card = (input: {
     reviewOverrides: null,
     modelOverrides: null,
     splitRationale: null,
-    worktree: null,
+    worktree: input.worktree ?? null,
     pullRequest: null,
     pullRequestHistory: [],
     pullRequestFloor: null,
@@ -378,6 +379,19 @@ describe("boardReleasedThreadIds", () => {
         plans: [{ cardId: BoardCardId.make("card-1"), ordinal: 0 }],
       } as unknown as Partial<BoardState>);
       assert.deepStrictEqual(released(state), []);
+    });
+
+    // Worktree retirement leaves no card thread unsettled (T3O-72).
+    it("is released once the card's worktree is reclaimed", () => {
+      const state = board({
+        card: card({
+          stage: String(BOARD_SEED_STAGE_IDS.done),
+          links: [link("thread-plan", planning)],
+          worktree: { path: null, status: "reclaimed" },
+        }),
+        step: stepState({ stepId: planning, threadId: "thread-plan", status: "abandoned" }),
+      });
+      assert.deepStrictEqual(released(state), ["thread-plan"]);
     });
 
     it("is released once the thread completes its step", () => {
