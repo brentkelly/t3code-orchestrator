@@ -350,19 +350,26 @@ const requireCallerCard = (
     : Effect.succeed(card);
 };
 
-/**
- * A card named by a caller acting on a card other than its own. Resolved here so the caller
- * gets `card-not-found`, and the handler still has the key to answer with after a delete.
- */
-/** The card's usage as the read tools report it (T3O-77). */
-const describeUsage = (detail: Pick<BoardCardDetail, "usage" | "usageHistoryPartial"> | null) => ({
+/** The card's usage total as the read tools report it (T3O-77). */
+const describeUsageSummary = (
+  detail: Pick<BoardCardDetail, "usage" | "usageHistoryPartial"> | null,
+) => ({
   summary:
     detail === null
       ? null
       : boardCardUsageSummaryFromRows(detail.usage, detail.usageHistoryPartial),
+});
+
+/** The total with its rows, for board_get_card. */
+const describeUsage = (detail: Pick<BoardCardDetail, "usage" | "usageHistoryPartial"> | null) => ({
+  ...describeUsageSummary(detail),
   rows: detail?.usage ?? [],
 });
 
+/**
+ * A card named by a caller acting on a card other than its own. Resolved here so the caller
+ * gets `card-not-found`, and the handler still has the key to answer with after a delete.
+ */
 const requireTargetCard = (
   board: BoardState,
   cardId: BoardCardId,
@@ -997,7 +1004,7 @@ export const boardHandlers = {
       sourcePlan: yield* describeSourcePlan(deps, board, card, detail?.brief ?? null),
       decisions: sortBoardCardDecisions(detail?.decisions ?? []).slice(0, CONTEXT_DECISIONS_MAX),
       ...(planReview === null ? {} : { planReview }),
-      usage: describeUsage(detail),
+      usage: describeUsageSummary(detail),
     };
   }),
 

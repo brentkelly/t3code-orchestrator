@@ -134,6 +134,10 @@ const BoardCardToolUsage = Schema.Struct({
   rows: Schema.Array(BoardCardUsageRow),
 });
 
+/** The context carries the total only: every card agent reads it first, and the rows grow
+    with every step, thread and model. board_get_card has the breakdown. */
+const BoardCardContextUsage = Schema.Struct({ summary: Schema.NullOr(BoardCardUsageSummary) });
+
 /** One ancestor of the card: the group it sits in, then
     that group's group, nearest first. Plans are metadata only — read a body
     with board_get_plan, which accepts an ancestor's plan ids. The brief is cut
@@ -214,9 +218,7 @@ const BoardCardContext = Schema.Struct({
       when none is running. */
   planReview: Schema.optionalKey(BoardPlanReviewToolResult),
   // Defaults decode the answer of a central built before T3O-77 (relay).
-  usage: BoardCardToolUsage.pipe(
-    Schema.withDecodingDefault(Effect.succeed({ summary: null, rows: [] })),
-  ),
+  usage: BoardCardContextUsage.pipe(Schema.withDecodingDefault(Effect.succeed({ summary: null }))),
 });
 
 /** A card's pull request as an agent checks it. `linked` is true
@@ -311,7 +313,7 @@ const NoParameters = Schema.Record(Schema.String, Schema.Never);
 
 const BoardGetCardContextTool = Tool.make("board_get_card_context", {
   description:
-    "Pull everything you need to work on your card: its title, brief, stage, dependency states, the work assigned right now, prior work and its outcomes, proposed plans, its recent activity, the current todo list of every thread working on it, and what its threads have cost in tokens and dollars by step. Activity is truncated to the most recent entries, so treat it as a tail, not the full history; the per-thread todo lists are how you pick up where you (or another thread on this card) left off. Call this first when you start work, and again whenever you need to re-orient. Your card is resolved from your thread; you never pass a card id. Fails if your thread is not linked to a card.",
+    "Pull everything you need to work on your card: its title, brief, stage, dependency states, the work assigned right now, prior work and its outcomes, proposed plans, its recent activity, the current todo list of every thread working on it, and what its threads have cost in total (board_get_card breaks that down by step). Activity is truncated to the most recent entries, so treat it as a tail, not the full history; the per-thread todo lists are how you pick up where you (or another thread on this card) left off. Call this first when you start work, and again whenever you need to re-orient. Your card is resolved from your thread; you never pass a card id. Fails if your thread is not linked to a card.",
   parameters: NoParameters,
   success: BoardCardContext,
   failure: BoardToolFailure,
