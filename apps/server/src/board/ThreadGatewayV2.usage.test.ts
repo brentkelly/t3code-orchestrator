@@ -72,7 +72,7 @@ describe("usage signals", () => {
       driver: "claudeAgent",
       model: "claude-opus-first",
       delegatedFromThreadId: null,
-      usage: turn().turnTokenUsage,
+      usage: (turn() as { readonly turnTokenUsage: unknown }).turnTokenUsage as never,
     });
   });
 
