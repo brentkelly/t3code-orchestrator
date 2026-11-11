@@ -109,8 +109,28 @@ export function boardCardNotificationReason(
     readonly now: number;
   },
 ): BoardCardNotificationReason | null {
+  return boardCardNotificationVerdict(input).shown;
+}
+
+interface BoardCardNotificationVerdict {
+  readonly shown: BoardCardNotificationReason | null;
+  /** The wait a quieter notice (worker trouble, a move, conflicts) hides: still a wait. */
+  readonly masked: BoardCardNotificationReason | null;
+}
+
+const verdict = (shown: BoardCardNotificationReason | null): BoardCardNotificationVerdict => ({
+  shown,
+  masked: null,
+});
+
+function boardCardNotificationVerdict(
+  input: BoardCardNotificationInput & {
+    readonly threadIdleSince: string | null;
+    readonly now: number;
+  },
+): BoardCardNotificationVerdict {
   const { card, now } = input;
-  if (input.projectHidden || card.archivedAt != null) return null;
+  if (input.projectHidden || card.archivedAt != null) return verdict(null);
   const withIdle =
     input.threadIdleSince === null ? card : { ...card, threadIdleSince: input.threadIdleSince };
   const attention = boardCardAttention({ card: withIdle, stages: input.stages, now });
@@ -138,36 +158,43 @@ export function boardCardNotificationReason(
     now,
   });
   const { own, notice } = face;
+  const ownReview =
+    own !== null && (own.reason === "review-held" || own.reason === "review-stuck")
+      ? reasonOf(own.reason === "review-stuck" ? "waiting" : "needsHuman", own.reason, card.stage)
+      : null;
   // The round row hides a held or stuck review loop's chip; the card still wears its tone.
-  if (
-    own !== null &&
-    (own.reason === "review-held" || own.reason === "review-stuck") &&
-    (notice === null || notice.kind === "blocked")
-  ) {
-    return reasonOf(
-      own.reason === "review-stuck" ? "waiting" : "needsHuman",
-      own.reason,
-      card.stage,
-    );
+  if (ownReview !== null && (notice === null || notice.kind === "blocked")) {
+    return verdict(ownReview);
   }
+  const attentionReason = (): BoardCardNotificationReason | null => {
+    if (attention === null) return null;
+    const category = attentionCategory(attention.reason, card.stalledReason);
+    return category === null ? null : reasonOf(category, attention.reason, card.stage);
+  };
   if (notice !== null) {
     switch (notice.kind) {
       case "attention": {
         const category = attentionCategory(notice.attention.reason, card.stalledReason);
-        return category === null ? null : reasonOf(category, notice.attention.reason, card.stage);
+        return verdict(
+          category === null ? null : reasonOf(category, notice.attention.reason, card.stage),
+        );
       }
       case "auto-merge":
-        return notice.pill.icon === "alert"
-          ? reasonOf("needsHuman", "merge-gave-up", card.stage)
-          : null;
+        return verdict(
+          notice.pill.icon === "alert" ? reasonOf("needsHuman", "merge-gave-up", card.stage) : null,
+        );
       case "no-pull-request":
-        return reasonOf("needsHuman", "no-pr", card.stage);
+        return verdict(reasonOf("needsHuman", "no-pr", card.stage));
       case "blocked":
-        return reasonOf("blocked", "blocked", card.stage);
+        return verdict(reasonOf("blocked", "blocked", card.stage));
+      case "worker":
+      case "worker-move":
+      case "conflicts":
+        // The board is on it, or the card's own panel says what to do. A wait they
+        // outrank is still there, so the gate neither clears nor re-raises it.
+        return { shown: null, masked: ownReview ?? attentionReason() };
       default:
-        // Conflicts, worker trouble, moves, a removed stage: the board is on it,
-        // or the card's own panel says what to do.
-        return null;
+        return verdict(null);
     }
   }
   if (
@@ -181,9 +208,9 @@ export function boardCardNotificationReason(
     !isBoardCardCiActive(card) &&
     !settling
   ) {
-    return reasonOf("readyForMerge", "ready", card.stage);
+    return verdict(reasonOf("readyForMerge", "ready", card.stage));
   }
-  return null;
+  return verdict(null);
 }
 
 const CATEGORY_SETTING: Record<
@@ -239,9 +266,9 @@ interface CardMemory {
     readonly idle: string | null;
     /** When it was computed: a reason computed inside the grace is stale once it ends. */
     readonly at: number;
-    readonly reason: BoardCardNotificationReason | null;
-    /** The graceless reason, read only while the thread's idle time is unknown. */
-    readonly raw: BoardCardNotificationReason | null;
+    readonly verdict: BoardCardNotificationVerdict;
+    /** The graceless verdict, read only while the thread's idle time is unknown. */
+    readonly raw: BoardCardNotificationVerdict | null;
   } | null;
 }
 
@@ -304,13 +331,13 @@ export function createBoardCardNotificationGate() {
         let firstSeenAt = prior?.firstSeenAt ?? now;
         const cached = prior?.cache;
         let idle = observation.threadIdleSince;
-        let raw: BoardCardNotificationReason | null = null;
+        let raw: BoardCardNotificationVerdict | null = null;
         if (idle === null) {
           raw =
-            cached != null && sameInput(cached.input, observation)
+            cached?.raw != null && sameInput(cached.input, observation)
               ? cached.raw
-              : boardCardNotificationReason({ ...observation, threadIdleSince: null, now });
-          const rawKey = raw?.key ?? null;
+              : boardCardNotificationVerdict({ ...observation, threadIdleSince: null, now });
+          const rawKey = (raw.shown ?? raw.masked)?.key ?? null;
           if (rawKey !== firstSeenKey) {
             firstSeenKey = rawKey;
             firstSeenAt = now;
@@ -327,15 +354,18 @@ export function createBoardCardNotificationGate() {
           cached.idle === idle &&
           sameInput(cached.input, observation) &&
           (idle === null || cached.at - Date.parse(idle) >= BOARD_ATTENTION_SETTLE_MS);
-        const reason = reusable
-          ? cached.reason
-          : boardCardNotificationReason({ ...observation, threadIdleSince: idle, now });
+        const computed = reusable
+          ? cached.verdict
+          : boardCardNotificationVerdict({ ...observation, threadIdleSince: idle, now });
         wakeFor(idle);
+        const priorKey = prior?.key ?? null;
+        // A worker blip or a move hides a wait without ending it: an accepted one stays accepted.
+        const accepted = silent || prior === undefined || computed.masked?.key === priorKey;
+        const reason = computed.shown ?? (accepted ? computed.masked : null);
         const key = reason?.key ?? null;
         const atMergeStage =
           observation.mergeStageId !== null && card.stage === observation.mergeStageId;
         let mergeVisitAlerted = atMergeStage && (prior?.mergeVisitAlerted ?? false);
-        const priorKey = prior?.key ?? null;
         if (priorKey !== null && priorKey !== key) cleared.push(card.cardId);
         if (silent || prior === undefined) {
           if (isMergeVisitReason(reason)) mergeVisitAlerted = true;
@@ -352,7 +382,7 @@ export function createBoardCardNotificationGate() {
           firstSeenKey,
           firstSeenAt,
           mergeVisitAlerted,
-          cache: reusable ? cached : { input: observation, idle, at: now, reason, raw },
+          cache: reusable ? cached : { input: observation, idle, at: now, verdict: computed, raw },
         });
       }
       for (const [cardId, prior] of memory) {

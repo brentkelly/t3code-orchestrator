@@ -4,10 +4,12 @@ import {
   BoardCardId,
   BoardStageId,
   EMPTY_BOARD_WORKERS_STATE,
+  EnvironmentId,
   ProjectId,
   makeBoardCardShell,
   type BoardCardShell,
   type BoardNotificationSettings,
+  type BoardWorkersState,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -294,6 +296,40 @@ describe("createBoardCardNotificationGate", () => {
       wakeAt: T0 + BOARD_ATTENTION_SETTLE_MS,
     });
     expect(run(gate, [held], T0 + BOARD_ATTENTION_SETTLE_MS).fired).toHaveLength(1);
+  });
+
+  it("keeps a wait quiet across its worker going offline and back", () => {
+    const workerId = EnvironmentId.make("worker-1");
+    const workers = (state: "online" | "offline"): BoardWorkersState => ({
+      ...EMPTY_BOARD_WORKERS_STATE,
+      workers: [
+        {
+          id: workerId,
+          label: "linux-box",
+          url: "http://linux-box:3773",
+          addedAt: iso(T0),
+          status: { state, lastSeenAt: null, t3oVersion: null, protocolVersion: null },
+          snapshot: null,
+        },
+      ],
+    });
+    const asking = shell("building", { awaitingInput: true, stepRunning: true, workerId });
+    const gate = createBoardCardNotificationGate();
+    run(gate, [observe(shell("building", { workerId }), { workers: workers("online") })]);
+    expect(run(gate, [observe(asking, { workers: workers("online") })]).fired).toEqual([
+      "waiting:input:building",
+    ]);
+    expect(run(gate, [observe(asking, { workers: workers("offline") })])).toMatchObject({
+      fired: [],
+      cleared: [],
+    });
+    expect(run(gate, [observe(asking, { workers: workers("online") })]).fired).toEqual([]);
+    // A wait that ends while the worker is away still clears.
+    run(gate, [observe(asking, { workers: workers("offline") })]);
+    const answered = shell("building", { stepRunning: true, workerId });
+    expect(run(gate, [observe(answered, { workers: workers("offline") })]).cleared).toEqual([
+      "card-1",
+    ]);
   });
 
   it("fires only one of No PR and Ready for merge per merge-stage visit", () => {
