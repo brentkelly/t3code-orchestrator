@@ -646,6 +646,9 @@ export function withGovernor(
         finishing. An absent thread answers null — "nothing outstanding" — which
         is what every fixture written before this signal existed reads as. */
     readonly threadPendingTurnStarts?: ReadonlyMap<string, string>;
+    /** Threads a subagent of which awaits approval. Read on every call, so a
+        test clears the hold by deleting from the set it passed. */
+    readonly subagentsAwaitingApproval?: ReadonlySet<string>;
     /** A `ServerConfig` layer: with one, a build/plan spawn stages
         the card's brief images from `<stateDir>/board/attachments`; without
         one the reactor stages nothing, as the other tests expect. */
@@ -762,6 +765,8 @@ export function withGovernor(
       },
       lastSignalAt: (threadId) => threadSignals.get(String(threadId)) ?? null,
       pendingTurnStartAt: (threadId) => threadPendingTurnStarts.get(String(threadId)) ?? null,
+      subagentAwaitingApproval: (threadId) =>
+        input.subagentsAwaitingApproval?.has(String(threadId)) ?? false,
     });
     const shells = fake.states;
     const gateway = input.gateway?.(fake.gateway) ?? fake.gateway;

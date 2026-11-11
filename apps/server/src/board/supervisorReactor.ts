@@ -207,6 +207,7 @@ import {
   BOARD_STEP_USAGE_LIMIT_RESUME_NUDGE,
   boardBackgroundCheckInCharged,
   boardBackgroundCheckInDueMs,
+  boardBackgroundWaitResumedSinceMs,
   boardBackgroundCheckInNudge,
   boardOfflineCreditMs,
   boardRecoveryNudge,
@@ -9739,6 +9740,8 @@ const make = Effect.gen(function* () {
       readonly checkInsSent: number;
       readonly checkInOutstanding: boolean;
       readonly progressed: boolean;
+      /** A subagent's approval held the due check-in. */
+      readonly heldForHuman?: boolean;
     }
   >();
   const beginBackgroundWait = (threadId: ThreadId, now: string, progressed = false) =>
@@ -9767,6 +9770,21 @@ const make = Effect.gen(function* () {
       (wait.progressed || (yield* committedSince(found.state, found.card, wait.since)));
     beginBackgroundWait(threadId, yield* nowIso, progressed);
   });
+  /** Best-effort: a failed read is "not waiting", the behaviour before this check existed. */
+  const subagentAwaitingApproval = (threadId: ThreadId) =>
+    threads.subagentAwaitingApproval(threadId).pipe(Effect.catchCause(() => Effect.succeed(false)));
+  /** The thread's own permission prompt or, read only when it has
+      none, a subagent's approval: either way a human is the pacing. */
+  const threadAwaitingHuman = (threadId: ThreadId) =>
+    liveThread(threadId).pipe(
+      Effect.flatMap((shell) =>
+        shell?.awaitingPermission === true
+          ? Effect.succeed(true)
+          : shell === undefined
+            ? Effect.succeed(false)
+            : subagentAwaitingApproval(threadId),
+      ),
+    );
   /** The thread's shell when it is between turns, needs no human and has
       background work — the same reading the card's "Waiting" label makes. */
   const threadWaitingOnBackground = (threadId: ThreadId) =>
@@ -9811,6 +9829,28 @@ const make = Effect.gen(function* () {
     // schedule through its own turn end instead.
     if (yield* committedSince(state, card, wait.since)) {
       beginBackgroundWait(state.threadId, input.now, true);
+      return true;
+    }
+    // A subagent waits on a human's approval: the agent cannot answer
+    // it, so no check-in, charge or escalation while it holds. Once answered,
+    // the wait resumes one ladder step from now, keeping its place. Read
+    // ahead of the due gate, or a hold answered between check-ins goes unseen.
+    if (yield* subagentAwaitingApproval(state.threadId)) {
+      if (wait.heldForHuman !== true) backgroundWaits.set(key, { ...wait, heldForHuman: true });
+      permissionHeldAt.set(key, input.now);
+      return true;
+    }
+    if (wait.heldForHuman === true) {
+      const resumedSinceMs = boardBackgroundWaitResumedSinceMs({
+        nowMs: input.nowMs,
+        checkInsSent: wait.checkInsSent,
+      });
+      backgroundWaits.set(key, {
+        since: DateTime.formatIso(DateTime.makeUnsafe(resumedSinceMs)),
+        checkInsSent: wait.checkInsSent,
+        checkInOutstanding: false,
+        progressed: wait.progressed,
+      });
       return true;
     }
     const sinceMs = Date.parse(wait.since);
@@ -9869,8 +9909,6 @@ const make = Effect.gen(function* () {
     });
     return true;
   });
-  const threadAwaitingPermission = (threadId: ThreadId) =>
-    liveThread(threadId).pipe(Effect.map((shell) => shell?.awaitingPermission ?? false));
   const stampPermissionAnswered = (threadId: ThreadId) =>
     nowIso.pipe(Effect.map((now) => void permissionHeldAt.set(String(threadId), now)));
 
@@ -10078,11 +10116,15 @@ const make = Effect.gen(function* () {
       const heldAt =
         state.threadId === null ? undefined : permissionHeldAt.get(String(state.threadId));
       if (state.threadId !== null && heldAt !== undefined) {
-        if (yield* threadAwaitingPermission(state.threadId)) {
+        if (yield* threadAwaitingHuman(state.threadId)) {
           permissionHeldAt.set(String(state.threadId), now);
         } else if (nowMs - Date.parse(heldAt) > state.timeoutMs) {
           permissionHeldAt.delete(String(state.threadId));
         }
+      } else if (state.threadId !== null && (yield* subagentAwaitingApproval(state.threadId))) {
+        // A child's answer names the child's thread and never stamps the
+        // step's, so the hold is read every sweep, not only once overdue.
+        permissionHeldAt.set(String(state.threadId), now);
       }
       const todo = yield* threadTodoState(state.threadId);
       const lastSignalAt = outputSignalShieldsStep({
@@ -10125,9 +10167,10 @@ const make = Effect.gen(function* () {
       // `lastNudgeAt ?? startedAt`.
       // Checked last, so only overdue steps pay.
       if (yield* supersededByPendingTurn(state)) continue;
-      // A thread on a permission prompt is waiting on a human and emits nothing; nudging it would
-      // replace "Needs permission" with a stall. Read last, so only overdue steps pay.
-      if (state.threadId !== null && (yield* threadAwaitingPermission(state.threadId))) {
+      // A thread on its own permission prompt is waiting on a human; nudging it would replace
+      // "Needs permission" with a stall. Read last, so only overdue steps pay. The subagent half
+      // repeats this sweep's earlier read on purpose: it closes the gap if a child just asked.
+      if (state.threadId !== null && (yield* threadAwaitingHuman(state.threadId))) {
         permissionHeldAt.set(String(state.threadId), now);
         continue;
       }

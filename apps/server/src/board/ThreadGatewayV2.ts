@@ -19,6 +19,7 @@ import {
   type OrchestrationV2ThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
+import { subagentAwaitsApproval } from "@t3tools/shared/agentAwareness";
 import { boardThreadSessionStatus, boardThreadStateSource } from "@t3tools/shared/boardThreadState";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -912,6 +913,41 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
             : null,
         ),
       ),
+
+    // Walks down the thread's own app-owned subagent records rather than
+    // scanning lineage JSON, which no index covers; a thread with no live
+    // delegations costs one indexed read. Native subagents ask on their parent.
+    subagentAwaitingApproval: Effect.fn("ThreadGatewayV2.subagentAwaitingApproval")(
+      function* (threadId) {
+        const root = yield* shellOf(threadId);
+        if (root === null || root.deletedAt !== null) return false;
+        const seen = new Set<ThreadId>([threadId]);
+        let parents: ReadonlyArray<ThreadId> = [threadId];
+        while (parents.length > 0) {
+          const children: ThreadId[] = [];
+          for (const parentId of parents) {
+            const { subagents } = yield* projections.getThreadRecords(parentId, ["subagents"], {
+              omitSettledSubagents: true,
+            });
+            for (const task of subagents) {
+              const childId = task.childThreadId;
+              if (task.origin !== "app_owned" || childId === null || seen.has(childId)) continue;
+              seen.add(childId);
+              children.push(childId);
+            }
+          }
+          for (const childId of children) {
+            const child = yield* projections.getThreadShell(childId);
+            if (child !== null && child.deletedAt === null && subagentAwaitsApproval(child)) {
+              return true;
+            }
+          }
+          parents = children;
+        }
+        return false;
+      },
+      Effect.mapError(readError("subagentAwaitingApproval")),
+    ),
 
     projects: () =>
       projectRows.list({ includeDeleted: true }).pipe(

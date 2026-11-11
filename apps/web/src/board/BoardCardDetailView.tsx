@@ -385,6 +385,9 @@ export interface BoardDetailThreadLink {
   readonly title: string | null;
   readonly threadState: BoardCardThreadState;
   readonly awaitingInput: boolean;
+  /** A subagent under this thread awaits approval; the modal opens on this thread, whose chat
+      shows the child's approval. */
+  readonly subagentAwaitingApproval?: boolean | undefined;
   /** The worker the thread lives on, which is where it opens. */
   readonly worker: BoardThreadWorker;
   /** "ran on {worker}", only on a board with more than one worker. */
@@ -2342,7 +2345,15 @@ export function initialBoardCardThreadId(
   stages: ReadonlyArray<BoardStageDefinition>,
   stage: BoardStageId,
   links: ReadonlyArray<BoardCardThreadLink>,
+  /** A thread whose subagent awaits approval wins when it is live. */
+  awaitingThreadId?: ThreadId | null,
 ): ThreadId | null {
+  if (
+    awaitingThreadId != null &&
+    links.some((link) => link.threadId === awaitingThreadId && isLiveBoardCardThreadLink(link))
+  ) {
+    return awaitingThreadId;
+  }
   // A card whose threads are all retired still opens its newest one.
   const active =
     activeBoardCardThreadId(links) ??
@@ -2590,9 +2601,33 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // stage makes current", so the pane follows the card until the user picks a
   // thread, and a since-unlinked selection falls back to that same default.
   const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
+  // Read once on open, so a subagent asking mid-read never moves the pane;
+  // the newest such thread, as the stage default prefers the newest.
+  const [awaitingThreadAtOpen] = useState(() => {
+    const awaiting = new Set(
+      props.threadLinks
+        .filter((link) => link.subagentAwaitingApproval === true && !link.tombstoned)
+        .map((link) => link.threadId),
+    );
+    return (
+      sortBoardCardThreadLinks(card.threadLinks.filter((link) => awaiting.has(link.threadId))).at(
+        -1,
+      )?.threadId ?? null
+    );
+  });
   const selectedThread =
     props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
-    initialBoardCardThreadId(props.stages, card.stage, card.threadLinks);
+    initialBoardCardThreadId(
+      props.stages,
+      card.stage,
+      card.threadLinks,
+      // Once answered, the pane follows the stage default again.
+      props.threadLinks.some(
+        (link) => link.threadId === awaitingThreadAtOpen && link.subagentAwaitingApproval === true,
+      )
+        ? awaitingThreadAtOpen
+        : null,
+    );
   // A group's Planning pane is the Thread pane pinned to its planning
   // thread; the Thread pill still lists every thread, planning included.
   const planStageId = boardStageWithRole(stageStateOf(props.stages), "plan")?.stageId ?? null;

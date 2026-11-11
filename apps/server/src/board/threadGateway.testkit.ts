@@ -154,6 +154,7 @@ export interface FakeThreadGatewayOptions {
   readonly latestAssistantMessage?: (threadId: ThreadId) => BoardAssistantMessage | null;
   readonly lastSignalAt?: (threadId: ThreadId) => string | null;
   readonly pendingTurnStartAt?: (threadId: ThreadId) => string | null;
+  readonly subagentAwaitingApproval?: (threadId: ThreadId) => boolean;
 }
 
 interface FakeRecord extends BoardThreadRecord {
@@ -368,6 +369,8 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
       lastSignalAt: (threadId) => Effect.succeed(options.lastSignalAt?.(threadId) ?? null),
       pendingTurnStartAt: (threadId) =>
         Effect.succeed(options.pendingTurnStartAt?.(threadId) ?? null),
+      subagentAwaitingApproval: (threadId) =>
+        Effect.succeed(options.subagentAwaitingApproval?.(threadId) ?? false),
 
       projects: () => Effect.succeed(projects),
       project: (projectId) =>
@@ -445,6 +448,7 @@ export const inertThreadGateway = (
   latestAssistantMessage: () => Effect.succeed(null),
   lastSignalAt: () => Effect.succeed(null),
   pendingTurnStartAt: () => Effect.succeed(null),
+  subagentAwaitingApproval: () => Effect.succeed(false),
   projects: () => Effect.succeed([]),
   project: () => Effect.succeed(null),
   observe: Stream.never,
