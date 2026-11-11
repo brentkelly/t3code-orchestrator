@@ -215,6 +215,20 @@ export const BoardGatewaySettleInput = Schema.Struct({
 });
 export type BoardGatewaySettleInput = typeof BoardGatewaySettleInput.Type;
 
+export const BoardGatewayPullRequestUnlinkInput = Schema.Struct({
+  ...BoardGatewayTargetInput.fields,
+  host: TrimmedNonEmptyString,
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+});
+export type BoardGatewayPullRequestUnlinkInput = typeof BoardGatewayPullRequestUnlinkInput.Type;
+
+export const BoardGatewayPullRequestLinkInput = Schema.Struct({
+  ...BoardGatewayPullRequestUnlinkInput.fields,
+  url: TrimmedNonEmptyString,
+});
+export type BoardGatewayPullRequestLinkInput = typeof BoardGatewayPullRequestLinkInput.Type;
+
 /**
  * A gateway call the worker answered with a failure. `refused` and `failed`
  * mirror the gateway's command errors and `read` its read error, so the
@@ -310,6 +324,8 @@ export const BoardGatewayCall = Schema.Union([
   Schema.TaggedStruct("delete", { input: BoardGatewayTargetInput }),
   Schema.TaggedStruct("armLimitRecovery", { input: BoardGatewayTargetInput }),
   Schema.TaggedStruct("answerPendingInput", { input: BoardGatewayAnswerInput }),
+  Schema.TaggedStruct("linkPullRequest", { input: BoardGatewayPullRequestLinkInput }),
+  Schema.TaggedStruct("unlinkPullRequest", { input: BoardGatewayPullRequestUnlinkInput }),
   Schema.TaggedStruct("threadState", { threadId: ThreadId }),
   Schema.TaggedStruct("threadRecords", { threadIds: Schema.Array(ThreadId) }),
   Schema.TaggedStruct("threadsInWorktree", { worktreePath: Schema.String }),
@@ -335,6 +351,8 @@ export const BOARD_GATEWAY_CALL_RESULTS = {
   delete: Schema.Null,
   armLimitRecovery: Schema.Boolean,
   answerPendingInput: Schema.Boolean,
+  linkPullRequest: Schema.Null,
+  unlinkPullRequest: Schema.Null,
   threadState: Schema.NullOr(BoardGatewayThreadState),
   threadRecords: Schema.Array(BoardGatewayThreadRecord),
   threadsInWorktree: Schema.Array(BoardGatewayWorktreeThread),

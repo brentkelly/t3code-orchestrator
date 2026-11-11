@@ -433,8 +433,18 @@ export const BoardCardThreadLink = Schema.Struct({
   /** The board finished with this still-alive thread: it stays on
       the card as history but no longer runs anything. Absent while live. */
   retiredAt: Schema.optionalKey(IsoDateTime),
+  /** The count of the card's retired pull requests (`pullRequestHistory`
+      length) when the thread was linked. A round that ends with no PR retires
+      none, so it shares its stamp with the next. Absent on links written
+      before stamping, which read as 0 (`boardCardThreadLinkRound`). */
+  round: Schema.optionalKey(NonNegativeInt),
 });
 export type BoardCardThreadLink = typeof BoardCardThreadLink.Type;
+
+/** The round a thread link belongs to; an unstamped link is round 0. */
+export function boardCardThreadLinkRound(link: Pick<BoardCardThreadLink, "round">): number {
+  return link.round ?? 0;
+}
 
 /** A link whose thread exists and is still the card's working thread:
     neither tombstoned (deleted) nor retired. */
@@ -6712,6 +6722,9 @@ export const BoardCardPullRequestRecordedPayload = Schema.Struct({
   cardId: BoardCardId,
   pullRequest: Schema.NullOr(BoardCardPullRequest),
   transition: BoardCardPullRequestTransition,
+  /** The pull request this replaced or unlinked, on a `linked` or `unlinked`
+      transition that had one; absent otherwise and on older events. */
+  previous: Schema.optionalKey(BoardCardPullRequest),
   card: BoardCard,
 });
 export type BoardCardPullRequestRecordedPayload = typeof BoardCardPullRequestRecordedPayload.Type;

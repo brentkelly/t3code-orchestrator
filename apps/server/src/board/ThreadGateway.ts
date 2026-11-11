@@ -302,6 +302,19 @@ export interface ThreadSettleInput extends ThreadTargetInput {
   readonly auto: boolean;
 }
 
+/** Upstream's pull request key: host, `owner/repo` and number. */
+export interface ThreadPullRequestKey {
+  readonly host: string;
+  readonly repository: string;
+  readonly number: number;
+}
+
+export interface ThreadPullRequestUnlinkInput extends ThreadTargetInput, ThreadPullRequestKey {}
+
+export interface ThreadPullRequestLinkInput extends ThreadPullRequestUnlinkInput {
+  readonly url: string;
+}
+
 // ── The service ────────────────────────────────────────────────────────
 
 export interface ThreadGatewayShape {
@@ -327,6 +340,15 @@ export interface ThreadGatewayShape {
   readonly answerPendingInput: (
     input: ThreadAnswerInput,
   ) => Effect.Effect<boolean, ThreadCommandError>;
+  /** Link a pull request on the thread, as upstream's thread PR link (source
+      `agent`). A repeat with the same command id is a no-op, so the board's
+      stable id never re-links one a human unlinked. */
+  readonly linkPullRequest: (
+    input: ThreadPullRequestLinkInput,
+  ) => Effect.Effect<void, ThreadCommandError>;
+  readonly unlinkPullRequest: (
+    input: ThreadPullRequestUnlinkInput,
+  ) => Effect.Effect<void, ThreadCommandError>;
 
   /** One thread, deleted ones included, or null when it never existed —
       or `unknown` while the worker it lives on cannot be reached. */

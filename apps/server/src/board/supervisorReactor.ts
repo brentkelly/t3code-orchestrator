@@ -193,6 +193,7 @@ import {
   type ThreadSignal,
 } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
+import { syncCardThreadPullRequests } from "./cardThreadPullRequests.ts";
 import { resolveCardPullRequestTarget } from "./cardPullRequestTarget.ts";
 import {
   removeBoardCardAttachmentsDir,
@@ -10092,6 +10093,16 @@ const make = Effect.gen(function* () {
         return event.payload.outcome === "reattached"
           ? requeueResolvedPlacementStalls(event.payload.cardId).pipe(Effect.andThen(schedule()))
           : Effect.void;
+      case "board.card-pull-request-recorded":
+      case "board.card-thread-linked":
+        return Effect.flatMap(readBoard, (board) =>
+          syncCardThreadPullRequests({
+            board,
+            event,
+            threads,
+            unlinkCommandId: commandId("pr-unlink"),
+          }),
+        );
       default:
         return Effect.void;
     }
@@ -10422,6 +10433,10 @@ const make = Effect.gen(function* () {
           // A project's CI switched off moves its cards on from CI.
           // Settings edits, so rare.
           event.type !== "board.project-stage-config-set" &&
+          // The card's PR moved, or a thread joined the card: its threads'
+          // PR links follow (T3O-75). One per PR change or spawn.
+          event.type !== "board.card-pull-request-recorded" &&
+          event.type !== "board.card-thread-linked" &&
           // A human turned a running plan review off, or turned one
           // on after the plan was posted; Changed its rounds.
           event.type !== "board.plan-review-stopped" &&

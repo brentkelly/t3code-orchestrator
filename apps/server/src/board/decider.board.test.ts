@@ -1667,8 +1667,49 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           role: "planning",
           linkedAt: NOW,
           tombstonedAt: null,
+          round: 0,
         },
       ]);
+
+      // The link is stamped with the card's round: how many PRs it has retired.
+      const secondRound = yield* decide(
+        {
+          type: "board.card.link-thread",
+          commandId: CommandId.make("cmd-link-round"),
+          cardId: BoardCardId.make("card-b"),
+          threadId: ThreadId.make("thread-1"),
+          role: "review@1",
+          createdAt: NOW,
+        },
+        makeReadModel({
+          threads,
+          board: {
+            cards: [
+              makeCard({
+                id: "card-b",
+                pullRequestHistory: [
+                  {
+                    number: 7,
+                    url: "https://github.com/acme/repo/pull/7",
+                    state: "merged",
+                    title: null,
+                    headBranch: "board/card-b",
+                    baseRef: "main",
+                    checkedAt: NOW,
+                  },
+                ],
+              }),
+            ],
+            nextCardNumberByProject: {},
+          },
+        }),
+      );
+      assert.strictEqual(
+        secondRound.type === "board.card-thread-linked"
+          ? secondRound.payload.card.threadLinks[0]?.round
+          : undefined,
+        1,
+      );
 
       // One thread, one card: the same thread on another card is rejected.
       const failure = yield* decideFail(
@@ -1910,6 +1951,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           role: "linked",
           linkedAt: later,
           tombstonedAt: null,
+          round: 0,
         },
       ]);
     }),
@@ -4894,6 +4936,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         assert.strictEqual(event.payload.transition, "linked");
         assert.strictEqual(event.payload.card.pullRequest?.number, 75);
         assert.strictEqual(event.payload.card.pullRequest?.linked, true);
+        assert.notProperty(event.payload, "previous");
       }),
     );
 
@@ -4906,6 +4949,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         assert.strictEqual(event.type, "board.card-pull-request-recorded");
         if (event.type !== "board.card-pull-request-recorded") return;
         assert.strictEqual(event.payload.card.pullRequest?.number, 75);
+        // The replaced PR rides the event, so the card's threads can drop it.
+        assert.strictEqual(event.payload.previous?.number, 90);
       }),
     );
 
@@ -4977,6 +5022,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         if (event.type !== "board.card-pull-request-recorded") return;
         assert.strictEqual(event.payload.transition, "unlinked");
         assert.isNull(event.payload.card.pullRequest);
+        assert.strictEqual(event.payload.previous?.number, 75);
 
         const error = yield* decideFail(setLinked(null), boardWith(card({ pullRequest: pr(90) })));
         assert.include(String(error), "no explicitly linked pull request");
@@ -5006,6 +5052,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         if (event.type !== "board.card-pull-request-recorded") return;
         assert.strictEqual(event.payload.transition, "state-changed");
         assert.strictEqual(event.payload.card.pullRequest?.state, "merged");
+        assert.notProperty(event.payload, "previous");
         assert.strictEqual(event.payload.card.pullRequest?.linked, true);
       }),
     );

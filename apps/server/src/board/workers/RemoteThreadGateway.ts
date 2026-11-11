@@ -48,6 +48,8 @@ export type RemoteThreadGatewayShape = Pick<
   | "delete"
   | "armLimitRecovery"
   | "answerPendingInput"
+  | "linkPullRequest"
+  | "unlinkPullRequest"
   | "threadState"
   | "threadRecords"
   | "listLiveThreadIds"
@@ -283,6 +285,16 @@ export const makeRemoteThreadGateway = (
         (rpc, answer: Parameters<ThreadGatewayShape["answerPendingInput"]>[0]) =>
           rpc.gateway.answerPendingInput(answer),
       )(input).pipe(Effect.orElseSucceed(() => false)),
+    linkPullRequest: command(
+      "linkPullRequest",
+      (rpc, input: Parameters<ThreadGatewayShape["linkPullRequest"]>[0]) =>
+        rpc.gateway.linkPullRequest(input),
+    ),
+    unlinkPullRequest: command(
+      "unlinkPullRequest",
+      (rpc, input: Parameters<ThreadGatewayShape["unlinkPullRequest"]>[0]) =>
+        rpc.gateway.unlinkPullRequest(input),
+    ),
     threadState: Effect.fn("RemoteThreadGateway.threadState")(function* (threadId) {
       const rpc = yield* link.pipe(Effect.option);
       if (rpc._tag === "None") return UNKNOWN_THREAD_STATE;

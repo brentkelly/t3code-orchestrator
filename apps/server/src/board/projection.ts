@@ -77,6 +77,7 @@ import {
   type BoardCardShell,
   type BoardShellSnapshot,
   IsoDateTime,
+  NonNegativeInt,
   BoardProjectStageConfig,
   boardProjectStageConfigShell,
   type BoardProjectStageConfigShell,
@@ -238,6 +239,8 @@ const BoardCardThreadLinkDbRow = Schema.Struct({
   workerId: Schema.NullOr(EnvironmentId),
   /** Null while live. */
   retiredAt: Schema.NullOr(IsoDateTime),
+  /** Null on links written before rounds were stamped. */
+  round: Schema.NullOr(NonNegativeInt),
 });
 type BoardCardThreadLinkDbRow = typeof BoardCardThreadLinkDbRow.Type;
 
@@ -380,6 +383,9 @@ const linkWorker = (row: { readonly workerId: EnvironmentId | null }) =>
 // Key-optional like `workerId`, so rehydration equals replay.
 const linkRetired = (row: { readonly retiredAt: string | null }) =>
   row.retiredAt === null ? {} : { retiredAt: row.retiredAt };
+
+const linkRound = (row: { readonly round: number | null }) =>
+  row.round === null ? {} : { round: row.round };
 
 /** Map a joined row to the wire shell: the todo fields are
     key-optional, so a thread with no list serialises as a bare link entry. */
@@ -1078,7 +1084,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         linked_at AS "linkedAt",
         tombstoned_at AS "tombstonedAt",
         worker_id AS "workerId",
-        retired_at AS "retiredAt"
+        retired_at AS "retiredAt",
+        pull_request_round AS "round"
       FROM board_card_thread_links
       ORDER BY linked_at ASC, thread_id ASC
     `,
@@ -1099,7 +1106,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         linked_at AS "linkedAt",
         tombstoned_at AS "tombstonedAt",
         worker_id AS "workerId",
-        retired_at AS "retiredAt"
+        retired_at AS "retiredAt",
+        pull_request_round AS "round"
       FROM board_card_thread_links
       WHERE tombstoned_at IS NULL
         AND retired_at IS NULL
@@ -1483,7 +1491,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         linked_at AS "linkedAt",
         tombstoned_at AS "tombstonedAt",
         worker_id AS "workerId",
-        retired_at AS "retiredAt"
+        retired_at AS "retiredAt",
+        pull_request_round AS "round"
       FROM board_card_thread_links
       WHERE card_id = ${cardId}
     `,
@@ -1627,7 +1636,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         linked_at,
         tombstoned_at,
         worker_id,
-        retired_at
+        retired_at,
+        pull_request_round
       )
       VALUES (
         ${row.threadId},
@@ -1636,7 +1646,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.linkedAt},
         ${row.tombstonedAt},
         ${row.workerId},
-        ${row.retiredAt}
+        ${row.retiredAt},
+        ${row.round}
       )
       ON CONFLICT (thread_id)
       DO UPDATE SET
@@ -1645,7 +1656,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         linked_at = excluded.linked_at,
         tombstoned_at = excluded.tombstoned_at,
         worker_id = excluded.worker_id,
-        retired_at = excluded.retired_at
+        retired_at = excluded.retired_at,
+        pull_request_round = excluded.pull_request_round
     `,
   });
 
@@ -2691,6 +2703,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           tombstonedAt: link.tombstonedAt,
           workerId: link.workerId ?? null,
           retiredAt: link.retiredAt ?? null,
+          round: link.round ?? null,
         });
       }
     },
@@ -3780,6 +3793,7 @@ function loadBoardState(
             tombstonedAt: row.tombstonedAt,
             ...linkWorker(row),
             ...linkRetired(row),
+            ...linkRound(row),
           });
           linksByCard.set(row.cardId, links);
         }
@@ -3928,6 +3942,7 @@ function boardShellCards(
           tombstonedAt: row.tombstonedAt,
           ...linkWorker(row),
           ...linkRetired(row),
+          ...linkRound(row),
         });
         linksByCard.set(row.cardId, links);
       }
@@ -4304,6 +4319,7 @@ function makeBoardCardDetailLoader(
               tombstonedAt: row.tombstonedAt,
               ...linkWorker(row),
               ...linkRetired(row),
+              ...linkRound(row),
             })),
           );
           const labels = [...labelRows]
