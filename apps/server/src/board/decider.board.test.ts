@@ -25,6 +25,7 @@ import {
   resolveBoardCardForThread,
   type BoardCard,
   type BoardCardStepState,
+  type BoardStepCompletion,
   type BoardLabel,
   type BoardPlan,
   type BoardState,
@@ -980,7 +981,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
   const settling = (sinceSha: string) => ({ kind: "settling" as const, sinceSha });
   const modesBoard = (
     roundModes: Record<string, { kind: "settling"; sinceSha: string } | { kind: "full" }>,
-    stepCompletions: ReadonlyArray<ReturnType<typeof stuckStep>>,
+    stepCompletions: ReadonlyArray<BoardStepCompletion>,
   ): BoardOrchestrationReadModel =>
     makeReadModel({
       board: {

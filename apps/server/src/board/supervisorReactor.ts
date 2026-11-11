@@ -2539,7 +2539,8 @@ const make = Effect.gen(function* () {
     plan: Extract<BoardStagePlan, { readonly kind: "run" }>,
   ) {
     if (!plan.recordBaseTip) return {};
-    const mode = plan.reviewRoundMode?.mode ?? boardReviewRoundModeOf(card.reviewOverrides, plan.round);
+    const mode =
+      plan.reviewRoundMode?.mode ?? boardReviewRoundModeOf(card.reviewOverrides, plan.round);
     const board = yield* readBoard;
     yield* Effect.logInfo("board: review round starting", {
       cardId: card.id,

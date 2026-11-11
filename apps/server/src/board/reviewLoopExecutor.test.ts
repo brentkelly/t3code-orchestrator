@@ -164,10 +164,7 @@ const settlingScenarios = [
   },
   {
     name: "settling round 4 continues on a landed critical fix",
-    completions: [
-      ...oneImprovementRounds(3),
-      ...fixedRound(4, [finding("critical", "c1")]),
-    ],
+    completions: [...oneImprovementRounds(3), ...fixedRound(4, [finding("critical", "c1")])],
     rounds: 6,
     stopAfterRound: null,
     roundModes: { "4": settlingSince("sha-3") },
@@ -1542,7 +1539,11 @@ describe("settling rounds (T3O-64)", () => {
     expect(off.reviewRoundMode).toBeUndefined();
     expect(off.prompt).not.toContain("settling round");
     const recorded = runOf(
-      plan(oneImprovementRounds(3), undefined, overrides({ roundModes: { "4": settlingSince("x") } })),
+      plan(
+        oneImprovementRounds(3),
+        undefined,
+        overrides({ roundModes: { "4": settlingSince("x") } }),
+      ),
     );
     expect(recorded.reviewRoundMode).toBeUndefined();
     expect(recorded.prompt).toContain("git diff x..HEAD");

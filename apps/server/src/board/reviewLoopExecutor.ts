@@ -184,7 +184,8 @@ function reviewLoopDecision(input: {
       phase === "review"
         ? boardReviewNextRoundMode({ round, completions: input.completions, review, overrides })
         : boardReviewRoundModeOf(overrides, round);
-    const recordMode = phase === "review" && mode.kind === "settling" && !(String(round) in roundModes);
+    const recordMode =
+      phase === "review" && mode.kind === "settling" && !(String(round) in roundModes);
     return {
       kind: "run",
       round,

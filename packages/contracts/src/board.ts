@@ -10502,10 +10502,8 @@ export function boardReviewRoundModeOf(
 
 /**
  * The mode round `round` runs in: its record when one exists, so a re-plan composes the same
- * prompt whatever the settings say now. Otherwise settling when settling is on, the previous
- * round is past `settleAfterRound`, it is not owed as a gate round, and the previous round had
- * fewer than `settleBelowFindings` forcing findings not ruled rejection-justified. Asked only by
- * the executor when it plans a round's review; every other reader uses the record.
+ * prompt. Otherwise settling once past `settleAfterRound`, outside a gate round, after a round
+ * with fewer than `settleBelowFindings` forcing findings. Only the executor asks this.
  */
 export function boardReviewNextRoundMode(input: {
   readonly round: number;
@@ -10577,18 +10575,16 @@ export function boardReviewRoundForcingCount(input: {
   });
   if (fold.kind === "converge") return 0;
   if (fold.kind !== "folded") return null;
-  return boardReviewForcingFindings(fold, boardReviewRoundModeOf(input.overrides, input.round))
-    .filter((finding) => fold.latestVerdict(finding.id)?.verdict !== "rejection-justified")
-    .length;
+  return boardReviewForcingFindings(
+    fold,
+    boardReviewRoundModeOf(input.overrides, input.round),
+  ).filter((finding) => fold.latestVerdict(finding.id)?.verdict !== "rejection-justified").length;
 }
 
 /**
- * Review, then triage when there are findings, then adjudicate when any is blocking. An
- * overruled triage binds: one re-triage and one re-adjudicate pass, after which a surviving
- * dispute (or an `escalated` verdict) makes the round stuck. Rounds without `anotherRound`, or
- * already moved past, never get a second pass, so replaying an old ledger plans nothing new.
- * A settling round adjudicates the same set but converges once its carried and critical
- * findings are settled, whatever `anotherRound` says.
+ * An overruled triage binds: one re-triage and re-adjudicate pass, then a surviving dispute is
+ * stuck. Rounds without `anotherRound`, or moved past, never get a second pass. A settling round
+ * adjudicates the same set but converges once its carried and critical findings are settled.
  */
 export function boardReviewRoundResolution(input: {
   readonly round: number;
@@ -10668,7 +10664,8 @@ export function boardReviewRoundResolution(input: {
     const shaCheckPasses =
       fixedFindings.length > 0 ||
       (boardReviewShaMatches(fold.triage.fixedSha, fold.reviewedSha) &&
-        (fold.retriage === null || boardReviewShaMatches(fold.retriage.fixedSha, fold.reviewedSha)));
+        (fold.retriage === null ||
+          boardReviewShaMatches(fold.retriage.fixedSha, fold.reviewedSha)));
     if (settled && shaCheckPasses) return { kind: "converge", by: "adjudicator" };
   }
   return { kind: "continue" };
@@ -10758,8 +10755,7 @@ export function boardReviewCompletionDefect(input: {
   const adjudication = Option.getOrNull(decodeBoardAdjudicatePayloadOption(value));
   if (adjudication === null) return null;
   if (adjudication.anotherRound === undefined) {
-    return boardReviewRoundModeOf({ roundModes: input.roundModes ?? {} }, round).kind ===
-      "settling"
+    return boardReviewRoundModeOf({ roundModes: input.roundModes ?? {} }, round).kind === "settling"
       ? "The payload must say `anotherRound`. This is a settling round, so the value is recorded but has no effect: only critical findings force another round. Complete the step again with it."
       : "The payload must say `anotherRound`: true for another review round, false only if this round raised nothing new beyond points already settled. Complete the step again with it.";
   }
@@ -11529,7 +11525,7 @@ export type BoardStageExecutionSimple = typeof BoardStageExecutionSimple.Type;
  * `resolveBoardStageExecution` forces build mode so the loop always has a worktree.
  */
 export const DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND = 3;
-export const DEFAULT_BOARD_REVIEW_SETTLE_BELOW_FINDINGS = 2;
+const DEFAULT_BOARD_REVIEW_SETTLE_BELOW_FINDINGS = 2;
 /** At least 2: a round with no forcing findings already converges, so 1 could never settle. */
 export const BOARD_REVIEW_SETTLE_BELOW_FINDINGS_MIN = 2;
 export const BoardReviewSettleBelowFindings = Schema.Int.check(

@@ -392,7 +392,7 @@ function boardReviewSettlingTag(mode: BoardReviewRoundMode | undefined): string 
 
 /** What a settling round asks of each phase, compiled in beside the machine contract so a
     custom phase prompt cannot drop it. Empty for a full round. */
-export function boardReviewSettlingBlock(input: {
+function boardReviewSettlingBlock(input: {
   readonly phase: BoardReviewPhaseId | BoardReviewFollowUpPhase;
   readonly mode: BoardReviewRoundMode | undefined;
 }): string {

@@ -35,6 +35,9 @@ import {
 import * as Schema from "effect/Schema";
 
 const cardId = BoardCardId.make("card-1");
+const decodeOverrides = Schema.decodeUnknownSync(BoardCardReviewOverrides);
+const decodeReviewStage = Schema.decodeUnknownSync(BoardStageExecutionReview);
+const decodeReviewPayload = Schema.decodeUnknownSync(BoardReviewPayload);
 
 const completion = (
   stepId: string,
@@ -1672,7 +1675,11 @@ describe("T3O-64: settling rounds", () => {
     findings: ReadonlyArray<BoardReviewFinding>,
   ): BoardStepCompletion[] => [
     review(round, findings),
-    triage(round, Object.fromEntries(findings.map((f) => [f.id, "fixed" as const])), `fix-${round}`),
+    triage(
+      round,
+      Object.fromEntries(findings.map((f) => [f.id, "fixed" as const])),
+      `fix-${round}`,
+    ),
     ruling("adjudicate", round, Object.fromEntries(findings.map((f) => [f.id, "fix-upheld"]))),
   ];
   const improvements = (round: number, count = 1) =>
@@ -1692,8 +1699,7 @@ describe("T3O-64: settling rounds", () => {
     completions: ReadonlyArray<BoardStepCompletion>,
     cardOverrides: BoardCardReviewOverrides | null = null,
     settings: { settleAfterRound: number | null; settleBelowFindings: number } = SETTLING,
-  ) =>
-    boardReviewNextRoundMode({ round, completions, review: settings, overrides: cardOverrides });
+  ) => boardReviewNextRoundMode({ round, completions, review: settings, overrides: cardOverrides });
   const settlingSince = (sha: string) => ({ kind: "settling" as const, sinceSha: sha });
   const walkModes = (
     completions: ReadonlyArray<BoardStepCompletion>,
@@ -1787,10 +1793,9 @@ describe("T3O-64: settling rounds", () => {
     });
 
     it("returns a recorded mode unchanged, whatever the settings say now", () => {
-      assert.deepStrictEqual(
-        modeOf(4, firstThree, overrides({ "4": { kind: "full" } })),
-        { kind: "full" },
-      );
+      assert.deepStrictEqual(modeOf(4, firstThree, overrides({ "4": { kind: "full" } })), {
+        kind: "full",
+      });
       assert.deepStrictEqual(
         modeOf(4, [], overrides({ "4": settlingSince("abc") }), {
           settleAfterRound: null,
@@ -1961,25 +1966,20 @@ describe("T3O-64: settling rounds", () => {
 
   describe("decoding older records", () => {
     it("decodes old overrides, stage config and review payloads", () => {
-      assert.deepStrictEqual(
-        Schema.decodeUnknownSync(BoardCardReviewOverrides)({ rounds: 5 }).roundModes,
-        {},
-      );
-      const stage = Schema.decodeUnknownSync(BoardStageExecutionReview)({ kind: "review" });
+      assert.deepStrictEqual(decodeOverrides({ rounds: 5 }).roundModes, {});
+      const stage = decodeReviewStage({ kind: "review" });
       assert.strictEqual(stage.settleAfterRound, 3);
       assert.strictEqual(stage.settleBelowFindings, 2);
       assert.strictEqual(
-        Schema.decodeUnknownSync(BoardStageExecutionReview)({
+        decodeReviewStage({
           kind: "review",
           settleAfterRound: null,
         }).settleAfterRound,
         null,
       );
-      assert.isUndefined(
-        Schema.decodeUnknownSync(BoardReviewPayload)({ reviewedSha: "a", findings: [] }).scope,
-      );
+      assert.isUndefined(decodeReviewPayload({ reviewedSha: "a", findings: [] }).scope);
       assert.throws(() =>
-        Schema.decodeUnknownSync(BoardStageExecutionReview)({
+        decodeReviewStage({
           kind: "review",
           settleBelowFindings: 1,
         }),
