@@ -9,6 +9,7 @@ import {
   BoardWorkerGitError,
   type BoardWorkspaceDurability,
   type ProjectId,
+  type WorktreeSubmodules,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -44,6 +45,9 @@ export interface LocalBoardWorkspaceDeps {
   /** This server's worktrees directory, as spelled and as resolved through
       symlinks; empty when there is none to sweep (a test without a config). */
   readonly worktreeRoots: Effect.Effect<ReadonlyArray<string>>;
+  /** The project's `worktreeSubmodules` setting on this server (T3O-74), or
+      null to defer to the checkout's t3.json. Absent reads as null. */
+  readonly worktreeSubmodules?: (projectId: ProjectId) => Effect.Effect<WorktreeSubmodules | null>;
   /** Whether this server's own board has workers other than itself. Only then
       can a base move without this checkout seeing it, so only then does
       `measureBaseTip` go to the remote. Absent reads as no. */
@@ -61,7 +65,7 @@ export type BoardWorktreeOwner = "self" | "central";
     worktree. No marker means this server's own board. It names no central
     server: a worker serves one board, and naming the session would orphan
     every checkout on a re-pair. */
-const CENTRAL_OWNER_MARKER = "t3o-board-owner";
+export const CENTRAL_OWNER_MARKER = "t3o-board-owner";
 
 /** How long a staleness check waits on the remote before reading what it has. */
 const BASE_TIP_FETCH_TIMEOUT_MS = 15_000;
@@ -325,7 +329,9 @@ export function makeLocalBoardWorkspace(
     rootOf("provisionWorktree", projectId).pipe(
       Effect.tap((projectCwd) => refuseForeignCheckout(projectCwd, branch)),
       Effect.flatMap((projectCwd) =>
-        withGit(provisionBoardCardWorktree({ projectCwd, branch, baseRefName })),
+        Effect.flatMap(deps.worktreeSubmodules?.(projectId) ?? Effect.succeed(null), (submodules) =>
+          withGit(provisionBoardCardWorktree({ projectCwd, branch, baseRefName, submodules })),
+        ),
       ),
       Effect.tap((worktree) =>
         owner === "central" ? markCentralOwned(worktree.path) : Effect.void,
@@ -714,7 +720,7 @@ export function makeLocalBoardWorkspace(
     rootOf("retireWorktree", projectId).pipe(
       Effect.flatMap((projectCwd) =>
         retirer
-          .retire({ projectCwd, projectId, worktreePath, kind, verifiedClean })
+          .retire({ projectCwd, projectId, worktreePath, kind, verifiedClean, cardWorktree: true })
           .pipe(Effect.mapError(gitFailed("retireWorktree"))),
       ),
     );

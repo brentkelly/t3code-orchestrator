@@ -36,6 +36,10 @@ back.
 If you delete a finished card's worktree folder yourself, the board notices on its next check and
 tidies git's record of it. The branch and its commits stay.
 
+Automatic worktree cleanup (**Settings → Worktrees → Cleanup**) leaves card worktrees alone, whatever their
+inactivity or merge state. The board removes a card's worktree itself, as described here; once it
+has, those rules apply to that folder again.
+
 ## Clearing a kept worktree
 
 Open the card. Its banner names the reason and the worktree's folder, and offers two actions:
@@ -70,6 +74,8 @@ removed**, or set `"runOnWorktreeRemove": true` on a script in `t3.json`:
   `T3_REMOVAL` (`reclaim`, or `forced` for **Remove worktree**, a card delete or a thread delete)
   and `T3_WORKTREE_VERIFIED_CLEAN` (`1` only when the worktree was just checked clean and its work
   saved elsewhere).
+- On a card's worktree, the project's run-on-settle action runs first, once, since card threads
+  skip it when they settle.
 - Several scripts may be marked; they run in order. The removal waits for them, up to 5 minutes
   each. Deleting a thread or a card does not wait: the worktree goes once the scripts finish.
 - A script that fails or times out does not stop the removal. The card's activity notes the failure.

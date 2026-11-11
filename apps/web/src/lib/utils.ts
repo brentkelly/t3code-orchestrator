@@ -4,15 +4,21 @@ import { type CxOptions, cx } from "class-variance-authority";
 import * as Hex from "effect/encoding/Hex";
 import { extendTailwindMerge } from "tailwind-merge";
 import { DraftId } from "../composerDraftStore";
+// T3o: the board's own theme scales, so cn() merges them by kind.
+import { mergeBoardTailwindTheme } from "../board/boardTailwindMerge";
 
 // Register extra font sizes and background images so tailwind-merge does not
 // treat text-2xs or bg-composer-seam-below as colors.
-const twMerge = extendTailwindMerge({
-  extend: {
-    theme: { text: ["2xs", "3xs", "4xs", "5xs"] },
-    classGroups: { "bg-image": [{ bg: ["composer-seam-below", "composer-seam-above"] }] },
+const twMerge = extendTailwindMerge(
+  {
+    extend: {
+      theme: { text: ["2xs", "3xs", "4xs", "5xs"] },
+      classGroups: { "bg-image": [{ bg: ["composer-seam-below", "composer-seam-above"] }] },
+    },
   },
-});
+  // T3o: board theme scales.
+  mergeBoardTailwindTheme,
+);
 
 export function cn(...inputs: CxOptions) {
   return twMerge(cx(inputs));

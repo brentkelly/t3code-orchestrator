@@ -179,6 +179,75 @@ it.effect("a wait that never ends escalates to a human once the ladder is spent"
   ),
 );
 
+it.effect("a subagent awaiting approval holds every check-in, charge and escalation", () => {
+  const held = new Set<string>();
+  return withGovernor({ ...fixture(), subagentsAwaitingApproval: held }, (h) =>
+    Effect.gen(function* () {
+      const threadId = yield* startWaiting(h);
+      held.add(String(threadId));
+      const maxAttempts = stateOf(yield* h.board)!.maxAttempts;
+      // Far past every free check-in and the ceiling that would escalate.
+      for (let sweep = 0; sweep < 3 + maxAttempts + 2; sweep++) yield* after(h, 30);
+      const waiting = stateOf(yield* h.board);
+      assert.strictEqual(waiting?.status, "running");
+      assert.strictEqual(waiting?.stallCount, 0);
+      assert.strictEqual(waiting?.stageEntryRecoveries, 0);
+      assert.strictEqual(checkInsOf(yield* h.commands), 0);
+      assert.strictEqual(stallNudgesOf(yield* h.commands), 0);
+
+      // Answered: the wait restarts, so the first check-in is +5 from now.
+      held.delete(String(threadId));
+      yield* after(h, 1);
+      yield* after(h, 4);
+      assert.strictEqual(checkInsOf(yield* h.commands), 0, "nothing before +5 after the answer");
+      yield* after(h, 1);
+      assert.strictEqual(checkInsOf(yield* h.commands), 1);
+      assert.strictEqual(stateOf(yield* h.board)?.stallCount, 0);
+    }),
+  );
+});
+
+it.effect("a subagent approval answered before a check-in is due restarts the wait", () => {
+  const held = new Set<string>();
+  return withGovernor({ ...fixture(), subagentsAwaitingApproval: held }, (h) =>
+    Effect.gen(function* () {
+      const threadId = yield* startWaiting(h);
+      held.add(String(threadId));
+      yield* after(h, 2);
+      held.delete(String(threadId));
+      yield* after(h, 2);
+      yield* after(h, 1);
+      assert.strictEqual(checkInsOf(yield* h.commands), 0, "the wait restarted at +4");
+      yield* after(h, 4);
+      assert.strictEqual(checkInsOf(yield* h.commands), 1);
+    }),
+  );
+});
+
+it.effect("a hold released after charged check-ins resumes one interval out", () => {
+  const held = new Set<string>();
+  return withGovernor({ ...fixture(), subagentsAwaitingApproval: held }, (h) =>
+    Effect.gen(function* () {
+      const threadId = yield* startWaiting(h);
+      yield* after(h, 5);
+      yield* after(h, 10);
+      yield* after(h, 15);
+      yield* after(h, 30);
+      assert.strictEqual(checkInsOf(yield* h.commands), 4);
+
+      held.add(String(threadId));
+      yield* after(h, 30);
+      yield* after(h, 30);
+      held.delete(String(threadId));
+      yield* after(h, 1);
+      yield* after(h, 29);
+      assert.strictEqual(checkInsOf(yield* h.commands), 4, "nothing before one interval");
+      yield* after(h, 1);
+      assert.strictEqual(checkInsOf(yield* h.commands), 5, "one interval after the release");
+    }),
+  );
+});
+
 it.effect("a commit mid-wait restarts the schedule and the stall streak", () => {
   // The branch's newest commit, read lazily so the agent can commit mid-test.
   let committedAt = "";

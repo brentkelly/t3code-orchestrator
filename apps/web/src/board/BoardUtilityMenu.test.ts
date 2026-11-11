@@ -41,7 +41,7 @@ describe("board corner menu", () => {
     // 14px corner inset + the 40px pill + 6px of clearance. A reserve merely
     // equal to the inset plus the pill lets a card's last two pixels sit
     // under the glass.
-    expect(BOARD_UTILITY_MENU_RESERVED_SPACE).toBe("pb-[60px]");
+    expect(BOARD_UTILITY_MENU_RESERVED_SPACE).toBe("pb-15");
     expect(boardPageSource).not.toMatch(/overflow-auto px-3 pb-3/);
   });
 });

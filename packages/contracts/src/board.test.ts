@@ -585,14 +585,24 @@ describe("board card shell derivation", () => {
         hasPendingApprovals: false,
         session: { status: "running" },
       }),
-    ).toEqual({ threadState: "waiting", awaitingInput: true, waitingOnBackground: false });
+    ).toEqual({
+      threadState: "waiting",
+      awaitingInput: true,
+      waitingOnBackground: false,
+      awaitingSubagent: false,
+    });
     expect(
       deriveBoardCardThreadState({
         hasPendingUserInput: false,
         hasPendingApprovals: true,
         session: { status: "running" },
       }),
-    ).toEqual({ threadState: "waiting", awaitingInput: false, waitingOnBackground: false });
+    ).toEqual({
+      threadState: "waiting",
+      awaitingInput: false,
+      waitingOnBackground: false,
+      awaitingSubagent: false,
+    });
     // A session that died mid-prompt keeps its approval row, but nobody can
     // approve into it: the card reads failed, not Needs permission.
     expect(
@@ -601,7 +611,12 @@ describe("board card shell derivation", () => {
         hasPendingApprovals: true,
         session: { status: "error" },
       }),
-    ).toEqual({ threadState: "failed", awaitingInput: false, waitingOnBackground: false });
+    ).toEqual({
+      threadState: "failed",
+      awaitingInput: false,
+      waitingOnBackground: false,
+      awaitingSubagent: false,
+    });
     expect(
       deriveBoardCardThreadState({
         hasPendingUserInput: false,
@@ -1084,6 +1099,7 @@ describe("deriveBoardCardThreadState aggregates across live threads (t3o-18, D7)
       threadState: "failed",
       awaitingInput: false,
       waitingOnBackground: false,
+      awaitingSubagent: false,
     });
   });
 
@@ -1892,6 +1908,62 @@ describe("cards that need a human (boardCardAttention)", () => {
         session: { status: "running" },
       });
       expect(attention({ threadState, awaitingInput })?.reason).toBe("permission");
+    });
+
+    // A delegate_task child's approval. The parent ended its turn with
+    // the delegate in the background, so it has no running session of its own.
+    it("turns violet for a subagent's approval under a parent idle on background work", () => {
+      const parent = {
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        session: { status: "ready" },
+        backgroundLiveness: "working",
+      } as const;
+      expect(deriveBoardCardThreadState(parent)).toMatchObject({
+        threadState: "working",
+        waitingOnBackground: true,
+        awaitingSubagent: false,
+      });
+      const derived = deriveBoardCardThreadState({ ...parent, subagentAwaitingApproval: true });
+      expect(derived).toEqual({
+        threadState: "waiting",
+        awaitingInput: false,
+        waitingOnBackground: false,
+        awaitingSubagent: true,
+      });
+      const flag = attention({
+        threadState: derived.threadState,
+        awaitingInput: derived.awaitingInput,
+        awaitingSubagent: derived.awaitingSubagent,
+      });
+      expect(flag?.reason).toBe("permission");
+      expect(flag?.label).toBe("Needs permission");
+      expect(flag?.detail).toBe(
+        "A thread under this card's agent is waiting for you to approve a request",
+      );
+    });
+
+    it("keeps the thread's own wording when a linked thread holds its own prompt too", () => {
+      const own = {
+        hasPendingApprovals: true,
+        hasPendingUserInput: false,
+        session: { status: "running" },
+      };
+      const sub = {
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        session: null,
+        subagentAwaitingApproval: true,
+      };
+      const derived = deriveBoardCardThreadState([own, sub]);
+      expect(derived.awaitingSubagent).toBe(false);
+      expect(attention({ ...permission })?.detail).toBe(
+        "A thread on this card is waiting for you to approve or deny a request",
+      );
+      // A question on the card still outranks a subagent's approval.
+      expect(
+        deriveBoardCardThreadState([{ ...sub, hasPendingUserInput: true }]).awaitingInput,
+      ).toBe(true);
     });
 
     it("ranks just below a question and below the step's own verdicts", () => {

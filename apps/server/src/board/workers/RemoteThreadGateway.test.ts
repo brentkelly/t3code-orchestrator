@@ -89,11 +89,12 @@ const spawnInput = (
     the router over all of them. */
 const setup = (
   links: ReadonlyMap<string, BoardWorkerId> = new Map(),
+  worker: Parameters<typeof makeInProcessWorker>[0] = {},
   recorder?: BoardUsageRecorderShape,
   protocolVersion?: number,
 ) =>
   Effect.gen(function* () {
-    const env = yield* makeInProcessWorker();
+    const env = yield* makeInProcessWorker(worker);
     if (protocolVersion !== undefined) env.worker.hello = helloFor(WORKER_ID, protocolVersion);
     const central = yield* makeFakeThreadGateway({
       projects: [
@@ -254,7 +255,7 @@ describe("the remote thread gateway", () => {
           yield* sql`
           INSERT INTO board_card_thread_links (thread_id, card_id, role, linked_at, worker_id)
           VALUES (${threadId}, ${cardId}, ${"review@1"}, ${"2026-01-01T00:00:00.000Z"}, ${WORKER_ID})`;
-          const { threads, feed } = yield* setup(new Map(), recorder);
+          const { threads, feed } = yield* setup(new Map(), {}, recorder);
           const changes = yield* recorder.subscribeChanges;
           const signals = yield* feed.subscribeSignals;
           yield* threads.emit({
@@ -297,7 +298,7 @@ describe("the remote thread gateway", () => {
           INSERT INTO board_card_thread_links (thread_id, card_id, role, linked_at, worker_id)
           VALUES ('thread-old', ${cardId}, 'building', '2026-01-01T00:00:00.000Z', ${WORKER_ID})`;
         const changes = yield* recorder.subscribeChanges;
-        yield* setup(new Map(), recorder, BOARD_WORKER_USAGE_PROTOCOL - 1);
+        yield* setup(new Map(), {}, recorder, BOARD_WORKER_USAGE_PROTOCOL - 1);
         assert.strictEqual(Option.getOrThrow(yield* Stream.runHead(changes)), cardId);
         const [card] = yield* sql<{ readonly partial: number }>`
           SELECT usage_history_partial AS partial FROM board_cards WHERE card_id = ${cardId}`;
@@ -365,6 +366,30 @@ describe("the remote thread gateway", () => {
           (error.cause as { readonly _tag?: string } | undefined)?._tag,
           "WorkerUnavailable",
         );
+      }),
+    ),
+  );
+
+  it.effect("asks the worker whether a subagent awaits approval, and reads silence as no", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const held = ThreadId.make("thread-held");
+        const free = ThreadId.make("thread-free");
+        const { router, kit, worker, connections } = yield* setup(
+          new Map<string, BoardWorkerId>([
+            [held, WORKER_ID],
+            [free, WORKER_ID],
+          ]),
+          { subagentAwaitingApproval: (threadId) => threadId === held },
+        );
+        assert.isTrue(yield* router.subagentAwaitingApproval(held));
+        assert.isFalse(yield* router.subagentAwaitingApproval(free));
+
+        // A worker that cannot answer must not hold a step forever.
+        worker.mode = "unreachable";
+        yield* kit.fake.drop(worker);
+        yield* waitOffline(connections);
+        assert.isFalse(yield* router.subagentAwaitingApproval(held));
       }),
     ),
   );

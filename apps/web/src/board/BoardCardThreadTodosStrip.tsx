@@ -58,11 +58,11 @@ export function BoardCardThreadTodosStrip({
         ) : (
           <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground" />
         )}
-        <span className="shrink-0 text-[11px] font-medium tabular-nums text-foreground">
+        <span className="shrink-0 text-board-11 font-medium tabular-nums text-foreground">
           {done}/{total} todos
         </span>
         {todo.todoCurrent === undefined || expanded ? null : (
-          <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+          <span className="min-w-0 flex-1 truncate text-board-11 text-muted-foreground">
             {todo.todoCurrent}
           </span>
         )}
@@ -78,7 +78,7 @@ export function BoardCardThreadTodosStrip({
           {Array.from({ length: statuses.length }, (_, index) => (
             <li
               className={cn(
-                "flex items-center gap-1.5 text-[11.5px]",
+                "flex items-center gap-1.5 text-board-11-5",
                 statuses[index] === BOARD_THREAD_TODO_STATUS_DONE
                   ? "text-muted-foreground line-through"
                   : statuses[index] === BOARD_THREAD_TODO_STATUS_IN_PROGRESS

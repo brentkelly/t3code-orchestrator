@@ -15,6 +15,7 @@ import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
   ThreadId,
   BOARD_SEED_STAGE_IDS,
   defaultBoardCardGroup,
@@ -24,6 +25,7 @@ import {
   resolveBoardCardForThread,
   type BoardCard,
   type BoardCardStepState,
+  type BoardStepCompletion,
   type BoardLabel,
   type BoardPlan,
   type BoardState,
@@ -368,6 +370,50 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
     }),
   );
 
+  it.effect("T3O-78: create stores an external reference no other live card holds", () =>
+    Effect.gen(function* () {
+      const ref = { system: "github-issue", id: "org/repo#7", url: "https://x/7" };
+      const holder = makeCard({ id: "card-holder", key: "CARD-3", externalRef: ref });
+      const event = yield* decide(
+        { ...createCommand({ cardId: "card-new" }), externalRef: ref },
+        makeReadModel({}),
+      );
+      assert.deepStrictEqual(
+        event.type === "board.card-created" ? event.payload.externalRef : null,
+        ref,
+      );
+      // Board-wide: a holder in another project still takes the reference.
+      const elsewhere = { ...holder, projectId: otherProjectId };
+      const refused = yield* decideFail(
+        { ...createCommand({ cardId: "card-new" }), externalRef: ref },
+        makeReadModel({ board: seededBoard([elsewhere]) }),
+      );
+      assert.include(String(refused.message), "CARD-3");
+      // An archived holder does not.
+      yield* decide(
+        { ...createCommand({ cardId: "card-new" }), externalRef: ref },
+        makeReadModel({ board: seededBoard([{ ...holder, archivedAt: NOW }]) }),
+      );
+      // Update: setting a taken reference is refused; the holder may re-set its own.
+      const other = makeCard({ id: "card-other", key: "CARD-4" });
+      const update = (cardId: string) =>
+        ({
+          type: "board.card.update",
+          commandId: CommandId.make(`cmd-ref-${cardId}`),
+          cardId: BoardCardId.make(cardId),
+          externalRef: ref,
+          createdAt: NOW,
+        }) as const;
+      const board = makeReadModel({ board: seededBoard([holder, other]) });
+      const taken = yield* decideFail(update("card-other"), board);
+      assert.include(String(taken.message), "CARD-3");
+      yield* decide(update("card-holder"), board);
+      // An unchanged re-send is no new claim, even beside an older live duplicate.
+      const twin = makeCard({ id: "card-twin", key: "CARD-5", externalRef: ref });
+      yield* decide(update("card-holder"), makeReadModel({ board: seededBoard([holder, twin]) }));
+    }),
+  );
+
   // ── Stage moves ──────────────────────────────────────────────────────
 
   it.effect("allows adjacent moves in both directions without override", () =>
@@ -703,6 +749,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         runThroughRound: null,
         carriedFindings: {},
         stuckWaivedThrough: null,
+        roundModes: {},
       },
       createdAt: NOW,
     }) satisfies BoardCommand;
@@ -839,6 +886,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
               runThroughRound: null,
               carriedFindings: {},
               stuckWaivedThrough: null,
+              roundModes: {},
             },
           }),
         );
@@ -866,6 +914,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
             runThroughRound: null,
             carriedFindings: {},
             stuckWaivedThrough: null,
+            roundModes: {},
           },
         }),
       );
@@ -902,6 +951,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           runThroughRound: 2,
           carriedFindings: { "2": carryEntry },
           stuckWaivedThrough: 1,
+          roundModes: {},
         };
         assert.include(
           String(
@@ -931,6 +981,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         runThroughRound: 2,
         carriedFindings: { "2": carryEntry },
         stuckWaivedThrough: 1,
+        roundModes: { "2": { kind: "settling" as const, sinceSha: "s" } },
       };
       for (const reviewOverrides of [
         null,
@@ -951,6 +1002,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           "2": carryEntry,
         });
         assert.strictEqual(event.payload.card.reviewOverrides?.stuckWaivedThrough, 1);
+        assert.deepStrictEqual(event.payload.card.reviewOverrides?.roundModes, {
+          "2": { kind: "settling", sinceSha: "s" },
+        });
       }
     }),
   );
@@ -965,6 +1019,138 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
       ...(cause === undefined ? {} : { cause }),
       createdAt: NOW,
     }) satisfies BoardCommand;
+
+  // ── Settling round modes (T3O-64) ──────
+
+  const settling = (sinceSha: string) => ({ kind: "settling" as const, sinceSha });
+  const modesBoard = (
+    roundModes: Record<string, { kind: "settling"; sinceSha: string } | { kind: "full" }>,
+    stepCompletions: ReadonlyArray<BoardStepCompletion>,
+  ): BoardOrchestrationReadModel =>
+    makeReadModel({
+      board: {
+        cards: [
+          {
+            ...makeCard({ id: "card-a" }),
+            stage: BoardStageId.make(BOARD_SEED_STAGE_IDS.review),
+            reviewOverrides: {
+              ...EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
+              roundModes,
+            },
+          },
+        ],
+        nextCardNumberByProject: {},
+        stepCompletions,
+      } as BoardState,
+    });
+  const cleanReview = (round: number) =>
+    stuckStep(`review@${round}`, { reviewedSha: `sha-${round}`, findings: [] });
+  const selectReview = (round: number, mode?: { kind: "settling"; sinceSha: string }) =>
+    ({
+      type: "board.card.select-step",
+      commandId: CommandId.make(`cmd-select-${round}`),
+      cardId: BoardCardId.make("card-a"),
+      stepId: `review@${round}`,
+      stepLabel: `Review · round ${round}`,
+      stageLabel: "Code review",
+      prompt: "review it",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5-codex",
+      runtimeMode: "auto",
+      mode: "build",
+      humanInLoop: false,
+      maxAttempts: 3,
+      timeoutMs: 600_000,
+      baseTipAtRoundStart: null,
+      ...(mode === undefined ? {} : { reviewRoundMode: { round, mode } }),
+      createdAt: NOW,
+    }) satisfies BoardCommand;
+
+  it.effect("T3O-64: select-step records a settling round in the same decision", () =>
+    Effect.gen(function* () {
+      const events = yield* decideEvents(
+        selectReview(2, settling("sha-1")),
+        modesBoard({}, [cleanReview(1)]),
+      );
+      assert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["board.card-step-selected", "board.card-updated"],
+      );
+      const updated = events[1]!;
+      if (updated.type !== "board.card-updated") throw new Error("expected card-updated");
+      assert.deepStrictEqual(updated.payload.card.reviewOverrides?.roundModes, {
+        "2": settling("sha-1"),
+      });
+      // The summary is recomputed from the new overrides, as set-review-carry does.
+      assert.isDefined(updated.payload.reviewSummary);
+    }),
+  );
+
+  it.effect("T3O-64: select-step never overwrites a recorded mode, and full records nothing", () =>
+    Effect.gen(function* () {
+      // A full-round request landed after the settling plan was composed: its prompt is stale.
+      const stale = yield* decideFail(
+        selectReview(2, settling("sha-new")),
+        modesBoard({ "2": { kind: "full" } }, [cleanReview(1)]),
+      );
+      assert.strictEqual(stale._tag, "BoardCommandInvariantError");
+      assert.include(String(stale), "already recorded as a full round");
+      const recorded = yield* decideEvents(
+        selectReview(2, settling("sha-1")),
+        modesBoard({ "2": settling("sha-1") }, [cleanReview(1)]),
+      );
+      assert.deepStrictEqual(
+        recorded.map((event) => event.type),
+        ["board.card-step-selected"],
+      );
+      const full = yield* decideEvents(selectReview(2), modesBoard({}, [cleanReview(1)]));
+      assert.deepStrictEqual(
+        full.map((event) => event.type),
+        ["board.card-step-selected"],
+      );
+    }),
+  );
+
+  it.effect(
+    "T3O-64: forceFullRound writes full from the first unreviewed round through the request",
+    () =>
+      Effect.gen(function* () {
+        // Round 2's review failed under a settling record, round 1 settled earlier.
+        const event = yield* decide(
+          setCarry({ runThroughRound: 2, clearStopAfterRound: true, forceFullRound: true }),
+          modesBoard({ "1": settling("sha-0"), "2": settling("sha-1") }, [
+            cleanReview(1),
+            { ...stuckStep("review@2", { reviewedSha: "x", findings: [] }), outcome: "failed" },
+          ]),
+        );
+        if (event.type !== "board.card-updated") throw new Error("expected card-updated");
+        assert.deepStrictEqual(event.payload.card.reviewOverrides?.roundModes, {
+          "1": settling("sha-0"),
+          "2": { kind: "full" },
+        });
+        // Alone it is a change, not a no-op the guard refuses.
+        const alone = yield* decide(
+          setCarry({ forceFullRound: true }),
+          modesBoard({}, [cleanReview(1)]),
+        );
+        if (alone.type !== "board.card-updated") throw new Error("expected card-updated");
+        // No round was requested, so nothing is forced.
+        assert.deepStrictEqual(alone.payload.card.reviewOverrides?.roundModes ?? {}, {});
+      }),
+  );
+
+  it.effect("T3O-64: a carry or a plain round request without the flag writes no mode", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        setCarry({ runThroughRound: 2, clearStopAfterRound: true }),
+        modesBoard({ "1": settling("sha-0") }, [cleanReview(1)]),
+      );
+      if (event.type !== "board.card-updated") throw new Error("expected card-updated");
+      assert.deepStrictEqual(event.payload.card.reviewOverrides?.roundModes, {
+        "1": settling("sha-0"),
+      });
+    }),
+  );
 
   it.effect("T3O-51: a human Advance writes the waiver in the move itself", () =>
     Effect.gen(function* () {
@@ -1002,6 +1188,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         runThroughRound,
         carriedFindings: {},
         stuckWaivedThrough: null,
+        roundModes: {},
       },
       createdAt: NOW,
     }) satisfies BoardCommand;
@@ -1053,6 +1240,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
             runThroughRound: 3,
             carriedFindings: {},
             stuckWaivedThrough: null,
+            roundModes: {},
           },
           createdAt: NOW,
         },
@@ -1065,6 +1253,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
             runThroughRound: null,
             carriedFindings: {},
             stuckWaivedThrough: null,
+            roundModes: {},
           },
         }),
       );
@@ -1092,6 +1281,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
             runThroughRound: null,
             carriedFindings: {},
             stuckWaivedThrough: null,
+            roundModes: {},
           },
           createdAt: NOW,
         },
@@ -1103,6 +1293,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
             runThroughRound: null,
             carriedFindings: {},
             stuckWaivedThrough: null,
+            roundModes: {},
           },
         }),
       );
@@ -1189,6 +1380,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
             runThroughRound: null,
             carriedFindings: {},
             stuckWaivedThrough: null,
+            roundModes: {},
           },
           createdAt: NOW,
         },
@@ -1200,6 +1392,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
             runThroughRound: null,
             carriedFindings: {},
             stuckWaivedThrough: null,
+            roundModes: {},
           },
           completedRounds: 2,
         }),
@@ -1225,6 +1418,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
             runThroughRound: null,
             carriedFindings: {},
             stuckWaivedThrough: null,
+            roundModes: {},
           },
           createdAt: NOW,
         },
@@ -1255,6 +1449,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
               runThroughRound: null,
               carriedFindings: {},
               stuckWaivedThrough: null,
+              roundModes: {},
             },
           }),
         );
@@ -1516,8 +1711,49 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           role: "planning",
           linkedAt: NOW,
           tombstonedAt: null,
+          round: 0,
         },
       ]);
+
+      // The link is stamped with the card's round: how many PRs it has retired.
+      const secondRound = yield* decide(
+        {
+          type: "board.card.link-thread",
+          commandId: CommandId.make("cmd-link-round"),
+          cardId: BoardCardId.make("card-b"),
+          threadId: ThreadId.make("thread-1"),
+          role: "review@1",
+          createdAt: NOW,
+        },
+        makeReadModel({
+          threads,
+          board: {
+            cards: [
+              makeCard({
+                id: "card-b",
+                pullRequestHistory: [
+                  {
+                    number: 7,
+                    url: "https://github.com/acme/repo/pull/7",
+                    state: "merged",
+                    title: null,
+                    headBranch: "board/card-b",
+                    baseRef: "main",
+                    checkedAt: NOW,
+                  },
+                ],
+              }),
+            ],
+            nextCardNumberByProject: {},
+          },
+        }),
+      );
+      assert.strictEqual(
+        secondRound.type === "board.card-thread-linked"
+          ? secondRound.payload.card.threadLinks[0]?.round
+          : undefined,
+        1,
+      );
 
       // One thread, one card: the same thread on another card is rejected.
       const failure = yield* decideFail(
@@ -1759,6 +1995,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           role: "linked",
           linkedAt: later,
           tombstonedAt: null,
+          round: 0,
         },
       ]);
     }),
@@ -4743,6 +4980,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         assert.strictEqual(event.payload.transition, "linked");
         assert.strictEqual(event.payload.card.pullRequest?.number, 75);
         assert.strictEqual(event.payload.card.pullRequest?.linked, true);
+        assert.notProperty(event.payload, "previous");
       }),
     );
 
@@ -4755,6 +4993,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         assert.strictEqual(event.type, "board.card-pull-request-recorded");
         if (event.type !== "board.card-pull-request-recorded") return;
         assert.strictEqual(event.payload.card.pullRequest?.number, 75);
+        // The replaced PR rides the event, so the card's threads can drop it.
+        assert.strictEqual(event.payload.previous?.number, 90);
       }),
     );
 
@@ -4826,6 +5066,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         if (event.type !== "board.card-pull-request-recorded") return;
         assert.strictEqual(event.payload.transition, "unlinked");
         assert.isNull(event.payload.card.pullRequest);
+        assert.strictEqual(event.payload.previous?.number, 75);
 
         const error = yield* decideFail(setLinked(null), boardWith(card({ pullRequest: pr(90) })));
         assert.include(String(error), "no explicitly linked pull request");
@@ -4855,6 +5096,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
         if (event.type !== "board.card-pull-request-recorded") return;
         assert.strictEqual(event.payload.transition, "state-changed");
         assert.strictEqual(event.payload.card.pullRequest?.state, "merged");
+        assert.notProperty(event.payload, "previous");
         assert.strictEqual(event.payload.card.pullRequest?.linked, true);
       }),
     );

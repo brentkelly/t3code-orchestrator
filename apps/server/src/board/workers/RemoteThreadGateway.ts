@@ -48,12 +48,15 @@ export type RemoteThreadGatewayShape = Pick<
   | "delete"
   | "armLimitRecovery"
   | "answerPendingInput"
+  | "linkPullRequest"
+  | "unlinkPullRequest"
   | "threadState"
   | "threadRecords"
   | "listLiveThreadIds"
   | "latestAssistantMessage"
   | "lastSignalAt"
   | "pendingTurnStartAt"
+  | "subagentAwaitingApproval"
 >;
 
 export interface RemoteThreadGatewayDeps {
@@ -282,6 +285,16 @@ export const makeRemoteThreadGateway = (
         (rpc, answer: Parameters<ThreadGatewayShape["answerPendingInput"]>[0]) =>
           rpc.gateway.answerPendingInput(answer),
       )(input).pipe(Effect.orElseSucceed(() => false)),
+    linkPullRequest: command(
+      "linkPullRequest",
+      (rpc, input: Parameters<ThreadGatewayShape["linkPullRequest"]>[0]) =>
+        rpc.gateway.linkPullRequest(input),
+    ),
+    unlinkPullRequest: command(
+      "unlinkPullRequest",
+      (rpc, input: Parameters<ThreadGatewayShape["unlinkPullRequest"]>[0]) =>
+        rpc.gateway.unlinkPullRequest(input),
+    ),
     threadState: Effect.fn("RemoteThreadGateway.threadState")(function* (threadId) {
       const rpc = yield* link.pipe(Effect.option);
       if (rpc._tag === "None") return UNKNOWN_THREAD_STATE;
@@ -310,5 +323,11 @@ export const makeRemoteThreadGateway = (
     lastSignalAt: (threadId) => read("lastSignalAt", (rpc) => rpc.gateway.lastSignalAt(threadId)),
     pendingTurnStartAt: (threadId) =>
       read("pendingTurnStartAt", (rpc) => rpc.gateway.pendingTurnStartAt(threadId)),
+    // Best-effort: a worker older than this call cannot decode it, and
+    // an unreachable one cannot answer; false is the behaviour before it existed.
+    subagentAwaitingApproval: (threadId) =>
+      read("subagentAwaitingApproval", (rpc) =>
+        rpc.gateway.subagentAwaitingApproval(threadId),
+      ).pipe(Effect.orElseSucceed(() => false)),
   };
 };

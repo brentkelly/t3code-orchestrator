@@ -85,7 +85,7 @@ export function BoardDeleteConfirmDialog({
         </AlertDialogHeader>
         {dependents.length === 0 ? null : (
           <>
-            <p className="px-6 pb-2 text-[13px] text-muted-foreground">
+            <p className="px-6 pb-2 text-board-13 text-muted-foreground">
               {dependents.length === 1
                 ? "1 card depends on this one and will lose the dependency:"
                 : `${dependents.length} cards depend on this one and will lose the dependency:`}
@@ -93,19 +93,19 @@ export function BoardDeleteConfirmDialog({
             <ul className="flex max-h-64 flex-col gap-1.5 overflow-y-auto px-6 pb-4">
               {shown.map((dependent) => (
                 <li
-                  className="flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]"
+                  className="flex items-center gap-2.25 rounded-lg border border-border bg-muted px-2.5 py-1.75"
                   key={dependent.cardId}
                 >
-                  <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
+                  <span className="shrink-0 text-board-11 font-medium text-muted-foreground">
                     {dependent.key}
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
+                  <span className="min-w-0 flex-1 truncate text-board-13 text-foreground">
                     {dependent.title}
                   </span>
                 </li>
               ))}
               {hidden > 0 ? (
-                <li className="px-0.5 text-[12px] text-muted-foreground">
+                <li className="px-0.5 text-board-12 text-muted-foreground">
                   +{hidden} more {hidden === 1 ? "card" : "cards"}
                 </li>
               ) : null}

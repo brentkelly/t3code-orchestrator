@@ -56,7 +56,9 @@ const makeDirs = () => {
 const script = (
   id: string,
   command: string,
-  flags: Partial<Pick<ProjectScript, "runOnWorktreeCreate" | "runOnWorktreeRemove">> = {},
+  flags: Partial<
+    Pick<ProjectScript, "runOnWorktreeCreate" | "runOnWorktreeRemove" | "runOnSettle">
+  > = {},
 ): ProjectScript => ({
   id,
   name: id,
@@ -66,6 +68,7 @@ const script = (
   ...(flags.runOnWorktreeRemove === undefined
     ? {}
     : { runOnWorktreeRemove: flags.runOnWorktreeRemove }),
+  ...(flags.runOnSettle === undefined ? {} : { runOnSettle: flags.runOnSettle }),
 });
 
 const thread = (
@@ -333,6 +336,28 @@ describe("retireWorktree", () => {
         () => reclaim,
       );
       assert.strictEqual(read("order.log"), "first\nsecond\n");
+    }),
+  );
+
+  it.effect("runs a card's settle script once, before its remove scripts, and no other's", () =>
+    Effect.gen(function* () {
+      const scripts = [
+        script("teardown", "echo teardown >> ../order.log", { runOnWorktreeRemove: true }),
+        script("settle", "echo settle >> ../order.log", { runOnSettle: true }),
+        script("both", "echo both >> ../order.log", {
+          runOnSettle: true,
+          runOnWorktreeRemove: true,
+        }),
+      ];
+      const card = yield* retireWith({ scripts }, () => ({ ...reclaim, cardWorktree: true }));
+      assert.strictEqual(card.read("order.log"), "settle\nteardown\nboth\n");
+      const stock = yield* retireWith({ scripts }, () => reclaim);
+      assert.strictEqual(stock.read("order.log"), "teardown\nboth\n");
+      const settleIsRemove = yield* retireWith({ scripts: scripts.slice(2) }, () => ({
+        ...reclaim,
+        cardWorktree: true,
+      }));
+      assert.strictEqual(settleIsRemove.read("order.log"), "both\n");
     }),
   );
 

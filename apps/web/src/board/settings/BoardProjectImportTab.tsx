@@ -75,7 +75,7 @@ export function BoardProjectImportTab(props: {
       <div className="flex flex-col gap-2 rounded-xl border border-border bg-card px-4 py-3 shadow-xs">
         <div className="flex items-center gap-2">
           <UploadIcon className="size-4 text-muted-foreground" />
-          <span className="text-[13.5px] font-medium text-foreground">Import from the repo</span>
+          <span className="text-board-13-5 font-medium text-foreground">Import from the repo</span>
           <span className="flex-1" />
           <Button size="xs" variant="ghost" onClick={refresh}>
             Check again
@@ -99,7 +99,7 @@ export function BoardProjectImportTab(props: {
       <div className="flex flex-col gap-2 rounded-xl border border-border bg-card px-4 py-3 shadow-xs">
         <div className="flex items-center gap-2">
           <DownloadIcon className="size-4 text-muted-foreground" />
-          <span className="text-[13.5px] font-medium text-foreground">Export to the repo</span>
+          <span className="text-board-13-5 font-medium text-foreground">Export to the repo</span>
           <span className="flex-1" />
           <Button size="xs" variant="outline" onClick={onExport}>
             Export
@@ -116,7 +116,7 @@ export function BoardProjectImportTab(props: {
               {exported.path} is uncommitted. Nobody else sees it until you commit and push it.
             </span>
             <div className="flex items-center gap-2">
-              <code className="min-w-0 flex-1 overflow-x-auto rounded-md bg-muted px-2 py-1 font-mono text-[11px]">
+              <code className="min-w-0 flex-1 overflow-x-auto rounded-md bg-muted px-2 py-1 font-mono text-board-11">
                 {COMMIT_COMMAND}
               </code>
               <Button

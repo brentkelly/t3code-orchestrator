@@ -29,6 +29,8 @@ import {
   type ThreadSignal,
   type ThreadSpawnInput,
   type ThreadAnswerInput,
+  type ThreadPullRequestLinkInput,
+  type ThreadPullRequestUnlinkInput,
   type ThreadTargetInput,
   type TodoLogEntry,
   type TodoSignal,
@@ -43,7 +45,9 @@ export type ThreadGatewayCall =
   | ({ readonly type: "thread.settle" } & ThreadSettleInput)
   | ({ readonly type: "thread.delete" } & ThreadTargetInput)
   | ({ readonly type: "thread.arm-limit-recovery" } & ThreadTargetInput)
-  | ({ readonly type: "thread.answer-pending-input" } & ThreadAnswerInput);
+  | ({ readonly type: "thread.answer-pending-input" } & ThreadAnswerInput)
+  | ({ readonly type: "thread.pull-request.link" } & ThreadPullRequestLinkInput)
+  | ({ readonly type: "thread.pull-request.unlink" } & ThreadPullRequestUnlinkInput);
 
 /** The fields a fixture sets on a thread; everything derived is computed. */
 export interface FakeThreadInput {
@@ -146,11 +150,15 @@ export interface FakeThreadGatewayOptions {
   readonly threads?: ReadonlyMap<string, BoardThreadState>;
   /** Refuse every spawn — a thread the engine will not create. */
   readonly rejectSpawn?: boolean;
+  /** Refuse a spawn on these provider instances, as a server whose project
+      settings turn them off does (T3O-74). */
+  readonly providerDisabled?: ReadonlyArray<string>;
   /** Runs before every call is recorded and applied. */
   readonly onCall?: (call: ThreadGatewayCall) => Effect.Effect<void>;
   readonly latestAssistantMessage?: (threadId: ThreadId) => BoardAssistantMessage | null;
   readonly lastSignalAt?: (threadId: ThreadId) => string | null;
   readonly pendingTurnStartAt?: (threadId: ThreadId) => string | null;
+  readonly subagentAwaitingApproval?: (threadId: ThreadId) => boolean;
 }
 
 interface FakeRecord extends BoardThreadRecord {
@@ -169,6 +177,11 @@ export interface FakeThreadGateway {
   readonly states: Ref.Ref<ReadonlyMap<string, BoardThreadState>>;
   /** Threads that actually settled, as opposed to every settle asked for. */
   readonly settled: Effect.Effect<ReadonlySet<string>>;
+  /** Each thread's linked pull requests as `host/repository#number`. A
+      repeated command id is a no-op, as the engine's receipt makes it. */
+  readonly pullRequestLinks: Effect.Effect<ReadonlyMap<string, ReadonlyArray<string>>>;
+  /** Drop a link as a human unlinking it in the thread would. */
+  readonly humanUnlinkPullRequest: (threadId: ThreadId, key: string) => Effect.Effect<void>;
   /** Deliver a live signal to every `observe` subscription. Replayed to late
       subscribers, so it is never lost to one that has not attached yet. */
   readonly emit: (signal: ThreadSignal) => Effect.Effect<void>;
@@ -194,6 +207,7 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
     );
     const calls = yield* Ref.make<ReadonlyArray<ThreadGatewayCall>>([]);
     const settled = yield* Ref.make<ReadonlySet<string>>(new Set());
+    const pullRequestLinks = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<string>>>(new Map());
     // Every subscription sees every signal, as `observe`'s contract promises; the
     // unbounded replay stands in for "the subscriber attached before the emit".
     const signals = yield* PubSub.unbounded<ThreadSignal>({ replay: Number.MAX_SAFE_INTEGER });
@@ -213,6 +227,24 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
 
     const refuse = (command: string, threadId: ThreadId, detail: string) =>
       Effect.fail(new ThreadCommandRefusedError({ command, threadId, detail }));
+
+    const handledCommandIds = new Set<string>();
+    const pullRequestKey = (input: ThreadPullRequestUnlinkInput) =>
+      `${input.host}/${input.repository}#${input.number}`;
+    const changePullRequestLinks = (
+      input: ThreadPullRequestUnlinkInput,
+      change: (keys: ReadonlyArray<string>, key: string) => ReadonlyArray<string>,
+    ) =>
+      Effect.gen(function* () {
+        if (handledCommandIds.has(String(input.commandId))) return;
+        handledCommandIds.add(String(input.commandId));
+        yield* Ref.update(pullRequestLinks, (current) =>
+          new Map(current).set(
+            String(input.threadId),
+            change(current.get(String(input.threadId)) ?? [], pullRequestKey(input)),
+          ),
+        );
+      });
 
     /** Present and not deleted — a thread a command can still target. */
     const exists = (threadId: ThreadId) =>
@@ -240,6 +272,14 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
           yield* record({ type: "thread.spawn", ...input });
           if (options.rejectSpawn === true) {
             return yield* refuse("spawn", input.threadId, "Refusing to create the thread.");
+          }
+          if (options.providerDisabled?.includes(input.modelSelection.instanceId) === true) {
+            return yield* new ThreadCommandRefusedError({
+              command: "thread.create",
+              threadId: input.threadId,
+              detail: "The provider is turned off for this project.",
+              reason: "provider-disabled",
+            });
           }
           yield* Ref.update(records, (current) =>
             new Map(current).set(String(input.threadId), {
@@ -277,6 +317,20 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
             settlementDecided: true,
           }));
         }),
+      linkPullRequest: (input) =>
+        record({ type: "thread.pull-request.link", ...input }).pipe(
+          Effect.andThen(
+            changePullRequestLinks(input, (keys, key) =>
+              keys.includes(key) ? keys : [...keys, key],
+            ),
+          ),
+        ),
+      unlinkPullRequest: (input) =>
+        record({ type: "thread.pull-request.unlink", ...input }).pipe(
+          Effect.andThen(
+            changePullRequestLinks(input, (keys, key) => keys.filter((entry) => entry !== key)),
+          ),
+        ),
       // As the engine does: answered only while a question is pending.
       answerPendingInput: (input) =>
         Effect.gen(function* () {
@@ -357,6 +411,8 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
       lastSignalAt: (threadId) => Effect.succeed(options.lastSignalAt?.(threadId) ?? null),
       pendingTurnStartAt: (threadId) =>
         Effect.succeed(options.pendingTurnStartAt?.(threadId) ?? null),
+      subagentAwaitingApproval: (threadId) =>
+        Effect.succeed(options.subagentAwaitingApproval?.(threadId) ?? false),
 
       projects: () => Effect.succeed(projects),
       project: (projectId) =>
@@ -396,6 +452,14 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
       calls: Ref.get(calls),
       states,
       settled: Ref.get(settled),
+      pullRequestLinks: Ref.get(pullRequestLinks),
+      humanUnlinkPullRequest: (threadId, key) =>
+        Ref.update(pullRequestLinks, (current) =>
+          new Map(current).set(
+            String(threadId),
+            (current.get(String(threadId)) ?? []).filter((entry) => entry !== key),
+          ),
+        ),
       emit: (signal) =>
         Ref.updateAndGet(signalHead, (head) => head + 1).pipe(
           Effect.flatMap((sequence) => PubSub.publish(batches, { sequence, signals: [signal] })),
@@ -428,6 +492,8 @@ export const inertThreadGateway = (
   delete: () => Effect.void,
   armLimitRecovery: () => Effect.succeed(false),
   answerPendingInput: () => Effect.succeed(false),
+  linkPullRequest: () => Effect.void,
+  unlinkPullRequest: () => Effect.void,
   threadState: () => Effect.succeed(null),
   threadRecords: () => Effect.succeed(new Map()),
   threadsInWorktree: () => Effect.succeed([]),
@@ -435,6 +501,7 @@ export const inertThreadGateway = (
   latestAssistantMessage: () => Effect.succeed(null),
   lastSignalAt: () => Effect.succeed(null),
   pendingTurnStartAt: () => Effect.succeed(null),
+  subagentAwaitingApproval: () => Effect.succeed(false),
   projects: () => Effect.succeed([]),
   project: () => Effect.succeed(null),
   observe: Stream.never,

@@ -13,6 +13,7 @@ import {
   type BoardReviewRoundOverride,
   type RuntimeMode,
   type BoardStepCompletion,
+  type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
 import { ChevronDownIcon, ChevronLeftIcon, MessageSquareIcon } from "lucide-react";
@@ -70,7 +71,7 @@ function unreadablePhaseOf(loop: BoardReviewLoop): BoardReviewStepPhase | null {
 
 const SEVERITY_STYLES: Record<BoardReviewLoopFinding["finding"]["severity"], string> = {
   critical: "bg-destructive/12 text-destructive-foreground",
-  improvement: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
+  improvement: "bg-warning/14 text-board-amber-text",
   nitpick: "bg-muted text-muted-foreground",
 };
 
@@ -117,31 +118,35 @@ function FindingRow({ entry }: { readonly entry: BoardReviewLoopFinding }) {
     <div className="flex items-start gap-2.5 rounded-lg px-2 py-1.5 -mx-2">
       <span
         className={cn(
-          "mt-px inline-flex h-4 shrink-0 items-center rounded-[5px] px-1.5 text-[10px] font-medium uppercase tracking-[.03em]",
+          "mt-px inline-flex h-4 shrink-0 items-center rounded-board-5 px-1.5 text-board-10 font-medium uppercase tracking-board-3",
           SEVERITY_STYLES[finding.severity],
         )}
       >
         {finding.severity}
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="text-[12.5px]/[1.45] text-pretty text-foreground">{finding.title}</span>
+        <span className="text-board-12-5 leading-board-1-45 text-pretty text-foreground">
+          {finding.title}
+        </span>
         {finding.file !== null ? (
-          <span className="truncate font-mono text-[10.5px] text-muted-foreground">
+          <span className="truncate font-mono text-board-10-5 text-muted-foreground">
             {finding.file}
             {finding.line !== null ? `:${finding.line}` : ""}
           </span>
         ) : null}
         {entry.carriedFrom !== null ? (
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-board-11 text-muted-foreground">
             Carried from round {entry.carriedFrom} · must-fix
           </span>
         ) : null}
         {latestNote === undefined ? null : (
-          <span className="text-[11px]/[1.4] text-muted-foreground">{latestNote}</span>
+          <span className="text-board-11 leading-board-1-4 text-muted-foreground">
+            {latestNote}
+          </span>
         )}
         {secondPass ? (
           <button
-            className="w-fit text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            className="w-fit text-board-11 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
             onClick={() => setShowPasses((open) => !open)}
             type="button"
           >
@@ -149,7 +154,7 @@ function FindingRow({ entry }: { readonly entry: BoardReviewLoopFinding }) {
           </button>
         ) : null}
         {secondPass && showPasses ? (
-          <ol className="flex flex-col gap-0.5 text-[11px]/[1.45] text-muted-foreground">
+          <ol className="flex flex-col gap-0.5 text-board-11 leading-board-1-45 text-muted-foreground">
             <li>
               Triage: {entry.disposition ?? "no answer"}
               {entry.verdict === null ? "" : ` → ${VERDICT_WORDS[entry.verdict]}`}
@@ -163,7 +168,7 @@ function FindingRow({ entry }: { readonly entry: BoardReviewLoopFinding }) {
       </div>
       <span
         className={cn(
-          "inline-flex h-[18px] shrink-0 items-center rounded-md border px-[7px] text-[10.5px] font-medium",
+          "inline-flex h-[18px] shrink-0 items-center rounded-md border px-1.75 text-board-10-5 font-medium",
           RESOLUTION_STYLES[entry.resolution],
         )}
       >
@@ -301,7 +306,7 @@ function roundBadge(
       // flags it amber too.
       return {
         label: "Unreadable",
-        className: "border-amber-500/45 bg-amber-500/14 text-amber-700 dark:text-amber-300",
+        className: "border-warning/45 bg-warning/14 text-board-amber-text",
       };
   }
 }
@@ -315,6 +320,18 @@ function roundSummary(round: BoardReviewLoopRound): string {
   if (round.counts.disputed > 0) parts.push(`${round.counts.disputed} disputed`);
   if (round.counts.escalated > 0) parts.push(`${round.counts.escalated} escalated`);
   return parts.join(" · ");
+}
+
+/** A settling round's tag. It claims a range only when the reviewer recorded what it read. */
+function settlingRoundText(round: BoardReviewLoopRound): string | null {
+  if (round.mode.kind !== "settling") return null;
+  const scope =
+    round.scope === "delta"
+      ? ` · changes since ${round.mode.sinceSha.slice(0, 7)}`
+      : round.scope === "branch"
+        ? " · whole branch reviewed"
+        : "";
+  return `Settling · only critical blocks${scope}`;
 }
 
 function Round({
@@ -335,6 +352,7 @@ function Round({
   readonly onOpenThread: ((threadId: ThreadId) => void) | undefined;
 }) {
   const badge = roundBadge(round, offStage);
+  const settling = settlingRoundText(round);
   const tally = `${round.severities.critical} / ${round.severities.improvement} / ${round.severities.nitpick}`;
   return (
     <div className="shrink-0 overflow-hidden rounded-xl border border-border bg-card shadow-xs">
@@ -346,32 +364,39 @@ function Round({
         onClick={onToggle}
         type="button"
       >
-        <span className="shrink-0 text-[12.5px] font-semibold text-foreground">
+        <span className="shrink-0 text-board-12-5 font-semibold text-foreground">
           Round {round.round}
         </span>
         <span
           className={cn(
-            "inline-flex h-[18px] shrink-0 items-center rounded-md border px-[7px] text-[10.5px] font-medium",
+            "inline-flex h-[18px] shrink-0 items-center rounded-md border px-1.75 text-board-10-5 font-medium",
             badge.className,
           )}
         >
           {badge.label}
         </span>
+        {settling === null ? null : (
+          <BoardHint label={settling}>
+            <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border px-[7px] text-[10.5px] font-medium text-muted-foreground">
+              Settling
+            </span>
+          </BoardHint>
+        )}
         {round.findings.length > 0 ? (
           <BoardHint
             label={`${round.severities.critical} critical · ${round.severities.improvement} improvement · ${round.severities.nitpick} nitpick`}
           >
-            <span className="inline-flex h-[18px] shrink-0 items-center rounded-[5px] bg-foreground/6 px-1.5 font-mono text-[10.5px] font-medium tracking-[.02em] text-muted-foreground">
+            <span className="inline-flex h-[18px] shrink-0 items-center rounded-board-5 bg-foreground/6 px-1.5 font-mono text-board-10-5 font-medium tracking-board-2 text-muted-foreground">
               {tally}
             </span>
           </BoardHint>
         ) : null}
-        <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+        <span className="min-w-0 truncate text-board-11 text-muted-foreground">
           {roundSummary(round)}
         </span>
         <span className="flex-1" />
         {round.completedAt !== null ? (
-          <span className="shrink-0 text-[11px] text-muted-foreground">
+          <span className="shrink-0 text-board-11 text-muted-foreground">
             {formatRelativeTimeLabel(round.completedAt)}
           </span>
         ) : null}
@@ -384,17 +409,22 @@ function Round({
       </button>
       {open ? (
         <div className="flex flex-col">
+          {settling === null ? null : (
+            <div className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+              {settling}
+            </div>
+          )}
           {round.carriedRuling === null ? null : (
             <div className="flex flex-col gap-1 border-t border-border bg-foreground/2 px-3 py-2.5">
               <div className="flex items-center gap-2">
-                <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border bg-card px-[7px] text-[10px] font-medium uppercase tracking-[.04em] text-foreground">
+                <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border bg-card px-1.75 text-board-10 font-medium uppercase tracking-board-4 text-foreground">
                   Must-fix
                 </span>
-                <span className="text-[12.5px] font-medium text-foreground">
+                <span className="text-board-12-5 font-medium text-foreground">
                   Carried from round {round.carriedRuling.fromRound}
                 </span>
               </div>
-              <span className="text-pretty text-[11.5px]/[1.5] text-muted-foreground">
+              <span className="text-pretty text-board-11-5/normal text-muted-foreground">
                 You sided with the adjudicator. Triage must fix{" "}
                 {round.findings.filter((f) => f.carriedFrom !== null).length === 1
                   ? "this finding"
@@ -402,14 +432,14 @@ function Round({
                 and the adjudicator checks the fix.
               </span>
               {round.carriedRuling.note === null ? null : (
-                <span className="border-l-2 border-input pl-2 text-pretty text-[11.5px]/[1.5] text-foreground">
+                <span className="border-l-2 border-input pl-2 text-pretty text-board-11-5/normal text-foreground">
                   {round.carriedRuling.note}
                 </span>
               )}
             </div>
           )}
           {round.dismissals.length === 0 ? null : (
-            <div className="flex flex-col gap-0.5 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+            <div className="flex flex-col gap-0.5 border-t border-border px-3 py-2 text-board-11 text-muted-foreground">
               {round.dismissals.map((dismissal) => (
                 <span key={dismissal.findingId}>
                   Dismissed by you in round {dismissal.round}: {dismissal.title}
@@ -428,17 +458,17 @@ function Round({
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <BoardShimmerText
                       active={status === "running"}
-                      className="w-fit text-[12.5px] font-medium text-foreground"
+                      className="w-fit text-board-12-5 font-medium text-foreground"
                       text={PHASE_NAMES[phaseId]}
                     />
-                    <span className="text-[11.5px]/[1.5] text-pretty text-muted-foreground">
+                    <span className="text-board-11-5/normal text-pretty text-muted-foreground">
                       {phaseNote(round, phaseId, status)}
                     </span>
                   </div>
                   {phase.threadId !== null && onOpenThread !== undefined ? (
                     <BoardHint label="Open this phase's thread">
                       <button
-                        className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] border border-input bg-popover px-2 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent"
+                        className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-board-7 border border-input bg-popover px-2 text-board-11-5 font-medium text-foreground shadow-xs hover:bg-accent"
                         onClick={() => onOpenThread(phase.threadId as ThreadId)}
                         type="button"
                       >
@@ -449,7 +479,7 @@ function Round({
                   ) : null}
                 </div>
                 {phaseId === "review" && round.findings.length > 0 ? (
-                  <div className="flex flex-col gap-0.5 pb-3 pl-[42px] pr-3 pt-0.5">
+                  <div className="flex flex-col gap-0.5 pb-3 pl-10.5 pr-3 pt-0.5">
                     {round.findings.map((entry) => (
                       <FindingRow key={entry.finding.id} entry={entry} />
                     ))}
@@ -495,7 +525,7 @@ function statusPill(
         return {
           label: `${phase} · stopped`,
           spinning: false,
-          className: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
+          className: "bg-warning/14 text-board-amber-text",
         };
       return live
         ? {
@@ -514,7 +544,9 @@ function statusPill(
         label:
           loop.convergedBy === "adjudicator"
             ? "Loop settled: adjudicator ruled nothing new"
-            : "Loop settled: nothing blocking",
+            : loop.convergedBy === "settled"
+              ? "Loop settled: no critical findings left"
+              : "Loop settled: nothing blocking",
         spinning: false,
         className: "bg-success/14 text-success-foreground",
       };
@@ -536,13 +568,13 @@ function statusPill(
       return {
         label: "Round limit reached · no convergence",
         spinning: false,
-        className: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
+        className: "bg-warning/14 text-board-amber-text",
       };
     case "stopped":
       return {
         label: "Stopped after this round, holding for you",
         spinning: false,
-        className: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
+        className: "bg-warning/14 text-board-amber-text",
       };
     case "unreadable": {
       const phase = unreadablePhaseOf(loop);
@@ -550,7 +582,7 @@ function statusPill(
       return {
         label: `${name.charAt(0).toUpperCase()}${name.slice(1)} payload unreadable`,
         spinning: false,
-        className: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
+        className: "bg-warning/14 text-board-amber-text",
       };
     }
   }
@@ -574,6 +606,9 @@ function footerNote(
         return `Round ${loop.currentRound} of ${loop.maxRounds} · the loop stopped. Continue it, restart the phase, or move the card on from the card's actions.`;
       return `Round ${loop.currentRound} of ${loop.maxRounds} · the loop stops early once a round closes clean.`;
     case "converged":
+      if (loop.convergedBy === "settled") {
+        return `A settling round left no critical finding open, so the loop is settled. Its other findings were fixed or rejected and checked by the adjudicator${loop.unreviewedFixes > 0 ? ` · ${loop.unreviewedFixes} ${loop.unreviewedFixes === 1 ? "fix" : "fixes"} verified by the adjudicator, not re-reviewed` : ""}.`;
+      }
       return loop.convergedBy === "adjudicator"
         ? "The adjudicator ruled the last round raised nothing new beyond points already settled, and no code changed, so the loop is settled."
         : "A round closed with nothing blocking, so the loop is settled.";
@@ -609,28 +644,28 @@ function NoConvergenceBlock({
   const unsettled = (current?.counts.open ?? 0) + (current?.counts.disputed ?? 0);
   const stopped = loop.status === "stopped";
   return (
-    <div className="flex shrink-0 flex-col gap-[11px] rounded-xl border border-amber-500/45 bg-amber-500/7 px-3.5 py-3">
+    <div className="flex shrink-0 flex-col gap-2.75 rounded-xl border border-warning/45 bg-warning/7 px-3.5 py-3">
       <div className="flex items-center gap-2.5">
-        <span className="inline-flex size-[22px] shrink-0 items-center justify-center rounded-[7px] bg-amber-500/18 font-mono text-[12px] font-semibold text-amber-700 dark:text-amber-300">
+        <span className="inline-flex size-[22px] shrink-0 items-center justify-center rounded-board-7 bg-warning/18 font-mono text-board-12 font-semibold text-board-amber-text">
           !
         </span>
-        <div className="text-[12.5px] font-semibold text-foreground">
+        <div className="text-board-12-5 font-semibold text-foreground">
           {stopped ? "Loop stopped without convergence" : "Round limit reached without convergence"}
         </div>
       </div>
-      <div className="text-pretty text-[11.5px]/[1.55] text-muted-foreground">
+      <div className="text-pretty text-board-11-5 leading-board-1-55 text-muted-foreground">
         {stopped
           ? `You asked the loop to hold after round ${loop.currentRound}.`
           : `All ${loop.maxRounds} rounds ran and round ${loop.currentRound} still closed with ${unsettled} unsettled ${unsettled === 1 ? "issue" : "issues"}.`}{" "}
         The loop stops here and will not hand the card on by itself.
       </div>
-      <div className="text-[11px] text-muted-foreground">
+      <div className="text-board-11 text-muted-foreground">
         {unsettled} unsettled this round · {loop.totals.disputed} disputed across the loop
       </div>
       <div className="flex items-center gap-2">
         {onRunAnotherRound === undefined ? null : (
           <button
-            className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary bg-primary px-3 text-[12.5px] font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
+            className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary bg-primary px-3 text-board-12-5 font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
             onClick={onRunAnotherRound}
             type="button"
           >
@@ -639,7 +674,7 @@ function NoConvergenceBlock({
         )}
         {onAdvance === undefined ? null : (
           <button
-            className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-input bg-popover px-3 text-[12.5px] font-medium text-foreground shadow-xs hover:bg-accent"
+            className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-input bg-popover px-3 text-board-12-5 font-medium text-foreground shadow-xs hover:bg-accent"
             onClick={onAdvance}
             type="button"
           >
@@ -679,16 +714,16 @@ function StuckBlock({
     setNote("");
   };
   return (
-    <div className="flex shrink-0 flex-col gap-[11px] rounded-xl border border-attention/40 bg-attention/6 px-3.5 py-3">
+    <div className="flex shrink-0 flex-col gap-2.75 rounded-xl border border-attention/40 bg-attention/6 px-3.5 py-3">
       <div className="flex items-center gap-2.5">
-        <span className="inline-flex size-[22px] shrink-0 items-center justify-center rounded-[7px] bg-attention/16 font-mono text-[12px] font-semibold text-attention-foreground">
+        <span className="inline-flex size-[22px] shrink-0 items-center justify-center rounded-board-7 bg-attention/16 font-mono text-board-12 font-semibold text-attention-foreground">
           !
         </span>
-        <div className="text-[12.5px] font-semibold text-foreground">
+        <div className="text-board-12-5 font-semibold text-foreground">
           Review is stuck on round {loop.currentRound}
         </div>
       </div>
-      <div className="text-pretty text-[11.5px]/[1.55] text-muted-foreground">
+      <div className="text-pretty text-board-11-5 leading-board-1-55 text-muted-foreground">
         Round {loop.currentRound} ended with {findings.length}{" "}
         {findings.length === 1 ? "finding" : "findings"} that triage and the adjudicator still
         disagree on after a second pass. The loop is holding for your call.
@@ -697,57 +732,57 @@ function StuckBlock({
         {findings.map((finding) => (
           <div
             key={finding.findingId}
-            className="flex flex-col gap-2 rounded-[10px] border border-border bg-card px-[11px] py-2.5"
+            className="flex flex-col gap-2 rounded-board-10 border border-border bg-card px-2.75 py-2.5"
           >
             <div className="flex items-start gap-2">
               <span
                 className={cn(
-                  "mt-px inline-flex h-4 shrink-0 items-center rounded-[5px] px-1.5 text-[10px] font-medium uppercase tracking-[.03em]",
+                  "mt-px inline-flex h-4 shrink-0 items-center rounded-board-5 px-1.5 text-board-10 font-medium uppercase tracking-board-3",
                   SEVERITY_STYLES[finding.severity],
                 )}
               >
                 {finding.severity}
               </span>
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="text-pretty text-[12.5px]/[1.45] font-medium text-foreground">
+                <span className="text-pretty text-board-12-5 leading-board-1-45 font-medium text-foreground">
                   {finding.title}
                 </span>
                 {finding.file === null ? null : (
-                  <span className="truncate font-mono text-[10.5px] text-muted-foreground">
+                  <span className="truncate font-mono text-board-10-5 text-muted-foreground">
                     {finding.file}
                     {finding.line === null ? "" : `:${finding.line}`}
                   </span>
                 )}
               </div>
               {finding.triageAction === "escalated" || finding.rulingVerdict === "escalated" ? (
-                <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border bg-attention/12 px-[7px] text-[10.5px] font-medium text-attention-foreground">
+                <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border bg-attention/12 px-1.75 text-board-10-5 font-medium text-attention-foreground">
                   {finding.rulingVerdict === "escalated" ? "adjudicator escalated" : "escalated"}
                 </span>
               ) : finding.carriedFrom !== null ? (
-                <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground">
+                <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border bg-muted px-1.75 text-board-10-5 font-medium text-muted-foreground">
                   carried fix failed
                 </span>
               ) : null}
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <div className="flex flex-col gap-1 rounded-lg bg-muted px-[9px] py-2">
-                <span className="text-[10px] font-semibold uppercase tracking-[.06em] text-muted-foreground">
+              <div className="flex flex-col gap-1 rounded-lg bg-muted px-2.25 py-2">
+                <span className="text-board-10 font-semibold uppercase tracking-board-6 text-muted-foreground">
                   Triage{finding.triageAction === null ? "" : ` · ${finding.triageAction}`}
                 </span>
-                <span className="text-pretty text-[11.5px]/[1.5] text-foreground">
+                <span className="text-pretty text-board-11-5/normal text-foreground">
                   {finding.triageNote.trim().length > 0
                     ? finding.triageNote
                     : "No answer recorded."}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 rounded-lg bg-muted px-[9px] py-2">
-                <span className="text-[10px] font-semibold uppercase tracking-[.06em] text-muted-foreground">
+              <div className="flex flex-col gap-1 rounded-lg bg-muted px-2.25 py-2">
+                <span className="text-board-10 font-semibold uppercase tracking-board-6 text-muted-foreground">
                   Ruling
                   {finding.rulingVerdict === null
                     ? ""
                     : ` · ${VERDICT_WORDS[finding.rulingVerdict]}`}
                 </span>
-                <span className="text-pretty text-[11.5px]/[1.5] text-foreground">
+                <span className="text-pretty text-board-11-5/normal text-foreground">
                   {finding.rulingNote.trim().length > 0
                     ? finding.rulingNote
                     : "No ruling recorded."}
@@ -762,7 +797,7 @@ function StuckBlock({
           <>
             <BoardHint label={`Round ${next} must fix these`}>
               <button
-                className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary bg-primary px-3 text-[12.5px] font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
+                className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary bg-primary px-3 text-board-12-5 font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
                 onClick={() => setForm(form === "fix" ? null : "fix")}
                 type="button"
               >
@@ -771,7 +806,7 @@ function StuckBlock({
             </BoardHint>
             <BoardHint label="Settle these as not issues">
               <button
-                className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-input bg-popover px-3 text-[12.5px] font-medium text-foreground shadow-xs hover:bg-accent"
+                className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-input bg-popover px-3 text-board-12-5 font-medium text-foreground shadow-xs hover:bg-accent"
                 onClick={() => setForm(form === "dismiss" ? null : "dismiss")}
                 type="button"
               >
@@ -782,7 +817,7 @@ function StuckBlock({
         )}
         {onAdvance === undefined ? null : (
           <button
-            className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-input bg-popover px-3 text-[12.5px] font-medium text-foreground shadow-xs hover:bg-accent"
+            className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-input bg-popover px-3 text-board-12-5 font-medium text-foreground shadow-xs hover:bg-accent"
             onClick={onAdvance}
             type="button"
           >
@@ -791,14 +826,14 @@ function StuckBlock({
         )}
       </div>
       {form === null ? null : (
-        <div className="flex flex-col gap-2 rounded-[10px] border border-border bg-card px-[11px] py-2.5">
-          <span className="text-[12px] font-medium text-foreground">
+        <div className="flex flex-col gap-2 rounded-board-10 border border-border bg-card px-2.75 py-2.5">
+          <span className="text-board-12 font-medium text-foreground">
             {form === "fix"
               ? `Fix ${findings.length === 1 ? "this finding" : "these findings"} in round ${next}`
               : `Rule ${findings.length === 1 ? "this finding" : "these findings"} not an issue`}
           </span>
           <textarea
-            className="block w-full resize-y rounded-lg border border-input bg-popover px-2.5 py-2 text-[12px]/[1.5] text-foreground"
+            className="block w-full resize-y rounded-lg border border-input bg-popover px-2.5 py-2 text-board-12/normal text-foreground"
             onChange={(event) => setNote(event.target.value)}
             placeholder={
               form === "fix" ? "Guidance for the fix, e.g. use approach X" : "Why, for the record"
@@ -807,20 +842,20 @@ function StuckBlock({
             value={note}
           />
           <div className="flex items-center gap-2">
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-board-11 text-muted-foreground">
               Optional ·{" "}
               {form === "fix" ? "goes to triage with the findings" : "kept with the ruling"}
             </span>
             <span className="flex-1" />
             <button
-              className="h-7 shrink-0 rounded-lg px-2.5 text-[12px] font-medium text-muted-foreground hover:text-foreground"
+              className="h-7 shrink-0 rounded-lg px-2.5 text-board-12 font-medium text-muted-foreground hover:text-foreground"
               onClick={() => setForm(null)}
               type="button"
             >
               Cancel
             </button>
             <button
-              className="inline-flex h-7 shrink-0 items-center rounded-lg border border-primary bg-primary px-[11px] text-[12px] font-medium text-primary-foreground shadow-xs"
+              className="inline-flex h-7 shrink-0 items-center rounded-lg border border-primary bg-primary px-2.75 text-board-12 font-medium text-primary-foreground shadow-xs"
               onClick={submit}
               type="button"
             >
@@ -829,7 +864,7 @@ function StuckBlock({
           </div>
         </div>
       )}
-      <div className="text-pretty text-[11px]/[1.5] text-muted-foreground">
+      <div className="text-pretty text-board-11/normal text-muted-foreground">
         {findings.length > 1 ? "Each action applies to all the findings above. " : ""}
         {loop.unreviewedFixes > 0
           ? `${loop.unreviewedFixes} ${loop.unreviewedFixes === 1 ? "fix" : "fixes"} from round ${loop.currentRound} ${loop.unreviewedFixes === 1 ? "has" : "have"} not been re-reviewed; advancing takes them as they stand.`
@@ -855,16 +890,16 @@ function UnreadableRoundBlock({
 }) {
   const name = UNREADABLE_PHASE_NAMES[phase];
   return (
-    <div className="flex shrink-0 flex-col gap-[11px] rounded-xl border border-amber-500/45 bg-amber-500/7 px-3.5 py-3">
+    <div className="flex shrink-0 flex-col gap-2.75 rounded-xl border border-warning/45 bg-warning/7 px-3.5 py-3">
       <div className="flex items-center gap-2.5">
-        <span className="inline-flex size-[22px] shrink-0 items-center justify-center rounded-[7px] bg-amber-500/18 font-mono text-[12px] font-semibold text-amber-700 dark:text-amber-300">
+        <span className="inline-flex size-[22px] shrink-0 items-center justify-center rounded-board-7 bg-warning/18 font-mono text-board-12 font-semibold text-board-amber-text">
           !
         </span>
-        <div className="text-[12.5px] font-semibold text-foreground">
+        <div className="text-board-12-5 font-semibold text-foreground">
           Round {round} recorded an unreadable result
         </div>
       </div>
-      <div className="text-pretty text-[11.5px]/[1.55] text-muted-foreground">
+      <div className="text-pretty text-board-11-5 leading-board-1-55 text-muted-foreground">
         {phase === "review"
           ? `The reviewer reported success but its findings payload did not arrive in a shape the board can read, so nothing was reviewed as far as the loop is concerned.`
           : `The ${name} reported success but its payload did not arrive in a shape the board can read, so the round is missing the result it claimed.`}{" "}
@@ -873,13 +908,13 @@ function UnreadableRoundBlock({
       {onReopen === undefined ? null : (
         <div className="flex items-center gap-2">
           <button
-            className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary bg-primary px-3 text-[12.5px] font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
+            className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary bg-primary px-3 text-board-12-5 font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
             onClick={onReopen}
             type="button"
           >
             {phase === "review" ? `Reopen round ${round}` : `Reopen ${name}`}
           </button>
-          <span className="min-w-0 text-[11px] text-muted-foreground">
+          <span className="min-w-0 text-board-11 text-muted-foreground">
             {phase === "review"
               ? "Sends the round back and runs its review again."
               : `Sends round ${round}'s ${name} back and runs it again.`}
@@ -900,17 +935,24 @@ function PlannedRoundSettings({
   model,
   phaseRuntimeMode,
   onChange,
+  projectId,
 }: {
   readonly round: number;
   readonly previousRound: number;
   readonly model: BoardReviewRoundOverride | null;
   readonly phaseRuntimeMode: RuntimeMode;
   readonly onChange: (model: BoardReviewRoundOverride | null) => void;
+  readonly projectId: ProjectId | null;
 }) {
   const settings = useBoardSettings();
   const serverProviders = useBoardServerProviders();
+  // T3O-74: a provider turned off for the card's project shows disabled.
   const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(serverProviders),
+      settings,
+      projectId,
+    ),
   );
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
@@ -950,7 +992,7 @@ function PlannedRoundSettings({
         runtimeMode={model?.runtimeMode ?? phaseRuntimeMode}
         selection={model === null ? null : { instanceId: model.instanceId, model: model.model }}
       />
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-board-11 text-muted-foreground">
         {model === null
           ? `Same as ${previousRound < 1 ? "the review stage's configured model" : `round ${previousRound}`}. Only round ${round}'s review runs on this. Triage and adjudication keep their configured models.`
           : `Only round ${round}'s review runs on this. Triage and adjudication keep their configured models.`}
@@ -960,6 +1002,7 @@ function PlannedRoundSettings({
 }
 
 export function BoardCardReviewPane({
+  projectId,
   completions,
   maxRounds,
   live,
@@ -978,6 +1021,8 @@ export function BoardCardReviewPane({
   onBackToThread,
   onOpenThread,
 }: {
+  /** The card's project, for which providers its round pickers offer (T3O-74). */
+  readonly projectId?: ProjectId | undefined;
   readonly completions: ReadonlyArray<BoardStepCompletion>;
   /** The EFFECTIVE round budget — the card's override when it has one, else the
       review stage's `rounds`. Resolved by the caller, which is the only layer
@@ -1040,6 +1085,7 @@ export function BoardCardReviewPane({
     {
       carriedFindings: overrides?.carriedFindings ?? {},
       stuckWaivedThrough: overrides?.stuckWaivedThrough ?? null,
+      roundModes: overrides?.roundModes ?? {},
     },
   );
   const stuck = loop.status === "stuck";
@@ -1090,20 +1136,20 @@ export function BoardCardReviewPane({
     <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pl-3.5 pr-3">
         <SectionHeading>Adversarial review</SectionHeading>
-        <span className="text-[11.5px] text-muted-foreground">
+        <span className="text-board-11-5 text-muted-foreground">
           Round {loop.currentRound} of {loop.maxRounds}
         </span>
         <span className="flex-1" />
         <span
           className={cn(
-            "inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-[7px] px-2 text-[11.5px] font-medium",
+            "inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-board-7 px-2 text-board-11-5 font-medium",
             pill.className,
           )}
         >
           <BoardShimmerText active={pill.spinning} text={pill.label} />
         </span>
         <button
-          className="inline-flex h-6 shrink-0 items-center gap-1 rounded-[7px] border border-input bg-popover pl-1.5 pr-2.5 text-[11.5px] font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
+          className="inline-flex h-6 shrink-0 items-center gap-1 rounded-board-7 border border-input bg-popover pl-1.5 pr-2.5 text-board-11-5 font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
           onClick={onBackToThread}
           type="button"
         >
@@ -1131,13 +1177,13 @@ export function BoardCardReviewPane({
                 >
                   <button
                     className={cn(
-                      "flex h-[22px] flex-1 items-center justify-center rounded-md text-[10.5px] font-medium",
+                      "flex h-[22px] flex-1 items-center justify-center rounded-md text-board-10-5 font-medium",
                       now
                         ? "bg-foreground text-background"
                         : exists
                           ? "bg-foreground/10 text-muted-foreground"
-                          : "cursor-default text-muted-foreground/50 shadow-[inset_0_0_0_1px_var(--border)]",
-                      n === shownRound && exists && !now ? "shadow-[0_0_0_2px_var(--ring)]" : "",
+                          : "cursor-default text-muted-foreground/50 shadow-board-inset-border",
+                      n === shownRound && exists && !now ? "shadow-board-ring-focus" : "",
                     )}
                     disabled={!exists && !plannable(n)}
                     onClick={() =>
@@ -1164,7 +1210,7 @@ export function BoardCardReviewPane({
                 >
                   <button
                     aria-label="Remove a round"
-                    className="inline-flex h-5 w-[19px] items-center justify-center rounded-[5px] text-[13px] font-medium text-foreground disabled:cursor-not-allowed disabled:text-muted-foreground/45"
+                    className="inline-flex h-5 w-[19px] items-center justify-center rounded-board-5 text-board-13 font-medium text-foreground disabled:cursor-not-allowed disabled:text-muted-foreground/45"
                     disabled={loop.maxRounds <= budgetFloor}
                     onClick={() => onSetRounds(loop.maxRounds - 1)}
                     type="button"
@@ -1178,7 +1224,7 @@ export function BoardCardReviewPane({
                 <BoardHint label={`Allow ${loop.maxRounds + 1} rounds`}>
                   <button
                     aria-label="Add a round"
-                    className="inline-flex h-5 w-[19px] items-center justify-center rounded-[5px] text-[13px] font-medium text-foreground"
+                    className="inline-flex h-5 w-[19px] items-center justify-center rounded-board-5 text-board-13 font-medium text-foreground"
                     onClick={() => onSetRounds(loop.maxRounds + 1)}
                     type="button"
                   >
@@ -1194,10 +1240,11 @@ export function BoardCardReviewPane({
               onChange={(model) => onSetRoundModel?.(plannedRound, model)}
               phaseRuntimeMode={phaseRuntimeMode ?? "auto"}
               previousRound={plannedRound - 1}
+              projectId={projectId ?? null}
               round={plannedRound}
             />
           )}
-          <div className="text-[11.5px] text-muted-foreground">{counts}</div>
+          <div className="text-board-11-5 text-muted-foreground">{counts}</div>
         </div>
         {loop.status === "unreadable" && unreadableStepId !== null && unreadablePhase !== null ? (
           <UnreadableRoundBlock
@@ -1222,7 +1269,7 @@ export function BoardCardReviewPane({
           />
         ))}
         <div className="flex shrink-0 items-center gap-3 rounded-xl border border-dashed border-input bg-foreground/3 px-3.5 py-3">
-          <span className="min-w-0 text-[11.5px]/[1.5] text-pretty text-muted-foreground">
+          <span className="min-w-0 text-board-11-5/normal text-pretty text-muted-foreground">
             {footerNote(loop, offStage === true, ledgerFloor > 0, stalled === true)}
           </span>
         </div>

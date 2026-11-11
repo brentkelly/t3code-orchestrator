@@ -56,6 +56,7 @@ import {
   type BoardSplitRecommendation,
   isLiveBoardCardThreadLink,
   type BoardProjectExecutionConfig,
+  boardStalledWords,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Debouncer } from "@tanstack/react-pacer";
@@ -71,6 +72,7 @@ import {
   ClockIcon,
   EllipsisVerticalIcon,
   ExternalLinkIcon,
+  LinkIcon,
   FileIcon,
   FileTextIcon,
   ArrowUpIcon,
@@ -99,9 +101,9 @@ import { Fragment, Suspense, lazy, useEffect, useState, type ReactNode } from "r
 import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./BoardCardNavRails";
 import { useBoardUiStore } from "./boardUiStore";
 import { Button } from "../components/ui/button";
-import { Dialog, DialogPopup } from "../components/ui/dialog";
+import { Dialog } from "../components/ui/dialog";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../components/ui/menu";
-import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
+import { Popover, PopoverTrigger } from "../components/ui/popover";
 import {
   boardCardModelOverrideSummary,
   boardCardModelRows,
@@ -112,7 +114,6 @@ import { boardCardMergeStrategyView } from "./boardCardMergeStrategy";
 import { Switch } from "../components/ui/switch";
 import { NumberStepper } from "../components/settings/BoardPipelineSection";
 import { nextBoardCardPlanReview, type BoardCardPlanReviewView } from "./boardCardPlanReview";
-import { Textarea } from "../components/ui/textarea";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
@@ -184,6 +185,11 @@ import {
   type BoardStepRecovery,
 } from "./boardStepRecovery";
 import { deriveBoardUsageBreakdown } from "./usage/boardUsageBreakdown";
+import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
+import { BoardTextarea } from "./ui/BoardInput";
+import { BoardSheetPopup } from "./ui/BoardDialog";
+
+const providerDisabledWords = boardStalledWords("provider-disabled-for-project", null, undefined);
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
     apply inside this pure view. */
@@ -383,6 +389,9 @@ export interface BoardDetailThreadLink {
   readonly title: string | null;
   readonly threadState: BoardCardThreadState;
   readonly awaitingInput: boolean;
+  /** A subagent under this thread awaits approval; the modal opens on this thread, whose chat
+      shows the child's approval. */
+  readonly subagentAwaitingApproval?: boolean | undefined;
   /** The worker the thread lives on, which is where it opens. */
   readonly worker: BoardThreadWorker;
   /** "ran on {worker}", only on a board with more than one worker. */
@@ -417,7 +426,7 @@ export interface BoardCardDetailGroup {
 export interface BoardCardDetailViewProps {
   readonly environmentId: EnvironmentId;
   /** Why the live step stalled, from the card's shell (drives the
-      provider-not-on-worker panel). */
+      provider-stall panels). */
   readonly stalledReason?: BoardCardStepStalledReason | undefined;
   /** What the card's shell says of its work and its worker, for the
       Worker offline / Worker removed panel. */
@@ -579,6 +588,8 @@ export interface BoardCardDetailViewProps {
       it — clicking through is a moment the user is about to learn whether the
       card's link is stale, so it may as well not be. */
   readonly onOpenPullRequest: (url: string) => void;
+  /** Open any other outside link, such as the item the card's external reference names. */
+  readonly onOpenLink?: ((url: string) => void) | undefined;
   /** The card's merge-conflict story, or null when its merge is not
       held: the banner's words, and the one thing that disables Merge. Resolved
       by the container, which holds both the shell flag and the pull request's
@@ -784,13 +795,10 @@ function TitleBody({
     setEditing(false);
   };
   const frame =
-    "mx-2.5 mt-2 shrink-0 rounded-[7px] px-1.5 text-[21px]/[1.25] font-semibold tracking-[-0.015em] text-pretty text-foreground";
+    "mx-2.5 mt-2 shrink-0 rounded-board-7 px-1.5 text-board-21/tight font-semibold tracking-board-n1-5 text-pretty text-foreground";
   if (editing) {
     return (
-      <h2
-        className={cn(frame, "flex bg-muted shadow-[0_0_0_1px_var(--primary)]")}
-        id={CARD_TITLE_ID}
-      >
+      <h2 className={cn(frame, "flex bg-muted shadow-board-ring-primary")} id={CARD_TITLE_ID}>
         {/* A textarea, not an input: long titles wrap here exactly as they do
             at rest, so committing never reflows the sheet. */}
         <textarea
@@ -891,7 +899,7 @@ function BriefBody({
       <>
         <div
           className={cn(
-            "-mx-[7px] -my-1 flex flex-col gap-2 rounded-lg border bg-muted px-[7px] py-1 shadow-[0_0_0_1px_var(--primary)]",
+            "-mx-[7px] -my-1 flex flex-col gap-2 rounded-lg border bg-muted px-1.75 py-1 shadow-board-ring-primary",
             boardBriefDropClass(staged.dropZone === "brief"),
           )}
           onDragLeave={staged.handlers.onDragLeave}
@@ -907,9 +915,10 @@ function BriefBody({
             onDetach={onDetachFile}
             state={staged}
           />
-          <Textarea
+          <BoardTextarea
             autoFocus
-            className="min-h-24 text-[13.5px]/[1.6]"
+            className="min-h-24"
+            look="brief"
             onBlur={commit}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
@@ -947,7 +956,7 @@ function BriefBody({
       <BoardHint label="Click to edit">
         <button
           className={cn(
-            "-mx-[7px] -my-1 w-[calc(100%+14px)] rounded-lg border px-[7px] py-1 text-left text-[13.5px]/[1.6] hover:bg-accent",
+            "-mx-[7px] -my-1 w-[calc(100%+14px)] rounded-lg border px-1.75 py-1 text-left text-board-13-5 leading-board-1-6 hover:bg-accent",
             boardBriefDropClass(staged.dropZone === "brief"),
           )}
           onClick={() => {
@@ -989,20 +998,20 @@ function ConflictBanner({
   readonly onViewThread?: (() => void) | undefined;
 }) {
   return (
-    <div className="mx-3.5 mt-2.5 flex items-center gap-2.5 rounded-[10px] border border-amber-500/40 bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] py-2.5 pl-3 pr-2.5 dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]">
+    <div className="mx-3.5 mt-2.5 flex items-center gap-2.5 rounded-board-10 border border-warning/40 bg-board-warning-tint py-2.5 pl-3 pr-2.5 dark:bg-board-warning-tint-dark">
       <LoaderCircleIcon
         aria-hidden="true"
-        className="size-3.5 shrink-0 animate-spin text-amber-600 dark:text-amber-400"
+        className="size-3.5 shrink-0 animate-spin text-board-amber-icon"
       />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="text-[12.5px] font-medium text-foreground">{info.headline}</span>
-        <span className="text-[11.5px] leading-[1.45] text-pretty text-muted-foreground">
+        <span className="text-board-12-5 font-medium text-foreground">{info.headline}</span>
+        <span className="text-board-11-5 leading-board-1-45 text-pretty text-muted-foreground">
           {info.detail}
         </span>
       </div>
       {onViewThread === undefined ? null : (
         <button
-          className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-input bg-popover px-2.5 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent"
+          className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-input bg-popover px-2.5 text-board-11-5 font-medium text-foreground shadow-xs hover:bg-accent"
           onClick={onViewThread}
           type="button"
         >
@@ -1037,9 +1046,8 @@ function AutoMergeBanner({ info }: { readonly info: BoardAutoMergeBanner }) {
   const tone =
     info.tone === "warning"
       ? {
-          frame:
-            "border-amber-500/40 bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]",
-          icon: "text-amber-600 dark:text-amber-400",
+          frame: "border-warning/40 bg-board-warning-tint dark:bg-board-warning-tint-dark",
+          icon: "text-board-amber-icon",
         }
       : {
           frame: "border-destructive/30 bg-destructive/10",
@@ -1048,19 +1056,21 @@ function AutoMergeBanner({ info }: { readonly info: BoardAutoMergeBanner }) {
   return (
     <div
       className={cn(
-        "mx-3.5 mt-2.5 flex items-start gap-2.5 rounded-[10px] border py-2.5 pl-3 pr-2.5",
+        "mx-3.5 mt-2.5 flex items-start gap-2.5 rounded-board-10 border py-2.5 pl-3 pr-2.5",
         tone.frame,
       )}
     >
       <TriangleAlertIcon aria-hidden="true" className={cn("mt-px size-3.5 shrink-0", tone.icon)} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="text-[12.5px] font-medium text-foreground">{info.headline}</span>
+        <span className="text-board-12-5 font-medium text-foreground">{info.headline}</span>
         {/* The forge's own words, verbatim: the user reads the forge's reason
             rather than a paraphrase of it. */}
-        <span className="text-[11.5px] leading-[1.45] text-pretty text-muted-foreground">
+        <span className="text-board-11-5 leading-board-1-45 text-pretty text-muted-foreground">
           {info.reason}
         </span>
-        <span className="text-[11px] leading-[1.45] text-muted-foreground/80">{info.meta}</span>
+        <span className="text-board-11 leading-board-1-45 text-muted-foreground/80">
+          {info.meta}
+        </span>
       </div>
     </div>
   );
@@ -1076,22 +1086,21 @@ function BoardCiSentBackBanner({
   readonly onViewRun: () => void;
 }) {
   return (
-    <div className="mx-3.5 mt-2.5 flex items-start gap-2.5 rounded-[10px] border border-amber-500/40 bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] py-2.5 pr-2.5 pl-3 dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]">
-      <Undo2Icon
-        aria-hidden="true"
-        className="mt-px size-3.5 shrink-0 text-amber-600 dark:text-amber-400"
-      />
+    <div className="mx-3.5 mt-2.5 flex items-start gap-2.5 rounded-board-10 border border-warning/40 bg-board-warning-tint py-2.5 pr-2.5 pl-3 dark:bg-board-warning-tint-dark">
+      <Undo2Icon aria-hidden="true" className="mt-px size-3.5 shrink-0 text-board-amber-icon" />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="text-[12.5px] font-medium text-foreground">{banner.title}</span>
+        <span className="text-board-12-5 font-medium text-foreground">{banner.title}</span>
         {banner.reason === "" ? null : (
-          <span className="text-[11.5px] leading-[1.45] text-pretty text-muted-foreground">
+          <span className="text-board-11-5 leading-board-1-45 text-pretty text-muted-foreground">
             {banner.reason}
           </span>
         )}
-        <span className="text-[11px] leading-[1.45] text-muted-foreground/80">{banner.meta}</span>
+        <span className="text-board-11 leading-board-1-45 text-muted-foreground/80">
+          {banner.meta}
+        </span>
       </div>
       <button
-        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-input bg-popover px-2.5 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent"
+        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-input bg-popover px-2.5 text-board-11-5 font-medium text-foreground shadow-xs hover:bg-accent"
         onClick={onViewRun}
         type="button"
       >
@@ -1111,11 +1120,11 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   const pending = props.queueForceStartPending === true;
   return (
     <div className="mx-3.5 mb-3.5 rounded-lg border border-border bg-muted/50 p-2.5">
-      <p className="flex items-center gap-1.5 text-[12.5px] font-semibold text-foreground">
+      <p className="flex items-center gap-1.5 text-board-12-5 font-semibold text-foreground">
         <ClockIcon className="size-3.5 shrink-0 text-muted-foreground" />
         {info.headline}
       </p>
-      <p className="mt-1 text-[11.5px] leading-[1.45] text-muted-foreground">{info.detail}</p>
+      <p className="mt-1 text-board-11-5 leading-board-1-45 text-muted-foreground">{info.detail}</p>
       {props.onQueueForceStart === undefined && props.onQueueMoveToFront === undefined ? null : (
         <div className="mt-2.5 flex items-center gap-1.5">
           {/* A card waiting for its worker's checkout has no limit to start
@@ -1124,7 +1133,7 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
             <BoardHint label="Run this task now, past every agent limit: the board's, its worker's and its provider's.">
               <button
                 className={cn(
-                  "inline-flex h-[28px] items-center justify-center gap-[6px] rounded-lg border border-primary bg-primary px-2.5 text-[12px] font-medium text-primary-foreground shadow-xs hover:bg-primary/90",
+                  "inline-flex h-[28px] items-center justify-center gap-1.5 rounded-lg border border-primary bg-primary px-2.5 text-board-12 font-medium text-primary-foreground shadow-xs hover:bg-primary/90",
                   pending && "cursor-wait opacity-60",
                 )}
                 disabled={pending}
@@ -1139,7 +1148,7 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
           {props.onQueueMoveToFront === undefined ? null : (
             <BoardHint label="Put this task at the front of the queue.">
               <button
-                className="inline-flex h-[28px] items-center justify-center gap-[6px] rounded-lg border border-input bg-popover px-2.5 text-[12px] font-medium text-foreground shadow-xs hover:bg-accent"
+                className="inline-flex h-[28px] items-center justify-center gap-1.5 rounded-lg border border-input bg-popover px-2.5 text-board-12 font-medium text-foreground shadow-xs hover:bg-accent"
                 onClick={props.onQueueMoveToFront}
                 type="button"
               >
@@ -1187,10 +1196,10 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
       <div className="flex items-center gap-1.5">
         <SectionHeading>Plan review</SectionHeading>
         <span className="flex-1" />
-        <span className="text-[11px] font-medium text-foreground">{view.summary}</span>
+        <span className="text-board-11 font-medium text-foreground">{view.summary}</span>
       </div>
       {/* A div, not a label: the switch is a button, as in the auto-start row. */}
-      <div className="flex items-start gap-2.5 text-[12.5px]">
+      <div className="flex items-start gap-2.5 text-board-12-5">
         <Switch
           aria-label="Adversarial plan review"
           checked={view.enabled}
@@ -1203,12 +1212,14 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
         />
         <span className="flex min-w-0 flex-col gap-0.5">
           <span className="font-medium text-foreground">Adversarial plan review</span>
-          <span className="text-[11.5px] leading-[1.45] text-muted-foreground">{view.note}</span>
+          <span className="text-board-11-5 leading-board-1-45 text-muted-foreground">
+            {view.note}
+          </span>
         </span>
       </div>
       {view.enabled ? (
-        <div className="flex items-center gap-2.5 pl-[38px]">
-          <span className="flex-1 text-[12px] font-medium text-foreground">Rounds</span>
+        <div className="flex items-center gap-2.5 pl-9.5">
+          <span className="flex-1 text-board-12 font-medium text-foreground">Rounds</span>
           <NumberStepper
             ariaLabel="plan review rounds"
             max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
@@ -1264,24 +1275,24 @@ function ThreadsSection(props: BoardCardDetailViewProps) {
         />
       </div>
       {props.threadLinks.length === 0 ? (
-        <p className="text-[13px] text-muted-foreground">No linked threads.</p>
+        <p className="text-board-13 text-muted-foreground">No linked threads.</p>
       ) : (
         <ul className="flex flex-col gap-1.5">
           {props.threadLinks.map((link) => (
             <Fragment key={link.threadId}>
               {link.movedFrom == null ? null : (
-                <li className="flex items-center gap-2 text-[10.5px] text-muted-foreground">
+                <li className="flex items-center gap-2 text-board-10-5 text-muted-foreground">
                   <span className="h-px flex-1 bg-border" />
                   {link.movedFrom}
                   <span className="h-px flex-1 bg-border" />
                 </li>
               )}
-              <li className="flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]">
+              <li className="flex items-center gap-2.25 rounded-lg border border-border bg-muted px-2.5 py-1.75">
                 <div className="flex min-w-0 flex-1 flex-col">
                   <div className="flex items-center gap-1.5">
                     <span
                       className={cn(
-                        "min-w-0 truncate text-[13px] text-foreground",
+                        "min-w-0 truncate text-board-13 text-foreground",
                         link.tombstoned && "text-muted-foreground line-through",
                       )}
                     >
@@ -1293,7 +1304,7 @@ function ThreadsSection(props: BoardCardDetailViewProps) {
                       <CircleAlertIcon className="size-3 shrink-0 text-attention-foreground" />
                     ) : null}
                   </div>
-                  <span className="text-[10.5px] text-muted-foreground">
+                  <span className="text-board-10-5 text-muted-foreground">
                     {link.role}
                     {link.tombstoned
                       ? " · deleted"
@@ -1363,7 +1374,7 @@ function StageLadder({
           </>
         );
         const className = cn(
-          "flex h-[26px] items-center gap-2 rounded-[7px] px-2 text-[12.5px]",
+          "flex h-[26px] items-center gap-2 rounded-board-7 px-2 text-board-12-5",
           current ? "bg-accent font-medium text-foreground" : "text-muted-foreground",
         );
         // The build role onward is granted by the pipeline, not chosen — those
@@ -1455,11 +1466,16 @@ function BoardStageSecondaryMenu({
     <Popover onOpenChange={setOpen} open={open}>
       <PopoverTrigger
         aria-label="Other ways to advance"
-        className="-ml-px inline-flex h-[34px] w-7 shrink-0 items-center justify-center rounded-lg rounded-l-none border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent"
+        render={
+          <button
+            className="-ml-px inline-flex h-[34px] w-7 shrink-0 items-center justify-center rounded-lg rounded-l-none border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent"
+            type="button"
+          />
+        }
       >
         <ChevronDownIcon className="size-3.5" />
       </PopoverTrigger>
-      <PopoverPopup align="end" className="w-[262px] p-1.5">
+      <BoardPopoverPopup align="end" className="w-[262px]" inset="1.5">
         <div className="flex flex-col gap-0.5">
           {actions.map((action) => (
             <button
@@ -1473,15 +1489,15 @@ function BoardStageSecondaryMenu({
             >
               <PullRequestGlyph.pullRequest className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
               <span className="flex min-w-0 flex-col">
-                <span className="text-[12.5px] font-medium text-foreground">{action.label}</span>
-                <span className="mt-px text-[11.5px]/[1.4] text-muted-foreground">
+                <span className="text-board-12-5 font-medium text-foreground">{action.label}</span>
+                <span className="mt-px text-board-11-5 leading-board-1-4 text-muted-foreground">
                   {action.detail}
                 </span>
               </span>
             </button>
           ))}
         </div>
-      </PopoverPopup>
+      </BoardPopoverPopup>
     </Popover>
   );
 }
@@ -1511,13 +1527,13 @@ function BoardStepRecoveryButton({
   const [open, setOpen] = useState(false);
   const next = recovery.next;
   const item =
-    "flex w-full items-center gap-2 rounded px-1.5 py-1.5 text-left text-[12.5px] font-medium text-foreground";
+    "flex w-full items-center gap-2 rounded px-1.5 py-1.5 text-left text-board-12-5 font-medium text-foreground";
   return (
     <div className="flex items-stretch">
       <BoardHint label="Pick up the stopped step where it left off">
         <button
           className={cn(
-            "inline-flex h-[34px] min-w-0 flex-1 items-center justify-center gap-[7px] rounded-lg rounded-r-none border border-primary bg-primary px-3 text-[13px] font-medium text-primary-foreground shadow-xs",
+            "inline-flex h-[34px] min-w-0 flex-1 items-center justify-center gap-1.75 rounded-lg rounded-r-none border border-primary bg-primary px-3 text-board-13 font-medium text-primary-foreground shadow-xs",
             onContinue === undefined || pending
               ? "cursor-not-allowed opacity-50"
               : "hover:bg-primary/90",
@@ -1533,11 +1549,16 @@ function BoardStepRecoveryButton({
       <Popover onOpenChange={setOpen} open={open}>
         <PopoverTrigger
           aria-label="Other ways to recover"
-          className="-ml-px inline-flex h-[34px] w-7 shrink-0 items-center justify-center rounded-lg rounded-l-none border border-primary bg-primary text-primary-foreground shadow-xs hover:bg-primary/90"
+          render={
+            <button
+              className="-ml-px inline-flex h-[34px] w-7 shrink-0 items-center justify-center rounded-lg rounded-l-none border border-primary bg-primary text-primary-foreground shadow-xs hover:bg-primary/90"
+              type="button"
+            />
+          }
         >
           <ChevronDownIcon className="size-3.5" />
         </PopoverTrigger>
-        <PopoverPopup align="end" className="w-[262px] p-1.5">
+        <BoardPopoverPopup align="end" className="w-[262px]" inset="1.5">
           <div className="flex flex-col gap-0.5">
             <BoardHint label={restartDisabledReason ?? undefined}>
               <button
@@ -1580,7 +1601,7 @@ function BoardStepRecoveryButton({
               </BoardHint>
             )}
           </div>
-        </PopoverPopup>
+        </BoardPopoverPopup>
       </Popover>
     </div>
   );
@@ -1638,16 +1659,52 @@ function GroupActionsSection({
         {displayed === null ? null : (
           <ViewPullRequestButton onOpen={props.onOpenPullRequest} pullRequest={displayed} />
         )}
-        <p className="text-[11.5px]/[1.5] text-pretty text-muted-foreground">{group.note}</p>
+        <p className="text-board-11-5/normal text-pretty text-muted-foreground">{group.note}</p>
       </div>
     </div>
+  );
+}
+
+/** The outside item the card tracks, such as the GitHub issue a webhook created it
+    from. Neutral: it is a link, not a status. */
+function BoardExternalRefChip({
+  externalRef,
+  onOpen,
+}: {
+  readonly externalRef: NonNullable<BoardCardDetailViewProps["detail"]["card"]["externalRef"]>;
+  readonly onOpen: ((url: string) => void) | undefined;
+}) {
+  const className =
+    "inline-flex h-[18px] max-w-60 shrink-0 items-center gap-1 rounded-md bg-muted px-1.75 text-board-11 font-medium text-muted-foreground";
+  const text = <span className="truncate">{externalRef.id}</span>;
+  return (
+    <BoardHint label={`${externalRef.system}: ${externalRef.id}`}>
+      {/* Only web links open: the reference can come from an outside party. */}
+      {externalRef.url === null ||
+      onOpen === undefined ||
+      !/^https?:\/\//i.test(externalRef.url) ? (
+        <span className={className}>
+          <LinkIcon className="size-2.5 shrink-0" />
+          {text}
+        </span>
+      ) : (
+        <button
+          className={cn(className, "hover:bg-accent")}
+          onClick={() => onOpen(externalRef.url!)}
+          type="button"
+        >
+          <LinkIcon className="size-2.5 shrink-0" />
+          {text}
+        </button>
+      )}
+    </BoardHint>
   );
 }
 
 /** The outline secondary look shared by the action-area buttons; hover is added
     per button because :hover still matches a disabled one. */
 const OUTLINE_ACTION_CLASS =
-  "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs";
+  "inline-flex h-[34px] items-center justify-center gap-1.75 rounded-lg border border-input bg-popover px-3 text-board-13 font-medium text-foreground shadow-xs";
 
 /** The outline View PR button, shared by the leaf and group action areas. */
 function ViewPullRequestButton({
@@ -1670,7 +1727,7 @@ function ViewPullRequestButton({
         {/* Neutral: a draft is waiting for the review loop, not on
             anyone. The board marks it ready at Ready for merge. */}
         {boardCardPullRequestIsOpenDraft(pullRequest) ? (
-          <span className="rounded border border-input px-1 text-[10.5px] text-muted-foreground">
+          <span className="rounded border border-input px-1 text-board-10-5 text-muted-foreground">
             Draft
           </span>
         ) : null}
@@ -1751,6 +1808,7 @@ function ActionsSection({
             {
               carriedFindings: props.reviewOverrides?.carriedFindings ?? {},
               stuckWaivedThrough: props.reviewOverrides?.stuckWaivedThrough ?? null,
+              roundModes: props.reviewOverrides?.roundModes ?? {},
             },
           )
         : null;
@@ -1862,7 +1920,7 @@ function ActionsSection({
           alarm; here the notice only says what is true and what to press. */}
       {missingPullRequest === null ? null : (
         <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-2.5">
-          <div className="flex gap-[7px] text-[11.5px]/[1.45] text-muted-foreground">
+          <div className="flex gap-1.75 text-board-11-5 leading-board-1-45 text-muted-foreground">
             <PullRequestGlyph.pullRequest className="mt-px size-3.5 shrink-0" />
             <span>
               {missingPullRequest.branch === null ? (
@@ -1879,7 +1937,7 @@ function ActionsSection({
             <BoardHint label="Ask the forge again, ignoring the cached answer">
               <button
                 className={cn(
-                  "inline-flex h-[30px] items-center justify-center gap-[7px] self-start rounded-lg border border-input bg-popover px-2.5 text-[12.5px] font-medium text-foreground shadow-xs",
+                  "inline-flex h-[30px] items-center justify-center gap-1.75 self-start rounded-lg border border-input bg-popover px-2.5 text-board-12-5 font-medium text-foreground shadow-xs",
                   props.checkingForPullRequest === true
                     ? "cursor-wait opacity-60"
                     : "hover:bg-accent",
@@ -1890,7 +1948,7 @@ function ActionsSection({
               >
                 {props.checkingForPullRequest === true ? (
                   <>
-                    <span className="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-muted-foreground/40 border-t-foreground" />
+                    <span className="size-3 shrink-0 animate-spin rounded-full border-board-spinner border-muted-foreground/40 border-t-foreground" />
                     Checking…
                   </>
                 ) : (
@@ -1914,9 +1972,9 @@ function ActionsSection({
         >
           <button
             className={cn(
-              "inline-flex h-8 items-center justify-center gap-[7px] rounded-lg border px-2.75 text-[13px] font-medium shadow-xs",
+              "inline-flex h-8 items-center justify-center gap-1.75 rounded-lg border px-2.75 text-board-13 font-medium shadow-xs",
               stopRound.pending
-                ? "border-amber-500/55 bg-amber-500/12 text-amber-700 dark:text-amber-300"
+                ? "border-warning/55 bg-warning/12 text-board-amber-text"
                 : "border-input bg-popover text-foreground hover:bg-accent",
             )}
             onClick={() => stopRound.onToggle(stopRound.pending ? null : stopRound.round)}
@@ -1939,7 +1997,7 @@ function ActionsSection({
           }
         >
           <button
-            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-attention/55 bg-attention/12 px-3 text-[13px] font-medium text-attention-foreground shadow-xs hover:bg-attention/20"
+            className="inline-flex h-[34px] items-center justify-center gap-1.75 rounded-lg border border-attention/55 bg-attention/12 px-3 text-board-13 font-medium text-attention-foreground shadow-xs hover:bg-attention/20"
             onClick={onReviewSplit}
             type="button"
           >
@@ -1964,7 +2022,7 @@ function ActionsSection({
           >
             <button
               className={cn(
-                "inline-flex h-[34px] min-w-0 flex-1 items-center justify-center gap-[7px] rounded-lg border px-3 text-[13px] font-medium shadow-xs",
+                "inline-flex h-[34px] min-w-0 flex-1 items-center justify-center gap-1.75 rounded-lg border px-3 text-board-13 font-medium shadow-xs",
                 forward.emphasised
                   ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
                   : "border-input bg-popover text-foreground hover:bg-accent",
@@ -1989,7 +2047,7 @@ function ActionsSection({
             >
               {merging ? (
                 <>
-                  <span className="size-3.5 shrink-0 animate-spin rounded-full border-[1.7px] border-primary-foreground/40 border-t-primary-foreground" />
+                  <span className="size-3.5 shrink-0 animate-spin rounded-full border-board-spinner-md border-primary-foreground/40 border-t-primary-foreground" />
                   Merging…
                 </>
               ) : (
@@ -2066,11 +2124,11 @@ function ActionsSection({
             <LayersIcon className="size-3.5" />
             Open board
           </button>
-          <p className="text-[11.5px]/[1.5] text-pretty text-muted-foreground">{group.note}</p>
+          <p className="text-board-11-5/normal text-pretty text-muted-foreground">{group.note}</p>
         </>
       )}
       {blocked ? (
-        <div className="flex gap-[7px] rounded-lg border border-warning/35 bg-warning/8 px-2.5 py-2.5 text-[11.5px]/[1.45] text-warning-foreground">
+        <div className="flex gap-1.75 rounded-lg border border-warning/35 bg-warning/8 px-2.5 py-2.5 text-board-11-5 leading-board-1-45 text-warning-foreground">
           <LockIcon className="mt-px size-3.5 shrink-0" />
           <span>
             {unmet.length === 0
@@ -2080,10 +2138,10 @@ function ActionsSection({
         </div>
       ) : null}
       {humanInLoop !== null ? (
-        <label className="flex items-center justify-between gap-2 rounded-lg border border-input bg-popover px-2.5 py-2 text-[12.5px]">
+        <label className="flex items-center justify-between gap-2 rounded-lg border border-input bg-popover px-2.5 py-2 text-board-12-5">
           <span className="flex flex-col">
             <span className="font-medium text-foreground">Human in the loop</span>
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-board-11 text-muted-foreground">
               {humanInLoop.explicit
                 ? humanInLoop.value
                   ? "You drive the build in conversation."
@@ -2128,7 +2186,7 @@ function InfoSection({
 }) {
   const base = props.baseBranch;
   return (
-    <div className="border-t border-border p-3.5 text-[11.5px]/[1.7] text-muted-foreground">
+    <div className="border-t border-border p-3.5 text-board-11-5 leading-board-1-7 text-muted-foreground">
       {/* Project. Editable until the card has been built, because a
           card created in the wrong project was otherwise stuck there — and
           pinned after, because a worktree, a branch and a key on a pull request
@@ -2150,6 +2208,13 @@ function InfoSection({
         shell={props.workerShell}
         stalledReason={props.stalledReason}
       />
+      {/* T3O-74: not a worker matter, so not in the worker row, which a board
+          with no workers never renders. */}
+      {props.stalledReason === "provider-disabled-for-project" ? (
+        <span className="rounded-md bg-warning/10 px-2 py-1.5 text-warning-foreground">
+          {providerDisabledWords.label}. {providerDisabledWords.detail}
+        </span>
+      ) : null}
       <div>Created · {formatRelativeTimeLabel(props.detail.card.createdAt)}</div>
       {base.retargeted && base.effective !== null ? (
         // Derived, never stored: the stated base and actual cut point disagree
@@ -2252,7 +2317,7 @@ function BoardBaseBranchRow({ props }: { readonly props: BoardCardDetailViewProp
       <BoardBaseBranchSelect
         align="end"
         baseBranch={card.baseBranch}
-        className="h-5 px-1 text-[11.5px] text-foreground"
+        inline
         environmentId={props.environmentId}
         onSelect={(next, localName) => {
           // Compared against the branch the card was CUT from, not the pin it
@@ -2333,7 +2398,15 @@ export function initialBoardCardThreadId(
   stages: ReadonlyArray<BoardStageDefinition>,
   stage: BoardStageId,
   links: ReadonlyArray<BoardCardThreadLink>,
+  /** A thread whose subagent awaits approval wins when it is live. */
+  awaitingThreadId?: ThreadId | null,
 ): ThreadId | null {
+  if (
+    awaitingThreadId != null &&
+    links.some((link) => link.threadId === awaitingThreadId && isLiveBoardCardThreadLink(link))
+  ) {
+    return awaitingThreadId;
+  }
   // A card whose threads are all retired still opens its newest one.
   const active =
     activeBoardCardThreadId(links) ??
@@ -2386,14 +2459,14 @@ function PaneTabs({
 }) {
   const pill = (active: boolean) =>
     cn(
-      "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] px-2.5 text-[11.5px]",
+      "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-board-7 px-2.5 text-board-11-5",
       active
-        ? "bg-card font-medium text-foreground shadow-[0_0_0_1px_var(--border)]"
+        ? "bg-card font-medium text-foreground shadow-board-ring-border"
         : "text-muted-foreground hover:text-foreground",
     );
   const tab = (value: BoardCardPane) => pill(pane === value);
   return (
-    <div className="flex shrink-0 items-center gap-0.5 rounded-[9px] bg-accent p-0.5">
+    <div className="flex shrink-0 items-center gap-0.5 rounded-board-9 bg-accent p-0.5">
       <button className={tab("thread")} onClick={() => onSelect("thread")} type="button">
         <MessageSquareIcon className="size-3" />
         Thread
@@ -2581,9 +2654,33 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // stage makes current", so the pane follows the card until the user picks a
   // thread, and a since-unlinked selection falls back to that same default.
   const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
+  // Read once on open, so a subagent asking mid-read never moves the pane;
+  // the newest such thread, as the stage default prefers the newest.
+  const [awaitingThreadAtOpen] = useState(() => {
+    const awaiting = new Set(
+      props.threadLinks
+        .filter((link) => link.subagentAwaitingApproval === true && !link.tombstoned)
+        .map((link) => link.threadId),
+    );
+    return (
+      sortBoardCardThreadLinks(card.threadLinks.filter((link) => awaiting.has(link.threadId))).at(
+        -1,
+      )?.threadId ?? null
+    );
+  });
   const selectedThread =
     props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
-    initialBoardCardThreadId(props.stages, card.stage, card.threadLinks);
+    initialBoardCardThreadId(
+      props.stages,
+      card.stage,
+      card.threadLinks,
+      // Once answered, the pane follows the stage default again.
+      props.threadLinks.some(
+        (link) => link.threadId === awaitingThreadAtOpen && link.subagentAwaitingApproval === true,
+      )
+        ? awaitingThreadAtOpen
+        : null,
+    );
   // A group's Planning pane is the Thread pane pinned to its planning
   // thread; the Thread pill still lists every thread, planning included.
   const planStageId = boardStageWithRole(stageStateOf(props.stages), "plan")?.stageId ?? null;
@@ -2709,11 +2806,11 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       {/* Identity row: key, the card's labels, its stage. `relative z-10` lifts
           it (and the × / ⋯ / fullscreen buttons it carries) above the nav
           rails' band, which would otherwise sit over them. */}
-      <div className="relative z-10 flex shrink-0 items-start gap-[9px] px-4 pt-4">
+      <div className="relative z-10 flex shrink-0 items-start gap-2.25 px-4 pt-4">
         {/* The key and its chips wrap onto a second line rather than pushing
             the tabs and the kebab off a narrow modal. */}
-        <div className="flex min-h-7 min-w-0 flex-1 flex-wrap items-center gap-x-[9px] gap-y-1.5">
-          <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">
+        <div className="flex min-h-7 min-w-0 flex-1 flex-wrap items-center gap-x-2.25 gap-y-1.5">
+          <span className="shrink-0 text-board-11-5 font-medium text-muted-foreground">
             {card.key}
           </span>
           {props.parentCard != null ? (
@@ -2721,7 +2818,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             // back into the sub-board it lives on, with this sheet still open.
             <BoardHint label={`Part of ${props.parentCard.key}'s sub-board: open it`}>
               <button
-                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
+                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-1.75 text-board-11 font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
                 disabled={props.onOpenParentSubBoard === undefined}
                 onClick={props.onOpenParentSubBoard}
                 type="button"
@@ -2732,12 +2829,15 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             </BoardHint>
           ) : null}
           {group === null ? null : (
-            <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground">
+            <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-1.75 text-board-11 font-medium text-foreground">
               <LayersIcon className="size-2.5" />
               {group.chip}
             </span>
           )}
           <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
+          {card.externalRef === null ? null : (
+            <BoardExternalRefChip externalRef={card.externalRef} onOpen={props.onOpenLink} />
+          )}
           {/* On a done card the stage chip IS the completion badge, cut to the
               same block as the label chips beside it: the sheet no
               longer wears a wash, so this and the title's check carry "done".
@@ -2746,8 +2846,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             className={cn(
               "inline-flex shrink-0 items-center font-medium",
               done
-                ? "h-4 rounded-[5px] bg-success/16 px-1.5 text-[10px] tracking-[0.03em] text-success-foreground uppercase"
-                : "h-[18px] rounded-md bg-muted-foreground/14 px-[7px] text-[11px] text-foreground",
+                ? "h-4 rounded-board-5 bg-success/16 px-1.5 text-board-10 tracking-board-3 text-success-foreground uppercase"
+                : "h-[18px] rounded-md bg-muted-foreground/14 px-1.75 text-board-11 text-foreground",
             )}
           >
             {/* "Continuous integration" is too long for this row. */}
@@ -2756,7 +2856,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               : boardStageLabel(props.stages, card.stage)}
           </span>
           {archived ? (
-            <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+            <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-1.75 text-board-11 font-medium text-muted-foreground">
               Archived
             </span>
           ) : null}
@@ -2780,7 +2880,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               running, not done, and asking nothing of anyone. */}
           {archived || done || autoMergeChip === null ? null : (
             <BoardHint label={autoMergeChip.tooltip}>
-              <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+              <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-1.75 text-board-11 font-medium text-muted-foreground">
                 <PullRequestGlyph.merged className="size-2.5" />
                 {autoMergeChip.label}
               </span>
@@ -2792,7 +2892,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               docs/t3o/status-colours.md. */}
           {props.queueInfo != null ? (
             <BoardHint label={props.queueInfo.detail}>
-              <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+              <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-1.75 text-board-11 font-medium text-muted-foreground">
                 <ClockIcon className="size-2.5" />
                 {props.queueInfo.label}
               </span>
@@ -2805,7 +2905,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           {modelOverridden ? (
             <BoardHint label={modelPillTitle}>
               <button
-                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.75 text-board-10-5 font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
                 onClick={() => setModelsOpen(true)}
                 type="button"
               >
@@ -2823,7 +2923,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           onSetMergeStrategy === undefined ? null : (
             <BoardHint label={mergeStrategy.pill.tooltip}>
               <button
-                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.75 text-board-10-5 font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
                 onClick={() => setMergeStrategyOpen(true)}
                 type="button"
               >
@@ -2833,7 +2933,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             </BoardHint>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-[9px]">
+        <div className="flex shrink-0 items-center gap-2.25">
           <PaneTabs
             ciLive={inCi && isBoardCiLive(card.ci)}
             hasCi={hasCi}
@@ -2849,8 +2949,13 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           <Menu>
             <MenuTrigger
               aria-label="More actions"
-              className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground data-popup-open:bg-accent data-popup-open:text-foreground"
               title="More actions"
+              render={
+                <button
+                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground data-popup-open:bg-accent data-popup-open:text-foreground"
+                  type="button"
+                />
+              }
             >
               <EllipsisVerticalIcon className="size-[15px]" />
             </MenuTrigger>
@@ -2867,7 +2972,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   <MenuItem onClick={() => setModelsOpen(true)}>
                     <SlidersHorizontalIcon />
                     <span className="flex-1">Models</span>
-                    <span className="font-mono text-[11px] font-medium text-muted-foreground">
+                    <span className="font-mono text-board-11 font-medium text-muted-foreground">
                       {modelSummary}
                     </span>
                   </MenuItem>
@@ -2877,7 +2982,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 <MenuItem onClick={() => setMergeStrategyOpen(true)}>
                   <MergeIcon />
                   <span className="flex-1">Merge strategy</span>
-                  <span className="font-mono text-[11px] font-medium text-muted-foreground">
+                  <span className="font-mono text-board-11 font-medium text-muted-foreground">
                     {mergeStrategy.menuValue}
                   </span>
                 </MenuItem>
@@ -2919,6 +3024,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onOpenChange={setModelsOpen}
                 open={modelsOpen}
                 overrides={card.modelOverrides}
+                projectId={card.projectId}
                 rows={modelRows}
                 stepRunning={props.stepRunning === true}
               />
@@ -3004,7 +3110,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 <SectionHeading>Brief</SectionHeading>
                 <span className="flex-1" />
                 <button
-                  className="inline-flex h-6 shrink-0 items-center gap-1 rounded-[7px] border border-input bg-popover pl-1.5 pr-2.5 text-[11.5px] font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
+                  className="inline-flex h-6 shrink-0 items-center gap-1 rounded-board-7 border border-input bg-popover pl-1.5 pr-2.5 text-board-11-5 font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
                   onClick={() => setPane("thread")}
                   type="button"
                 >
@@ -3116,6 +3222,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onBackToThread={() => setPane("thread")}
                 onSetRoundModel={props.onSetReviewRoundModel}
                 phaseRuntimeMode={props.reviewPhaseRuntimeMode}
+                projectId={card.projectId}
                 onResume={props.onResumeReview}
                 onRuling={onReviewStage ? props.onReviewRuling : undefined}
                 onReopenStep={props.onReopenReviewStep}
@@ -3245,7 +3352,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               />
             ) : null}
             {props.feedback !== null ? (
-              <p className="mx-3.5 mb-3.5 rounded-md bg-destructive/10 px-2 py-1.5 text-[12px] text-destructive-foreground">
+              <p className="mx-3.5 mb-3.5 rounded-md bg-destructive/10 px-2 py-1.5 text-board-12 text-destructive-foreground">
                 {props.feedback}
               </p>
             ) : null}
@@ -3261,7 +3368,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         <div className="mt-3 flex min-h-0 flex-[0_1_auto] flex-col overflow-y-auto border-t border-border">
           <div className="flex items-stretch">
             {/* ── Left: what the card is ─────────────────────────────── */}
-            <div className="flex min-w-0 flex-1 flex-col gap-[18px] px-5 pt-4 pb-5">
+            <div className="flex min-w-0 flex-1 flex-col gap-4.5 px-5 pt-4 pb-5">
               {props.stepFailure !== null ? (
                 <BoardCardStepFailure
                   stageLabel={props.stepFailure.stageLabel}
@@ -3280,7 +3387,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 />
               ) : null}
               {props.feedback !== null ? (
-                <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-[12px] text-destructive-foreground">
+                <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-board-12 text-destructive-foreground">
                   {props.feedback}
                 </p>
               ) : null}
@@ -3419,14 +3526,14 @@ export function BoardCardDetailPopup({
   const [sheet, setSheet] = useState<HTMLElement | null>(null);
   useBoardCardNavKeys(sheet, nav);
   return (
-    <DialogPopup
+    <BoardSheetPopup
       aria-labelledby={CARD_TITLE_ID}
       className={cn(
         // `group/sheet` is what the nav rails watch: they reveal on hover of
         // the whole sheet, not of their own invisible band.
-        "group/sheet overflow-hidden p-0",
+        "group/sheet overflow-hidden",
         maximised
-          ? "fixed inset-0 h-screen max-h-none w-screen max-w-none rounded-none border-0"
+          ? null
           : wide
             ? // Under 1000px tall, take all but a 0.5rem sliver: the negative
               // margin reaches into the viewport's 1rem padding. `sm:` spares
@@ -3434,8 +3541,8 @@ export function BoardCardDetailPopup({
               "h-[86vh] max-h-[86vh] w-[min(1220px,100%)] max-w-[1220px] sm:[@media(max-height:999.98px)]:-my-2 sm:[@media(max-height:999.98px)]:h-[calc(100dvh-1rem)] sm:[@media(max-height:999.98px)]:max-h-[calc(100dvh-1rem)]"
             : "max-h-[86vh] w-[min(760px,100%)] max-w-[760px]",
       )}
+      maximised={maximised}
       ref={setSheet}
-      showCloseButton={false}
       {...(cardId === null ? {} : { "data-board-card-detail": cardId })}
     >
       {children}
@@ -3443,6 +3550,6 @@ export function BoardCardDetailPopup({
           stacking that keeps the header's buttons hit-testable over a rail is
           the explicit z-index on each, not source order. */}
       <BoardCardNavRails nav={nav} />
-    </DialogPopup>
+    </BoardSheetPopup>
   );
 }

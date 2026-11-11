@@ -14,6 +14,8 @@ import {
   type BoardGatewaySpawnInput,
   type BoardGatewayTargetInput,
   type BoardGatewayAnswerInput,
+  type BoardGatewayPullRequestLinkInput,
+  type BoardGatewayPullRequestUnlinkInput,
   type BoardGatewayThreadState,
   type BoardMcpRelayRequest,
   type BoardMcpRelayResponse,
@@ -66,6 +68,8 @@ export interface WorkerGatewayRpcOf<E> {
   readonly delete: (input: BoardGatewayTargetInput) => Effect.Effect<void, E>;
   readonly armLimitRecovery: (input: BoardGatewayTargetInput) => Effect.Effect<boolean, E>;
   readonly answerPendingInput: (input: BoardGatewayAnswerInput) => Effect.Effect<boolean, E>;
+  readonly linkPullRequest: (input: BoardGatewayPullRequestLinkInput) => Effect.Effect<void, E>;
+  readonly unlinkPullRequest: (input: BoardGatewayPullRequestUnlinkInput) => Effect.Effect<void, E>;
   readonly threadState: (threadId: ThreadId) => Effect.Effect<BoardGatewayThreadState | null, E>;
   readonly threadRecords: (
     threadIds: ReadonlyArray<ThreadId>,
@@ -79,6 +83,7 @@ export interface WorkerGatewayRpcOf<E> {
   ) => Effect.Effect<BoardAssistantMessage | null, E>;
   readonly lastSignalAt: (threadId: ThreadId) => Effect.Effect<string | null, E>;
   readonly pendingTurnStartAt: (threadId: ThreadId) => Effect.Effect<string | null, E>;
+  readonly subagentAwaitingApproval: (threadId: ThreadId) => Effect.Effect<boolean, E>;
   readonly projects: Effect.Effect<ReadonlyArray<BoardProject>, E>;
   readonly project: (projectId: ProjectId) => Effect.Effect<BoardProjectDetail | null, E>;
   readonly subscribeSignals: (
@@ -167,6 +172,9 @@ const toWireCommandError = (error: ThreadCommandError): BoardWorkerGatewayError 
     operation: error.command,
     threadId: error.threadId,
     detail: error.detail,
+    ...(error._tag === "ThreadCommandRefusedError" && error.reason !== undefined
+      ? { reason: error.reason }
+      : {}),
   });
 
 export const toWireReadError = (error: ThreadReadError): BoardWorkerGatewayError =>
@@ -187,7 +195,12 @@ export const fromWireCommandError =
   (command: string, threadId: ThreadId) =>
   (error: WorkerGatewayCallError): ThreadCommandError =>
     error._tag === "BoardWorkerGatewayError" && error.kind === "refused"
-      ? new ThreadCommandRefusedError({ command, threadId, detail: error.detail })
+      ? new ThreadCommandRefusedError({
+          command,
+          threadId,
+          detail: error.detail,
+          ...(error.reason === undefined ? {} : { reason: error.reason }),
+        })
       : new ThreadCommandFailedError({
           command,
           threadId,

@@ -401,6 +401,7 @@ export function deriveBoardCardWorkSummary(input: {
     {
       carriedFindings: card.reviewOverrides?.carriedFindings ?? {},
       stuckWaivedThrough: card.reviewOverrides?.stuckWaivedThrough ?? null,
+      roundModes: card.reviewOverrides?.roundModes ?? {},
     },
   );
   // The Review pane's walk treats an empty ledger as round 1 running. Summary

@@ -210,6 +210,8 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     delete: (input) => wireCommand(local.delete(input)),
     armLimitRecovery: (input) => wireCommand(local.armLimitRecovery(input)),
     answerPendingInput: (input) => wireCommand(local.answerPendingInput(input)),
+    linkPullRequest: (input) => wireCommand(local.linkPullRequest(input)),
+    unlinkPullRequest: (input) => wireCommand(local.unlinkPullRequest(input)),
     threadState: (threadId) => wireRead(local.threadState(threadId)),
     threadRecords: (threadIds) =>
       wireRead(local.threadRecords(threadIds)).pipe(Effect.map((records) => [...records.values()])),
@@ -218,6 +220,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     latestAssistantMessage: (threadId) => wireRead(local.latestAssistantMessage(threadId)),
     lastSignalAt: (threadId) => wireRead(local.lastSignalAt(threadId)),
     pendingTurnStartAt: (threadId) => wireRead(local.pendingTurnStartAt(threadId)),
+    subagentAwaitingApproval: (threadId) => wireRead(local.subagentAwaitingApproval(threadId)),
     projects: wireRead(local.projects()),
     project: (projectId) => wireRead(local.project(projectId)),
     subscribeSignals: (afterSequence, withUsage) =>

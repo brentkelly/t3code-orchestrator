@@ -32,10 +32,10 @@ export function BoardCardStepPaused(props: {
       <div className="flex items-start gap-2">
         <PauseIcon aria-hidden="true" className="mt-px size-3.5 shrink-0 text-muted-foreground" />
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="text-[12px] font-medium text-foreground">
+          <span className="text-board-12 font-medium text-foreground">
             {boardStageLabelMidSentence(props.stageLabel)} is paused
           </span>
-          <span className="break-words text-[12px] leading-[1.5] text-muted-foreground">
+          <span className="break-words text-board-12 leading-normal text-muted-foreground">
             You stopped this, so nothing is running and the board is leaving it alone. Resuming puts
             it back in the queue, and it carries on in the same thread as soon as an agent slot is
             free.

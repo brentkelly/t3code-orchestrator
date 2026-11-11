@@ -1,9 +1,10 @@
-import { BoardGatewaySignal, ThreadId } from "@t3tools/contracts";
+import { BoardGatewaySignal, BoardWorkerGatewayError, ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { fromWireSignal, toWireSignal } from "./gatewayWire.ts";
+import { ThreadCommandRefusedError } from "../ThreadGateway.ts";
+import { fromWireCommandError, fromWireSignal, wireCommand, toWireSignal } from "./gatewayWire.ts";
 
 // The `turn-ended` arm as the previous protocol-1 build declared it: `errorMessage` required.
 const PreviousTurnEnded = Schema.Struct({
@@ -88,5 +89,43 @@ it.effect("a finished turn's usage crosses the wire with the counts the board pr
         otherUsage: { inputTokens: 10, outputTokens: 2 },
       },
     });
+  }),
+);
+
+const encodeGatewayError = Schema.encodeEffect(BoardWorkerGatewayError);
+const decodeGatewayError = Schema.decodeUnknownEffect(BoardWorkerGatewayError);
+
+it.effect("a provider-disabled refusal keeps its reason across the wire", () =>
+  Effect.gen(function* () {
+    const refused = new ThreadCommandRefusedError({
+      command: "thread.create",
+      threadId,
+      detail: "disabled",
+      reason: "provider-disabled",
+    });
+    const decoded = yield* decodeGatewayError(
+      yield* encodeGatewayError(yield* Effect.flip(wireCommand(Effect.fail(refused)))),
+    );
+    const back = fromWireCommandError("thread.spawn", threadId)(decoded);
+    assert.strictEqual(back._tag, "ThreadCommandRefusedError");
+    assert.strictEqual(
+      back._tag === "ThreadCommandRefusedError" && back.reason,
+      "provider-disabled",
+    );
+  }),
+);
+
+it.effect("a refusal from a worker without reasons decodes as a plain refusal", () =>
+  Effect.gen(function* () {
+    const decoded = yield* decodeGatewayError({
+      _tag: "BoardWorkerGatewayError",
+      kind: "refused",
+      operation: "thread.create",
+      threadId,
+      detail: "refused",
+    });
+    const back = fromWireCommandError("thread.spawn", threadId)(decoded);
+    assert.strictEqual(back._tag, "ThreadCommandRefusedError");
+    assert.strictEqual(back._tag === "ThreadCommandRefusedError" && back.reason, undefined);
   }),
 );

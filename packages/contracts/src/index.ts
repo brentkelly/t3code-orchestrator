@@ -62,6 +62,7 @@ export * from "./boardStopSignal.ts";
 export * from "./boardRetrySchedule.ts";
 export * from "./t3oProjectFile.ts";
 export * from "./boardProjectConfig.ts";
+export * from "./boardNotifications.ts";
 export * from "./commandOrigin.ts";
 export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
@@ -79,6 +80,8 @@ export * from "./previewAutomation.ts";
 export * from "./previewCapture.ts";
 export * from "./usage.ts";
 export * from "./scheduledTask.ts";
+// T3o: webhook board rules (T3O-78).
+export * from "./boardWebhookAction.ts";
 export * from "./worktreeMcp.ts";
 export * from "./resourceTelemetry.ts";
 export * from "./rpc.ts";

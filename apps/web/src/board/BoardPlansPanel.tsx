@@ -66,7 +66,7 @@ export function BoardPlansPanel({
     <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
       <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border pl-3.5 pr-3">
         <SectionHeading>Cards</SectionHeading>
-        <span className="text-[11.5px] text-muted-foreground">in dependency order</span>
+        <span className="text-board-11-5 text-muted-foreground">in dependency order</span>
         <span className="flex-1" />
         <button
           className={boardHeaderButtonClass(chartOpen)}
@@ -79,7 +79,7 @@ export function BoardPlansPanel({
         {onOpenSubBoard === undefined ? null : (
           <BoardHint label="Open these cards as a board">
             <button
-              className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] border border-input bg-popover px-2.5 text-[11.5px] font-medium whitespace-nowrap text-foreground shadow-xs hover:bg-accent"
+              className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-board-7 border border-input bg-popover px-2.5 text-board-11-5 font-medium whitespace-nowrap text-foreground shadow-xs hover:bg-accent"
               onClick={onOpenSubBoard}
               type="button"
             >
@@ -91,7 +91,7 @@ export function BoardPlansPanel({
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-4 pt-3.5 pb-5">
         {chartOpen ? <BoardPlanGraph onOpenChild={onOpenChild} rows={planRows.rows} /> : null}
-        <div className="flex flex-col gap-[7px]">
+        <div className="flex flex-col gap-1.75">
           {planRows.rows.map((row) => (
             <PlanRow key={row.rowId} onOpenChild={onOpenChild} row={row} />
           ))}
@@ -123,7 +123,7 @@ function PlanRow({
     <BoardHint label={openable ? `Open ${row.key ?? row.title} in the sub-board` : row.title}>
       <button
         className={cn(
-          "flex w-full items-center gap-[11px] rounded-[10px] border bg-card px-3 py-2.5 text-left shadow-xs",
+          "flex w-full items-center gap-2.75 rounded-board-10 border bg-card px-3 py-2.5 text-left shadow-xs",
           row.live?.awaitingInput === true || row.live?.awaitingPermission === true
             ? "border-attention/50"
             : "border-border",
@@ -145,19 +145,21 @@ function PlanRow({
         ) : (
           <span className={cn("size-[7px] shrink-0 rounded-full", TONE_DOT[row.tone])} />
         )}
-        <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">#{row.n}</span>
-        <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
+        <span className="shrink-0 text-board-11 font-semibold text-muted-foreground">#{row.n}</span>
+        <span className="flex min-w-0 flex-1 flex-col gap-0.75">
           <span
             className={cn(
-              "truncate text-[13px] font-medium text-foreground",
+              "truncate text-board-13 font-medium text-foreground",
               row.state === "archived" && "line-through",
             )}
           >
             {row.title}
           </span>
-          <span className="truncate text-[10.5px] text-muted-foreground">{meta.join("  ·  ")}</span>
+          <span className="truncate text-board-10-5 text-muted-foreground">
+            {meta.join("  ·  ")}
+          </span>
           {row.blockers.length > 0 && !row.done ? (
-            <span className="inline-flex items-center gap-1 text-[10.5px] font-medium text-warning-foreground">
+            <span className="inline-flex items-center gap-1 text-board-10-5 font-medium text-warning-foreground">
               <LockIcon className="size-2.5 shrink-0" />
               Waiting on{" "}
               {row.blockers.map((blocker) => `#${blocker.n} · ${blocker.stageLabel}`).join(", ")}
@@ -165,32 +167,32 @@ function PlanRow({
           ) : null}
         </span>
         {row.done ? null : row.live?.stalled === true ? (
-          <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-warning-foreground">
+          <span className="inline-flex shrink-0 items-center gap-1 text-board-10-5 font-medium text-warning-foreground">
             <CircleAlertIcon className="size-3" />
             Stalled
           </span>
         ) : row.live?.awaitingInput === true ? (
-          <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-attention-foreground">
+          <span className="inline-flex shrink-0 items-center gap-1 text-board-10-5 font-medium text-attention-foreground">
             <CircleAlertIcon className="size-3" />
             Input needed
           </span>
         ) : row.live?.awaitingPermission === true ? (
-          <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-attention-foreground">
+          <span className="inline-flex shrink-0 items-center gap-1 text-board-10-5 font-medium text-attention-foreground">
             <CircleAlertIcon className="size-3" />
             Needs permission
           </span>
         ) : row.live?.queued === true ? (
-          <span className="shrink-0 text-[10.5px] font-medium text-muted-foreground">Queued</span>
+          <span className="shrink-0 text-board-10-5 font-medium text-muted-foreground">Queued</span>
         ) : row.live?.working === true ? (
           <BoardHint label="Working">
             <span
               aria-label="Working"
               role="img"
-              className="size-[11px] shrink-0 animate-spin rounded-full border-[1.8px] border-[color-mix(in_srgb,var(--info)_25%,transparent)] border-t-info-foreground"
+              className="size-[11px] shrink-0 animate-spin rounded-full border-board-spinner-lg border-board-spinner-track border-t-info-foreground"
             />
           </BoardHint>
         ) : null}
-        <span className="inline-flex h-5 shrink-0 items-center rounded-md border border-border bg-muted px-2 text-[11px] font-medium text-muted-foreground">
+        <span className="inline-flex h-5 shrink-0 items-center rounded-md border border-border bg-muted px-2 text-board-11 font-medium text-muted-foreground">
           {row.stageLabel ?? "No card"}
         </span>
         <ChevronRightIcon

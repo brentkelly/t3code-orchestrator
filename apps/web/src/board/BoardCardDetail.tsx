@@ -3,7 +3,6 @@
  * streams here, never on the shell every column card renders from.
  */
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
-import { boardThreadStateSource } from "@t3tools/shared/boardThreadState";
 import {
   BoardCardId,
   BoardLabelId,
@@ -54,6 +53,7 @@ import {
   boardBuildQueue,
   boardColumnAppendOrderKey,
   boardRunningStepCount,
+  boardThreadStateSourceWithSubagents,
   planBoardQueueMoveToFront,
 } from "@t3tools/client-runtime/state/shell";
 import {
@@ -81,7 +81,7 @@ import { useEnvironment } from "../state/environments";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { usePaginatedBranches } from "../state/queries";
 import { environmentShell } from "../state/shell";
-import { threadEnvironment } from "../state/threads";
+import { environmentThreadShells, threadEnvironment } from "../state/threads";
 import {
   boardAdoptableThreads,
   useBoardAdoptKnownCardThreadIds,
@@ -463,6 +463,10 @@ export function BoardCardDetail({
     snapshot?.threads ?? [],
   );
   const offShellThreads = useBoardCardThreadRows(environmentId, missingThreadIds);
+  // A subagent awaiting approval turns its parent's row violet.
+  const subagentRequests = useAtomValue(
+    environmentThreadShells.pendingSubagentRequestsAtom(environmentId),
+  );
   const shellThreads = snapshot?.threads ?? [];
   // "Moved from {worker}" above the first thread after each move.
   const movedFrom = boardThreadMoveDividers({
@@ -480,9 +484,11 @@ export function BoardCardDetail({
       const thread =
         shellThreads.find((candidate) => candidate.id === link.threadId) ??
         offShellThreads.threads.get(link.threadId);
-      const { threadState, awaitingInput } = deriveBoardCardThreadState(
-        thread === undefined ? undefined : boardThreadStateSource(thread),
-      );
+      const source =
+        thread === undefined
+          ? undefined
+          : boardThreadStateSourceWithSubagents(thread, subagentRequests);
+      const { threadState, awaitingInput } = deriveBoardCardThreadState(source);
       const worker = boardThreadWorker({
         workerId: link.workerId,
         workers,
@@ -502,6 +508,7 @@ export function BoardCardDetail({
               : null),
         threadState,
         awaitingInput,
+        subagentAwaitingApproval: source?.subagentAwaitingApproval === true,
         worker,
         ranOn: threadWorkerRanOn(worker, workers),
         movedFrom: movedFrom.get(link.threadId) ?? null,
@@ -1444,6 +1451,11 @@ export function BoardCardDetail({
         void refreshCardPullRequest({ environmentId, input: { cardId: card.id } });
         void openLink(url).catch((error: unknown) => {
           setFeedback(error instanceof Error ? error.message : "Unable to open the pull request.");
+        });
+      }}
+      onOpenLink={(url) => {
+        void openLink(url).catch((error: unknown) => {
+          setFeedback(error instanceof Error ? error.message : "Unable to open the link.");
         });
       }}
       onMoveStage={(toStage) => {

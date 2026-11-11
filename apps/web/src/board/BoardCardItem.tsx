@@ -4,12 +4,10 @@
  */
 import {
   BOARD_SEED_STAGE_IDS,
-  boardCardChildAttentionLabel,
   boardSplitProposedNote,
   boardCardChildRunningLabel,
   isBoardCardWorking,
   boardCardWorkingLabel,
-  isBoardReviewLoopHeld,
 } from "@t3tools/contracts";
 import type {
   BoardCardAttention,
@@ -46,11 +44,10 @@ import {
   type BoardTodoThreadState,
 } from "./boardCardProgressBlock";
 import { BoardCardCiFace } from "./BoardCardCiFace";
-import { boardConflictFix } from "./boardConflictFix";
-import { boardAutoMergePill } from "./boardAutoMergeHold";
 import { boardCardAutoBuildChip } from "./boardCardAutomation";
 import { boardCardScheduleLabel } from "./boardCardScheduleLabel";
-import { boardCardNotice, type BoardCardNotice } from "./boardCardNotice";
+import { boardCardFace } from "./boardCardFace";
+import type { BoardCardNotice } from "./boardCardNotice";
 import { boardCardMeta, boardCardSummary } from "./boardCardSummary";
 import { BoardLabelChips } from "./BoardLabelChips";
 import {
@@ -64,11 +61,7 @@ import {
 } from "./BoardCardSummaryRow";
 import { projectAccent } from "./projectAccent";
 import { useBoardWorkersState } from "./workers/BoardWorkersContext";
-import {
-  boardCardMoveNotice,
-  boardCardWorkerChip,
-  boardCardWorkerTrouble,
-} from "./workers/cardWorker";
+import { boardCardWorkerChip } from "./workers/cardWorker";
 import { BoardHint } from "./BoardHint";
 import type { BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardGroupCardVm, BoardGroupChildState } from "./boardGroups";
@@ -98,12 +91,12 @@ function BoardGroupBlock({
   return (
     <div className="flex flex-col gap-1.5">
       {group.pips.length > 0 ? (
-        <div className="flex items-center gap-[3px]" data-board-group-pips>
+        <div className="flex items-center gap-0.75" data-board-group-pips>
           {group.pips.map((pip) => (
             <BoardHint key={pip.tooltip} label={pip.tooltip}>
               <span
                 aria-label={pip.tooltip}
-                className={cn("h-1 min-w-1 flex-1 rounded-[2px]", PIP_CLASS[pip.state])}
+                className={cn("h-1 min-w-1 flex-1 rounded-xs", PIP_CLASS[pip.state])}
                 data-state={pip.state}
                 role="img"
               />
@@ -111,7 +104,7 @@ function BoardGroupBlock({
           ))}
         </div>
       ) : null}
-      <div className="flex min-w-0 items-center gap-2 text-[11.5px] font-medium">
+      <div className="flex min-w-0 items-center gap-2 text-board-11-5 font-medium">
         <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           <span
             className={cn(
@@ -150,7 +143,7 @@ function BoardGroupBlock({
       </div>
       {group.meta.length === 0 && costSlot == null ? null : (
         <div className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+          <span className="min-w-0 flex-1 truncate text-board-11 text-muted-foreground">
             {group.meta}
           </span>
           {costSlot}
@@ -185,25 +178,21 @@ const EMPTY_TODO_THREADS: ReadonlyArray<BoardCardThreadShell> = [];
  * untinted card's own classes: a paused card asserts nothing about work.
  */
 const TONE_BORDER: Record<BoardCardAttentionTone, string> = {
-  warning: "border-amber-500/60",
+  warning: "border-warning/60",
   attention: "border-attention/55",
   neutral: "border-border",
 };
 
 const TONE_TINT: Record<BoardCardAttentionTone, string> = {
-  warning:
-    "bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]",
-  attention:
-    "bg-[color-mix(in_srgb,var(--attention)_7%,var(--card))] dark:bg-[color-mix(in_srgb,var(--attention)_9%,#1c1c20)]",
-  neutral: "bg-card hover:border-foreground/18 dark:bg-[#1c1c20]",
+  warning: "bg-board-warning-tint dark:bg-board-warning-tint-dark",
+  attention: "bg-board-attention-tint dark:bg-board-attention-tint-dark",
+  neutral: "bg-card hover:border-foreground/18 dark:bg-board-card-dark",
 };
 
 const TONE_RING: Record<BoardCardAttentionTone, string> = {
-  warning:
-    "shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]",
-  attention:
-    "shadow-[0_0_0_1px_color-mix(in_srgb,var(--attention)_40%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--attention)_40%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]",
-  neutral: "shadow-xs/5 hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35)]",
+  warning: "shadow-board-card-warning hover:shadow-board-card-warning-hover",
+  attention: "shadow-board-card-attention hover:shadow-board-card-attention-hover",
+  neutral: "shadow-xs/5 hover:shadow-board-card-hover",
 };
 
 /** The chip's leading mark per reason. The violet question keeps its DOT rather
@@ -232,7 +221,7 @@ const ATTENTION_ICON: Record<BoardCardAttentionReason, ReactNode> = {
 /** The chip's own colours, which are text-weight rather than surface-weight —
     the card fill is already carrying the tone. */
 const TONE_CHIP: Record<BoardCardAttentionTone, string> = {
-  warning: "text-amber-700 dark:text-amber-300",
+  warning: "text-board-amber-text",
   attention: "text-attention-foreground",
   neutral: "text-muted-foreground",
 };
@@ -335,7 +324,7 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
       <span
         aria-label={view.tooltip}
         className={cn(
-          "inline-flex min-w-0 items-center gap-1 text-[10.5px] font-semibold",
+          "inline-flex min-w-0 items-center gap-1 text-board-10-5 font-semibold",
           view.tint,
         )}
       >
@@ -460,72 +449,26 @@ export function BoardCardContent({
       : childRunning !== undefined && childRunning > 0
         ? boardCardChildRunningLabel(childRunning)
         : null;
-  // A parent with no problem of its own inherits its worst child's tone: it
-  // cannot advance while a child is stuck. A muted Done card or a group takes
-  // no tone.
-  const own = summary.muted || isGroup ? null : (attention ?? null);
-  const inherited = summary.muted || isGroup || own !== null ? null : (childAttention ?? null);
-  const flag = own ?? inherited;
-  const tone = flag?.tone ?? null;
-  // A held review loop's round row already says why, so skip the chip — keyed
-  // on the row actually rendering, since it is stage-conditional.
-  const roundRowExplainsIt = summary.items.some(
-    (item) =>
-      item.kind === "round" && item.outcome !== undefined && isBoardReviewLoopHeld(item.outcome),
-  );
-  const chip =
-    flag === null ||
-    (own !== null &&
-      (own.reason === "review-held" || own.reason === "review-stuck") &&
-      roundRowExplainsIt)
-      ? null
-      : {
-          reason: flag.reason,
-          tone: flag.tone,
-          label: inherited === null ? flag.label : boardCardChildAttentionLabel(inherited),
-          tooltip: inherited === null ? flag.detail : `A child of this card: ${inherited.detail}`,
-        };
+  // oxlint-disable-next-line react/purity -- the face samples the clock whenever the card re-renders on a board push.
+  const faceNow = Date.now();
+  const { own, tone, notice } = boardCardFace({
+    card,
+    summary,
+    attention: attention ?? null,
+    childAttention: childAttention ?? null,
+    isGroup,
+    noPullRequest: noPullRequest === true,
+    worktreeKeptReason,
+    stageGone,
+    workers,
+    now: faceNow,
+  });
+  const autoMergeHeld = !summary.muted && card.autoMergeHeldSince != null;
   // A split parent wears the stack: the card reads as the top
   // sheet of a pile. Purely visual now — the drill-in affordance is the plan
   // row's chip — so it keys off `planTotal` alone and the drag ghost / archive
   // sheet keep the pile.
   const wearsStack = isGroup || (card.planTotal !== undefined && card.planTotal > 0);
-  // "This card's merge is held by conflicts" — a server fact off the
-  // step row, not a guess at a running merge-stage step. A Done card is muted
-  // and asking for nothing, so it never wears the pill; the flag is already
-  // false by then, and the guard just says so out loud.
-  const conflictFix = summary.muted
-    ? null
-    : boardConflictFix({
-        live: card.stepConflictFix,
-        checks: card.stepChecksFix,
-        queued: card.queued,
-      });
-  // "This card's merge was refused and the board is retrying".
-  const autoMergeHold = boardAutoMergePill({
-    heldSince: card.autoMergeHeldSince,
-    gaveUp: card.autoMergeGaveUp,
-    done: summary.muted,
-    // oxlint-disable-next-line react/purity -- the pill samples the clock whenever the card re-renders on a board push.
-    nowMs: Date.now(),
-  });
-  // ONE notice for the whole header. A group keeps only its own dependency
-  // gate; its children's states are in its stats.
-  const notice = boardCardNotice({
-    attention: isGroup ? null : chip,
-    conflictFix: isGroup ? null : conflictFix,
-    autoMergeHold: isGroup ? null : autoMergeHold,
-    // T3o: a Done card is asking for nothing, and the page's predicate
-    // already says so — the guard here just refuses to trust a stale prop.
-    noPullRequestAtMerge: !isGroup && noPullRequest === true && !summary.muted,
-    blocked: card.blocked,
-    dependencyCount: card.dependencyCount,
-    worktreeKeptReason: isGroup ? null : worktreeKeptReason,
-    stageGone: isGroup ? null : stageGone,
-    workerMove: isGroup ? null : boardCardMoveNotice(card, workers),
-    workerTrouble: isGroup ? null : boardCardWorkerTrouble(card, workers),
-    providerMissing: !isGroup && card.stalled && card.stalledReason === "provider-not-on-worker",
-  });
   // The card's scheduled start. Null on a done card and on
   // one whose time has already passed — the server clears the field within a
   // tick, and a pill for a moment that has gone is a stale label.
@@ -550,21 +493,23 @@ export function BoardCardContent({
         // `transition-colors` alone could not animate the lift — box-shadow is
         // not a colour property, so the hover shadow snapped in. Transition
         // both; the hover lift itself rides the per-state shadow branch below.
-        "flex cursor-pointer flex-col gap-1.5 rounded-[10px] border px-[11px] py-2.5 transition-[color,background-color,border-color,box-shadow] duration-[120ms] ease-[ease]",
+        "flex cursor-pointer flex-col gap-1.5 rounded-board-10 border px-2.75 py-2.5 transition-[color,background-color,border-color,box-shadow] duration-120 ease-board",
         // One border class: competing `border-*` utilities resolve by
         // stylesheet order, so stacking them decides nothing.
         selected ? "border-foreground/40" : tone === null ? "border-border" : TONE_BORDER[tone],
-        // `dark:bg-[#1c1c20]` lifts the card above the column; the stock dark
+        // `dark:bg-board-card-dark` lifts the card above the column; the stock dark
         // `--card` lands below the column's fill.
-        tone === null ? "bg-card hover:border-foreground/18 dark:bg-[#1c1c20]" : TONE_TINT[tone],
+        tone === null
+          ? "bg-card hover:border-foreground/18 dark:bg-board-card-dark"
+          : TONE_TINT[tone],
         // Done recedes: finished work is muted and lower-contrast.
         summary.muted && "bg-card/60 opacity-70",
         // EXACTLY one box-shadow branch per card (stylesheet order wins), each
         // with its own resting and hover shadow. `--sheet` tracks the card fill.
         wearsStack
-          ? "mb-2 [--sheet:var(--card)] dark:[--sheet:#1c1c20] shadow-[0_5px_0_-1px_var(--sheet),0_5px_0_0_var(--border),0_10px_0_-2px_var(--sheet),0_10px_0_-1px_var(--border)] hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35),0_5px_0_-1px_var(--sheet),0_5px_0_0_var(--border),0_10px_0_-2px_var(--sheet),0_10px_0_-1px_var(--border)]"
+          ? "mb-2 [--board-card-sheet:var(--card)] dark:[--board-card-sheet:var(--color-board-card-dark)] shadow-board-card-stack hover:shadow-board-card-stack-hover"
           : tone === null
-            ? "shadow-xs/5 hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35)]"
+            ? "shadow-xs/5 hover:shadow-board-card-hover"
             : TONE_RING[tone],
       )}
       data-board-card={card.cardId}
@@ -573,7 +518,7 @@ export function BoardCardContent({
       <div className="flex items-center gap-1.5">
         <span
           className={cn(
-            "inline-flex h-4 shrink-0 items-center rounded px-1.5 text-[10px] font-semibold tracking-wide",
+            "inline-flex h-4 shrink-0 items-center rounded px-1.5 text-board-10 font-semibold tracking-wide",
             accent.pill,
           )}
         >
@@ -584,7 +529,7 @@ export function BoardCardContent({
           // mixed column still reads as a whole. The chip is informational —
           // navigation stays the card click; drill-in is separate.
           <BoardHint label={`Part of ${parentKey}'s sub-board`}>
-            <span className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
+            <span className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-board-10 font-medium text-muted-foreground">
               <LayersIcon className="mr-0.5 size-2.5" />
               {parentKey}
             </span>
@@ -610,7 +555,7 @@ export function BoardCardContent({
           <BoardHint label="Waiting for background task">
             <span
               aria-label="Waiting for background task"
-              className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
+              className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-board-10 font-medium text-muted-foreground"
             >
               Waiting
             </span>
@@ -629,7 +574,7 @@ export function BoardCardContent({
           <BoardHint label={scheduleLabel.tooltip}>
             <span
               aria-label={scheduleLabel.tooltip}
-              className="inline-flex shrink-0 items-center gap-0.5 rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
+              className="inline-flex shrink-0 items-center gap-0.5 rounded bg-muted px-1.5 text-board-10 font-medium text-muted-foreground"
             >
               <ClockIcon className="size-2.5" />
               {scheduleLabel.label}
@@ -644,7 +589,7 @@ export function BoardCardContent({
           <BoardHint label={autoBuildChip.tooltip}>
             <span
               aria-label={autoBuildChip.tooltip}
-              className="inline-flex shrink-0 items-center gap-0.5 rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
+              className="inline-flex shrink-0 items-center gap-0.5 rounded bg-muted px-1.5 text-board-10 font-medium text-muted-foreground"
             >
               <ClockIcon className="size-2.5" />
               {autoBuildChip.label}
@@ -660,7 +605,7 @@ export function BoardCardContent({
           // waiting — and that it will start on its own — is readable without
           // opening it.
           <BoardHint label={`${queueSlot.headline}. ${queueSlot.detail}`}>
-            <span className="inline-flex shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
+            <span className="inline-flex shrink-0 items-center rounded bg-muted px-1.5 text-board-10 font-medium text-muted-foreground">
               {queueSlot.label}
             </span>
           </BoardHint>
@@ -669,7 +614,7 @@ export function BoardCardContent({
             whose slot went to a pending question is still held, and "merges
             itself as soon as the forge accepts it" is not true of it. */}
         {(autoMergeArmed ?? card.autoMergeSetting === true) &&
-        autoMergeHold === null &&
+        !autoMergeHeld &&
         !summary.muted &&
         atMergeStage ? (
           // Armed and quiet, merge stage only. Counts the board-wide arm exactly as
@@ -677,7 +622,7 @@ export function BoardCardContent({
           <BoardHint label="Merges itself as soon as the forge accepts it">
             <span
               aria-label="Auto-merge armed"
-              className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-muted-foreground"
+              className="inline-flex shrink-0 items-center gap-0.5 text-board-10-5 font-medium text-muted-foreground"
             >
               <PullRequestGlyph.merged className="size-3" />
               Auto
@@ -694,7 +639,7 @@ export function BoardCardContent({
       ) : null}
       <div
         className={cn(
-          "text-[13px]/[1.35] font-medium text-pretty",
+          "text-board-13 leading-board-1-35 font-medium text-pretty",
           summary.muted ? "text-muted-foreground" : "text-foreground",
         )}
       >
@@ -702,7 +647,7 @@ export function BoardCardContent({
       </div>
       {own?.reason === "approval" ? (
         // A pending split: the chip says it needs you, this says what.
-        <div className="text-[11.5px] font-medium text-attention-foreground">
+        <div className="text-board-11-5 font-medium text-attention-foreground">
           {boardSplitProposedNote(card.planCount ?? 0)}
         </div>
       ) : null}

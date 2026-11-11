@@ -45,7 +45,7 @@ function stageStateOf(stages: ReadonlyArray<BoardStageDefinition>): BoardState {
 function BoardListPage() {
   const board = useBoardEnvironment();
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <BoardUtilityMenu />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
         {board.kind === "ready" ? (

@@ -4,6 +4,8 @@ import * as NodeCrypto from "node:crypto";
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
+  BOARD_RULE_PROMPT,
+  type BoardWebhookAction,
   type ManagedPolicyDocument,
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliveryId,
@@ -31,6 +33,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
+import * as BoardWebhookRules from "../board/webhookRules.ts";
 import { renderWebhookPrompt } from "./webhookTemplate.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
@@ -2198,3 +2201,188 @@ it.effect("filters run before replay and coalescing without claiming ignored del
     { workers },
   );
 });
+
+// T3o: board rules (T3O-78).
+const boardRuleAction: BoardWebhookAction = {
+  externalRef: { system: "github-pr", idTemplate: "{{body.pull_request.url}}" },
+  rules: [
+    { filters: [], action: { kind: "create", titleTemplate: "PR {{body.pull_request.url}}" } },
+  ],
+};
+const boardRuleSchedule = {
+  type: "webhook",
+  signature: {
+    header: "x-hub-signature-256",
+    encoding: "hex",
+    prefix: "sha256=",
+    secret: "s3cret",
+  },
+};
+const signedBoardRequest = (task: Parameters<typeof requestFor>[0]) =>
+  requestFor(task, {
+    headers: {
+      "content-type": "application/json",
+      "x-hub-signature-256": githubSignature("s3cret"),
+    },
+  });
+
+const withBoardRunner = <A, E, R>(
+  runner: Partial<BoardWebhookRules.BoardWebhookRunner>,
+  effect: Effect.Effect<A, E, R>,
+) =>
+  Effect.scoped(
+    BoardWebhookRules.registerBoardWebhookRunner({
+      run: () => Effect.succeed("Created T3O-80"),
+      validate: () => Effect.succeed(null),
+      ...runner,
+    }).pipe(Effect.andThen(effect)),
+  );
+
+it.effect("a board rule delivery runs the board with the raw request and launches no thread", () =>
+  withService(({ service, launches }) =>
+    Effect.gen(function* () {
+      const seen = yield* Deferred.make<BoardWebhookRules.BoardWebhookRunInput>();
+      yield* withBoardRunner(
+        { run: (input) => Deferred.succeed(seen, input).pipe(Effect.as("Created T3O-80")) },
+        Effect.gen(function* () {
+          const { task } = yield* service.upsert(
+            yield* webhookTaskInput({ schedule: boardRuleSchedule, boardAction: boardRuleAction }),
+          );
+          assert.equal(task.prompt, BOARD_RULE_PROMPT);
+          assert.deepEqual(task.boardAction, boardRuleAction);
+          yield* waitForSpan(
+            service.triggerWebhook(signedBoardRequest(task)),
+            "ScheduledTaskService.runWebhookDelivery",
+          );
+          const input = yield* Deferred.await(seen);
+          assert.equal(input.request.bodyText, new TextDecoder().decode(pullRequestBody));
+          assert.equal(input.taskTitle, "Review PRs");
+          assert.equal(yield* Queue.size(launches), 0);
+          const [summary] = (yield* service.listWebhookDeliveries({ id: task.id })).deliveries;
+          const { delivery } = yield* service.getWebhookDelivery({
+            id: task.id,
+            deliveryId: summary!.id,
+          });
+          assert.equal(delivery.outcome, "accepted");
+          assert.equal(delivery.renderedPrompt, "Created T3O-80");
+          const after = (yield* service.list()).tasks.find((candidate) => candidate.id === task.id);
+          assert.equal(after?.lastRunStatus, "succeeded");
+          assert.isNull(after?.threadId);
+        }),
+      );
+    }),
+  ),
+);
+
+it.effect("a board rule whose action row is lost fails instead of launching a thread", () =>
+  withService(({ service, launches, sql }) =>
+    withBoardRunner(
+      {},
+      Effect.gen(function* () {
+        const { task } = yield* service.upsert(
+          yield* webhookTaskInput({ schedule: boardRuleSchedule, boardAction: boardRuleAction }),
+        );
+        yield* sql`DELETE FROM boards.scheduled_task_board_actions`;
+        yield* waitForSpan(
+          service.triggerWebhook(signedBoardRequest(task)),
+          "ScheduledTaskService.runWebhookDelivery",
+        );
+        assert.equal(yield* Queue.size(launches), 0);
+        const after = (yield* service.list()).tasks.find((candidate) => candidate.id === task.id);
+        assert.equal(after?.lastRunStatus, "failed");
+        assert.equal(after?.lastRunError, "Board rule is missing.");
+      }),
+    ),
+  ),
+);
+
+it.effect("upsert keeps an omitted board rule, clears a null one, and validates rules", () =>
+  withService(({ service, secretsByRef, sql }) =>
+    Effect.gen(function* () {
+      const saved = (overrides: Record<string, unknown>) =>
+        webhookTaskInput({ schedule: boardRuleSchedule, ...overrides }).pipe(
+          Effect.flatMap(service.upsert),
+          Effect.map(({ task }) => task),
+        );
+      const refusal = (overrides: Record<string, unknown>) =>
+        Effect.flip(saved(overrides)).pipe(Effect.map((error) => error.message));
+
+      assert.equal(
+        yield* refusal({ boardAction: boardRuleAction }),
+        "Board is not running on this server.",
+      );
+      yield* withBoardRunner(
+        {
+          validate: ({ action }) =>
+            Effect.succeed(action.rules.length > 1 ? "Rule 2 names Building." : null),
+        },
+        Effect.gen(function* () {
+          yield* saved({ boardAction: boardRuleAction });
+          // Omitted (an older or mobile client) keeps it, prompt included.
+          const kept = yield* saved({ prompt: BOARD_RULE_PROMPT });
+          assert.deepEqual(kept.boardAction, boardRuleAction);
+          assert.equal(
+            yield* refusal({ boardAction: null, prompt: BOARD_RULE_PROMPT }),
+            "Write a prompt for this task, or turn its board rule back on.",
+          );
+          const cleared = yield* saved({ boardAction: null });
+          assert.isUndefined(cleared.boardAction);
+          assert.equal(cleared.prompt, "Review this PR: {{body.pull_request.url}}");
+
+          yield* saved({ boardAction: boardRuleAction });
+          const timed = yield* saved({ schedule: { type: "interval", everyMs: 60_000 } });
+          assert.isUndefined(timed.boardAction);
+          assert.isUndefined(
+            (yield* saved({ schedule: boardRuleSchedule })).boardAction,
+            "switching back to a webhook does not bring the rule back",
+          );
+
+          assert.equal(
+            yield* refusal({ schedule: { type: "webhook" }, boardAction: boardRuleAction }),
+            "A board rule needs a signature check with a signing secret.",
+          );
+          assert.equal(
+            yield* refusal({
+              schedule: { ...boardRuleSchedule, dedupe: { coalesceKey: "{{body.group}}" } },
+              boardAction: boardRuleAction,
+            }),
+            "A board rule cannot coalesce deliveries. Remove the coalesce key.",
+          );
+          // A refused rule leaves a secretRef unused, so the corrected save can still take it.
+          const ref = "secret-ref:00000000000000000000000000000003";
+          secretsByRef.set(ref, "s3cret");
+          const refSchedule = {
+            type: "webhook",
+            signature: { ...boardRuleSchedule.signature, secret: undefined, secretRef: ref },
+          };
+          assert.equal(
+            yield* refusal({
+              schedule: { ...refSchedule, dedupe: { coalesceKey: "{{body.group}}" } },
+              boardAction: boardRuleAction,
+            }),
+            "A board rule cannot coalesce deliveries. Remove the coalesce key.",
+          );
+          yield* saved({ schedule: refSchedule, boardAction: boardRuleAction });
+          assert.equal(
+            yield* refusal({
+              boardAction: {
+                ...boardRuleAction,
+                rules: [...boardRuleAction.rules, ...boardRuleAction.rules],
+              },
+            }),
+            "Rule 2 names Building.",
+          );
+          // A stored rule the board no longer accepts (a deleted label) still lets omitted saves through.
+          const stale = {
+            ...boardRuleAction,
+            rules: [...boardRuleAction.rules, ...boardRuleAction.rules],
+          };
+          const current = yield* saved({ boardAction: boardRuleAction });
+          yield* BoardWebhookRules.saveBoardAction(sql, current.id, stale);
+          const renamed = yield* saved({ title: "Renamed", prompt: BOARD_RULE_PROMPT });
+          assert.deepEqual(renamed.boardAction, stale);
+        }),
+      );
+    }),
+  ),
+);

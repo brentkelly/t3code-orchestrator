@@ -22,9 +22,10 @@ export interface ProjectAccent {
 }
 
 /*
- * Fills are literal arbitrary values, never interpolated: Tailwind scans source
- * text, so a runtime-built `bg-[${hex}]` emits no CSS. The test checks each
- * foreground against `boardLabelForeground`.
+ * Fills are literal `board-accent-*` classes, never interpolated: Tailwind scans
+ * source text, so a runtime-built class emits no CSS. Each token's value lives in
+ * board-theme.css; the test checks it equals `mutedHex`, and each foreground
+ * against `boardLabelForeground`.
  */
 
 /**
@@ -35,111 +36,111 @@ export interface ProjectAccent {
 export const PROJECT_ICON_ACCENTS: Readonly<Record<ProjectIconColor, ProjectAccent>> = {
   gray: {
     hex: "#6a7282",
-    dot: "bg-[#70747c]",
+    dot: "bg-board-accent-gray",
     mutedHex: "#70747c",
-    pill: "bg-[#70747c] text-white",
+    pill: "bg-board-accent-gray text-white",
   },
   red: {
     hex: "#fb2c36",
-    dot: "bg-[#c76065]",
+    dot: "bg-board-accent-red",
     mutedHex: "#c76065",
-    pill: "bg-[#c76065] text-white",
+    pill: "bg-board-accent-red text-white",
   },
   orange: {
     hex: "#ff6900",
-    dot: "bg-[#bf7440]",
+    dot: "bg-board-accent-orange",
     mutedHex: "#bf7440",
-    pill: "bg-[#bf7440] text-white",
+    pill: "bg-board-accent-orange text-white",
   },
   amber: {
     hex: "#fe9a00",
-    dot: "bg-[#bf8d40]",
+    dot: "bg-board-accent-amber",
     mutedHex: "#bf8d40",
-    pill: "bg-[#bf8d40] text-white",
+    pill: "bg-board-accent-amber text-white",
   },
   yellow: {
     hex: "#f0b100",
-    dot: "bg-[#b4943c]",
+    dot: "bg-board-accent-yellow",
     mutedHex: "#b4943c",
-    pill: "bg-[#b4943c] text-white",
+    pill: "bg-board-accent-yellow text-white",
   },
   lime: {
     hex: "#7ccf00",
-    dot: "bg-[#729b34]",
+    dot: "bg-board-accent-lime",
     mutedHex: "#729b34",
-    pill: "bg-[#729b34] text-white",
+    pill: "bg-board-accent-lime text-white",
   },
   green: {
     hex: "#00c950",
-    dot: "bg-[#32975a]",
+    dot: "bg-board-accent-green",
     mutedHex: "#32975a",
-    pill: "bg-[#32975a] text-white",
+    pill: "bg-board-accent-green text-white",
   },
   emerald: {
     hex: "#00bc7d",
-    dot: "bg-[#2f8d6e]",
+    dot: "bg-board-accent-emerald",
     mutedHex: "#2f8d6e",
-    pill: "bg-[#2f8d6e] text-white",
+    pill: "bg-board-accent-emerald text-white",
   },
   teal: {
     hex: "#00bba7",
-    dot: "bg-[#2f8c82]",
+    dot: "bg-board-accent-teal",
     mutedHex: "#2f8c82",
-    pill: "bg-[#2f8c82] text-white",
+    pill: "bg-board-accent-teal text-white",
   },
   cyan: {
     hex: "#00b8db",
-    dot: "bg-[#3793a4]",
+    dot: "bg-board-accent-cyan",
     mutedHex: "#3793a4",
-    pill: "bg-[#3793a4] text-white",
+    pill: "bg-board-accent-cyan text-white",
   },
   sky: {
     hex: "#00a6f4",
-    dot: "bg-[#3d90b7]",
+    dot: "bg-board-accent-sky",
     mutedHex: "#3d90b7",
-    pill: "bg-[#3d90b7] text-white",
+    pill: "bg-board-accent-sky text-white",
   },
   blue: {
     hex: "#2b7fff",
-    dot: "bg-[#608aca]",
+    dot: "bg-board-accent-blue",
     mutedHex: "#608aca",
-    pill: "bg-[#608aca] text-white",
+    pill: "bg-board-accent-blue text-white",
   },
   indigo: {
     hex: "#615fff",
-    dot: "bg-[#8887d7]",
+    dot: "bg-board-accent-indigo",
     mutedHex: "#8887d7",
-    pill: "bg-[#8887d7] text-white",
+    pill: "bg-board-accent-indigo text-white",
   },
   violet: {
     hex: "#8e51ff",
-    dot: "bg-[#9b7dd3]",
+    dot: "bg-board-accent-violet",
     mutedHex: "#9b7dd3",
-    pill: "bg-[#9b7dd3] text-white",
+    pill: "bg-board-accent-violet text-white",
   },
   purple: {
     hex: "#ad46ff",
-    dot: "bg-[#a874d1]",
+    dot: "bg-board-accent-purple",
     mutedHex: "#a874d1",
-    pill: "bg-[#a874d1] text-white",
+    pill: "bg-board-accent-purple text-white",
   },
   fuchsia: {
     hex: "#e12afb",
-    dot: "bg-[#ba5ec7]",
+    dot: "bg-board-accent-fuchsia",
     mutedHex: "#ba5ec7",
-    pill: "bg-[#ba5ec7] text-white",
+    pill: "bg-board-accent-fuchsia text-white",
   },
   pink: {
     hex: "#f6339a",
-    dot: "bg-[#c56497]",
+    dot: "bg-board-accent-pink",
     mutedHex: "#c56497",
-    pill: "bg-[#c56497] text-white",
+    pill: "bg-board-accent-pink text-white",
   },
   rose: {
     hex: "#ff2056",
-    dot: "bg-[#c75873]",
+    dot: "bg-board-accent-rose",
     mutedHex: "#c75873",
-    pill: "bg-[#c75873] text-white",
+    pill: "bg-board-accent-rose text-white",
   },
 };
 
@@ -149,15 +150,55 @@ export const PROJECT_ICON_ACCENTS: Readonly<Record<ProjectIconColor, ProjectAcce
  * reordering it would recolour every such project.
  */
 export const PROJECT_HASH_ACCENTS: ReadonlyArray<ProjectAccent> = [
-  { hex: "#9400ff", dot: "bg-[#8a40bf]", mutedHex: "#8a40bf", pill: "bg-[#8a40bf] text-white" },
-  { hex: "#38bdf8", dot: "bg-[#68abc8]", mutedHex: "#68abc8", pill: "bg-[#68abc8] text-white" },
-  { hex: "#f59e0b", dot: "bg-[#bb8f46]", mutedHex: "#bb8f46", pill: "bg-[#bb8f46] text-white" },
+  {
+    hex: "#9400ff",
+    dot: "bg-board-accent-hash-0",
+    mutedHex: "#8a40bf",
+    pill: "bg-board-accent-hash-0 text-white",
+  },
+  {
+    hex: "#38bdf8",
+    dot: "bg-board-accent-hash-1",
+    mutedHex: "#68abc8",
+    pill: "bg-board-accent-hash-1 text-white",
+  },
+  {
+    hex: "#f59e0b",
+    dot: "bg-board-accent-hash-2",
+    mutedHex: "#bb8f46",
+    pill: "bg-board-accent-hash-2 text-white",
+  },
   // Same register — soft, mid-tone, none of them fully saturated.
-  { hex: "#34d399", dot: "bg-[#5cab8e]", mutedHex: "#5cab8e", pill: "bg-[#5cab8e] text-white" },
-  { hex: "#fb7185", dot: "bg-[#d8939e]", mutedHex: "#d8939e", pill: "bg-[#d8939e] text-white" },
-  { hex: "#22d3ee", dot: "bg-[#55aebb]", mutedHex: "#55aebb", pill: "bg-[#55aebb] text-white" },
-  { hex: "#fb923c", dot: "bg-[#cb976c]", mutedHex: "#cb976c", pill: "bg-[#cb976c] text-white" },
-  { hex: "#2dd4bf", dot: "bg-[#57aaa0]", mutedHex: "#57aaa0", pill: "bg-[#57aaa0] text-white" },
+  {
+    hex: "#34d399",
+    dot: "bg-board-accent-hash-3",
+    mutedHex: "#5cab8e",
+    pill: "bg-board-accent-hash-3 text-white",
+  },
+  {
+    hex: "#fb7185",
+    dot: "bg-board-accent-hash-4",
+    mutedHex: "#d8939e",
+    pill: "bg-board-accent-hash-4 text-white",
+  },
+  {
+    hex: "#22d3ee",
+    dot: "bg-board-accent-hash-5",
+    mutedHex: "#55aebb",
+    pill: "bg-board-accent-hash-5 text-white",
+  },
+  {
+    hex: "#fb923c",
+    dot: "bg-board-accent-hash-6",
+    mutedHex: "#cb976c",
+    pill: "bg-board-accent-hash-6 text-white",
+  },
+  {
+    hex: "#2dd4bf",
+    dot: "bg-board-accent-hash-7",
+    mutedHex: "#57aaa0",
+    pill: "bg-board-accent-hash-7 text-white",
+  },
 ];
 
 /** FNV-1a over the id: stable across sessions and clients, no stored state. */

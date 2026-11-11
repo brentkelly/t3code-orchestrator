@@ -41,16 +41,16 @@ const CHECK_STYLE: Record<
   fail_preexisting: {
     glyph: "!",
     icon: "text-warning-foreground",
-    tile: "border-border bg-[color-mix(in_srgb,var(--warning)_7%,var(--card))]",
+    tile: "border-border bg-board-warning-tile",
   },
   fail: {
     glyph: "!",
     icon: "text-warning-foreground",
-    tile: "border-warning/55 bg-[color-mix(in_srgb,var(--warning)_7%,var(--card))]",
+    tile: "border-warning/55 bg-board-warning-tile",
   },
 };
 
-const CODE_CLASS = "rounded-[4px] bg-accent px-1 py-px font-mono text-[12px] font-medium";
+const CODE_CLASS = "rounded-sm bg-accent px-1 py-px font-mono text-board-12 font-medium";
 
 /** Backtick-delimited identifiers as inline code chips; everything else as
     plain text. Deliberately not markdown: the payload asks for backticks and
@@ -80,7 +80,7 @@ function InlineCode({ text }: { readonly text: string }) {
 }
 
 function Heading({ children }: { readonly children: React.ReactNode }) {
-  return <h4 className="text-[12px] font-semibold text-foreground">{children}</h4>;
+  return <h4 className="text-board-12 font-semibold text-foreground">{children}</h4>;
 }
 
 function NoteRow({
@@ -97,16 +97,18 @@ function NoteRow({
     <li className="grid grid-cols-[96px_minmax(0,1fr)] items-baseline gap-2.5">
       <span
         className={cn(
-          "self-start justify-self-start whitespace-nowrap rounded-md px-[7px] py-0.5 text-[11.5px] font-medium",
+          "self-start justify-self-start whitespace-nowrap rounded-md px-1.75 py-0.5 text-board-11-5 font-medium",
           tag.className,
         )}
       >
         {tag.label}
       </span>
-      <div className="flex min-w-0 flex-col gap-[3px]">
-        <div className="text-[13px]/[1.55] text-pretty text-foreground">{children}</div>
+      <div className="flex min-w-0 flex-col gap-0.75">
+        <div className="text-board-13 leading-board-1-55 text-pretty text-foreground">
+          {children}
+        </div>
         {detail !== undefined && detail.trim().length > 0 ? (
-          <div className="text-[12.5px]/[1.5] text-muted-foreground">
+          <div className="text-board-12-5/normal text-muted-foreground">
             <InlineCode text={detail} />
           </div>
         ) : null}
@@ -151,11 +153,11 @@ export function BoardCardSummaryPane({
   const showBuilt = children !== null || build.areaCount > 0;
   return (
     <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pl-[22px] pr-3">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pl-5.5 pr-3">
         <SectionHeading>{buildPending ? "Summary" : "Build summary"}</SectionHeading>
         <span className="flex-1" />
         <button
-          className="inline-flex h-6 shrink-0 items-center gap-1 rounded-[7px] border border-input bg-popover pl-1.5 pr-2.5 text-[11.5px] font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
+          className="inline-flex h-6 shrink-0 items-center gap-1 rounded-board-7 border border-input bg-popover pl-1.5 pr-2.5 text-board-11-5 font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
           onClick={onBackToThread}
           type="button"
         >
@@ -163,23 +165,23 @@ export function BoardCardSummaryPane({
           Back to thread
         </button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-[26px] overflow-y-auto px-[22px] pb-8 pt-5 text-[13px]">
+      <div className="flex min-h-0 flex-1 flex-col gap-6.5 overflow-y-auto px-5.5 pb-8 pt-5 text-board-13">
         <div className="flex flex-col gap-2.5">
           {lead !== null ? (
-            <p className="text-[15px]/[1.5] font-medium text-pretty text-foreground">
+            <p className="text-board-15/normal font-medium text-pretty text-foreground">
               <InlineCode text={lead} />
             </p>
           ) : buildPending ? (
-            <p className="text-[12.5px]/[1.5] text-muted-foreground">
+            <p className="text-board-12-5/normal text-muted-foreground">
               The build summary appears here when the build finishes.
             </p>
           ) : build.empty ? (
-            <p className="text-[15px]/[1.5] text-muted-foreground">No build summary</p>
+            <p className="text-board-15/normal text-muted-foreground">No build summary</p>
           ) : null}
-          <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-2 text-board-12 text-muted-foreground">
             <span
               className={cn(
-                "inline-flex shrink-0 items-center rounded-md px-[7px] py-0.5 text-[11.5px] font-medium",
+                "inline-flex shrink-0 items-center rounded-md px-1.75 py-0.5 text-board-11-5 font-medium",
                 TONE_CLASS[verdict.tone],
               )}
             >
@@ -212,7 +214,7 @@ export function BoardCardSummaryPane({
                   </button>
                 </BoardHint>
                 {pullRequest.baseRef !== null && pullRequest.headBranch !== null ? (
-                  <span className="font-mono text-[11.5px]">
+                  <span className="font-mono text-board-11-5">
                     {pullRequest.baseRef} ← {pullRequest.headBranch}
                   </span>
                 ) : null}
@@ -267,28 +269,28 @@ export function BoardCardSummaryPane({
                 return (
                   <li
                     className={cn(
-                      "flex flex-col gap-[3px] rounded-lg border px-[11px] py-[9px]",
+                      "flex flex-col gap-0.75 rounded-lg border px-2.75 py-2.25",
                       style.tile,
                     )}
                     // oxlint-disable-next-line react/no-array-index-key -- tiles have no identity besides their position in the summary
                     key={index}
                   >
-                    <div className="flex items-baseline gap-[7px]">
+                    <div className="flex items-baseline gap-1.75">
                       <span
                         aria-hidden="true"
                         className={cn(
-                          "w-3 flex-none text-center text-[12px] font-bold",
+                          "w-3 flex-none text-center text-board-12 font-bold",
                           style.icon,
                         )}
                       >
                         {style.glyph}
                       </span>
-                      <span className="text-[12.5px]/[1.4] font-medium text-foreground">
+                      <span className="text-board-12-5 leading-board-1-4 font-medium text-foreground">
                         <InlineCode text={check.name} />
                       </span>
                     </div>
                     {check.detail.trim().length > 0 ? (
-                      <div className="pl-[19px] text-[12px]/[1.45] text-pretty text-muted-foreground">
+                      <div className="pl-4.75 text-board-12 leading-board-1-45 text-pretty text-muted-foreground">
                         <InlineCode text={check.detail} />
                       </div>
                     ) : null}
@@ -304,7 +306,7 @@ export function BoardCardSummaryPane({
             <div className="flex items-baseline gap-2">
               <Heading>What was built</Heading>
               {build.areaCount > 0 ? (
-                <span className="text-[12px] text-muted-foreground">
+                <span className="text-board-12 text-muted-foreground">
                   {build.changeCount} {build.changeCount === 1 ? "change" : "changes"} across{" "}
                   {build.areaCount} {build.areaCount === 1 ? "area" : "areas"}
                 </span>
@@ -312,7 +314,7 @@ export function BoardCardSummaryPane({
             </div>
             {children !== null ? (
               <div className="flex flex-col gap-1">
-                <div className="text-[12.5px] font-semibold text-muted-foreground">
+                <div className="text-board-12-5 font-semibold text-muted-foreground">
                   {children.done} of {children.total} {children.total === 1 ? "plan" : "plans"} done
                 </div>
                 <ul className="flex flex-col">
@@ -327,7 +329,7 @@ export function BoardCardSummaryPane({
                       <li key={row.key}>
                         <button
                           className={cn(
-                            "-mx-1.5 flex w-[calc(100%+12px)] items-center justify-between gap-2 rounded-md px-1.5 py-0.5 text-left text-[13px]/[1.6]",
+                            "-mx-1.5 flex w-[calc(100%+12px)] items-center justify-between gap-2 rounded-md px-1.5 py-0.5 text-left text-board-13 leading-board-1-6",
                             openable
                               ? "text-foreground hover:bg-accent"
                               : "cursor-default text-foreground",
@@ -337,7 +339,7 @@ export function BoardCardSummaryPane({
                           type="button"
                         >
                           <span className="font-medium">{row.key}</span>
-                          <span className="text-[11.5px] text-muted-foreground">
+                          <span className="text-board-11-5 text-muted-foreground">
                             {row.stageLabel}
                           </span>
                         </button>
@@ -351,13 +353,13 @@ export function BoardCardSummaryPane({
               area.items.length === 0 ? null : (
                 // oxlint-disable-next-line react/no-array-index-key -- areas have no identity besides their position in the summary
                 <div className="flex flex-col gap-1" key={areaIndex}>
-                  <div className="text-[12.5px] font-semibold text-muted-foreground">
+                  <div className="text-board-12-5 font-semibold text-muted-foreground">
                     <InlineCode text={area.name} />
                   </div>
                   <ul className="flex flex-col">
                     {area.items.map((item, itemIndex) => (
                       <li
-                        className="flex items-baseline gap-[9px] text-[13px]/[1.6] text-foreground"
+                        className="flex items-baseline gap-2.25 text-board-13 leading-board-1-6 text-foreground"
                         // oxlint-disable-next-line react/no-array-index-key -- items have no identity besides their position in the area
                         key={itemIndex}
                       >

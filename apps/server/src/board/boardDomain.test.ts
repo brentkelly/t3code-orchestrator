@@ -224,6 +224,7 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
             linkedAt: t0,
             tombstonedAt: null,
             retiredAt: t0,
+            round: 0,
           },
         ],
       );

@@ -342,7 +342,7 @@ function useBoardAssetUrl(environmentId: EnvironmentId, resource: AssetResource)
 }
 
 const THUMB_CLASS =
-  "size-14 shrink-0 rounded-[9px] border border-border bg-muted bg-cover bg-center shadow-xs";
+  "size-14 shrink-0 rounded-board-9 border border-border bg-muted bg-cover bg-center shadow-xs";
 
 function RemoveBadge({ label, onClick }: { readonly label: string; readonly onClick: () => void }) {
   return (
@@ -421,7 +421,7 @@ function StagedImageThumb(props: {
           ) : null}
           {row.status === "failed" ? (
             <button
-              className="absolute inset-0 rounded-[9px] bg-background/60 text-[10px] font-medium text-destructive-foreground"
+              className="absolute inset-0 rounded-board-9 bg-background/60 text-board-10 font-medium text-destructive-foreground"
               onClick={() => props.onRetry(row.id)}
               type="button"
             >
@@ -535,14 +535,14 @@ function Chip(props: {
   const label = (
     <>
       <FileIcon className="size-3 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 truncate text-[12px] text-foreground">{props.name}</span>
-      <span className="shrink-0 font-mono text-[10.5px] text-muted-foreground">{props.size}</span>
+      <span className="min-w-0 truncate text-board-12 text-foreground">{props.name}</span>
+      <span className="shrink-0 font-mono text-board-10-5 text-muted-foreground">{props.size}</span>
     </>
   );
   return (
     <span
       className={cn(
-        "relative inline-flex h-[26px] max-w-full items-center gap-1.5 rounded-[7px] border border-border bg-popover pr-1.5 pl-1.5 shadow-xs",
+        "relative inline-flex h-[26px] max-w-full items-center gap-1.5 rounded-board-7 border border-border bg-popover pr-1.5 pl-1.5 shadow-xs",
         props.failed && "border-destructive/60",
       )}
     >
@@ -572,7 +572,7 @@ function Chip(props: {
       ) : null}
       {props.failed && props.onRetry ? (
         <button
-          className="shrink-0 text-[11px] font-medium text-destructive-foreground hover:underline"
+          className="shrink-0 text-board-11 font-medium text-destructive-foreground hover:underline"
           onClick={props.onRetry}
           type="button"
         >
@@ -640,7 +640,7 @@ export function BoardBriefAttachRow(props: {
   return (
     <div
       className={cn(
-        "flex flex-wrap items-center gap-1.5 rounded-[9px] border pt-2.5 transition-colors",
+        "flex flex-wrap items-center gap-1.5 rounded-board-9 border pt-2.5 transition-colors",
         boardBriefDropClass(state.dropZone === "row"),
         props.className,
       )}
@@ -651,7 +651,7 @@ export function BoardBriefAttachRow(props: {
       {props.editable ? (
         <BoardHint label={disabled ? disabledReason : null}>
           <button
-            className="inline-flex h-[26px] items-center gap-1.5 rounded-[7px] border border-dashed border-input px-2.5 text-[12px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-[26px] items-center gap-1.5 rounded-board-7 border border-dashed border-input px-2.5 text-board-12 font-medium text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
             disabled={disabled}
             onClick={state.openPicker}
             type="button"
@@ -690,7 +690,9 @@ export function BoardBriefAttachRow(props: {
         />
       ))}
       {state.notice !== null ? (
-        <span className="basis-full text-[11.5px] text-destructive-foreground">{state.notice}</span>
+        <span className="basis-full text-board-11-5 text-destructive-foreground">
+          {state.notice}
+        </span>
       ) : null}
     </div>
   );

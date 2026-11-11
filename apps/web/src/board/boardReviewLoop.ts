@@ -12,10 +12,12 @@ import {
   boardReviewDismissals,
   boardReviewFindingResolution,
   boardReviewLoopWalk,
+  boardReviewRoundModeOf,
   BoardTriagePayload,
   type BoardReviewCarry,
   type BoardReviewFollowUpPhase,
   type BoardReviewRetriageAction,
+  type BoardReviewRoundMode,
   type BoardReviewStuckFinding,
   isBoardReviewBlockingSeverity,
   parseBoardStepPayloadJson,
@@ -93,6 +95,10 @@ export type BoardReviewRoundOutcome =
 export interface BoardReviewLoopRound {
   readonly round: number;
   readonly outcome: BoardReviewRoundOutcome;
+  /** The mode the round was started in: settling rounds review only recent changes. */
+  readonly mode: BoardReviewRoundMode;
+  /** What a settling round's reviewer says it read, null when it did not say. */
+  readonly scope: "delta" | "branch" | null;
   readonly reviewMalformed: boolean;
   /** The human's ruling carried INTO this round: `fix` opens it
       with must-fix findings. */
@@ -140,10 +146,12 @@ export interface BoardReviewLoop {
   readonly status: BoardReviewLoopStatus;
   /** What a stuck loop stopped on; empty otherwise. */
   readonly stuckFindings: ReadonlyArray<BoardReviewStuckFinding>;
-  /** The stuck (or advanced-past) round's fixes no review has read. */
+  /** The stuck (or advanced-past) round's fixes no review has read; on a loop converged
+      `settled`, the fixes only the adjudicator verified. */
   readonly unreviewedFixes: number;
-  /** Set when the adjudicator ended the loop: nothing new was raised. */
-  readonly convergedBy: "adjudicator" | null;
+  /** Set when the adjudicator ended the loop (nothing new was raised), or when a settling
+      round's critical findings were all settled. */
+  readonly convergedBy: "adjudicator" | "settled" | null;
   /** The step id the loop halted `unreadable` on, null otherwise — the record
       the pane's Reopen sends back. */
   readonly unreadableStepId: string | null;
@@ -181,6 +189,7 @@ export function deriveBoardReviewLoop(
   carry: {
     readonly carriedFindings: Readonly<Record<string, BoardReviewCarry>>;
     readonly stuckWaivedThrough: number | null;
+    readonly roundModes?: Readonly<Record<string, BoardReviewRoundMode>>;
   } = { carriedFindings: {}, stuckWaivedThrough: null },
 ): BoardReviewLoop {
   const byStep = new Map<string, BoardStepCompletion>();
@@ -201,6 +210,7 @@ export function deriveBoardReviewLoop(
     runThroughRound,
     carriedFindings: carry.carriedFindings,
     stuckWaivedThrough: carry.stuckWaivedThrough,
+    roundModes: carry.roundModes ?? {},
   });
   const { next, status, currentRound, unreadableStepId } = walk;
   const unreadable = unreadableStepId === null ? null : parseReviewStepId(unreadableStepId);
@@ -346,8 +356,11 @@ export function deriveBoardReviewLoop(
       review !== undefined && !reviewMalformed && (next === null || next.round !== round);
     const unreadablePhase =
       unreadable !== null && unreadable.round === round ? unreadable.phase : null;
+    const mode = boardReviewRoundModeOf({ roundModes: carry.roundModes ?? {} }, round);
     roundModels.push({
       round,
+      mode,
+      scope: mode.kind === "settling" ? (reviewPayload?.scope ?? null) : null,
       outcome:
         unreadablePhase !== null
           ? "unreadable"

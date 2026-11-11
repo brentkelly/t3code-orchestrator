@@ -1,5 +1,5 @@
 /**
- * The board's usage tables (T3O-77, migration 062): one row per card, step, thread,
+ * The board's usage tables (T3O-77, migration 064): one row per card, step, thread,
  * provider and model, and the ingested-turn keys that make every turn count once. Cost is
  * stored in micro-dollars so SQL sums are exact.
  */

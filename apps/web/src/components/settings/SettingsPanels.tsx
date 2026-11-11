@@ -1,5 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
+// T3o: board card notification toggles.
+import { BoardNotificationSettings } from "../../board/settings/BoardNotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -773,6 +775,8 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+        {/* T3o: board card notifications (board/settings/BoardNotificationSettings.tsx). */}
+        <BoardNotificationSettings />
       </SettingsSection>
 
       <SettingsSection id="sidebar" title="Sidebar">

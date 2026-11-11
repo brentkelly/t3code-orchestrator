@@ -36,7 +36,7 @@ export const BOARD_CARD_GAP = 8;
  * Opaque in dark mode: page, column and card must increase in lightness, and a
  * translucent tint composited above `--card`, making cards darker than the column.
  */
-const BOARD_COLUMN_DARK_SURFACE = "dark:bg-[#131316]";
+const BOARD_COLUMN_DARK_SURFACE = "dark:bg-board-column-dark";
 
 export interface BoardAddProject {
   readonly id: ProjectId;
@@ -183,7 +183,7 @@ function CollapsedColumn(props: BoardColumnProps) {
           // full-height target, while expanded columns size to their cards.
           "flex w-11 shrink-0 cursor-pointer flex-col items-center gap-2.5 self-stretch rounded-xl border border-transparent bg-foreground/5 py-2.5 transition-colors hover:bg-foreground/10",
           BOARD_COLUMN_DARK_SURFACE,
-          isOver && "border-ring bg-foreground/10 dark:bg-[#1e1e22]",
+          isOver && "border-ring bg-foreground/10 dark:bg-board-column-drop-dark",
           refused && "border-dashed border-foreground/30",
         )}
         data-board-drop-refused={refused ? "" : undefined}
@@ -194,7 +194,7 @@ function CollapsedColumn(props: BoardColumnProps) {
         type="button"
       >
         <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
-        <span className="text-[11px] font-medium text-muted-foreground">{cards.length}</span>
+        <span className="text-board-11 font-medium text-muted-foreground">{cards.length}</span>
         <span className="text-sm font-semibold text-muted-foreground [writing-mode:vertical-rl]">
           {label}
         </span>
@@ -272,7 +272,7 @@ function ExpandedColumn(props: BoardColumnProps) {
       className={cn(
         "flex min-h-[104px] w-[268px] shrink-0 flex-col rounded-xl border border-transparent bg-foreground/5 p-2.5 transition-colors",
         BOARD_COLUMN_DARK_SURFACE,
-        isOver && "border-ring/60 bg-foreground/10 dark:bg-[#1e1e22]",
+        isOver && "border-ring/60 bg-foreground/10 dark:bg-board-column-drop-dark",
         removed === true && !isOver && "border-dashed border-foreground/20 bg-transparent",
         refused && "border-dashed border-foreground/30",
       )}
@@ -307,13 +307,13 @@ function ExpandedColumn(props: BoardColumnProps) {
         ) : null}
         {removed === true ? (
           <BoardHint label="No project in view uses this stage any more">
-            <span className="ml-1 shrink-0 rounded-[5px] border border-border px-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+            <span className="ml-1 shrink-0 rounded-board-5 border border-border px-1 text-board-10 font-medium tracking-wide text-muted-foreground uppercase">
               Off
             </span>
           </BoardHint>
         ) : null}
         <span className="flex-1" />
-        <span className="text-[11px] font-medium text-muted-foreground">{cards.length}</span>
+        <span className="text-board-11 font-medium text-muted-foreground">{cards.length}</span>
         {canAdd ? (
           <Button
             onClick={() => onRequestCreate(stage)}
@@ -330,7 +330,7 @@ function ExpandedColumn(props: BoardColumnProps) {
           {hint === undefined ? null : settingsProjectId != null &&
             (stage === BOARD_SEED_STAGE_IDS.ci || removed === true) ? (
             <Link
-              className="min-w-0 flex-1 text-[11.5px] text-muted-foreground underline-offset-2 hover:underline"
+              className="min-w-0 flex-1 text-board-11-5 text-muted-foreground underline-offset-2 hover:underline"
               params={{
                 projectId: settingsProjectId,
                 tab: stage === BOARD_SEED_STAGE_IDS.ci ? "ci" : "pipeline",
@@ -341,7 +341,7 @@ function ExpandedColumn(props: BoardColumnProps) {
               {hint}
             </Link>
           ) : (
-            <span className="min-w-0 flex-1 text-[11.5px] text-muted-foreground">{hint}</span>
+            <span className="min-w-0 flex-1 text-board-11-5 text-muted-foreground">{hint}</span>
           )}
           {headerAction}
         </div>

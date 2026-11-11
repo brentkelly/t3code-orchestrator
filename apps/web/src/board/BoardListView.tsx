@@ -562,7 +562,7 @@ export function BoardListView(props: BoardListViewProps) {
       >
         {hasSelection ? (
           <>
-            <span className="text-[12.5px] font-medium text-foreground">
+            <span className="text-board-12-5 font-medium text-foreground">
               {selection.length} selected
             </span>
             <StepButton
@@ -634,7 +634,7 @@ export function BoardListView(props: BoardListViewProps) {
         ) : (
           <>
             {props.scopeControl}
-            <span className="text-[12px] text-muted-foreground">
+            <span className="text-board-12 text-muted-foreground">
               {tree.inScope.size} cards · {groupCount} groups
             </span>
             <Menu>
@@ -667,7 +667,7 @@ export function BoardListView(props: BoardListViewProps) {
                   >
                     <span className="flex w-full items-center justify-between gap-3">
                       {stage.label}
-                      <span className="text-[11px] text-muted-foreground tabular-nums">
+                      <span className="text-board-11 text-muted-foreground tabular-nums">
                         {counts.get(stage.stageId) ?? 0}
                       </span>
                     </span>
@@ -707,7 +707,7 @@ export function BoardListView(props: BoardListViewProps) {
               </MenuPopup>
             </Menu>
             <span className="flex-1 md:hidden" />
-            <span className="hidden min-w-0 flex-1 basis-0 items-center justify-end-safe gap-1 overflow-hidden text-[11.5px] whitespace-nowrap text-muted-foreground md:flex">
+            <span className="hidden min-w-0 flex-1 basis-0 items-center justify-end-safe gap-1 overflow-hidden text-board-11-5 whitespace-nowrap text-muted-foreground md:flex">
               <ListKbd>⇧Click</ListKbd> for a range. <ListKbd>Tab</ListKbd> indents,
               <ListKbd>⇧Tab</ListKbd> outdents; drag to move.
             </span>
@@ -720,7 +720,7 @@ export function BoardListView(props: BoardListViewProps) {
       </div>
       <div
         className={cn(
-          "grid shrink-0 items-center gap-x-3 border-b border-foreground/7 px-[calc(--spacing(3)+10px)] pb-1.5 text-[11px] font-medium text-muted-foreground sm:px-[calc(--spacing(5)+10px)]",
+          "grid shrink-0 items-center gap-x-3 border-b border-foreground/7 px-5.5 pb-1.5 text-board-11 font-medium text-muted-foreground sm:px-7.5",
           GRID_COLUMNS,
         )}
       >
@@ -760,7 +760,7 @@ export function BoardListView(props: BoardListViewProps) {
           tabIndex={0}
         >
           {rows.length === 0 ? (
-            <p className="px-2.5 py-6 text-[12.5px] text-muted-foreground">
+            <p className="px-2.5 py-6 text-board-12-5 text-muted-foreground">
               {props.query.trim().length > 0 || stageFilter.size > 0
                 ? "No cards match the filter."
                 : "No cards here yet."}
@@ -816,12 +816,12 @@ export function BoardListView(props: BoardListViewProps) {
           {usageTotal === null ? null : (
             <div
               className={cn(
-                "grid h-9 items-center gap-x-3 px-2.5 text-[11.5px] font-semibold text-foreground",
+                "grid h-9 items-center gap-x-3 px-2.5 text-board-11-5 font-semibold text-foreground",
                 GRID_COLUMNS,
               )}
               data-board-list-usage-total
             >
-              <span className="pl-[42px]">Total in view</span>
+              <span className="pl-10.5">Total in view</span>
               <span />
               <span />
               <span />
@@ -934,7 +934,7 @@ function StepButton({
 
 function ListKbd({ children }: { readonly children: ReactNode }) {
   return (
-    <kbd className="rounded-[4px] border border-border bg-muted px-[5px] py-px font-mono text-[10.5px] font-medium text-foreground">
+    <kbd className="rounded-sm border border-border bg-muted px-1.25 py-px font-mono text-board-10-5 font-medium text-foreground">
       {children}
     </kbd>
   );
@@ -950,7 +950,7 @@ function KeyPill({
   return (
     <span
       className={cn(
-        "inline-flex h-4 shrink-0 items-center rounded px-1.5 text-[10px] font-semibold tracking-wide",
+        "inline-flex h-4 shrink-0 items-center rounded px-1.5 text-board-10 font-semibold tracking-wide",
         projectAccent(card.projectId, accentNameFor(card.projectId)).pill,
       )}
     >
@@ -969,7 +969,7 @@ function StatusFlag({
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center gap-[5px] text-[11.5px] font-medium whitespace-nowrap",
+        "inline-flex shrink-0 items-center gap-1.25 text-board-11-5 font-medium whitespace-nowrap",
         tone === "attention" && "text-attention-foreground",
         tone === "info" && "text-info-foreground",
         tone === "warning" && "text-warning-foreground",
@@ -1058,12 +1058,10 @@ const BoardListRowView = memo(function BoardListRowView(props: BoardListRowViewP
         "grid h-[35px] items-center gap-x-3 border-b border-foreground/7 px-2.5 select-none",
         GRID_COLUMNS,
         props.dragging ? "cursor-grabbing" : "cursor-grab",
-        props.dropZone === "into" && "bg-primary/12 shadow-[inset_0_0_0_1.5px_var(--primary)]",
-        props.dropZone === "before" && "shadow-[inset_0_2px_0_0_var(--primary)]",
-        props.dropZone === "after" && "shadow-[inset_0_-2px_0_0_var(--primary)]",
-        props.dropZone === null &&
-          props.selected &&
-          "bg-primary/8 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--primary)_32%,transparent)]",
+        props.dropZone === "into" && "bg-primary/12 shadow-board-inset-primary",
+        props.dropZone === "before" && "shadow-board-drop-before",
+        props.dropZone === "after" && "shadow-board-drop-after",
+        props.dropZone === null && props.selected && "bg-primary/8 shadow-board-inset-primary-soft",
         props.dragging && props.dropBlocked
           ? "opacity-40"
           : props.context
@@ -1104,7 +1102,7 @@ const BoardListRowView = memo(function BoardListRowView(props: BoardListRowViewP
           aria-checked={props.selected}
           aria-label={`Select ${card.key}`}
           className={cn(
-            "inline-flex size-[15px] shrink-0 cursor-pointer items-center justify-center rounded-[4px] border text-primary-foreground",
+            "inline-flex size-[15px] shrink-0 cursor-pointer items-center justify-center rounded-sm border text-primary-foreground",
             props.selected ? "border-primary bg-primary" : "border-input bg-card",
           )}
           onClick={(event) => {
@@ -1129,14 +1127,14 @@ const BoardListRowView = memo(function BoardListRowView(props: BoardListRowViewP
         <KeyPill accentNameFor={props.accentNameFor} card={card} />
         <span
           className={cn(
-            "min-w-0 truncate text-[13px] text-foreground",
+            "min-w-0 truncate text-board-13 text-foreground",
             props.isGroup ? "font-semibold" : "font-normal",
           )}
         >
           {card.title}
         </span>
         {props.isGroup ? (
-          <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+          <span className="shrink-0 text-board-11 text-muted-foreground tabular-nums">
             {props.childCount}
           </span>
         ) : null}
@@ -1172,7 +1170,7 @@ const BoardListRowView = memo(function BoardListRowView(props: BoardListRowViewP
       <div className="min-w-0">
         <span
           className={cn(
-            "inline-flex h-5 items-center rounded-md px-[7px] text-[11px] font-medium whitespace-nowrap",
+            "inline-flex h-5 items-center rounded-md px-1.75 text-board-11 font-medium whitespace-nowrap",
             done
               ? "bg-success/14 text-success-foreground"
               : deferred
@@ -1193,12 +1191,12 @@ const BoardListRowView = memo(function BoardListRowView(props: BoardListRowViewP
       <div className="flex min-w-0 items-center gap-2">
         {stats !== null ? (
           <>
-            <span className="flex min-w-0 flex-1 items-center gap-[2px]">
+            <span className="flex min-w-0 flex-1 items-center gap-0.5">
               {stats.active.map((child, index) => {
                 const state = stats.states[index]!;
                 return (
                   <span
-                    className={cn("h-1 max-w-3 min-w-1 flex-1 rounded-[2px]", PIP_CLASS[state])}
+                    className={cn("h-1 max-w-3 min-w-1 flex-1 rounded-xs", PIP_CLASS[state])}
                     data-state={state}
                     key={child.key}
                   />
@@ -1207,7 +1205,7 @@ const BoardListRowView = memo(function BoardListRowView(props: BoardListRowViewP
             </span>
             <span
               className={cn(
-                "shrink-0 text-[11px] tabular-nums",
+                "shrink-0 text-board-11 tabular-nums",
                 stats.active.length > 0 &&
                   stats.done === stats.active.length &&
                   stats.deferred === 0
@@ -1222,13 +1220,13 @@ const BoardListRowView = memo(function BoardListRowView(props: BoardListRowViewP
       </div>
       <div
         className={cn(
-          "min-w-0 truncate font-mono text-[11px] font-medium",
+          "min-w-0 truncate font-mono text-board-11 font-medium",
           props.targetOwn ? "text-foreground" : "text-muted-foreground",
         )}
       >
         {props.target === null ? "" : `→ ${props.target}`}
       </div>
-      <span className="text-right font-mono text-[11.5px] tabular-nums text-muted-foreground">
+      <span className="text-right font-mono text-board-11-5 tabular-nums text-muted-foreground">
         {formatBoardTokens(props.usage?.tokens ?? null)}
       </span>
       <BoardUsageCell emphasisUsd={props.costEmphasisUsd} usage={props.usage} />
@@ -1248,7 +1246,7 @@ function BoardUsageCell({
     <BoardHint label={figure.tooltip}>
       <span
         className={cn(
-          "text-right font-mono text-[12px] tabular-nums whitespace-nowrap",
+          "text-right font-mono text-xs tabular-nums whitespace-nowrap",
           figure.known ? "text-foreground" : "text-muted-foreground",
           isBoardUsageEmphasized(usage, emphasisUsd) ? "font-semibold" : "font-medium",
         )}

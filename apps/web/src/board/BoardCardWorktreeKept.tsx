@@ -37,24 +37,22 @@ export function BoardCardWorktreeKept(props: {
   return (
     <div
       className={cn(
-        "flex flex-col gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2",
+        "flex flex-col gap-2 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-2",
         props.className,
       )}
     >
       <div className="flex items-start gap-2">
         <HardDriveIcon
           aria-hidden="true"
-          className="mt-px size-3.5 shrink-0 text-amber-600 dark:text-amber-400"
+          className="mt-px size-3.5 shrink-0 text-board-amber-icon"
         />
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="text-[12px] font-medium text-amber-700 dark:text-amber-300">
-            Worktree kept
-          </span>
-          <span className="break-words text-[12px] leading-[1.5] text-amber-700/90 dark:text-amber-300/90">
+          <span className="text-board-12 font-medium text-board-amber-text">Worktree kept</span>
+          <span className="break-words text-board-12 leading-normal text-board-amber-text/90">
             {props.reason}
           </span>
           {props.path === null ? null : (
-            <span className="break-all font-mono text-[11px] text-amber-700/75 dark:text-amber-300/75">
+            <span className="break-all font-mono text-board-11 text-board-amber-text/75">
               {props.path}
             </span>
           )}

@@ -478,6 +478,9 @@ describe("the planning-thread rules", () => {
     const card = linked(PLANNING);
     assert.strictEqual(keptPlanningThreadId(board([card]), card), thread);
     assert.isNull(keptPlanningThreadId(board([card]), { ...card, stage: READY }));
+    // A reopened card keeps its reclaimed status until Building provisions again.
+    const reopened = { ...card, worktree: { status: "reclaimed" } } as unknown as typeof card;
+    assert.strictEqual(keptPlanningThreadId(board([reopened]), reopened), thread);
     const finished = board([card], {
       stepCompletions: [
         {

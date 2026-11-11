@@ -19,7 +19,7 @@ export function BoardWorkerSettings(props: { readonly environmentId: Environment
   return (
     <>
       <SettingsSection id="board-workers" title={workersAnchor.title} variant="plain">
-        <p className="mb-2 max-w-xl px-3 text-[13px] leading-[1.55] text-muted-foreground/80 sm:px-4">
+        <p className="mb-2 max-w-xl px-3 text-board-13 leading-board-1-55 text-muted-foreground/80 sm:px-4">
           Machines that run cards for this board. This server hosts the board and is always a
           worker. Cards run on the default worker unless you pin them to another.
         </p>
@@ -34,7 +34,7 @@ export function BoardWorkerSettings(props: { readonly environmentId: Environment
       </SettingsSection>
       {showCheckouts ? (
         <SettingsSection id="board-project-checkouts" title={checkoutsAnchor.title} variant="plain">
-          <p className="mb-2 max-w-xl px-3 text-[13px] leading-[1.55] text-muted-foreground/80 sm:px-4">
+          <p className="mb-2 max-w-xl px-3 text-board-13 leading-board-1-55 text-muted-foreground/80 sm:px-4">
             A worker can only run cards for projects it has a checkout of. Set up clones the repo
             from its git remote into the worker's projects folder, using that machine's git
             credentials.

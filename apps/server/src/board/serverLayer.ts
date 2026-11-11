@@ -16,6 +16,7 @@ import { BoardMcpRelayClientLive } from "../mcp/toolkits/board/relayClient.ts";
 import { ThreadGatewayRouterLive } from "./ThreadGatewayRouter.ts";
 import { LocalThreadGatewayV2Live } from "./ThreadGatewayV2.ts";
 import { WorktreeRetirerLive } from "./worktreeRetire.ts";
+import { BoardWebhookActionsLive } from "./webhookActions.ts";
 import { BoardSetupScriptRunnerLive } from "./ports/BoardSetupScriptRunner.live.ts";
 import { BoardTerminalsLive } from "./ports/BoardTerminals.live.ts";
 import { BoardGitStatusLive } from "./ports/BoardGitStatus.live.ts";
@@ -62,6 +63,8 @@ export const BoardServerLive = BoardMcpRelayClientLive.pipe(
   // Board code reaches upstream services through ports; the adapters
   // live here so the upstream requirement still flows up to `server.ts`.
   Layer.provideMerge(SupervisorReactorLive.pipe(Layer.provide(BoardSetupScriptRunnerLive))),
+  // Webhook scheduled tasks reach the board through the runner this registers.
+  Layer.provideMerge(BoardWebhookActionsLive),
   // Moving a card to another worker, for the Move dialog's RPCs.
   Layer.provideMerge(BoardCardMoverLive),
   Layer.provide(BoardStepSlotsLive),

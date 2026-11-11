@@ -89,6 +89,9 @@ import {
   isBoardTerminalStepStatus,
   isEmptyBoardCardReviewOverrides,
   EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
+  BOARD_REVIEW_FULL_ROUND,
+  reviewStepId,
+  type BoardReviewRoundMode,
   readBoardPlanReviewReport,
   pickNextBoardLabelColour,
   BOARD_CARD_ATTACHMENTS_MAX,
@@ -96,6 +99,7 @@ import {
   sortBoardCardThreadLinks,
   unmetBoardCardDependencies,
   type BoardCard,
+  type BoardCardExternalRef,
   type BoardCardEditSummary,
   type BoardCardUpdateCommand,
   type BoardCardReviewSummary,
@@ -289,6 +293,25 @@ function requireLiveStepState(input: {
         ),
       )
     : Effect.succeed(state);
+}
+
+/** Board-wide, so a card that changed project still guards its reference. Archived cards
+    do not hold one: restoring a duplicate is the caller's to refuse. */
+function externalRefTakenRefusal(
+  board: BoardState,
+  ref: BoardCardExternalRef,
+  cardId: BoardCardId,
+): string | null {
+  const holder = board.cards.find(
+    (card) =>
+      card.id !== cardId &&
+      card.archivedAt === null &&
+      card.externalRef?.system === ref.system &&
+      card.externalRef.id === ref.id,
+  );
+  return holder === undefined
+    ? null
+    : `Card '${holder.key}' already tracks ${ref.system} '${ref.id}'.`;
 }
 
 /** Move and start-stage-thread name unmet deps the same way: `KEY "title"`. */
@@ -979,6 +1002,7 @@ function reviewSummaryOverrideInputs(overrides: BoardCardReviewOverrides | null)
     runThroughRound: overrides?.runThroughRound ?? null,
     carriedFindings: overrides?.carriedFindings ?? {},
     stuckWaivedThrough: overrides?.stuckWaivedThrough ?? null,
+    roundModes: overrides?.roundModes ?? {},
   };
 }
 
@@ -1002,6 +1026,31 @@ function boardCardStuckReviewRound(board: BoardState, card: BoardCard): number |
 }
 
 /**
+ * The round modes after "Another review round": every round from the lowest with no succeeded
+ * review through the requested one is full. A settling record on a round whose review failed
+ * is overwritten too, or the executor would re-plan it settling on the way to the request.
+ */
+function forcedFullRoundModes(input: {
+  readonly stored: Readonly<Record<string, BoardReviewRoundMode>>;
+  readonly completions: ReadonlyArray<BoardStepCompletion>;
+  readonly throughRound: number | null;
+}): Record<string, BoardReviewRoundMode> {
+  const next: Record<string, BoardReviewRoundMode> = { ...input.stored };
+  if (input.throughRound === null) return next;
+  const reviewed = new Set(
+    input.completions
+      .filter((completion) => completion.outcome === "succeeded")
+      .map((completion) => completion.stepId),
+  );
+  let from = 1;
+  while (reviewed.has(reviewStepId("review", from))) from += 1;
+  for (let round = from; round <= input.throughRound; round++) {
+    next[String(round)] = BOARD_REVIEW_FULL_ROUND;
+  }
+  return next;
+}
+
+/**
  * Keep the server-only carry fields through a client's override
  * write, whatever the client sent — including `reviewOverrides: null`. Only
  * `board.card.set-review-carry` writes them.
@@ -1014,6 +1063,7 @@ function keepReviewCarry(
     ...(next ?? EMPTY_BOARD_CARD_REVIEW_OVERRIDES),
     carriedFindings: stored?.carriedFindings ?? {},
     stuckWaivedThrough: stored?.stuckWaivedThrough ?? null,
+    roundModes: stored?.roundModes ?? {},
   };
   return isEmptyBoardCardReviewOverrides(merged) ? null : merged;
 }
@@ -1720,6 +1770,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         proposed: command.labels ?? [],
         existing: [],
       });
+      if (command.externalRef !== undefined) {
+        const refusal = externalRefTakenRefusal(board, command.externalRef, command.cardId);
+        if (refusal !== null) return yield* invariant(command, refusal);
+      }
 
       // Child create: any live card may take a child, at any
       // depth and across projects, unless it is a leaf already being built.
@@ -1876,6 +1930,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           // Key-optional like `baseBranch`: absent IS "follow the default".
           ...(pinnedWorkerId === null ? {} : { pinnedWorkerId }),
           ...(command.mergeStrategy === undefined ? {} : { mergeStrategy: command.mergeStrategy }),
+          ...(command.externalRef === undefined ? {} : { externalRef: command.externalRef }),
           ...(heading === null ? {} : { group: heading }),
           dependsOn,
           stage,
@@ -2668,6 +2723,16 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       }
 
       const nextLabels = yield* resolveCardUpdateLabels({ board, card, command });
+      // An unchanged reference re-sent is no new claim, even beside an older duplicate.
+      if (
+        command.externalRef !== undefined &&
+        command.externalRef !== null &&
+        (card.externalRef?.system !== command.externalRef.system ||
+          card.externalRef.id !== command.externalRef.id)
+      ) {
+        const refusal = externalRefTakenRefusal(board, command.externalRef, card.id);
+        if (refusal !== null) return yield* invariant(command, refusal);
+      }
 
       // Brief and dependency edits, whole-value or incremental.
       const edits = yield* resolveCardUpdateEdits({ board, card, command, context });
@@ -2945,6 +3010,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         linkedAt: command.createdAt,
         tombstonedAt: null,
         ...(command.workerId === undefined ? {} : { workerId: command.workerId }),
+        round: card.pullRequestHistory.length,
       };
       const nextCard: BoardCard = {
         ...card,
@@ -4691,6 +4757,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           cardId: command.cardId,
           pullRequest: next,
           transition,
+          ...(previous !== null && (transition === "linked" || transition === "unlinked")
+            ? { previous }
+            : {}),
           card: nextCard,
         },
       };
@@ -4769,6 +4838,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           cardId: command.cardId,
           pullRequest: next,
           transition,
+          ...(previous !== null && (transition === "linked" || transition === "unlinked")
+            ? { previous }
+            : {}),
           card: nextCard,
         },
       };
@@ -4792,7 +4864,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         command.runThroughRound === undefined &&
         command.clearStopAfterRound === undefined &&
         command.stuckWaivedThrough === undefined &&
-        command.carry === undefined
+        command.carry === undefined &&
+        command.forceFullRound === undefined
       ) {
         return yield* invariant(command, `Review carry for card '${card.id}' carries no changes.`);
       }
@@ -4837,6 +4910,14 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           command.carry === undefined
             ? stored.carriedFindings
             : { ...stored.carriedFindings, [String(command.carry.round)]: command.carry.entry },
+        roundModes:
+          command.forceFullRound === true
+            ? forcedFullRoundModes({
+                stored: stored.roundModes,
+                completions: boardCardStepCompletions(board, card.id),
+                throughRound: command.runThroughRound ?? stored.runThroughRound,
+              })
+            : stored.roundModes,
       };
       const reviewOverrides = isEmptyBoardCardReviewOverrides(next) ? null : next;
       const nextCard: BoardCard = { ...card, reviewOverrides, updatedAt: command.createdAt };
@@ -5207,15 +5288,59 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         startedAt: null,
         updatedAt: command.createdAt,
       };
-      return {
+      const selected = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
           commandId: command.commandId,
         })),
-        type: "board.card-step-selected",
+        type: "board.card-step-selected" as const,
         payload: { cardId: command.cardId, state },
       };
+      // A settling round is recorded in the decision that freezes its prompt, before any
+      // thread spawns, so every later reader sees the mode the round was composed in.
+      const roundMode = command.reviewRoundMode;
+      const storedOverrides = selecting.reviewOverrides ?? EMPTY_BOARD_CARD_REVIEW_OVERRIDES;
+      if (roundMode === undefined) return selected;
+      const stored = storedOverrides.roundModes[String(roundMode.round)];
+      if (stored !== undefined) {
+        // The plan was composed before this record landed (a full-round request in the window
+        // between plan and select-step), so its prompt is stale: refuse it and let the reactor
+        // re-plan from the record.
+        if (
+          stored.kind !== roundMode.mode.kind ||
+          (stored.kind === "settling" &&
+            roundMode.mode.kind === "settling" &&
+            stored.sinceSha !== roundMode.mode.sinceSha)
+        ) {
+          return yield* invariant(
+            command,
+            `Round ${roundMode.round} of card '${command.cardId}' is already recorded as a ${stored.kind} round; re-plan it from that record.`,
+          );
+        }
+        return selected;
+      }
+      const reviewOverrides: BoardCardReviewOverrides = {
+        ...storedOverrides,
+        roundModes: { ...storedOverrides.roundModes, [String(roundMode.round)]: roundMode.mode },
+      };
+      const summary = boardCardReviewSummary(board, selecting.id, reviewOverrides);
+      return [
+        selected,
+        {
+          ...(yield* makeBoardEventBase({
+            cardId: command.cardId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "board.card-updated" as const,
+          payload: {
+            cardId: command.cardId,
+            card: { ...selecting, reviewOverrides, updatedAt: command.createdAt },
+            ...(summary === null ? {} : { reviewSummary: summary }),
+          },
+        },
+      ];
     }
 
     case "board.card.start-stage-thread": {

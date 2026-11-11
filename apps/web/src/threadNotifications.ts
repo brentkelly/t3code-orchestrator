@@ -38,7 +38,23 @@ export function threadNotificationTag(environmentId: EnvironmentId, threadId: Th
 let originalFavicon: HTMLLinkElement | undefined;
 let badgeFavicon: HTMLLinkElement | undefined;
 
+// T3o: board card alerts share the badge; the board's count is added to the threads'. See board/boardCardNotifications.tsx.
+let threadBadgeCount = 0;
+let boardBadgeCount = 0;
+export function setBoardNotificationBadge(count: number) {
+  boardBadgeCount = count;
+  drawNotificationBadge(threadBadgeCount + boardBadgeCount);
+}
+export function boardCardNotificationTag(environmentId: EnvironmentId, cardId: string): string {
+  return threadNotificationTag(environmentId, `board:${cardId}` as ThreadId);
+}
+
 export function setNotificationBadge(count: number) {
+  threadBadgeCount = count;
+  drawNotificationBadge(threadBadgeCount + boardBadgeCount);
+}
+
+function drawNotificationBadge(count: number) {
   const bridge = window.desktopBridge;
   let image: string | null = null;
   if (count > 0 && (!bridge || bridge.getClientPlatform() === "win32")) {

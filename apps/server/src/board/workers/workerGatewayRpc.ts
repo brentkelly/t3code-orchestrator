@@ -50,6 +50,10 @@ const runGatewayCall = (
         return host.armLimitRecovery(call.input);
       case "answerPendingInput":
         return host.answerPendingInput(call.input);
+      case "linkPullRequest":
+        return host.linkPullRequest(call.input).pipe(Effect.as(null));
+      case "unlinkPullRequest":
+        return host.unlinkPullRequest(call.input).pipe(Effect.as(null));
       case "threadState":
         return host.threadState(call.threadId);
       case "threadRecords":
@@ -64,6 +68,8 @@ const runGatewayCall = (
         return host.lastSignalAt(call.threadId);
       case "pendingTurnStartAt":
         return host.pendingTurnStartAt(call.threadId);
+      case "subagentAwaitingApproval":
+        return host.subagentAwaitingApproval(call.threadId);
       case "projects":
         return host.projects;
       case "project":

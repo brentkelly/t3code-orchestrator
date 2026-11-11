@@ -166,10 +166,13 @@ export const makeThreadGatewayRouter = (deps: ThreadGatewayRouterDeps): ThreadGa
     delete: routed("delete", (gateway) => gateway.delete),
     armLimitRecovery: routed("armLimitRecovery", (gateway) => gateway.armLimitRecovery),
     answerPendingInput: routed("answerPendingInput", (gateway) => gateway.answerPendingInput),
+    linkPullRequest: routed("linkPullRequest", (gateway) => gateway.linkPullRequest),
+    unlinkPullRequest: routed("unlinkPullRequest", (gateway) => gateway.unlinkPullRequest),
     threadState: routedRead((gateway) => gateway.threadState),
     latestAssistantMessage: routedRead((gateway) => gateway.latestAssistantMessage),
     lastSignalAt: routedRead((gateway) => gateway.lastSignalAt),
     pendingTurnStartAt: routedRead((gateway) => gateway.pendingTurnStartAt),
+    subagentAwaitingApproval: routedRead((gateway) => gateway.subagentAwaitingApproval),
 
     // Best-effort per worker: removed and unreachable workers' threads are left out, so one offline
     // worker never stalls the release sweep. Fails only when no worker named answered, so a single

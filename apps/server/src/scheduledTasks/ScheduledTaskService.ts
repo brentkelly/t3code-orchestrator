@@ -75,6 +75,8 @@ import {
 } from "./webhookDedupe.ts";
 import { describeFailedWebhookFilter, findFailedWebhookFilter } from "./webhookFilter.ts";
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
+// T3o: webhook tasks can be board rules (T3O-78).
+import * as BoardWebhookRules from "../board/webhookRules.ts";
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
@@ -536,11 +538,13 @@ export const layer = Layer.effect(
     const listRows = Effect.fn("ScheduledTaskService.listRows")(function* () {
       const rows = yield* selectAllRows();
       const origin = yield* readWebhookOrigin;
-      return yield* Effect.forEach(
+      const tasks = yield* Effect.forEach(
         rows,
         (row) => decodeRow(row, origin).pipe(Effect.map(withPolicy)),
         { concurrency: 1 },
       );
+      // T3o: attach board rules (T3O-78).
+      return yield* BoardWebhookRules.withBoardActions(sql, tasks);
     });
 
     const getRows = (id: ScheduledTaskId) =>
@@ -581,7 +585,11 @@ export const layer = Layer.effect(
       );
       const row = rows[0];
       if (row === undefined) return null;
-      return withPolicy(yield* decodeRow(row, yield* readWebhookOrigin));
+      // T3o: attach the board rule (T3O-78).
+      return yield* BoardWebhookRules.withBoardAction(
+        sql,
+        withPolicy(yield* decodeRow(row, yield* readWebhookOrigin)),
+      );
     });
 
     const findWebhookCredentials = (id: ScheduledTaskId) =>
@@ -734,6 +742,8 @@ export const layer = Layer.effect(
         .withTransaction(
           sql`DELETE FROM scheduled_task_webhook_deliveries WHERE task_id = ${id}`.pipe(
             Effect.andThen(sql`DELETE FROM scheduled_tasks WHERE task_id = ${id}`),
+            // T3o: and its board rule (T3O-78).
+            Effect.andThen(BoardWebhookRules.deleteBoardAction(sql, id)),
           ),
         )
         .pipe(
@@ -852,6 +862,8 @@ export const layer = Layer.effect(
         readonly deliveryId: string;
         readonly prompt: string;
         readonly dispatched: Ref.Ref<boolean>;
+        // T3o: board rules read the raw request (T3O-78).
+        readonly request: WebhookRequest;
       },
     ) {
       // Read before reserving: nothing between the reservation and its release may fail.
@@ -971,10 +983,16 @@ export const layer = Layer.effect(
               }),
             );
 
+        // T3o: a board rule runs the board instead of a thread (T3O-78).
+        const boardRule =
+          webhook === undefined
+            ? null
+            : BoardWebhookRules.runBoardRuleDelivery(sql, active, webhook);
         // Capture defects and interrupts too so dispatch failures still reach markCompleted.
-        const result =
+        // T3o: built, not run, so a board rule can take its place (T3O-78).
+        const threadRun =
           active.threadId === null
-            ? yield* Effect.exit(
+            ? Effect.exit(
                 threadLaunch
                   .launch({
                     commandId,
@@ -1000,13 +1018,14 @@ export const layer = Layer.effect(
                     ),
                   ),
               )
-            : yield* Effect.exit(
+            : Effect.exit(
                 // The stored selection only seeds fresh threads. A bound run
                 // follows the thread's current provider, so it passes none.
                 sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
                   Effect.as(ThreadId.make(active.threadId)),
                 ),
               );
+        const result = boardRule !== null ? yield* Effect.exit(boardRule) : yield* threadRun;
 
         const runSucceeded = result._tag === "Success";
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
@@ -1362,6 +1381,11 @@ export const layer = Layer.effect(
           : input.schedule.type === "once"
             ? { type: "once", runAt: iso(DateTime.makeUnsafe(input.schedule.runAt)) }
             : input.schedule;
+      // T3o: validate the board rule before a secretRef is consumed; a rule stores its sentinel prompt (T3O-78).
+      const board = yield* BoardWebhookRules.resolveUpsertBoardAction(sql, input, {
+        taskId: id,
+        schedule,
+      });
       const webhook =
         input.schedule.type === "webhook"
           ? yield* Effect.gen(function* () {
@@ -1412,7 +1436,7 @@ export const layer = Layer.effect(
       const task: ScheduledTask = {
         id,
         title: input.title,
-        prompt: input.prompt,
+        prompt: board.prompt,
         enabled: input.enabled,
         schedule,
         projectId: input.projectId,
@@ -1439,6 +1463,15 @@ export const layer = Layer.effect(
         input.requireExisting === true,
         scheduleUnchanged ? existingTask.schedule : null,
         webhook,
+      ).pipe(
+        // T3o: the board rule is saved in the same transaction (T3O-78).
+        Effect.andThen(BoardWebhookRules.saveBoardAction(sql, id, board.boardAction)),
+        (save) => sql.withTransaction(save),
+        Effect.mapError((cause) =>
+          isScheduledTaskError(cause)
+            ? cause
+            : taskError("Could not save schedule task.", { taskId: id, cause }),
+        ),
       );
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
@@ -1540,6 +1573,8 @@ export const layer = Layer.effect(
       const removed = yield* sql
         .withTransaction(
           Effect.gen(function* () {
+            // T3o: and their board rules (T3O-78).
+            yield* BoardWebhookRules.deleteThreadBoardActions(sql, threadId);
             yield* sql`
             DELETE FROM scheduled_task_webhook_deliveries
             WHERE task_id IN (SELECT task_id FROM scheduled_tasks WHERE thread_id = ${threadId})
@@ -1900,6 +1935,8 @@ export const layer = Layer.effect(
       task: ScheduledTask,
       deliveryId: string,
       prompt: string,
+      // T3o: board rules read the raw request (T3O-78).
+      request: WebhookRequest,
     ) {
       const runOutcome = (outcome: "started" | "skipped" | "failed") =>
         Effect.all([
@@ -1907,7 +1944,7 @@ export const layer = Layer.effect(
           Metrics.increment(Metrics.webhookRunsTotal, { outcome }),
         ]);
       const dispatched = yield* Ref.make(false);
-      return yield* runTask(task, "webhook", { deliveryId, prompt, dispatched }).pipe(
+      return yield* runTask(task, "webhook", { deliveryId, prompt, dispatched, request }).pipe(
         Effect.flatMap(({ dispatchFailed }) =>
           dispatchFailed
             ? runOutcome("failed").pipe(
@@ -2364,7 +2401,7 @@ export const layer = Layer.effect(
           }
           yield* observe("accepted");
           const permit = yield* webhookPermit(task.id);
-          yield* runWebhookDelivery(task, deliveryId, rendered.prompt).pipe(
+          yield* runWebhookDelivery(task, deliveryId, rendered.prompt, request).pipe(
             permit.withPermits(1),
             Effect.ensuring(release),
             Effect.forkIn(serviceScope),
@@ -2442,6 +2479,7 @@ export const layer = Layer.effect(
                   task,
                   taskJson: task === snapshot ? null : yield* encodePendingTask(task),
                   rendered: renderWebhookPrompt(task.prompt, request, frameId),
+                  request,
                 };
               }).pipe(Effect.exit);
               if (Exit.isFailure(prepared)) {
@@ -2455,7 +2493,7 @@ export const layer = Layer.effect(
                 yield* remove;
                 continue;
               }
-              const { task, taskJson, rendered } = prepared.value;
+              const { task, taskJson, rendered, request } = prepared.value;
               if (rendered.prompt.trim().length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
                 yield* markDeliveryFailed(entry.delivery_id, PROMPT_TOO_LONG);
                 yield* releaseFailedDelivery(entry.delivery_id);
@@ -2463,7 +2501,8 @@ export const layer = Layer.effect(
                 if (taskJson !== null)
                   yield* sql`UPDATE scheduled_task_webhook_pending SET task_json = ${taskJson} WHERE delivery_id = ${entry.delivery_id}`;
                 yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL, rendered_prompt = ${rendered.prompt.slice(0, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT)}, missing_fields_json = ${encodeMissingFieldsJson(rendered.missing)} WHERE delivery_id = ${entry.delivery_id}`;
-                if (!(yield* runWebhookDelivery(task, entry.delivery_id, rendered.prompt))) return;
+                if (!(yield* runWebhookDelivery(task, entry.delivery_id, rendered.prompt, request)))
+                  return;
               }
               yield* remove;
             }
