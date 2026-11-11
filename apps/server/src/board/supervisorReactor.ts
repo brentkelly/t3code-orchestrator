@@ -9793,8 +9793,20 @@ const make = Effect.gen(function* () {
     });
     return true;
   });
-  const threadAwaitingPermission = (threadId: ThreadId) =>
-    liveThread(threadId).pipe(Effect.map((shell) => shell?.awaitingPermission ?? false));
+  // A permission prompt, or a question only a human can answer: a `request_secret` waits inside
+  // a live run with no question signal to park the step. Review-deciding questions are the
+  // board's own to answer, so they never count.
+  const threadAwaitingHuman = (state: Pick<BoardCardStepState, "stepId">, threadId: ThreadId) =>
+    liveThread(threadId).pipe(
+      Effect.map(
+        (shell) =>
+          shell !== undefined &&
+          (shell.awaitingPermission ||
+            (shell.awaitingUserInput &&
+              shell.sessionStatus !== "error" &&
+              !isReviewDecidingStep(state))),
+      ),
+    );
   const stampPermissionAnswered = (threadId: ThreadId) =>
     nowIso.pipe(Effect.map((now) => void permissionHeldAt.set(String(threadId), now)));
 
@@ -10002,7 +10014,7 @@ const make = Effect.gen(function* () {
       const heldAt =
         state.threadId === null ? undefined : permissionHeldAt.get(String(state.threadId));
       if (state.threadId !== null && heldAt !== undefined) {
-        if (yield* threadAwaitingPermission(state.threadId)) {
+        if (yield* threadAwaitingHuman(state, state.threadId)) {
           permissionHeldAt.set(String(state.threadId), now);
         } else if (nowMs - Date.parse(heldAt) > state.timeoutMs) {
           permissionHeldAt.delete(String(state.threadId));
@@ -10049,9 +10061,10 @@ const make = Effect.gen(function* () {
       // `lastNudgeAt ?? startedAt`.
       // Checked last, so only overdue steps pay.
       if (yield* supersededByPendingTurn(state)) continue;
-      // A thread on a permission prompt is waiting on a human and emits nothing; nudging it would
-      // replace "Needs permission" with a stall. Read last, so only overdue steps pay.
-      if (state.threadId !== null && (yield* threadAwaitingPermission(state.threadId))) {
+      // A thread on a permission prompt or a secret request is waiting on a human and emits
+      // nothing; nudging it would replace the violet wait with a stall. Read last, so only overdue
+      // steps pay.
+      if (state.threadId !== null && (yield* threadAwaitingHuman(state, state.threadId))) {
         permissionHeldAt.set(String(state.threadId), now);
         continue;
       }

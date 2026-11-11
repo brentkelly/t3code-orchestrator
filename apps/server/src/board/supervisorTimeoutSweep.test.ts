@@ -357,6 +357,47 @@ it.effect("T3O-16: a permission stamp is dropped once its step leaves running", 
   ),
 );
 
+// A `request_secret` waits inside a live run: the thread shows a pending question but no
+// question signal parks the step, so the sweep is what must leave it alone (T3O-72).
+const awaitingSecretShells = (): ReadonlyMap<string, BoardThreadState> =>
+  new Map([[String(threadId), aliveThread(String(threadId), { awaitingUserInput: true })]]);
+
+it.effect("a running step waiting on a human's secret is never swept", () =>
+  withGovernor(
+    {
+      board: boardWithStep(runningStep()),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+    },
+    ({ reactor, board, shells }) =>
+      Effect.gen(function* () {
+        yield* Ref.set(shells, awaitingSecretShells());
+        yield* reactor.sweep;
+        const after = yield* board;
+        assert.strictEqual(attemptOf(after), 1);
+        assert.isNull(boardCardStepState(after, cardId)?.lastNudgeAt ?? null);
+      }),
+  ),
+);
+
+// The board answers a review-deciding step's questions itself, so nobody else will.
+it.effect("a review-deciding step waiting on input is still swept", () =>
+  withGovernor(
+    {
+      board: boardWithStep(runningStep({ stepId: "triage@1" })),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+    },
+    ({ reactor, board, shells }) =>
+      Effect.gen(function* () {
+        yield* Ref.set(shells, awaitingSecretShells());
+        yield* reactor.sweep;
+        const after = boardCardStepState(yield* board, cardId);
+        assert.isTrue(after?.attempt !== 1 || after?.status !== "running");
+      }),
+  ),
+);
+
 // A session that died mid-prompt cannot be approved in, so the pending
 // approval no longer exempts it and the step is swept as usual.
 it.effect("T3O-16: a dead session's lingering permission prompt does not exempt it", () =>
