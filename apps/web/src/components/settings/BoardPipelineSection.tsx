@@ -24,6 +24,8 @@ import {
   DEFAULT_BOARD_REVIEW_PHASES,
   boardDraftPullRequestLine,
   boardReviewPhasePreamble,
+  BOARD_REVIEW_SETTLE_BELOW_FINDINGS_MIN,
+  DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND,
   boardReviewPhaseProtocol,
   reviewStepId,
   reviewStepLabel,
@@ -1880,6 +1882,43 @@ function ReviewStageBody(props: {
               />
             }
           />
+          <ToggleRow
+            label="Settling rounds"
+            hint="After this, each round reviews only the new changes and only critical findings start another round. Another review round always runs a full review."
+            checked={exec.settleAfterRound !== null}
+            ariaLabel="Settling rounds"
+            onChange={(checked) =>
+              set({ settleAfterRound: checked ? DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND : null })
+            }
+          />
+          {exec.settleAfterRound === null ? null : (
+            <>
+              <NumberRow
+                label="Settle after round"
+                stepper={
+                  <NumberStepper
+                    value={exec.settleAfterRound}
+                    min={1}
+                    max={20}
+                    ariaLabel="Settle after round"
+                    onChange={(settleAfterRound) => set({ settleAfterRound })}
+                  />
+                }
+              />
+              <NumberRow
+                label="When a round has fewer than this many blocking findings"
+                stepper={
+                  <NumberStepper
+                    value={exec.settleBelowFindings}
+                    min={BOARD_REVIEW_SETTLE_BELOW_FINDINGS_MIN}
+                    max={20}
+                    ariaLabel="Settle below blocking findings"
+                    onChange={(settleBelowFindings) => set({ settleBelowFindings })}
+                  />
+                }
+              />
+            </>
+          )}
           {/* The review loop runs unattended, so there is no human-in-the-loop gate
               to hide this behind; the reactor reads `autoAdvance` for review too. */}
           <ToggleRow
