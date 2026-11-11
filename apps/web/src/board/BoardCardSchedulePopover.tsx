@@ -104,18 +104,18 @@ export function BoardCardSchedulePopover({
       >
         <Clock className="size-3 shrink-0" />
         {scheduledStartAt === null ? null : (
-          <span className="whitespace-nowrap text-[10.5px] font-medium">
+          <span className="whitespace-nowrap text-board-10-5 font-medium">
             {scheduleTriggerLabel(scheduledStartAt, triggerNowMs)}
           </span>
         )}
       </PopoverTrigger>
       <PopoverPopup align="start" className="w-[252px] p-2.5">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+        <div className="text-board-11 font-semibold uppercase tracking-board-6 text-muted-foreground">
           {copy.title}
         </div>
         <input
           aria-label={copy.title}
-          className="mt-1.5 h-[30px] w-full rounded-md border border-input bg-background px-2 text-[12.5px] text-foreground outline-none focus-visible:border-ring"
+          className="mt-1.5 h-[30px] w-full rounded-md border border-input bg-background px-2 text-board-12-5 text-foreground outline-none focus-visible:border-ring"
           onChange={(event) => {
             setDraft(event.target.value);
             // Committed on every COMPLETE value rather than on a Done button:
@@ -131,7 +131,7 @@ export function BoardCardSchedulePopover({
           {presets.map((preset) => (
             <button
               className={cn(
-                "h-[26px] rounded-md border border-input px-2 text-[12px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground",
+                "h-[26px] rounded-md border border-input px-2 text-board-12 font-medium text-muted-foreground hover:bg-accent hover:text-foreground",
                 scheduledStartAt === preset.iso && "border-primary text-foreground",
               )}
               key={preset.label}
@@ -142,12 +142,12 @@ export function BoardCardSchedulePopover({
             </button>
           ))}
         </div>
-        <p className="mt-2 text-[11px] leading-[1.45] text-pretty text-muted-foreground">
+        <p className="mt-2 text-board-11 leading-board-1-45 text-pretty text-muted-foreground">
           {copy.note}
         </p>
         {scheduledStartAt === null ? null : (
           <button
-            className="mt-2 h-[28px] w-full rounded-md border border-input text-[12px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="mt-2 h-[28px] w-full rounded-md border border-input text-board-12 font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
             onClick={() => commit(null)}
             type="button"
           >

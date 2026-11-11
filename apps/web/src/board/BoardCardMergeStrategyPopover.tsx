@@ -34,8 +34,8 @@ export function BoardCardMergeStrategyPopover({
     <Popover open={open} onOpenChange={onOpenChange}>
       {anchor}
       <PopoverPopup align="end" className="w-[328px] p-3">
-        <span className="text-[12.5px] font-semibold text-foreground">Merge strategy</span>
-        <p className="mt-1 text-[11.5px] leading-[1.5] text-muted-foreground">
+        <span className="text-board-12-5 font-semibold text-foreground">Merge strategy</span>
+        <p className="mt-1 text-board-11-5 leading-normal text-muted-foreground">
           Applies to this card only.
         </p>
         <RadioGroup
@@ -51,13 +51,13 @@ export function BoardCardMergeStrategyPopover({
             const optionValue = option.value ?? DEFAULT_VALUE;
             return (
               <label
-                className="flex cursor-pointer items-start gap-2.5 rounded-lg px-2 py-[7px] hover:bg-accent has-data-checked:bg-accent"
+                className="flex cursor-pointer items-start gap-2.5 rounded-lg px-2 py-1.75 hover:bg-accent has-data-checked:bg-accent"
                 key={optionValue}
               >
                 <Radio className="mt-px" value={optionValue} />
                 <span className="flex min-w-0 flex-col gap-0.5">
-                  <span className="text-[12px] font-medium text-foreground">{option.label}</span>
-                  <span className="text-[11px] leading-[1.45] text-muted-foreground">
+                  <span className="text-board-12 font-medium text-foreground">{option.label}</span>
+                  <span className="text-board-11 leading-board-1-45 text-muted-foreground">
                     {option.note}
                   </span>
                 </span>

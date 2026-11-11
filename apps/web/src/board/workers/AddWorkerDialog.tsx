@@ -254,7 +254,7 @@ function AddWorkerFlow(props: {
           </DialogTitle>
         </DialogHeader>
         <DialogPanel>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-board-13">
             <dt className="text-muted-foreground">T3o</dt>
             <dd>{worker.status.t3oVersion ?? "Unknown"}</dd>
             <dt className="text-muted-foreground">Providers</dt>
@@ -273,7 +273,7 @@ function AddWorkerFlow(props: {
               {coveredProjects} of {totalProjects} board projects
             </dd>
           </dl>
-          <p className="text-[12.5px] text-muted-foreground">
+          <p className="text-board-12-5 text-muted-foreground">
             On {worker.label}, the board appears under Settings → Sharing & access → Authorized
             clients as “{sessionLabel}”.
           </p>
@@ -307,7 +307,7 @@ function AddWorkerFlow(props: {
           </DialogTitle>
         </DialogHeader>
         <DialogPanel>
-          <ul className="flex flex-col gap-2 text-[13px]">
+          <ul className="flex flex-col gap-2 text-board-13">
             <ProgressLine done={step.minted}>
               {step.viaLink
                 ? `Pairing link accepted by ${target}`
@@ -346,16 +346,16 @@ function AddWorkerFlow(props: {
         </DialogHeader>
         <DialogPanel>
           {why.box === null ? null : (
-            <div className="rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-[12.5px]">
+            <div className="rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-board-12-5">
               <div className="font-medium text-foreground">{why.box.title}</div>
               <div className="mt-0.5 text-muted-foreground">{why.box.body}</div>
             </div>
           )}
-          <div className="text-[12.5px] text-muted-foreground">
+          <div className="text-board-12-5 text-muted-foreground">
             <div className="font-medium text-foreground">On the worker machine</div>
             <ol className="mt-1 list-decimal space-y-0.5 pl-4">
               <li>
-                Run <code className="rounded bg-muted px-1 font-mono text-[11.5px]">t3 pair</code>{" "}
+                Run <code className="rounded bg-muted px-1 font-mono text-board-11-5">t3 pair</code>{" "}
                 in a terminal.
               </li>
               <li>
@@ -451,8 +451,8 @@ function AddWorkerFlow(props: {
         <DialogPanel>
           <div className="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5">
             <div className="flex min-w-0 flex-1 flex-col">
-              <span className="text-[13px] font-medium">{repairTarget.label}</span>
-              <span className="truncate font-mono text-[11.5px] text-muted-foreground">
+              <span className="text-board-13 font-medium">{repairTarget.label}</span>
+              <span className="truncate font-mono text-board-11-5 text-muted-foreground">
                 Your connection
                 {repairTarget.displayUrl === null ? "" : ` · ${repairTarget.displayUrl}`}
               </span>
@@ -460,7 +460,7 @@ function AddWorkerFlow(props: {
             <Badge variant="outline">Admin access</Badge>
           </div>
           {error === null ? null : <ErrorBox error={error} />}
-          <p className="text-[12.5px] text-muted-foreground">
+          <p className="text-board-12-5 text-muted-foreground">
             If {props.mode.worker.label}'s owner revoked access on purpose, check with them first.
             Label, pinned cards and limits are kept.
           </p>
@@ -494,7 +494,7 @@ function AddWorkerFlow(props: {
       </DialogHeader>
       <DialogPanel>
         <div className="flex flex-col gap-1.5">
-          <span className="text-[12.5px] font-medium">
+          <span className="text-board-12-5 font-medium">
             Environment from Settings → Environments
           </span>
           <div
@@ -523,12 +523,12 @@ function AddWorkerFlow(props: {
                     )}
                   >
                     <div className="flex min-w-0 flex-1 flex-col">
-                      <span className="text-[13px] font-medium">{environment.label}</span>
-                      <span className="truncate font-mono text-[11.5px] text-muted-foreground">
+                      <span className="text-board-13 font-medium">{environment.label}</span>
+                      <span className="truncate font-mono text-board-11-5 text-muted-foreground">
                         {environment.displayUrl ?? ""}
                       </span>
                     </div>
-                    <span className="shrink-0 text-[11.5px] text-muted-foreground">
+                    <span className="shrink-0 text-board-11-5 text-muted-foreground">
                       {candidate.kind === "pick"
                         ? version === null
                           ? ""
@@ -549,7 +549,7 @@ function AddWorkerFlow(props: {
               );
             })}
           </div>
-          <span className="text-[11.5px] text-muted-foreground">
+          <span className="text-board-11-5 text-muted-foreground">
             Not listed: this board server, and environments that are already workers.
           </span>
         </div>
@@ -684,7 +684,7 @@ function ProgressLine(props: {
 
 function ErrorBox(props: { readonly error: AddWorkerErrorCopy }) {
   return (
-    <div className="rounded-lg border border-warning/40 bg-warning/8 px-3 py-2 text-[12.5px]">
+    <div className="rounded-lg border border-warning/40 bg-warning/8 px-3 py-2 text-board-12-5">
       <div className="font-medium text-warning-foreground">{props.error.title}</div>
       {props.error.body.length === 0 ? null : (
         <div className="mt-0.5 text-muted-foreground">{props.error.body}</div>

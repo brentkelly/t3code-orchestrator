@@ -96,15 +96,17 @@ function AutomationRowView({
         </span>
       </BoardHint>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="flex min-w-0 flex-wrap items-baseline gap-x-[7px]">
-          <span className="text-[12px] font-medium text-foreground">{row.label}</span>
+        <span className="flex min-w-0 flex-wrap items-baseline gap-x-1.75">
+          <span className="text-board-12 font-medium text-foreground">{row.label}</span>
           {row.tag === null ? null : (
-            <span className="font-mono text-[10.5px] font-medium text-muted-foreground">
+            <span className="font-mono text-board-10-5 font-medium text-muted-foreground">
               {row.tag}
             </span>
           )}
         </span>
-        <span className="text-[11.5px]/[1.45] text-pretty text-muted-foreground">{row.note}</span>
+        <span className="text-board-11-5 leading-board-1-45 text-pretty text-muted-foreground">
+          {row.note}
+        </span>
       </span>
     </div>
   );
@@ -143,7 +145,7 @@ function GroupChangeConfirmDialog({
             Children that inherit {groupKey}'s setting follow it straight away.
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <ul className="flex list-disc flex-col gap-1 px-6 pb-4 ps-10 text-[13px] text-foreground">
+        <ul className="flex list-disc flex-col gap-1 px-6 pb-4 ps-10 text-board-13 text-foreground">
           {(pending?.lines ?? []).map((line) => (
             <li key={line}>{line}</li>
           ))}
@@ -235,9 +237,9 @@ function BoardGroupAutomationPanel(
     <div className="flex flex-col gap-3" data-board-group-settings>
       <div className="flex flex-col gap-1.5">
         <div className="flex min-w-0 items-baseline gap-2">
-          <span className="shrink-0 text-[12px] font-medium text-foreground">Merge target</span>
+          <span className="shrink-0 text-board-12 font-medium text-foreground">Merge target</span>
           <span className="flex-1" />
-          <span className="truncate font-mono text-[11px] text-foreground">
+          <span className="truncate font-mono text-board-11 text-foreground">
             → {vm.resolvedTarget}
           </span>
         </div>
@@ -256,7 +258,7 @@ function BoardGroupAutomationPanel(
           <Toggle value="inherit">Inherit</Toggle>
           <Toggle value="own">Own branch</Toggle>
         </ToggleGroup>
-        <span className="text-[11.5px]/[1.45] text-pretty text-muted-foreground">
+        <span className="text-board-11-5 leading-board-1-45 text-pretty text-muted-foreground">
           {vm.targetLockReason ?? vm.ownReviewNote}
         </span>
       </div>

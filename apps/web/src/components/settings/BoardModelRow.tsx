@@ -38,7 +38,7 @@ const EMPTY_INSTANCE_ID = ProviderInstanceId.make("none");
 
 // Sized like the model button beside it (Button `xs`), so the two read as one row.
 const CONTROLS_TRIGGER_CLASS =
-  "h-7 min-w-0 max-w-56 shrink-0 gap-1 px-[calc(--spacing(2)-1px)] text-sm text-foreground/90 hover:text-foreground sm:h-6 sm:text-xs";
+  "h-7 min-w-0 max-w-56 shrink-0 gap-1 px-1.75 text-sm text-foreground/90 hover:text-foreground sm:h-6 sm:text-xs";
 
 /**
  * The row's one settings control: the chat composer's combined controls menu
@@ -164,7 +164,7 @@ export function ModelRow(props: {
   return (
     <div className="flex flex-col gap-1 py-2">
       <div className="flex items-center justify-between gap-4">
-        <span className="text-[13.5px] text-foreground">{props.label}</span>
+        <span className="text-board-13-5 text-foreground">{props.label}</span>
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
           <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger

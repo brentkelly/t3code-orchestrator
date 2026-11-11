@@ -36,7 +36,7 @@ import {
 import { boardCiLogFileName, boardCiProgressFraction, boardCiProgressLabel } from "./boardCi";
 
 const HEADER_BUTTON_CLASS =
-  "inline-flex h-6 shrink-0 items-center gap-1 rounded-[7px] border border-input bg-popover px-2 text-[11.5px] font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground disabled:opacity-60";
+  "inline-flex h-6 shrink-0 items-center gap-1 rounded-board-7 border border-input bg-popover px-2 text-board-11-5 font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground disabled:opacity-60";
 
 /** How far before an `openAt` offset the viewer starts reading. */
 const OPEN_AT_CONTEXT_BYTES = 64 * 1024;
@@ -109,7 +109,7 @@ const LogBlock = memo(function LogBlock({
   readonly highlightLine: number | null;
 }) {
   return (
-    <pre className="m-0 font-mono text-[11.5px]/[1.6] whitespace-pre text-foreground [contain-intrinsic-size:auto_320px] [content-visibility:auto]">
+    <pre className="m-0 font-mono text-board-11-5 leading-board-1-6 whitespace-pre text-foreground [contain-intrinsic-size:auto_320px] [content-visibility:auto]">
       {parsed.lines.map((segments, index) => (
         // oxlint-disable-next-line react/no-array-index-key -- a block's log lines never reorder; the log only appends
         <LogLine highlighted={index === highlightLine} key={index} segments={segments} />
@@ -325,15 +325,15 @@ export function BoardCiLogDialogView({
         showCloseButton
       >
         <div className="flex shrink-0 items-center gap-2.5 border-b border-border py-2.5 pr-12 pl-4">
-          <span className="shrink-0 font-mono text-[12px] text-muted-foreground">›_</span>
+          <span className="shrink-0 font-mono text-board-12 text-muted-foreground">›_</span>
           <div className="flex min-w-0 flex-1 flex-col gap-px">
-            <DialogTitle className="truncate text-[13px] font-semibold">
+            <DialogTitle className="truncate text-board-13 font-semibold">
               {step?.name ?? "CI step"}
             </DialogTitle>
-            <span className="truncate font-mono text-[11px] text-muted-foreground">
+            <span className="truncate font-mono text-board-11 text-muted-foreground">
               {step?.command}
             </span>
-            <span className="truncate text-[11px] text-muted-foreground">
+            <span className="truncate text-board-11 text-muted-foreground">
               {cardKey} · pass {pass.ordinal}
               {stillLive
                 ? following
@@ -378,7 +378,7 @@ export function BoardCiLogDialogView({
           </button>
         </div>
         {progress !== null && (progressCount !== null || progress.message !== null) ? (
-          <div className="flex shrink-0 items-center gap-2.5 border-b border-border px-4 py-1.5 text-[11.5px]">
+          <div className="flex shrink-0 items-center gap-2.5 border-b border-border px-4 py-1.5 text-board-11-5">
             <span className="min-w-0 truncate text-foreground">{progress.message ?? ""}</span>
             <span className="flex-1" />
             {progressCount === null || progress.done === null ? null : (
@@ -399,10 +399,10 @@ export function BoardCiLogDialogView({
         <div className="relative flex min-h-0 flex-1 flex-col bg-muted/40">
           {missing ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
-              <span className="text-[13px] font-semibold text-foreground">
+              <span className="text-board-13 font-semibold text-foreground">
                 Log no longer available
               </span>
-              <span className="text-[11.5px] text-muted-foreground">
+              <span className="text-board-11-5 text-muted-foreground">
                 {view?.missingReason ?? "The log couldn't be read."}
               </span>
             </div>
@@ -416,12 +416,12 @@ export function BoardCiLogDialogView({
             >
               <div ref={setContent}>
                 {view?.truncated ? (
-                  <div className="mb-2 text-[11px] text-muted-foreground">
+                  <div className="mb-2 text-board-11 text-muted-foreground">
                     Older output isn&apos;t shown here. Download for the full log.
                   </div>
                 ) : null}
                 {view === null || view.status === "loading" ? (
-                  <span className="text-[11.5px] text-muted-foreground">Loading the log…</span>
+                  <span className="text-board-11-5 text-muted-foreground">Loading the log…</span>
                 ) : (
                   <LogBlocks highlight={highlight} view={view} />
                 )}
@@ -430,7 +430,7 @@ export function BoardCiLogDialogView({
           )}
           {hasNewOutput ? (
             <button
-              className="absolute bottom-3 left-1/2 inline-flex h-7 -translate-x-1/2 items-center gap-1.5 rounded-full border border-info/40 bg-popover px-3 text-[11.5px] font-medium text-info-foreground shadow-md hover:bg-accent"
+              className="absolute bottom-3 left-1/2 inline-flex h-7 -translate-x-1/2 items-center gap-1.5 rounded-full border border-info/40 bg-popover px-3 text-board-11-5 font-medium text-info-foreground shadow-md hover:bg-accent"
               onClick={jumpToLatest}
               type="button"
             >
@@ -438,7 +438,7 @@ export function BoardCiLogDialogView({
             </button>
           ) : null}
         </div>
-        <div className="shrink-0 border-t border-border px-4 py-1.5 text-[11px] text-muted-foreground">
+        <div className="shrink-0 border-t border-border px-4 py-1.5 text-board-11 text-muted-foreground">
           {totalLines} {totalLines === 1 ? "line" : "lines"}
           {stillLive && following ? " · scroll up to pause following" : ""}
         </div>

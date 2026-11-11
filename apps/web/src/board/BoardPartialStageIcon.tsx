@@ -31,7 +31,7 @@ export function BoardPartialStageIcon(props: {
         </svg>
       </PopoverTrigger>
       <PopoverPopup align="start" className="w-[280px] p-3">
-        <div className="flex flex-col gap-2 text-[12px]">
+        <div className="flex flex-col gap-2 text-board-12">
           <span className="font-medium text-foreground">{props.title}</span>
           <CoverageList
             accentNameFor={props.accentNameFor}
@@ -65,7 +65,7 @@ function CoverageList(props: {
   const included = props.heading === "Included";
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-[11px] tracking-wide text-muted-foreground uppercase">
+      <span className="text-board-11 tracking-wide text-muted-foreground uppercase">
         {props.heading}
       </span>
       {props.entries.map((entry) => (
@@ -82,7 +82,7 @@ function CoverageList(props: {
             )}
           />
           <span className="min-w-0 flex-1 truncate text-foreground">{entry.project.title}</span>
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-board-11 text-muted-foreground">
             {entry.how === "switched"
               ? included
                 ? "Switched on"

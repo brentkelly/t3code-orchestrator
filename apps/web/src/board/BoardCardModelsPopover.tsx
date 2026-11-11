@@ -107,11 +107,13 @@ export function BoardCardModelsPopover({
       {anchor}
       <PopoverPopup align="end" className="w-[440px] p-3">
         <div className="flex items-center gap-2">
-          <span className="text-[12.5px] font-semibold text-foreground">Models for this card</span>
+          <span className="text-board-12-5 font-semibold text-foreground">
+            Models for this card
+          </span>
           <span className="flex-1" />
           {anySet ? (
             <button
-              className="h-[22px] shrink-0 rounded-md px-[7px] text-[11.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="h-[22px] shrink-0 rounded-md px-1.75 text-board-11-5 font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
               onClick={reset}
               type="button"
             >
@@ -119,7 +121,7 @@ export function BoardCardModelsPopover({
             </button>
           ) : null}
         </div>
-        <p className="mt-1.5 text-[11.5px] leading-[1.5] text-pretty text-muted-foreground">
+        <p className="mt-1.5 text-board-11-5 leading-normal text-pretty text-muted-foreground">
           Overrides the workspace defaults from Settings for this card only.
         </p>
         {rows.map((row) => {
@@ -127,9 +129,9 @@ export function BoardCardModelsPopover({
           const current = override ?? null;
           return (
             <div className="mt-2.5 flex flex-col" key={row.stageId}>
-              <div className="flex items-baseline gap-[7px]">
-                <span className="text-[11.5px] font-medium text-foreground">{row.label}</span>
-                <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+              <div className="flex items-baseline gap-1.75">
+                <span className="text-board-11-5 font-medium text-foreground">{row.label}</span>
+                <span className="min-w-0 truncate text-board-11 text-muted-foreground">
                   {row.note}
                 </span>
               </div>
@@ -183,7 +185,7 @@ export function BoardCardModelsPopover({
           );
         })}
         {stepRunning ? (
-          <p className="mt-2.5 text-[11px] text-muted-foreground">
+          <p className="mt-2.5 text-board-11 text-muted-foreground">
             A step is running. It keeps the model it started with. This applies to the next run.
           </p>
         ) : null}

@@ -37,14 +37,14 @@ export function BoardWorkerPicker(props: {
       <PopoverTrigger
         aria-label="Worker"
         className={cn(
-          "inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md border border-input bg-background px-2 text-left text-[12.5px] text-foreground hover:bg-accent",
+          "inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md border border-input bg-background px-2 text-left text-board-12-5 text-foreground hover:bg-accent",
           props.className,
         )}
         render={<button type="button" />}
       >
         <span className="min-w-0 flex-1 truncate">{props.value.label}</span>
         {props.value.pinned ? (
-          <span className="shrink-0 text-[11px] text-muted-foreground">Pinned</span>
+          <span className="shrink-0 text-board-11 text-muted-foreground">Pinned</span>
         ) : null}
         <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
       </PopoverTrigger>
@@ -54,22 +54,22 @@ export function BoardWorkerPicker(props: {
           onClick={() => pick(null)}
           type="button"
         >
-          <span className="flex w-full items-center gap-1.5 text-[12.5px]">
+          <span className="flex w-full items-center gap-1.5 text-board-12-5">
             <span className="min-w-0 flex-1 truncate">{props.followLabel}</span>
             {props.pinnedWorkerId === null ? (
               <CheckIcon className="size-3 shrink-0 text-muted-foreground" />
             ) : null}
           </span>
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-board-11 text-muted-foreground">
             Moves with the default until the card has a worktree
           </span>
         </button>
-        <p className="px-2 pt-2 pb-1 text-[11px] font-medium text-muted-foreground">Pin to</p>
+        <p className="px-2 pt-2 pb-1 text-board-11 font-medium text-muted-foreground">Pin to</p>
         {props.choices.map((choice) => {
           const row = (
             <div
               className={cn(
-                "flex h-7 items-center gap-1.5 rounded-md px-2 text-[12.5px]",
+                "flex h-7 items-center gap-1.5 rounded-md px-2 text-board-12-5",
                 choice.selectable ? "cursor-pointer hover:bg-accent" : "text-muted-foreground",
               )}
               key={choice.workerId}
@@ -84,11 +84,13 @@ export function BoardWorkerPicker(props: {
                 {props.pinnedWorkerId === choice.workerId ? (
                   <CheckIcon className="size-3 shrink-0 text-muted-foreground" />
                 ) : null}
-                <span className="shrink-0 text-[11px] text-muted-foreground">{choice.detail}</span>
+                <span className="shrink-0 text-board-11 text-muted-foreground">
+                  {choice.detail}
+                </span>
               </button>
               {choice.canSetUp ? (
                 <button
-                  className="shrink-0 rounded px-1 text-[11px] font-medium text-foreground hover:bg-accent"
+                  className="shrink-0 rounded px-1 text-board-11 font-medium text-foreground hover:bg-accent"
                   onClick={() => props.onSetUp(choice.workerId)}
                   type="button"
                 >

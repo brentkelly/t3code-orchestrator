@@ -2,6 +2,7 @@
  * The accent palette is hand-written literal Tailwind values, so these tests pin
  * each pill's foreground to the label chips' luminance rule.
  */
+import * as NodeFS from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ProjectIconColor, ProjectId } from "@t3tools/contracts";
@@ -37,6 +38,16 @@ function halfSaturation(hex: string): string {
     .join("")}`;
 }
 
+const boardThemeCss = NodeFS.readFileSync(new URL("./board-theme.css", import.meta.url), "utf8");
+
+/** The colour board-theme.css gives a `bg-board-accent-*` class. */
+function themeColourOf(fill: string): string | undefined {
+  const token = /^bg-(board-accent-[\w-]+)$/.exec(fill)?.[1];
+  return token
+    ? new RegExp(`--color-${token}:\\s*(#[0-9a-f]{6});`).exec(boardThemeCss)?.[1]
+    : undefined;
+}
+
 const ALL_ACCENTS: ReadonlyArray<readonly [string, ProjectAccent]> = [
   ...ICON_COLORS.map((name) => [name, PROJECT_ICON_ACCENTS[name]] as const),
   ...PROJECT_HASH_ACCENTS.map((accent, index) => [`hash #${index}`, accent] as const),
@@ -50,7 +61,7 @@ describe("project accent palette", () => {
   it("fills the dot and pill with the accent at half saturation", () => {
     for (const [name, accent] of ALL_ACCENTS) {
       expect(accent.mutedHex, `${name} pill fill`).toBe(halfSaturation(accent.hex));
-      expect(accent.dot, `${name} dot fill`).toBe(`bg-[${accent.mutedHex}]`);
+      expect(themeColourOf(accent.dot), `${name} dot fill`).toBe(accent.mutedHex);
     }
   });
 
@@ -58,7 +69,7 @@ describe("project accent palette", () => {
     for (const [name, accent] of ALL_ACCENTS) {
       const expected = boardLabelForeground(accent.mutedHex);
       expect(accent.pill, `${name} pill foreground`).toBe(
-        `bg-[${accent.mutedHex}] text-${expected === "#ffffff" ? "white" : `[${expected}]`}`,
+        `${accent.dot} text-${expected === "#ffffff" ? "white" : `[${expected}]`}`,
       );
     }
   });

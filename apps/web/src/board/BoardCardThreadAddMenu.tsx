@@ -53,9 +53,9 @@ function MenuRow({
     >
       <span className="mt-px shrink-0 text-muted-foreground">{icon}</span>
       <span className="flex min-w-0 flex-col">
-        <span className="text-[12.5px] text-foreground">{title}</span>
+        <span className="text-board-12-5 text-foreground">{title}</span>
         {hint === undefined ? null : (
-          <span className="text-[11.5px] text-muted-foreground">{hint}</span>
+          <span className="text-board-11-5 text-muted-foreground">{hint}</span>
         )}
       </span>
     </button>

@@ -34,11 +34,11 @@ const TRIGGER_CHIPS = 2;
 /** A chip inside the trigger — the card chip's shape, one notch taller so it
     sits comfortably in a full-height control. */
 const TRIGGER_CHIP_CLASS =
-  "inline-flex h-[18px] max-w-24 shrink-0 items-center truncate rounded-[5px] px-1.5 text-[10px] font-medium tracking-[0.03em] uppercase";
+  "inline-flex h-[18px] max-w-24 shrink-0 items-center truncate rounded-board-5 px-1.5 text-board-10 font-medium tracking-board-3 uppercase";
 
 /** One catalogue row's height, shared by the live rows, the create row and the
     restore rows so the list reads as one list. */
-const ROW_CLASS = "flex h-[30px] items-center gap-2 rounded-[7px] px-2 text-[12.5px]";
+const ROW_CLASS = "flex h-[30px] items-center gap-2 rounded-board-7 px-2 text-board-12-5";
 
 /** Controls act on click so keyboard activation works; mousedown is prevented only
     to keep focus in the search box between picks. */
@@ -104,7 +104,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
       >
         <TagIcon className="size-[13px] shrink-0 text-muted-foreground" />
         {selectedNames.length === 0 ? (
-          <span className="min-w-0 flex-1 text-left text-[12.5px] text-muted-foreground">
+          <span className="min-w-0 flex-1 text-left text-board-12-5 text-muted-foreground">
             Add labels
           </span>
         ) : (
@@ -136,10 +136,10 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
       {/* `align="end"` pins the popover to the trigger's right edge, which is
           where the field sits in the create dialog's Title/Label row. */}
       <PopoverPopup align="end" className="w-[280px] max-w-[calc(100vw-80px)] p-1.5" padding="none">
-        <div className="flex min-w-0 flex-col gap-[5px]">
+        <div className="flex min-w-0 flex-col gap-1.25">
           <Input
             autoFocus
-            className="h-[30px] rounded-lg text-[12.5px]"
+            className="h-[30px] rounded-lg text-board-12-5"
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -178,7 +178,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                     <span
                       aria-hidden="true"
                       className={cn(
-                        "inline-flex size-[15px] shrink-0 items-center justify-center rounded-[4px] border",
+                        "inline-flex size-[15px] shrink-0 items-center justify-center rounded-sm border",
                         selected ? "border-transparent" : "border-input bg-background",
                       )}
                       style={
@@ -202,7 +202,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                   <BoardHint label="Change colour">
                     <button
                       aria-label={`Change the colour of ${label.name}`}
-                      className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground hover:bg-accent hover:text-foreground"
+                      className="inline-flex size-5 shrink-0 items-center justify-center rounded-board-5 text-muted-foreground hover:bg-accent hover:text-foreground"
                       onClick={() => {
                         setEditingColourFor((current) =>
                           current === label.labelId ? null : label.labelId,
@@ -217,7 +217,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                   <BoardHint label="Delete label">
                     <button
                       aria-label={`Delete the label ${label.name}`}
-                      className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground"
+                      className="inline-flex size-5 shrink-0 items-center justify-center rounded-board-5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground"
                       onClick={() => {
                         props.onDelete(label.labelId);
                       }}
@@ -229,7 +229,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                   </BoardHint>
                 </div>
                 {editingColourFor === label.labelId ? (
-                  <div className="flex flex-wrap gap-[5px] py-1.5 pr-1.5 pl-7">
+                  <div className="flex flex-wrap gap-1.25 py-1.5 pr-1.5 pl-7">
                     {BOARD_LABEL_SWATCHES.map((swatch) => (
                       <BoardHint key={swatch} label={swatch}>
                         <button
@@ -271,21 +271,21 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
             ) : null}
 
             {model.matches.length === 0 && !model.canCreate ? (
-              <div className="px-2 py-2 text-[12.5px] text-muted-foreground">
+              <div className="px-2 py-2 text-board-12-5 text-muted-foreground">
                 No labels yet. Type a name to create one.
               </div>
             ) : null}
 
             {model.deleted.length > 0 ? (
               <div className="mt-1 flex flex-col gap-px border-t border-border pt-1">
-                <span className="px-2 text-[10.5px] font-medium text-muted-foreground">
+                <span className="px-2 text-board-10-5 font-medium text-muted-foreground">
                   Deleted
                 </span>
                 {model.deleted.map((label) => (
                   <div className={cn(ROW_CLASS, "text-muted-foreground")} key={label.labelId}>
                     <span
                       aria-hidden="true"
-                      className="size-2.5 shrink-0 rounded-[3px] opacity-55"
+                      className="size-2.5 shrink-0 rounded-board-3 opacity-55"
                       style={{ backgroundColor: label.colour }}
                     />
                     <span className="min-w-0 flex-1 truncate text-left line-through">
@@ -294,7 +294,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                     <BoardHint label="Restore label">
                       <button
                         aria-label={`Restore the label ${label.name}`}
-                        className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] hover:bg-accent hover:text-foreground"
+                        className="inline-flex size-5 shrink-0 items-center justify-center rounded-board-5 hover:bg-accent hover:text-foreground"
                         onClick={() => {
                           props.onUndelete(label.labelId);
                         }}

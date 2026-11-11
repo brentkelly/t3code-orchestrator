@@ -96,12 +96,12 @@ function BoardGroupBlock({
   return (
     <div className="flex flex-col gap-1.5">
       {group.pips.length > 0 ? (
-        <div className="flex items-center gap-[3px]" data-board-group-pips>
+        <div className="flex items-center gap-0.75" data-board-group-pips>
           {group.pips.map((pip) => (
             <BoardHint key={pip.tooltip} label={pip.tooltip}>
               <span
                 aria-label={pip.tooltip}
-                className={cn("h-1 min-w-1 flex-1 rounded-[2px]", PIP_CLASS[pip.state])}
+                className={cn("h-1 min-w-1 flex-1 rounded-xs", PIP_CLASS[pip.state])}
                 data-state={pip.state}
                 role="img"
               />
@@ -109,7 +109,7 @@ function BoardGroupBlock({
           ))}
         </div>
       ) : null}
-      <div className="flex min-w-0 items-center gap-2 text-[11.5px] font-medium">
+      <div className="flex min-w-0 items-center gap-2 text-board-11-5 font-medium">
         <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           <span
             className={cn(
@@ -147,7 +147,7 @@ function BoardGroupBlock({
         )}
       </div>
       {group.meta.length === 0 ? null : (
-        <div className="truncate text-[11px] text-muted-foreground">{group.meta}</div>
+        <div className="truncate text-board-11 text-muted-foreground">{group.meta}</div>
       )}
     </div>
   );
@@ -178,25 +178,21 @@ const EMPTY_TODO_THREADS: ReadonlyArray<BoardCardThreadShell> = [];
  * untinted card's own classes: a paused card asserts nothing about work.
  */
 const TONE_BORDER: Record<BoardCardAttentionTone, string> = {
-  warning: "border-amber-500/60",
+  warning: "border-warning/60",
   attention: "border-attention/55",
   neutral: "border-border",
 };
 
 const TONE_TINT: Record<BoardCardAttentionTone, string> = {
-  warning:
-    "bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]",
-  attention:
-    "bg-[color-mix(in_srgb,var(--attention)_7%,var(--card))] dark:bg-[color-mix(in_srgb,var(--attention)_9%,#1c1c20)]",
-  neutral: "bg-card hover:border-foreground/18 dark:bg-[#1c1c20]",
+  warning: "bg-board-warning-tint dark:bg-board-warning-tint-dark",
+  attention: "bg-board-attention-tint dark:bg-board-attention-tint-dark",
+  neutral: "bg-card hover:border-foreground/18 dark:bg-board-card-dark",
 };
 
 const TONE_RING: Record<BoardCardAttentionTone, string> = {
-  warning:
-    "shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]",
-  attention:
-    "shadow-[0_0_0_1px_color-mix(in_srgb,var(--attention)_40%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--attention)_40%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]",
-  neutral: "shadow-xs/5 hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35)]",
+  warning: "shadow-board-card-warning hover:shadow-board-card-warning-hover",
+  attention: "shadow-board-card-attention hover:shadow-board-card-attention-hover",
+  neutral: "shadow-xs/5 hover:shadow-board-card-hover",
 };
 
 /** The chip's leading mark per reason. The violet question keeps its DOT rather
@@ -225,7 +221,7 @@ const ATTENTION_ICON: Record<BoardCardAttentionReason, ReactNode> = {
 /** The chip's own colours, which are text-weight rather than surface-weight —
     the card fill is already carrying the tone. */
 const TONE_CHIP: Record<BoardCardAttentionTone, string> = {
-  warning: "text-amber-700 dark:text-amber-300",
+  warning: "text-board-amber-text",
   attention: "text-attention-foreground",
   neutral: "text-muted-foreground",
 };
@@ -328,7 +324,7 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
       <span
         aria-label={view.tooltip}
         className={cn(
-          "inline-flex min-w-0 items-center gap-1 text-[10.5px] font-semibold",
+          "inline-flex min-w-0 items-center gap-1 text-board-10-5 font-semibold",
           view.tint,
         )}
       >
@@ -539,21 +535,23 @@ export function BoardCardContent({
         // `transition-colors` alone could not animate the lift — box-shadow is
         // not a colour property, so the hover shadow snapped in. Transition
         // both; the hover lift itself rides the per-state shadow branch below.
-        "flex cursor-pointer flex-col gap-1.5 rounded-[10px] border px-[11px] py-2.5 transition-[color,background-color,border-color,box-shadow] duration-[120ms] ease-[ease]",
+        "flex cursor-pointer flex-col gap-1.5 rounded-board-10 border px-2.75 py-2.5 transition-[color,background-color,border-color,box-shadow] duration-120 ease-board",
         // One border class: competing `border-*` utilities resolve by
         // stylesheet order, so stacking them decides nothing.
         selected ? "border-foreground/40" : tone === null ? "border-border" : TONE_BORDER[tone],
-        // `dark:bg-[#1c1c20]` lifts the card above the column; the stock dark
+        // `dark:bg-board-card-dark` lifts the card above the column; the stock dark
         // `--card` lands below the column's fill.
-        tone === null ? "bg-card hover:border-foreground/18 dark:bg-[#1c1c20]" : TONE_TINT[tone],
+        tone === null
+          ? "bg-card hover:border-foreground/18 dark:bg-board-card-dark"
+          : TONE_TINT[tone],
         // Done recedes: finished work is muted and lower-contrast.
         summary.muted && "bg-card/60 opacity-70",
         // EXACTLY one box-shadow branch per card (stylesheet order wins), each
         // with its own resting and hover shadow. `--sheet` tracks the card fill.
         wearsStack
-          ? "mb-2 [--sheet:var(--card)] dark:[--sheet:#1c1c20] shadow-[0_5px_0_-1px_var(--sheet),0_5px_0_0_var(--border),0_10px_0_-2px_var(--sheet),0_10px_0_-1px_var(--border)] hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35),0_5px_0_-1px_var(--sheet),0_5px_0_0_var(--border),0_10px_0_-2px_var(--sheet),0_10px_0_-1px_var(--border)]"
+          ? "mb-2 [--board-card-sheet:var(--card)] dark:[--board-card-sheet:var(--color-board-card-dark)] shadow-board-card-stack hover:shadow-board-card-stack-hover"
           : tone === null
-            ? "shadow-xs/5 hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35)]"
+            ? "shadow-xs/5 hover:shadow-board-card-hover"
             : TONE_RING[tone],
       )}
       data-board-card={card.cardId}
@@ -562,7 +560,7 @@ export function BoardCardContent({
       <div className="flex items-center gap-1.5">
         <span
           className={cn(
-            "inline-flex h-4 shrink-0 items-center rounded px-1.5 text-[10px] font-semibold tracking-wide",
+            "inline-flex h-4 shrink-0 items-center rounded px-1.5 text-board-10 font-semibold tracking-wide",
             accent.pill,
           )}
         >
@@ -573,7 +571,7 @@ export function BoardCardContent({
           // mixed column still reads as a whole. The chip is informational —
           // navigation stays the card click; drill-in is separate.
           <BoardHint label={`Part of ${parentKey}'s sub-board`}>
-            <span className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
+            <span className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-board-10 font-medium text-muted-foreground">
               <LayersIcon className="mr-0.5 size-2.5" />
               {parentKey}
             </span>
@@ -599,7 +597,7 @@ export function BoardCardContent({
           <BoardHint label="Waiting for background task">
             <span
               aria-label="Waiting for background task"
-              className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
+              className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-board-10 font-medium text-muted-foreground"
             >
               Waiting
             </span>
@@ -618,7 +616,7 @@ export function BoardCardContent({
           <BoardHint label={scheduleLabel.tooltip}>
             <span
               aria-label={scheduleLabel.tooltip}
-              className="inline-flex shrink-0 items-center gap-0.5 rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
+              className="inline-flex shrink-0 items-center gap-0.5 rounded bg-muted px-1.5 text-board-10 font-medium text-muted-foreground"
             >
               <ClockIcon className="size-2.5" />
               {scheduleLabel.label}
@@ -633,7 +631,7 @@ export function BoardCardContent({
           <BoardHint label={autoBuildChip.tooltip}>
             <span
               aria-label={autoBuildChip.tooltip}
-              className="inline-flex shrink-0 items-center gap-0.5 rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
+              className="inline-flex shrink-0 items-center gap-0.5 rounded bg-muted px-1.5 text-board-10 font-medium text-muted-foreground"
             >
               <ClockIcon className="size-2.5" />
               {autoBuildChip.label}
@@ -649,7 +647,7 @@ export function BoardCardContent({
           // waiting — and that it will start on its own — is readable without
           // opening it.
           <BoardHint label={`${queueSlot.headline}. ${queueSlot.detail}`}>
-            <span className="inline-flex shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
+            <span className="inline-flex shrink-0 items-center rounded bg-muted px-1.5 text-board-10 font-medium text-muted-foreground">
               {queueSlot.label}
             </span>
           </BoardHint>
@@ -666,7 +664,7 @@ export function BoardCardContent({
           <BoardHint label="Merges itself as soon as the forge accepts it">
             <span
               aria-label="Auto-merge armed"
-              className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-muted-foreground"
+              className="inline-flex shrink-0 items-center gap-0.5 text-board-10-5 font-medium text-muted-foreground"
             >
               <PullRequestGlyph.merged className="size-3" />
               Auto
@@ -683,7 +681,7 @@ export function BoardCardContent({
       ) : null}
       <div
         className={cn(
-          "text-[13px]/[1.35] font-medium text-pretty",
+          "text-board-13 leading-board-1-35 font-medium text-pretty",
           summary.muted ? "text-muted-foreground" : "text-foreground",
         )}
       >
@@ -691,7 +689,7 @@ export function BoardCardContent({
       </div>
       {own?.reason === "approval" ? (
         // A pending split: the chip says it needs you, this says what.
-        <div className="text-[11.5px] font-medium text-attention-foreground">
+        <div className="text-board-11-5 font-medium text-attention-foreground">
           {boardSplitProposedNote(card.planCount ?? 0)}
         </div>
       ) : null}

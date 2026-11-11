@@ -115,7 +115,7 @@ export function BoardCardWorkerRow(props: {
           <span>Worker ·</span>
           <BoardWorkerPicker
             choices={field.choices}
-            className="h-6 flex-1 text-[11.5px]"
+            className="h-6 flex-1 text-board-11-5"
             followLabel={`Follow default (${boardWorkerLabel(workers.defaultWorkerId, workers)})`}
             onSelect={select}
             onSetUp={field.setUp}
@@ -126,7 +126,7 @@ export function BoardCardWorkerRow(props: {
         </div>
       )}
       {holds && move === null ? (
-        <span className="text-[11px]/[1.45]">
+        <span className="text-board-11 leading-board-1-45">
           Worktree is on {runsOn}. Choosing another worker moves the card.
         </span>
       ) : null}

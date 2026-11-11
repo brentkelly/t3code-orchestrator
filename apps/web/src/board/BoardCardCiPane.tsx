@@ -58,13 +58,13 @@ const BoardCiLogDialog = lazy(() =>
 );
 
 const BUTTON_CLASS =
-  "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-input bg-popover px-2.5 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent";
+  "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-input bg-popover px-2.5 text-board-11-5 font-medium text-foreground shadow-xs hover:bg-accent";
 
 function Chip({ label, tone }: { readonly label: string; readonly tone: BoardCiChipTone }) {
   return (
     <span
       className={cn(
-        "inline-flex h-[18px] shrink-0 items-center rounded-[5px] px-[7px] text-[10.5px] font-medium whitespace-nowrap",
+        "inline-flex h-[18px] shrink-0 items-center rounded-board-5 px-1.75 text-board-10-5 font-medium whitespace-nowrap",
         BOARD_CI_CHIP_CLASS[tone],
       )}
     >
@@ -93,14 +93,14 @@ function HeadlineBox({
       )}
     >
       <div className="flex min-w-0 items-center gap-2">
-        <span className="min-w-0 truncate text-[12.5px] font-semibold text-foreground">
+        <span className="min-w-0 truncate text-board-12-5 font-semibold text-foreground">
           {headline.what}
         </span>
         {headline.machine ? <Chip label="Machine problem" tone="warning" /> : null}
         <span className="flex-1" />
         {onShowInLog === undefined ? null : (
           <button
-            className="shrink-0 text-[11.5px] text-muted-foreground hover:text-foreground"
+            className="shrink-0 text-board-11-5 text-muted-foreground hover:text-foreground"
             onClick={onShowInLog}
             type="button"
           >
@@ -108,7 +108,7 @@ function HeadlineBox({
           </button>
         )}
       </div>
-      <span className="text-[11.5px]/[1.55] text-pretty break-words text-muted-foreground">
+      <span className="text-board-11-5 leading-board-1-55 text-pretty break-words text-muted-foreground">
         {headline.why}
       </span>
     </div>
@@ -131,10 +131,10 @@ function RunningMeta({ step }: { readonly step: BoardCiPassStep }) {
   return (
     <>
       {limit === null ? null : (
-        <span className="text-[11px] text-warning-foreground tabular-nums">{limit}</span>
+        <span className="text-board-11 text-warning-foreground tabular-nums">{limit}</span>
       )}
       {silence === null ? null : (
-        <span className="text-[11px] text-warning-foreground tabular-nums">{silence}</span>
+        <span className="text-board-11 text-warning-foreground tabular-nums">{silence}</span>
       )}
     </>
   );
@@ -150,7 +150,7 @@ function StepProgress({
   const label = boardCiProgressLabel(progress);
   return (
     <div className="flex flex-col gap-1 pt-0.5">
-      <div className="flex min-w-0 items-center gap-2 text-[11px]">
+      <div className="flex min-w-0 items-center gap-2 text-board-11">
         <span className="min-w-0 truncate text-foreground">{progress.message ?? ""}</span>
         <span className="flex-1" />
         {progress.done === null || label === null ? null : (
@@ -173,12 +173,12 @@ function StepProgress({
 function LogDirRow({ logDir }: { readonly logDir: string }) {
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "log folder" });
   return (
-    <div className="flex min-w-0 items-center gap-2 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+    <div className="flex min-w-0 items-center gap-2 border-t border-border px-3 py-2 text-board-11 text-muted-foreground">
       <span className="shrink-0">Logs</span>
       <span className="min-w-0 flex-1 font-mono break-all">{logDir}</span>
       <button
         aria-label="Copy the log folder"
-        className="inline-flex h-[22px] shrink-0 items-center gap-1 rounded-md border border-border bg-popover px-[7px] font-medium hover:bg-accent hover:text-foreground"
+        className="inline-flex h-[22px] shrink-0 items-center gap-1 rounded-md border border-border bg-popover px-1.75 font-medium hover:bg-accent hover:text-foreground"
         onClick={() => copyToClipboard(logDir, undefined)}
         type="button"
       >
@@ -239,7 +239,7 @@ function StepRow({
     <div className={cn(index > 0 && "border-t border-border")}>
       <div
         className={cn(
-          "flex items-center gap-2.5 px-3 py-[9px]",
+          "flex items-center gap-2.5 px-3 py-2.25",
           (running || stepFixing) && "bg-info/5",
         )}
       >
@@ -247,12 +247,12 @@ function StepRow({
         <div className="flex min-w-0 flex-1 flex-col gap-px">
           <BoardShimmerText
             active={running}
-            className="w-fit text-[12.5px] font-medium text-foreground"
+            className="w-fit text-board-12-5 font-medium text-foreground"
             text={step.name}
           />
           <span
             className={cn(
-              "truncate text-[11px] text-muted-foreground",
+              "truncate text-board-11 text-muted-foreground",
               (step.kind ?? "script") === "script" && "font-mono",
             )}
           >
@@ -266,7 +266,7 @@ function StepRow({
             {step.parallel === true ? " · in parallel" : ""}
           </span>
           {step.note === undefined ? null : (
-            <span className="text-[11px] text-muted-foreground">{step.note}</span>
+            <span className="text-board-11 text-muted-foreground">{step.note}</span>
           )}
           {running ? <RunningMeta step={step} /> : null}
           {step.progress === undefined || step.status === "passed" ? null : (
@@ -274,7 +274,7 @@ function StepRow({
           )}
           {onOpenLog === undefined ? null : (
             <button
-              className="w-fit font-mono text-[11px] text-info-foreground hover:underline"
+              className="w-fit font-mono text-board-11 text-info-foreground hover:underline"
               onClick={onOpenLog}
               type="button"
             >
@@ -283,7 +283,7 @@ function StepRow({
           )}
           {step.threadId === undefined || onOpenThread === undefined ? null : (
             <button
-              className="w-fit text-[11px] text-info-foreground hover:underline"
+              className="w-fit text-board-11 text-info-foreground hover:underline"
               onClick={() => onOpenThread(step.threadId!)}
               type="button"
             >
@@ -294,7 +294,7 @@ function StepRow({
         {hasTail ? (
           <button
             aria-expanded={tailOpen}
-            className="h-[22px] shrink-0 rounded-md border border-border bg-popover px-[7px] text-[11px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="h-[22px] shrink-0 rounded-md border border-border bg-popover px-1.75 text-board-11 font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
             onClick={onToggleTail}
             type="button"
           >
@@ -303,7 +303,7 @@ function StepRow({
         ) : null}
         <span
           className={cn(
-            "w-16 shrink-0 text-right font-mono text-[11.5px] font-medium tabular-nums",
+            "w-16 shrink-0 text-right font-mono text-board-11-5 font-medium tabular-nums",
             running ? "text-foreground" : "text-muted-foreground",
           )}
         >
@@ -315,7 +315,7 @@ function StepRow({
         </span>
         <span
           className={cn(
-            "w-[92px] shrink-0 text-right text-[11.5px] font-medium",
+            "w-[92px] shrink-0 text-right text-board-11-5 font-medium",
             statusClass(step.status, fixing),
           )}
         >
@@ -327,7 +327,7 @@ function StepRow({
       </div>
       {step.result !== undefined &&
       (step.result.summary !== null || step.result.failures.length > 0) ? (
-        <div className="flex flex-col gap-1 border-t border-border py-1.5 pr-3 pl-[42px] text-[11.5px]">
+        <div className="flex flex-col gap-1 border-t border-border py-1.5 pr-3 pl-10.5 text-board-11-5">
           {step.result.summary === null ? null : (
             <span className="text-muted-foreground">{step.result.summary}</span>
           )}
@@ -339,7 +339,7 @@ function StepRow({
             >
               <span className="text-foreground">{failure.title}</span>
               {failure.file === undefined ? null : (
-                <span className="font-mono text-[10.5px] text-muted-foreground">
+                <span className="font-mono text-board-10-5 text-muted-foreground">
                   {failure.file}
                   {failure.line === undefined ? "" : `:${failure.line}`}
                 </span>
@@ -353,12 +353,12 @@ function StepRow({
       ) : null}
       {hasTail && tailOpen ? (
         <div className="flex flex-col border-t border-border bg-muted">
-          <span className="py-1.5 pr-3 pl-[42px] text-[10.5px] font-medium tracking-[.04em] text-muted-foreground uppercase">
+          <span className="py-1.5 pr-3 pl-10.5 text-board-10-5 font-medium tracking-board-4 text-muted-foreground uppercase">
             {boardCiTailMeta(step.tail)}
           </span>
           <pre
             aria-label={`${step.name} output`}
-            className="m-0 max-h-[280px] overflow-auto pt-1 pr-3 pb-3 pl-[42px] font-mono text-[11px]/[1.6] whitespace-pre text-foreground"
+            className="m-0 max-h-[280px] overflow-auto pt-1 pr-3 pb-3 pl-10.5 font-mono text-board-11 leading-board-1-6 whitespace-pre text-foreground"
           >
             {step.tail}
           </pre>
@@ -403,20 +403,20 @@ function FixFailuresRow({
     <div className="border-t border-border" data-ci-fix-row={row.state}>
       <div
         className={cn(
-          "flex items-center gap-2.5 px-3 py-[9px]",
+          "flex items-center gap-2.5 px-3 py-2.25",
           row.state === "running" && "bg-info/5",
         )}
       >
         <BoardStepBadge index={index + 1} state={row.badge} />
         <div className="flex min-w-0 flex-1 flex-col gap-px">
-          <span className="text-[12.5px] font-medium text-foreground">Fix failures</span>
-          <span className="truncate text-[11px] text-muted-foreground">
+          <span className="text-board-12-5 font-medium text-foreground">Fix failures</span>
+          <span className="truncate text-board-11 text-muted-foreground">
             {row.headline}
             {row.fixedSha === null ? "" : ` · pushed ${row.fixedSha.slice(0, 7)}`}
           </span>
           {threadId === null || onOpenThread === undefined ? null : (
             <button
-              className="w-fit text-[11px] text-info-foreground hover:underline"
+              className="w-fit text-board-11 text-info-foreground hover:underline"
               onClick={() => onOpenThread(threadId)}
               type="button"
             >
@@ -426,7 +426,7 @@ function FixFailuresRow({
         </div>
         <span
           className={cn(
-            "w-[92px] shrink-0 text-right text-[11.5px] font-medium",
+            "w-[92px] shrink-0 text-right text-board-11-5 font-medium",
             row.state === "running"
               ? "text-info-foreground"
               : row.badge === "passed"
@@ -437,7 +437,7 @@ function FixFailuresRow({
           {FIX_ROW_LABEL[row.state]}
         </span>
       </div>
-      <div className="flex flex-col gap-1 border-t border-border py-1.5 pr-3 pl-[42px] text-[11.5px]">
+      <div className="flex flex-col gap-1 border-t border-border py-1.5 pr-3 pl-10.5 text-board-11-5">
         {row.issues.map((issue) => (
           <div className="flex items-start gap-2" key={issue.id}>
             <div className="flex min-w-0 flex-1 flex-col">
@@ -446,7 +446,9 @@ function FixFailuresRow({
                 {issue.title}
               </span>
               {issue.where === null ? null : (
-                <span className="font-mono text-[10.5px] text-muted-foreground">{issue.where}</span>
+                <span className="font-mono text-board-10-5 text-muted-foreground">
+                  {issue.where}
+                </span>
               )}
               {issue.note === null ? null : (
                 <span className="text-muted-foreground">{issue.note}</span>
@@ -555,13 +557,13 @@ function EarlierPass({
         onClick={() => setOpen((value) => !value)}
         type="button"
       >
-        <span className="shrink-0 text-[12.5px] font-semibold text-foreground">
+        <span className="shrink-0 text-board-12-5 font-semibold text-foreground">
           Pass {pass.ordinal}
         </span>
         <Chip label={chip.label} tone={chip.tone} />
-        <span className="min-w-0 truncate text-[11px] text-muted-foreground">{summary}</span>
+        <span className="min-w-0 truncate text-board-11 text-muted-foreground">{summary}</span>
         <span className="flex-1" />
-        <span className="shrink-0 text-[11px] text-muted-foreground">
+        <span className="shrink-0 text-board-11 text-muted-foreground">
           {formatRelativeTimeLabel(pass.finishedAt ?? pass.startedAt)}
         </span>
         <ChevronDownIcon
@@ -678,7 +680,7 @@ export function BoardCardCiPane({
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pr-3 pl-3.5">
         <SectionHeading>Continuous integration</SectionHeading>
         {current === undefined ? null : (
-          <span className="truncate text-[11.5px] text-muted-foreground">
+          <span className="truncate text-board-11-5 text-muted-foreground">
             Pass {current.ordinal}
             {ci == null ? "" : ` · fix ${ci.fixAttempts} of ${ci.maxFixAttempts}`}
             {ci == null ? "" : ` · stop on failure ${ci.continueOnFailure === true ? "No" : "Yes"}`}
@@ -688,7 +690,7 @@ export function BoardCardCiPane({
         {status === null ? null : (
           <span
             className={cn(
-              "inline-flex h-[22px] shrink-0 items-center rounded-[7px] px-2 text-[11.5px] font-medium",
+              "inline-flex h-[22px] shrink-0 items-center rounded-board-7 px-2 text-board-11-5 font-medium",
               BOARD_CI_CHIP_CLASS[status.tone],
             )}
           >
@@ -700,7 +702,7 @@ export function BoardCardCiPane({
         ci != null &&
         (ci.phase === "queued" || ci.phase === "running" || ci.phase === "fixing") ? (
           <button
-            className="inline-flex h-6 shrink-0 items-center rounded-[7px] border border-input bg-popover px-2.5 text-[11.5px] font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
+            className="inline-flex h-6 shrink-0 items-center rounded-board-7 border border-input bg-popover px-2.5 text-board-11-5 font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
             onClick={onStopCi}
             type="button"
           >
@@ -708,7 +710,7 @@ export function BoardCardCiPane({
           </button>
         ) : null}
         <button
-          className="inline-flex h-6 shrink-0 items-center gap-1 rounded-[7px] border border-input bg-popover pr-2.5 pl-1.5 text-[11.5px] font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
+          className="inline-flex h-6 shrink-0 items-center gap-1 rounded-board-7 border border-input bg-popover pr-2.5 pl-1.5 text-board-11-5 font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
           onClick={onBackToThread}
           type="button"
         >
@@ -738,19 +740,19 @@ export function BoardCardCiPane({
           />
         )}
         {!inCi && lastOutcome != null ? (
-          <div className="flex shrink-0 flex-col gap-[5px] rounded-xl border border-border bg-card px-3.5 py-3">
-            <span className="text-[12.5px] font-semibold text-foreground">
+          <div className="flex shrink-0 flex-col gap-1.25 rounded-xl border border-border bg-card px-3.5 py-3">
+            <span className="text-board-12-5 font-semibold text-foreground">
               {lastOutcome.kind === "sent-back"
                 ? "Sent back to Code review"
                 : `Skipped by ${lastOutcome.actor ?? "someone"}`}
             </span>
-            <span className="text-[11.5px]/[1.55] text-pretty text-muted-foreground">
+            <span className="text-board-11-5 leading-board-1-55 text-pretty text-muted-foreground">
               {lastOutcome.kind === "sent-back"
                 ? (lastOutcome.finding ?? "")
                 : "Moved on without a passing run. Steps still running were cancelled."}
             </span>
             {lastOutcome.kind === "sent-back" ? (
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-board-11 text-muted-foreground">
                 {lastOutcome.stepName === undefined ? "" : `${lastOutcome.stepName} · `}
                 {usedFixes} fix {usedFixes === 1 ? "attempt" : "attempts"} used · the failure went
                 with the card
@@ -767,7 +769,7 @@ export function BoardCardCiPane({
                 : "border-warning/40 bg-warning/5",
             )}
           >
-            <span className="text-[12.5px] font-semibold text-foreground">
+            <span className="text-board-12-5 font-semibold text-foreground">
               {ci.phase === "stopped"
                 ? "Stopped for you"
                 : ci.machine === true
@@ -776,14 +778,14 @@ export function BoardCardCiPane({
                     ? "CI stopped"
                     : "CI can't run this pass"}
             </span>
-            <span className="text-[11.5px]/[1.55] text-pretty text-muted-foreground">
+            <span className="text-board-11-5 leading-board-1-55 text-pretty text-muted-foreground">
               {ci.phase === "stopped"
                 ? (ci.stopReason ?? "CI stopped for a human.")
                 : (ci.stopReason ??
                   "The pass couldn't finish (the runner or the worktree wasn't available). Fix what's in the way, then retry.")}
             </span>
             {ci.phase === "stopped" ? (
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-board-11 text-muted-foreground">
                 {ci.fixAttempts} of {ci.maxFixAttempts} fix{" "}
                 {ci.maxFixAttempts === 1 ? "attempt" : "attempts"} used
               </span>
@@ -791,7 +793,7 @@ export function BoardCardCiPane({
             <div className="flex flex-wrap items-center gap-2">
               {onRetryCi === undefined ? null : (
                 <button
-                  className={cn(BUTTON_CLASS, "h-[30px] px-3 text-[12.5px]")}
+                  className={cn(BUTTON_CLASS, "h-[30px] px-3 text-board-12-5")}
                   onClick={onRetryCi}
                   type="button"
                 >
@@ -800,7 +802,7 @@ export function BoardCardCiPane({
               )}
               {ci.phase === "stopped" && onSendBack !== undefined ? (
                 <button
-                  className={cn(BUTTON_CLASS, "h-[30px] px-3 text-[12.5px]")}
+                  className={cn(BUTTON_CLASS, "h-[30px] px-3 text-board-12-5")}
                   onClick={onSendBack}
                   type="button"
                 >
@@ -809,7 +811,7 @@ export function BoardCardCiPane({
               ) : null}
               {projectId === undefined ? null : (
                 <Link
-                  className="text-[11.5px] text-muted-foreground hover:text-foreground"
+                  className="text-board-11-5 text-muted-foreground hover:text-foreground"
                   params={{ projectId, tab: "ci" }}
                   to="/settings/board/projects/$projectId/$tab"
                 >
@@ -820,24 +822,24 @@ export function BoardCardCiPane({
           </div>
         ) : null}
         {current === undefined ? (
-          <div className="rounded-xl border border-border bg-card px-3.5 py-3 text-[11.5px] text-muted-foreground">
+          <div className="rounded-xl border border-border bg-card px-3.5 py-3 text-board-11-5 text-muted-foreground">
             {inCi ? "Waiting for the first pass to start." : "CI has not run on this card."}
           </div>
         ) : (
           <div className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
             <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
-              <span className="text-[12.5px] font-semibold text-foreground">
+              <span className="text-board-12-5 font-semibold text-foreground">
                 Pass {current.ordinal}
               </span>
               {(() => {
                 const chip = boardCiPassOutcomeChip(current, inCi ? ci : null);
                 return <Chip label={chip.label} tone={chip.tone} />;
               })()}
-              <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+              <span className="min-w-0 truncate text-board-11 text-muted-foreground">
                 {currentSummary}
               </span>
               <span className="flex-1" />
-              <span className="text-[11px] text-muted-foreground tabular-nums">
+              <span className="text-board-11 text-muted-foreground tabular-nums">
                 {/* A live round shows its total time; the chip says Running. */}
                 {live && current.finishedAt === null && ci?.phase === "running" ? (
                   <RunningTimer startedAt={current.startedAt} />
@@ -858,7 +860,7 @@ export function BoardCardCiPane({
               onOpenThread={onOpenThread}
               pass={current}
             />
-            <div className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+            <div className="border-t border-border px-3 py-2 text-board-11 text-muted-foreground">
               {current.steps.length} {current.steps.length === 1 ? "step" : "steps"} from the
               project&apos;s CI settings · run in order,{" "}
               {inCi && ci?.continueOnFailure === true
@@ -868,7 +870,7 @@ export function BoardCardCiPane({
             {current.logDir === null ? null : <LogDirRow logDir={current.logDir} />}
             {projectId === undefined ? null : (
               <Link
-                className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground hover:text-foreground"
+                className="border-t border-border px-3 py-2 text-board-11 text-muted-foreground hover:text-foreground"
                 params={{ projectId, tab: "ci" }}
                 to="/settings/board/projects/$projectId/$tab"
               >
@@ -879,7 +881,7 @@ export function BoardCardCiPane({
         )}
         {earlier.length === 0 ? null : (
           <div className="flex flex-col gap-1.5">
-            <span className="px-0.5 pt-0.5 text-[11px] font-semibold tracking-[.07em] text-muted-foreground uppercase">
+            <span className="px-0.5 pt-0.5 text-board-11 font-semibold tracking-board-7 text-muted-foreground uppercase">
               Earlier passes
             </span>
             {earlier.map((pass) => (
@@ -895,7 +897,7 @@ export function BoardCardCiPane({
         )}
         {inCi && onSkipCi !== undefined && !showConfirm ? (
           <div className="mt-1 flex shrink-0 items-center gap-3 rounded-xl border border-dashed border-input bg-foreground/3 px-3.5 py-3">
-            <span className="min-w-0 text-[11.5px]/[1.5] text-pretty text-muted-foreground">
+            <span className="min-w-0 text-board-11-5/normal text-pretty text-muted-foreground">
               Moves the card to {skipToLabel} without a passing CI run. The skip is recorded on the
               card under your name.
             </span>
@@ -903,7 +905,7 @@ export function BoardCardCiPane({
             <button
               className={cn(
                 BUTTON_CLASS,
-                "h-[30px] px-3 text-[12.5px] whitespace-nowrap disabled:opacity-60",
+                "h-[30px] px-3 text-board-12-5 whitespace-nowrap disabled:opacity-60",
               )}
               disabled={skipPending}
               onClick={() => setConfirming(true)}
@@ -917,13 +919,13 @@ export function BoardCardCiPane({
         {showConfirm ? (
           <div
             aria-label={`Skip CI for ${cardKey}?`}
-            className="mt-1 flex shrink-0 flex-col gap-2.5 rounded-xl border border-warning/40 bg-warning/5 px-3.5 py-[13px]"
+            className="mt-1 flex shrink-0 flex-col gap-2.5 rounded-xl border border-warning/40 bg-warning/5 px-3.5 py-3.25"
             role="group"
           >
-            <span className="text-[12.5px] font-semibold text-foreground">
+            <span className="text-board-12-5 font-semibold text-foreground">
               Skip CI for {cardKey}?
             </span>
-            <span className="text-[11.5px]/[1.55] text-pretty text-muted-foreground">
+            <span className="text-board-11-5 leading-board-1-55 text-pretty text-muted-foreground">
               {fixing
                 ? "The fix agent stops and "
                 : live
@@ -933,14 +935,14 @@ export function BoardCardCiPane({
             </span>
             <div className="flex items-center justify-end gap-2">
               <button
-                className={cn(BUTTON_CLASS, "h-[30px] px-3 text-[12.5px]")}
+                className={cn(BUTTON_CLASS, "h-[30px] px-3 text-board-12-5")}
                 onClick={() => setConfirming(false)}
                 type="button"
               >
                 Keep running
               </button>
               <button
-                className="inline-flex h-[30px] items-center rounded-lg bg-destructive px-3 text-[12.5px] font-medium text-white shadow-xs hover:brightness-95"
+                className="inline-flex h-[30px] items-center rounded-lg bg-destructive px-3 text-board-12-5 font-medium text-white shadow-xs hover:brightness-95"
                 onClick={() => {
                   setConfirming(false);
                   onSkipCi?.();

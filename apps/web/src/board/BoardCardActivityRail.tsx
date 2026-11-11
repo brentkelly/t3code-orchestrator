@@ -618,7 +618,7 @@ function ActivityRow({
   const workers = useBoardWorkersState();
   const workerName = (workerId: BoardWorkerId) => boardWorkerLabel(workerId, workers);
   return (
-    <li className="flex items-start gap-1.5 text-[12px]/[1.5] text-muted-foreground">
+    <li className="flex items-start gap-1.5 text-board-12/normal text-muted-foreground">
       <span className="mt-[3px]">
         <ActivityIcon kind={entry.kind} payload={entry.payload} />
       </span>
@@ -640,7 +640,7 @@ function ActivityRow({
         {toggle}
       </span>
       <BoardHint label={entry.createdAt}>
-        <span className="mt-[1px] shrink-0 text-[10.5px] tabular-nums text-muted-foreground/70">
+        <span className="mt-[1px] shrink-0 text-board-10-5 tabular-nums text-muted-foreground/70">
           {formatRelativeTimeLabel(entry.createdAt)}
         </span>
       </BoardHint>

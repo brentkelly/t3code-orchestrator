@@ -154,7 +154,7 @@ export function BoardBaseBranchSelect({
                   <span className="min-w-0 flex-1 truncate">{option.localName}</span>
                   <span className="flex shrink-0 items-center gap-1.5">
                     {option.isDefault ? (
-                      <span className="text-[10px] text-muted-foreground/45">default</span>
+                      <span className="text-board-10 text-muted-foreground/45">default</span>
                     ) : null}
                     {option.localName === selectedName ? (
                       <CheckIcon className="size-3 text-muted-foreground" />

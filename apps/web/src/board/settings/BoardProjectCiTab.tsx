@@ -195,7 +195,7 @@ export function BoardProjectCiTab(props: {
       {ciOn || steps.length > 0 ? (
         <div className="flex items-center gap-4 rounded-xl border border-border bg-card px-4 py-3 shadow-xs">
           <div className="flex min-w-0 flex-1 flex-col gap-px">
-            <span className="text-[13.5px] font-medium text-foreground">
+            <span className="text-board-13-5 font-medium text-foreground">
               Run CI for this project
             </span>
             <span className="text-xs text-pretty text-muted-foreground">
@@ -225,7 +225,7 @@ export function BoardProjectCiTab(props: {
           )}
         >
           <div className="flex min-w-0 flex-1 flex-col gap-px">
-            <span className="text-[13.5px] font-medium text-foreground">Stop on failure</span>
+            <span className="text-board-13-5 font-medium text-foreground">Stop on failure</span>
             <span className="text-xs text-pretty text-muted-foreground">
               {draft !== null
                 ? "Save or discard your step changes before changing this."
@@ -286,10 +286,10 @@ export function BoardProjectCiTab(props: {
       ) : steps.length === 0 ? (
         <div className="flex flex-col items-start gap-3.5 rounded-xl border border-dashed border-input bg-card px-6.5 pt-6.5 pb-6">
           <div className="flex max-w-[60ch] flex-col gap-1">
-            <span className="text-[15px] font-semibold tracking-[-0.01em] text-foreground">
+            <span className="text-board-15 font-semibold tracking-board-n1 text-foreground">
               {props.projectTitle} has no CI yet
             </span>
-            <span className="text-[13px] leading-[1.6] text-pretty text-muted-foreground">
+            <span className="text-board-13 leading-board-1-6 text-pretty text-muted-foreground">
               Without CI, cards go from Code review straight to Ready for merge. Add steps here,
               save them, then turn CI on for this project; cards already past Code review
               aren&apos;t affected.
@@ -302,11 +302,11 @@ export function BoardProjectCiTab(props: {
                 onClick={() => add(boardCiStarterStep(steps))}
                 type="button"
               >
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-[9px] bg-primary text-primary-foreground">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-board-9 bg-primary text-primary-foreground">
                   <BotIcon className="size-4" />
                 </span>
                 <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="text-[13px] font-semibold text-foreground">
+                  <span className="text-board-13 font-semibold text-foreground">
                     Add an agent step that runs this project&apos;s checks
                   </span>
                   <span className="text-xs leading-normal text-pretty text-muted-foreground">
@@ -316,7 +316,7 @@ export function BoardProjectCiTab(props: {
                 </span>
                 <span className="shrink-0 text-xs font-medium text-primary">Add step</span>
               </button>
-              <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-2 text-board-12-5 text-muted-foreground">
                 <span>Or start from</span>
                 {addButtons.map((button) => (
                   <Button key={button.label} onClick={button.add} size="xs" variant="outline">
@@ -353,17 +353,17 @@ export function BoardProjectCiTab(props: {
           <div className="flex flex-col">
             <div className="flex items-center gap-2.5 rounded-xl border border-border bg-muted px-3.5 py-2.5">
               <LockIcon className="size-3 shrink-0 text-muted-foreground" />
-              <span className="flex size-6 shrink-0 items-center justify-center rounded-[7px] bg-accent text-foreground">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-board-7 bg-accent text-foreground">
                 <GitCompareArrowsIcon className="size-3.5" />
               </span>
               <div className="flex min-w-0 flex-1 flex-col gap-px">
-                <span className="text-[13px] font-medium text-foreground">Sync with base</span>
+                <span className="text-board-13 font-medium text-foreground">Sync with base</span>
                 <span className="text-xs text-pretty text-muted-foreground">
                   Always first, always alone. Passes at once when the branch is up to date; a
                   conflict starts a fix agent inside CI.
                 </span>
               </div>
-              <span className="shrink-0 rounded-full border border-border px-[7px] py-px text-[11px] font-medium text-muted-foreground">
+              <span className="shrink-0 rounded-full border border-border px-1.75 py-px text-board-11 font-medium text-muted-foreground">
                 Built in
               </span>
             </div>
@@ -374,23 +374,23 @@ export function BoardProjectCiTab(props: {
               const multi = group.length > 1;
               return (
                 <div className="flex flex-col" key={first.step.id}>
-                  <div className="flex h-[22px] items-center gap-2 pl-[22px]">
+                  <div className="flex h-[22px] items-center gap-2 pl-5.5">
                     <span className="h-full w-px bg-input" />
-                    <span className="text-[10.5px] font-medium tracking-[.06em] text-muted-foreground uppercase">
+                    <span className="text-board-10-5 font-medium tracking-board-6 text-muted-foreground uppercase">
                       {groupIndex === 0 ? "then" : "then, once the group above passes"}
                     </span>
                   </div>
                   <div
                     className={cn(
                       "flex flex-col overflow-hidden rounded-xl border bg-card shadow-xs",
-                      multi ? "border-primary/30 border-l-[3px] border-l-primary" : "border-border",
+                      multi ? "border-primary/30 border-l-3 border-l-primary" : "border-border",
                     )}
                   >
                     {multi ? (
-                      <div className="flex items-center gap-[7px] border-b border-primary/18 px-3 pt-[7px] pb-1.5">
+                      <div className="flex items-center gap-1.75 border-b border-primary/18 px-3 pt-1.75 pb-1.5">
                         <ParallelGlyph />
-                        <span className="text-[11.5px] font-semibold text-primary">Parallel</span>
-                        <span className="text-[11.5px] text-muted-foreground">
+                        <span className="text-board-11-5 font-semibold text-primary">Parallel</span>
+                        <span className="text-board-11-5 text-muted-foreground">
                           {group.length} steps start together; the group passes when all of them
                           pass
                         </span>
@@ -437,7 +437,7 @@ export function BoardProjectCiTab(props: {
                       />
                     ))}
                     {warning !== undefined ? (
-                      <div className="flex gap-2 border-t border-warning/35 bg-warning/7 px-3 py-[9px] text-xs leading-normal text-pretty text-foreground">
+                      <div className="flex gap-2 border-t border-warning/35 bg-warning/7 px-3 py-2.25 text-xs leading-normal text-pretty text-foreground">
                         <TriangleAlertIcon className="mt-px size-3.5 shrink-0 text-warning-foreground" />
                         <span>
                           {warning.names.join(" and ")} share one worktree. Scripts running at once
@@ -453,7 +453,7 @@ export function BoardProjectCiTab(props: {
 
             {canWrite ? (
               <div className="flex flex-wrap items-center gap-2 pt-3.5 pl-0.5">
-                <span className="text-[12.5px] font-medium text-muted-foreground">Add step</span>
+                <span className="text-board-12-5 font-medium text-muted-foreground">Add step</span>
                 {addButtons.map((button) => (
                   <Button
                     disabled={!canAdd}
@@ -576,8 +576,8 @@ function StepRow(props: {
       className={cn(
         props.separated && "border-t border-border",
         props.dragging && "opacity-45",
-        props.dropEdge === "before" && "shadow-[inset_0_2px_0_var(--color-primary)]",
-        props.dropEdge === "after" && "shadow-[inset_0_-2px_0_var(--color-primary)]",
+        props.dropEdge === "before" && "shadow-board-drop-before",
+        props.dropEdge === "after" && "shadow-board-drop-after",
       )}
       onDragOver={(event) => {
         if (!props.canWrite) return;
@@ -618,13 +618,13 @@ function StepRow(props: {
             props.canWrite ? "cursor-grab" : "invisible",
           )}
         />
-        <span className="flex size-[26px] shrink-0 items-center justify-center rounded-[7px] bg-accent text-foreground">
+        <span className="flex size-[26px] shrink-0 items-center justify-center rounded-board-7 bg-accent text-foreground">
           <Icon className="size-3.5" />
         </span>
         <div className="flex min-w-0 flex-1 flex-col gap-px">
-          <div className="flex min-w-0 items-center gap-[7px]">
-            <span className="truncate text-[13px] font-medium text-foreground">{step.name}</span>
-            <span className="shrink-0 text-[10.5px] font-medium tracking-[.04em] text-muted-foreground uppercase">
+          <div className="flex min-w-0 items-center gap-1.75">
+            <span className="truncate text-board-13 font-medium text-foreground">{step.name}</span>
+            <span className="shrink-0 text-board-10-5 font-medium tracking-board-4 text-muted-foreground uppercase">
               {TYPE_LABEL[step.kind]}
             </span>
           </div>
@@ -645,7 +645,7 @@ function StepRow(props: {
         >
           <label
             className={cn(
-              "inline-flex shrink-0 items-center gap-[7px] text-[11.5px] font-medium",
+              "inline-flex shrink-0 items-center gap-1.75 text-board-11-5 font-medium",
               parallelOn ? "text-foreground" : "text-muted-foreground",
               props.parallelBlock !== null && "opacity-45",
             )}
@@ -672,7 +672,7 @@ function StepRow(props: {
       </div>
 
       {props.open ? (
-        <div className="flex flex-col gap-3 pt-1 pr-3.5 pb-3.5 pl-[58px]">
+        <div className="flex flex-col gap-3 pt-1 pr-3.5 pb-3.5 pl-14.5">
           <Field label="Name">
             <Input
               aria-label="Step name"
@@ -688,7 +688,7 @@ function StepRow(props: {
               {/* Grows with the command, which may span lines. */}
               <textarea
                 aria-label="Command"
-                className="field-sizing-content min-h-8 min-w-0 flex-1 resize-none rounded-lg border border-input bg-popover px-2.5 py-1.5 font-mono text-[12.5px] leading-[1.5] font-medium text-foreground shadow-xs outline-none focus-visible:border-ring disabled:opacity-64"
+                className="field-sizing-content min-h-8 min-w-0 flex-1 resize-none rounded-lg border border-input bg-popover px-2.5 py-1.5 font-mono text-board-12-5 leading-normal font-medium text-foreground shadow-xs outline-none focus-visible:border-ring disabled:opacity-64"
                 disabled={!props.canWrite}
                 maxLength={BOARD_CI_COMMAND_MAX}
                 onChange={(event) => props.onChange({ command: event.target.value })}
@@ -701,7 +701,7 @@ function StepRow(props: {
 
           {step.kind === "agent" ? (
             <div className="flex flex-col gap-1.5">
-              <span className="text-[13px] text-muted-foreground">
+              <span className="text-board-13 text-muted-foreground">
                 Prompt · runs in its own thread
               </span>
               <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xs">
@@ -711,7 +711,7 @@ function StepRow(props: {
                 </BoardAddedNote>
                 <textarea
                   aria-label="Agent prompt"
-                  className="block min-h-28 w-full resize-y border-none bg-card px-3.5 py-3 text-[13px] leading-[1.6] text-foreground outline-none disabled:opacity-64"
+                  className="block min-h-28 w-full resize-y border-none bg-card px-3.5 py-3 text-board-13 leading-board-1-6 text-foreground outline-none disabled:opacity-64"
                   disabled={!props.canWrite}
                   maxLength={BOARD_CI_PROMPT_MAX}
                   onChange={(event) => props.onChange({ prompt: event.target.value })}
@@ -755,7 +755,7 @@ function StepRow(props: {
                 </span>
                 <select
                   aria-label="When no checks appear"
-                  className="h-8 rounded-lg border border-input bg-popover px-2 text-[13px] font-medium shadow-xs"
+                  className="h-8 rounded-lg border border-input bg-popover px-2 text-board-13 font-medium shadow-xs"
                   disabled={!props.canWrite}
                   onChange={(event) =>
                     props.onChange({
@@ -830,7 +830,7 @@ function Field(props: {
     >
       <span
         className={cn(
-          "w-24 shrink-0 text-[13px] text-muted-foreground",
+          "w-24 shrink-0 text-board-13 text-muted-foreground",
           props.align === "start" && "pt-1.5",
         )}
       >
@@ -846,11 +846,11 @@ function BoardAddedNote(props: { readonly edge: "top" | "bottom"; readonly child
   return (
     <div
       className={cn(
-        "relative bg-muted py-2.5 pr-[120px] pl-3.5 font-mono text-xs leading-[1.6] whitespace-pre-wrap text-muted-foreground",
+        "relative bg-muted py-2.5 pr-30 pl-3.5 font-mono text-xs leading-board-1-6 whitespace-pre-wrap text-muted-foreground",
         props.edge === "top" ? "border-b border-border" : "border-t border-border",
       )}
     >
-      <span className="absolute top-2 right-2.5 rounded-full border border-border bg-card px-[7px] py-px font-sans text-[10.5px] font-medium">
+      <span className="absolute top-2 right-2.5 rounded-full border border-border bg-card px-1.75 py-px font-sans text-board-10-5 font-medium">
         Added by the board
       </span>
       {props.children}
@@ -867,7 +867,7 @@ function CheckNamesInput(props: {
   const [text, setText] = useState("");
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-1">
-      <div className="flex min-h-8 flex-wrap items-center gap-[5px] rounded-lg border border-input bg-popover px-1.5 py-[3px] shadow-xs">
+      <div className="flex min-h-8 flex-wrap items-center gap-1.25 rounded-lg border border-input bg-popover px-1.5 py-0.75 shadow-xs">
         {props.names.map((name) => (
           <span
             className="inline-flex h-[22px] items-center gap-1 rounded-md bg-accent pr-1 pl-2 font-mono text-xs font-medium"
@@ -946,12 +946,12 @@ function ScriptContractHelp() {
     <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xs">
       <button
         aria-expanded={open}
-        className="flex cursor-pointer items-center gap-[9px] px-4 py-3 text-left hover:bg-muted"
+        className="flex cursor-pointer items-center gap-2.25 px-4 py-3 text-left hover:bg-muted"
         onClick={() => setOpen((value) => !value)}
         type="button"
       >
         <CodeXmlIcon className="size-[15px] shrink-0 text-muted-foreground" />
-        <span className="flex-1 text-[13px] font-medium text-foreground">
+        <span className="flex-1 text-board-13 font-medium text-foreground">
           Report progress and results from a script
         </span>
         <span className="text-xs text-muted-foreground">Optional</span>
@@ -964,7 +964,7 @@ function ScriptContractHelp() {
       </button>
       {open ? (
         <div className="flex flex-col gap-3 pt-0.5 pr-4 pb-4 pl-10">
-          <p className="max-w-[66ch] text-[12.5px] leading-[1.55] text-pretty text-muted-foreground">
+          <p className="max-w-[66ch] text-board-12-5 leading-board-1-55 text-pretty text-muted-foreground">
             Print progress lines and the step shows the message, a count and a bar, and the card
             shows the count instead of a timer. The card catches up about every 10 seconds; the
             step&apos;s live log shows each line as it&apos;s printed, and a failed step keeps its
@@ -973,7 +973,7 @@ function ScriptContractHelp() {
             optional; the exit code alone decides pass or fail. Scripts run in the card&apos;s
             worktree, so install what they need in the command itself.
           </p>
-          <p className="max-w-[66ch] text-[12.5px] leading-[1.55] text-pretty text-muted-foreground">
+          <p className="max-w-[66ch] text-board-12-5 leading-board-1-55 text-pretty text-muted-foreground">
             A failed step heads the card with what failed and why: a failure line if the script
             printed one, else a reason read from its result file and output. A machine problem (a
             missing system library, a full or read-only disk, a command that isn&apos;t installed, a
@@ -996,7 +996,7 @@ function Snippet(props: { readonly title: string; readonly code: string }) {
   return (
     <div className="flex flex-col overflow-hidden rounded-xl border border-border">
       <div className="flex items-center gap-2 border-b border-border bg-muted py-1.5 pr-2 pl-3">
-        <span className="flex-1 text-[11.5px] font-medium text-muted-foreground">
+        <span className="flex-1 text-board-11-5 font-medium text-muted-foreground">
           {props.title}
         </span>
         <Button
@@ -1012,7 +1012,7 @@ function Snippet(props: { readonly title: string; readonly code: string }) {
           <CopyIcon /> {copied ? "Copied" : "Copy"}
         </Button>
       </div>
-      <pre className="overflow-x-auto bg-card px-3 py-2.5 font-mono text-xs leading-[1.6] text-foreground">
+      <pre className="overflow-x-auto bg-card px-3 py-2.5 font-mono text-xs leading-board-1-6 text-foreground">
         {props.code}
       </pre>
     </div>

@@ -151,7 +151,7 @@ export function BoardCardProjectRowValue({
       <BoardHint label="Move this task to another project">
         <PopoverTrigger
           aria-label="Project"
-          className="-ml-[3px] inline-flex h-5 items-center gap-1.5 rounded-md px-[5px] font-medium text-[11.5px] text-foreground hover:bg-accent"
+          className="-ml-[3px] inline-flex h-5 items-center gap-1.5 rounded-md px-1.25 font-medium text-board-11-5 text-foreground hover:bg-accent"
           render={<button type="button" />}
         >
           <ProjectDot accent={accent} projectId={projectId} />
@@ -162,12 +162,12 @@ export function BoardCardProjectRowValue({
       {/* Upward and left-aligned, per the prototype: the row sits at the bottom
           of the side panel, so a downward menu would open off the panel. */}
       <PopoverPopup align="start" className="w-50 flex-col p-1" side="top">
-        <p className="text-wrap px-[7px] pt-1.5 pb-1 text-[11px]/[1.4] text-muted-foreground">
+        <p className="text-wrap px-1.75 pt-1.5 pb-1 text-board-11 leading-board-1-4 text-muted-foreground">
           Moving reissues the task ID and resets the base branch.
         </p>
         {options.map((option) => (
           <button
-            className="flex h-7 items-center gap-1.5 rounded-md px-[7px] text-left text-[12px] hover:bg-accent"
+            className="flex h-7 items-center gap-1.5 rounded-md px-1.75 text-left text-board-12 hover:bg-accent"
             key={option.id}
             onClick={() => {
               setOpen(false);
@@ -182,7 +182,7 @@ export function BoardCardProjectRowValue({
             {option.current ? (
               <CheckIcon className="size-3 shrink-0 text-muted-foreground" />
             ) : (
-              <span className="shrink-0 font-medium font-mono text-[10.5px] text-muted-foreground">
+              <span className="shrink-0 font-medium font-mono text-board-10-5 text-muted-foreground">
                 {option.nextKey}
               </span>
             )}

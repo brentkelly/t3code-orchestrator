@@ -74,14 +74,14 @@ export function BoardPickerSearchBody({
       />
       <div className="mt-1.5 flex max-h-64 flex-col gap-0.5 overflow-y-auto">
         {filtered.length === 0 ? (
-          <span className="px-1.5 py-1 text-[12.5px] text-muted-foreground">
+          <span className="px-1.5 py-1 text-board-12-5 text-muted-foreground">
             {pending ? "Searching…" : "No matches."}
           </span>
         ) : (
           <>
             {filtered.map((option) => (
               <button
-                className="flex items-center gap-2 rounded px-1.5 py-1 text-left text-[12.5px] hover:bg-accent"
+                className="flex items-center gap-2 rounded px-1.5 py-1 text-left text-board-12-5 hover:bg-accent"
                 key={option.id}
                 onClick={() => onPick(option.id)}
                 type="button"
@@ -103,7 +103,7 @@ export function BoardPickerSearchBody({
               </button>
             ))}
             {hidden > 0 ? (
-              <span className="px-1.5 py-1 text-[12.5px] text-muted-foreground">
+              <span className="px-1.5 py-1 text-board-12-5 text-muted-foreground">
                 {hidden} more. Keep typing to narrow.
               </span>
             ) : null}

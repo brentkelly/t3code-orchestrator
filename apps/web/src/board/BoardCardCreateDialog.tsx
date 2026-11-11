@@ -543,8 +543,8 @@ export function BoardCardCreateDialog({
       >
         {/* Identity row — the card modal's, with the stage the card will land
             in standing where the open card shows the stage it is in. */}
-        <div className="flex shrink-0 items-center gap-[9px] px-4 pt-4 pr-11">
-          <DialogTitle className="shrink-0 text-[17px]/[1.25] tracking-[-0.01em]">
+        <div className="flex shrink-0 items-center gap-2.25 px-4 pt-4 pr-11">
+          <DialogTitle className="shrink-0 text-board-17/tight tracking-board-n1">
             {isChild ? "New child card" : "New card"}
           </DialogTitle>
           {parentShell === null ? null : (
@@ -554,7 +554,7 @@ export function BoardCardCreateDialog({
               <span
                 // Focusable so the hint is reachable by keyboard, not hover only.
                 tabIndex={0}
-                className="inline-flex h-[18px] min-w-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground"
+                className="inline-flex h-[18px] min-w-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-1.75 text-board-11 font-medium text-foreground"
               >
                 <LayersIcon className="size-2.5 shrink-0" />
                 <span className="shrink-0">{parentShell.key}</span>
@@ -590,19 +590,19 @@ export function BoardCardCreateDialog({
         {/* A card may be created into any stage; warn when the chosen
             stage auto-executes, since creating there starts an agent. */}
         {resolveBoardStageExecution(boardSettings, stage, projectExecutionConfig).autoExecute ? (
-          <p className="mx-4 mt-2 rounded-md bg-warning/10 px-2.5 py-1.5 text-[12px] text-warning-foreground">
+          <p className="mx-4 mt-2 rounded-md bg-warning/10 px-2.5 py-1.5 text-board-12 text-warning-foreground">
             {boardStageLabel(stages, stage)} runs automatically: creating here starts an agent.
           </p>
         ) : null}
 
-        <div className="mt-3 flex min-h-0 flex-[0_1_auto] flex-col gap-[18px] overflow-y-auto border-t border-border px-5 pt-4 pb-5">
+        <div className="mt-3 flex min-h-0 flex-[0_1_auto] flex-col gap-4.5 overflow-y-auto border-t border-border px-5 pt-4 pb-5">
           {/* Restored-draft banner. Neutral, never blue: the status
               vocabulary reserves `--info` for "running"
               (docs/t3o/status-colours.md), and a draft is not work in
               progress. */}
           {restored !== null ? (
             <div className="flex items-center gap-3 rounded-md bg-accent px-2.5 py-2">
-              <p className="min-w-0 flex-1 text-[12px] text-muted-foreground">
+              <p className="min-w-0 flex-1 text-board-12 text-muted-foreground">
                 Unsaved draft restored.
                 {restored.droppedAttachments ? " Some attachments expired and were removed." : null}
               </p>
@@ -613,7 +613,7 @@ export function BoardCardCreateDialog({
           ) : null}
 
           {feedback !== null ? (
-            <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-[12px] text-destructive-foreground">
+            <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-board-12 text-destructive-foreground">
               {feedback}
             </p>
           ) : null}
@@ -624,7 +624,7 @@ export function BoardCardCreateDialog({
             <div className="min-w-0 flex-1">
               <BoardSectionHeading className="mb-[7px]">Project</BoardSectionHeading>
               {isChild ? (
-                <div className="flex h-8 min-w-0 items-center gap-1.5 text-[13px] text-foreground">
+                <div className="flex h-8 min-w-0 items-center gap-1.5 text-board-13 text-foreground">
                   {projectId === null ? null : (
                     <span
                       className={cn(
@@ -687,7 +687,7 @@ export function BoardCardCreateDialog({
             {isChild ? (
               <div className="min-w-0 flex-1">
                 <BoardSectionHeading className="mb-[7px]">Base branch</BoardSectionHeading>
-                <p className="flex h-8 items-center text-[13px] text-muted-foreground">
+                <p className="flex h-8 items-center text-board-13 text-muted-foreground">
                   {parentShell === null ? "From its parent" : `From ${parentShell.key}`}
                 </p>
               </div>
@@ -740,7 +740,7 @@ export function BoardCardCreateDialog({
                   projectName: workerField.projectName,
                 });
                 return warning === null ? null : (
-                  <p className="-mt-2 text-[12px] text-warning-foreground">{warning}</p>
+                  <p className="-mt-2 text-board-12 text-warning-foreground">{warning}</p>
                 );
               })()
             : null}
@@ -754,7 +754,7 @@ export function BoardCardCreateDialog({
               <BoardSectionHeading className="mb-[7px]">Title</BoardSectionHeading>
               <Input
                 autoFocus
-                className="text-[13.5px]"
+                className="text-board-13-5"
                 onChange={(event) => setTitle(event.target.value)}
                 placeholder="What needs building?"
                 value={title}
@@ -812,7 +812,7 @@ export function BoardCardCreateDialog({
                 state={briefAttachments}
               />
               <Textarea
-                className="min-h-24 text-[13.5px]/[1.6]"
+                className="min-h-24 text-board-13-5 leading-board-1-6"
                 onChange={(event) => setBrief(event.target.value)}
                 onPaste={briefAttachments.handlers.onPaste}
                 placeholder="What's the context? Paste screenshots (⌘V) or drop files in here."
@@ -857,7 +857,7 @@ export function BoardCardCreateDialog({
               failed) it reverts to a plain Cancel. */}
           {draftHasContent && !draftSuppressed ? (
             <>
-              <span className="text-[12px] text-muted-foreground max-sm:sr-only">
+              <span className="text-board-12 text-muted-foreground max-sm:sr-only">
                 Closing keeps this draft
               </span>
               <Button
@@ -885,7 +885,7 @@ export function BoardCardCreateDialog({
           >
             Create card
             {/* Nothing to press on a phone, where this dialog is a sheet. */}
-            <Kbd className="h-4 min-w-0 rounded-sm bg-primary-foreground/20 px-1 font-mono text-[10px] text-primary-foreground max-sm:hidden">
+            <Kbd className="h-4 min-w-0 rounded-sm bg-primary-foreground/20 px-1 font-mono text-board-10 text-primary-foreground max-sm:hidden">
               {submitShortcutLabel}
             </Kbd>
           </Button>

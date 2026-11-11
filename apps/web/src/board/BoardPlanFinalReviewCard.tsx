@@ -29,7 +29,7 @@ export function BoardPlanFinalReviewCard({
         <PullRequestGlyph.merged className="size-3.5" />
       </span>
       <div className="min-w-0">
-        <div className="text-[12.5px] font-semibold text-foreground">
+        <div className="text-board-12-5 font-semibold text-foreground">
           Final review
           {branch === null ? (
             <span className="font-normal text-muted-foreground"> · integration branch pending</span>
@@ -40,7 +40,7 @@ export function BoardPlanFinalReviewCard({
             </>
           )}
         </div>
-        <div className="text-[11.5px]/[1.5] text-pretty text-muted-foreground">{note}</div>
+        <div className="text-board-11-5/normal text-pretty text-muted-foreground">{note}</div>
       </div>
     </div>
   );
