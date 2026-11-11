@@ -560,14 +560,24 @@ describe("board card shell derivation", () => {
         hasPendingApprovals: false,
         session: { status: "running" },
       }),
-    ).toEqual({ threadState: "waiting", awaitingInput: true, waitingOnBackground: false, awaitingSubagent: false });
+    ).toEqual({
+      threadState: "waiting",
+      awaitingInput: true,
+      waitingOnBackground: false,
+      awaitingSubagent: false,
+    });
     expect(
       deriveBoardCardThreadState({
         hasPendingUserInput: false,
         hasPendingApprovals: true,
         session: { status: "running" },
       }),
-    ).toEqual({ threadState: "waiting", awaitingInput: false, waitingOnBackground: false, awaitingSubagent: false });
+    ).toEqual({
+      threadState: "waiting",
+      awaitingInput: false,
+      waitingOnBackground: false,
+      awaitingSubagent: false,
+    });
     // A session that died mid-prompt keeps its approval row, but nobody can
     // approve into it: the card reads failed, not Needs permission.
     expect(
@@ -576,7 +586,12 @@ describe("board card shell derivation", () => {
         hasPendingApprovals: true,
         session: { status: "error" },
       }),
-    ).toEqual({ threadState: "failed", awaitingInput: false, waitingOnBackground: false, awaitingSubagent: false });
+    ).toEqual({
+      threadState: "failed",
+      awaitingInput: false,
+      waitingOnBackground: false,
+      awaitingSubagent: false,
+    });
     expect(
       deriveBoardCardThreadState({
         hasPendingUserInput: false,

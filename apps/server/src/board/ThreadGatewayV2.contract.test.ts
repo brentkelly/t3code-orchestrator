@@ -1019,22 +1019,49 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
 
         // An app-owned child on a live run, held on a permission prompt.
         const yes = childOf("yes", "yes-child");
-        yield* projectThread({ tag: "yes-child", parent: yes.parent, run: "running", request: "permission" });
-        yield* projectThread({ tag: "yes", run: "completed", delegates: [{ child: yes.child, status: "running" }] });
+        yield* projectThread({
+          tag: "yes-child",
+          parent: yes.parent,
+          run: "running",
+          request: "permission",
+        });
+        yield* projectThread({
+          tag: "yes",
+          run: "completed",
+          delegates: [{ child: yes.child, status: "running" }],
+        });
         assert.isTrue(yield* awaiting("yes"));
         // The child itself has no subagent of its own waiting.
         assert.isFalse(yield* awaiting("yes-child"));
 
         // A child's question goes to the coordinator, not the human.
         const asks = childOf("asks", "asks-child");
-        yield* projectThread({ tag: "asks-child", parent: asks.parent, run: "running", request: "user_input" });
-        yield* projectThread({ tag: "asks", run: "completed", delegates: [{ child: asks.child, status: "running" }] });
+        yield* projectThread({
+          tag: "asks-child",
+          parent: asks.parent,
+          run: "running",
+          request: "user_input",
+        });
+        yield* projectThread({
+          tag: "asks",
+          run: "completed",
+          delegates: [{ child: asks.child, status: "running" }],
+        });
         assert.isFalse(yield* awaiting("asks"));
 
         // A prompt left behind by a run that ended can never be answered.
         const dead = childOf("dead", "dead-child");
-        yield* projectThread({ tag: "dead-child", parent: dead.parent, run: "completed", request: "permission" });
-        yield* projectThread({ tag: "dead", run: "completed", delegates: [{ child: dead.child, status: "running" }] });
+        yield* projectThread({
+          tag: "dead-child",
+          parent: dead.parent,
+          run: "completed",
+          request: "permission",
+        });
+        yield* projectThread({
+          tag: "dead",
+          run: "completed",
+          delegates: [{ child: dead.child, status: "running" }],
+        });
         assert.isFalse(yield* awaiting("dead"));
 
         // Provider-native subagents ask on their parent, which already reads it.
@@ -1069,7 +1096,11 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
           run: "running",
           delegates: [{ child: grandchild, status: "running" }],
         });
-        yield* projectThread({ tag: "nested", run: "completed", delegates: [{ child: nested.child, status: "running" }] });
+        yield* projectThread({
+          tag: "nested",
+          run: "completed",
+          delegates: [{ child: nested.child, status: "running" }],
+        });
         assert.isTrue(yield* awaiting("nested"));
 
         // A thread that never delegated, and one that does not exist.

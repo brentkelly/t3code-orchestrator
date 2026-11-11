@@ -917,8 +917,8 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
     // Walks down the thread's own app-owned subagent records rather than
     // scanning lineage JSON, which no index covers; a thread with no live
     // delegations costs one indexed read. Native subagents ask on their parent.
-    subagentAwaitingApproval: (threadId) =>
-      Effect.gen(function* () {
+    subagentAwaitingApproval: Effect.fn("ThreadGatewayV2.subagentAwaitingApproval")(
+      function* (threadId) {
         const root = yield* shellOf(threadId);
         if (root === null || root.deletedAt !== null) return false;
         const seen = new Set<ThreadId>([threadId]);
@@ -945,7 +945,9 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
           parents = children;
         }
         return false;
-      }).pipe(Effect.mapError(readError("subagentAwaitingApproval"))),
+      },
+      Effect.mapError(readError("subagentAwaitingApproval")),
+    ),
 
     projects: () =>
       projectRows.list({ includeDeleted: true }).pipe(

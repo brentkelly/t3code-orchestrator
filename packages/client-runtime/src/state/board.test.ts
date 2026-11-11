@@ -954,11 +954,7 @@ describe("withBoardThreadFields", () => {
     expect(asking.cards[0]?.waitingOnBackground).toBe(true);
 
     // Answered: the map clears and the key goes away with it.
-    const answered = withBoardThreadFields(
-      { ...board, cards: waiting.cards },
-      [parent],
-      new Map(),
-    );
+    const answered = withBoardThreadFields({ ...board, cards: waiting.cards }, [parent], new Map());
     expect(answered.cards[0]).not.toHaveProperty("awaitingSubagent");
     expect(answered.cards[0]?.threadState).toBe("working");
   });

@@ -267,10 +267,6 @@ function useBoardLiveColumns({
 
   // The thread shells, joined from the snapshot the client already holds. Read
   // by the card todo strips and by the attention settle grace.
-  // A subagent awaiting approval turns its parent's to-do row violet.
-  const subagentRequests = useAtomValue(
-    environmentThreadShells.pendingSubagentRequestsAtom(environmentId),
-  );
   const threadShellsById = (() => {
     const shells = Option.getOrNull(shellState.snapshot)?.threads ?? [];
     return new Map(shells.map((thread) => [thread.id, thread]));
@@ -723,6 +719,10 @@ function useBoardPageModel({
       return next;
     });
   };
+  // A subagent awaiting approval turns its parent's to-do row violet.
+  const subagentRequests = useAtomValue(
+    environmentThreadShells.pendingSubagentRequestsAtom(environmentId),
+  );
   const todoThreadStateOf = (threadId: ThreadId) => {
     const shell = threadShellsById.get(threadId);
     if (shell === undefined) return undefined;

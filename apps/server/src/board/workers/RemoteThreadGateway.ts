@@ -314,8 +314,8 @@ export const makeRemoteThreadGateway = (
     // Best-effort: a worker older than this call cannot decode it, and
     // an unreachable one cannot answer; false is the behaviour before it existed.
     subagentAwaitingApproval: (threadId) =>
-      read("subagentAwaitingApproval", (rpc) => rpc.gateway.subagentAwaitingApproval(threadId)).pipe(
-        Effect.orElseSucceed(() => false),
-      ),
+      read("subagentAwaitingApproval", (rpc) =>
+        rpc.gateway.subagentAwaitingApproval(threadId),
+      ).pipe(Effect.orElseSucceed(() => false)),
   };
 };

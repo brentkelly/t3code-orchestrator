@@ -9771,9 +9771,7 @@ const make = Effect.gen(function* () {
   });
   /** Best-effort: a failed read is "not waiting", the behaviour before this check existed. */
   const subagentAwaitingApproval = (threadId: ThreadId) =>
-    threads
-      .subagentAwaitingApproval(threadId)
-      .pipe(Effect.catchCause(() => Effect.succeed(false)));
+    threads.subagentAwaitingApproval(threadId).pipe(Effect.catchCause(() => Effect.succeed(false)));
   /** The thread's own permission prompt or, read only when it has
       none, a subagent's approval: either way a human is the pacing.
       A child's approval answer names the child's thread, so it never stamps
