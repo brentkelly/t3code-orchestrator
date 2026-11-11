@@ -239,6 +239,14 @@ function setup() {
   state.mode = "notifications";
   state.inApp = false;
   state.boardEnvironmentId = null;
+  state.boardNotifications = {
+    enabled: true,
+    waiting: true,
+    needsHuman: true,
+    readyForMerge: true,
+    blocked: false,
+    muteRoutineThreadAlerts: true,
+  };
   state.settingsListeners.clear();
   registry.set(
     presentationsAtom,
@@ -348,6 +356,22 @@ it("watches the nominated board server and stays silent while it is disconnected
   );
   app.setBoard("two", [card({ held: true })]);
   expect(TestNotification.sent).toHaveLength(1);
+});
+
+it("keeps the routine mute while every card category is off", async () => {
+  await using app = setup();
+  state.boardNotifications = {
+    ...state.boardNotifications,
+    waiting: false,
+    needsHuman: false,
+    readyForMerge: false,
+  };
+  const linked = [{ cardId: "card-1", threadId: "thread-1" }];
+  app.setBoard("one", [card({ activeThreadId: "thread-1" as never })], linked);
+  app.start();
+  expect(isBoardRoutineThreadAlertMuted("thread-1", "completion", "ready")).toBe(true);
+  app.setBoard("one", [card({ activeThreadId: "thread-1" as never, awaitingInput: true })], linked);
+  expect(TestNotification.sent).toEqual([]);
 });
 
 it("stops watching when notifications are off", async () => {

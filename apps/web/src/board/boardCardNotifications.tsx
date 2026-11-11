@@ -50,7 +50,7 @@ import {
 } from "../threadNotifications";
 import { deriveBoardThreadIdleSince } from "./boardAttentionSettle";
 import {
-  anyBoardCardNotificationOn,
+  boardCardNotifierNeeded,
   boardCardWaitAlreadyAlerted,
   createBoardCardNotificationGate,
   type BoardCardNotificationFiring,
@@ -111,6 +111,7 @@ export function startBoardCardNotifications(
   const openToasts = new Map<BoardCardId, Array<ToastId>>();
   let watched: { environmentId: EnvironmentId; unsubscribe: () => void } | null = null;
   let wakeTimer: ReturnType<typeof setTimeout> | null = null;
+  const withProgress = new WeakMap<BoardCardShell, BoardCardShell>();
 
   const syncBadge = () => setBoardNotificationBadge(pending.size);
   const clearPending = () => {
@@ -246,9 +247,13 @@ export function startBoardCardNotifications(
         ? board.cards
         : board.cards.map((card) => {
             const counts = progress.get(card.cardId);
-            return counts === undefined
-              ? card
-              : { ...card, planTotal: counts.total, planDone: counts.done };
+            if (counts === undefined) return card;
+            // Reuse the last spread so the gate's per-card cache, keyed on identity, hits.
+            const prior = withProgress.get(card);
+            if (prior?.planTotal === counts.total && prior.planDone === counts.done) return prior;
+            const next = { ...card, planTotal: counts.total, planDone: counts.done };
+            withProgress.set(card, next);
+            return next;
           });
     const armedByCard = boardShellAutoMergeArmedByCard({
       shells: cards,
@@ -290,13 +295,17 @@ export function startBoardCardNotifications(
     if (cleared.length > 0) syncBadge();
     const hidden = registry.get(environmentThreadShells.hiddenThreadKeysAtom);
     const delegated = registry.get(environmentThreadShells.delegatedUnderParentAtom);
-    const threadState = (thread: OrchestrationV2ThreadShell): BoardCardThreadAlertState => {
+    const threadState = (
+      thread: OrchestrationV2ThreadShell,
+      activeThreadId: ThreadId | null,
+    ): BoardCardThreadAlertState => {
       const presented = presentThreadShell(environmentId, thread, null);
       let status = resolveSidebarThreadStatus(presented);
       if (status === "ready" && presented.latestRun?.status === "failed") status = "failed";
       return {
         status,
         archived: presented.archivedAt !== null,
+        active: thread.id === activeThreadId,
         upstreamSkips:
           hidden.has(threadKey({ environmentId, threadId: thread.id })) ||
           isShownUnderParent({ environmentId, threadId: thread.id }, thread.lineage, delegated),
@@ -306,7 +315,7 @@ export function startBoardCardNotifications(
       const cardThreads = liveCardThreadIds(firing.card, board.cardThreads).flatMap(
         (threadId: ThreadId) => {
           const thread = threadById.get(threadId);
-          return thread === undefined ? [] : [threadState(thread)];
+          return thread === undefined ? [] : [threadState(thread, firing.card.activeThreadId)];
         },
       );
       if (
@@ -357,7 +366,7 @@ export function startBoardCardNotifications(
   const sync = () => {
     const settings = getClientSettings();
     const active =
-      anyBoardCardNotificationOn(settings.boardNotifications) && upstreamAlertsOn(settings);
+      boardCardNotifierNeeded(settings.boardNotifications) && upstreamAlertsOn(settings);
     const target = active ? resolveWatchedBoard(registry) : null;
     if (target === null) {
       unwatch();

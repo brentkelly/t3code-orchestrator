@@ -281,6 +281,17 @@ describe("createBoardCardNotificationGate", () => {
     expect(run(gate, [observe(shell("merge", { hasPr: true }), QUIET)]).fired).toEqual([
       "readyForMerge:ready:merge",
     ]);
+
+    // A No PR that raised nothing does not spend the visit.
+    const quiet = createBoardCardNotificationGate();
+    const noNeedsHuman = { ...SETTINGS, needsHuman: false };
+    run(quiet, [observe(shell("review", { hasPr: false }), QUIET)], T0, noNeedsHuman);
+    expect(
+      run(quiet, [observe(shell("merge", { hasPr: false }), QUIET)], T0, noNeedsHuman).fired,
+    ).toEqual([]);
+    expect(
+      run(quiet, [observe(shell("merge", { hasPr: true }), QUIET)], T0, noNeedsHuman).fired,
+    ).toEqual(["readyForMerge:ready:merge"]);
   });
 
   it("leaves blocked off by default and honours the master switch", () => {
@@ -322,6 +333,7 @@ describe("boardCardWaitAlreadyAlerted", () => {
   const thread = (overrides?: Partial<BoardCardThreadAlertState>): BoardCardThreadAlertState => ({
     status: "input",
     archived: false,
+    active: true,
     upstreamSkips: false,
     ...overrides,
   });
@@ -359,6 +371,13 @@ describe("boardCardWaitAlreadyAlerted", () => {
       "an archived failed thread",
       reason("stopped"),
       [thread({ status: "failed", archived: true })],
+      base,
+      false,
+    ],
+    [
+      "an earlier stage's failed thread beside a clean active thread",
+      reason("held"),
+      [thread({ status: "failed", active: false }), thread({ status: "ready" })],
       base,
       false,
     ],

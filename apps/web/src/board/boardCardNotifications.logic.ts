@@ -203,10 +203,17 @@ function isBoardCardNotificationCategoryOn(
   return settings.enabled && settings[CATEGORY_SETTING[category]];
 }
 
-export function anyBoardCardNotificationOn(settings: BoardNotificationSettings): boolean {
+function anyBoardCardNotificationOn(settings: BoardNotificationSettings): boolean {
   return (
     settings.enabled &&
     (settings.waiting || settings.needsHuman || settings.readyForMerge || settings.blocked)
+  );
+}
+
+/** Whether the notifier must watch the board: to alert, or to keep the routine mute current. */
+export function boardCardNotifierNeeded(settings: BoardNotificationSettings): boolean {
+  return (
+    anyBoardCardNotificationOn(settings) || (settings.enabled && settings.muteRoutineThreadAlerts)
   );
 }
 
@@ -324,9 +331,10 @@ export function createBoardCardNotificationGate() {
           if (isMergeVisitReason(reason)) mergeVisitAlerted = true;
         } else if (reason !== null && key !== priorKey) {
           const suppressed = isMergeVisitReason(reason) && mergeVisitAlerted;
-          if (isMergeVisitReason(reason)) mergeVisitAlerted = true;
           if (!suppressed && isBoardCardNotificationCategoryOn(input.settings, reason.category)) {
             fire.push({ card, reason });
+            // Only a raised alert spends the visit, so a muted No PR leaves Ready for merge.
+            if (isMergeVisitReason(reason)) mergeVisitAlerted = true;
           }
         }
         next.set(card.cardId, {
@@ -351,6 +359,8 @@ export interface BoardCardThreadAlertState {
   /** `resolveSidebarThreadStatus`, with upstream's ready-and-failed promotion. */
   readonly status: SidebarThreadStatus;
   readonly archived: boolean;
+  /** The card's `activeThreadId`: the only thread whose failure can be this wait's cause. */
+  readonly active: boolean;
   /** Upstream skips it: delegated under a parent, or hidden by a tag filter. */
   readonly upstreamSkips: boolean;
 }
@@ -379,7 +389,9 @@ export function boardCardWaitAlreadyAlerted(input: {
       return matches((thread) => thread.status === "approval");
     case "held":
     case "stopped":
-      return matches((thread) => thread.status === "failed" && !thread.archived);
+      // A failed status sticks until that thread runs again, so an earlier stage's
+      // failed thread says nothing about this wait.
+      return matches((thread) => thread.active && thread.status === "failed" && !thread.archived);
     default:
       return false;
   }
