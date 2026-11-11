@@ -318,8 +318,9 @@ describe("ClientSettings notifications", () => {
       blocked: false,
       muteRoutineThreadAlerts: true,
     });
-    expect(decodeClientSettings({ boardNotifications: { blocked: true } }).boardNotifications)
-      .toMatchObject({ enabled: true, blocked: true });
+    expect(
+      decodeClientSettings({ boardNotifications: { blocked: true } }).boardNotifications,
+    ).toMatchObject({ enabled: true, blocked: true });
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("boardNotifications");
   });
 });

@@ -17,7 +17,8 @@ const CATEGORY_ROWS: ReadonlyArray<{
   {
     key: "waiting",
     title: "Input needed",
-    description: "A question, a permission prompt, a plan or split to approve, or CI waiting on you.",
+    description:
+      "A question, a permission prompt, a plan or split to approve, or CI waiting on you.",
   },
   {
     key: "needsHuman",

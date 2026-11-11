@@ -158,7 +158,12 @@ describe("boardCardNotificationReason", () => {
     expect(reasonOf(ready)).toBe("readyForMerge:ready:merge");
     expect(reasonOf(ready, { autoMergeArmed: true })).toBeNull();
     expect(
-      reasonOf(shell("merge", { hasPr: true, ci: { phase: "running" } as NonNullable<BoardCardShell["ci"]> })),
+      reasonOf(
+        shell("merge", {
+          hasPr: true,
+          ci: { phase: "running" } as NonNullable<BoardCardShell["ci"]>,
+        }),
+      ),
     ).toBeNull();
     expect(reasonOf(shell("merge", { hasPr: true, stepConflictFix: true }))).toBeNull();
     expect(reasonOf(shell("merge", { hasPr: true, threadState: "working" }))).toBeNull();
@@ -331,13 +336,7 @@ describe("boardCardWaitAlreadyAlerted", () => {
   };
 
   it.each<
-    [
-      string,
-      BoardCardNotificationReason,
-      ReadonlyArray<BoardCardThreadAlertState>,
-      Rest,
-      boolean,
-    ]
+    [string, BoardCardNotificationReason, ReadonlyArray<BoardCardThreadAlertState>, Rest, boolean]
   >([
     ["a live question the thread raised", reason("input"), [thread()], base, true],
     ["a guest request", reason("input"), [thread({ status: "request" })], base, true],
@@ -349,7 +348,13 @@ describe("boardCardWaitAlreadyAlerted", () => {
       false,
     ],
     ["a permission prompt", reason("permission"), [thread({ status: "approval" })], base, true],
-    ["a failed thread behind a held card", reason("held"), [thread({ status: "failed" })], base, true],
+    [
+      "a failed thread behind a held card",
+      reason("held"),
+      [thread({ status: "failed" })],
+      base,
+      true,
+    ],
     [
       "an archived failed thread",
       reason("stopped"),
@@ -357,14 +362,14 @@ describe("boardCardWaitAlreadyAlerted", () => {
       base,
       false,
     ],
+    ["a thread upstream skips", reason("input"), [thread({ upstreamSkips: true })], base, false],
     [
-      "a thread upstream skips",
+      "upstream alerts off",
       reason("input"),
-      [thread({ upstreamSkips: true })],
-      base,
+      [thread()],
+      { ...base, upstreamAlertsOn: false },
       false,
     ],
-    ["upstream alerts off", reason("input"), [thread()], { ...base, upstreamAlertsOn: false }, false],
     [
       "a disconnected board",
       reason("input"),

@@ -578,7 +578,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   // T3o: which card waits notify on this device (inside notificationMode).
-  boardNotifications: BoardNotificationSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  boardNotifications: BoardNotificationSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   // Opt-in TeX typesetting in rendered Markdown. Off keeps math parsing and
   // KaTeX out of the render path entirely.
   mathRenderingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),

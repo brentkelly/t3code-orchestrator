@@ -29,8 +29,9 @@ import {
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import type { AtomRegistry } from "effect/reactivity";
-import { GitMergeIcon, LockIcon, MessageCircleQuestionIcon, TriangleAlertIcon } from "lucide-react";
+import { LockIcon, MessageCircleQuestionIcon, TriangleAlertIcon } from "lucide-react";
 
+import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { resolveSidebarThreadStatus } from "../components/Sidebar.logic";
 import { toastManager } from "../components/ui/toast";
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
@@ -127,7 +128,7 @@ export function startBoardCardNotifications(
     }
   };
   const closeAll = () => {
-    for (const cardId of [...openToasts.keys()]) closeCard(cardId);
+    for (const cardId of openToasts.keys()) closeCard(cardId);
     clearPending();
   };
   const openCard = (cardId: BoardCardId) => {
@@ -165,7 +166,7 @@ export function startBoardCardNotifications(
             reason.category === "waiting" ? (
               <MessageCircleQuestionIcon aria-hidden className="size-4 text-attention-foreground" />
             ) : reason.category === "readyForMerge" ? (
-              <GitMergeIcon aria-hidden className="size-4 text-attention-foreground" />
+              <PullRequestGlyph.merged aria-hidden className="size-4 text-attention-foreground" />
             ) : reason.category === "blocked" ? (
               <LockIcon aria-hidden className="size-4 text-warning-foreground" />
             ) : (
@@ -278,9 +279,12 @@ export function startBoardCardNotifications(
 
     const liveThreadIds = new Set<string>();
     for (const card of cards) {
-      for (const threadId of liveCardThreadIds(card, board.cardThreads)) liveThreadIds.add(threadId);
+      for (const threadId of liveCardThreadIds(card, board.cardThreads))
+        liveThreadIds.add(threadId);
     }
-    setBoardMutedRoutineThreads(settings.boardNotifications.muteRoutineThreadAlerts ? liveThreadIds : null);
+    setBoardMutedRoutineThreads(
+      settings.boardNotifications.muteRoutineThreadAlerts ? liveThreadIds : null,
+    );
 
     for (const cardId of cleared) closeCard(cardId);
     if (cleared.length > 0) syncBadge();
@@ -327,7 +331,9 @@ export function startBoardCardNotifications(
     gate.reset();
     const reevaluate = () => evaluate(environmentId);
     const unsubscribes = [
-      registry.subscribe(boardEnvironment.boardAtom(environmentId), reevaluate, { immediate: true }),
+      registry.subscribe(boardEnvironment.boardAtom(environmentId), reevaluate, {
+        immediate: true,
+      }),
       registry.subscribe(environmentShell.stateValueAtom(environmentId), reevaluate),
       registry.subscribe(boardEnvironment.workersAtom(environmentId), reevaluate),
       registry.subscribe(boardEnvironment.stageListAtom(environmentId), reevaluate),
@@ -350,7 +356,8 @@ export function startBoardCardNotifications(
 
   const sync = () => {
     const settings = getClientSettings();
-    const active = anyBoardCardNotificationOn(settings.boardNotifications) && upstreamAlertsOn(settings);
+    const active =
+      anyBoardCardNotificationOn(settings.boardNotifications) && upstreamAlertsOn(settings);
     const target = active ? resolveWatchedBoard(registry) : null;
     if (target === null) {
       unwatch();

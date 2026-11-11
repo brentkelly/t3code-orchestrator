@@ -106,7 +106,9 @@ describe("playNotificationSound", () => {
 // T3o: the board's card alerts and upstream's thread alerts add up to one badge.
 describe("setBoardNotificationBadge", () => {
   it("draws the sum of thread and card alerts", async () => {
-    const setNotificationBadge = vi.fn(async (_badge: { count: number; image: string | null }) => {});
+    const setNotificationBadge = vi.fn(
+      async (_badge: { count: number; image: string | null }) => {},
+    );
     vi.stubGlobal("window", {
       desktopBridge: { getClientPlatform: () => "darwin", setNotificationBadge },
     });

@@ -144,7 +144,11 @@ export function boardCardNotificationReason(
     (own.reason === "review-held" || own.reason === "review-stuck") &&
     (notice === null || notice.kind === "blocked")
   ) {
-    return reasonOf(own.reason === "review-stuck" ? "waiting" : "needsHuman", own.reason, card.stage);
+    return reasonOf(
+      own.reason === "review-stuck" ? "waiting" : "needsHuman",
+      own.reason,
+      card.stage,
+    );
   }
   if (notice !== null) {
     switch (notice.kind) {
@@ -192,7 +196,7 @@ const CATEGORY_SETTING: Record<
   blocked: "blocked",
 };
 
-export function isBoardCardNotificationCategoryOn(
+function isBoardCardNotificationCategoryOn(
   settings: BoardNotificationSettings,
   category: BoardCardNotificationCategory,
 ): boolean {
