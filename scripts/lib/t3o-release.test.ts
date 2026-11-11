@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildStamp,
+  changedPaths,
   checkExitCode,
   childPath,
   compareT3oTags,
@@ -81,6 +82,14 @@ describe("build stamp", () => {
     expect(porcelainIsDirty(" M pnpm-lock.yaml\n")).toBe(false);
     expect(porcelainIsDirty(" M pnpm-lock.yaml\n M apps/web/src/main.tsx\n")).toBe(true);
     expect(porcelainIsDirty("R  old.ts -> new.ts\n")).toBe(true);
+    // Callers trim git's stdout, which eats the first line's leading status column.
+    expect(porcelainIsDirty("M pnpm-lock.yaml\n M package.json")).toBe(true);
+    expect(porcelainIsDirty("M pnpm-lock.yaml")).toBe(false);
+    expect(changedPaths("M pnpm-lock.yaml\n M package.json\nR  a.ts -> b.ts")).toEqual([
+      "pnpm-lock.yaml",
+      "package.json",
+      "b.ts",
+    ]);
   });
 
   it("records the tag and base from describe", () => {

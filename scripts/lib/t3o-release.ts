@@ -113,11 +113,13 @@ export function porcelainIsDirty(porcelain: string): boolean {
   return changedPaths(porcelain).some((path) => path !== "pnpm-lock.yaml");
 }
 
+/** Paths from `git status --porcelain`, tolerating a first line whose status column was trimmed. */
 export function changedPaths(porcelain: string): string[] {
   return porcelain
     .split("\n")
-    .filter((line) => line.trim() !== "")
-    .map((line) => line.slice(3).split(" -> ").at(-1)!.trim());
+    .map((line) => /^[ MTADRCU?!]{1,2} (.+)$/.exec(line)?.[1])
+    .filter((path): path is string => path !== undefined)
+    .map((path) => path.split(" -> ").at(-1)!.trim());
 }
 
 export function buildStamp(input: {
