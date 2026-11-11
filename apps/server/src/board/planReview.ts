@@ -85,21 +85,23 @@ export function planReviewInstructions(input: {
 }
 
 /**
- * Whether a new `succeeded` completion replaces the pinned one: only
- * when a late plan review reopened the step after that completion was recorded.
- * Everywhere else the pin holds. The decider and the MCP reply both read it.
+ * Whether a new `succeeded` completion replaces the pinned one: only when the
+ * step was reopened after that completion was recorded, by a late plan review
+ * or by turning Auto-plan on. The one reading of "is this step reopened": a
+ * stale stamp stops counting once a newer completion exists.
  */
-export function boardCompletionReopenedByPlanReview(
+export function boardCompletionReopened(
   existing: BoardStepCompletion | undefined,
   current: BoardCardStepState | null,
 ): boolean {
-  return (
-    existing !== undefined &&
-    existing.outcome === "succeeded" &&
-    current !== null &&
-    current.stepId === existing.stepId &&
-    !isBoardTerminalStepStatus(current.status) &&
-    current.planReviewStartedAt !== undefined &&
-    existing.completedAt < current.planReviewStartedAt
-  );
+  if (
+    existing === undefined ||
+    existing.outcome !== "succeeded" ||
+    current === null ||
+    current.stepId !== existing.stepId ||
+    isBoardTerminalStepStatus(current.status)
+  )
+    return false;
+  const after = (at: string | undefined) => at !== undefined && existing.completedAt < at;
+  return after(current.planReviewStartedAt) || after(current.reopenedAt);
 }

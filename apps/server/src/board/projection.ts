@@ -504,6 +504,8 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULL before migration 054 and on every step with no plan review started.
   planReviewStartedAt: Schema.NullOr(IsoDateTime),
   planReviewRounds: Schema.NullOr(Schema.Int),
+  // NULL before migration 062 and on every step Auto-plan never reopened.
+  reopenedAt: Schema.NullOr(IsoDateTime),
   humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
   timeoutMs: BoardCardStepState.fields.timeoutMs,
@@ -2170,7 +2172,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         stage_entry_recoveries, last_nudge_at, prompt,
         provider_instance_id, model, mode, runtime_mode, model_options, base_tip_at_round_start,
         last_error, awaiting_reason, human_turn_at, stalled_reason, retry_at,
-        plan_review_started_at, plan_review_rounds,
+        plan_review_started_at, plan_review_rounds, reopened_at,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
         queued_by, started_at, updated_at
       )
@@ -2180,7 +2182,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.runtimeMode}, ${row.modelOptions},
         ${row.baseTipAtRoundStart},
         ${row.lastError}, ${row.awaitingReason}, ${row.humanTurnAt}, ${row.stalledReason}, ${row.retryAt},
-        ${row.planReviewStartedAt}, ${row.planReviewRounds},
+        ${row.planReviewStartedAt}, ${row.planReviewRounds}, ${row.reopenedAt},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
         ${row.queuedBy}, ${row.startedAt}, ${row.updatedAt}
@@ -2208,6 +2210,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         retry_at = excluded.retry_at,
         plan_review_started_at = excluded.plan_review_started_at,
         plan_review_rounds = excluded.plan_review_rounds,
+        reopened_at = excluded.reopened_at,
         human_in_loop = excluded.human_in_loop,
         max_attempts = excluded.max_attempts,
         timeout_ms = excluded.timeout_ms,
@@ -2248,6 +2251,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         retry_at AS "retryAt",
         plan_review_started_at AS "planReviewStartedAt",
         plan_review_rounds AS "planReviewRounds",
+        reopened_at AS "reopenedAt",
         human_in_loop AS "humanInLoop",
         max_attempts AS "maxAttempts",
         timeout_ms AS "timeoutMs",
@@ -2945,6 +2949,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         retryAt: state.retryAt,
         planReviewStartedAt: state.planReviewStartedAt ?? null,
         planReviewRounds: state.planReviewRounds ?? null,
+        reopenedAt: state.reopenedAt ?? null,
         humanInLoop: state.humanInLoop ? 1 : 0,
         maxAttempts: state.maxAttempts,
         timeoutMs: state.timeoutMs,
@@ -3870,6 +3875,7 @@ function loadBoardState(
               ? {}
               : { planReviewStartedAt: row.planReviewStartedAt }),
             ...(row.planReviewRounds === null ? {} : { planReviewRounds: row.planReviewRounds }),
+            ...(row.reopenedAt === null ? {} : { reopenedAt: row.reopenedAt }),
             humanInLoop: row.humanInLoop !== 0,
             maxAttempts: row.maxAttempts,
             timeoutMs: row.timeoutMs,
