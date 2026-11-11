@@ -5259,7 +5259,23 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // thread spawns, so every later reader sees the mode the round was composed in.
       const roundMode = command.reviewRoundMode;
       const storedOverrides = selecting.reviewOverrides ?? EMPTY_BOARD_CARD_REVIEW_OVERRIDES;
-      if (roundMode === undefined || String(roundMode.round) in storedOverrides.roundModes) {
+      if (roundMode === undefined) return selected;
+      const stored = storedOverrides.roundModes[String(roundMode.round)];
+      if (stored !== undefined) {
+        // The plan was composed before this record landed (a full-round request in the window
+        // between plan and select-step), so its prompt is stale: refuse it and let the reactor
+        // re-plan from the record.
+        if (
+          stored.kind !== roundMode.mode.kind ||
+          (stored.kind === "settling" &&
+            roundMode.mode.kind === "settling" &&
+            stored.sinceSha !== roundMode.mode.sinceSha)
+        ) {
+          return yield* invariant(
+            command,
+            `Round ${roundMode.round} of card '${command.cardId}' is already recorded as a ${stored.kind} round; re-plan it from that record.`,
+          );
+        }
         return selected;
       }
       const reviewOverrides: BoardCardReviewOverrides = {

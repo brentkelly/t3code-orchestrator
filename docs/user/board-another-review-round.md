@@ -113,8 +113,10 @@ checks every fix, but those fixes do not need a round of their own. The review p
 rounds **Settling**. When a loop ends this way, the pane says how many fixes the adjudicator verified
 but no reviewer re-read.
 
-The rule is checked again every round. A settling round that finds 2 or more real problems sends the
-next round back to a full review. Findings the adjudicator ruled not issues do not count.
+The rule is checked again every round. In a full round every blocking finding counts toward the
+threshold; in a settling round only critical findings and findings you sent back do, so a settling round with 2 or more
+critical findings sends the next round back to a full review. Findings the adjudicator ruled not
+issues never count.
 **Another review round** always runs a full review.
 
 To change when settling starts, or to turn it off, go to **Settings → Board → Pipeline → Code review**. In

@@ -10701,9 +10701,14 @@ export function boardReviewCompletionDefect(input: {
       return `Finding ids may not start with '${BOARD_REVIEW_CARRIED_ID_PREFIX}': the board reserves that prefix. Rename those findings and complete the step again.`;
     }
     const duplicate = ids.find((id, index) => ids.indexOf(id) !== index);
-    return duplicate === undefined
-      ? null
-      : `Finding id '${duplicate}' is used more than once. Give every finding its own id and complete the step again.`;
+    if (duplicate !== undefined) {
+      return `Finding id '${duplicate}' is used more than once. Give every finding its own id and complete the step again.`;
+    }
+    const settling =
+      boardReviewRoundModeOf({ roundModes: input.roundModes ?? {} }, round).kind === "settling";
+    return settling && review.scope === undefined
+      ? `This is a settling round: set \`scope\` to "delta" if you reviewed only the changes since the given commit, or "branch" if you fell back to the whole branch, and complete the step again.`
+      : null;
   }
   const done = new Map<string, BoardStepCompletion>();
   for (const completion of input.completions) {
@@ -11525,11 +11530,6 @@ export const BoardStageExecutionSimple = Schema.Struct({
 });
 export type BoardStageExecutionSimple = typeof BoardStageExecutionSimple.Type;
 
-/**
- * Carries every simple-member field so the reactor reads stages uniformly, plus `rounds` and
- * the per-phase configs. The executor ignores the top-level `prompt`/`model`, and
- * `resolveBoardStageExecution` forces build mode so the loop always has a worktree.
- */
 export const DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND = 3;
 const DEFAULT_BOARD_REVIEW_SETTLE_BELOW_FINDINGS = 2;
 /** At least 2: a round with no forcing findings already converges, so 1 could never settle. */
@@ -11538,6 +11538,11 @@ export const BoardReviewSettleBelowFindings = Schema.Int.check(
   Schema.isGreaterThanOrEqualTo(BOARD_REVIEW_SETTLE_BELOW_FINDINGS_MIN),
 );
 
+/**
+ * Carries every simple-member field so the reactor reads stages uniformly, plus `rounds` and
+ * the per-phase configs. The executor ignores the top-level `prompt`/`model`, and
+ * `resolveBoardStageExecution` forces build mode so the loop always has a worktree.
+ */
 export const BoardStageExecutionReview = Schema.Struct({
   kind: Schema.Literal("review"),
   autoExecute: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),

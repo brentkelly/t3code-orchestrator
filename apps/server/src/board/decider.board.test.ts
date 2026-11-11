@@ -1044,9 +1044,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
 
   it.effect("T3O-64: select-step never overwrites a recorded mode, and full records nothing", () =>
     Effect.gen(function* () {
-      const recorded = yield* decideEvents(
+      // A full-round request landed after the settling plan was composed: its prompt is stale.
+      const stale = yield* decideFail(
         selectReview(2, settling("sha-new")),
         modesBoard({ "2": { kind: "full" } }, [cleanReview(1)]),
+      );
+      assert.strictEqual(stale._tag, "BoardCommandInvariantError");
+      assert.include(String(stale), "already recorded as a full round");
+      const recorded = yield* decideEvents(
+        selectReview(2, settling("sha-1")),
+        modesBoard({ "2": settling("sha-1") }, [cleanReview(1)]),
       );
       assert.deepStrictEqual(
         recorded.map((event) => event.type),

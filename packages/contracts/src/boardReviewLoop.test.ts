@@ -1975,6 +1975,21 @@ describe("T3O-64: settling rounds", () => {
       });
       assert.notInclude(full ?? "", "no effect");
     });
+
+    it("refuses a settling review that does not say what it reviewed", () => {
+      const reviewDefect = (payload: unknown, roundModes?: typeof settledFour) =>
+        boardReviewCompletionDefect({
+          stepId: "review@4",
+          payload: JSON.stringify(payload),
+          completions: firstThree,
+          carriedFindings: {},
+          ...(roundModes === undefined ? {} : { roundModes }),
+        });
+      const noScope = { reviewedSha: reviewSha(4), findings: [] };
+      assert.include(reviewDefect(noScope, settledFour) ?? "", "scope");
+      assert.isNull(reviewDefect({ ...noScope, scope: "branch" }, settledFour));
+      assert.isNull(reviewDefect(noScope));
+    });
   });
 
   describe("decoding older records", () => {
