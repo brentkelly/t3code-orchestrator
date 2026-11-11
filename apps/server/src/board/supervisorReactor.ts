@@ -7617,7 +7617,15 @@ const make = Effect.gen(function* () {
       reopenFinished: true,
       createdAt: yield* nowIso,
     });
-    if (refusal !== null) return null;
+    if (refusal !== null) {
+      if (options.ownToggle) {
+        yield* autoPlanNote(
+          card.id,
+          `Auto-plan is on, but planning could not be reopened, so nothing was sent: ${refusal}`,
+        );
+      }
+      return null;
+    }
     const reopened = boardCardStepState(yield* readBoard, card.id);
     if (reopened === null) return null;
     if (reopened.humanInLoop) {

@@ -1135,6 +1135,51 @@ it.effect("a reopened step whose turn hits a usage limit parks with its prompt p
   );
 });
 
+it.effect("a refused reopen says so on the card's rail", () => {
+  const card = planningCard("refused", { autoBuildSetting: true });
+  let beforeReopen: Effect.Effect<void> = Effect.void;
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("refused", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+      gateway: (local) => ({
+        ...local,
+        pendingTurnStartAt: (threadId) =>
+          Effect.suspend(() => {
+            const hook = beforeReopen;
+            beforeReopen = Effect.void;
+            return hook;
+          }).pipe(Effect.andThen(local.pendingTurnStartAt(threadId))),
+      }),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("refused");
+        yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
+        // Another path marks the run between the reopen's reads and its dispatch.
+        beforeReopen = Ref.update(h.model, (model) => ({
+          ...model,
+          board: {
+            ...model.board!,
+            cards: model.board!.cards.map((entry) =>
+              entry.id === id
+                ? { ...entry, autoPlan: { requestedAt: "1970-01-01T00:00:00.000Z", endedAt: null } }
+                : entry,
+            ),
+          },
+        }));
+        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        const notes = autoPlanNotes(yield* h.commands);
+        assert.isTrue(
+          notes.some((note) =>
+            note.startsWith("Auto-plan is on, but planning could not be reopened"),
+          ),
+        );
+        assert.lengthOf(sendsOf(yield* h.commands, reopenedText(true)), 0);
+      }),
+  );
+});
+
 it.effect("a re-completion in the same turn is approved with nothing sent", () => {
   const card = planningCard("quick", { autoBuildSetting: true });
   return withGovernor(
