@@ -7251,12 +7251,10 @@ const make = Effect.gen(function* () {
     const found = stepThreadCard(board, threadId);
     if (found === null) return;
     if (found.state.status !== "running" && found.state.status !== "awaiting-input") return;
-    // Only a SUCCEEDED completion hands the step to the completion handler for
-    // good. A `failed`/`blocked` completion must not disarm death detection —
-    // after a failure + recovery nudge, a retry thread that dies silently
-    // still needs to be recovered here.
-    // A reopened step's old completion does not count: the agent must finish again.
-    if (pinnedSuccess(board, found.card.id, found.state)) return; // the completion handler owns this step
+    // Only a SUCCEEDED completion, not one a reopen superseded, hands the step to the completion
+    // handler for good. A `failed`/`blocked` one must not disarm death detection: a retry thread
+    // that dies silently after a recovery nudge still needs recovering here.
+    if (pinnedSuccess(board, found.card.id, found.state)) return;
     const shell = yield* liveThread(threadId);
     // Another turn is live, typically a recovery nudge; its own completion re-runs this. Compared
     // by identity, because the projection usually still names the just-ended turn as live. Without
@@ -7452,7 +7450,7 @@ const make = Effect.gen(function* () {
       createdAt:
         Number.isNaN(reopenedMs) || Date.parse(now) > reopenedMs
           ? now
-          : new Date(reopenedMs + 1).toISOString(),
+          : DateTime.formatIso(DateTime.makeUnsafe(reopenedMs + 1)),
     });
   });
 
@@ -7460,28 +7458,29 @@ const make = Effect.gen(function* () {
    * A step Auto-plan reopened gets its prompt when the agent's current turn ends, never mid-turn:
    * interrupting or steering would stop running plan-review subagents. True when it went out.
    */
-  const deliverReopenedAutoPlan = Effect.fn("board-supervisor-deliverReopenedAutoPlan")(
-    function* (card: BoardCard, state: BoardCardStepState) {
-      if (state.reopenedAt === undefined) return false;
-      const board = yield* readBoard;
-      const current = board.cards.find((candidate) => candidate.id === card.id);
-      const live = boardCardStepState(board, card.id);
-      if (current === undefined || live === null || live.threadId === null) return false;
-      if (live.stepId !== state.stepId || live.status !== "running") return false;
-      if (live.lastNudgeAt !== live.reopenedAt || !reopenedForAutoPlan(board, current, live)) {
-        return false;
-      }
-      if (!(yield* recordReopenedDelivery(live))) return false;
-      yield* sendTurn({
-        threadId: live.threadId,
-        text: boardAutoPlanInstruction(automationIn(board, current).autoBuild.value, {
-          reopened: true,
-        }),
-        runtimeMode: live.runtimeMode,
-      });
-      return true;
-    },
-  );
+  const deliverReopenedAutoPlan = Effect.fn("board-supervisor-deliverReopenedAutoPlan")(function* (
+    card: BoardCard,
+    state: BoardCardStepState,
+  ) {
+    if (state.reopenedAt === undefined) return false;
+    const board = yield* readBoard;
+    const current = board.cards.find((candidate) => candidate.id === card.id);
+    const live = boardCardStepState(board, card.id);
+    if (current === undefined || live === null || live.threadId === null) return false;
+    if (live.stepId !== state.stepId || live.status !== "running") return false;
+    if (live.lastNudgeAt !== live.reopenedAt || !reopenedForAutoPlan(board, current, live)) {
+      return false;
+    }
+    if (!(yield* recordReopenedDelivery(live))) return false;
+    yield* sendTurn({
+      threadId: live.threadId,
+      text: boardAutoPlanInstruction(automationIn(board, current).autoBuild.value, {
+        reopened: true,
+      }),
+      runtimeMode: live.runtimeMode,
+    });
+    return true;
+  });
 
   /**
    * A question on a step Auto-plan reopened is answered with the Auto-plan prompt instead of

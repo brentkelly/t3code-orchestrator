@@ -977,7 +977,8 @@ const finishedPlanning = (
 const completedAgain = (id: BoardCardId, sequence: number) =>
   planningCompleted(id, sequence, SECOND_FINISH);
 
-const reopenedText = (autoBuild: boolean) => boardAutoPlanInstruction(autoBuild, { reopened: true });
+const reopenedText = (autoBuild: boolean) =>
+  boardAutoPlanInstruction(autoBuild, { reopened: true });
 
 const sendsOf = (commands: ReadonlyArray<HarnessCommand>, text: string) =>
   commands.filter((command) => command.type === "thread.send" && command.text === text);

@@ -47,7 +47,7 @@ export const BOARD_AUTO_PLAN_INSTRUCTION =
 
 /** Appended when turning Auto-plan on reopened a planning step the agent had
     already marked finished, so its next completion is the real finish. */
-export const BOARD_AUTO_PLAN_REOPENED_NOTE =
+const BOARD_AUTO_PLAN_REOPENED_NOTE =
   "Planning had been marked finished and has been reopened. When your current work, including any plan review, is done, call board_complete_step again.";
 
 const reopenedSuffix = (options: { readonly reopened?: boolean } | undefined) =>

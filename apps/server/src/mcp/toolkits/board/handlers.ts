@@ -1003,9 +1003,7 @@ export const boardHandlers = {
     const keptMatch = isKeptStepThread(board, card, stepId, deps.scope.thread.threadId);
     const supersedes =
       (existing !== undefined && existing.outcome !== "succeeded" && (liveMatch || keptMatch)) ||
-      (input.outcome === "succeeded" &&
-        liveMatch &&
-        boardCompletionReopened(existing, liveState));
+      (input.outcome === "succeeded" && liveMatch && boardCompletionReopened(existing, liveState));
     // A `succeeded` record with an unreadable payload is repaired, not re-emitted. Mirrors the
     // decider so the reply is right; only a valid completion may repair (checked below).
     const repairs =

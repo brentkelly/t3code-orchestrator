@@ -240,39 +240,41 @@ it.layer(layer)("plan review through the board tools", (it) => {
     }),
   );
 
-  it.effect("after an Auto-plan reopen, the next completion is recorded, not a no-op (T3O-80)", () =>
-    Effect.gen(function* () {
-      const engine = yield* boardStackEngine;
-      const { cardId, threadId } = yield* seedPlanningCard("autoreopen", { inPlanning: true });
-      yield* boardHandlers.board_propose_plans({ plans: onePlan }).pipe(as(threadId));
-      yield* boardHandlers
-        .board_complete_step({ outcome: "succeeded", summary: "Planned." })
-        .pipe(as(threadId));
-      yield* engine.dispatch({
-        type: "board.card.settle-step",
-        commandId: CommandId.make("cmd-settle-autoreopen"),
-        cardId,
-        stepId: BOARD_SEED_STAGE_IDS.planning,
-        outcome: "succeeded",
-        createdAt: "2026-01-01T00:00:01.000Z",
-      });
-      yield* TestClock.adjust("1 second");
-      yield* engine.dispatch({
-        type: "board.card.mark-auto-plan",
-        commandId: CommandId.make("cmd-mark-autoreopen"),
-        cardId,
-        reopenFinished: true,
-        createdAt: "2026-01-01T00:00:02.000Z",
-      });
+  it.effect(
+    "after an Auto-plan reopen, the next completion is recorded, not a no-op (T3O-80)",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* boardStackEngine;
+        const { cardId, threadId } = yield* seedPlanningCard("autoreopen", { inPlanning: true });
+        yield* boardHandlers.board_propose_plans({ plans: onePlan }).pipe(as(threadId));
+        yield* boardHandlers
+          .board_complete_step({ outcome: "succeeded", summary: "Planned." })
+          .pipe(as(threadId));
+        yield* engine.dispatch({
+          type: "board.card.settle-step",
+          commandId: CommandId.make("cmd-settle-autoreopen"),
+          cardId,
+          stepId: BOARD_SEED_STAGE_IDS.planning,
+          outcome: "succeeded",
+          createdAt: "2026-01-01T00:00:01.000Z",
+        });
+        yield* TestClock.adjust("1 second");
+        yield* engine.dispatch({
+          type: "board.card.mark-auto-plan",
+          commandId: CommandId.make("cmd-mark-autoreopen"),
+          cardId,
+          reopenFinished: true,
+          createdAt: "2026-01-01T00:00:02.000Z",
+        });
 
-      const done = yield* boardHandlers
-        .board_complete_step({ outcome: "succeeded", summary: "Planned again." })
-        .pipe(as(threadId));
-      assert.strictEqual(done.alreadyCompleted, false);
-      const after = yield* boardHandlers.board_get_card_context().pipe(as(threadId));
-      assert.strictEqual(after.steps.length, 1);
-      assert.strictEqual(after.steps[0]?.summary, "Planned again.");
-    }),
+        const done = yield* boardHandlers
+          .board_complete_step({ outcome: "succeeded", summary: "Planned again." })
+          .pipe(as(threadId));
+        assert.strictEqual(done.alreadyCompleted, false);
+        const after = yield* boardHandlers.board_get_card_context().pipe(as(threadId));
+        assert.strictEqual(after.steps.length, 1);
+        assert.strictEqual(after.steps[0]?.summary, "Planned again.");
+      }),
   );
 
   it.effect("a rounds change mid-review reaches the context and the activity", () =>

@@ -169,15 +169,16 @@ export function boardCardAutomationRows(input: {
   readonly planningFinished?: boolean;
 }): ReadonlyArray<BoardAutomationRow> {
   const { autoPlan, autoBuild, autoMerge } = input.resolved;
-  const planNote = input.inPlanning && input.planningFinished === true
-    ? "Planning is finished."
-    : autoPlan.value
-    ? autoBuild.value
-      ? "The agent plans this card unattended; the plan is approved and built."
-      : "The agent plans this card unattended; the plan waits for your approval."
-    : input.inPlanning
-      ? "Turn on to have the agent decide the remaining questions and finish the plan."
-      : "Planned with you when it enters Planning.";
+  const planNote =
+    input.inPlanning && input.planningFinished === true
+      ? "Planning is finished."
+      : autoPlan.value
+        ? autoBuild.value
+          ? "The agent plans this card unattended; the plan is approved and built."
+          : "The agent plans this card unattended; the plan waits for your approval."
+        : input.inPlanning
+          ? "Turn on to have the agent decide the remaining questions and finish the plan."
+          : "Planned with you when it enters Planning.";
   const buildNote = autoBuild.waitingForGroupStart
     ? `Starts building once ${autoBuild.inheritedFrom?.key ?? "the group"} has started and every dependency is done.`
     : autoBuild.value
