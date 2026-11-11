@@ -10,7 +10,7 @@ import {
   type BoardWorkersState,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { createContext, useContext } from "react";
+import { createContext, useContext, useState } from "react";
 
 import { boardEnvironment } from "../../state/board";
 
@@ -37,6 +37,12 @@ function boardWorkersCardView(state: BoardWorkersState): BoardWorkersState {
 /** `boardWorkersCardView`, kept the same object until what it holds changes. */
 export function useBoardWorkersCardView(environmentId: EnvironmentId): BoardWorkersState {
   const state = useAtomValue(boardEnvironment.workersAtom(environmentId));
-  const key = JSON.stringify(boardWorkersCardView(state));
-  return JSON.parse(key) as BoardWorkersState;
+  const view = boardWorkersCardView(state);
+  const key = JSON.stringify(view);
+  // Held in state, as `useStableHandoffRuns` does: the compiler caches on `state`, which
+  // every clone-progress tick replaces.
+  const [stable, setStable] = useState({ key, view });
+  if (stable.key === key) return stable.view;
+  setStable({ key, view });
+  return view;
 }

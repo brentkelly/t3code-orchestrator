@@ -146,18 +146,66 @@ interface DropTarget {
   readonly zone: BoardListDropZone;
 }
 
+// Its own hook so a selection change, which the model reads, never rebuilds the rows.
+function useBoardListRows(props: BoardListViewProps) {
+  const { shells, stages, inScope, query } = props;
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  const [stageFilter, setStageFilter] = useState<ReadonlySet<string>>(() => new Set());
+  const tree = buildBoardListTree({ shells, stages, inScope });
+  const filter = { query, stages: stageFilter };
+  const rows = boardListRows({ tree, collapsed, filter });
+  const visibleIds = rows.map((row) => String(row.card.cardId));
+  return { collapsed, setCollapsed, stageFilter, setStageFilter, tree, rows, visibleIds };
+}
+
+// The derivations live in their own hook: a value the compiler sees later passed to
+// a call after one of the view's hooks loses its cache, and hook results are frozen.
+function useBoardListModel(props: BoardListViewProps) {
+  const { shells, allShells, stages, attentionFor, query } = props;
+  const { collapsed, setCollapsed, stageFilter, setStageFilter, tree, rows, visibleIds } =
+    useBoardListRows(props);
+  const [rawSelected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const [dragIds, setDragIds] = useState<ReadonlyArray<string> | null>(null);
+  // Every action reads only the selected rows still on screen: a filter or a
+  // collapse must not leave Tab, Move to… or a drag acting on hidden cards.
+  const selected = boardListVisibleSelection(rawSelected, visibleIds);
+  const selection = boardListSelection(tree, selected);
+  const selectionIds = selection.map((card) => String(card.cardId));
+  const filtering = query.trim().length > 0 || stageFilter.size > 0;
+  const indent = boardListIndent(tree, selected, filtering ? new Set(visibleIds) : undefined);
+  const outdent = boardListOutdent(tree, selected, allShells);
+  const dragBlocked = dragIds === null ? null : boardListDragBlocked(shells, dragIds);
+  // `boardGroupStats` caches per input object, so this must keep its identity.
+  const statsInput: BoardGroupStatsInput = { shells, stages, attentionFor };
+  return {
+    setSelected,
+    collapsed,
+    setCollapsed,
+    stageFilter,
+    setStageFilter,
+    dragIds,
+    setDragIds,
+    tree,
+    rows,
+    visibleIds,
+    selected,
+    selection,
+    selectionIds,
+    indent,
+    outdent,
+    dragBlocked,
+    statsInput,
+  };
+}
+
 export function BoardListView(props: BoardListViewProps) {
-  const { environmentId, shells, allShells, stages, inScope, attentionFor } = props;
+  const { environmentId, shells, allShells, stages } = props;
   const moveCards = useAtomCommand(boardEnvironment.moveCards);
   const archiveCard = useAtomCommand(boardEnvironment.archiveCard);
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
 
   // Session-scoped view state: none of it is worth a reload (D9).
-  const [rawSelected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [anchorId, setAnchorId] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
-  const [stageFilter, setStageFilter] = useState<ReadonlySet<string>>(() => new Set());
-  const [dragIds, setDragIds] = useState<ReadonlyArray<string> | null>(null);
   const [over, setOver] = useState<DropTarget | null>(null);
   const [startedDialog, setStartedDialog] = useState<{
     readonly startedId: string;
@@ -166,20 +214,25 @@ export function BoardListView(props: BoardListViewProps) {
   const [newGroup, setNewGroup] = useState<{ readonly ids: ReadonlyArray<string> } | null>(null);
   const [archiveGroupId, setArchiveGroupId] = useState<string | null>(null);
 
-  const tree = buildBoardListTree({ shells, stages, inScope });
-  const filter = { query: props.query, stages: stageFilter };
-  const rows = boardListRows({ tree, collapsed, filter });
-  const visibleIds = rows.map((row) => String(row.card.cardId));
-  // Every action reads only the selected rows still on screen: a filter or a
-  // collapse must not leave Tab, Move to… or a drag acting on hidden cards.
-  const selected = boardListVisibleSelection(rawSelected, visibleIds);
-  const selection = boardListSelection(tree, selected);
-  const selectionIds = selection.map((card) => String(card.cardId));
-  const filtering = props.query.trim().length > 0 || stageFilter.size > 0;
-  const indent = boardListIndent(tree, selected, filtering ? new Set(visibleIds) : undefined);
-  const outdent = boardListOutdent(tree, selected, allShells);
-  const dragBlocked = dragIds === null ? null : boardListDragBlocked(shells, dragIds);
-  const statsInput: BoardGroupStatsInput = { shells, stages, attentionFor };
+  const {
+    setSelected,
+    collapsed,
+    setCollapsed,
+    stageFilter,
+    setStageFilter,
+    dragIds,
+    setDragIds,
+    tree,
+    rows,
+    visibleIds,
+    selected,
+    selection,
+    selectionIds,
+    indent,
+    outdent,
+    dragBlocked,
+    statsInput,
+  } = useBoardListModel(props);
   const stageDefinitions = stages.stages ?? [];
 
   // ── The one move path ────────────────────────────────────────────────

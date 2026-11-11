@@ -207,6 +207,8 @@ export function BoardCardThreadPane({
   // remain hidden so the chevron only appears when it does something.
   const stripRef = useRef<HTMLDivElement | null>(null);
   const [canScrollRight, setCanScrollRight] = useState(false);
+  // What the tabs' widths depend on, so a board push that changes neither skips the re-measure.
+  const tabStripKey = threadLinks.map((link) => `${link.threadId}:${link.title ?? ""}`).join("\n");
   const syncScrollAffordance = () => {
     const el = stripRef.current;
     if (el === null) return;
@@ -218,8 +220,8 @@ export function BoardCardThreadPane({
     if (el === null) return undefined;
     syncScrollAffordance();
     return observeResize(el, syncScrollAffordance);
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- a new tab widens the strip's content without resizing the strip, so it re-measures.
-  }, [syncScrollAffordance, threadLinks]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- a new or renamed tab widens the strip's content without resizing the strip, so it re-measures.
+  }, [syncScrollAffordance, tabStripKey]);
   const scrollOlderIntoView = () => {
     stripRef.current?.scrollBy({ left: stripRef.current.clientWidth * 0.7, behavior: "smooth" });
   };
