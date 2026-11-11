@@ -60,7 +60,7 @@ import { boardConflictFix } from "./boardConflictFix";
 import { boardAutoMergePill } from "./boardAutoMergeHold";
 import { boardCardAutoBuildChip } from "./boardCardAutomation";
 import { boardCardScheduleLabel } from "./boardCardScheduleLabel";
-import { boardCardNotice, type BoardCardNotice } from "./boardCardNotice";
+import { boardCardNotice, boardCardProviderStalled, type BoardCardNotice } from "./boardCardNotice";
 import { boardCardMeta, boardCardSummary } from "./boardCardSummary";
 import { BoardLabelChips } from "./BoardLabelChips";
 import {
@@ -568,7 +568,7 @@ export function BoardCardContent({
     stageGone: isGroup ? null : stageGone,
     workerMove: isGroup ? null : boardCardMoveNotice(card, workers),
     workerTrouble: isGroup ? null : boardCardWorkerTrouble(card, workers),
-    providerMissing: !isGroup && card.stalled && card.stalledReason === "provider-not-on-worker",
+    providerMissing: !isGroup && boardCardProviderStalled(card),
   });
   // The card's scheduled start (T3O-19, D9/D14). Null on a done card and on
   // one whose time has already passed — the server clears the field within a

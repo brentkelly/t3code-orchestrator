@@ -11,6 +11,7 @@ import type { BoardConflictFixInfo } from "./boardConflictFix";
 import {
   boardCardNoPullRequest,
   boardCardNotice,
+  boardCardProviderStalled,
   type BoardCardNoticeAttention,
 } from "./boardCardNotice";
 import type { BoardCardWorkerTrouble } from "./workers/cardWorker";
@@ -310,6 +311,21 @@ describe("the worktree-kept notice (T3O-52)", () => {
         dependencyCount: 2,
       }),
     ).toEqual({ kind: "attention", attention: providerMissing });
+  });
+});
+
+describe("boardCardProviderStalled", () => {
+  it("is a stall on the provider, on the worker or for the project, and nothing else", () => {
+    expect(
+      boardCardProviderStalled({ stalled: true, stalledReason: "provider-not-on-worker" }),
+    ).toBe(true);
+    expect(
+      boardCardProviderStalled({ stalled: true, stalledReason: "provider-disabled-for-project" }),
+    ).toBe(true);
+    expect(boardCardProviderStalled({ stalled: true, stalledReason: "gave-up" })).toBe(false);
+    expect(
+      boardCardProviderStalled({ stalled: false, stalledReason: "provider-disabled-for-project" }),
+    ).toBe(false);
   });
 });
 

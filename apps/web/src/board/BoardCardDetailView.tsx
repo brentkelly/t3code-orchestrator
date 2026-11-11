@@ -446,8 +446,8 @@ export interface BoardCardDetailGroup {
 
 export interface BoardCardDetailViewProps {
   readonly environmentId: EnvironmentId;
-  /** Why the live step stalled, from the card's shell (T3O-65 shows the
-      provider-not-on-worker panel off it). */
+  /** Why the live step stalled, from the card's shell (T3O-65 and T3O-74
+      show the provider-stall panels off it). */
   readonly stalledReason?: BoardCardStepStalledReason | undefined;
   /** What the card's shell says of its work and its worker (T3O-66), for the
       Worker offline / Worker removed panel. */
@@ -2298,6 +2298,15 @@ function InfoSection({
         shell={props.workerShell}
         stalledReason={props.stalledReason}
       />
+      {/* T3O-74: not a worker matter, so not in the worker row, which a board
+          with no workers never renders. */}
+      {props.stalledReason === "provider-disabled-for-project" ? (
+        <span className="rounded-md bg-warning/10 px-2 py-1.5 text-warning-foreground">
+          Provider disabled. This step's provider is turned off for the card's project, so the step
+          hasn't started. Turn it on in the project's settings and press Continue, or change the
+          stage's model in Models.
+        </span>
+      ) : null}
       <div>Created · {formatRelativeTimeLabel(props.detail.card.createdAt)}</div>
       {base.retargeted && base.effective !== null ? (
         // Derived, never stored (D14): between retargeting and the rebase that
@@ -3124,6 +3133,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onOpenChange={setModelsOpen}
                 open={modelsOpen}
                 overrides={card.modelOverrides}
+                projectId={card.projectId}
                 rows={modelRows}
                 stepRunning={props.stepRunning === true}
               />
@@ -3326,6 +3336,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onBackToThread={() => setPane("thread")}
                 onSetRoundModel={props.onSetReviewRoundModel}
                 phaseRuntimeMode={props.reviewPhaseRuntimeMode}
+                projectId={card.projectId}
                 onResume={props.onResumeReview}
                 onRuling={onReviewStage ? props.onReviewRuling : undefined}
                 onReopenStep={props.onReopenReviewStep}
