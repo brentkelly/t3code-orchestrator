@@ -1096,6 +1096,45 @@ it.effect("a reopened prompt whose send fails stays pending, so recovery sends i
   );
 });
 
+it.effect("a reopened step whose turn hits a usage limit parks with its prompt pending", () => {
+  const card = planningCard("limited", { autoBuildSetting: true });
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("limited", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("limited");
+        const threadId = yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
+        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* Ref.update(
+          h.shells,
+          (shells) =>
+            new Map([
+              ...shells,
+              [
+                threadId,
+                {
+                  ...fakeThreadState(threadId),
+                  usageLimit: {
+                    resetAt: "1970-01-01T01:00:00.000Z",
+                    message: "Usage limit reached.",
+                    resumeArmed: false,
+                  },
+                },
+              ],
+            ]),
+        );
+        yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-limited"));
+        assert.lengthOf(sendsOf(yield* h.commands, reopenedText(true)), 0);
+        const parked = boardCardStepState(yield* h.board, id)!;
+        assert.strictEqual(parked.stalledReason, "usage-limit");
+        assert.isUndefined(parked.reopenedPromptAt);
+      }),
+  );
+});
+
 it.effect("a re-completion in the same turn is approved with nothing sent", () => {
   const card = planningCard("quick", { autoBuildSetting: true });
   return withGovernor(

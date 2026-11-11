@@ -7315,6 +7315,15 @@ const make = Effect.gen(function* () {
       return;
     }
     backgroundWaits.delete(String(threadId));
+    // A turn that hit a usage limit parks with the reopened prompt still pending: sent now it would
+    // only fail a turn. The resumed turn's end delivers it.
+    if (
+      !found.state.humanInLoop &&
+      reopenedPromptPending(found.state) &&
+      (yield* parkForUsageLimit(found))
+    ) {
+      return;
+    }
     if (yield* deliverReopenedAutoPlan(found.card, found.state)) return;
     // The one free turn-ending a human's turn bought: spent here only, since the timeout sweep also
     // reaches `recoverStep` and must still catch a hung agent. One ending, then supervision
