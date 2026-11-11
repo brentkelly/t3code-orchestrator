@@ -57,11 +57,16 @@ export function startTabIdentity(router: AppRouter): void {
     getClientSettings().boardEnvironmentId,
   ).pipe(Atom.keepAlive, Atom.withLabel("t3o-tab-identity-nominated-board"));
 
-  router.subscribe("onResolved", () => {
+  const syncLocation = () => {
     const next = currentRouteKey(router);
     if (!sameRouteKey(next, appAtomRegistry.get(locationKeyAtom))) {
       appAtomRegistry.set(locationKeyAtom, next);
     }
+  };
+  router.subscribe("onResolved", syncLocation);
+  // The composer's picker can move an open draft to another project without changing the URL.
+  useComposerDraftStore.subscribe(() => {
+    if (appAtomRegistry.get(locationKeyAtom).kind === "draft") syncLocation();
   });
   subscribeClientSettings(() => {
     appAtomRegistry.set(nominatedBoardEnvAtom, getClientSettings().boardEnvironmentId);
@@ -134,10 +139,10 @@ export function startTabIdentity(router: AppRouter): void {
   }).pipe(Atom.withLabel("t3o-tab-identity"));
 
   const favicon = isElectron ? null : startFavicon();
-  let lastAppliedKey: TabRouteKey | null = null;
+  let lastApplied: { key: TabRouteKey; pending: boolean } | null = null;
   const apply = ({ key, identity }: { key: TabRouteKey; identity: TabIdentity | null }) => {
-    if (identity === null || shouldHold(identity, key, lastAppliedKey)) return;
-    lastAppliedKey = key;
+    if (identity === null || shouldHold(identity, key, lastApplied)) return;
+    lastApplied = { key, pending: identity.pending };
     if (document.title !== identity.title) document.title = identity.title;
     favicon?.set(identity.icon);
   };
@@ -174,11 +179,15 @@ function startFavicon(): { set: (icon: TabIcon) => void } | null {
     link.href = url;
     appliedKey = key;
   };
-  void import("./faviconTile").then(async (module) => {
-    await module.loadTileFont();
-    renderer = module;
-    paint();
-  });
+  void import("./faviconTile")
+    .then(async (module) => {
+      await module.loadTileFont();
+      renderer = module;
+      paint();
+    })
+    .catch(() => {
+      // A failed chunk or font load leaves the static icon in place.
+    });
   return {
     set: (icon) => {
       wanted = icon;

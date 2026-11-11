@@ -319,16 +319,21 @@ export function resolveIdentity(key: TabRouteKey, inputs: TabIdentityInputs): Ta
 }
 
 /**
- * Whether to hold the tab as it is: only while the route is unchanged and the board snapshot
- * it needs is still loading, so a reconnect never flickers the card away. A changed route, or
- * a board server that is down, resolves at once.
+ * Whether to hold the tab as it is: only while the route is unchanged, the board snapshot it
+ * needs is still loading, and what the tab shows was itself resolved, so a reconnect never
+ * flickers the card away but a cold start keeps updating until the snapshot lands.
  */
 export function shouldHold(
   identity: TabIdentity,
   key: TabRouteKey,
-  lastAppliedKey: TabRouteKey | null,
+  lastApplied: { readonly key: TabRouteKey; readonly pending: boolean } | null,
 ): boolean {
-  return identity.pending && sameRouteKey(key, lastAppliedKey);
+  return (
+    identity.pending &&
+    lastApplied !== null &&
+    !lastApplied.pending &&
+    sameRouteKey(key, lastApplied.key)
+  );
 }
 
 export function tabIconKey(icon: TabIcon): string {

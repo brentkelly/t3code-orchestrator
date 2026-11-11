@@ -365,19 +365,24 @@ describe("routeKey", () => {
 describe("shouldHold", () => {
   const key = card("card-65");
   const pending = resolveIdentity(key, inputs({ cardIndex: null }))!;
+  const resolved = { key: card("card-65"), pending: false };
 
-  it("holds an unchanged route while its snapshot loads", () => {
-    expect(shouldHold(pending, key, card("card-65"))).toBe(true);
+  it("holds a resolved route while its snapshot reloads", () => {
+    expect(shouldHold(pending, key, resolved)).toBe(true);
   });
 
   it("resolves at once when the route changed", () => {
-    expect(shouldHold(pending, key, { kind: "other" })).toBe(false);
+    expect(shouldHold(pending, key, { key: { kind: "other" }, pending: false })).toBe(false);
     expect(shouldHold(pending, key, null)).toBe(false);
+  });
+
+  it("keeps updating a cold start whose snapshot has not arrived yet", () => {
+    expect(shouldHold(pending, key, { key: card("card-65"), pending: true })).toBe(false);
   });
 
   it("never holds when the board server is unavailable", () => {
     const down = resolveIdentity(key, inputs({ boardEnvironment: { kind: "unavailable" } }))!;
-    expect(shouldHold(down, key, key)).toBe(false);
+    expect(shouldHold(down, key, resolved)).toBe(false);
   });
 });
 
