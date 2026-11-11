@@ -2975,6 +2975,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         linkedAt: command.createdAt,
         tombstonedAt: null,
         ...(command.workerId === undefined ? {} : { workerId: command.workerId }),
+        round: card.pullRequestHistory.length,
       };
       const nextCard: BoardCard = {
         ...card,
@@ -4721,6 +4722,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           cardId: command.cardId,
           pullRequest: next,
           transition,
+          ...(previous !== null && (transition === "linked" || transition === "unlinked")
+            ? { previous }
+            : {}),
           card: nextCard,
         },
       };
@@ -4799,6 +4803,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           cardId: command.cardId,
           pullRequest: next,
           transition,
+          ...(previous !== null && (transition === "linked" || transition === "unlinked")
+            ? { previous }
+            : {}),
           card: nextCard,
         },
       };

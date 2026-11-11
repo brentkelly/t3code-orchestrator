@@ -14,6 +14,8 @@ import {
   type BoardGatewaySpawnInput,
   type BoardGatewayTargetInput,
   type BoardGatewayAnswerInput,
+  type BoardGatewayPullRequestLinkInput,
+  type BoardGatewayPullRequestUnlinkInput,
   type BoardGatewayThreadState,
   type BoardMcpRelayRequest,
   type BoardMcpRelayResponse,
@@ -60,6 +62,10 @@ export interface WorkerGatewayRpcOf<E> {
   readonly delete: (input: BoardGatewayTargetInput) => Effect.Effect<void, E>;
   readonly armLimitRecovery: (input: BoardGatewayTargetInput) => Effect.Effect<boolean, E>;
   readonly answerPendingInput: (input: BoardGatewayAnswerInput) => Effect.Effect<boolean, E>;
+  readonly linkPullRequest: (input: BoardGatewayPullRequestLinkInput) => Effect.Effect<void, E>;
+  readonly unlinkPullRequest: (
+    input: BoardGatewayPullRequestUnlinkInput,
+  ) => Effect.Effect<void, E>;
   readonly threadState: (threadId: ThreadId) => Effect.Effect<BoardGatewayThreadState | null, E>;
   readonly threadRecords: (
     threadIds: ReadonlyArray<ThreadId>,
