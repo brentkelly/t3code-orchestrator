@@ -42,7 +42,8 @@ const nextLink = (
 const rerunDelay = (reruns: number): Duration.Duration =>
   Duration.seconds(Math.min(30, 2 ** Math.min(reruns, 5)));
 
-export const runPerOnlineWorker = Effect.fn("PerOnlineWorker.run")(function* (
+// Untraced: it and its loops run for the server's lifetime.
+export const runPerOnlineWorker = Effect.fnUntraced(function* (
   connections: WorkerConnectionsShape,
   name: string,
   run: (workerId: EnvironmentId, rpc: WorkerRpc) => Effect.Effect<void>,
@@ -50,7 +51,7 @@ export const runPerOnlineWorker = Effect.fn("PerOnlineWorker.run")(function* (
 ): Effect.fn.Return<void, never, Scope.Scope> {
   const fibers = yield* FiberMap.make<EnvironmentId>();
   const started = new Set<EnvironmentId>();
-  const loop = Effect.fn("PerOnlineWorker.loop")(function* (workerId: EnvironmentId) {
+  const loop = Effect.fnUntraced(function* (workerId: EnvironmentId) {
     let last: WorkerRpc | null = null;
     let reruns = 0;
     let pause: Duration.Duration | null = null;

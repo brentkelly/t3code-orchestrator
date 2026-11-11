@@ -256,7 +256,8 @@ export const makeWorkerConnections = Effect.gen(function* () {
       renewal, when the link is let go for one on the successor. A failed
       renewal is retried while the link is up: upstream doesn't close a
       socket whose session expires, so the next redial would be refused. */
-  const hold = Effect.fn("WorkerConnections.hold")(function* (
+  // Untraced: a span here would stay open for the connection's lifetime.
+  const hold = Effect.fnUntraced(function* (
     worker: BoardWorker,
     link: WorkerLink,
     hello: BoardWorkerHello,
@@ -330,7 +331,8 @@ export const makeWorkerConnections = Effect.gen(function* () {
     );
 
   /** A worker's loop: dial, hold, and dial again until it is unauthorized. */
-  const runWorker = Effect.fn("WorkerConnections.runWorker")(function* (worker: BoardWorker) {
+  // Untraced: a span here would stay open for the worker's lifetime.
+  const runWorker = Effect.fnUntraced(function* (worker: BoardWorker) {
     let failures = 0;
     let renewed = false;
     while (true) {

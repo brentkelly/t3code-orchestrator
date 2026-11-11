@@ -51,7 +51,8 @@ export const makeWorkerSignalFeed = Effect.gen(function* () {
   const signals = yield* PubSub.unbounded<WorkerThreadSignal>();
   const todoChanges = yield* PubSub.unbounded<ThreadId>();
 
-  const follow = Effect.fn("WorkerSignalFeed.follow")(function* (
+  // Untraced: it lasts as long as the worker's signal stream.
+  const follow = Effect.fnUntraced(function* (
     workerId: EnvironmentId,
     rpc: WorkerRpc,
   ) {
