@@ -257,8 +257,8 @@ function withDerivedThreadFields(
 const NO_SUBAGENT_REQUESTS: ReadonlyMap<ThreadId, PendingSubagentRequest> = new Map();
 
 /** A thread's board state source, flagged when upstream's subagent-request map
-    (`pendingSubagentRequestsAtom`) says something under it awaits approval
-   . Only approvals count: the coordinator answers child questions. */
+    (`pendingSubagentRequestsAtom`) says something under it awaits approval.
+    Only approvals count: the coordinator answers child questions. */
 export function boardThreadStateSourceWithSubagents(
   thread: BoardThreadShellFields & { readonly id: ThreadId },
   subagentRequests: ReadonlyMap<ThreadId, PendingSubagentRequest>,

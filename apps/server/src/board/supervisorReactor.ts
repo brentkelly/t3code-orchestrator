@@ -9773,9 +9773,7 @@ const make = Effect.gen(function* () {
   const subagentAwaitingApproval = (threadId: ThreadId) =>
     threads.subagentAwaitingApproval(threadId).pipe(Effect.catchCause(() => Effect.succeed(false)));
   /** The thread's own permission prompt or, read only when it has
-      none, a subagent's approval: either way a human is the pacing.
-      A child's approval answer names the child's thread, so it never stamps
-      the step's; the sweep's re-stamp while the prompt holds covers it. */
+      none, a subagent's approval: either way a human is the pacing. */
   const threadAwaitingHuman = (threadId: ThreadId) =>
     liveThread(threadId).pipe(
       Effect.flatMap((shell) =>
@@ -9832,13 +9830,10 @@ const make = Effect.gen(function* () {
       beginBackgroundWait(state.threadId, input.now, true);
       return true;
     }
-    const sinceMs = Date.parse(wait.since);
-    if (input.nowMs < boardBackgroundCheckInDueMs({ sinceMs, checkInsSent: wait.checkInsSent })) {
-      return true;
-    }
     // A subagent waits on a human's approval: the agent cannot answer
     // it, so no check-in, charge or escalation while it holds. Once answered,
-    // the wait restarts so the next check-in is a full interval away.
+    // the wait restarts so the next check-in is a full interval away. Read
+    // ahead of the due gate, or a hold answered between check-ins goes unseen.
     if (yield* subagentAwaitingApproval(state.threadId)) {
       if (wait.heldForHuman !== true) backgroundWaits.set(key, { ...wait, heldForHuman: true });
       permissionHeldAt.set(key, input.now);
@@ -9851,6 +9846,10 @@ const make = Effect.gen(function* () {
         checkInOutstanding: false,
         progressed: wait.progressed,
       });
+      return true;
+    }
+    const sinceMs = Date.parse(wait.since);
+    if (input.nowMs < boardBackgroundCheckInDueMs({ sinceMs, checkInsSent: wait.checkInsSent })) {
       return true;
     }
     // A human's message is already on its way in; the board's would land
@@ -10117,6 +10116,10 @@ const make = Effect.gen(function* () {
         } else if (nowMs - Date.parse(heldAt) > state.timeoutMs) {
           permissionHeldAt.delete(String(state.threadId));
         }
+      } else if (state.threadId !== null && (yield* subagentAwaitingApproval(state.threadId))) {
+        // A child's answer names the child's thread and never stamps the
+        // step's, so the hold is read every sweep, not only once overdue.
+        permissionHeldAt.set(String(state.threadId), now);
       }
       const todo = yield* threadTodoState(state.threadId);
       const lastSignalAt = outputSignalShieldsStep({

@@ -287,6 +287,32 @@ it.effect("a step whose subagent awaits approval is never swept, and the hold tr
   );
 });
 
+// A child's answer names the child's thread, so only the sweep can stamp
+// the step's: it must see the hold before the step is overdue.
+it.effect("a subagent approval answered before the step is overdue still shields it", () => {
+  const held = new Set([String(threadId)]);
+  return withGovernor(
+    {
+      board: boardWithStep(runningStep({ startedAt: FRESH, updatedAt: FRESH })),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+      subagentsAwaitingApproval: held,
+    },
+    ({ reactor, board }) =>
+      Effect.gen(function* () {
+        yield* TestClock.adjust("30 seconds");
+        yield* reactor.sweep;
+        held.delete(String(threadId));
+        yield* TestClock.adjust("40 seconds");
+        yield* reactor.sweep;
+        assert.strictEqual(attemptOf(yield* board), 1);
+        yield* TestClock.adjust("30 seconds");
+        yield* reactor.sweep;
+        assert.strictEqual(attemptOf(yield* board), 2);
+      }),
+  );
+});
+
 // Approval is a life sign. A prompt that outlives the output-signal
 // ceiling leaves every other life sign stale, so without this the first sweep
 // after the human approves would nudge the agent seconds into real work.

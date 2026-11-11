@@ -2601,15 +2601,23 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // stage makes current", so the pane follows the card until the user picks a
   // thread, and a since-unlinked selection falls back to that same default.
   const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
+  // Read once on open, so a subagent asking mid-read never moves the pane;
+  // the newest such thread, as the stage default prefers the newest.
+  const [awaitingThreadAtOpen] = useState(() => {
+    const awaiting = new Set(
+      props.threadLinks
+        .filter((link) => link.subagentAwaitingApproval === true && !link.tombstoned)
+        .map((link) => link.threadId),
+    );
+    return (
+      sortBoardCardThreadLinks(card.threadLinks.filter((link) => awaiting.has(link.threadId))).at(
+        -1,
+      )?.threadId ?? null
+    );
+  });
   const selectedThread =
     props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
-    initialBoardCardThreadId(
-      props.stages,
-      card.stage,
-      card.threadLinks,
-      props.threadLinks.find((link) => link.subagentAwaitingApproval === true && !link.tombstoned)
-        ?.threadId,
-    );
+    initialBoardCardThreadId(props.stages, card.stage, card.threadLinks, awaitingThreadAtOpen);
   // A group's Planning pane is the Thread pane pinned to its planning
   // thread; the Thread pill still lists every thread, planning included.
   const planStageId = boardStageWithRole(stageStateOf(props.stages), "plan")?.stageId ?? null;
