@@ -843,6 +843,46 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
       }),
     );
 
+    it.effect("a PR link lands as the agent's; a repeat after a human unlink does nothing", () =>
+      Effect.gen(function* () {
+        const threadId = yield* createIdleThread("pr-link");
+        const threads = yield* LocalThreadGateway;
+        const engine = yield* boardStackEngine;
+        const pullRequests = ProjectionStore.ProjectionStoreV2.pipe(
+          Effect.flatMap((projections) => projections.getThreadShell(threadId)),
+          Effect.map((shell) =>
+            (shell?.pullRequests ?? []).map(
+              (link) => `${link.source} ${link.host}/${link.repository}#${link.number}`,
+            ),
+          ),
+        );
+        const key = { host: "github.com", repository: "acme/repo", number: 7 };
+        const link = {
+          commandId: CommandId.make("server:board-pr-link:thread-contract-pr-link:github.com/acme/repo#7"),
+          threadId,
+          ...key,
+          url: "https://github.com/acme/repo/pull/7",
+        };
+        yield* threads.linkPullRequest(link);
+        assert.deepStrictEqual(yield* pullRequests, ["agent github.com/acme/repo#7"]);
+
+        yield* engine.dispatch({
+          type: "thread.pull-request.unlink",
+          commandId: CommandId.make("cmd-contract-human-unlink"),
+          threadId,
+          ...key,
+        });
+        assert.deepStrictEqual(yield* pullRequests, []);
+        yield* threads.linkPullRequest(link);
+        assert.deepStrictEqual(yield* pullRequests, []);
+
+        yield* threads.linkPullRequest({ ...link, commandId: boardCommandId("pr-link-new") });
+        assert.deepStrictEqual(yield* pullRequests, ["agent github.com/acme/repo#7"]);
+        yield* threads.unlinkPullRequest({ commandId: boardCommandId("pr-unlink"), threadId, ...key });
+        assert.deepStrictEqual(yield* pullRequests, []);
+      }),
+    );
+
     it.effect("an automatic settle settles a candidate", () =>
       Effect.gen(function* () {
         const threadId = yield* createIdleThread("auto-settled");

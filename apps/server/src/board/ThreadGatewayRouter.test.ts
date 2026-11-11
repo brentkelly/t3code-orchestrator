@@ -97,7 +97,7 @@ const setup = Effect.gen(function* () {
         digest,
       }),
   });
-  return { ...env, router };
+  return { ...env, central, router };
 });
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -132,6 +132,43 @@ describe("the thread gateway router's batch read", () => {
         // rather than reporting a thread that never existed.
         const error = yield* Effect.flip(router.threadRecords([WORKER_THREAD]));
         assert.strictEqual(error._tag, "ThreadReadError");
+      }),
+    ),
+  );
+});
+
+describe("the thread gateway router's pull request links (T3O-75)", () => {
+  const pullRequest = { host: "github.com", repository: "acme/repo", number: 7 };
+
+  it.effect("links and unlinks on the worker the thread lives on", () =>
+    run(
+      Effect.gen(function* () {
+        const { router, threads: worker, central } = yield* setup;
+        yield* router.linkPullRequest({
+          commandId: CommandId.make("server:board-pr-link:worker"),
+          threadId: WORKER_THREAD,
+          ...pullRequest,
+          url: "https://github.com/acme/repo/pull/7",
+        });
+        yield* router.linkPullRequest({
+          commandId: CommandId.make("server:board-pr-link:local"),
+          threadId: LOCAL_THREAD,
+          ...pullRequest,
+          url: "https://github.com/acme/repo/pull/7",
+        });
+        const onWorker = yield* worker.pullRequestLinks;
+        const onCentral = yield* central.pullRequestLinks;
+        assert.deepStrictEqual(onWorker.get(WORKER_THREAD), ["github.com/acme/repo#7"]);
+        assert.isFalse(onWorker.has(LOCAL_THREAD));
+        assert.deepStrictEqual(onCentral.get(LOCAL_THREAD), ["github.com/acme/repo#7"]);
+        assert.isFalse(onCentral.has(WORKER_THREAD));
+
+        yield* router.unlinkPullRequest({
+          commandId: CommandId.make("server:board-pr-unlink:worker"),
+          threadId: WORKER_THREAD,
+          ...pullRequest,
+        });
+        assert.deepStrictEqual((yield* worker.pullRequestLinks).get(WORKER_THREAD), []);
       }),
     ),
   );
