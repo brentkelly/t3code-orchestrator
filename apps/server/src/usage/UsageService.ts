@@ -946,9 +946,23 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  // T3o: only the first call waits, to load the cached table; later ones never fetch.
+  // T3o: only the first call waits, to load the table. A stale or missing one is then
+  // refreshed in the background, so a slow fetch never holds up the board's turn tail.
+  let boardRatesLoaded = false;
+  let boardRatesRefreshing = false;
   const currentRates = Effect.gen(function* () {
-    if (ratesFetchedAtMs === null) yield* ensureRates(false);
+    const now = yield* Clock.currentTimeMillis;
+    if (!boardRatesLoaded) {
+      boardRatesLoaded = true;
+      yield* ensureRates(false);
+    } else if (
+      !boardRatesRefreshing &&
+      (ratesFetchedAtMs === null || now - ratesFetchedAtMs >= RATES_TTL_MS)
+    ) {
+      boardRatesRefreshing = true;
+      const done = Effect.sync(() => (boardRatesRefreshing = false));
+      yield* Effect.forkDetach(ensureRates(false).pipe(Effect.ensuring(done)));
+    }
     const settings = yield* settingsService.getSettings.pipe(Effect.option);
     return {
       table: rates,
