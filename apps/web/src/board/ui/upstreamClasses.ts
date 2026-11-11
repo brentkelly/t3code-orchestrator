@@ -46,6 +46,9 @@ export const UPSTREAM_COMBOBOX_ITEM_CONTENT =
   "flex min-w-0 flex-1 items-center gap-2 [&_svg:not([class*='text-'])]:text-muted-foreground";
 export const UPSTREAM_COMBOBOX_LIST = "size-full min-w-0 not-empty:px-1 not-empty:py-1";
 
+/** components/ui/radio-group.tsx, less the gap the board sets. */
+export const UPSTREAM_RADIO_GROUP = "flex flex-col";
+
 /** components/ui/kbd.tsx */
 export const UPSTREAM_KBD =
   "pointer-events-none inline-flex h-5 min-w-5 select-none items-center justify-center gap-1 rounded px-1 font-medium font-sans text-muted-foreground text-xs [&_svg:not([class*='size-'])]:size-3";

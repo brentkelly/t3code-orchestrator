@@ -36,6 +36,7 @@ function BoardButtonElement({
   className,
   look,
   callerClassName,
+  type,
   ...props
 }: ComponentProps<"button"> & {
   readonly look: BoardButtonLook;
@@ -43,9 +44,9 @@ function BoardButtonElement({
 }) {
   return (
     <button
-      className={cn(className, BOARD_BUTTON_LOOKS[look], callerClassName)}
-      type="button"
       {...props}
+      className={cn(className, BOARD_BUTTON_LOOKS[look], callerClassName)}
+      type={type ?? "button"}
     />
   );
 }

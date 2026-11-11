@@ -49,9 +49,11 @@ export type BoardInputLook = keyof typeof BOARD_INPUT_LOOKS;
 
 type BoardInputProps = Omit<
   InputPrimitive.Props & React.RefAttributes<HTMLInputElement>,
-  "size"
+  "size" | "type"
 > & {
   readonly look: BoardInputLook;
+  /** Only the types whose upstream styling BoardInput carries. */
+  readonly type?: "text" | "search";
   readonly size?: keyof typeof INPUT_SIZE_CLASS;
   readonly unstyled?: boolean;
   readonly nativeInput?: boolean;

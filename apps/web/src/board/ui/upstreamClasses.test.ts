@@ -50,6 +50,7 @@ const MIRRORS: Record<keyof typeof mirrors, Mirror> = {
   UPSTREAM_COMBOBOX_ITEM_SELECTED_FILL: { file: "combobox.tsx", match: "exact" },
   UPSTREAM_COMBOBOX_ITEM_CONTENT: { file: "combobox.tsx", match: "exact" },
   UPSTREAM_COMBOBOX_LIST: { file: "combobox.tsx", match: "exact" },
+  UPSTREAM_RADIO_GROUP: { file: "radio-group.tsx", match: "subset" },
   UPSTREAM_KBD: { file: "kbd.tsx", match: "exact" },
   UPSTREAM_POPOVER_POSITIONER: { file: "popover.tsx", match: "exact" },
   UPSTREAM_POPOVER_POSITIONER_TRANSITION: { file: "popover.tsx", match: "exact" },
