@@ -1,11 +1,7 @@
 /**
- * T3o thread todo cache + Activity rail (t3o-18).
- *
- * Drives the real engine and projection: a `turn.plan.updated` thread activity
- * lands in `board_thread_todos` when — and only when — the emitting thread has a
- * live card link, the caps hold, elapsed time survives reordering, the sweeps
- * fire, and the Activity rail records the nine curated kinds with the actor the
- * dispatch boundary stamped.
+ * On the real engine: plan updates land in `board_thread_todos` only for a
+ * thread with a live card link, caps hold, elapsed time survives reordering,
+ * and the Activity rail records the curated kinds with the stamped actor.
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -110,17 +106,13 @@ const appendPlan = (
 ) =>
   Effect.gen(function* () {
     yield* writeStackPlan(threadId, id, plan, createdAt);
-    // The todo cache follows upstream's log on its own tail (T3O-56).
+    // The todo cache follows upstream's log on its own tail.
     yield* drainBoardThreadTail;
   });
 
-const boardMethods = Effect.gen(function* () {
-  return yield* BoardQueries;
-});
-
 const cardThreads = (cardId: BoardCardId) =>
   Effect.gen(function* () {
-    const methods = yield* boardMethods;
+    const methods = yield* BoardQueries;
     return yield* methods.boardCardThreads(cardId);
   });
 
@@ -150,7 +142,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
       assert.strictEqual(entry.todoTotal, 3);
       assert.strictEqual(entry.todoCurrent, "Write the code");
 
-      const methods = yield* boardMethods;
+      const methods = yield* BoardQueries;
       assert.isNull(yield* methods.boardThreadTodo(orphanThread));
     }),
   );
@@ -205,7 +197,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
       assert.strictEqual((yield* cardThreads(cardId))[0]!.todoStartedAt, at(1));
 
       // Rewording the in-progress item is indistinguishable from moving on, so
-      // it resets — wrong, harmless, and rare (D6).
+      // it resets — wrong, harmless, and rare.
       yield* appendPlan(
         linkedThread,
         "ac7-3",
@@ -222,7 +214,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
   it.effect("D16: the stall-reset signal moves only when the list actually advances", () =>
     Effect.gen(function* () {
       const { linkedThread } = yield* seed("d16");
-      const methods = yield* boardMethods;
+      const methods = yield* BoardQueries;
       yield* appendPlan(
         linkedThread,
         "d16-1",
@@ -235,7 +227,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
       assert.strictEqual((yield* methods.boardThreadTodo(linkedThread))?.advancedAt, at(1));
 
       // A revision that neither ticks an item nor changes the current one is not
-      // progress — a frozen list reads exactly like no list (D16).
+      // progress — a frozen list reads exactly like no list.
       yield* appendPlan(
         linkedThread,
         "d16-2",
@@ -268,7 +260,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
     Effect.gen(function* () {
       const { cardId, linkedThread } = yield* seed("ac19a");
       const engine = yield* boardStackEngine;
-      const methods = yield* boardMethods;
+      const methods = yield* BoardQueries;
       yield* appendPlan(linkedThread, "ac19a-1", [{ step: "Alpha", status: "pending" }], at(1));
       assert.isNotNull(yield* methods.boardThreadTodo(linkedThread));
 
@@ -288,7 +280,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
     Effect.gen(function* () {
       const { cardId, linkedThread } = yield* seed("ac19b");
       const engine = yield* boardStackEngine;
-      const methods = yield* boardMethods;
+      const methods = yield* BoardQueries;
       yield* appendPlan(linkedThread, "ac19b-1", [{ step: "Alpha", status: "pending" }], at(1));
       yield* engine.dispatch({
         type: "board.card.archive",
@@ -304,7 +296,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
     Effect.gen(function* () {
       const { linkedThread } = yield* seed("ac20");
       const engine = yield* boardStackEngine;
-      const methods = yield* boardMethods;
+      const methods = yield* BoardQueries;
       yield* appendPlan(linkedThread, "ac20-1", [{ step: "Alpha", status: "pending" }], at(1));
 
       yield* engine.dispatch({
@@ -327,7 +319,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
   it.effect("AC 20: the boot sweep spares a row written after the live list was taken", () =>
     Effect.gen(function* () {
       const { linkedThread } = yield* seed("ac20b");
-      const methods = yield* boardMethods;
+      const methods = yield* BoardQueries;
       // The thread was born and posted its first plan between the clock read
       // and the list read, so the list does not name it.
       yield* appendPlan(linkedThread, "ac20b-1", [{ step: "Alpha", status: "pending" }], at(5));
@@ -343,9 +335,9 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
     Effect.gen(function* () {
       const { cardId } = yield* seed("ac15");
       const engine = yield* boardStackEngine;
-      const methods = yield* boardMethods;
+      const methods = yield* BoardQueries;
 
-      // A human drag: the dispatch boundary stamps the actor first (D11).
+      // A human drag: the dispatch boundary stamps the actor first.
       const moveCommandId = nextCommandId();
       stampBoardActivityActor(moveCommandId, boardHumanActor("brent"));
       yield* engine.dispatch({
@@ -371,7 +363,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
         splitRationale: null,
         createdAt: at(3),
       });
-      // Excluded from the rail (D12): a reorder is not a milestone.
+      // Excluded from the rail: a reorder is not a milestone.
       yield* engine.dispatch({
         type: "board.card.reorder",
         commandId: nextCommandId(),

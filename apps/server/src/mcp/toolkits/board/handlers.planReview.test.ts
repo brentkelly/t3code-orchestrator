@@ -1,7 +1,7 @@
 /**
- * Plan review through the board tools (T3O-39): `board_propose_plans` hands
+ * Plan review through the board tools: `board_propose_plans` hands
  * the planning agent its review instructions, a late turn-on starts the
- * review at once (reopening a finished step, T3O-50), and
+ * review at once (reopening a finished step), and
  * `board_get_card_context` carries a running review and its rounds.
  */
 import {
@@ -57,7 +57,7 @@ const onePlan = [{ key: "main", title: "Main", summary: "s", dependsOn: [], body
 
 /** A card of its own with a live, running Planning step on `thread`. The card
     sits in the first stage unless `inPlanning`, which a finished step's late
-    review needs (T3O-50). */
+    review needs. */
 const seedPlanningCard = Effect.fn("seedPlanningCard")(function* (
   suffix: string,
   options: { readonly inPlanning?: true } = {},

@@ -1,22 +1,5 @@
-// T3o: retired thread links (T3O-41).
-//
-// `board_card_thread_links.retired_at` — set when the board finishes with a
-// thread that is still alive (a finished conflict fix, a superseded restart,
-// an abandoned step), so the thread stays on its card as history instead of
-// losing its link. Null while the link is live.
-//
-// Backfills the threads the board unlinked before this existed, straight into
-// the table (the board hydrates from its tables, like 012/016):
-//
-//   (a) the thread's LAST `board.card-thread-unlinked` event was the server's,
-//       on a live thread: relink it to that card as retired, with the role,
-//       linked_at and worker of its latest `board.card-thread-linked` event.
-//   (b) no event says where it belonged, but its title is `<KEY> · <label>`
-//       for a card in the thread's project and a board stage or step label.
-//
-// Only threads with no link row (thread_id is the key), that still exist
-// undeleted, and whose card still exists. A human's unlink is left alone.
-// Guarded by the column check, so re-running is a no-op.
+// Backfills only threads with no link row that still exist undeleted on an
+// existing card; a human's unlink is left alone. Guarded by the column check.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

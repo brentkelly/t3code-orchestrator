@@ -1,5 +1,5 @@
 /**
- * Board toasts (T3O-29): neutral for information, red-tinted for errors, each
+ * Board toasts: neutral for information, red-tinted for errors, each
  * with an optional action ("Open", "Open board"). Errors linger longer — 9s
  * against 6s — because they are the ones a human has to read to act on.
  */

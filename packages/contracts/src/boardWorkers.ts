@@ -1,18 +1,5 @@
 /**
- * T3o distributed board: workers (T3O-62, overview D19–D22).
- *
- * One central T3o server hosts the board and dials each worker — another T3o
- * server — as a paired client. This file holds everything worker-shaped on the
- * wire:
- *
- * - the registry (`BoardWorker`) and what the central server knows about each
- *   worker at runtime (`BoardWorkerStatus`, the last-known snapshot);
- * - `BoardWorkersState`, the one bounded summary that rides
- *   `board.subscribeBoard`;
- * - the central server's `board.workers.*` RPCs, which clients call;
- * - the worker-side `boardWorker.*` RPCs, which the central server calls on
- *   each worker over the connection it holds.
- *
+ * One central server hosts the board and dials each worker as a paired client.
  * Imports only leaf modules, so `board.ts` can import it without a cycle.
  */
 import * as Schema from "effect/Schema";
@@ -38,16 +25,12 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 // ── Protocol ───────────────────────────────────────────────────────────
 
 /**
- * The board-worker protocol this build speaks. Bumped when the central server
- * starts relying on a `boardWorker.*` call (or a change to one) that an older
- * worker does not have.
- *
- * 2: `boardWorker.git.closePullRequest` (T3O-28), used by group archive and
- *    cancel-work. Best-effort, so the floor stays at 1.
+ * Bump when the central server starts relying on a `boardWorker.*` call an older worker
+ * lacks. 2 added `boardWorker.git.closePullRequest`, best-effort, so the floor stays at 1.
  */
 export const BOARD_WORKER_PROTOCOL_VERSION = 2;
 
-/** The oldest protocol a worker may speak and still be used (D16). */
+/** The oldest protocol a worker may speak and still be used. */
 export const BOARD_WORKER_PROTOCOL_FLOOR = 1;
 
 /**
@@ -76,7 +59,7 @@ export const BoardWorkerLabel = TrimmedNonEmptyString.check(
   Schema.isMaxLength(BOARD_WORKER_LABEL_MAX_LENGTH),
 );
 
-/** A registered worker (D19). The registry lives in the board read model (D8). */
+/** A registered worker. The registry lives in the board read model. */
 export const BoardWorker = Schema.Struct({
   id: EnvironmentId,
   label: BoardWorkerLabel,
@@ -89,17 +72,9 @@ export type BoardWorker = typeof BoardWorker.Type;
 // ── Runtime status ─────────────────────────────────────────────────────
 
 /**
- * Where the central server's connection to a worker stands. Supervisor
- * runtime state, re-derived by dialing on every boot — never event-sourced
- * (D8).
- *
- * - `online` — connected, handshake passed. The steady state.
- * - `connecting` — dialing, or handshaking.
- * - `offline` — unreachable; retried with backoff.
- * - `incompatible` — reachable, but below the protocol floor or not a T3o
- *   worker at all.
- * - `unauthorized` — the worker refused the board's session: revoked on the
- *   worker, or the worker was reset. Needs a re-pair.
+ * Supervisor runtime state, re-derived by dialing on every boot, never event-sourced.
+ * `incompatible`: below the protocol floor or not T3o. `unauthorized`: the worker refused
+ * the board's session (revoked or reset) and needs a re-pair.
  */
 export const BoardWorkerConnectionState = Schema.Literals([
   "online",
@@ -215,13 +190,8 @@ export type BoardWorkerSetup = typeof BoardWorkerSetup.Type;
 // ── The board's worker summary ─────────────────────────────────────────
 
 /**
- * Everything about workers a board client holds. Rides `board.subscribeBoard`
- * (the snapshot's `workers`, and the whole-state `workers` delta), never the
- * card shell (D7). Absent from the snapshot on a local-only board, which is
- * the overwhelming majority: an ordinary board's payload is unchanged.
- *
- * The `local` worker is not listed: it always exists, and the client renders
- * it from its own connection (`boardWorkerIds`).
+ * Rides `board.subscribeBoard`, never the card shell. Absent on a local-only board, so an
+ * ordinary board's payload is unchanged. The `local` worker is never listed.
  */
 export const BoardWorkersState = Schema.Struct({
   defaultWorkerId: BoardWorkerId,
@@ -256,17 +226,12 @@ export function canBeDefaultBoardWorker(worker: BoardWorkerView): boolean {
   return worker.status.state === "online";
 }
 
-// ── Commands and events (the registry, D8) ─────────────────────────────
+// ── Commands and events (the registry) ─────────────────────────────
 
 /**
- * Register a worker, or record a re-pair of one. Internal: dispatched by the
- * `board.workers.add` / `.repair` RPCs once the credential exchange succeeded,
- * never by a client directly — the board must hold a working session before a
- * worker exists in its registry.
- *
- * `mode: "add"` is refused for a worker that is already registered;
- * `"repair"` is refused for one that is not, and keeps its label and
- * `addedAt` (only the URL may change).
+ * Internal: dispatched only after the credential exchange succeeded, so the board holds
+ * a working session before a worker is registered. `add` refuses a registered worker;
+ * `repair` refuses an unknown one and keeps its label and `addedAt`.
  */
 export const BoardWorkerRegisterCommand = Schema.Struct({
   type: Schema.Literal("board.worker.register"),
@@ -317,14 +282,12 @@ export function compareBoardWorkers(left: BoardWorker, right: BoardWorker): numb
   return compareCodeUnits(left.label, right.label) || compareCodeUnits(left.id, right.id);
 }
 
-// ── Project ↔ worker mapping (D20) ─────────────────────────────────────
+// ── Project ↔ worker mapping ─────────────────────────────────────
 
 /**
- * The key a board project and a worker's checkout must share to be the same
- * repository: upstream's grouping key, which prefers the checkout's own
- * remote over the canonical one, so a fork stays distinct from what it forked
- * — the same origin-first rule `board/boardRepository.ts` addresses pull
- * requests by. Lower-cased, so host and owner casing never split a match.
+ * Prefers the checkout's own remote over the canonical one, so a fork stays distinct
+ * (the origin-first rule pull requests are addressed by). Lower-cased so casing never
+ * splits a match.
  */
 export function boardRepositoryGroupingKey(
   identity: RepositoryIdentity | null | undefined,
@@ -457,7 +420,7 @@ export const BOARD_WORKERS_WS_METHODS = {
 } as const;
 
 /**
- * How the central server gets its own session on a worker (D19): a one-time
+ * How the central server gets its own session on a worker: a one-time
  * token the client minted on the worker (`POST /api/auth/pairing-token`), or
  * a pairing link the human pasted from `t3 pair`.
  */
@@ -529,7 +492,7 @@ export const BoardWorkerRemovePreviewCard = Schema.Struct({
 export type BoardWorkerRemovePreviewCard = typeof BoardWorkerRemovePreviewCard.Type;
 
 /**
- * What removing a worker would do to its cards (T3O-66, D22): the cards with
+ * What removing a worker would do to its cards: the cards with
  * no worktree yet move to the default worker; the ones with a worktree or a
  * running step need moving by hand, and hold until they are. Archived cards
  * are not listed.
@@ -554,18 +517,8 @@ export const BoardWorkerAddResult = Schema.Struct({
 export type BoardWorkerAddResult = typeof BoardWorkerAddResult.Type;
 
 /**
- * Every way adding or re-pairing a worker fails, one per prototype error
- * state (1.9).
- *
- * - `unreachable` — the BOARD SERVER cannot reach the worker (the client may
- *   well be able to).
- * - `invalid-credential` — the link or token expired, was used, or is malformed.
- * - `incompatible` — the worker is below the protocol floor, or not T3o.
- * - `different-server` — the credential belongs to another server than the
- *   one picked (or, on re-pair, than the worker being re-paired).
- * - `board-server` — the credential is the board server's own.
- * - `already-worker` — that server is already a worker.
- * - `not-found` — re-pair of a worker that is not registered.
+ * `unreachable` means the board server cannot reach the worker, though the client may.
+ * `different-server`: the credential belongs to another server than the one picked.
  */
 export const BoardWorkerAddErrorCode = Schema.Literals([
   "unreachable",
@@ -638,7 +591,7 @@ export const BOARD_WORKERS_RPCS = [
 ] as const;
 
 /**
- * Scopes, spread into `BOARD_RPC_SCOPES`. No new scope tier (D19): a worker's
+ * Scopes, spread into `BOARD_RPC_SCOPES`. No new scope tier: a worker's
  * reads are thread-shell reads, managing workers is a board write, cloning is
  * a source-control write, and the board's own session holds all three.
  */

@@ -1,14 +1,7 @@
 /**
- * T3o (T3O-62, D19): the client's half of Add worker.
- *
- * The board server cannot mint its own session on a worker: only someone
- * already paired there can. So the client this human is using mints a
- * one-time pairing token on the worker — with ITS session on that
- * environment, cookie, bearer or DPoP — and hands the token to the board
- * server, which spends it for a session of its own. Never the client's own
- * bearer token: revoking this device must not break the board.
- *
- * Lives in client-runtime so a future mobile board reuses it (D17).
+ * The board server cannot mint its own session on a worker, so this client mints a one-time
+ * pairing token there with its own session and hands it over. Never the client's own bearer
+ * token: revoking this device must not break the board.
  */
 import {
   AuthStandardClientScopes,
@@ -73,14 +66,9 @@ export interface BoardWorkerCandidateInput {
 }
 
 /**
- * What Add worker can do with an environment (prototype 1.4):
- *
- * - `pick` — one click; the client mints the token.
- * - `needs-link` — this client can't mint one there (no `access:write`), so a
- *   pairing link from `t3 pair` on that machine is the way in.
- * - `disabled` — not usable from this client at all, and why.
- *
- * The board server itself and existing workers are left out entirely.
+ * `pick` mints the token in one click; `needs-link` lacks `access:write` there, so a link from
+ * `t3 pair` is the way in; `disabled` says why. The board server and existing workers are
+ * left out.
  */
 export type BoardWorkerCandidate =
   | { readonly kind: "pick" }

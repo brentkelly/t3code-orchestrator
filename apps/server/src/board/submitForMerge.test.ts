@@ -1,17 +1,8 @@
 /**
- * "Submit for merge — no review" at the assembled reactor (t3o-07).
- *
- * The pure routing decision lives in `stageExecutor.test.ts`; what is proved
- * here is the thing a user actually presses: a held build card selects one
- * unattended submit step, the card does NOT move until that step succeeds, and
- * when it does the card lands in the merge-role stage — over the top of the
- * review-role stage, and whatever the Build stage's `autoAdvance` says.
- *
- * Driven through the shared `withGovernor` harness, so every assertion is over
- * the board state the real decider + projector produce from the reactor's own
- * dispatches. The refusals are asserted the same way, because each of them is a
- * sentence the card shows — a button that silently does nothing is the failure
- * mode this whole feature replaces.
+ * "Submit for merge, no review" at the assembled reactor: a held build card runs one
+ * unattended submit step, does NOT move until it succeeds, then lands in the merge stage
+ * whatever `autoAdvance` says. Refusals are asserted on board state, since each is a
+ * sentence the card shows.
  */
 import {
   BOARD_SEED_STAGES,
@@ -114,7 +105,7 @@ const heldBoard = (card: BoardCard = heldBuildCard()) => ({
   nextCardNumberByProject: {},
 });
 
-// ── D1: the click selects a step; it does not move the card ─────────────────
+// ── The click selects a step; it does not move the card ─────────────────
 
 it.effect("D1: submitting a held build card selects one unattended submit step", () =>
   withGovernor(
@@ -141,12 +132,12 @@ it.effect("D1: submitting a held build card selects one unattended submit step",
         assert.strictEqual(state?.stepId, BOARD_SUBMIT_STEP_ID);
         assert.strictEqual(state?.stepLabel, "Submit for merge");
         assert.strictEqual(state?.prompt, "Push and open the PR.");
-        // The submit step's OWN model and limits, not the build's (D1/D3).
+        // The submit step's OWN model and limits, not the build's.
         assert.strictEqual(state?.providerInstanceId, "claude");
         assert.strictEqual(state?.model, "opus");
         assert.strictEqual(state?.maxAttempts, 2);
         assert.strictEqual(state?.timeoutMs, 60_000);
-        // Unattended machinery (D10): there is no conversation to have about
+        // Unattended machinery: there is no conversation to have about
         // pushing a branch.
         assert.strictEqual(state?.humanInLoop, false);
         // It needs the worktree it is pushing from.
@@ -182,7 +173,7 @@ it.effect("the submit step falls back to the Build stage's model when it names n
   ),
 );
 
-// ── D5/D6: the settle routes the card past Code review ──────────────────────
+// ── The settle routes the card past Code review ──────────────────────
 
 it.effect("D5: the submit step succeeding moves the card to the merge stage, over review", () =>
   withGovernor(
@@ -233,11 +224,8 @@ it.effect("a REBUILD after a submit still advances one stage, to Code review", (
       board: {
         cards: [heldBuildCard()],
         stepStates: [{ ...settledBuildStep, status: "running" }],
-        // The card was submitted once, dragged back to Building, and is being
-        // built again — so it carries a `submit` completion that will never be
-        // cleared. Routing on that COMPLETION rather than on the settle would
-        // send this rebuild straight to the merge stage the moment it finished,
-        // skipping review on a card nobody asked to skip review for (D5).
+        // A rebuilt card carries a never-cleared `submit` completion; routing on it rather than
+        // the settle would skip review on a card nobody asked to skip review for.
         stepCompletions: [
           { ...buildCompletion, stepId: BOARD_SUBMIT_STEP_ID, summary: "opened PR" },
         ],
@@ -257,7 +245,7 @@ it.effect("a REBUILD after a submit still advances one stage, to Code review", (
   ),
 );
 
-// ── D9: on failure the card stays put ───────────────────────────────────────
+// ── On failure the card stays put ───────────────────────────────────────
 
 it.effect("D9: a submit step that fails leaves the card in Building", () =>
   withGovernor(
@@ -283,12 +271,8 @@ it.effect("D9: a submit step that fails leaves the card in Building", () =>
 it.effect("D5: a submit step that completed while the server was down still routes the card", () =>
   withGovernor(
     {
-      // The state a crash mid-submit leaves behind: the agent reported
-      // `succeeded`, the settle never landed, and the step row is still
-      // `running`. Boot reconciliation settles it and asks the executor what
-      // happens next — which is the routing this feature is made of. Nothing
-      // durable had to be added to the card to survive this: the step row and
-      // its completion already were.
+      // A crash mid-submit: the agent reported `succeeded` but the settle never landed. Boot
+      // reconciliation settles it and asks the executor what happens next.
       board: {
         cards: [heldBuildCard()],
         stepStates: [
@@ -403,15 +387,9 @@ it.effect("refuses a card that does not exist", () =>
   ),
 );
 
-// ── The gates that only bite at the directed advance ────────────────────────
-//
-// Two of the decider's forward gates past the build role — an unfinished
-// sub-board child and an unapproved split — refuse the DIRECTED MOVE, which
-// happens after the submit step has already pushed the branch and opened the
-// pull request. Left to bite there, the refusal is swallowed by the reactor's
-// dispatch and the card sits in Building with a fresh pull request and no
-// account of why. So they are pre-checked before the step runs, and the race
-// that pre-check cannot close is reported on the card.
+// Two forward gates (an unfinished sub-board child, an unapproved split) would refuse the
+// directed move only after the PR is opened, where the refusal is swallowed. So they are
+// pre-checked before the step runs, and the race the pre-check cannot close is reported.
 
 /** A live plan card of `card-1`'s: materialised, sitting on the floor, not
     done — the state that holds its parent at the build ceiling. */
@@ -473,7 +451,7 @@ it.effect("says why the card stayed when a gate closes while the submit step is 
 
         // The move is refused, so the card stays put — and it SAYS so, with the
         // decider's own sentence, rather than leaving a fresh pull request and
-        // a card that quietly did not move (D6).
+        // a card that quietly did not move.
         assert.strictEqual(cardStage(yield* board, cardId), "building");
         const notes = (yield* decided).filter((event) => event.type === "board.card-note-recorded");
         assert.strictEqual(notes.length, 1);

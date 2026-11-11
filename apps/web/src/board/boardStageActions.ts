@@ -1,17 +1,7 @@
 /**
- * T3o primary stage action (t3o-06, D18/D13). The detail pane's primary button
- * is the human gate that advances a card one stage — the SAME gate a drag or a
- * thread answer resolves. Now derived generically from the user-defined stage
- * list (t3o-15): the exhaustive per-stage switch is gone, replaced by "move to
- * the next stage in order".
- *
- * The `build`-role stage has no forward button WHILE the pipeline is driving
- * it: its onward crossing is board-driven (a successful unattended run
- * auto-advances, D8), never a human click. The one exception is a SETTLED step
- * (t3o-06 held-build-forward-button, D1) — a human-in-the-loop build never
- * auto-advances and a failed one never will either, so once the step settles
- * the ordinary forward move is offered rather than nothing at all. The last
- * stage (Done) has none either — its only exit is archive.
+ * The detail pane's primary stage action: move to the next stage in order. The
+ * build role has none while the pipeline drives it, only once its step settles;
+ * the last stage has none (its exit is archive).
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -33,12 +23,8 @@ function stateOf(stages: ReadonlyArray<BoardStageDefinition>): BoardState {
 }
 
 /**
- * Stages a human may drop a card into directly from the detail modal's stage
- * ladder: everything before the `build` role. From the build role onward, a
- * stage describes work the board has started shepherding (a worktree, a run),
- * so it is *granted* by a gate, a run result or a review verdict rather than
- * chosen. The ladder still shows those stages; it just does not offer them as a
- * click.
+ * Stages a human may pick from the detail modal's ladder: everything before
+ * the build role. Later stages are granted by a gate, run result or verdict.
  */
 export function isBoardStageManuallySelectable(
   stages: ReadonlyArray<BoardStageDefinition>,
@@ -53,13 +39,8 @@ export function isBoardStageManuallySelectable(
 }
 
 /**
- * The detail pane's primary button.
- *
- * A discriminated union because the merge-role stage's button does something
- * categorically different from every other stage's: it performs a git
- * operation on the forge rather than moving a card between columns. Making
- * that a `kind` rather than, say, a nullable `toStage` means the view cannot
- * accidentally treat a Merge click as a stage move.
+ * The primary button. A union because Merge is a forge operation, not a stage
+ * move, and the view must not treat it as one.
  */
 export type BoardStagePrimaryAction =
   | {
@@ -83,7 +64,7 @@ export type BoardStagePrimaryAction =
 
 /** What the merge-role stage's button needs to know beyond the stage list. */
 export interface BoardStagePrimaryActionContext {
-  /** The card has a CI entry (T3O-44): only passing or Skip CI moves it on. */
+  /** The card has a CI entry: only passing or Skip CI moves it on. */
   readonly ciEntryLive?: boolean;
   /** The card's pull request state, or null when it has none. Only `open` puts
       a Merge button on the card: a merged or closed PR has nothing left to
@@ -95,28 +76,21 @@ export interface BoardStagePrimaryActionContext {
       merged, dragged back out of Done, worked on again — and an unnumbered
       "Merge" leaves the one moment that matters ambiguous. */
   readonly pullRequestNumber?: number | null;
-  /** Whether a merge conflict fix is live on this card — the shell's
-      `stepConflictFix` (T3O-9), which is derived from the step row's persisted
-      label rather than inferred from a running step at the merge stage. That
-      inference was wrong for the clean merge-stage conversation a human can
-      start by hand, which greyed the button out for a fix that did not exist;
-      such a click now reaches the server, which refuses it by name. */
+  /** Whether a merge conflict fix is live, from the shell's `stepConflictFix`,
+      not inferred from a running merge-stage step (which a human-started
+      conversation also is). */
   readonly conflictFixLive?: boolean;
-  /** Why Merge is disabled while that fix runs ("Fixing CI…" for a CI fix,
-      T3O-12). Defaults to the conflict wording. */
+  /** Why Merge is disabled while that fix runs ("Fixing CI…" for a CI fix).
+      Defaults to the conflict wording. */
   readonly conflictFixReason?: string | null;
-  /** Whether the card's step has SETTLED and left the card standing (the
-      shell's `held`, ranked by `boardCardAttention`). The build role has no
-      human forward gate while the pipeline is driving it — but once its step
-      settles, nothing will move the card on, so the ordinary forward move is
-      offered instead of nothing at all. */
+  /** Whether the card's step has settled and left it standing. A settled build
+      step gets the ordinary forward move, since nothing else will move it. */
   readonly stepHeld?: boolean;
 }
 
 /**
- * A secondary action offered BESIDE the primary one, behind a caret (t3o-07,
- * D8). A list, not a nullable, so a second entry is a list entry rather than a
- * second shape — the popover is already a list.
+ * A secondary action offered BESIDE the primary one, behind a caret. A list, not a nullable, so
+ * a second entry is a list entry rather than a second shape — the popover is already a list.
  */
 export type BoardStageSecondaryAction = {
   readonly kind: "submit-no-review";
@@ -137,21 +111,9 @@ export interface BoardStageSecondaryActionContext extends BoardStagePrimaryActio
 }
 
 /**
- * The caret beside the forward button (t3o-07, D8).
- *
- * "Submit for merge — no review" appears under a full conjunction, and each
- * clause is a separate reason the offer would be meaningless:
- *
- *  - the primary forward button is showing at all (so, a HELD build step —
- *    the same gate `boardStagePrimaryAction` applies);
- *  - the card's ordinary next stage is the review-role stage. If the pipeline
- *    already routes Building somewhere else, "skip review" says nothing;
- *  - a merge-role stage exists to route to;
- *  - the card has a branch to push;
- *  - the card is not blocked.
- *
- * Pure and list-returning, the same shape and testability as
- * `boardStagePrimaryAction`, so the view stays dumb.
+ * The caret beside the forward button: "Submit for merge (no review)" only
+ * when the forward button shows, the next stage is review, a merge stage
+ * exists, the card has a branch, and it is not blocked.
  */
 export function boardStageSecondaryActions(
   stages: ReadonlyArray<BoardStageDefinition>,
@@ -170,19 +132,16 @@ export function boardStageSecondaryActions(
   return [
     {
       kind: "submit-no-review",
-      label: "Submit for merge — no review",
+      label: "Submit for merge (no review)",
       detail: "Opens the PR as normal, straight to Ready for merge.",
     },
   ];
 }
 
 /**
- * The forward move's target, CI aware (T3O-44). The list is the card's own
- * pipeline, so a CI in it is the project's live CI (or the one the card sits
- * in): the stage before CI moves into it, and a card leaves CI by passing or
- * by Skip CI, so nothing crosses it by button. A card left in a paused CI has
- * no entry and moves on like any held card. `boardNextStageId` reads a bare
- * list as the global pipeline, which never has CI, so CI is walked here.
+ * The forward target, CI aware: the stage before CI moves into it, and a card
+ * leaves CI only by passing or Skip CI. `boardNextStageId` reads a bare list as
+ * the global pipeline, which never has CI, so CI is walked here.
  */
 export function boardCiAwareNextStageId(
   stages: ReadonlyArray<BoardStageDefinition>,
@@ -211,11 +170,8 @@ export function boardStagePrimaryAction(
   // carries it as NULL, and the button must not change behaviour based on how
   // old someone's database is.
   const currentRole = current === null ? null : effectiveBoardStageRole(current);
-  // The build role advances board-driven (D8) — no human forward gate WHILE the
-  // pipeline is driving it. A settled step is the opposite case: a build that
-  // finished with the stage's auto-advance off does not move on, and a failed
-  // one never will either, so the card would sit in Building with a "Needs a
-  // human" chip and nothing to press.
+  // No human gate while the pipeline drives the build; a settled step would
+  // otherwise leave the card with nothing to press.
   if (currentRole === "build" && context?.stepHeld !== true) return null;
   // The merge role's button merges the pull request and advances as a
   // consequence. Only with a PR still OPEN: merged, closed, or absent all fall
@@ -231,12 +187,12 @@ export function boardStagePrimaryAction(
       disabledReason: disabled ? (context.conflictFixReason ?? "Resolving conflicts…") : null,
     };
   }
-  // The stage list is already the card's own project's pipeline (T3O-43).
+  // The stage list is already the card's own project's pipeline.
   const next = boardCiAwareNextStageId(stages, stageId, context?.ciEntryLive === true);
   if (next === null) return null;
   const nextStage = stages.find((stage) => stage.stageId === next);
   if (nextStage === undefined) return null;
-  // Crossing into the build role is the "Begin build" human gate (D11).
+  // Crossing into the build role is the "Begin build" human gate.
   if (effectiveBoardStageRole(nextStage) === "build") {
     return { kind: "move", label: "Begin build", toStage: next, emphasised: true };
   }
@@ -244,14 +200,9 @@ export function boardStagePrimaryAction(
 }
 
 /**
- * Whether a move would carry a card forward out of its plan-role stage before a
- * plan was written (T3O-19). Such a move is usually a slip, so the board asks
- * before making it. The planning thread survives the move either way; the
- * question is whether the human meant to skip planning.
- *
- * A backward move (deprioritising the card) is deliberate and goes through
- * unasked. A split child owns a copy of its plan (T3O-27), so `planCount`
- * alone decides.
+ * Whether a forward move leaves the plan-role stage with no plan written, which
+ * the board confirms first. Backward moves go unasked. A split child owns a copy
+ * of its plan, so `planCount` alone decides.
  */
 export function boardMoveLeavesPlanningUnwritten(input: {
   readonly stages: ReadonlyArray<BoardStageDefinition>;

@@ -1,5 +1,5 @@
 /**
- * Board migration 054 (plan review, T3O-39): the card's plan-review column and
+ * Board migration 054 (plan review): the card's plan-review column and
  * the step state's review columns, all NULL on existing rows.
  */
 import { assert, it } from "@effect/vitest";

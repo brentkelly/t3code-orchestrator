@@ -1,9 +1,6 @@
 /**
- * General grouping (T3O-27, D12): a card with children is a GROUP, a card
- * without is a LEAF, and only leaves run the pipeline. Groups nest to any
- * depth. A group's stage is derived from its children, never set by hand.
- *
- * Every rule the decider, the reactor and the clients share lives here, so a
+ * A card with children is a group, one without is a leaf, and only leaves run the
+ * pipeline. Every rule the decider, the reactor and the clients share lives here, so a
  * refusal and the control that would trigger it can never disagree.
  */
 import {
@@ -70,13 +67,12 @@ export function boardCardGroupOf(board: BoardState, card: BoardCard): BoardCardG
   });
 }
 
-/** Whether a card is a group. */
 function isBoardCardGroup(board: BoardState, card: BoardCard): boolean {
   return boardCardGroupOf(board, card) !== null;
 }
 
 /**
- * The plan row a split child owns (T3O-27): a copy of the plan it was cut
+ * The plan row a split child owns: a copy of the plan it was cut
  * from, so it counts as planned on its own. Shared by both projections and
  * mirrored by migration 051, so replay equals rehydration.
  */
@@ -176,7 +172,7 @@ export function isBoardCardSelfOrAncestor(
 }
 
 /**
- * Whether work has started on a leaf (D6): it reached the build stage, or it
+ * Whether work has started on a leaf: it reached the build stage, or it
  * still owns a branch from having been there. A group is never started — its
  * children are.
  */
@@ -198,8 +194,7 @@ function boardGroupPlacedStage(board: BoardState, stageId: BoardStageId): BoardS
 }
 
 /** The settings a card takes when it first becomes a group. An own-branch
-    group auto-merges its children into that branch unless told otherwise
-    (T3O-38). */
+    group auto-merges its children into that branch unless told otherwise. */
 export function defaultBoardCardGroup(
   board: BoardState,
   card: Pick<BoardCard, "stage">,
@@ -220,13 +215,9 @@ export function defaultBoardCardGroup(
 }
 
 /**
- * The stage an emptied group reverts to as an ordinary card: the stage it had
- * before it became a group, capped at Sprint (the stage before the plan
- * role) so a card that lost its children never claims a plan or a build it
- * no longer has. A deferred group stays deferred. It walks the card's own
- * project pipeline (T3O-43), so it never lands in a stage that project
- * removed; a stage the project no longer uses falls back to the nearest one
- * before it.
+ * The stage an emptied group reverts to: its pre-group stage, capped at Sprint so it never
+ * claims a plan or build it no longer has. Walks the card's own project pipeline, falling
+ * back to the nearest earlier stage the project still uses. A deferred group stays deferred.
  */
 export function boardGroupRevertStage(
   board: BoardState,
@@ -252,18 +243,9 @@ export function boardGroupRevertStage(
 }
 
 /**
- * A group's derived stage (D12):
- *
- * - **Done** when every active child (not Deferred) is done. An `own` group
- *   first sits in its integration review — the stage after build — until
- *   `integrated` is set; once a human has walked it further along that lane
- *   it stays where they put it.
- * - **Building** while any active child is at the build stage or later, and
- *   while a started group still sits there.
- * - Otherwise `placed`.
- *
- * A child group contributes its own derived stage, so a whole subtree
- * resolves in one call regardless of what its stored stages say.
+ * Done when every active (not Deferred) child is done, after an `own` group's integration
+ * review; Building while any active child is at build or later; otherwise `placed`. A child
+ * group contributes its own derived stage, so stored stages of a subtree are never read.
  */
 export function deriveBoardGroupStage(board: BoardState, card: BoardCard): BoardStageId {
   return deriveWithMemo(board, card, new Map());
@@ -335,7 +317,7 @@ export function boardGroupTargetLockReason(board: BoardState, card: BoardCard): 
 }
 
 /**
- * Why cards can't arrive under `parent` (T3O-28): an integration branch lives
+ * Why cards can't arrive under `parent`: an integration branch lives
  * in one repository, so every card landing on one must share the project of
  * the group that owns it. `arriving` is every card that would sit there,
  * subtrees included. Null when they may, or when they land on trunk.
@@ -354,7 +336,7 @@ export function boardGroupProjectRefusal(
 }
 
 /** Why a group can't take its own integration branch because its subtree
-    spans projects (T3O-28), or null when it can. */
+    spans projects, or null when it can. */
 export function boardGroupOwnTargetProjectRefusal(
   board: BoardState,
   card: BoardCard,
@@ -367,7 +349,7 @@ export function boardGroupOwnTargetProjectRefusal(
 }
 
 /**
- * Whether a card counts as PLANNED (T3O-27): it owns a plan row. A split child
+ * Whether a card counts as PLANNED: it owns a plan row. A split child
  * owns a copy of the plan it was cut from, so this needs no parent special case.
  */
 export function isBoardCardPlanned(board: BoardState, cardId: BoardCardId): boolean {
@@ -375,11 +357,9 @@ export function isBoardCardPlanned(board: BoardState, cardId: BoardCardId): bool
 }
 
 /**
- * The split recommendation's fallback rules (T3O-31), for a field the agent
- * omitted: every child planned → auto-build on with its own branch (today's
- * sub-board); otherwise an epic breakdown → auto-build off, inherit. A card
- * that already merges into an ancestor's integration branch prefers inherit,
- * so a nested split does not stack a second integration review.
+ * Fallback for an omitted field: every child planned means auto-build on with its own
+ * branch, otherwise auto-build off and inherit. A card already merging into an ancestor's
+ * integration branch prefers inherit, so nested splits do not stack integration reviews.
  */
 export function boardSplitRecommendationFallback(input: {
   readonly plans: ReadonlyArray<Pick<BoardPlan, "planned">>;
@@ -409,7 +389,7 @@ export function boardShellMergesIntoIntegrationBranch(
 }
 
 /** A card's split recommendation: the stored one, or the fallback for a
-    proposal made before T3O-31 recorded one. */
+    proposal made before recommendations were recorded. */
 export function boardSplitRecommendationOf(
   board: BoardState,
   card: BoardCard,
@@ -481,7 +461,7 @@ export function boardShellDescendantIds(
 }
 
 /**
- * A new phase (T3O-29): a group's deferred cards move out to a fresh sibling
+ * A new phase: a group's deferred cards move out to a fresh sibling
  * group, a heading created next to it, and land in that group's Backlog. One
  * rule set shared by the board's dialog and `board_new_phase`, which both
  * compose it from create, move-cards and move.
@@ -501,7 +481,7 @@ export type BoardNewPhasePlan =
       readonly cardStage: BoardStageId;
     };
 
-/** Where a card created with no stage lands (T3O-53): Planning under a parent
+/** Where a card created with no stage lands: Planning under a parent
     group that has started, so it joins the running work instead of stalling
     the group in Backlog; otherwise the project's first stage. */
 export function boardCreateDefaultStage(

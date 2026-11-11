@@ -1,10 +1,3 @@
-/**
- * T3o board settings — the typed stage-execution pipeline (D4, t3o-07/t3o-15).
- * These lock the three things the spec's verification calls out: an empty
- * settings file produces a working pipeline, the pipeline round-trips (survives
- * a restart), and a stage absent from the pipeline resolves to the all-defaults
- * (auto-execute off) config rather than throwing.
- */
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -48,7 +41,7 @@ const PROJECT = ProjectId.make("project-1");
 describe("board settings defaults", () => {
   it("decodes an empty file to a working default pipeline", () => {
     const settings = decodeSettings({});
-    // Building ships auto-executing in build mode (D4) — a working pipeline out
+    // Building ships auto-executing in build mode — a working pipeline out
     // of an empty file.
     expect(settings.pipeline[BOARD_SEED_STAGE_IDS.building]).toEqual(
       DEFAULT_BOARD_PIPELINE[BOARD_SEED_STAGE_IDS.building],
@@ -63,20 +56,14 @@ describe("board settings defaults", () => {
   });
 
   it("decodes a settings file written before the lifecycle reshape", () => {
-    // `lifecycle` is one of the INDIVISIBLE settings keys, so a user who ever
-    // touched the old archive-window or retention control has the WHOLE old
-    // object on disk. Unknown keys drop silently, leaving `{}` — and a
-    // `lifecycle` block that fails to decode does not merely lose its own
-    // value: `loadSettingsFromDisk` discards the ENTIRE settings file back to
-    // compiled-in defaults, silently reverting every unrelated setting the
-    // user has. The field's own decoding default is what stops that; the
-    // struct-level one on `BoardSettings.lifecycle` does not, because it fires
-    // only when `lifecycle` is ABSENT, never when it is present and invalid.
+    // `lifecycle` is indivisible, and a block that fails to decode discards the whole settings
+    // file to defaults. The field's own decoding default prevents that; the struct-level one
+    // fires only when `lifecycle` is absent.
     const settings = decodeSettings({
       lifecycle: { archiveAfterDays: 21, worktreeRetention: "reclaim-on-archive" },
     });
     expect(settings.lifecycle.reclaimWorktreeOnDone).toBe(DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE);
-    // The old `archiveAfterDays` must not switch auto-archive on (T3O-77).
+    // The old `archiveAfterDays` must not switch auto-archive on.
     expect(settings.lifecycle.autoArchiveDone).toBe(false);
     expect(settings.lifecycle.autoArchiveAfterDays).toBe(7);
   });
@@ -241,7 +228,7 @@ describe("board settings round-trip", () => {
 
 describe("resolveBoard* helpers", () => {
   it("resolves a stage's execution config, or the all-defaults config when the stage has none", () => {
-    // The resolver fills the effective access level (t3o-21): a build-mode
+    // The resolver fills the effective access level: a build-mode
     // stage defaults to `auto` (never the old forced `full-access`).
     expect(
       resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.building),
@@ -257,11 +244,8 @@ describe("resolveBoard* helpers", () => {
   });
 
   it("resolves an ABSENT seeded stage to its seeded config, not the empty one", () => {
-    // settings.json is written sparsely — an entry equal to its compiled-in
-    // default is pruned — so "Planning is missing from the map" is the normal
-    // state of a board whose Planning was never edited. Resolving it to the
-    // empty all-defaults config would switch the seeded stage off the first
-    // time any OTHER stage was edited.
+    // settings.json prunes entries equal to their default, so a missing Planning is normal and
+    // must not resolve to the all-defaults (switched off) config.
     const onlyBuilding = decodeSettings({
       pipeline: { [BOARD_SEED_STAGE_IDS.building]: DEFAULT_BOARD_PIPELINE.building },
     });
@@ -272,12 +256,8 @@ describe("resolveBoard* helpers", () => {
     }
   });
 
-  // ── The Build stage's `submit` config (t3o-07, D2) ────────────────────
-  //
-  // The Building stage resolves to the BUILD member whatever the settings file
-  // says, so every reader — the settings card, the submit action, the executor
-  // — sees `submit`. No migration exists to guarantee that; the resolver is
-  // the guarantee.
+  // The Building stage resolves to the build member whatever the file says; the resolver,
+  // not a migration, is the guarantee.
 
   it("resolves an ABSENT Building entry to the build member, with submit populated", () => {
     const resolved = resolveBoardStageExecution(decodeSettings({}), BOARD_SEED_STAGE_IDS.building);
@@ -292,11 +272,8 @@ describe("resolveBoard* helpers", () => {
   });
 
   it("UPGRADES a legacy simple Building entry rather than discarding what the user wrote", () => {
-    // A settings.json written before the build member existed. The review and
-    // merge branches coerce a legacy entry to their default; here the stored
-    // fields are still meaningful — one of them is the Building PROMPT — so
-    // replacing them with compiled-in defaults would silently throw away a
-    // prompt the user wrote.
+    // Unlike review and merge, a legacy build entry keeps its fields: one of them is a prompt
+    // the user wrote.
     const legacy = decodeSettings({
       pipeline: {
         [BOARD_SEED_STAGE_IDS.building]: {
@@ -374,11 +351,8 @@ describe("resolveBoard* helpers", () => {
   });
 
   it("still decodes an entry carrying the retired `accentColor`, and drops it", () => {
-    // Files written before the Board colour followed the project icon (T3O-4)
-    // carry `accentColor` on each project entry. Rejecting the key would fail
-    // the whole-settings decode and silently revert the user's file to
-    // defaults, so it must decode, keep the entry's other fields, and not
-    // survive the next write.
+    // Legacy entries carry `accentColor`; rejecting it would revert the whole settings file,
+    // so it must decode, keep the other fields, and not survive the next write.
     const legacy = decodeSettings({
       projects: { [PROJECT]: { keyPrefix: "T3", accentColor: "violet", hidden: true } },
     });

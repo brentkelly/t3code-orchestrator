@@ -1,13 +1,7 @@
 /**
- * T3O-76 — human-in-the-loop is the human's toggle and nothing else's.
- *
- * Two bugs, one rule. A human-in-the-loop step that reached
- * `board_complete_step` sat in its stage forever, because `advanceStage`
- * skipped every human-in-the-loop run; it now honours the stage's
- * `autoAdvance` exactly as an unattended run does. And a human messaging a
- * running board agent flipped the card to human-in-the-loop and paused it:
- * the queued message they steered in read as a Stop at the gateway, and a Stop
- * flipped the card. Both halves are covered here through the live reactor.
+ * Human-in-the-loop is the human's toggle and nothing else's: a completed
+ * human-in-the-loop step honours the stage's `autoAdvance`, and a human steering
+ * a running agent does not flip the card or pause it.
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -86,7 +80,7 @@ it.effect("a human-in-the-loop build stays put when Building's auto-advance is o
   ),
 );
 
-// A drag-back re-entry conversation (D7) is always human-in-the-loop with no
+// A drag-back re-entry conversation is always human-in-the-loop with no
 // prompt. It finishes the stage exactly as any other step does: a human who
 // talked the work through to `board_complete_step` wants the card moved on, and
 // a stage that should hold for them ships with `autoAdvance` off.

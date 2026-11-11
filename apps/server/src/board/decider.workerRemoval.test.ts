@@ -1,12 +1,7 @@
 /**
- * T3o worker removal, re-add and force-move, the decider half (T3O-66, D22).
- *
- * Removing a worker decides what happens to every card placed there in the
- * same command: a card with nothing there follows the default worker, and one
- * with a worktree or a running step holds ("placementOrphaned") until a human
- * moves it. Adding the worker back reattaches it. A force-move leaves a worker
- * the board can't reach, abandoning its worktree there or, with nothing on the
- * remote, restarting the card's branch from base.
+ * Removing a worker: idle cards follow the default worker, cards with a worktree
+ * or running step hold as `placementOrphaned`. Re-adding reattaches; a force-move
+ * abandons the remote worktree, or restarts the branch from base.
  */
 import {
   BoardCardId,

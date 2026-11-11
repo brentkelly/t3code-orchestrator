@@ -1,12 +1,7 @@
 /**
- * Doubles for the board's own services (T3O-56), for suites that stub the
- * supervisor's world rather than build the real stack.
- *
- * `boardEngineDouble` hands every dispatch to the suite's own handler — the one
- * that already records and folds commands for upstream's engine double — and
- * reads the board off the suite's model. `inertBoardQueries` answers every read
- * with "nothing there", which is what a suite that never seeded a todo row,
- * message or brief already assumed.
+ * Doubles for the board's own services. `boardEngineDouble` hands each
+ * dispatch to the suite's handler and reads the board off the suite's model;
+ * `inertBoardQueries` answers every read with "nothing there".
  */
 import type { BoardState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";

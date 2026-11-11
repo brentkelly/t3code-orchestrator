@@ -1,22 +1,7 @@
 /**
- * A turn that ends while the agent's subagents run on is waiting, not stopped
- * (T3O-9).
- *
- * An agent that fans work out to background subagents ends its own turn
- * straight away; the provider wakes it again when they report back. The board
- * read that turn ending as the agent stopping without `board_complete_step`, so
- * it parked the card as "waiting to resume — nothing is running right now" and,
- * when the backoff ran out, nudged the agent in the middle of its wait. Every
- * nudge interrupted the agent and made it end another turn, so the card climbed
- * the stall ladder while its subagents were doing the work.
- *
- * The thread already says when background work is running: the thread state's
- * `backgroundWork` is what draws the composer's "N agents working" /
- * "Monitoring" banner and the card's working dot. The turn-end handler reads
- * the same field, and since T3O-20 treats a monitor the same as subagents.
- *
- * Driven through the live reactor against the stateful engine double, because
- * the behaviour spans the turn-end handler and the decider.
+ * A turn that ends while the agent's subagents run on is waiting, not stopped: the
+ * provider wakes it when they report, and nudging mid-wait climbs the stall ladder. The
+ * turn-end handler reads the thread state's `backgroundWork`, monitors included.
  */
 import {
   BoardCardId,
@@ -112,12 +97,8 @@ it.effect("once the subagents finish, a turn that ends without completing recove
   ),
 );
 
-// A background command or a Monitor ("monitoring", T3O-20) is a wait too:
-// the provider wakes the agent when it reports. It used to be supervised as a
-// stop, so the agent was nudged with "your turn ended without calling
-// board_complete_step", replied "still waiting" and climbed the stall ladder.
-// The timeout sweep's check-ins supervise it instead
-// (`backgroundWaitCheckIns.test.ts`).
+// A background command or a Monitor is a wait too; the timeout sweep's check-ins
+// supervise it instead (`backgroundWaitCheckIns.test.ts`).
 it.effect(
   "a turn that ends with a background command or monitor running leaves the step running",
   () =>
@@ -137,7 +118,7 @@ it.effect(
     ),
 );
 
-// A human-in-the-loop run keeps its pre-T3O-20 handling of a monitor: the human
+// A human-in-the-loop run keeps its own handling of a monitor: the human
 // is the pacing, so the step parks on them rather than starting a wait.
 it.effect("a human-in-the-loop turn that ends with a monitor running parks on the human", () =>
   withGovernor(

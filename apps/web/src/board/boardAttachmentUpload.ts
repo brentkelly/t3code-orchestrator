@@ -1,12 +1,7 @@
 /**
- * T3o brief attachments — the web upload path (t3o-32, K2/K7).
- *
- * A dropped, pasted or picked file becomes a pending upload through the SAME
- * cycle the chat composer uses (`runAttachmentUploadCycle`: mint a signed URL,
- * POST the bytes), then the card claims it through `board.attachCardFile`.
- * This module owns the pure half — classification, image preparation, the XHR
- * transport and size labels — and stays clear of the composer draft store,
- * which is threaded through the chat surfaces and has no card to hang off.
+ * Brief attachments' web upload path: the chat composer's upload cycle, then
+ * the card claims the pending upload. The pure half only, clear of the composer
+ * draft store.
  */
 import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,

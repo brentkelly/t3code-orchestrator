@@ -1,20 +1,7 @@
 /**
- * T3o: the card's "Worktree kept" banner (T3O-52, D5).
- *
- * A finished card — Done, or archived — normally gives its worktree back on its
- * own. When it cannot, because removing the checkout would lose work, the board
- * keeps it and says why. Until now that refusal was recorded and never shown,
- * so the disk just quietly filled.
- *
- * Amber, per `docs/t3o/status-colours.md`: the cleanup is blocked, and only a
- * human can clear what is in the way. Two ways out:
- *
- * - **Check again** re-runs the cleanup (after a pull request refresh), for when
- *   the human has dealt with the cause — committed the stray file, merged the
- *   pull request.
- * - **Remove worktree** removes it anyway, after a dialog that repeats the
- *   reason. The branch is kept, so committed work is never lost; only
- *   uncommitted changes go.
+ * The "Worktree kept" banner: a finished card whose cleanup would lose work. Amber,
+ * since only a human can clear it. Check again re-runs the cleanup; Remove deletes the
+ * checkout anyway but keeps the branch, so only uncommitted changes are lost.
  */
 import { HardDriveIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";

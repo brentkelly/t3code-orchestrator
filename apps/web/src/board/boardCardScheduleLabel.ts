@@ -1,11 +1,6 @@
 /**
- * The board card's schedule pill (T3O-19, D9/D11) — pure, so its wording is
- * testable without rendering a card.
- *
- * The LABEL is absolute (`9:00 PM`, `tomorrow 8:00 AM`) and only the TOOLTIP is
- * relative. That is what lets thirty of these sit on a board and repaint only
- * when their card does: a relative label would either tick continuously or lie,
- * and this repo refuses both.
+ * The card's schedule pill. The label is absolute and only the tooltip relative,
+ * so the pill repaints only when its card does.
  */
 import { isBoardCardScheduleDue } from "@t3tools/contracts";
 
@@ -20,23 +15,16 @@ export function boardCardScheduleLabel(input: {
   readonly scheduledStartAt: string | null;
   /** A done card is asking for nothing and is not going to move on a timer. */
   readonly done: boolean;
-  /** Whether the card's step is parked, so the tooltip says RESUME rather than
-      start. Read off the shell flags the card face already holds, which is why
-      this surface needs no stage name: the verb has to match the popover's
-      (`boardScheduleSetTip`), or the same card would claim two different
-      things depending on where you hovered it. */
+  /** Whether the step is parked, so the tooltip says resume, matching the
+      popover's verb (`boardScheduleSetTip`). */
   readonly parked: boolean;
   readonly nowMs: number;
 }): BoardCardScheduleLabel | null {
   const at = input.scheduledStartAt;
   if (at === null || input.done) return null;
-  // No pill once the moment has passed. `schedule()` admits a due card WITHOUT
-  // clearing the field — only the 30s firing pass clears it — so a card can be
-  // running for up to a tick with its time still set, and a pill naming a
-  // moment that has gone is a stale label. Sharing `isBoardCardScheduleDue`
-  // with the supervisor's gate and the queue derivation is what keeps the pill
-  // and the thing it describes from disagreeing; it also covers an instant
-  // this client cannot read, which is due by the same rule.
+  // No pill once the moment has passed: a due card keeps its time until the next
+  // firing pass. `isBoardCardScheduleDue` is shared with the supervisor and the
+  // queue, so they cannot disagree.
   if (isBoardCardScheduleDue(at, input.nowMs)) return null;
   const label = whenLabel(at, input.nowMs);
   const until = untilLabel(at, input.nowMs);

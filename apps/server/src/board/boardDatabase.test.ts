@@ -1,8 +1,8 @@
 /**
- * The board database attach and the legacy relocation (t3o-26 P1).
+ * The board database attach and the legacy relocation.
  *
  * The relocation is the one piece of this phase that touches a user's existing
- * data, so it is tested against the shape a real pre-t3o-26 database has: board
+ * data, so it is tested against the shape a real legacy database has: board
  * tables and their indexes sitting in `main`, with rows in them.
  */
 import { assert, describe, it } from "@effect/vitest";
@@ -21,7 +21,7 @@ import {
   resolveBoardDatabasePath,
 } from "./boardDatabase.ts";
 
-/** A pre-t3o-26 layout: board tables in `main`, with data and an index. */
+/** The legacy layout: board tables in `main`, with data and an index. */
 const seedLegacyLayout = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`
@@ -320,11 +320,8 @@ describe("board database", () => {
       );
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
-  // A data-destroying gate must fail closed: two EMPTY ledgers differ by zero
-  // rows via EXCEPT, which would otherwise read as a "proven copy" and let the
-  // relocation overwrite boards from main. Divergent data with empty ledgers on
-  // both sides is not reachable today, but the gate must refuse it regardless of
-  // that invariant holding.
+  // A data-destroying gate must fail closed: two EMPTY ledgers EXCEPT to zero, which would
+  // otherwise read as a proven copy and let the relocation overwrite boards from main.
   it.effect("refuses when both ledgers are empty rather than treating it as a copy", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

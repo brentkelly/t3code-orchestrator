@@ -1,16 +1,6 @@
 /**
- * A review loop whose next phase never started (T3O-5), against the LIVE
- * reactor.
- *
- * The halt this closes: `adjudicate@1` completed `succeeded` and the step
- * settled, but the continuation that should have selected `review@2` failed
- * (the disk was full, so the dispatch never landed). The ledger then says
- * round 2 is owed while the step row says the stage is finished with nothing
- * live. Nothing asked the executor again: an idempotent repeat of the
- * completion returned early, and boot reconcile only walks steps that are
- * still in flight. The card sat in Code review with no thread, for ever.
- *
- * Both ways back in are pinned here: the agent re-calling
+ * A review loop whose next phase never started: the ledger owes round 2 while the step row
+ * is finished with nothing live. Both ways back in are pinned: the agent re-calling
  * `board_complete_step`, and a server restart.
  */
 import {

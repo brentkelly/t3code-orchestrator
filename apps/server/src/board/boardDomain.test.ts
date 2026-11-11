@@ -1,12 +1,7 @@
 /**
- * T3o board domain integration (t3o-03): a full card lifecycle — create,
- * move, update with dependencies and a brief, link/unlink against real
- * threads, thread-deletion tombstoning, archive/unarchive — dispatched
- * through the real engine, with the projection tables, shell snapshot, and
- * a from-empty replay all agreeing at the end.
- *
- * Plus the destructive counterpart: a card DELETE, which is the only board
- * write whose correctness rests on things being gone rather than present.
+ * A full card lifecycle through the real engine, with the projection tables,
+ * shell snapshot and a from-empty replay agreeing at the end; plus card delete,
+ * whose correctness rests on things being gone.
  */
 import {
   BoardCardId,
@@ -120,11 +115,11 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
       const atReady = yield* snapshotQuery.getCommandReadModel();
       const cardOneAtReady = atReady.board?.cards.find((card) => card.id === cardOne);
       assert.strictEqual(cardOneAtReady?.stage, "ready");
-      // Ready is an ordinary pre-build stage now (D11): dependency blocking is
+      // Ready is an ordinary pre-build stage now: dependency blocking is
       // derived only from the build role onward, so an unmet dependency does
       // not block a card sitting at Ready.
       assert.strictEqual(cardOneAtReady?.blocked, false);
-      // The brief body never enters the read model, only its ref (D8).
+      // The brief body never enters the read model, only its ref.
       assert.strictEqual(cardOneAtReady?.briefRef, "brief");
 
       // Link a real thread, delete the thread, unlink: tombstone, not
@@ -150,7 +145,7 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
         role: "planning",
         createdAt: t0,
       });
-      // The board snapshot names the live link (t3o-04); the thread-derived
+      // The board snapshot names the live link; the thread-derived
       // state rests at "none", for the client to derive from its thread shells.
       const shellLinked = yield* snapshotQuery.getBoardSnapshot();
       const cardOneShell = shellLinked.cards?.find((card) => card.cardId === cardOne);
@@ -188,7 +183,7 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
       assert.strictEqual(cardOneUnlinked?.activeThreadId, null);
       assert.strictEqual(cardOneUnlinked?.threadState, "none");
 
-      // A retired link (T3O-41) stays on the card, round-trips through the
+      // A retired link stays on the card, round-trips through the
       // table, and is not the card's active thread.
       const retiredThreadId = ThreadId.make("thread-retired");
       yield* engine.dispatch({
@@ -364,7 +359,7 @@ it.layer(makeBoardDomainTestLayer("t3o-board-delete-test-"))("board card delete"
       // A plan on the card being deleted, so the purge has a `board_plans` row
       // to drop — and the `plans` slice, non-empty before the delete, empties
       // to the SAME absent state on replay and on rehydration (both omit an
-      // empty slice). This is the D7 edge a card with no plan cannot exercise.
+      // empty slice). This is the edge a card with no plan cannot exercise.
       yield* engine.dispatch({
         type: "board.plans.propose",
         commandId: CommandId.make("cmd-one-plan"),
@@ -439,12 +434,9 @@ it.layer(makeBoardDomainTestLayer("t3o-board-base-branch-test-"))(
   "per-card base branch (T3O-5)",
   (it) => {
     it.effect("survives the SQL round trip, and replay agrees with rehydration", () =>
-      // The base branch crosses seven projection touch points (row schema,
-      // encode, decode, insert, upsert, both select lists), and a column missed
-      // in any one of them is invisible until a server restart quietly hands
-      // every card its project default back. So this drives the real tables:
-      // pin, clear, re-pin, then compare a from-empty replay against what the
-      // rows rehydrate to.
+      // The base branch crosses seven projection touch points, and a miss in
+      // any shows only after a restart, so this drives the real tables and
+      // compares a from-empty replay against the rehydrated rows.
       Effect.gen(function* () {
         const engine = yield* boardStackEngine;
         const snapshotQuery = yield* boardStackSnapshotQuery;

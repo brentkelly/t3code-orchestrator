@@ -1,5 +1,5 @@
 /**
- * T3o card progress block (t3o-18, D5/D7/D8).
+ * T3o card progress block.
  *
  * The precedence — review > subcards > todos — is the rule that decides what a
  * split parent shows once it reaches code review, and this is the one place the
@@ -152,7 +152,7 @@ describe("pickBoardCardTodoThread (D7)", () => {
       })?.threadId,
     ).toBe(thread("a"));
 
-    // A linked thread with no list is not a candidate (D14: the cache fills
+    // A linked thread with no list is not a candidate (the cache fills
     // forward, so this is the common state right after an upgrade).
     expect(
       pickBoardCardTodoThread({

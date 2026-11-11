@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-63): the per-worker loop behind the signal feed and the MCP relay.
+ * T3o: the per-worker loop behind the signal feed and the MCP relay.
  */
 import { EnvironmentId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";

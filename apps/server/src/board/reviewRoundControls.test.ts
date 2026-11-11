@@ -1,16 +1,7 @@
 /**
- * The reactor's re-plan-on-edit tail (t3o-22, D6), against the LIVE reactor.
- *
- * The tail exists so that raising a held review loop's round budget makes it
- * plan the next round — `continueStage` only ever runs off a step settling, and
- * a loop held at its cap has already settled, so without this nothing would ask
- * the executor again.
- *
- * It is deliberately role-AGNOSTIC (an `if (stage.role === "review")` would be
- * the first leak of review logic into the reactor, breaking t3o-16 AC10), which
- * means it runs on EVERY card edit at EVERY stage — a title, a label, a
- * dependency. These tests pin the blast radius of that: an edit may resume work
- * the executor genuinely has left, and must do nothing at all otherwise.
+ * The reactor's re-plan-on-edit tail runs on EVERY card edit at every stage, because it
+ * is role-agnostic. An edit may resume work the executor genuinely has left, and must do
+ * nothing at all otherwise.
  */
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -93,11 +84,9 @@ it.effect("t3o-22 D6: a card edit does NOT resurrect an abandoned step at an aut
     },
     ({ slots, pumpDomain, board, decided }) =>
       Effect.gen(function* () {
-        // `SimpleStageExecutor` decides from SUCCEEDED completions alone, so it
-        // sees no completion for this stage's step and plans a fresh `run` —
-        // even though the card is carrying an abandoned step, which is exactly
-        // the state a human's manually adopted thread leaves behind. Renaming
-        // the card must not spawn an agent beside them.
+        // `SimpleStageExecutor` sees no succeeded completion and plans a fresh `run`, but the
+        // card carries an abandoned step (a manually adopted thread). Renaming the card must not
+        // spawn an agent beside it.
         yield* pumpDomain(cardUpdated({ ...buildingCard("card-1", "m"), title: "Renamed" }, 2));
 
         const selects = (yield* decided).filter(
@@ -122,7 +111,7 @@ it.effect("t3o-22 D6: a card edit is a no-op for a stage whose step already succ
         yield* pumpDomain(movedToBuilding(buildingCard("card-1", "m"), 1));
         // The build succeeds and the card auto-advances out of Building.
         yield* pumpDomain(stepCompleted(cardId, "succeeded", 2));
-        // The one automatic crossing (D18) has happened.
+        // The one automatic crossing has happened.
         assert.strictEqual((yield* board).cards[0]?.stage, BOARD_SEED_STAGE_IDS.review);
 
         yield* pumpDomain(

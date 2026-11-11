@@ -1,6 +1,6 @@
 /**
  * T3o: the half-filled circle on a column some, but not all, projects in view
- * use (T3O-49). Its native title gives "N of M projects · only X"; a click
+ * use. Its native title gives "N of M projects · only X"; a click
  * opens who is included and who isn't, each row linking to that project's
  * pipeline settings, and "Stage settings" opening the global Pipeline page.
  */

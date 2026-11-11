@@ -1,18 +1,7 @@
 /**
- * Auto-merge (T3O-38): an armed card merges its own pull request as soon as
- * the forge accepts it, and a refused merge climbs a classified retry ladder
- * instead of parking the card until someone notices.
- *
- * Driven through the live reactor against the stateful engine double
- * (`withGovernor`), because the behaviour spans the arrival gate, the real
- * decider's arm and hold commands, the forge seam and the 30s tick. The engine
- * double decides every dispatched command with the production decider, so a
- * hold this suite says the card carries is one the decider really recorded.
- *
- * Nothing here sleeps or polls: the sweep is driven by calling the reactor's
- * own `fireAutoMerges` hook, exactly as the auto-start suite drives
- * `startArmed`, and the clock is advanced with `TestClock` where a rung has to
- * come due.
+ * Auto-merge through the live reactor and the stateful engine double, which
+ * decides every command with the production decider. The sweep runs through
+ * the reactor's `fireAutoMerges` hook and rungs come due via `TestClock`.
  */
 import {
   BOARD_CHECKS_FIX_STEP_LABEL,
@@ -107,7 +96,7 @@ const probe = (input: {
 };
 
 /** A converged review round's settled step, carrying the tip its round
-    started from (t3o-24, D1). Recorded anywhere but "main" — which is what
+    started from. Recorded anywhere but "main" — which is what
     the harness's git stub answers — it is STALE. */
 const settledReviewStep = (tip: string): BoardCardStepState => ({
   cardId: BoardCardId.make("card-one"),
@@ -497,7 +486,7 @@ it.effect("an UNARMED card's CI fix waits for the checks its push re-ran, then m
   );
 });
 
-// T3O-67: a clean pull request the host refused anyway. This used to be read
+// A clean pull request the host refused anyway. This used to be read
 // by elimination as a missing approval and stop the card at once. The real
 // cause was a token that could read the pull request but not merge it. Now the
 // refusal waits on the soft ladder and the card shows the forge's own words.
@@ -524,11 +513,8 @@ it.effect("keeps climbing on a refusal with every check green, showing the forge
   ),
 );
 
-// A merge refused BEFORE the host was asked (T3O-47). The pull request is
-// green, up to date and unconflicted, because it was never the problem, so a
-// probe would describe the pull request instead of the merge-strategy
-// setting. The attempt's own sentence is the answer, and no retry can change
-// it.
+// A merge refused before the host was asked: the pull request was never the
+// problem, so the attempt's own sentence is the answer and no retry helps.
 it.effect("reports a refusal upstream made itself, without probing the pull request", () =>
   withGovernor(
     setup({
@@ -651,7 +637,7 @@ it.effect("sends a CONFLICT to the conflict-fix step, never to the ladder (D8)",
     setup({
       cards: [cardAtMerge({ autoMerge: true })],
       mergeFailure: "the host refused",
-      // T3o (T3O-47): a conflict is read off the host's structured merge state
+      // T3o: a conflict is read off the host's structured merge state
       // rather than out of the refusal's prose, which upstream's process layer
       // no longer carries out of a subprocess.
       mergeState: probe({ mergeable: "blocked", blockedReason: "conflict", passed: 1 }),
@@ -747,7 +733,7 @@ it.effect("clears the hold when the arm is switched off (D10)", () =>
   ),
 );
 
-// T3O-80: the strategy change clears the hold, and the hold was the retry.
+// The strategy change clears the hold, and the hold was the retry.
 it.effect("re-attempts a held card at once when its merge strategy changes", () =>
   withGovernor(
     setup({
@@ -778,7 +764,7 @@ it.effect("re-attempts a held card at once when its merge strategy changes", () 
   ),
 );
 
-// T3O-80: a child with no strategy of its own merges with its parent's, so the
+// A child with no strategy of its own merges with its parent's, so the
 // parent's change is the change that has to release the child's hold.
 it.effect("re-attempts a held child at once when its parent's merge strategy changes", () => {
   const parent = makeBoardCard({ id: "card-parent", stage: BUILDING, orderKey: "a" });
@@ -808,7 +794,7 @@ it.effect("re-attempts a held child at once when its parent's merge strategy cha
   );
 });
 
-// Groups nest (T3O-27): the nearest ancestor with a strategy governs, so a
+// Groups nest: the nearest ancestor with a strategy governs, so a
 // grandparent's change reaches a held grandchild through a group with none.
 it.effect("re-attempts a held grandchild when a grandparent's merge strategy changes", () => {
   const grandparent = makeBoardCard({ id: "card-grandparent", stage: BUILDING, orderKey: "a" });
@@ -932,12 +918,9 @@ it.effect("merges a card deferred as BLOCKED once its dependency lands (D8)", ()
         yield* h.pumpDomain(cardMoved(card, REVIEW, MERGE, 1));
         assert.deepStrictEqual(yield* h.mergeAttempts, []);
 
-        // The dependency reaching Done re-flags the dependent, which is a
-        // plain `card-updated` carrying no auto-merge marker of any kind. The
-        // arrival recorded no hold, so nothing about the card says it was ever
-        // eligible — without the deferral the sweep has nothing to revisit and
-        // the card sits here until someone clicks Merge, which is the whole
-        // complaint.
+        // The dependency reaching Done re-flags the dependent with a plain
+        // `card-updated` and the arrival recorded no hold, so only the
+        // deferral lets the sweep revisit the card.
         const dep = (yield* h.board).cards.find((entry) => entry.id === BoardCardId.make("dep"));
         assert.isDefined(dep);
         yield* h.pumpDomain(
@@ -1079,7 +1062,7 @@ it.effect("a human Merge click resets the ladder to rung 0 (D10/D11)", () =>
   ),
 );
 
-// ── The whole point: an unattended dependency clears itself (D15) ──────────
+// ── The whole point: an unattended dependency clears itself ──────────
 
 it.effect("an armed dependency merges itself and starts its armed dependent", () =>
   withGovernor(
@@ -1103,19 +1086,13 @@ it.effect("an armed dependency merges itself and starts its armed dependent", ()
     (h) =>
       Effect.gen(function* () {
         // The card this whole feature exists for: you arm the dependency, go
-        // to bed, and the chain resolves without you. Before T3O-38 the
-        // dependency parked at Merge waiting for a click and the dependent
-        // was still sitting in Ready in the morning.
+        // to bed, and the chain resolves without you.
         yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
         assert.strictEqual(stageOf(yield* h.board), DONE);
 
-        // D15, pinned through the REAL merge path rather than by mocking the
-        // ordering. Read BEFORE the Done arrival is delivered: the local base
-        // branch has already been fast-forwarded by the time the card reaches
-        // Done, so anything the Done arrival starts — the armed dependent —
-        // cuts from history that already contains the dependency's commits.
-        // Break that ordering and you silently produce agents that cannot see
-        // the code they depend on.
+        // Read before the Done arrival is delivered: the base branch must
+        // already be fast-forwarded, so whatever Done starts (the armed
+        // dependent) cuts from history containing the dependency's commits.
         const gitBeforeDone = yield* h.gitInvocations;
         assert.isTrue(
           gitBeforeDone.some(
@@ -1126,11 +1103,8 @@ it.effect("an armed dependency merges itself and starts its armed dependent", ()
             .join(" | ")}`,
         );
 
-        // The engine double decides and projects a dispatched command but does
-        // not feed its event back into the domain queue, so the Done arrival
-        // is handed over here — exactly as the auto-start suite does. In
-        // production the reactor's own dispatch loops back through the
-        // projection pipeline.
+        // The engine double does not feed its events back into the domain
+        // queue, so the Done arrival is handed over here.
         const merged = (yield* h.board).cards.find(
           (card) => card.id === BoardCardId.make("card-one"),
         );

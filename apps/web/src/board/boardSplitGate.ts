@@ -1,5 +1,5 @@
 /**
- * The split gate's view (T3O-31): what each proposed child is, where it lands,
+ * The split gate's view: what each proposed child is, where it lands,
  * and how the human's settings compare with the agent's recommendation.
  * Pure, so the gate component only draws it.
  */

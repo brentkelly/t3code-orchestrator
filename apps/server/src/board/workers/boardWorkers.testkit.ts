@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-62): a `BoardWorkers` for suites that are not about workers — a
+ * T3o: a `BoardWorkers` for suites that are not about workers — a
  * local-only board that refuses every worker operation. Its summary never
  * changes, so a board subscription under test sees exactly today's stream.
  */
@@ -37,7 +37,7 @@ export const BoardWorkersLocalOnlyTest = Layer.succeed(BoardWorkers, {
   states: Stream.make(EMPTY_BOARD_WORKERS_STATE),
 });
 
-/** No worker connections at all (T3O-65): every card is placed on this server. */
+/** No worker connections at all: every card is placed on this server. */
 export const WorkerConnectionsNoneTest = Layer.succeed(WorkerConnections, {
   get: (workerId) =>
     Effect.fail(
@@ -56,7 +56,7 @@ export const WorkerConnectionsNoneTest = Layer.succeed(WorkerConnections, {
   record: () => Effect.void,
 });
 
-/** A local-only board's placement (T3O-65): no workers, and nothing changes. */
+/** A local-only board's placement: no workers, and nothing changes. */
 export const BoardPlacementLocalOnlyTest = Layer.succeed(BoardPlacement, {
   workers: Effect.succeed(EMPTY_BOARD_WORKERS_STATE),
   changes: Stream.empty,

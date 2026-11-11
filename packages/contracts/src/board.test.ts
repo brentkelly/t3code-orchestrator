@@ -1,9 +1,6 @@
 /**
- * T3o board payload discipline (t3o-04). The shell/detail split (D7) is won
- * or lost here: `BoardCardShell` rides every shell snapshot and every
- * reconnect, so its serialized size is a contract, not an implementation
- * detail. A regression is invisible on localhost and obvious on a phone on
- * cellular — these tests are the tripwire.
+ * `BoardCardShell` rides every snapshot and reconnect, so its serialized size is a contract.
+ * A regression is invisible on localhost and obvious on a phone on cellular.
  */
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
@@ -47,7 +44,12 @@ import {
   BoardCardShell,
   BoardStageExecutionReview,
   DEFAULT_BOARD_REVIEW_PHASE_PROMPT,
-  LEGACY_BOARD_REVIEW_PHASE_PROMPT,
+  RETIRED_BOARD_REVIEW_PHASE_PROMPTS,
+  BoardStageExecutionBuild,
+  DEFAULT_BOARD_TRIAGE_PHASE_PROMPT,
+  RETIRED_BOARD_TRIAGE_PHASE_PROMPTS,
+  DEFAULT_BOARD_SUBMIT_PROMPT,
+  RETIRED_BOARD_SUBMIT_PROMPTS,
   BoardLabelId,
   BoardLabelName,
   boardAppendOrderKey,
@@ -111,39 +113,15 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 const encodeShell = Schema.encodeUnknownSync(BoardCardShell);
 const decodeShell = Schema.decodeUnknownSync(BoardCardShell);
 const encodeSnapshot = Schema.encodeUnknownSync(BoardShellSnapshot);
+const decodeStepState = Schema.decodeUnknownSync(BoardCardStepState);
 
 const utf8Bytes = (value: unknown): number =>
   new TextEncoder().encode(JSON.stringify(value)).length;
 
 /**
- * Measured at 860 bytes on implementation (2026-08-10) for a worst-case
- * shell — review stage with every optional field populated, UUID-length
- * ids, and the title cap fully saturated. t3o-06a added `labelIds` (a bounded
- * array of at most `BOARD_CARD_LABELS_MAX` UUID-length ids), which is ~200
- * bytes at the cap, so the budget rose to 1280 — still a hard ceiling, still
- * scalar-plus-one-small-array, and still linear in card count. If a change
- * pushes past this, it added real bytes to every card on every reconnect,
- * and the right fix is almost never raising the number.
- *
- * T3O-19 raised it to 1344 for the ONE case that argument does not cover: a
- * key-optional field that no ordinary card carries. `scheduledStartAt` costs a
- * scheduled card ~45 bytes and every other card exactly zero (asserted below,
- * and by the linear-growth test, which measures unscheduled cards — the real
- * per-card cost on reconnect, and unchanged). The ceiling moved only for a
- * worst case that cannot actually occur: a card cannot be scheduled and running
- * and queued and mid-review-round at the same instant.
- *
- * T3O-38 raised it to 1408 on the same terms, for the same kind of field. The
- * auto-merge hold's three keys cost a held card ~64 bytes and every other card
- * exactly zero (asserted below, and by the linear-growth test, which measures
- * unheld cards — the real per-card cost on reconnect, and unchanged). The
- * ceiling moved only for a worst case that cannot occur: a card whose merge is
- * held has no live step, so it is not queued, not running and not conflicting.
- *
- * The Automation section (T3O-38, the later card of that number) raised it to
- * 1472 on the same terms: three own toggles and the unattended-run flag cost a
- * card that sets all of them ~85 bytes and an inheriting card exactly zero,
- * replacing the ~37 the auto-start and auto-merge-armed flags used to cost.
+ * A hard ceiling, measured with every optional field populated. Past it, a change added bytes
+ * to every card on every reconnect; raise it only for key-optional fields that cost an
+ * ordinary card zero (the linear-growth test measures those).
  */
 const BOARD_CARD_SHELL_BYTE_BUDGET = 1472;
 
@@ -166,7 +144,7 @@ const fullyPopulatedShell = {
   blocked: true,
   dependencyCount: 12,
   hasBrief: true,
-  // Never populated on the live snapshot (archived cards leave it, D15), but
+  // Never populated on the live snapshot (archived cards leave it), but
   // the archive page reuses this shell — so the budget is measured against a
   // populated timestamp rather than the null every live card sends.
   archivedAt: "2026-01-01T00:00:00.000Z",
@@ -186,17 +164,17 @@ const fullyPopulatedShell = {
   planTotal: 24,
   planDone: 12,
   prNumber: 48213,
-  // Populated (T3O-19, D8): the budget is measured against a card that IS
+  // Populated: the budget is measured against a card that IS
   // scheduled, so the field is proven to fit in the worst case rather than
   // only in the absent-key case every unscheduled card sends.
   scheduledStartAt: "2026-01-01T00:00:00.000Z",
-  // Populated (T3O-38) for the same reason: the budget is measured against a
+  // Populated for the same reason: the budget is measured against a
   // card with every Automation toggle set, not only the inheriting case.
   autoPlanSetting: true,
   autoBuildSetting: true,
   autoMergeSetting: true,
   autoPlanPending: true,
-  // Populated (T3O-38, D14) for the same reason: the budget is measured
+  // Populated for the same reason: the budget is measured
   // against a card whose merge is held, not only against the absent-key case
   // every healthy card sends.
   autoMergeHeldSince: "2026-01-01T00:00:00.000Z",
@@ -219,7 +197,7 @@ const typicalCard = (index: number): BoardCard => ({
   cardNumber: index,
   projectId: ProjectId.make("project-0b8a2c3d-4e5f-6789-abcd-ef0123456789"),
   // Labels at the cap on every card, so the linear-growth assertion measures
-  // the shell's worst per-card case (t3o-06a).
+  // the shell's worst per-card case.
   labels: labelIdsAtCap,
   stage: BOARD_SEED_STAGE_IDS.building,
   pullRequest: null,
@@ -359,13 +337,12 @@ describe("BoardCardShell payload discipline", () => {
   });
 
   it("serializes to scalars plus the one bounded labelIds array — nothing else", () => {
-    // The structural form of the D7 promise: nothing unbounded can hide in
-    // a field whose every value is a primitive or null. t3o-06a adds exactly
-    // one array — `labelIds` — and it is bounded at `BOARD_CARD_LABELS_MAX`
+    // Nothing unbounded can hide in a field whose every value is a primitive
+    // or null. The one array — `labelIds` — and it is bounded at `BOARD_CARD_LABELS_MAX`
     // and holds only strings; everything else stays scalar.
     const encoded = encodeShell(fullyPopulatedShell) as Record<string, unknown>;
     for (const [field, value] of Object.entries(encoded)) {
-      // CI (T3O-44) carries one bounded object; its own test below holds it
+      // CI carries one bounded object; its own test below holds it
       // to a budget.
       if (field === "ci" || field === "ciLastOutcome") continue;
       if (field === "labelIds") {
@@ -383,7 +360,7 @@ describe("BoardCardShell payload discipline", () => {
   });
 
   it("costs an unscheduled card nothing and carries a scheduled card's instant (T3O-19, D8)", () => {
-    // D8's whole argument: the shell is under a per-card budget and the
+    // The whole argument: the shell is under a per-card budget and the
     // snapshot grows linearly with card count, so the COMMON card — the one
     // that is not scheduled — must be byte-for-byte what it was before this
     // field existed.
@@ -474,7 +451,7 @@ describe("isBoardCardScheduleDue (T3O-19, D1)", () => {
   it("withholds a future card and admits one at or past its instant", () => {
     expect(isBoardCardScheduleDue("2026-03-04T09:00:01.000Z", now)).toBe(false);
     expect(isBoardCardScheduleDue("2026-03-04T09:00:00.000Z", now)).toBe(true);
-    // A past time means "now" (D6): the picker refuses none, and a card that
+    // A past time means "now": the picker refuses none, and a card that
     // missed its moment while the server was down catches up.
     expect(isBoardCardScheduleDue("2020-01-01T00:00:00.000Z", now)).toBe(true);
   });
@@ -592,7 +569,7 @@ describe("board card shell derivation", () => {
       }),
     ).toEqual({ threadState: "waiting", awaitingInput: false, waitingOnBackground: false });
     // A session that died mid-prompt keeps its approval row, but nobody can
-    // approve into it: the card reads failed, not Needs permission (T3O-16).
+    // approve into it: the card reads failed, not Needs permission.
     expect(
       deriveBoardCardThreadState({
         hasPendingUserInput: false,
@@ -661,14 +638,14 @@ describe("board card shell derivation", () => {
     // No `pullRequest` passed means the card has none: `hasPr` is a real
     // derived false here, not the hardcoded placeholder it used to be.
     expect(shell.hasPr).toBe(false);
-    // Still-unsourced t3o-11 field.
+    // Still-unsourced field.
     expect(shell.attachmentCount).toBe(0);
-    // `queued` is now sourced (t3o-11) but rests at false when a producer omits
+    // `queued` is now sourced but rests at false when a producer omits
     // it — the card-carrying delta path, where step state is not in hand.
     expect(shell.queued).toBe(false);
-    // `stalled` (t3o-17, D3) rests at false the same way.
+    // `stalled` rests at false the same way.
     expect(shell.stalled).toBe(false);
-    // `stepConflictFix` (T3O-9) rests at false the same way: a card-carrying
+    // `stepConflictFix` rests at false the same way: a card-carrying
     // delta cannot see the step row, so it must not assert "no conflict".
     expect(shell.stepConflictFix).toBe(false);
     // post-MVP sub-boards and review pipeline: key-optional and absent, so
@@ -915,7 +892,7 @@ describe("dependency gating across the archive (t3o-13)", () => {
   });
 
   it("stops gating on an archived dependency, finished or not", () => {
-    // The whole point of t3o-13: archiving unfinished work must not deadlock
+    // Archiving unfinished work must not deadlock
     // everything that was waiting on it.
     expect(unmetOf("archived-open")).toEqual([]);
     expect(unmetOf("archived-done")).toEqual([]);
@@ -1066,7 +1043,7 @@ describe("deriveBoardCardThreadState aggregates across live threads (t3o-18, D7)
     expect(deriveBoardCardThreadState(null).threadState).toBe("none");
   });
 
-  // ── A dead thread is not an idle one (t3o-10, D5) ────────────────────
+  // ── A dead thread is not an idle one ────────────────────
   //
   // A server restart marks every orphaned session `error`. Read as "not
   // running", that was indistinguishable from a thread resting between turns,
@@ -1152,11 +1129,8 @@ describe("deriveBoardCardThreadState flags a background wait (T3O-20)", () => {
 });
 
 describe("BoardCardStepState decoding (t3o-19 D7)", () => {
-  // The event log is replayed through `Schema.decodeUnknownEffect`, so a
-  // `board.card-step-selected` payload written before t3o-19 — which has no
-  // `stageLabel` KEY at all — must still decode. A required-but-nullable field
-  // would reject it, and D7's "replay equals rehydration" would hold for the
-  // projection tables while silently breaking for the log.
+  // The log replays through `Schema.decodeUnknownEffect`, so old payloads without the
+  // `stageLabel` key must still decode; replay must equal rehydration.
   const legacyPayload = {
     cardId: "card-1",
     stepId: "building",
@@ -1179,17 +1153,17 @@ describe("BoardCardStepState decoding (t3o-19 D7)", () => {
   };
 
   it("decodes a pre-t3o-19 payload that carries no stageLabel key", () => {
-    const decoded = Schema.decodeUnknownSync(BoardCardStepState)(legacyPayload);
+    const decoded = decodeStepState(legacyPayload);
     expect(decoded.stageLabel).toBe(null);
     expect(decoded.stepLabel).toBe("Building");
   });
 
   it("decodes a pre-t3o-24 payload that carries no baseTipAtRoundStart key (AC7)", () => {
-    // Same replay reason: an event written before t3o-24 has no key, and a
+    // Same replay reason: an older event has no key, and a
     // null already MEANS "no tip recorded — not stale".
-    const decoded = Schema.decodeUnknownSync(BoardCardStepState)(legacyPayload);
+    const decoded = decodeStepState(legacyPayload);
     expect(decoded.baseTipAtRoundStart).toBe(null);
-    const recorded = Schema.decodeUnknownSync(BoardCardStepState)({
+    const recorded = decodeStepState({
       ...legacyPayload,
       baseTipAtRoundStart: "sha-round-start",
     });
@@ -1197,7 +1171,7 @@ describe("BoardCardStepState decoding (t3o-19 D7)", () => {
   });
 
   it("still decodes a post-t3o-19 payload, stepped or unstepped", () => {
-    const unstepped = Schema.decodeUnknownSync(BoardCardStepState)({
+    const unstepped = decodeStepState({
       ...legacyPayload,
       stepLabel: null,
       stageLabel: "Planning",
@@ -1205,7 +1179,7 @@ describe("BoardCardStepState decoding (t3o-19 D7)", () => {
     expect(unstepped.stepLabel).toBe(null);
     expect(unstepped.stageLabel).toBe("Planning");
 
-    const stepped = Schema.decodeUnknownSync(BoardCardStepState)({
+    const stepped = decodeStepState({
       ...legacyPayload,
       stepId: "review@1",
       stepLabel: "Review · round 1",
@@ -1441,9 +1415,8 @@ describe("per-card model overrides (t3o-29)", () => {
   const opus = { instanceId: ProviderInstanceId.make("anthropic"), model: "claude-opus-5" };
   const haiku = { instanceId: ProviderInstanceId.make("anthropic"), model: "claude-haiku-4-5" };
 
-  // AC8 (the pre-t3o-29 payload decoding to null) lives in
-  // `boardReviewLoop.test.ts`, alongside the identical t3o-22 assertion and the
-  // legacy card fixture both share.
+  // A legacy payload decoding to null overrides is covered in
+  // `boardReviewLoop.test.ts`, alongside the legacy card fixture.
   it("an empty map overrides nothing, exactly as null does", () => {
     expect(isEmptyBoardCardModelOverrides(null)).toBe(true);
     expect(isEmptyBoardCardModelOverrides({})).toBe(true);
@@ -1546,7 +1519,7 @@ describe("cards that need a human (boardCardAttention)", () => {
     stepAwaiting: null,
     queued: false,
     // The base fixture's `waiting` with `awaitingInput: false` is a pending
-    // permission request (T3O-16) — rest on no thread so only the cases that
+    // permission request — rest on no thread so only the cases that
     // ask for one get one.
     threadState: "none",
     archivedAt: null,
@@ -1563,7 +1536,7 @@ describe("cards that need a human (boardCardAttention)", () => {
       a held review. */
   const attention = (
     overrides: Partial<BoardCardShell>,
-    /** The settle-grace inputs the board page joins client-side (T3O-29).
+    /** The settle-grace inputs the board page joins client-side.
         Omitted by every other case, which is what the production callers that
         hold no thread shells do — and means "no grace". */
     settle?: { readonly threadIdleSince?: string | null; readonly now?: number },
@@ -1583,7 +1556,7 @@ describe("cards that need a human (boardCardAttention)", () => {
   it("ranks the reasons, loudest first", () => {
     // The ranking IS the contract: a card can satisfy several at once and the
     // face has room for one.
-    // A human's own stop outranks everything (T3O-23): it is the definitive
+    // A human's own stop outranks everything: it is the definitive
     // statement about the card's live step, and they made it a beat ago.
     expect(
       attention({ stepAwaiting: "paused", stalled: true, held: true, awaitingInput: true })?.reason,
@@ -1624,12 +1597,8 @@ describe("cards that need a human (boardCardAttention)", () => {
   });
 
   it("paints every reading of stalled amber, never red", () => {
-    // `docs/t3o/status-colours.md` (T3O-22, D10): the vocabulary is green,
-    // blue, violet and amber, and every reading of `stalled` are the same
-    // amber fact — nobody is working on this card. A usage-limit card counting
-    // down to its own automatic resume rendered as an error is the case that
-    // forced this: the loudest colour on the board, contradicting the chip's
-    // own words.
+    // Every reading of `stalled` is amber (docs/t3o/status-colours.md): nobody is working on
+    // this card, even a usage-limit card counting down to its own resume.
     for (const stalledReason of [
       "usage-limit",
       "waiting-retry",
@@ -1650,23 +1619,20 @@ describe("cards that need a human (boardCardAttention)", () => {
       { stalled: true, stalledReason: "usage-limit", retryAt },
       { now: Date.parse(retryAt) - 60_000 },
     );
-    expect(chip?.label).toMatch(/^Usage limit — resuming by /);
+    expect(chip?.label).toMatch(/^Usage limit: resuming by /);
   });
 
   it("says a card whose branch could not be prepared cannot start (T3O-15)", () => {
     // Without its own words this read "Stalled — recovery gave up", which is
     // false: no agent ever ran, so there was nothing to recover.
     const chip = attention({ stalled: true, stalledReason: "no-worktree" });
-    expect(chip?.label).toBe("Can't start — needs a human");
+    expect(chip?.label).toBe("Can't start: needs a human");
     expect(chip?.detail).toContain("Continue");
   });
 
   it("keeps saying Paused while the card's thread is still winding down", () => {
-    // Unlike the two parked-on-a-human chips, this one is NOT vetoed by the
-    // working dot. Those assert "nobody is working on this card", which a blue
-    // dot flatly contradicts; this asserts only that the human pressed Stop,
-    // which stays true across the beat between the pause landing and the
-    // interrupted turn actually ending.
+    // Not vetoed by the working dot: it asserts only that the human pressed Stop, which holds
+    // between the pause landing and the interrupted turn ending.
     expect(attention({ stepAwaiting: "paused", threadState: "working" })?.reason).toBe("paused");
     expect(attention({ stepAwaiting: "paused", stepRunning: true })?.reason).toBe("paused");
     // …while the two it sits beside stay vetoed.
@@ -1749,7 +1715,7 @@ describe("cards that need a human (boardCardAttention)", () => {
     expect(attention({ held: true, queued: true })).toBeNull();
   });
 
-  // t3o-34 D4: a step parked on a human is a card-face fact. Before this the
+  // A step parked on a human is a card-face fact. Before this the
   // card only learned about a waiting agent from the THREAD's pending question,
   // so a step parked for a question asked in prose said nothing at all.
   it("reads a step parked for a question as Input needed, in Planning as anywhere", () => {
@@ -1790,14 +1756,11 @@ describe("cards that need a human (boardCardAttention)", () => {
     expect(attention({ stage: BOARD_SEED_STAGE_IDS.done, stepAwaiting: "stopped" })).toBeNull();
   });
 
-  // T3O-18: the card face showed the blue working dot and an amber "Needs a
+  // The card face showed the blue working dot and an amber "Needs a
   // human" at once, on a planning card whose agent was demonstrably mid-turn.
   it("never says a card needs a human while a thread on it is working", () => {
-    // The step row parked ("the agent stopped without asking anything") and the
-    // thread went back to work without the board hearing a resume signal —
-    // `turn.started` is deliberately not one (t3o-34, D5), and a
-    // `turn.completed` for the PREVIOUS turn can park a step a human has
-    // already resumed. The row keeps saying `stopped` for the rest of the run.
+    // `turn.started` is not a resume signal, and a stale `turn.completed` can park a resumed
+    // step, so a working thread outranks the parked row.
     expect(attention({ stepAwaiting: "stopped", threadState: "working" })).toBeNull();
     // Same lie in the other reason: a prose question the agent has since moved
     // past is not something to answer.
@@ -1806,7 +1769,7 @@ describe("cards that need a human (boardCardAttention)", () => {
     expect(attention({ stepAwaiting: "stopped", stepRunning: true })).toBeNull();
   });
 
-  // T3O-29: the same lie, one branch further up. `held` was deliberately exempt
+  // The same lie, one branch further up. `held` was deliberately exempt
   // from the working veto — it is a claim about the STAGE, not the agent — but
   // it wears the same three words, so a build that settled and was then chatted
   // with sat there in amber beside a pulsing blue dot.
@@ -1828,7 +1791,7 @@ describe("cards that need a human (boardCardAttention)", () => {
     );
   });
 
-  // T3O-68: a held card sat in amber for a whole CI pass. A running CI script
+  // A held card sat in amber for a whole CI pass. A running CI script
   // is not a thread and not `stepRunning`, so nothing vetoed the chip.
   it("never says a card needs a human while its CI round is active", () => {
     const ci = (phase: BoardCardCiPhase): BoardCardCi => ({
@@ -1880,7 +1843,7 @@ describe("cards that need a human (boardCardAttention)", () => {
     ).toBe("input");
   });
 
-  // T3O-16: a thread blocked on a permission prompt is waiting on the human
+  // A thread blocked on a permission prompt is waiting on the human
   // exactly as much as one that asked a question, and the card said "Building"
   // with a blue dot — and its sub-board parent said nothing at all.
   describe("a thread waiting for permission", () => {
@@ -1939,7 +1902,7 @@ describe("cards that need a human (boardCardAttention)", () => {
     });
   });
 
-  // T3O-29: the second half of the same complaint — a card that stopped a beat
+  // The second half of the same complaint — a card that stopped a beat
   // ago is not yet a card that needs a human. The turn ends, the step row parks
   // and the supervisor decides whether to resume, over several round trips that
   // do not land together, and the chip flashed amber through all of it.
@@ -2042,7 +2005,7 @@ describe("cards that need a human (boardCardAttention)", () => {
     });
     expect(stuck?.reason).toBe("review-stuck");
     expect(stuck?.tone).toBe("attention");
-    expect(stuck?.detail).toBe("Review is stuck on round 3 — needs your call");
+    expect(stuck?.detail).toBe("Review is stuck on round 3, needs your call");
     expect(attention({ stage: BOARD_SEED_STAGE_IDS.merge, reviewOutcome: "stuck" })).toBeNull();
     // Advanced is neither a pass nor a call for a human, in any stage.
     for (const stage of [BOARD_SEED_STAGE_IDS.review, BOARD_SEED_STAGE_IDS.merge]) {
@@ -2258,7 +2221,7 @@ describe("children actively working (deriveBoardCardChildRunning)", () => {
   });
 });
 
-// ── Per-card base branch (T3O-5) ────────────────────────────────────────────
+// ── Per-card base branch ────────────────────────────────────────────
 
 describe("base branch shape (T3O-5, D5)", () => {
   it("accepts an ordinary local branch name, slashes and all", () => {
@@ -2396,13 +2359,8 @@ describe("isBoardCardBaseRetargeted (T3O-5, D14)", () => {
   });
 
   it("an unpinned card in flight follows the project default when the project MOVES it", () => {
-    // The unpinned rung is resolved live, the cut point is a snapshot, so
-    // moving a project's default retargets every unpinned card that already
-    // has a branch — deliberate (D2), and the reason the picker stores null for
-    // the default rather than its name. Locked here because both readings look
-    // reasonable in isolation: without this, "follow the default" could be
-    // quietly narrowed to "the default as of provisioning" and nothing would
-    // fail.
+    // The unpinned rung resolves live, so moving a project's default retargets unpinned cards
+    // that already have a branch. Deliberate: the picker stores null for "the default".
     expect(
       isBoardCardBaseRetargeted({
         card: { parentCardId: null, baseBranch: null, worktree: worktree("main") },
@@ -2464,18 +2422,15 @@ describe("a live merge conflict fix (isBoardConflictFixLive, T3O-9)", () => {
 
   it("is not live once the step settles — or stalls, or a human pauses it", () => {
     for (const status of NOT_LIVE_STATUSES) {
-      // `stalled` is excluded deliberately: it already draws the louder
-      // "Stalled" chip, and two chips claiming the same card is exactly what
-      // `boardCardAttention`'s ranking exists to prevent. `paused` (T3O-23) is
-      // excluded for the same reason, and its chip is ranked ahead of every
-      // other one.
+      // `stalled` and `paused` draw their own louder chips, and two chips on one card is what
+      // `boardCardAttention`'s ranking prevents.
       expect(isBoardConflictFixLive(row({ status })), status).toBe(false);
     }
   });
 
   it("ignores a step that is not a conflict fix, however busy it looks", () => {
     // The unarmed merge-stage re-entry conversation: a running step at the
-    // merge stage with no step identity (t3o-19, D4). This is the case the old
+    // merge stage with no step identity. This is the case the old
     // `stepRunning` inference called a conflict fix.
     expect(isBoardConflictFixLive(row({ stepLabel: null }))).toBe(false);
     expect(isBoardConflictFixLive(row({ stepLabel: "review@2" }))).toBe(false);
@@ -2495,11 +2450,8 @@ describe("stamping a selected step's label (boardSelectedStepLabel, T3O-9)", () 
   });
 
   it("takes the reserved label off a plan the reactor did not arm", () => {
-    // The label is the fix's whole identity downstream — the `card-stalled`
-    // delta is projected from one event and cannot reach board state to ask
-    // what role the step's stage plays — so an executor naming its step
-    // `Conflicts` would otherwise light the pill and disable Merge on a card
-    // whose merge is not held.
+    // The label is the fix's whole identity downstream (`card-stalled` cannot ask the stage's
+    // role), so a step merely named `Conflicts` must not light the pill.
     const stamped = boardSelectedStepLabel(null, BOARD_CONFLICT_STEP_LABEL);
     expect(stamped).toBe(null);
     expect(isBoardConflictFixLive({ stepLabel: stamped, status: "running" })).toBe(false);
@@ -3106,7 +3058,7 @@ describe("board column scope and arrival placement (T3O-27)", () => {
   });
 });
 
-// T3O-24: a pull request an earlier card on the same branch name closed.
+// A pull request an earlier card on the same branch name closed.
 describe("boardPullRequestPredatesCard", () => {
   const created = "2026-10-19T19:07:15.683Z";
   it("is true only for a non-open pull request that closed before the card", () => {
@@ -3204,14 +3156,42 @@ describe("boardCardAutoArchiveDue (T3O-77)", () => {
   });
 });
 
-describe("review phase prompt saved before T3O-51", () => {
+describe("default prompt saved as an old default", () => {
   const decodeReview = Schema.decodeUnknownSync(BoardStageExecutionReview);
-  const reviewPrompt = (prompt: string) =>
-    decodeReview({ kind: "review", phases: { review: { prompt } } }).phases.review.prompt;
+  const decodeBuild = Schema.decodeUnknownSync(BoardStageExecutionBuild);
+  const cases = [
+    {
+      name: "review phase",
+      retired: RETIRED_BOARD_REVIEW_PHASE_PROMPTS,
+      current: DEFAULT_BOARD_REVIEW_PHASE_PROMPT,
+      decoded: (prompt: string) =>
+        decodeReview({ kind: "review", phases: { review: { prompt } } }).phases.review.prompt,
+    },
+    {
+      name: "triage phase",
+      retired: RETIRED_BOARD_TRIAGE_PHASE_PROMPTS,
+      current: DEFAULT_BOARD_TRIAGE_PHASE_PROMPT,
+      decoded: (prompt: string) =>
+        decodeReview({ kind: "review", phases: { triage: { prompt } } }).phases.triage.prompt,
+    },
+    {
+      name: "submit",
+      retired: RETIRED_BOARD_SUBMIT_PROMPTS,
+      current: DEFAULT_BOARD_SUBMIT_PROMPT,
+      decoded: (prompt: string) => decodeBuild({ kind: "build", submit: { prompt } }).submit.prompt,
+    },
+  ];
 
-  it("upgrades the old default verbatim and keeps an edited prompt", () => {
-    expect(reviewPrompt(LEGACY_BOARD_REVIEW_PHASE_PROMPT)).toBe(DEFAULT_BOARD_REVIEW_PHASE_PROMPT);
-    const edited = `${LEGACY_BOARD_REVIEW_PHASE_PROMPT} Also check the docs.`;
-    expect(reviewPrompt(edited)).toBe(edited);
-  });
+  it.each(cases)(
+    "$name: upgrades every retired default verbatim and keeps an edited prompt",
+    ({ retired, current, decoded }) => {
+      expect(retired.length).toBeGreaterThan(0);
+      for (const prompt of retired) {
+        expect(decoded(prompt)).toBe(current);
+      }
+      expect(retired).not.toContain(current);
+      const edited = `${retired[0]} Also check the docs.`;
+      expect(decoded(edited)).toBe(edited);
+    },
+  );
 });

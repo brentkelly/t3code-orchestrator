@@ -1,15 +1,8 @@
 /**
- * T3o: turning a refused auto-merge into a decision (T3O-38, D6/D8).
- *
- * Pure and total — a probe in, a classification and the words the card will
- * show out — so the whole of the hard-versus-soft judgement is testable
- * without a forge, a reactor or a clock. The reactor resolves the world; this
- * decides what it means, the same split `recoveryDecision` established.
- *
- * The ONE rule that must never be broken: anything unrecognised degrades to
- * SOFT. A probe we cannot read costs a few extra retries; a wrong hard verdict
- * parks a card until somebody notices, which is the state this whole feature
- * exists to remove.
+ * Turns a refused auto-merge into a classification and the words the card
+ * shows. Pure, so the hard-versus-soft judgement is testable without a forge.
+ * Invariant: anything unrecognised degrades to SOFT; a wrong hard verdict
+ * parks a card until somebody notices.
  */
 import {
   BOARD_AUTO_MERGE_MAX_ATTEMPTS,
@@ -46,13 +39,9 @@ function describe(state: BoardMergeState): string | null {
 }
 
 /**
- * Classify a refusal against the forge's structured merge state (D6).
- *
- * Order matters and is the table in the spec: a failed required check is the
- * only verdict that survives a green-looking rollup, pending checks always
- * mean wait, and only a block the detail actually names stops the ladder. A
- * refusal with everything green is no longer read as a missing approval
- * (T3O-67): it waits, and the card shows the forge's own words.
+ * Order matters: a failed required check is the only verdict that survives a
+ * green-looking rollup, pending checks always mean wait, and only a block the
+ * detail names stops the ladder. Everything green waits with the forge's words.
  */
 export function classifyBoardAutoMergeRefusal(state: BoardMergeState): BoardAutoMergeVerdict {
   const detail = describe(state);
@@ -72,7 +61,7 @@ export function classifyBoardAutoMergeRefusal(state: BoardMergeState): BoardAuto
       case "behind":
         return { classification: "behind", detail, headSha };
       // A conflict never reaches here in practice — `mergeCardPullRequest`
-      // routes it to the conflict-fix step before any probe runs (D8) — but a
+      // routes it to the conflict-fix step before any probe runs — but a
       // forge that reports one anyway is structural, not transient.
       case "conflict":
       case "draft":
@@ -88,7 +77,7 @@ export function classifyBoardAutoMergeRefusal(state: BoardMergeState): BoardAuto
 }
 
 /** The verdict for a refusal the probe could not classify at all — an
-    unsupported provider, or a probe that itself failed. Always soft (D7). */
+    unsupported provider, or a probe that itself failed. Always soft. */
 export const UNCLASSIFIED_AUTO_MERGE_VERDICT: BoardAutoMergeVerdict = {
   classification: "soft",
   detail: null,
@@ -103,18 +92,9 @@ export interface BoardAutoMergeLadderStep {
 }
 
 /**
- * Where a refusal leaves the ladder (D5/D9).
- *
- * `previousAttempt` is the attempt count the card's existing hold recorded, or
- * 0 when this is the first refusal. A new head sha resets to 0 — new commits
- * mean new CI, so the old ladder's evidence is stale — and because the reset
- * keys on the SHA rather than on a counter, it fires once per distinct sha
- * however many rungs have already passed.
- *
- * A non-soft classification stops the ladder on the spot, whatever rungs
- * remain: that is the entire value of classifying at all. A hard block becomes
- * visible within a few minutes of the first refusal instead of after an hour
- * and a half of a pill that claimed to be waiting.
+ * `previousAttempt` is the attempt count of the card's existing hold, or 0. A
+ * new head sha resets it to 0 (new commits mean new CI), once per distinct sha.
+ * A non-soft classification stops the ladder at once, whatever rungs remain.
  */
 export function boardAutoMergeLadderStep(input: {
   readonly classification: BoardCardAutoMergeClassification;

@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Reading a CI step's log (T3O-60): where a read starts, chunking, UTF-8
+ * Reading a CI step's log: where a read starts, chunking, UTF-8
  * characters cut across reads, following growth, a log replaced under the
  * reader, the end rule, the worker's path guard and an old worker.
  */

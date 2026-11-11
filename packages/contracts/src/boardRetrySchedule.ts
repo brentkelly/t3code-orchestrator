@@ -1,30 +1,14 @@
 /**
- * T3o retry cadences — every number the board waits on between attempts at a
- * stopped step or a refused merge, in one place, as pure functions of scalars.
- *
- * None of these is a setting. They are safety numbers, not preferences.
- *
- * Pure and total throughout — no clock, no randomness. `nowMs` and a `[0, 1)`
- * random arrive as arguments, the same "the reactor resolves, the function
- * stays pure" split `recoveryDecision` established.
+ * Retry cadences for stopped steps and refused merges. Safety numbers, not settings.
+ * Pure: `nowMs` and a `[0, 1)` random arrive as arguments.
  */
 
 const MINUTE = 60_000;
 
 /**
- * The gap before each recovery nudge (D7), indexed by how many nudges this step
- * has already had: 2, 4, 8, 16, 32 minutes.
- *
- * Today there is no gap at all — the next nudge goes the instant the previous
- * reply lands — which is how two cards on the live board spent their entire
- * five-nudge budget in TWELVE SECONDS against a provider that was out of quota
- * and answering in 0.7s. This is the safety net that makes a MISSED detection
- * harmless rather than fatal: the board must not depend on recognising a
- * provider's refusal to avoid spamming it.
- *
- * It barely bites in healthy use. A real agent takes minutes to answer a nudge
- * anyway, so the floor is invisible except in exactly the pathological case it
- * exists for.
+ * Gap before each recovery nudge, indexed by nudges already sent. Without it a provider
+ * refusing in under a second burns the whole nudge budget in seconds; the board must not
+ * depend on recognising a refusal to avoid spamming it.
  */
 export const BOARD_RETRY_DELAYS_MS = [
   2 * MINUTE,
@@ -45,33 +29,16 @@ export function boardRetryDelayMs(nudgeIndex: number): number {
     cards never hits one provider on a precise cadence. */
 export const BOARD_RETRY_JITTER_MS = MINUTE;
 
-/**
- * `delayMs` spread by ±`BOARD_RETRY_JITTER_MS`.
- *
- * `random` is a `[0, 1)` value the caller supplies, so this stays pure and a
- * test can pin the jitter to either edge instead of asserting a range. Floored
- * at zero: a jittered delay that went negative would fire in the past, which is
- * the one outcome the jitter must never produce.
- */
+/** Floored at zero: a jittered delay that went negative would fire in the past. */
 export function applyBoardRetryJitter(delayMs: number, random: number): number {
   const offset = Math.round((random * 2 - 1) * BOARD_RETRY_JITTER_MS);
   return Math.max(0, Math.round(delayMs) + offset);
 }
 
 /**
- * The auto-merge retry ladder (T3O-38, D5): 3, 3, 5, 5, 10, 20, 40 minutes.
- *
- * One initial attempt plus seven retries — 8 attempts over ~86 minutes — then
- * the ladder stops and the card says so and waits for a human. Shaped exactly
- * like `BOARD_RETRY_DELAYS_MS`: charged at the refusal, delivered later by the
- * existing 30s supervisor sweep, and jittered through
- * `applyBoardRetryJitter` so ten cards arriving together do not hammer
- * one forge in lockstep.
- *
- * Front-loaded because the common refusal is "required checks have not passed"
- * on a CI run that finishes in single-digit minutes, and stretched at the tail
- * because a merge still refused after half an hour is usually waiting on
- * something slower than a build.
+ * Auto-merge retries: one attempt plus seven, then the card waits for a human.
+ * Front-loaded because the common refusal is CI that finishes in minutes. Charged at the
+ * refusal and delivered by the supervisor sweep, jittered so cards do not hit a forge in lockstep.
  */
 export const BOARD_AUTO_MERGE_RETRY_DELAYS_MS = [
   3 * MINUTE,
@@ -88,12 +55,8 @@ export const BOARD_AUTO_MERGE_RETRY_DELAYS_MS = [
 export const BOARD_AUTO_MERGE_MAX_ATTEMPTS = BOARD_AUTO_MERGE_RETRY_DELAYS_MS.length + 1;
 
 /**
- * How long to wait after the `attempt`-th refusal (1-based), or `null` once
- * the ladder is spent.
- *
- * Returning null rather than clamping to the last rung is the whole point:
- * this ladder ENDS, and the end is a state the card shows ("Merge needs you")
- * rather than a wait that never resolves.
+ * Null once the ladder is spent rather than clamping to the last rung: the ladder ends,
+ * and the card shows that end ("Merge needs you").
  */
 export function boardAutoMergeRetryDelayMs(attempt: number): number | null {
   const index = Math.floor(attempt) - 1;

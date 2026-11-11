@@ -1,5 +1,5 @@
 /**
- * Plan review (T3O-39): the instructions the planning agent gets, the card and
+ * Plan review: the instructions the planning agent gets, the card and
  * settings resolution, and the completion report reader.
  */
 import { describe, expect, it } from "vite-plus/test";

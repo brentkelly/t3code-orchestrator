@@ -1,7 +1,7 @@
 /**
  * The board's command palette entries: switching between the Board, List and
- * Threads modes (T3O-30), plus whatever the mounted board publishes to
- * `boardUiStore` (T3O-29: drill into the selected group, back up one level),
+ * Threads modes, plus whatever the mounted board publishes to
+ * `boardUiStore` (drill into the selected group, back up one level),
  * so the palette lists them without subscribing to the board itself.
  */
 import { useRouter, useRouterState } from "@tanstack/react-router";

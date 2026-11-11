@@ -1,22 +1,5 @@
-// T3o: why a `stalled` step stopped, and when it next tries (T3O-22, D10).
-//
-// Two columns, additive and guarded exactly like 034's `awaiting_reason`:
-//
-//   stalled_reason — one of BOARD_STEP_STALLED_REASONS (contracts board.ts;
-//     plain TEXT, so later reasons need no migration). NULL reads as `gave-up`, which is what every stalled row
-//     written before this spec actually was: recovery giving up. It MUST match
-//     the decoding default on BoardCardStepState.stalledReason (contracts
-//     board.ts), so a from-empty replay of a log written before this spec
-//     decodes each step to `gave-up` and a pre-existing row rehydrates to
-//     `gave-up`: replay equals rehydration.
-//
-//   retry_at — the ISO instant the board will try this step again, or NULL when
-//     nothing is scheduled. NULL is the honest resting value: before this spec
-//     the next nudge went instantly, so no row had a time to record.
-//
-// Nullable rather than NOT NULL with a default, because `retry_at` genuinely has
-// a third state ("nothing scheduled") and the two columns should read the same
-// way. History is NOT rewritten: existing rows get NULL on both.
+// A NULL `stalled_reason` reads as `gave-up`, matching the decoding default on
+// BoardCardStepState.stalledReason. A NULL `retry_at` means nothing scheduled.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

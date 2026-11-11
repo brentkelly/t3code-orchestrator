@@ -1,5 +1,5 @@
 /**
- * Board migration 050 (T3O-72): the board's own usage-limit cooldowns retire.
+ * Board migration 050: the board's own usage-limit cooldowns retire.
  *
  * The provider-limit table goes, and a step parked on the retired
  * `quota-exhausted` reason reads as `gave-up` — the human-needed stall it

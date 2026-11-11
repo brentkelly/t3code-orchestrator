@@ -1,4 +1,4 @@
-// T3o: the per-card merge strategy on board_cards (T3O-80).
+// T3o: the per-card merge strategy on board_cards.
 //
 // One column, additive and guarded like 036's `base_branch`, defaulting to
 // NULL — "follow the default" — which MUST match the decoding default on

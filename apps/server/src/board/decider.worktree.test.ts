@@ -1,12 +1,7 @@
 /**
- * T3o worktree/branch lifecycle decider invariants (t3o-09, D6/D18).
- *
- * The pure half of the lifecycle: the server-internal worktree commands record
- * branch/worktree state on the card, gated so that provisioning can only
- * happen once the card is in Building (D6 — the worktree is created ON entry
- * to Building, which is itself the human "Begin build" gate; nothing here
- * advances a stage, D18), a failed step is visibly failed and retryable, and a
- * reclaim that would lose work is refused with a reason.
+ * Worktree/branch lifecycle decider invariants: worktree commands record state
+ * on the card and never advance a stage, a failed step is visible and
+ * retryable, and a reclaim that would lose work is refused with a reason.
  */
 import {
   BoardCardId,
@@ -150,8 +145,7 @@ const reclaim = (cardId: string, outcome: "removed" | "blocked", reason?: string
   }) as const satisfies BoardCommand;
 
 /** Every event a command decides. Archive and unarchive decide several —
-    the card's own, plus a `blocked` re-flag per affected dependent (t3o-13,
-    D5) — while every other command decides exactly one. */
+    the card's own, plus a `blocked` re-flag per affected dependent — while every other command decides exactly one. */
 const decideEvents = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
   decideBoardCommandOnModel({ command, readModel }).pipe(Effect.map(boardDecidedEvents));
 
@@ -166,12 +160,12 @@ const decideFail = (command: BoardCommand, readModel: BoardOrchestrationReadMode
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   "board worktree lifecycle decider",
   (it) => {
-    // ── D6: laziness — moving into Building creates no worktree ───────────
+    // ── Laziness — moving into Building creates no worktree ───────────
 
     it.effect("the human move into Building does not itself create a worktree", () =>
       Effect.gen(function* () {
         // A card sitting in Ready with no worktree — the planning-and-Ready
-        // life it has led so far is worktree-free (D6).
+        // life it has led so far is worktree-free.
         const card = makeCard({ id: "card-1", stage: "ready", worktree: null });
         const move = {
           type: "board.card.move",
@@ -191,12 +185,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
-    // ── D6: provisioning is mode-gated by the REACTOR, not stage-gated here ──
-    // Which stages need a worktree is a settings question (any stage may resolve
-    // to `mode: "build"`; the review stage always does), and the pure decider
-    // cannot read settings. The command is server-internal, so the resolved-mode
-    // gate lives with its only dispatcher — a stage-literal invariant here would
-    // orphan real git worktrees for build-mode stages not named 'building'.
+    // Provisioning is mode-gated by the reactor, not stage-gated here: which
+    // stages need a worktree is a settings question the pure decider cannot read.
 
     it.effect("provisions a worktree for a card in any stage (e.g. the review stage)", () =>
       Effect.gen(function* () {
@@ -230,7 +220,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         }),
     );
 
-    // ── record / fail ────────────────────────────────────────────────────
+    // ── Record / fail ────────────────────────────────────────────────────
 
     it.effect("recording a ready worktree sets the path and status", () =>
       Effect.gen(function* () {
@@ -293,13 +283,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
 
     it.effect("a pre-provision failure is reported on a card that has no worktree yet", () =>
       Effect.gen(function* () {
-        // The reactor resolves the project cwd and the base branch BEFORE it
-        // dispatches `provision-worktree`; when that resolution fails there is no
-        // worktree record to mark. Rejecting the report used to swallow the only
-        // signal the human had (the card just sat in Building with nothing
-        // running), so the event is decided as a pure report: the reason reaches
-        // the activity rail, and `worktree` stays null — the state a retry starts
-        // from, since a null worktree is provisionable.
+        // A failure before `provision-worktree` has no worktree record to mark,
+        // so the report is decided as-is: the reason reaches the activity rail
+        // and `worktree` stays null, which a retry can provision.
         const card = makeCard({ id: "card-1", worktree: null });
         const event = yield* decide(
           fail("card-1", "/tmp/proj is not a git repository, or has no commits yet"),
@@ -405,7 +391,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
-    // ── a second round of work ───────────────────────────────────────────
+    // ── A second round of work ───────────────────────────────────────────
 
     const mergedPr = (number: number) =>
       ({
@@ -485,14 +471,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
 
     it.effect("leaving Done retires a pull request cached as OPEN too", () =>
       Effect.gen(function* () {
-        // `card.pullRequest` is a CACHE, and the decider is pure — so a link
-        // cached `open` that has since merged on the forge would otherwise take
-        // the no-boundary path. The card would carry that stale link into round
-        // two, the next refresh would resolve it as `merged`, and the settle
-        // would delete a branch now holding round two's unmerged commits, with
-        // the reclaim having already removed the checkout. Leaving Done ends the
-        // round whatever the link says, so no stale value can authorise a
-        // deletion.
+        // `card.pullRequest` is a cache: a stale `open` link carried into round
+        // two could later resolve `merged` and authorise deleting a branch with
+        // unmerged commits. Leaving Done ends the round whatever the link says.
         const card = makeCard({
           id: "card-1",
           stage: "done",
@@ -551,10 +532,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
 
     it.effect("a round that ended without a pull request cannot LOWER the floor", () =>
       Effect.gen(function* () {
-        // Round one merged #284 and set the floor. Round two is being reopened
-        // having never opened a pull request of its own. Round three must still
-        // be floored at #284 — recomputing from "the entry retiring now" alone
-        // would reset it to nothing and let #284 be adopted all over again.
+        // Round one merged PR 284 and set the floor; round two never opened one.
+        // Round three must still be floored there, not recomputed from the entry
+        // retiring now, or PR 284 would be adopted again.
         const card = makeCard({
           id: "card-1",
           stage: "done",
@@ -623,11 +603,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
 
     it.effect("a pull request at or below the floor is refused", () =>
       Effect.gen(function* () {
-        // The forge lookup keeps answering #284 for the re-cut branch until the
-        // new round opens one of its own, because it falls back to the newest
-        // pull request overall when none is open. Adopting it would put a
-        // "merged" link on live, unmerged work — and branch cleanup deletes the
-        // remote branch of a card whose link says merged.
+        // The forge lookup falls back to the newest pull request when none is
+        // open, so it keeps answering the old merged one. Adopting it would mark
+        // live work merged, and branch cleanup would delete its remote branch.
         const card = reclaimedCard({
           pullRequest: null,
           pullRequestHistory: [mergedPr(284)],
@@ -649,13 +627,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
 
     it.effect("a retired pull request that is still OPEN may be re-adopted", () =>
       Effect.gen(function* () {
-        // The exemption that stops the floor from stranding a card. Leaving Done
-        // retires whatever link the card held without consulting its cached state
-        // — a cache may not authorise an irreversible deletion — so a pull request
-        // that was genuinely still open gets retired too. It is nonetheless the
-        // branch's LIVE pull request: round two's pushes go into it, and no new
-        // one can be opened for a head that already has one. Refusing it would
-        // leave the card unable to link, merge, or ever open a pull request again.
+        // A retired link that was really still open is the branch's live pull
+        // request: no new one can be opened for that head, so refusing it would
+        // leave the card unable to link or merge ever again.
         const card = reclaimedCard({
           pullRequest: null,
           pullRequestHistory: [mergedPr(284)],
@@ -683,10 +657,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
     it.effect("a re-adopted open pull request can still record its own merge", () =>
       Effect.gen(function* () {
         // The floor never falls, so exempting `open` alone would be a one-way
-        // door: the pull request re-adopted while open could never record its
-        // merge, the link would read `open` for ever, and the settle, the branch
-        // cleanup and the boot sweep would all keep no-opping — the card would
-        // never get its worktree or its branches back.
+        // door: a re-adopted pull request could never record its merge.
         const card = reclaimedCard({
           pullRequest: { ...mergedPr(284), state: "open" },
           pullRequestHistory: [mergedPr(284)],
@@ -840,7 +811,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
-    // T3O-24: card keys get reused, so a card's branch can carry a pull request
+    // Card keys get reused, so a card's branch can carry a pull request
     // an earlier card merged months before this one existed.
     describe("a pull request that closed before the card existed", () => {
       const BEFORE = "2025-09-09T10:00:00Z";
@@ -976,7 +947,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
-    // T3O-52 (D5): the rail rows a refusal once per distinct reason, and a
+    // The rail rows a refusal once per distinct reason, and a
     // human's forced removal is marked as such.
     const keptCard = (reclaimBlockedReason: string | null) =>
       makeCard({
@@ -1049,7 +1020,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
-    // ── T3O-5, D6: record-base-ref moves a completed retarget's recorded base ──
+    // ── Record-base-ref moves a completed retarget's recorded base ──
 
     const recordBaseRef = (cardId: string, baseRefName: string) =>
       ({

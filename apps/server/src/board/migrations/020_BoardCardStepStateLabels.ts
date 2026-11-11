@@ -1,26 +1,6 @@
-// T3o: nullable step label + frozen stage label (t3o-19, D4/D5).
-//
-// `step_label` becomes NULLABLE — null means "this stage has no steps", which
-// is every stage but the review loop. Migration 013 declared it NOT NULL
-// because a single-step stage always had one: the stage's own label, rendered
-// into the prompt as the tautology `Stage: planning. Step: Planning.`.
-//
-// `stage_label` is added so the preamble can name the stage by its LABEL (a
-// custom stage's id is a UUID) and so every `stepLabel` reader — thread title,
-// stall message, activity rail — resolves `stepLabel ?? stageLabel` without a
-// board read.
-//
-// History is NOT rewritten (D7): existing rows keep their `step_label` and get
-// `stage_label = NULL`, so they render exactly as they did today and a table
-// rehydration still equals a from-empty replay of the events that produced
-// them. A card already mid-stage at deploy keeps its old preamble until that
-// stage ends.
-//
-// SQLite has no ALTER COLUMN, so relaxing NOT NULL is a create-copy-drop-rename.
-// The column list is spelled out in full — 013's ten, 014's six frozen-config
-// columns and 015's two stall columns — rather than `SELECT *`, so the copy is
-// explicit about what it carries. Nothing references this table: no index, no
-// trigger, no foreign key.
+// SQLite has no ALTER COLUMN, so relaxing `step_label` NOT NULL is a
+// create-copy-drop-rename. The column list is spelled out in full, so the copy
+// can't silently drop a frozen-config column. Existing rows keep their labels.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

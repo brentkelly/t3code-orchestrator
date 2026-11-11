@@ -1,5 +1,5 @@
 /**
- * New phase (T3O-29): which deferred cards may move out of a group into a
+ * New phase: which deferred cards may move out of a group into a
  * fresh sibling heading, where that heading sits, and its default title.
  */
 import { describe, expect, it } from "vite-plus/test";

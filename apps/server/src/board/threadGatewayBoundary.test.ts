@@ -1,18 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * The thread gateway is the board's ONE seam onto threads (T3O-58).
- *
- * Swapping the thread engine is meant to be "write another gateway", not "edit
- * the supervisor". That only holds while nothing else in board code reaches
- * past the gateway, so this suite reads the source and fails the build when
- * something does:
- *
- * - no import of upstream orchestration, persistence or provider code outside
- *   `ThreadGatewayV2.ts`;
- * - no SQL against a table the board does not own.
- *
- * Tests and testkits are exempt: a suite that builds the real engine stack has
- * to import it.
+ * The thread gateway is the board's one seam onto threads: outside `ThreadGatewayV2.ts`, no
+ * board source imports upstream orchestration, persistence or provider code, or runs SQL
+ * against a table the board does not own. Tests and testkits are exempt.
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";

@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-63; prototype 7.2/7.3): a card thread that runs on a worker opens
+ * T3o (prototype 7.2/7.3): a card thread that runs on a worker opens
  * in that worker's environment, which this device may not be connected to.
  * Until it is, the thread pane says so — and offers the way there — instead
  * of showing the chat. The rest of the card stays fully usable.

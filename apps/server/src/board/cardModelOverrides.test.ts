@@ -1,19 +1,7 @@
 /**
- * Per-card model overrides at the REACTOR level (t3o-29, AC1/AC4).
- *
- * The contracts resolver and the popover's row derivation are unit-tested where
- * they live, but neither proves the thing that actually matters: that the
- * override reaches a real spawn. Between them sits the wiring this file covers
- * — the reactor resolving the card (and, for a sub-board child, its parent) out
- * of the board aggregate, handing it to the executor on the config, and the
- * executor's plan landing on the `board.card.select-step` the thread is
- * created from.
- *
- * D4's parent inheritance is the reason this cannot be left to the pure layer.
- * "A child runs its parent's model" is a claim about a lookup performed against
- * live board state at plan time, and a resolver that is correct in isolation
- * still proves nothing about whether the reactor ever asked it the right
- * question.
+ * Per-card model overrides reach a real spawn: the reactor resolves the card
+ * (and a sub-board child's parent) from live board state and the executor's plan
+ * lands on the `board.card.select-step` the thread is created from.
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -129,7 +117,7 @@ describe("per-card model overrides reach the spawn (t3o-29)", () => {
   it.effect("an override naming no access level leaves the stage's posture alone", () =>
     Effect.gen(function* () {
       // An override says only what it changes. The build stage resolves to
-      // `auto` (t3o-21, D2), and naming a model must not quietly move it.
+      // `auto`, and naming a model must not quietly move it.
       const card = buildCard({ id: "card-1", modelOverrides: { [building]: opus } });
       const step = yield* spawnedStep([card], card);
       assert.strictEqual(step.runtimeMode, "auto");
@@ -199,13 +187,9 @@ describe("per-card model overrides reach the spawn (t3o-29)", () => {
 
   it.effect("AC1: a re-entry into a spent review loop still runs on the card's override", () =>
     Effect.gen(function* () {
-      // The SECOND application point (t3o-29, D7): a review loop that exhausted
-      // its rounds reports `complete` forever, so dragging the card back opens a
-      // clean human-in-the-loop conversation the reactor — not an executor —
-      // owns. That conversation is still this card's run of this stage, so a
-      // pinned model must survive the re-entry rather than snap back to the
-      // workspace default. Exercised through a real spawn because no executor
-      // plans a re-entry: only the reactor's `complete` arm does.
+      // An exhausted review loop re-entered opens a human-in-the-loop
+      // conversation the reactor owns, not an executor; the pinned model must
+      // survive that re-entry.
       const cardId = BoardCardId.make("card-1");
       const reviewOverride: BoardCardStageModelOverride = {
         ...opus,
@@ -286,7 +270,7 @@ describe("per-card model overrides reach the spawn (t3o-29)", () => {
       assert.strictEqual(step.providerInstanceId, String(reviewOverride.instanceId));
       assert.strictEqual(step.runtimeMode, "approval-required");
       // ...and it is unmistakably the re-entry conversation, not a fresh run:
-      // no prompt injected, human-in-the-loop forced (D7).
+      // no prompt injected, human-in-the-loop forced.
       assert.strictEqual(step.humanInLoop, true);
       assert.strictEqual(step.prompt, "");
     }),
@@ -308,9 +292,8 @@ const planningSettings = settingsWith({
   globalMaxConcurrent: 4,
 });
 
-// The popover's Planning row (#119). The storage and the reactor were
-// always stage-id keyed, so these pin that a Planning override written by the
-// new row actually reaches the plan-mode spawn — no server change behind it.
+// A Planning override written by the popover's Planning row reaches the
+// plan-mode spawn.
 describe("per-card model overrides reach the Planning spawn (#119)", () => {
   it.effect("a card's own Planning override is what the step runs on", () =>
     Effect.gen(function* () {

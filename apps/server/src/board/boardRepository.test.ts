@@ -1,5 +1,5 @@
 /**
- * T3O-24: the board resolves its pull requests on `origin`, not on the
+ * The board resolves its pull requests on `origin`, not on the
  * project identity, which upstream points at an `upstream` remote first.
  */
 import { type RepositoryIdentity, SourceControlProviderKind } from "@t3tools/contracts";

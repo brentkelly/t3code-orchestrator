@@ -1,21 +1,8 @@
 /**
- * Concurrency governor end-to-end coverage (t3o-11, D11).
- *
- * The pure ordering and the slot-admission policy are unit-tested in
- * `supervisor.test.ts` and `BoardStepSlots.test.ts`; here we drive the live
- * reactor against a STATEFUL engine double — its `dispatch` runs the real board
- * decider + projector to evolve a `Ref`-held read model, so the reactor's own
- * `schedule` pass sees its own selects/admits/settles exactly as in production.
- * Domain and runtime events are fed through `Queue`s (buffered, so no
- * subscribe-before-publish race), and `reactor.drain` gates each assertion.
- *
- * The harness itself lives in `supervisorHarness.testkit.ts`, shared with the
- * t3o-12 building-stage acceptance suite (`buildingStageAutomation.test.ts`).
- *
- * The load-bearing test is the no-leak sweep: a slot leak silently halves
- * throughput forever, so we run a card through EVERY release path — success,
- * step failure, crash/death, and abandonment — and prove the held count returns
- * to baseline each time and zero after the whole run drains.
+ * Governor end-to-end: the live reactor against a stateful engine double, so `schedule` sees
+ * its own selects, admits and settles as in production. The load-bearing case is the no-leak
+ * sweep: a leaked slot halves throughput forever, so every release path must return the held
+ * count to baseline.
  */
 import { BoardCardId, boardCardStepState, ProviderInstanceId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -77,7 +64,7 @@ it.effect("maxConcurrent 1 runs two same-instance cards strictly sequentially", 
         assert.strictEqual(stepStatus(after, BoardCardId.make("card-a")), "running");
         assert.strictEqual(stepStatus(after, BoardCardId.make("card-b")), "queued");
 
-        // card-a finishes → the freed slot goes to the queued card-b (D11).
+        // card-a finishes → the freed slot goes to the queued card-b.
         yield* pumpDomain(stepCompleted(BoardCardId.make("card-a"), "succeeded", 3));
         const promoted = yield* board;
         assert.strictEqual(stepStatus(promoted, BoardCardId.make("card-b")), "running");
@@ -126,11 +113,9 @@ it.effect(
     ),
 );
 
-// (The "an idle provider is not blocked by a saturated one" guarantee is
-// enforced by BoardStepSlots.acquire and unit-tested in BoardStepSlots.test.ts;
-// it is not reproducible at the reactor level in the MVP because every Building
-// card resolves the same single-stage recipe — per-card provider mixing is a
-// multi-step/post-MVP recipe concern, D10/D4.)
+// "An idle provider is not blocked by a saturated one" is unit-tested in
+// BoardStepSlots.test.ts: every Building card here resolves the same single-stage recipe,
+// so it cannot be reproduced at the reactor level.
 
 it.effect("no slot leaks across success, failure, crash/death, and abandonment", () =>
   withGovernor(
@@ -163,12 +148,8 @@ it.effect("no slot leaks across success, failure, crash/death, and abandonment",
         yield* pumpDomain(movedToBuilding(buildingCard("fail", "b"), 3));
         assert.strictEqual(yield* slots.heldFor(codex), 1);
         yield* pumpDomain(stepCompleted(BoardCardId.make("fail"), "failed", 4));
-        // A failed report enters recovery, and since T3O-22 (D7) a retry WAITS:
-        // the step parks with a `retryAt` and releases its slot rather than
-        // holding a worker idle for up to half an hour on a three-slot board.
-        // This supersedes t3o-17's "a retry keeps its place" for the waiting
-        // window — `orderBoardQueue` ranks started-and-later-stage first, so the
-        // card regains its place ahead of fresh work when its rung arrives.
+        // A failed report enters recovery, and a retry WAITS: the step parks with a `retryAt` and
+        // releases its slot. `orderBoardQueue` puts the started card back ahead of fresh work.
         assert.strictEqual(yield* slots.heldFor(codex), 0);
         assert.strictEqual(stepStatus(yield* board, BoardCardId.make("fail")), "stalled");
         yield* pumpDomain(cardArchived(buildingCard("fail", "b"), 5));
@@ -184,7 +165,7 @@ it.effect("no slot leaks across success, failure, crash/death, and abandonment",
         const running = boardCardStepState(yield* board, BoardCardId.make("crash"));
         assert.strictEqual(running?.status, "running");
         // The thread is gone (never added to the shells map) → turn.completed
-        // with no completion is death → recovery parks it (T3O-22, D7) and the
+        // with no completion is death → recovery parks it and the
         // slot goes back. The respawn happens when the rung arrives, through the
         // ordinary queue, which is where the slot is re-acquired.
         yield* pumpRuntime(turnCompleted(running!.threadId!));
@@ -219,12 +200,8 @@ it.effect("a card DELETE releases the running step's slot and deletes its thread
         assert.strictEqual(running?.status, "running");
         const spawned = running!.threadId!;
 
-        // The delete already happened: the card and its step-state row left the
-        // read model with the event, so the reactor gets exactly what the
-        // payload carries and nothing else. That is the whole reason the step
-        // state rides the payload — the slot count is in-memory, so no later
-        // read could recover it and the board would run one short of its
-        // ceiling for the rest of the process's life.
+        // The card and its step-state row left the read model with the event, so the slot
+        // release must come from the payload: the count is in-memory and no read could recover it.
         const deleted = (yield* board).cards.find(
           (card) => card.id === BoardCardId.make("doomed"),
         )!;

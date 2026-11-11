@@ -1,19 +1,7 @@
 /**
- * T3o group rows and the dependency chart's layout (t3o-29, T3O-34). Pure
- * functions, no React — the Cards pane and the sub-board both render from
- * these, and they are unit-tested without a DOM.
- *
- * Rows are CARDS first: every child of the group gets one, whether it was cut
- * from a plan or made by hand and grouped, and the plans no child claims are
- * listed after them as "No card". Every live per-child fact — stage,
- * `blocked`, PR number, whether an agent is working, whether a human is being
- * asked something — comes from the child's `BoardCardShell`, which rides the
- * unscoped shell snapshot the root board already reads.
- *
- * The edges between card rows come from each child's own `dependsOn`, carried
- * on the detail-only `BoardCardChildRef` (the shell's D7 budget only has room
- * for `dependencyCount`). A card-less plan's edges come from `plan.dependsOn`,
- * resolved to the card cut from each plan where there is one.
+ * Group rows and the dependency chart's layout. Rows are cards first (every
+ * child, planned or hand-made), then plans no child claims. Live facts come from
+ * each child's shell; card edges from the child's `dependsOn`.
  */
 import {
   effectiveBoardStageRole,
@@ -40,12 +28,12 @@ export type BoardPlanRowPlan = Pick<
     card face's queue indicator exists to avoid. */
 export type BoardPlanRowTone = "done" | "blocked" | "active" | "idle" | "gone";
 
-/** The three states a row can be in (D4). A plan outlives the card cut from
+/** The three states a row can be in. A plan outlives the card cut from
     it: `missing` is a deleted child, `archived` one that was filed away. */
 export type BoardPlanRowState = "live" | "archived" | "missing";
 
 /** The live half of a row, absent unless the child is on the board. Archived
-    cards leave the shell snapshot (D15), so an archived child has a
+    cards leave the shell snapshot, so an archived child has a
     `BoardCardChildRef` and no shell — which is exactly why this is null for
     both `archived` and `missing`. */
 export interface BoardPlanRowLive {
@@ -57,7 +45,7 @@ export interface BoardPlanRowLive {
       threads have all died goes dark here exactly as it does there. */
   readonly working: boolean;
   readonly awaitingInput: boolean;
-  /** A thread is blocked on a permission prompt (T3O-16) — the card face's
+  /** A thread is blocked on a permission prompt — the card face's
       `permission` reason, read the same way. */
   readonly awaitingPermission: boolean;
   readonly queued: boolean;
@@ -83,7 +71,7 @@ export interface BoardPlanRow {
   readonly title: string;
   readonly state: BoardPlanRowState;
   /** The child's key, retained for an archived child too, so the pairing
-      survives the card (D4). */
+      survives the card. */
   readonly key: string | null;
   readonly stage: BoardStageId | null;
   readonly stageLabel: string | null;
@@ -115,11 +103,9 @@ const EMPTY_ROWS: BoardPlanRows = { rows: [], liveTotal: 0, liveDone: 0 };
 type DraftPlanRow = BoardPlanRow & { readonly started: boolean };
 
 /**
- * The rows a group's children and its unclaimed plans make, in dependency
- * order: a topological sort over the row edges, ties broken by input order
- * (children in `card_number` order, then plans in `ordinal` order). Hand-made
- * children have no ordinal to sort by, so the order has to be derived here.
- * Cycle-safe: whatever a cycle leaves unplaced follows in input order.
+ * The rows in dependency order: a topological sort, ties broken by input order
+ * (hand-made children have no ordinal). Whatever a cycle leaves unplaced
+ * follows in input order.
  */
 export function deriveBoardPlanRows(input: {
   readonly plans: ReadonlyArray<BoardPlanRowPlan>;
@@ -259,11 +245,8 @@ export function deriveBoardPlanRows(input: {
 
   const rowById = new Map(rows.map((row) => [row.rowId, row]));
   const settled = rows.map((row): BoardPlanRow => {
-    // Only a LIVE, unfinished sibling holds a row up. An archived dependency
-    // no longer gates (t3o-13, D1) and a deleted one has nothing left to
-    // wait for, so neither is a blocker — same rule the decider applies, so
-    // the panel never shows a card as waiting on something the board would
-    // happily let it past.
+    // Only a live, unfinished sibling blocks; archived or deleted dependencies do
+    // not, matching the decider.
     const blockers = row.dependsOn
       .map((dependency) => rowById.get(dependency))
       .filter(
@@ -371,13 +354,8 @@ export interface BoardPlanGraphLayout {
 
 /**
  * Lay the rows out in dependency waves: column = longest path from a root, so
- * every edge points strictly rightward and a plan sits one column past its
- * last-landing prerequisite.
- *
- * The depth walk carries a cycle guard. The decider refuses to approve a
- * cyclic plan graph, so this should be unreachable — but a pure function that
- * can hang the render on bad data is a worse failure than the one it guards,
- * and "terminate on a cycle" costs a `Set`.
+ * every edge points right. The decider refuses cyclic plans, but the depth walk
+ * still guards cycles so bad data cannot hang the render.
  */
 export function boardPlanGraphLayout(
   rows: ReadonlyArray<BoardPlanRow>,
@@ -483,15 +461,9 @@ export interface BoardPlanFinalReview {
 }
 
 /**
- * The footer's copy (D5). It STATES; it does not act. The reactor already
- * owns this transition — `advanceParentIfChildrenDone` moves the parent out
- * of build the moment the last child lands, and `regressParentIfChildLeftDone`
- * puts it back if one leaves — so a button here would be a second path into
- * the same move, reachable only in a race the reactor normally wins.
- *
- * No "→ main": the default branch is resolved server-side when the
- * integration branch is cut and never rides the wire, so naming one here
- * would be the panel's only invention.
+ * The footer's copy. It states and never acts: the reactor already advances
+ * and regresses the parent. It names no target branch because the default
+ * branch never rides the wire.
  */
 export function boardPlanFinalReview(input: {
   readonly branch: string | null;

@@ -1,5 +1,5 @@
 /**
- * Collapsing repeated Activity rows (T3O-35).
+ * Collapsing repeated Activity rows.
  *
  * The rule these pin down: a run collapses only when every row in it would read
  * the same, it keeps its newest member, and its identity is the OLDEST member —
@@ -187,12 +187,8 @@ describe("groupBoardActivity", () => {
 });
 
 /**
- * Pressing the toggle. The rail's own state is a set of expanded run keys and a
- * pure view over it, so what the user actually sees — one row and "+5 more",
- * then six rows and "Show less", then one row again — is checked here rather
- * than through rendered markup. The web unit project runs without a DOM (no
- * `document`, and neither jsdom nor a client testing library is a dependency),
- * so a rendered click is not available to assert on.
+ * Expanding and collapsing a run, checked through the pure view over expanded
+ * keys: the web unit project has no DOM to click in.
  */
 describe("expanding a collapsed run", () => {
   const runOfSix = () =>

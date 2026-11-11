@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-58): Settings → Source Control's Project tokens. Read-only: for each project, which
+ * T3o: Settings → Source Control's Project tokens. Read-only: for each project, which
  * gitenv line (folder, repo, owner) or ambient source its GitHub token comes from, and whether
  * GitHub accepts it, so a dead token shows here before a merge fails. Checked on open and on
  * refresh only. Edit the gitenv file to change a token; see docs/t3o/gitenv.md.

@@ -1,16 +1,7 @@
 /**
- * Scheduled starts (T3O-19): one nullable instant on the card that holds it
- * still until its moment, then makes the move the supervisor would otherwise
- * have made now — and clears itself doing it.
- *
- * Driven through the live reactor against the stateful engine double
- * (`withGovernor`), because the behaviour spans the governor's gate, the slot
- * accounting, worktree provisioning, the decider and the 30s tick.
- *
- * `it.effect` runs on the TestClock, whose "now" is the epoch, so FUTURE and
- * PAST fixtures sit an hour either side of it. Nothing here sleeps, polls or
- * advances the clock: the tick is driven by calling the reactor's own
- * `fireSchedules` hook, exactly as the timeout-sweep suite drives `sweep`.
+ * Scheduled starts, driven through the live reactor against the stateful engine double.
+ * The TestClock's now is the epoch, so FUTURE and PAST sit an hour either side; the tick
+ * is driven through the reactor's `fireSchedules` hook, never by advancing the clock.
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -44,7 +35,7 @@ import {
 
 const codex = ProviderInstanceId.make("codex");
 
-/** A step a human force-started (t3o-33) on a card that also carries a
+/** A step a human force-started on a card that also carries a
     schedule — the one state in which the gate's `forceStart` bypass is
     reachable. */
 const forcedQueuedStep = (id: string): BoardCardStepState => ({
@@ -142,7 +133,7 @@ it.effect(
           assert.strictEqual(state?.status, "pending");
           assert.strictEqual(state?.slotHeld, false);
           assert.strictEqual(yield* slots.heldTotal, 0);
-          // The gate sits BEFORE `ensureWorktree` (D2): a card scheduled for
+          // The gate sits BEFORE `ensureWorktree`: a card scheduled for
           // tomorrow morning must not hold a checkout overnight, nor cut its
           // branch from a base that will have moved by the time it runs.
           const card = (yield* board).cards.find(
@@ -214,16 +205,9 @@ it.effect("a force-started step is admitted despite a schedule (the gate's one b
         yield* reactor.reconcile;
         yield* reactor.drain;
 
-        // "Start it anyway" beats a time the same human set earlier, exactly as
-        // it beats the concurrency cap. Nothing else in the board can reach a
-        // scheduled step's `forceStart`, so this is a defensive guard rather
-        // than a button — but a gate that ignored the override would be a card
-        // whose "start anyway" silently did nothing.
-        // Asserted on the ADMISSION rather than on the step's later status: the
-        // gate's job is to let this candidate reach the governor, and what
-        // happens to the step afterwards (this fixture seeds no thread shell, so
-        // a second reconcile pass reads its spawned thread as gone and parks it
-        // for a retry) is a different mechanism's business.
+        // "Start it anyway" (`forceStart`) beats a scheduled time as it beats the concurrency cap.
+        // Asserted on the admission, not the step's later status: this fixture seeds no thread
+        // shell, so a later reconcile parks the spawned step, which is another mechanism's job.
         assert.include(commandTypes(yield* commands), "board.card.admit-step");
       }),
   ),
@@ -256,7 +240,7 @@ it.effect("the tick fires a due card with no other event to prompt it, and clear
         const card = (yield* board).cards.find(
           (candidate) => candidate.id === BoardCardId.make("due"),
         );
-        // AC3: the time does not survive its own firing. Without the clear, one
+        // The time does not survive its own firing. Without the clear, one
         // decision made before the build would re-gate Code review and every
         // stage after it.
         assert.isNull(card?.scheduledStartAt ?? null);
@@ -287,7 +271,7 @@ it.effect("the clear lands before the admit", () =>
         const admitted = types.indexOf("board.card.admit-step");
         assert.isAbove(cleared, -1);
         assert.isAbove(admitted, -1);
-        // D4. A crash between the two must leave a cleared-but-unstarted card,
+        // A crash between the two must leave a cleared-but-unstarted card,
         // which the next pass starts — never a started card still carrying a
         // stale time that would re-gate its next stage.
         assert.isBelow(cleared, admitted);
@@ -300,7 +284,7 @@ it.effect("a card whose schedule is in the past is admitted the moment it is set
     Effect.gen(function* () {
       yield* pumpDomain(movedToBuilding(scheduledCard({ id: "past", scheduledStartAt: PAST }), 1));
 
-      // A past time means "now" (D6): the picker refuses none, and the card
+      // A past time means "now": the picker refuses none, and the card
       // must not sit holding a pill for a moment that has already gone.
       const card = (yield* board).cards.find(
         (candidate) => candidate.id === BoardCardId.make("past"),
@@ -327,7 +311,7 @@ it.effect("scheduling a running card stops the agent and gives its slot back", (
 
         yield* pumpDomain(cardScheduleUpdated(scheduledCard({ id: "pause" }), FUTURE, 2));
 
-        // D13: the popover says setting a time on a working card stops it, and
+        // The popover says setting a time on a working card stops it, and
         // this is that promise. The thread and worktree are kept, so the resume
         // picks the conversation up rather than starting over.
         const state = boardCardStepState(yield* board, BoardCardId.make("pause"));
@@ -405,7 +389,7 @@ it.effect("clearing a schedule resumes a paused card on the thread it already ha
         ),
       );
 
-      // D6: clearing is the reverse state AND the "start now" button. A card
+      // Clearing is the reverse state AND the "start now" button. A card
       // that could only be released by waiting would be the one-way door
       // AGENTS.md forbids.
       const state = boardCardStepState(yield* board, BoardCardId.make("resume"));
@@ -517,7 +501,7 @@ it.effect("a manual resume clears the time, so the card is not re-paused later",
 
       // The human went back to the thread and typed. They have overtaken the
       // decision they made earlier, so the 9pm resume must not become a 9pm
-      // re-pause of work they restarted at 3pm (D6).
+      // re-pause of work they restarted at 3pm.
       yield* pumpDomain(humanTurnStartRequested(threadId, 3));
 
       const card = (yield* board).cards.find(

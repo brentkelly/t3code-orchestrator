@@ -23,7 +23,7 @@ const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
 
 // The frozen execution config the reactor resolves at stage entry and stamps
-// onto the run row (D12) — the single seeded step per stage (D1) replaces the
+// onto the run row — the single seeded step per stage replaces the
 // old multi-step recipe snapshot.
 const frozenConfig = {
   prompt: "do it",
@@ -155,10 +155,10 @@ it.effect("select-step records a pending step, freezing the stage's config onto 
       assert.strictEqual(event.payload.state.status, "pending");
       assert.strictEqual(event.payload.state.attempt, 1);
       // Omitting `priorRecoveries` is a genuine stage entry: the stage's
-      // recovery spend starts over (T3O-12, D4).
+      // recovery spend starts over.
       assert.strictEqual(event.payload.state.stageEntryRecoveries, 0);
       assert.strictEqual(event.payload.state.slotHeld, false);
-      // The frozen config (D12) is stamped verbatim onto the run row.
+      // The frozen config is stamped verbatim onto the run row.
       assert.strictEqual(event.payload.state.prompt, "do it");
       assert.strictEqual(event.payload.state.mode, "build");
       assert.strictEqual(event.payload.state.providerInstanceId, "codex");
@@ -220,7 +220,7 @@ it.effect(
         // `attempt` does NOT ride along any more. It used to carry the stage
         // entry's cumulative total so the ceiling could be read off it, which
         // is what displayed "attempt 45" beside "maxAttempts 5" on a long
-        // review loop. A new phase is a new step and counts its own (D5).
+        // review loop. A new phase is a new step and counts its own.
         assert.strictEqual(event.payload.state.attempt, 1);
         // And a fresh step's stall streak starts empty regardless.
         assert.strictEqual(event.payload.state.stallCount, 0);
@@ -433,14 +433,14 @@ it.effect(
         board,
       );
       if (event.type === "board.card-step-recovered") {
-        // attempt counts this step's invocations (D1); stallCount extends the
+        // attempt counts this step's invocations; stallCount extends the
         // streak; the recovery total is what the runaway ceiling reads, and an
-        // escalation is itself a recovery (T3O-12, D4).
+        // escalation is itself a recovery.
         assert.strictEqual(event.payload.state.attempt, 4);
         assert.strictEqual(event.payload.state.stallCount, 5);
         assert.strictEqual(event.payload.state.stageEntryRecoveries, 7);
-        // Giving up is the distinct `stalled` status, not `awaiting-input` (D3),
-        // and releases the slot (D4).
+        // Giving up is the distinct `stalled` status, not `awaiting-input`,
+        // and releases the slot.
         assert.strictEqual(event.payload.state.status, "stalled");
         assert.strictEqual(event.payload.state.slotHeld, false);
         assert.strictEqual(event.payload.state.lastNudgeAt, NOW);
@@ -480,18 +480,15 @@ it.effect(
         board,
       );
       if (event.type === "board.card-step-recovered") {
-        // Progress resets the whole retry budget, not just the streak (T3O-22,
-        // D12): the step demonstrably did real work since the last nudge, so it
-        // starts its ladder over rather than inheriting a count from the stall
-        // before it. `attempt` used to climb here regardless, which meant a card
-        // that resumed, worked for a day and stalled again arrived at the
-        // ceiling on its first quiet turn.
+        // Progress resets the whole retry budget, not just the streak: a step that did real
+        // work since the last nudge starts its ladder over instead of arriving at the ceiling
+        // on its next stall.
         assert.strictEqual(event.payload.state.attempt, 1);
         // Progress forgets the streak; this stall is #1 of a new one.
         assert.strictEqual(event.payload.state.stallCount, 1);
         // A nudge is a recovery too, whether or not it progressed: the ceiling
         // bounds recovery SPEND, and a step that keeps needing rescuing is
-        // exactly what it is there to stop (T3O-12, D4).
+        // exactly what it is there to stop.
         assert.strictEqual(event.payload.state.stageEntryRecoveries, 7);
         assert.strictEqual(event.payload.state.status, "running");
         assert.strictEqual(event.payload.state.slotHeld, true);
@@ -541,12 +538,12 @@ it.effect(
         // instead of re-escalating on their first quiet turn.
         assert.strictEqual(event.payload.state.stallCount, 0);
         // No board invocation happened, so neither the per-step ledger nor the
-        // stage-entry recovery ceiling is charged for the human's own turn
-        // (T3O-12, D7) — charging it would escalate the card again the moment
+        // stage-entry recovery ceiling is charged for the human's own turn —
+        // charging it would escalate the card again the moment
         // their turn ended.
         assert.strictEqual(event.payload.state.attempt, 3);
         assert.strictEqual(event.payload.state.stageEntryRecoveries, 4);
-        // The slot escalation released is TAKEN BACK (T3O-23): a build step
+        // The slot escalation released is TAKEN BACK: a build step
         // running on `slotHeld: false` would occupy a worker invisibly and skip
         // its release at settle. The reactor performs the matching
         // `slots.restore` when the dispatch lands.
@@ -560,11 +557,8 @@ it.effect(
 it.effect("resume-step drops the park's reason and its scheduled retry (T3O-22)", () =>
   Effect.gen(function* () {
     const card = makeCard({ id: "card-1" });
-    // A card parked behind a provider cooldown, resumed by a human who is not
-    // waiting for the window: the row is about to be RUNNING, so a `usage-limit`
-    // reason and a future `retryAt` on it are simply untrue. Every reader of
-    // both happens to gate on `status === "stalled"` today, which is what keeps
-    // this quiet rather than correct.
+    // A human resumes a card parked behind a provider cooldown: the row becomes RUNNING, so a
+    // `usage-limit` reason and future `retryAt` on it would be untrue.
     const board = makeReadModel({
       cards: [card],
       stepStates: [
@@ -643,7 +637,7 @@ it.effect("settle-step releases the slot and is idempotent (a double settle adva
     assert.strictEqual(first.payload.state.slotHeld, false);
 
     // A retried settle over the now-terminal state re-emits the SAME terminal
-    // record — no second release, no double transition (D4 Release idempotency).
+    // record — no second release, no double transition.
     const settled = makeReadModel({
       cards: [card],
       stepStates: [first.payload.state],
@@ -693,7 +687,7 @@ it.effect("await-step-input only fires on a running step (D13: no retry consumed
   }),
 );
 
-// ── A human stop parks the step (T3O-23) ────────────────────────────────
+// ── A human stop parks the step ────────────────────────────────
 
 it.effect("pause-step parks a running step and gives its slot back (T3O-23)", () =>
   Effect.gen(function* () {
@@ -1035,7 +1029,7 @@ it.effect("admit-step refreshes lastNudgeAt so a requeued step is not instantly 
   }),
 );
 
-// ── T3O-17: the steer signal on the row ───────────────────────────────────
+// ── The steer signal on the row ───────────────────────────────────
 
 const STEERED_AT = "2026-01-01T00:05:00.000Z";
 

@@ -1,16 +1,8 @@
 /**
- * T3o (T3O-62, D19): the central server's line to one worker.
- *
- * `WorkerRpc` is the narrow, typed slice of a worker's WebSocket RPC the
- * board uses. Later plans grow it (the remote thread gateway, the MCP relay,
- * the named git operations); it never becomes the whole `WsRpcGroup` client,
- * so a test transport can fake exactly what the board relies on.
- *
- * `WorkerTransport.connect` dials with the board's bearer token: a WebSocket
- * ticket from `/api/auth/websocket-ticket`, then `/ws`. It resolves once the
- * socket is open and hands back a `WorkerLink` whose `closed` completes when
- * the socket drops. Reconnecting is the connection manager's job, so the
- * socket itself never retries.
+ * The central server's line to one worker. `WorkerRpc` stays a narrow typed slice
+ * of the worker's RPC, never the whole `WsRpcGroup` client, so a test transport
+ * fakes exactly what the board relies on. The socket never retries: reconnecting
+ * is `WorkerConnections`' job.
  */
 import {
   BOARD_WORKER_GATEWAY_WS_METHODS,
@@ -83,9 +75,9 @@ export interface WorkerRpc {
   /** Every tracked clone on the worker, once now and again on each change. */
   readonly projectClones: Stream.Stream<ProjectCloneListEvent, WorkerRpcError>;
   /** The worker's own threads, its signals, the MCP relay and attachment
-      staging (T3O-63). */
+      staging. */
   readonly gateway: WorkerGatewayRpc;
-  /** One named board git or forge operation, run on the worker (T3O-64, D21).
+  /** One named board git or forge operation, run on the worker.
       A refusal carries the worker's `BoardWorkerGitError` as its `cause`. */
   readonly git: <Method extends BoardWorkerGitMethod>(
     method: Method,
@@ -132,34 +124,36 @@ const toWsUrl = (url: string, ticket: string): string => {
   return next.toString();
 };
 
-const requestTicket = (url: string, accessToken: string) =>
-  Effect.gen(function* () {
-    const unreachable = new WorkerConnectError({
-      reason: "unreachable",
-      message: `Couldn't reach ${url}.`,
-    });
-    const http = yield* HttpClient.HttpClient;
-    const response = yield* http
-      .execute(
-        HttpClientRequest.post(workerPath(url, "/api/auth/websocket-ticket").toString()).pipe(
-          HttpClientRequest.bearerToken(accessToken),
-        ),
-      )
-      .pipe(
-        Effect.timeout(TICKET_TIMEOUT),
-        Effect.mapError(() => unreachable),
-      );
-    if (response.status === 401 || response.status === 403) {
-      return yield* new WorkerConnectError({
-        reason: "unauthorized",
-        message: "The worker no longer accepts this board's session.",
-      });
-    }
-    if (response.status !== 200) return yield* unreachable;
-    const body = yield* response.json.pipe(Effect.mapError(() => unreachable));
-    const decoded = yield* decodeTicket(body).pipe(Effect.mapError(() => unreachable));
-    return decoded.ticket;
+const requestTicket = Effect.fn("WorkerTransport.requestTicket")(function* (
+  url: string,
+  accessToken: string,
+) {
+  const unreachable = new WorkerConnectError({
+    reason: "unreachable",
+    message: `Couldn't reach ${url}.`,
   });
+  const http = yield* HttpClient.HttpClient;
+  const response = yield* http
+    .execute(
+      HttpClientRequest.post(workerPath(url, "/api/auth/websocket-ticket").toString()).pipe(
+        HttpClientRequest.bearerToken(accessToken),
+      ),
+    )
+    .pipe(
+      Effect.timeout(TICKET_TIMEOUT),
+      Effect.mapError(() => unreachable),
+    );
+  if (response.status === 401 || response.status === 403) {
+    return yield* new WorkerConnectError({
+      reason: "unauthorized",
+      message: "The worker no longer accepts this board's session.",
+    });
+  }
+  if (response.status !== 200) return yield* unreachable;
+  const body = yield* response.json.pipe(Effect.mapError(() => unreachable));
+  const decoded = yield* decodeTicket(body).pipe(Effect.mapError(() => unreachable));
+  return decoded.ticket;
+});
 
 /** One worker call, its failures typed. A server answers a call it does not
     have with a defect, not an error, so that is caught and named too. */
@@ -189,105 +183,104 @@ export const WorkerTransportLive = Layer.effect(
   }),
 );
 
-const connectWorker = ({
+const connectWorker = Effect.fn("WorkerTransport.connect")(function* ({
   url,
   accessToken,
 }: {
   readonly url: string;
   readonly accessToken: string;
-}) =>
-  Effect.gen(function* () {
-    const ticket = yield* requestTicket(url, accessToken);
-    const connected = yield* Deferred.make<void>();
-    const disconnected = yield* Deferred.make<void>();
-    const hooks = RpcClient.ConnectionHooks.of({
-      onConnect: Deferred.succeed(connected, undefined).pipe(Effect.asVoid),
-      onDisconnect: Deferred.succeed(disconnected, undefined).pipe(Effect.asVoid),
-    });
-    const layerProtocol = Layer.effect(
-      RpcClient.Protocol,
-      RpcClient.makeProtocolSocket({
-        pingTimeout: PING_TIMEOUT,
-        retryTransientErrors: false,
-        retryPolicy: Schedule.recurs(0),
-      }),
-    ).pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          Socket.layerWebSocket(toWsUrl(url, ticket), { openTimeout: SOCKET_OPEN_TIMEOUT }).pipe(
-            Layer.provide(NodeSocket.layerWebSocketConstructor),
-          ),
-          RpcSerialization.layerJson,
-          Layer.succeed(RpcClient.ConnectionHooks, hooks),
-        ),
-      ),
-    );
-    const context = yield* Layer.build(layerProtocol);
-    const client = yield* RpcClient.make(WsRpcGroup).pipe(Effect.provide(context));
-    // The socket opens lazily; ask for the handshake's first frame by waiting
-    // for whichever comes first.
-    const opened = yield* Effect.raceFirst(
-      Deferred.await(connected).pipe(Effect.as(true)),
-      Deferred.await(disconnected).pipe(Effect.as(false)),
-    );
-    if (!opened) {
-      return yield* new WorkerConnectError({
-        reason: "unreachable",
-        message: `Couldn't open a connection to ${url}.`,
-      });
-    }
-    const rpc: WorkerRpc = {
-      hello: call(
-        client[BOARD_WORKER_WS_METHODS.hello]({}),
-        "The worker didn't answer the board's handshake.",
-      ),
-      projects: call(
-        client[BOARD_WORKER_WS_METHODS.projects]({}),
-        "The worker didn't list its projects.",
-      ),
-      providers: call(
-        client[BOARD_WORKER_WS_METHODS.providers]({}),
-        "The worker didn't list its providers.",
-      ),
-      release: call(
-        client[BOARD_WORKER_WS_METHODS.release]({}),
-        "The worker didn't release the board's session.",
-      ),
-      renew: call(
-        client[BOARD_WORKER_WS_METHODS.renew]({}),
-        "The worker didn't renew the board's session.",
-      ),
-      startProjectClone: (input) =>
-        call(client[WS_METHODS.projectCloneStart](input), "The worker couldn't start the clone."),
-      retryProjectClone: (projectId) =>
-        call(
-          client[WS_METHODS.projectCloneRetry]({ projectId }).pipe(
-            Effect.map((result) => result.applied),
-          ),
-          "The worker couldn't retry the clone.",
-        ),
-      gateway: makeLiveGatewayRpc(client),
-      git: (method, payload) =>
-        call(
-          encodeGitPayload(method, payload).pipe(
-            Effect.flatMap((encoded) =>
-              client[BOARD_WORKER_GIT_CALL_WS_METHODS.call]({ method, payload: encoded }),
-            ),
-            Effect.flatMap((answer) => decodeGitSuccess(method, answer)),
-          ),
-          "The worker couldn't run the board's git operation.",
-        ),
-      projectClones: client[WS_METHODS.subscribeProjectClones]({}).pipe(
-        Stream.mapError(
-          (cause) =>
-            new WorkerRpcError({ message: "The worker's clone progress stream ended.", cause }),
-        ),
-      ),
-    };
-    return { rpc, closed: Deferred.await(disconnected) };
+}) {
+  const ticket = yield* requestTicket(url, accessToken);
+  const connected = yield* Deferred.make<void>();
+  const disconnected = yield* Deferred.make<void>();
+  const hooks = RpcClient.ConnectionHooks.of({
+    onConnect: Deferred.succeed(connected, undefined).pipe(Effect.asVoid),
+    onDisconnect: Deferred.succeed(disconnected, undefined).pipe(Effect.asVoid),
   });
+  const layerProtocol = Layer.effect(
+    RpcClient.Protocol,
+    RpcClient.makeProtocolSocket({
+      pingTimeout: PING_TIMEOUT,
+      retryTransientErrors: false,
+      retryPolicy: Schedule.recurs(0),
+    }),
+  ).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Socket.layerWebSocket(toWsUrl(url, ticket), { openTimeout: SOCKET_OPEN_TIMEOUT }).pipe(
+          Layer.provide(NodeSocket.layerWebSocketConstructor),
+        ),
+        RpcSerialization.layerJson,
+        Layer.succeed(RpcClient.ConnectionHooks, hooks),
+      ),
+    ),
+  );
+  const context = yield* Layer.build(layerProtocol);
+  const client = yield* RpcClient.make(WsRpcGroup).pipe(Effect.provide(context));
+  // The socket opens lazily; ask for the handshake's first frame by waiting
+  // for whichever comes first.
+  const opened = yield* Effect.raceFirst(
+    Deferred.await(connected).pipe(Effect.as(true)),
+    Deferred.await(disconnected).pipe(Effect.as(false)),
+  );
+  if (!opened) {
+    return yield* new WorkerConnectError({
+      reason: "unreachable",
+      message: `Couldn't open a connection to ${url}.`,
+    });
+  }
+  const rpc: WorkerRpc = {
+    hello: call(
+      client[BOARD_WORKER_WS_METHODS.hello]({}),
+      "The worker didn't answer the board's handshake.",
+    ),
+    projects: call(
+      client[BOARD_WORKER_WS_METHODS.projects]({}),
+      "The worker didn't list its projects.",
+    ),
+    providers: call(
+      client[BOARD_WORKER_WS_METHODS.providers]({}),
+      "The worker didn't list its providers.",
+    ),
+    release: call(
+      client[BOARD_WORKER_WS_METHODS.release]({}),
+      "The worker didn't release the board's session.",
+    ),
+    renew: call(
+      client[BOARD_WORKER_WS_METHODS.renew]({}),
+      "The worker didn't renew the board's session.",
+    ),
+    startProjectClone: (input) =>
+      call(client[WS_METHODS.projectCloneStart](input), "The worker couldn't start the clone."),
+    retryProjectClone: (projectId) =>
+      call(
+        client[WS_METHODS.projectCloneRetry]({ projectId }).pipe(
+          Effect.map((result) => result.applied),
+        ),
+        "The worker couldn't retry the clone.",
+      ),
+    gateway: makeLiveGatewayRpc(client),
+    git: (method, payload) =>
+      call(
+        encodeGitPayload(method, payload).pipe(
+          Effect.flatMap((encoded) =>
+            client[BOARD_WORKER_GIT_CALL_WS_METHODS.call]({ method, payload: encoded }),
+          ),
+          Effect.flatMap((answer) => decodeGitSuccess(method, answer)),
+        ),
+        "The worker couldn't run the board's git operation.",
+      ),
+    projectClones: client[WS_METHODS.subscribeProjectClones]({}).pipe(
+      Stream.mapError(
+        (cause) =>
+          new WorkerRpcError({ message: "The worker's clone progress stream ended.", cause }),
+      ),
+    ),
+  };
+  return { rpc, closed: Deferred.await(disconnected) };
+});
 
-/** The gateway half of a live worker client (T3O-63). */
+/** The gateway half of a live worker client. */
 const makeLiveGatewayRpc = (
   client: RpcClient.FromGroup<typeof WsRpcGroup, RpcClientError.RpcClientError>,
 ): WorkerGatewayRpc => {

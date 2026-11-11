@@ -1,6 +1,6 @@
 /**
- * T3o (T3O-65, prototype 4.1–4.3): the Worker field's picker — "Follow default
- * — {worker}", or Pin to a worker. Each row says the worker's load, or why it
+ * T3o (prototype 4.1–4.3): the Worker field's picker: "Follow default
+ * ({worker})", or Pin to a worker. Each row says the worker's load, or why it
  * can't be picked, and a worker with no checkout of the project offers Set up
  * on worker inline. Shared by the create dialog and the card's details column.
  */
@@ -17,7 +17,7 @@ export function BoardWorkerPicker(props: {
   readonly choices: ReadonlyArray<BoardWorkerChoice>;
   /** The pin, or null when the card follows the default. */
   readonly pinnedWorkerId: BoardWorkerId | null;
-  /** "Follow default — This server". */
+  /** "Follow default (This server)". */
   readonly followLabel: string;
   /** The closed field's text and whether it reads as pinned. */
   readonly value: { readonly label: string; readonly pinned: boolean };

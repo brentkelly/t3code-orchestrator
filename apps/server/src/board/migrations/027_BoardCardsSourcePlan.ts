@@ -1,9 +1,6 @@
 /**
- * Sub-boards (t3o-23): `source_plan_id` records which plan a materialised
- * child card was cut from, pairing the parent's plan pane with its children.
- * Nullable and NULL for every pre-existing row and every top-level card —
- * matching `sourcePlanId`'s decoding default on the contracts side, so a
- * from-empty replay equals rehydration. PRAGMA-guarded so it is re-runnable.
+ * NULL for every top-level card, matching `sourcePlanId`'s decoding default, so
+ * replay equals rehydration. PRAGMA-guarded so it is re-runnable.
  */
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";

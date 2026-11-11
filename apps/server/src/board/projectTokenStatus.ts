@@ -5,7 +5,7 @@ import type { SourceControlDriverEntry } from "../sourceControl/builtInDrivers.t
 import type { ThreadGatewayShape } from "./ThreadGateway.ts";
 
 /**
- * T3O-58: Settings → Source Control's project tokens, for this environment's live projects.
+ * Settings → Source Control's project tokens, for this environment's live projects.
  * The GitHub driver does the work (`t3oProjectTokens`); a build without it answers empty.
  */
 export const boardProjectTokenStatus = Effect.fn("Board.projectTokenStatus")(function* (

@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * The CI disk preflight (T3O-59): a pass doesn't start on a filesystem with
+ * The CI disk preflight: a pass doesn't start on a filesystem with
  * less than 2 GiB free, since a full disk is what left Z5-305 "running" with
  * no result. Fixed on purpose; there is no setting.
  */
@@ -30,7 +30,7 @@ export class BoardDiskSpace extends Context.Reference<BoardDiskSpaceShape>(
   { defaultValue: () => ({ freeBytes: statfsFreeBytes }) },
 ) {}
 
-/** This server's machine, as a machine-problem reason names it (T3O-61). */
+/** This server's machine, as a machine-problem reason names it. */
 export const boardCiHostName = (): string => NodeOS.hostname();
 
 /** Why `path`'s filesystem is too full for CI, or null when it isn't — or

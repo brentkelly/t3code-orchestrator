@@ -1,10 +1,4 @@
-/**
- * T3o migration 016 (t3o-15 follow-up): recompute the stored `blocked` flag
- * under the build-onward rule. 012 recomputed under its day's ready-onward
- * rule; t3o-15 moved the live gate to the build role, and `blocked` is
- * rehydrated straight from `board_cards` — so a legacy database boots wearing
- * badges the decider contradicts at the card's next event until this runs.
- */
+/** `blocked` is recomputed under the build-onward rule. */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -19,14 +13,10 @@ const NOW = "2026-01-01T00:00:00.000Z";
 
 const dependsOnColumn = (ids: ReadonlyArray<string>) => `[${ids.map((id) => `"${id}"`).join(",")}]`;
 
-/** Everything up to (but not including) 016, applied directly — the schema
-    and stage seed the rows below were written under, including 012's
-    ready-onward recompute. 016 itself then runs directly too: 014's ALTERs
-    are not idempotent, so re-running the lineage through the Migrator on top
-    of a directly-applied schema would double-apply them. */
+/** Migrations before 016, applied directly. 016 runs directly too: 014's
+    ALTERs are not idempotent, so the Migrator would double-apply them. */
 const migrateToPrevious = Effect.gen(function* () {
-  // T3o-26: board tables live in the attached board database now, so the
-  // attach has to happen before any board migration, exactly as at boot.
+  // Board tables live in the attached board database, so attach first, as at boot.
   yield* attachBoardDatabase();
   yield* runMigrations();
   for (const [id, , migration] of BOARD_MIGRATIONS) {

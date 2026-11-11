@@ -1,12 +1,7 @@
 /**
- * T3o (T3O-63): an in-process worker for the distributed-board suites.
- *
- * The worker is the real `WorkerGatewayHost` over an in-memory thread gateway
- * of its own, wired into the fake worker transport, so the central server's
- * `WorkerConnections`, `RemoteThreadGateway`, signal feed and MCP relay talk
- * to exactly the code a real worker runs — just without a socket. Dropping
- * the fake link ends every stream the central server holds, as a network
- * blip would.
+ * An in-process worker for the distributed-board suites: the real
+ * `WorkerGatewayHost` behind the fake transport, so the central side talks to the
+ * code a real worker runs. Dropping the fake link ends every stream, as a network blip would.
  */
 import {
   AuthSessionId,
@@ -151,7 +146,7 @@ export const makeInProcessWorker = (
   });
 
 /**
- * Placement over the in-process worker's live connection (T3O-65): the board's
+ * Placement over the in-process worker's live connection: the board's
  * worker summary as `BoardWorkers` would build it, with no setups.
  */
 export const placementOver = (connections: WorkerConnectionsShape): BoardPlacementShape => {

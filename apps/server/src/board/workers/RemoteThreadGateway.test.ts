@@ -1,10 +1,6 @@
 /**
- * T3o (T3O-63): the central server driving a worker's threads.
- *
- * The worker is in process (`distributed.testkit.ts`): the real gateway host
- * over an in-memory thread engine, behind the fake transport. The central
- * side is the real router, remote gateway and signal feed — with the feed's
- * cursor in a real board database, so a resume reads what was persisted.
+ * The central server driving an in-process worker's threads, with the signal
+ * feed's cursor in a real board database so a resume reads what was persisted.
  */
 import {
   BoardCardId,
@@ -107,7 +103,7 @@ const setup = (links: ReadonlyMap<string, BoardWorkerId> = new Map()) =>
     yield* env.connections.sync([registeredWorker]);
     yield* waitOnline(env.connections);
     const feed = yield* makeWorkerSignalFeed.pipe(
-      Effect.provide(Layer.succeed(WorkerConnections, env.connections)),
+      Effect.provideService(WorkerConnections, env.connections),
     );
     const fileSystem = yield* FileSystem.FileSystem;
     const digest = yield* Digest.Digest;

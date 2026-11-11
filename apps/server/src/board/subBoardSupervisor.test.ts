@@ -1,8 +1,8 @@
 /**
- * Sub-board supervisor behaviour (t3o-23, D4): a split parent in the
+ * Sub-board supervisor behaviour: a split parent in the
  * build-role stage spawns nothing while its children are unfinished, and
  * advances to the next stage in order when the last child finishes — by
- * reaching Done, or by being archived (an archived child counts as done, D6).
+ * reaching Done, or by being archived (an archived child counts as done).
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -92,7 +92,7 @@ const parentCard = (): BoardCard => ({
     id: "card-parent",
     stage: "building",
     orderKey: "a",
-    // The split's branch-only integration branch (D5): real branch, no
+    // The split's branch-only integration branch: real branch, no
     // worktree until the parent's own review entry.
     worktree: { ...readyWorktree("card-parent"), path: null, status: "branch-only" },
   }),
@@ -104,12 +104,11 @@ const childCard = (id: string, stage: string, archivedAt: string | null = null):
   archivedAt,
 });
 
-/** A child's ready worktree, cut from the PARENT's integration branch — what
-    `resolveBoardCardBaseRef` hands provisioning for a sub-board child, and so
-    what its slice really records. Spelled out rather than reusing the top-level
-    `readyWorktree`'s `main`, because a child whose recorded base disagrees with
-    its parent's live branch reads as retargeted (T3O-5, D10) and would earn a
-    sync step no production child ever gets. */
+/**
+ * A child's ready worktree, cut from the PARENT's integration branch as provisioning
+ * records it. Not `readyWorktree`'s `main`: a base disagreeing with the parent's branch
+ * reads as retargeted and would earn a sync step no real child gets.
+ */
 const childWorktree = (id: string): BoardCardWorktree => ({
   ...readyWorktree(id),
   baseRefName: `board/${String(parentId)}`,
@@ -141,7 +140,7 @@ it.effect(
           yield* pumpDomain(movedToBuilding(parentCard(), 1));
           const after = yield* board;
           // No step selected, no slot held: the parent builds THROUGH its
-          // children (D4), so the build stage's auto-execute must not touch it.
+          // children, so the build stage's auto-execute must not touch it.
           assert.strictEqual(stepStatus(after, parentId), null);
           assert.strictEqual(yield* slots.heldTotal, 0);
           assert.strictEqual(cardStage(after, parentId), "building");
@@ -191,7 +190,7 @@ it.effect(
     withGovernor(
       {
         // The child is created straight into the auto-executing build stage — the
-        // worst case for D18 (approving a split must not fan out into N running
+        // worst case for the build gate (approving a split must not fan out into N running
         // agents). handleCardCreated must skip kickoff for a card with a parent.
         board: {
           cards: [parentCard()],
@@ -216,12 +215,9 @@ it.effect(
 it.effect("provisions and runs a build step from a branch-only slice (parent review entry)", () =>
   withGovernor(
     {
-      // A split parent reaches its own review carrying the `branch-only`
-      // integration-branch slice from approval (t3o-23, D5). `schedule` must
-      // (re)provision it — a worktree that is neither ready nor mid-flight
-      // provisioning — rather than skip it and leave the review step wedged
-      // pending forever. Modelled at the build stage (auto-executes a single
-      // step), which shares the exact `schedule` gate.
+      // A split parent reaches review carrying the `branch-only` slice from approval; `schedule`
+      // must (re)provision it rather than skip it and wedge the step pending. Modelled at
+      // build, which shares the exact `schedule` gate.
       board: {
         cards: [
           {
@@ -281,7 +277,7 @@ it.effect("counts an archived child as finished and advances the parent (D6)", (
       }),
   ),
 );
-// ── The cascade (t3o-28, D3) ───────────────────────────────────────────
+// ── The cascade ───────────────────────────────────────────
 
 it.effect("starts every unblocked child when the PARENT arrives at the build stage", () =>
   withGovernor(
@@ -304,7 +300,7 @@ it.effect("starts every unblocked child when the PARENT arrives at the build sta
         yield* pumpDomain(movedToBuilding(parentCard(), 1));
         const after = yield* board;
         assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), "building");
-        // Blocked siblings stay on the floor: the D11 gate would refuse them
+        // Blocked siblings stay on the floor: the dependency gate would refuse them
         // anyway, so the cascade never asks.
         assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "ready");
         assert.strictEqual(cardStage(after, BoardCardId.make("card-three")), "ready");
@@ -378,7 +374,7 @@ it.effect("starts nothing while the parent is still short of the build stage", (
   withGovernor(
     {
       // The children are materialised and unblocked, but the human has not
-      // pressed Begin build. Approval is not a start signal (D1).
+      // pressed Begin build. Approval is not a start signal.
       board: {
         cards: [
           { ...parentCard(), stage: BoardStageId.make("planning") },
@@ -518,12 +514,9 @@ it.effect("restarts the sub-board when a corrected parent lands back on build (t
 it.effect("starts the children when a split is APPROVED on a parent already at build", () =>
   withGovernor(
     {
-      // Approving from the build stage is legal (a card built conversationally
-      // can be split first) and emits no move, so the entering-build trigger
-      // never fires. handlePlansApproved must nudge the cascade itself, or the
-      // children strand on the floor with nothing to start them (t3o-28, D3).
-      // The parent's branch-only worktree makes ensureIntegrationBranch a
-      // no-op, so this exercises the cascade nudge and not the git path.
+      // Approving from build emits no move, so the entering-build trigger never fires;
+      // handlePlansApproved must nudge the cascade itself. The branch-only worktree makes
+      // ensureIntegrationBranch a no-op, so only the cascade nudge is exercised.
       board: {
         cards: [
           parentCard(),
@@ -555,7 +548,7 @@ it.effect("starts the children when a split is APPROVED on a parent already at b
 // ── A child's human-in-the-loop stance ─────────────────────────────────
 
 /** The shipped Build stage defaults: a card WITHOUT a plan pauses for a human,
-    one WITH a plan runs unattended (D6). The harness turns both off, so this
+    one WITH a plan runs unattended. The harness turns both off, so this
     re-arms the one that bit: a materialised child owns no `board_plans` row
     (its plan became its brief), and read as plan-less it would pause. */
 const settingsPausingPlanless = (): BoardSettings => {
@@ -621,7 +614,7 @@ it.effect(
           const state = boardCardStepState(yield* board, childId);
           assert.isNotNull(state);
           // The whole point of the sub-board: dependency resolution → build →
-          // PR → merge with no human in between (t3o-28, D3). A materialised
+          // PR → merge with no human in between. A materialised
           // child owns its plan, so the plan-less pause does not apply.
           assert.strictEqual(state!.humanInLoop, false);
         }),
@@ -657,18 +650,13 @@ it.effect("still pauses a child a human explicitly put in the loop", () =>
   ),
 );
 
-// ── Merging a child down (t3o-23 D4, t3o-28 D3) ────────────────────────
-//
-// The sub-board's whole promise is dependency resolution → build → PR → merge
-// with NO human in between. The human act was Begin build on the parent; a
-// child that sits at the merge stage waiting to be clicked breaks the chain
-// and strands every sibling that depends on it.
+// A sub-board child merges itself down with no human: a child waiting at merge to be
+// clicked strands every sibling that depends on it.
 
-/** A child's open pull request, aimed at the PARENT's integration branch —
-    the same branch `childWorktree` records, because that is what the child was
-    cut from and what the review stage opens its pull request against. The two
-    must agree or the merge gate refuses (T3O-5): a pull request whose base is
-    not the branch the card is based on would land unreviewed commits. */
+/**
+ * A child's open pull request, aimed at the PARENT's integration branch like
+ * `childWorktree`. The two must agree or the merge gate refuses.
+ */
 const openPr: VcsStatusChangeRequest = {
   number: 284,
   title: "Services index page",
@@ -707,7 +695,7 @@ const mergeRefusedNotes = (commands: ReadonlyArray<HarnessCommand>) =>
     (command) => command.type === "board.card.record-note" && command.kind === "card-merge-refused",
   );
 
-/** Every auto-merge hold the reactor recorded (T3O-38, D4), in order. */
+/** Every auto-merge hold the reactor recorded, in order. */
 const autoMergeHolds = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.flatMap((command) =>
     command.type === "board.card.record-auto-merge-hold" ? [command.hold] : [],
@@ -840,8 +828,8 @@ it.effect("holds a merge the forge REFUSES, and shows the forge's reason on the 
       pullRequest: openPr,
       mergeFailure: "GitHub returned an error: At least 1 approving review is required.",
       // Every check green and the host still says no. The detail cannot say
-      // why, so the board does not guess (T3O-67). (Failing CI starts a fix
-      // instead — T3O-12.)
+      // why, so the board does not guess. (Failing CI starts a fix
+      // instead.)
       mergeState: probeState({ passed: 3, mergeable: "mergeable" }),
     },
     (h) =>
@@ -902,7 +890,7 @@ it.effect("does not merge a child a human pulled BACK out of Done", () =>
       Effect.gen(function* () {
         // A backward drag is an UNDO. Answering it by immediately re-merging on
         // the forge is both surprising and irreversible, so the hook takes
-        // forward arrivals only — the same condition the t3o-24 crossing gate
+        // forward arrivals only — the same condition the crossing gate
         // applies just above it.
         yield* h.pumpDomain(cardMoved(childAtMerge("card-one"), DONE, MERGE, 1));
         assert.deepStrictEqual(yield* h.mergeAttempts, []);
@@ -933,21 +921,10 @@ it.effect("does not merge a child a human dragged straight from Building, skippi
   ),
 );
 
-// ── The pipeline end-to-end (the reported failure) ─────────────────────
-//
-// Every test above pumps ONE event and asserts the immediate handler. That
-// proves each handler in isolation but NOT the chain: in production a handler
-// DISPATCHES a command, the engine persists the resulting event and REPUBLISHES
-// it (OrchestrationEngine `eventPubSub`), and the reactor's own subscription
-// routes it back through `handleCardMoved` / `handleStepCompleted`. The test
-// engine double does not republish — `applyDecided` updates the model but never
-// re-feeds the reactor — so a chain that only works because a dispatched move
-// re-enters the reactor is GREEN here and BROKEN in the app.
-//
-// `drainBus` closes that gap: it re-feeds every newly-decided domain event back
-// through the reactor until the bus goes quiet, exactly as the real PubSub does.
-// Step completions are excluded — the reactor never dispatches one, and pumping
-// it would re-project a completion already folded in.
+// The test engine double does not republish dispatched events, so a chain that only works
+// because a dispatched move re-enters the reactor would pass here and break in the app.
+// `drainBus` re-feeds newly decided domain events until quiet, as the real PubSub does.
+// Step completions are excluded: the reactor never dispatches one.
 const REFEED_TYPES = new Set<string>([
   "board.card-moved",
   "board.card-created",
@@ -1013,14 +990,8 @@ it.effect("PIPELINE 4: a MANUALLY merged child cascades its freed siblings into 
   ),
 );
 
-// ── The stranded split (the reported production bug) ────────────────────
-//
-// The dev DB that surfaced this: a parent dragged back to the floor (`ready`)
-// while its children were mid-flight. One child then reached Done, but its
-// freed siblings never cascaded — the cascade gated on the parent sitting
-// EXACTLY at the build stage, and a begun split whose parent a human parked
-// below build silently stopped. The split must run to completion regardless of
-// where the parent is parked.
+// A split must run to completion wherever the parent is parked: a parent dragged back to
+// the floor mid-split must not stop freed siblings cascading.
 
 /** A parent parked at the floor (`ready`) — below the build stage — while its
     split is already underway. */
@@ -1070,7 +1041,7 @@ it.effect("still waits for Begin build on a split that has NOT begun", () =>
   withGovernor(
     {
       // Parent parked at the floor, every child still on the floor — nobody has
-      // pressed Begin build, so approval alone must start nothing (t3o-28 D1).
+      // pressed Begin build, so approval alone must start nothing.
       board: {
         cards: [
           parentParkedAtFloor(),
@@ -1091,13 +1062,8 @@ it.effect("still waits for Begin build on a split that has NOT begun", () =>
   ),
 );
 
-// ── Point 2: a child's build auto-advances to review, which auto-starts ──
-//
-// Faithful chain: the child finishes building, the completion re-enters the
-// reactor via the bus, the build stage auto-advances the card to review, and
-// the review-role stage — which auto-executes — selects the first review step
-// with no human. The bare-pump tests elsewhere prove each hop; this proves they
-// connect.
+// Full chain: a child's build completion re-enters via the bus, auto-advances the card to
+// review, and the review stage selects its first step with no human.
 
 /** A running build step for a child, the state right after admission. */
 const runningBuildStep = (cardId: BoardCardId): BoardCardStepState => ({
@@ -1165,12 +1131,8 @@ it.effect("PIPELINE 2: a child's finished build auto-advances to review and it a
   ),
 );
 
-// ── Point 3: a child's converged review auto-merges to Done ─────────────
-//
-// The capstone chain: a one-round review converges, the loop advances the
-// child to the merge stage, and — because it is a sub-board child — it merges
-// itself down to Done with no human. Each hop has a bare-pump test; this proves
-// the review verdict flows all the way to Done off one completion.
+// Full chain: a one-round review converges, advances the child to merge, and the child
+// merges itself down to Done off one completion.
 
 /** A running first-round review step for a child. */
 const runningReviewStep = (cardId: BoardCardId): BoardCardStepState => ({
@@ -1241,19 +1203,9 @@ it.effect("PIPELINE 3: a child's converged review auto-merges it through to Done
   ),
 );
 
-// ---------------------------------------------------------------------------
-// Restarting a child's merge stage by hand.
-//
-// The merge role's re-entry rule ("not armed means open a clean
-// human-in-the-loop conversation") is written for a top-level card, whose merge
-// must always be a deliberate click. A sub-board child is the shape that rule
-// does not describe: the human initiated it at Begin build on the parent, and
-// the arm that marks that is IN-MEMORY and is dropped by `recoverStep` the
-// moment a conflict fix escalates. So the one path a human has to rescue a
-// failed conflict fix — the card's stage-restart button — used to hand the
-// child a blank, human-in-the-loop thread that no auto-advance and no drop
-// detection would ever follow up on, and the card stranded at Merge with a
-// merged pull request.
+// Restarting a child's merge stage by hand. Its in-memory arm is dropped when a conflict
+// fix escalates, so the restart button must not hand the child a blank human-in-the-loop
+// thread nothing follows up on.
 
 /** The on-demand kickoff the stage-restart button dispatches. */
 const stageThreadRequested = (card: BoardCard, sequence: number): HarnessEvent =>

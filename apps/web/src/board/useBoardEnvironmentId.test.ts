@@ -1,5 +1,5 @@
 /**
- * Which server's board a device shows (T3O-71). The rule that matters: a nominated board server
+ * Which server's board a device shows. The rule that matters: a nominated board server
  * that can't be reached is reported, never silently swapped for the primary — the primary's board
  * is a different board, and showing it would look like every card had vanished.
  */

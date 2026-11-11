@@ -118,7 +118,7 @@ thread history stay there. The default worker can't be removed; make another one
 The confirmation lists the cards on that worker:
 
 - Cards with no worktree yet move to the default worker.
-- Cards with a worktree, or a step running there, show **Worker removed — move this card** until you
+- Cards with a worktree, or a step running there, show **Worker removed: move this card** until you
   move them. A running step is stopped first, if the worker can be reached.
 
 Adding the same server back as a worker puts those cards back on it, and a stopped step carries on.

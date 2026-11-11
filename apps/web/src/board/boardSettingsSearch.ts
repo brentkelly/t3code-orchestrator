@@ -1,24 +1,19 @@
 /**
- * T3o board settings search index (t3o-07).
- *
- * Spread into the core `SETTINGS_SEARCH_ITEMS` (`components/settings/settingsSearch.ts`)
- * as `...BOARD_SETTINGS_SEARCH_ITEMS` — a t3o-02a registry spread, so each
- * board setting is findable beside the settings it belongs to without
- * enumerating board entries in that upstream-owned file. New board settings
- * register here, next to the panel section they anchor to. `targetId`s match
- * the section/row `id`s in `BoardSettingsPanel`.
+ * Board settings search entries, spread into the core `SETTINGS_SEARCH_ITEMS`
+ * so the upstream file needs no per-entry edits. `targetId`s match the section
+ * and row ids in the board settings panels.
  */
 import type { SettingsSearchItem } from "../components/settings/settingsSearch";
 
 export const BOARD_SETTINGS_SEARCH_ITEMS = [
-  // T3O-71: which server's board this device shows.
+  // Which server's board this device shows.
   {
     id: "board-server",
     title: "Board server",
     to: "/settings/board",
     searchTerms: ["central board remote environment connection"],
   },
-  // T3O-40: board display preferences.
+  // Board display preferences.
   { id: "board-display", title: "Board display", to: "/settings/board" },
   {
     id: "board-auto-collapse-empty-stages",
@@ -46,7 +41,7 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     to: "/settings/board",
     searchTerms: ["stages default for projects continuous integration ci fix attempts"],
   },
-  // T3O-49: each project's pipeline, CI and t3o.json live on its own page,
+  // Each project's pipeline, CI and t3o.json live on its own page,
   // reached from the project list.
   {
     id: "board-project-pipelines",
@@ -62,7 +57,7 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     targetId: "board-pipeline",
   },
   { id: "board-concurrency", title: "Board concurrency", to: "/settings/board" },
-  // T3O-62: the distributed board.
+  // The distributed board.
   { id: "board-workers", title: "Workers", to: "/settings/board" },
   {
     id: "board-default-worker",
@@ -85,7 +80,7 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
   },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
-/** Breadcrumb labels for Settings → Board's own pages (T3O-49). */
+/** Breadcrumb labels for Settings → Board's own pages. */
 export function boardSettingsBreadcrumbLabel(pathname: string): string | null {
   if (pathname.startsWith("/settings/board/projects/")) return "Board project";
   return null;

@@ -42,7 +42,7 @@ const NO_ROWS: BoardCardThreadRows = { threads: new Map(), loading: new Set(), f
 
 /**
  * What the card's thread pane can show for one thread. Only a read that succeeded without the row
- * proves the thread is gone; a failed read is not proof (T3O-41).
+ * proves the thread is gone; a failed read is not proof.
  */
 export function boardCardChatPresence(input: {
   readonly threadId: ThreadId;

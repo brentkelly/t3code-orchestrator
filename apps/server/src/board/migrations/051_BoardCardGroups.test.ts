@@ -1,5 +1,5 @@
 /**
- * Board migration 051 (T3O-27): group settings on `board_cards`, every split
+ * Board migration 051: group settings on `board_cards`, every split
  * parent backfilled as an own-branch, auto-building group, and each split
  * child given its own copy of the plan it was cut from.
  */

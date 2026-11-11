@@ -1,17 +1,7 @@
 /**
- * Settings → Board → General (t3o-15, redesigned after `.plans/prototype/T3
- * Settings.dc.html`; split into pages by T3O-49). Per-project card identity,
- * the import notices, concurrency ceilings and lifecycle windows — all
- * sharing the prototype's bordered-card aesthetic. Execution config and
- * project edits reach the decider / reactor, so the panel reads and writes
- * through `useBoardSettings` / `useUpdateBoardSettings` — the board server's
- * settings (T3O-71); stage CRUD is a board command dispatched through the
- * environment.
- *
- * The pipeline is keyed by STAGE ID, so a rename never orphans a stage's config.
- * A stage's resolved config is frozen onto the card at stage entry (D12), so a
- * mid-flight edit here takes effect only on the next entry, never on a running
- * card.
+ * Settings > Board > General. Reads and writes the board server's settings via
+ * `useBoardSettings` / `useUpdateBoardSettings`. Config is keyed by stage id
+ * and frozen onto a card at stage entry, so edits apply on the next entry.
  */
 import {
   DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
@@ -26,7 +16,6 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import { EyeIcon, EyeOffIcon, SettingsIcon, WorkflowIcon } from "lucide-react";
-import { useMemo } from "react";
 import * as Option from "effect/Option";
 
 import { projectAccent, projectIconColorOf } from "../../board/projectAccent";
@@ -69,18 +58,15 @@ import {
 function useProviderInstanceIds(): ReadonlyArray<string> {
   const providers = useBoardServerProviders();
   const providerInstances = useBoardSettings((settings) => settings.providerInstances);
-  return useMemo(
-    () => [
-      ...new Set([
-        ...providers.map((provider) => String(provider.instanceId)),
-        ...Object.keys(providerInstances),
-      ]),
-    ],
-    [providers, providerInstances],
-  );
+  return [
+    ...new Set([
+      ...providers.map((provider) => String(provider.instanceId)),
+      ...Object.keys(providerInstances),
+    ]),
+  ];
 }
 
-/** Settings → Board → General (T3O-49): the board server, display, the
+/** Settings → Board → General: the board server, display, the
     project list with its import notices, the global pipeline, concurrency, workers and
     lifecycle.
     The layout resolves the board server first. */
@@ -107,7 +93,7 @@ function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId
   return (
     <>
       <DisplaySection board={board} update={update} />
-      {/* T3O-49: committed t3o.json files waiting to import. */}
+      {/* Committed t3o.json files waiting to import. */}
       <BoardImportNotices />
       <ProjectsSection board={board} environmentId={environmentId} update={update} />
       <BoardPipelineSection />
@@ -117,7 +103,7 @@ function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId
         instanceIds={instanceIds}
         update={update}
       />
-      {/* T3O-62: the board's workers, and which projects each has checked out. */}
+      {/* The board's workers, and which projects each has checked out. */}
       <BoardWorkerSettings environmentId={environmentId} />
       <LifecycleSection board={board} update={update} />
     </>
@@ -221,7 +207,7 @@ function ProjectRows({
               }}
             />
             <div className="flex shrink-0 items-center gap-0.5">
-              {/* T3O-49: the project's pipeline, CI and t3o.json. */}
+              {/* The project's pipeline, CI and t3o.json. */}
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -355,7 +341,7 @@ function ConcurrencySection({
 }
 
 /**
- * Concurrency, per worker once the board has any (T3O-65, D11). A local-only
+ * Concurrency, per worker once the board has any. A local-only
  * board keeps the section exactly as it was, unless a per-worker override for
  * this server outlived the workers.
  */

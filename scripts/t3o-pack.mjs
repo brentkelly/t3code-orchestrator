@@ -1,20 +1,9 @@
 #!/usr/bin/env node
 /**
- * Pack the built server as an installable npm tarball, without publishing.
- *
- * Upstream only ever ships `t3` through `npm publish` (apps/server/scripts/cli.ts
- * publish). A fork has no registry, so this does the same package.json rewrite
- * -- resolve `catalog:` specs against pnpm-workspace.yaml, drop workspace-only
- * devDependencies -- then runs `npm pack` against a staged copy of the build.
- *
- * Staging matters: the publish path mutates apps/server/package.json in place and
- * restores it afterwards. This never touches the working tree, so an interrupted
- * run cannot leave the repo holding a rewritten manifest.
- *
- * Usage:
- *   vp run --filter t3 build         # build first (web + server bundle)
- *   node scripts/t3o-pack.mjs        # -> dist-npm/t3-0.0.37.tgz
- *   node scripts/t3o-pack.mjs --name t3o --version 0.0.37-t3o.1
+ * Pack the built server as an npm tarball without publishing, applying the publish
+ * path's manifest rewrite to a staged copy so the working tree is never touched.
+ * Usage: `vp run --filter t3 build`, then
+ * `node scripts/t3o-pack.mjs [--name t3o --version 0.0.37-t3o.1]`.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";

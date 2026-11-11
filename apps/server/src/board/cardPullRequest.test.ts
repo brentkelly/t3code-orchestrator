@@ -1,18 +1,7 @@
 /**
- * The card ↔ pull request link, the Merge button, and branch cleanup at Done.
- *
- * Integration tests against the LIVE supervisor reactor wired to the stateful
- * engine double (`withGovernor`), because the behaviour under test spans the
- * reactor, the real decider and the real projector: "the card records its PR"
- * is only true if the command is accepted, decided into an event, and
- * projected back onto the card the reactor next reads.
- *
- * The forge itself is stubbed through `BoardPullRequestGateway` — the board's
- * seam onto the forge — so a test can say "the lookup fails" or "the merge is
- * refused for conflicts" without a real repository or a real `gh`. Since T3O-47
- * WHY a merge was refused comes from the host's structured merge state rather
- * than from the refusal's prose, so a refusal fixture is a `mergeState` and the
- * failure text beside it only has to be a failure.
+ * The card's pull request link, the Merge button, and branch cleanup at Done, through the live
+ * reactor and the stateful engine double (`withGovernor`). The forge is stubbed through
+ * `BoardPullRequestGateway`; why a merge was refused comes from a `mergeState` fixture, not prose.
  */
 import { assert, it, describe } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -56,7 +45,7 @@ const openPr: VcsStatusChangeRequest = {
   state: "open",
 };
 
-/** A refused merge, as the host reports it afterwards (T3O-47). `mergeFailure`
+/** A refused merge, as the host reports it afterwards. `mergeFailure`
     only makes the merge fail; this is what the board reads to decide what to do
     about it. */
 const refusal = (input: {
@@ -96,7 +85,7 @@ const cardInMerge = (): BoardCard =>
   });
 
 /** A running step in the merge stage — what a human gets by restarting the
-    stage thread by hand. The step id IS the stage id (t3o-15, D1). */
+    stage thread by hand. The step id IS the stage id. */
 const runningMergeStep = (cardId: BoardCardId): BoardCardStepState => ({
   cardId,
   stepId: String(BOARD_SEED_STAGE_IDS.merge),
@@ -191,11 +180,8 @@ describe("card ↔ pull request link", () => {
     ),
   );
 
-  // T3o (T3O-48): the refresh used to return `Schema.Void`, so a card with no
-  // pull request and a refresh that found none looked exactly like a refresh
-  // that could not reach the forge. Those are different facts, only one is
-  // worth retrying, and the card that filed this bug sat at Ready for merge
-  // for hours with no way to tell which it was.
+  // A refresh that found no pull request and one that could not reach the forge are different
+  // facts, and only the second is worth retrying.
   describe("what the refresh reports", () => {
     it.effect("names the pull request it found", () =>
       withGovernor(
@@ -285,7 +271,7 @@ describe("card ↔ pull request link", () => {
     );
   });
 
-  // T3o (T3O-48): "Check again" is a human asking whether the answer they were
+  // T3o: "Check again" is a human asking whether the answer they were
   // just given is still true. Answering that out of the cache that produced it
   // — or out of the failure backoff — is a button that does nothing.
   describe("the forced re-check", () => {
@@ -405,13 +391,9 @@ describe("card ↔ pull request link", () => {
 
   it.effect("records nothing when the link lands WHILE the lookup is in flight", () =>
     Effect.gen(function* () {
-      // The lookup is a forge round trip, and the card the refresh is holding
-      // was read BEFORE it. Two triggers overlapping across that window is
-      // ordinary — the same card opening in two browser tabs, a review step
-      // boundary landing on top of a stage move — and only one of them can
-      // record. The refresh therefore re-reads the card once the lookup answers,
-      // so the one that loses the race recognises its own answer already on the
-      // card instead of dispatching a command the decider can only refuse.
+      // Two refreshes can overlap across the forge round trip, and only one can record. The refresh
+      // re-reads the card after the lookup, so the loser sees its answer already recorded instead of
+      // dispatching a command the decider can only refuse.
       let duringLookup: Effect.Effect<void> = Effect.void;
       yield* withGovernor(
         {
@@ -1149,7 +1131,7 @@ describe("merging a card's pull request", () => {
       (h) =>
         Effect.gen(function* () {
           // The advance names no position, so the decider gives it the top of
-          // Done (T3O-15) — the card that just merged is the one you read
+          // Done — the card that just merged is the one you read
           // first, not one buried under a month of finished work.
           const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
           assert.equal(result.outcome, "merged");
@@ -1170,15 +1152,14 @@ describe("merging a card's pull request", () => {
         pullRequest: openPr,
         mergeFailure: "GitHub returned an error: At least 1 approving review is required.",
         // A refusal the detail cannot explain; failing CI starts a fix of its
-        // own (T3O-12).
+        // own.
         mergeState: refusal({}),
       },
       (h) =>
         Effect.gen(function* () {
           const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
           assert.equal(result.outcome, "refused");
-          // The user reads the forge's own reason, not one the board guessed
-          // (T3O-67).
+          // The user reads the forge's own reason, not one the board guessed.
           assert.strictEqual(
             result.outcome === "refused" ? result.detail : "",
             "The forge refused the merge: GitHub returned an error: At least 1 approving review is required.",
@@ -1211,7 +1192,7 @@ describe("merging a card's pull request", () => {
             (command) => command.type === "board.card.start-stage-thread",
           );
           assert.equal(started.length, 1);
-          // …and the step it starts is STAMPED as a conflict fix (T3O-9), which
+          // …and the step it starts is STAMPED as a conflict fix, which
           // is what makes "this card's merge is held" a persisted fact rather
           // than a client-side guess at a running merge-stage step.
           yield* h.pumpDomain(stageThreadRequested(cardInMerge(), 1));
@@ -1406,11 +1387,9 @@ describe("merging a card's pull request", () => {
 
   it.effect("does not claim a conflict fix that never started", () =>
     Effect.gen(function* () {
-      // An archived card is the reachable version of "the kickoff was
-      // dropped": the decider refuses `start-stage-thread` for one, which is
-      // exactly what happens if someone archives a card mid-merge.
-      // The link is seeded and already matches what the lookup returns, so the
-      // pre-merge refresh is a no-op — an archived card cannot record one.
+      // An archived card is the reachable "kickoff dropped" case: the decider refuses
+      // `start-stage-thread` for one. The seeded link already matches the lookup, so the pre-merge
+      // refresh is a no-op.
       const archived = {
         ...cardInMerge(),
         archivedAt: "2026-01-01T00:00:00.000Z",
@@ -1447,11 +1426,9 @@ describe("merging a card's pull request", () => {
 
   it.effect("refuses rather than claiming a fix when a thread already holds the stage", () =>
     Effect.gen(function* () {
-      // The drop that no downstream signal can report: `beginStageRun` bails
-      // at `hasLiveStageThread` AFTER the kickoff command has landed, with a
-      // bare `return`. Left unchecked, a card whose merge-stage thread a human
-      // started by hand would report `conflict` — disabling the Merge button
-      // and arming the card — while nothing ran at all.
+      // `beginStageRun` bails at `hasLiveStageThread` AFTER the kickoff command lands, which no
+      // downstream signal reports. Unchecked, a hand-started merge-stage thread would read as
+      // `conflict` while nothing ran.
       const held = {
         ...cardInMerge(),
         threadLinks: [
@@ -1509,7 +1486,7 @@ describe("merging a card's pull request", () => {
           const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
           assert.equal(result.outcome, "refused");
           // The probe's failure is passed on, not dressed up as a forge that
-          // gave no reason (T3O-8).
+          // gave no reason.
           assert.equal(
             result.outcome === "refused" ? result.detail : "",
             "The forge refused the merge, and asking it why failed: No provider is registered. The forge said: the host refused",
@@ -1621,11 +1598,8 @@ describe("merging a card's pull request", () => {
       },
       (h) =>
         Effect.gen(function* () {
-          // A human can start a thread in the merge stage by hand (the card's
-          // stage-restart menu). Its success must NOT merge the pull request —
-          // that would be a merge nobody asked for, which is the one thing the
-          // design refuses to do. Only a Merge click that hit a conflict arms
-          // the completion path.
+          // A merge-stage thread started by hand must NOT merge the pull request on success. Only a
+          // Merge click that hit a conflict arms the completion path.
           yield* h.pumpDomain(mergeStepCompleted(cardInMerge().id, 1));
           assert.equal((yield* h.mergeAttempts).length, 0);
           assert.deepStrictEqual(movesTo(yield* h.commands), []);
@@ -1635,16 +1609,9 @@ describe("merging a card's pull request", () => {
 
   it.effect("runs the conflict prompt on a SECOND conflict fix, not a blank thread", () =>
     Effect.gen(function* () {
-      // The gap this closes: the reactor's re-entry rule blanks the prompt and
-      // forces a human-in-the-loop thread when a card already has a completion
-      // for the stage's step. Every other conflict test uses a card with no
-      // prior merge-stage completion, which is the only branch that behaves as
-      // designed — so a card on its SECOND Merge click got an empty
-      // conversation instead of the conflict-resolution prompt.
-      // The card carries the PRIOR fix's live thread link as well as its
-      // completion. The link's role is the stage id, which is what
-      // `hasLiveStageThread` refuses to trample — so a fixture with only the
-      // completion misses the guard that actually fires first in production.
+      // A card on its SECOND Merge click already has a merge-stage completion, which the re-entry
+      // rule answers with a blank human-in-the-loop thread. The fixture carries the prior fix's live
+      // link too, because `hasLiveStageThread` is the guard that fires first in production.
       const card = {
         ...cardInMerge(),
         threadLinks: [
@@ -1702,7 +1669,7 @@ describe("merging a card's pull request", () => {
               false,
               "the conflict fix runs unattended so its success can complete the merge",
             );
-            // A SECOND fix wears the label as well (T3O-9) — the stamp is per
+            // A SECOND fix wears the label as well — the stamp is per
             // conflict, not per stage entry, so the pill and the modal banner
             // come back for it exactly as they did the first time.
             assert.strictEqual(step.stepLabel, BOARD_CONFLICT_STEP_LABEL);
@@ -1741,8 +1708,8 @@ describe("merging a card's pull request", () => {
               true,
               "a hand-started merge-stage thread must stay human-in-the-loop",
             );
-            // …and it carries NO step identity (t3o-19, D4), so nothing derives
-            // a live conflict fix from it (T3O-9). This is the case the old
+            // …and it carries NO step identity, so nothing derives
+            // a live conflict fix from it. This is the case the old
             // `stepRunning` inference called a conflict fix: a running step at
             // the merge stage that is a conversation, not a fix.
             assert.strictEqual(step.stepLabel, null);
@@ -1795,7 +1762,7 @@ describe("merging a card's pull request", () => {
             // again, so the card stays put — and the thread must be released.
             yield* h.pumpDomain(mergeStepCompleted(card.id, 1));
 
-            // Retired, not unlinked (T3O-41): it stays on the card as history.
+            // Retired, not unlinked: it stays on the card as history.
             const retired = (yield* h.commands).filter(
               (command) =>
                 command.type === "board.card.retire-thread" &&
@@ -1906,7 +1873,7 @@ describe("branch cleanup at Done", () => {
             // branch is the only place the work exists. It is not deleted.
             assert.equal((yield* h.board).cards[0]!.pullRequest?.state, "open");
             assert.equal(branchCleanupNotes(yield* h.commands).length, 0);
-            // The CHECKOUT may go, though (T3O-52, D2): the open pull request's
+            // The CHECKOUT may go, though: the open pull request's
             // branch is on the remote, so removing it loses nothing.
             assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
           }),
@@ -2056,7 +2023,7 @@ describe("branch cleanup at Done", () => {
     "re-attempts a refused reclaim at boot, and says nothing new if it is refused again",
     () =>
       Effect.gen(function* () {
-        // T3O-52 (D4): a refusal no longer retires a card from the boot sweep —
+        // A refusal no longer retires a card from the boot sweep —
         // a tree that has since become clean or durable must be collected. A
         // repeat of the SAME refusal dispatches nothing, so a kept card costs
         // no event and no rail row per boot.
@@ -2091,11 +2058,8 @@ describe("branch cleanup at Done", () => {
 
   it.effect("settles a card whose pull request is merged while it SITS in Done", () =>
     Effect.gen(function* () {
-      // The two facts — "in Done" and "merged" — can become true in either
-      // order. This is the second order: the card arrived with an open pull
-      // request that somebody then merged on the forge. Hanging the settle off
-      // the refresh rather than off the stage move is what catches it, with no
-      // polling and no forge call that was not already being made.
+      // "In Done" and "merged" can become true in either order; here the pull request merges after
+      // the card arrives. Settling off the refresh, not the stage move, catches it without polling.
       const card = { ...cardInMerge(), stage: BOARD_SEED_STAGE_IDS.done };
       yield* withGovernor(
         {

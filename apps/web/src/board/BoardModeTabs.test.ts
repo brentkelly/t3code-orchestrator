@@ -1,11 +1,6 @@
 /**
- * Regression tests for the Threads/Board tab navigation (t3o).
- *
- * The Board tab "did nothing" because the switch pushed straight onto
- * `router.history`, which does not re-run route matching in this TanStack
- * version. These tests drive the extracted `navigateToMode` against a real
- * in-memory router (no DOM), so a regression back to `router.history.push`
- * fails loudly. The first test pins that failing behaviour as the proof.
+ * Drives `navigateToMode` against a real in-memory router: a raw
+ * `router.history.push` does not re-run route matching, so the Board tab did nothing.
  */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
@@ -140,7 +135,7 @@ describe("navigateToMode", () => {
 });
 
 /**
- * The tabs are links (T3O-49). They were plain buttons, so ctrl/cmd-click,
+ * The tabs are links. They were plain buttons, so ctrl/cmd-click,
  * middle-click, right-click → "open in new tab" and copy-link all did nothing:
  * there was no address on them to open or copy. These pin both halves of the
  * fix — the address the anchor carries, and the clicks it must not swallow.
@@ -250,7 +245,7 @@ describe("handleModeTabClick", () => {
 });
 
 /**
- * Composition guards for the control itself (T3O-34), asserted from source the
+ * Composition guards for the control itself, asserted from source the
  * way `BoardTopBar.test.ts` pins the board header's composition. Rendering the
  * component to markup to read back its children would test React, not us.
  */

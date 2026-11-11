@@ -1,10 +1,5 @@
 /**
- * The card's schedule labels, presets and copy (T3O-19).
- *
- * Every case pins its own "now", so nothing here depends on when the suite
- * runs — and the pill's label is asserted to be the kind of string that does
- * NOT go stale, which is the whole reason it is absolute and the tooltip is
- * relative (D11).
+ * Schedule labels, presets and copy. Every case pins its own "now".
  */
 import { describe, expect, it } from "vite-plus/test";
 
@@ -63,7 +58,7 @@ describe("whenLabel", () => {
     expect(whenLabel("tomorrow-ish", NOW_MS)).toBe("");
   });
 
-  // The D11 promise itself: the same instant reads the same at 2:30pm and at
+  // The promise itself: the same instant reads the same at 2:30pm and at
   // 5:00pm on the same day, so nothing has to repaint in between.
   it("does not change as the day wears on", () => {
     const iso = at({ hour: 21 });
@@ -90,7 +85,7 @@ describe("datetime-local round trip", () => {
     const iso = at({ day: 5, hour: 8, minute: 30 });
     const value = isoToLocalInputValue(iso);
     expect(value).toBe("2026-03-05T08:30");
-    // Only the INSTANT crosses the wire (D12), which is what makes a time set
+    // Only the INSTANT crosses the wire, which is what makes a time set
     // on a laptop read correctly on a phone in another zone.
     expect(localInputValueToIso(value)).toBe(iso);
   });
@@ -153,7 +148,7 @@ describe("boardScheduleCopy", () => {
     expect(copy.note).toContain("planning and approval still need you");
   });
 
-  // The one that matters (D13): setting a time on a working card STOPS it, and
+  // The one that matters: setting a time on a working card STOPS it, and
   // the control has to say so before the click rather than after.
   it("says out loud that scheduling a working card stops the agent", () => {
     const copy = boardScheduleCopy("live", "Building");
@@ -161,7 +156,7 @@ describe("boardScheduleCopy", () => {
     expect(copy.note).toBe("Stops the agent now and picks it up again at that time.");
     // And clearing is the full undo, which is what makes a confirm dialog
     // unnecessary.
-    expect(copy.clearLabel).toBe("Clear — keep working");
+    expect(copy.clearLabel).toBe("Clear (keep working)");
   });
 
   it("names the stage once the card is past the build gate", () => {
@@ -172,7 +167,7 @@ describe("boardScheduleCopy", () => {
 
   it("gives every situation a way out", () => {
     for (const kind of ["before-build", "waiting", "live", "parked"] as const) {
-      expect(boardScheduleCopy(kind, "Building").clearLabel).toMatch(/^Clear — /);
+      expect(boardScheduleCopy(kind, "Building").clearLabel).toMatch(/^Clear \(/);
     }
   });
 });
@@ -186,7 +181,7 @@ describe("boardScheduleSetTip", () => {
         iso: at({ hour: 21 }),
         nowMs: NOW_MS,
       }),
-    ).toBe("Starts the build 9:00 PM · in 6h 30m — click to change");
+    ).toBe("Starts the build 9:00 PM · in 6h 30m. Click to change");
   });
 
   it("says 'now' for a passed instant, so the tooltip and its label agree", () => {
@@ -197,7 +192,7 @@ describe("boardScheduleSetTip", () => {
         iso: at({ hour: 14, minute: 0 }),
         nowMs: NOW_MS,
       }),
-    ).toBe("Starts building now — click to change");
+    ).toBe("Starts building now. Click to change");
   });
 
   it("says resume for a parked card, not start", () => {
@@ -234,11 +229,8 @@ describe("scheduleTriggerLabel", () => {
 
 describe("scheduleInputValue", () => {
   it("opens EMPTY on an unscheduled card, so a nudge cannot commit a time nobody chose", () => {
-    // The popover has no submit: it writes on every complete value. A
-    // pre-filled field would therefore turn the first spinner nudge into a
-    // commit — and on a running card that commit stops the agent and releases
-    // its slot. Empty means an incomplete value is all a nudge can produce, and
-    // an incomplete value is never sent.
+    // The popover writes every complete value, so a pre-filled field would turn a
+    // first nudge into a commit; empty means a nudge yields an unsent partial value.
     const value = scheduleInputValue({ draft: "", scheduledStartAt: null });
     expect(value).toBe("");
     expect(localInputValueToIso(value)).toBeNull();

@@ -1,16 +1,6 @@
 /**
- * t3o-14 — the card thread pane's `+` menu.
- *
- * The load-bearing invariant is the restart gate: "New thread — restart <stage>"
- * appears ONLY when the card's current stage auto-executes (t3o-15 generalised
- * auto-kickoff to any stage), and is DISABLED while a supervised run is in
- * flight — restarting then would leave two threads owning the same step (D1).
- *
- * The gate is computed in `BoardCardDetail` (auto-execute + in-flight proxy) and
- * threaded through `BoardCardDetailView` → `BoardCardThreadPane` → the menu, so
- * the rows it produces are pinned here. The popover itself portals, and a portal
- * renders nothing on the server, so the body is exported separately rather than
- * reached through the trigger.
+ * The restart item appears only when the stage auto-executes and is disabled while
+ * a supervised run is in flight. The popover portals, so the body is tested directly.
  */
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
@@ -35,7 +25,7 @@ const body = (stageRestart: BoardThreadStageRestart | null, mode: "menu" | "adop
 describe("BoardCardThreadAddMenuBody", () => {
   it("offers all three actions on an auto-executing stage", () => {
     const html = body({ label: "Planning", disabledReason: null });
-    expect(html).toContain("New thread — restart planning");
+    expect(html).toContain("New thread: restart planning");
     expect(html).toContain("New blank thread");
     expect(html).toContain("Adopt an existing thread");
     // Enabled: no rendered `disabled` attribute (the className carries Tailwind
@@ -55,7 +45,7 @@ describe("BoardCardThreadAddMenuBody", () => {
     const reason = "A run is already in flight for this card — drag it out and back to restart.";
     const html = body({ label: "Planning", disabledReason: reason });
     // The row is still offered (named after the stage) but disabled...
-    expect(html).toContain("New thread — restart planning");
+    expect(html).toContain("New thread: restart planning");
     expect(html).toContain('disabled=""');
     // ...and the reason is shown.
     expect(html).toContain(reason);

@@ -1,13 +1,7 @@
 /**
- * T3o (T3O-62): the worker RPC handlers, spread into the board's RPC handler
- * record (`board/rpc.ts`).
- *
- * - `board.workers.*` run on the CENTRAL server for its clients, and each is a
- *   thin call into the `BoardWorkers` service.
- * - `boardWorker.*` run on a WORKER for the central server that dialed it: the
- *   handshake, its checkouts, its providers, and giving the board's session
- *   back, or renewing it. Every T3o server answers them; whether it is anyone's worker is up
- *   to the boards that paired with it.
+ * Worker RPC handlers for `board/rpc.ts`. `board.workers.*` run on the central
+ * server for its clients; `boardWorker.*` run on a worker for the central server
+ * that dialed it, and every T3o server answers them.
  */
 import {
   BOARD_WORKER_PROTOCOL_VERSION,
@@ -173,14 +167,10 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
             Effect.asVoid,
           ),
         ),
-      // The successor copies the caller's subject, scopes and label, so a
-      // session can only extend itself, never widen itself. The old one stays
-      // valid until the caller gives it back. Only a board's own plain bearer
-      // session may renew: a browser cookie or a DPoP-bound session would
-      // otherwise trade itself for an unbound token readable from script. The
-      // label is advisory: a client names itself on /oauth/token, so any plain
-      // bearer client can pass it and outlive its TTL — but only with the
-      // subject and scopes it already holds.
+      // The successor copies subject, scopes and label, so a session can extend
+      // but never widen itself. Only a plain bearer session may renew: a cookie or
+      // DPoP-bound one would trade itself for an unbound token readable from script.
+      // The label is advisory; any bearer client can renew, but only with what it holds.
       [BOARD_WORKER_WS_METHODS.renew]: (_input: Record<string, never>) =>
         authorized(
           BOARD_WORKER_WS_METHODS.renew,

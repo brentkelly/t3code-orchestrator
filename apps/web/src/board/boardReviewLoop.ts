@@ -1,24 +1,7 @@
 /**
- * The Review pane's read of the code-review loop (t3o-16, D9). Pure functions
- * over a card's step completions — the SAME opaque payloads the agents write —
- * mirroring `ReviewLoopExecutor`'s decision rules so the pane's "where the
- * loop is up to" can never disagree with what the server will actually run
- * next:
- *
- * - a round with no findings at all converges immediately;
- * - a round with only nitpicks runs one triage pass, then converges without
- *   adjudication or another round;
- * - a round with blocking findings runs triage, then adjudication; when the
- *   adjudicator overrules triage, re-triage and re-adjudication follow inside
- *   the round (T3O-51), and a dispute that survives them stops the loop
- *   `stuck` for a human;
- * - a malformed payload on any phase halts the loop (a review's is never read
- *   as "no findings", and no phase's is read as "it said nothing");
- * - running out of rounds holds the loop (`round-cap`) with the open findings
- *   still recorded here — it never reads as a pass.
- *
- * The executor itself lives server-side (it also owns prompts, models and
- * step dispatch); what is mirrored here is only the pure phase-order walk.
+ * The Review pane's read of the review loop: pure functions over the card's step
+ * completions that mirror `ReviewLoopExecutor`'s phase-order walk, so the pane
+ * cannot disagree with what the server runs next.
  */
 import {
   BOARD_REVIEW_PHASE_IDS,
@@ -68,7 +51,7 @@ export interface BoardReviewLoopFinding {
   readonly dispositionNote: string;
   readonly verdict: BoardReviewVerdict | null;
   readonly verdictNote: string;
-  /** The second pass, when the adjudicator overruled triage (T3O-51). */
+  /** The second pass, when the adjudicator overruled triage. */
   readonly retriage: BoardReviewRetriageAction | null;
   readonly retriageNote: string;
   readonly reverdict: BoardReviewVerdict | null;
@@ -78,7 +61,7 @@ export interface BoardReviewLoopFinding {
   readonly carriedFrom: number | null;
 }
 
-/** A finding a human ruled not an issue, at or before this round (T3O-51). */
+/** A finding a human ruled not an issue, at or before this round. */
 export interface BoardReviewLoopDismissal {
   readonly findingId: string;
   readonly title: string;
@@ -104,20 +87,20 @@ export type BoardReviewRoundOutcome =
   | "changes-requested"
   /** One of the round's phases recorded a payload nothing can read. */
   | "unreadable"
-  /** A dispute survived the round's second pass (T3O-51). */
+  /** A dispute survived the round's second pass. */
   | "stuck";
 
 export interface BoardReviewLoopRound {
   readonly round: number;
   readonly outcome: BoardReviewRoundOutcome;
   readonly reviewMalformed: boolean;
-  /** The human's ruling carried INTO this round (T3O-51): `fix` opens it
+  /** The human's ruling carried INTO this round: `fix` opens it
       with must-fix findings. */
   readonly carriedRuling: { readonly fromRound: number; readonly note: string | null } | null;
   /** Findings a human dismissed by this round. */
   readonly dismissals: ReadonlyArray<BoardReviewLoopDismissal>;
   /** The round's phase whose payload the board cannot read, when the loop
-      halted on it — what the Reopen affordance names and repairs (T3O-14).
+      halted on it — what the Reopen affordance names and repairs.
       `reviewMalformed` stays beside it because a broken REVIEW is the one that
       also leaves the round's later phases unsummoned. */
   readonly unreadablePhase: BoardReviewStepPhase | null;
@@ -135,26 +118,15 @@ export interface BoardReviewLoopRound {
     readonly escalated: number;
   };
   /** The round's phases in order. The follow-ups appear only when they ran or
-      are due (T3O-51). */
+      are due. */
   readonly phases: ReadonlyArray<BoardReviewLoopPhase>;
   /** The round's most recent phase completion, for the head's timestamp. */
   readonly completedAt: string | null;
 }
 
 /**
- * Where the loop stands. The vocabulary is `BoardReviewLoopOutcome` from
- * contracts, shared with the column card's summary so the two surfaces cannot
- * describe the same loop differently:
- *
- *  - `running`    — a phase is due (spinning when the card's thread is live).
- *  - `converged`  — a round closed with nothing blocking; the loop passed.
- *  - `round-cap`  — every round ran without a clean pass. The card does NOT
- *                   move on (t3o-22, D1): nothing was signed off.
- *  - `stopped`    — the user held the loop after a round, budget remaining.
- *  - `unreadable` — a review phase recorded a payload nothing can read.
- *  - `stuck`      — a dispute survived re-triage and re-adjudication; a human
- *                   must rule (T3O-51).
- *  - `advanced`   — a human advanced the card past a stuck round.
+ * Where the loop stands, in `BoardReviewLoopOutcome`'s vocabulary (shared with
+ * the column card). `round-cap` never moves the card on: nothing was signed off.
  */
 export type BoardReviewLoopStatus = BoardReviewLoopOutcome;
 
@@ -166,14 +138,14 @@ export interface BoardReviewLoop {
   /** The phase the loop runs next, while it still runs. */
   readonly next: { readonly phase: BoardReviewStepPhase; readonly round: number } | null;
   readonly status: BoardReviewLoopStatus;
-  /** What a stuck loop stopped on (T3O-51); empty otherwise. */
+  /** What a stuck loop stopped on; empty otherwise. */
   readonly stuckFindings: ReadonlyArray<BoardReviewStuckFinding>;
   /** The stuck (or advanced-past) round's fixes no review has read. */
   readonly unreviewedFixes: number;
   /** Set when the adjudicator ended the loop: nothing new was raised. */
   readonly convergedBy: "adjudicator" | null;
   /** The step id the loop halted `unreadable` on, null otherwise — the record
-      the pane's Reopen sends back (T3O-14). */
+      the pane's Reopen sends back. */
   readonly unreadableStepId: string | null;
   readonly totals: {
     readonly raised: number;
@@ -199,13 +171,13 @@ export function hasBoardReviewSteps(completions: ReadonlyArray<BoardStepCompleti
 export function deriveBoardReviewLoop(
   completions: ReadonlyArray<BoardStepCompletion>,
   maxRounds: number,
-  /** The card's stop-after-round, if it set one (t3o-22, D5). */
+  /** The card's stop-after-round, if it set one. */
   stopAfterRound: number | null = null,
   /** The card's run-through-round, if a human asked a settled loop for one
-      more pass (T3O-39, D13). Without it the pane reports `converged` while
+      more pass. Without it the pane reports `converged` while
       the executor is dispatching round N+1. */
   runThroughRound: number | null = null,
-  /** The card's server-written carry fields (T3O-51). */
+  /** The card's server-written carry fields. */
   carry: {
     readonly carriedFindings: Readonly<Record<string, BoardReviewCarry>>;
     readonly stuckWaivedThrough: number | null;
@@ -220,11 +192,8 @@ export function deriveBoardReviewLoop(
     highestRound = Math.max(highestRound, parsed.round);
   }
 
-  // The executor's walk, from contracts (t3o-22, D7) so the pane, the column
-  // card's cached summary and the executor cannot drift on where the loop is.
-  // It is bounded by the EFFECTIVE cap exactly as the executor's is — a round
-  // recorded beyond a since-lowered cap is history the executor will never
-  // re-enter, so it is rendered below but never treated as "still running".
+  // The executor's walk from contracts, bounded by the effective cap: rounds
+  // beyond a since-lowered cap render as history, never as still running.
   const walk = boardReviewLoopWalk({
     completions,
     maxRounds,

@@ -1,10 +1,6 @@
 /**
- * The board's query service (T3O-56).
- *
- * Every board read — card detail, activity, briefs, plan bodies, thread todos,
- * and the few facts the board needs about upstream threads and projects — as
- * one service, so callers depend on the board rather than on upstream's
- * `ProjectionSnapshotQuery`.
+ * Every board read as one service, so callers depend on the board rather than
+ * on upstream's `ProjectionSnapshotQuery`.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

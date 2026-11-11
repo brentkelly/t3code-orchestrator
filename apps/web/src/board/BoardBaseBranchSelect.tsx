@@ -1,23 +1,11 @@
 /**
- * The card's base-branch picker (T3O-5, D11) — the create dialog's row and the
- * open card's `Base · <branch>` control, one component.
- *
- * REUSE IS AT THE DATA LAYER, not at `BranchToolbarBranchSelector`. That
- * component cannot be shared: it is welded to a thread (switch-ref, create-ref,
- * PR checkout, env-mode, start-from-origin, the composer draft store), and
- * refactoring it to be shareable would be exactly the churn on an
- * upstream-owned file that a future sync has to reconcile. What IS shared is
- * everything underneath it, none of which needed a change: `usePaginatedBranches`
- * (which takes a `cwd`, not a thread), `VcsRef.isDefault` for the `default`
- * hint, `deriveLocalBranchNameFromRemoteRef`, and the `Combobox` primitives.
- *
- * A search input is not optional (D15): the mockup shows four branches and real
- * repositories have hundreds, which is why the query is paginated and
- * server-filtered.
+ * The card's base-branch picker. Shares the data layer (`usePaginatedBranches`,
+ * `VcsRef.isDefault`) rather than `BranchToolbarBranchSelector`, which is welded to
+ * a thread and upstream-owned. Real repos have hundreds of branches, so it searches.
  */
 import type { EnvironmentId } from "@t3tools/contracts";
 import { CheckIcon, ChevronDownIcon, GitBranchIcon, SearchIcon } from "lucide-react";
-import { useCallback, useDeferredValue, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useRef, useState } from "react";
 
 import { Button } from "../components/ui/button";
 import {
@@ -56,12 +44,8 @@ export function BoardBaseBranchSelect({
   readonly workspaceRoot: string | null;
   /** The card's pin, or null to follow the project default. */
   readonly baseBranch: string | null;
-  /** What to store — the local branch name, or null when the user picked the
-      project's current default (D12) — and, separately, the branch that value
-      RESOLVES to. The card detail needs both: it stores the first and compares
-      the second against the branch the card was actually cut from, so putting
-      a retargeted card back on its cut point asks for no rebase it does not
-      need. */
+  /** The value to store (null follows the project default) and the branch it
+      resolves to, which the card detail compares against its cut point. */
   readonly onSelect: (baseBranch: string | null, localName: string) => void;
   readonly disabled?: boolean;
   readonly className?: string;
@@ -72,12 +56,9 @@ export function BoardBaseBranchSelect({
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query).trim();
 
-  const target = useMemo(
-    () => ({ environmentId, cwd: workspaceRoot, query: deferredQuery }),
-    [deferredQuery, environmentId, workspaceRoot],
-  );
+  const target = { environmentId, cwd: workspaceRoot, query: deferredQuery };
   const branchState = usePaginatedBranches(target);
-  const options = useMemo(() => boardBaseBranchOptions(branchState.refs), [branchState.refs]);
+  const options = boardBaseBranchOptions(branchState.refs);
   const selectedName = boardBaseBranchSelectedName({ baseBranch, options });
   // The label falls back to the card's pin so a branch that has since been
   // deleted still reads as what the card is actually set to, rather than
@@ -87,29 +68,26 @@ export function BoardBaseBranchSelect({
   const hasNextPage = branchState.data?.nextCursor != null;
   const scrollElementRef = useRef<HTMLElement | null>(null);
   const previousScrollTopRef = useRef<number | null>(null);
-  const maybeFetchNextPage = useCallback(
-    (event: { readonly currentTarget: HTMLDivElement }) => {
-      const element = event.currentTarget;
-      scrollElementRef.current = element;
-      const previousScrollTop = previousScrollTopRef.current;
-      previousScrollTopRef.current = element.scrollTop;
-      if (!open || !hasNextPage || branchState.isFetchingNextPage) return;
-      if (
-        !shouldLoadNextBranchPageAfterScroll({
-          previousScrollTop,
-          scrollTop: element.scrollTop,
-          scrollHeight: element.scrollHeight,
-          clientHeight: element.clientHeight,
-        })
-      ) {
-        return;
-      }
-      branchState.loadNext();
-    },
-    [branchState, hasNextPage, open],
-  );
+  const maybeFetchNextPage = (event: { readonly currentTarget: HTMLDivElement }) => {
+    const element = event.currentTarget;
+    scrollElementRef.current = element;
+    const previousScrollTop = previousScrollTopRef.current;
+    previousScrollTopRef.current = element.scrollTop;
+    if (!open || !hasNextPage || branchState.isFetchingNextPage) return;
+    if (
+      !shouldLoadNextBranchPageAfterScroll({
+        previousScrollTop,
+        scrollTop: element.scrollTop,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+      })
+    ) {
+      return;
+    }
+    branchState.loadNext();
+  };
 
-  const itemValues = useMemo(() => options.map((option) => option.localName), [options]);
+  const itemValues = options.map((option) => option.localName);
 
   return (
     <Combobox
@@ -153,11 +131,8 @@ export function BoardBaseBranchSelect({
         <ComboboxEmpty>
           {branchState.isPending ? "Loading branches…" : "No branches found."}
         </ComboboxEmpty>
-        {/* The scroll container is ours, not `ComboboxList`'s: that one wraps
-            its list in a `ScrollArea`, so the element `onScroll` fires on is
-            not the one whose `scrollHeight` decides when to fetch the next
-            page. `ComboboxListVirtualized` is the same list without the
-            wrapper, for exactly this case. */}
+        {/* Our own scroll container: `ComboboxList`'s `ScrollArea` wrapper would
+            put `onScroll` on a different element from the one paged by `scrollHeight`. */}
         <div
           className="max-h-56 min-h-0 overflow-y-auto overscroll-contain"
           onScroll={maybeFetchNextPage}

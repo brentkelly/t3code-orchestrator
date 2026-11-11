@@ -1,15 +1,7 @@
 /**
- * T3o board commands — client operations (t3o-03 commands, t3o-04 helpers).
- *
- * Board commands ride the board's own `board.dispatchCommand` RPC (T3O-57),
- * decided by the board's engine. Each helper mirrors the upstream
- * `operations/commands.ts` shape — caller supplies the domain fields,
- * `commandId` / `createdAt` are generated when absent.
- *
- * `orderKey` values are computed client-side with the `threadSort.ts`
- * fractional helpers (see `planBoardCardReorder` in `state/board.ts`) — the
- * server stores what the client computed, following the `pinOrderKey`
- * precedent committed to on `BoardCard.orderKey`.
+ * Board commands ride `board.dispatchCommand`; `commandId` and `createdAt` are generated
+ * when absent. `orderKey` values are computed client-side (`planBoardCardReorder`) and the
+ * server stores what the client computed.
  */
 import {
   BOARD_WS_METHODS,
@@ -121,21 +113,16 @@ function dispatch(command: BoardClientCommand) {
   return request(BOARD_WS_METHODS.dispatchCommand, command);
 }
 
-/**
- * The two card→pull-request ACTIONS (t3o card↔PR spec). Unlike everything else
- * in this module these are not board commands: they are their own board RPCs,
- * because each returns a result the caller renders — and because a
- * refresh fires whenever a card is opened, which has no business writing to
- * the durable event log every time.
- */
+/** Not board commands: their own RPCs, because each returns a result the caller renders
+    and a refresh on every card open must not write to the event log. */
 export const refreshBoardCardPullRequest = (input: {
   readonly cardId: BoardCardId;
-  /** T3o (T3O-48): a human's "Check again". Omitted by the automatic triggers,
+  /** T3o: a human's "Check again". Omitted by the automatic triggers,
       which keep the cached lookup. */
   readonly force?: boolean;
 }) => request(BOARD_WS_METHODS.refreshCardPullRequest, input);
 
-/** "Link one" on a card with no pull request (T3O-18). The target goes as
+/** "Link one" on a card with no pull request. The target goes as
     typed — a URL, `#312` — and the server parses it, checks it with the forge,
     and answers `linked` or the refusal to show. */
 export const linkBoardCardPullRequest = (input: {
@@ -146,26 +133,26 @@ export const linkBoardCardPullRequest = (input: {
 export const mergeBoardCardPullRequest = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.mergeCardPullRequest, input);
 
-/** Open the card's pull request from Building and route it past Code review
-    (t3o-07). Same input shape as the merge action, and the same reason for
+/** Open the card's pull request from Building and route it past Code review.
+    Same input shape as the merge action, and the same reason for
     being an RPC: the caller renders the outcome. */
 export const submitBoardCardForMerge = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.submitCardForMerge, input);
 
-/** Run one more review round on a card whose loop has already settled
-    (T3O-39) — "Another review round", and "Request review" on a card that
+/** Run one more review round on a card whose loop has already settled —
+     "Another review round", and "Request review" on a card that
     never had one. An RPC for the ordering: the override has to be written
     before the card moves, and the server owns that order. */
 export const requestBoardReviewRound = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.requestReviewRound, input);
 
-/** "Skip CI" (T3O-44): stop the card's CI run and move it to the stage after
+/** "Skip CI": stop the card's CI run and move it to the stage after
     CI. The server records the skip under the caller's name. */
 export const skipBoardCardCi = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.skipCi, input);
 
-/** Retry CI and "Send back to review anyway" (T3O-49); Retry carries
-    `action: "stop"` for Stop CI (T3O-59). */
+/** Retry CI and "Send back to review anyway"; Retry carries
+    `action: "stop"` for Stop CI. */
 export const retryBoardCardCi = (input: {
   readonly cardId: BoardCardId;
   readonly action?: "retry" | "stop";
@@ -174,21 +161,21 @@ export const retryBoardCardCi = (input: {
 export const sendBackBoardCardCi = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.ciSendBack, input);
 
-/** "Remove worktree" on a finished card that kept one (T3O-52): removes it
+/** "Remove worktree" on a finished card that kept one: removes it
     past the safety rule. The branch is kept. */
 export const removeBoardCardWorktree = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.removeCardWorktree, input);
 
-/** Re-run a kept worktree's cleanup (T3O-52), answering what it did. */
+/** Re-run a kept worktree's cleanup, answering what it did. */
 export const checkBoardCardWorktree = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.checkCardWorktree, input);
 
-/** The Move dialog (T3O-65): check a move, start it, or ask the card's agent
+/** The Move dialog: check a move, start it, or ask the card's agent
     to push. Answers what the action gives. */
 export const boardCardWorkerMove = (input: BoardCardWorkerMoveRequest) =>
   request(BOARD_WS_METHODS.cardWorkerMove, input);
 
-/** Claim a pending upload onto a card's brief (t3o-32): the server copies the
+/** Claim a pending upload onto a card's brief: the server copies the
     file into the card's folder and records it, in that order. */
 export const attachBoardCardFile = (input: BoardAttachCardFileInput) =>
   request(BOARD_WS_METHODS.attachCardFile, input);
@@ -232,7 +219,7 @@ export const reorderBoardCard: (input: ReorderBoardCardInput) => CommandEffect =
   });
 });
 
-/** Start a card's queued step now, over the agent cap (t3o-33). Names no step:
+/** Start a card's queued step now, over the agent cap. Names no step:
     the server resolves the card's live one. */
 export const forceStartBoardCardStep: (input: ForceStartBoardCardStepInput) => CommandEffect =
   Effect.fn("BoardCommands.forceStartBoardCardStep")(function* (input) {
@@ -245,7 +232,7 @@ export const forceStartBoardCardStep: (input: ForceStartBoardCardStepInput) => C
     });
   });
 
-/** Send a card's parked step back to the build queue (T3O-23) — the Resume
+/** Send a card's parked step back to the build queue — the Resume
     button on a paused card. Names no step: the server resolves the card's live
     one, and the governor admits it when a slot frees. */
 export const requeueBoardCardStep: (input: RequeueBoardCardStepInput) => CommandEffect = Effect.fn(
@@ -260,7 +247,7 @@ export const requeueBoardCardStep: (input: RequeueBoardCardStepInput) => Command
   });
 });
 
-/** Repair a settled step whose recorded payload cannot be read (T3O-14), so
+/** Repair a settled step whose recorded payload cannot be read, so
     the review loop plans its round again. Refused on a readable record. */
 export const reopenBoardCardStep: (input: ReopenBoardCardStepInput) => CommandEffect = Effect.fn(
   "BoardCommands.reopenBoardCardStep",
@@ -286,7 +273,7 @@ export const updateBoardCard: (input: UpdateBoardCardInput) => CommandEffect = E
   });
 });
 
-/** Move a card to another project (T3O-33), reissuing its key against that
+/** Move a card to another project, reissuing its key against that
     project's prefix and counter and clearing its base-branch pin. Refused by
     the decider once the card has ever been built. `keyPrefix` is resolved
     client-side, exactly as `createBoardCard` resolves it. */
@@ -302,7 +289,7 @@ export const setBoardCardProject: (input: SetBoardCardProjectInput) => CommandEf
   });
 });
 
-/** Pin a card to a worker, or null to follow the default (T3O-65). Refused by
+/** Pin a card to a worker, or null to follow the default. Refused by
     the decider for a card whose worktree is on another worker — that is a
     move (`boardCardWorkerMove`). */
 export const pinBoardCardWorker: (input: PinBoardCardWorkerInput) => CommandEffect = Effect.fn(
@@ -352,7 +339,7 @@ export const archiveBoardCard: (input: ArchiveBoardCardInput) => CommandEffect =
   });
 });
 
-/** Regroup cards (T3O-27): into a group, out of one, or within one. */
+/** Regroup cards: into a group, out of one, or within one. */
 export const moveBoardCards: (input: MoveBoardCardsInput) => CommandEffect = Effect.fn(
   "BoardCommands.moveBoardCards",
 )(function* (input) {
@@ -365,7 +352,7 @@ export const moveBoardCards: (input: MoveBoardCardsInput) => CommandEffect = Eff
   });
 });
 
-/** A group's merge target, auto-build, auto-merge and auto-plan (T3O-29). */
+/** A group's merge target, auto-build, auto-merge and auto-plan. */
 export const setBoardCardGroupSettings: (input: SetBoardCardGroupSettingsInput) => CommandEffect =
   Effect.fn("BoardCommands.setBoardCardGroupSettings")(function* (input) {
     const metadata = yield* commandMetadata(input);
@@ -377,7 +364,7 @@ export const setBoardCardGroupSettings: (input: SetBoardCardGroupSettingsInput) 
     });
   });
 
-/** A card's own Automation toggles (T3O-38): true / false, or null to
+/** A card's own Automation toggles: true / false, or null to
     inherit from the parent group. */
 export const setBoardCardAutomation: (input: SetBoardCardAutomationInput) => CommandEffect =
   Effect.fn("BoardCommands.setBoardCardAutomation")(function* (input) {
@@ -390,7 +377,7 @@ export const setBoardCardAutomation: (input: SetBoardCardAutomationInput) => Com
     });
   });
 
-/** Cancel a started leaf's work so it can become a group (T3O-28). The
+/** Cancel a started leaf's work so it can become a group. The
     caller has confirmed it by the card's typed key. */
 export const cancelBoardCardWork: (input: CancelBoardCardWorkInput) => CommandEffect = Effect.fn(
   "BoardCommands.cancelBoardCardWork",
@@ -430,7 +417,7 @@ export const deleteBoardCard: (input: DeleteBoardCardInput) => CommandEffect = E
   });
 });
 
-/** Approve a card's proposed split (t3o-23): materialise its plans as child
+/** Approve a card's proposed split: materialise its plans as child
     cards and start the sub-board. Human-only — no MCP tool dispatches this. */
 export const approveBoardPlans: (input: ApproveBoardPlansInput) => CommandEffect = Effect.fn(
   "BoardCommands.approveBoardPlans",
@@ -493,7 +480,7 @@ export const undeleteBoardLabel: (input: UndeleteBoardLabelInput) => CommandEffe
 });
 
 /**
- * T3O-49: stage and project config commands ride their own settings-tier RPC,
+ * Stage and project config commands ride their own settings-tier RPC,
  * never `board.dispatchCommand`. The server stamps the actor.
  */
 const dispatchSettings = <T extends SettingsCommandType>(type: T, name: string) =>
@@ -545,7 +532,7 @@ export const dismissBoardProjectImport = dispatchSettings(
 export const getBoardProjectConfig = (input: { readonly projectId: ProjectId }) =>
   request(BOARD_WS_METHODS.getProjectConfig, input);
 
-/** T3O-58: each project's GitHub token source and whether GitHub accepts it. */
+/** Each project's GitHub token source and whether GitHub accepts it. */
 export const getBoardProjectTokenStatus = () => request(BOARD_WS_METHODS.projectTokenStatus, {});
 
 export const getBoardProjectImportCandidates = (input: BoardProjectImportCandidatesInput) =>

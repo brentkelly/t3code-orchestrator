@@ -25,10 +25,10 @@ import {
   type ComposeStepPromptStep,
 } from "./supervisor.ts";
 
-// The frozen run-row fields a spawn needs (t3o-15, D12). `humanInLoop` false is
+// The frozen run-row fields a spawn needs. `humanInLoop` false is
 // an unattended run, whose postamble carries the completion-contract /
 // never-prose stance. `stepLabel` defaults to NULL because Building — like
-// every stage but the review loop — has no steps (t3o-19, D4).
+// every stage but the review loop — has no steps.
 const step = (overrides: Partial<ComposeStepPromptStep> = {}): ComposeStepPromptStep => ({
   stepId: "building",
   stepLabel: null,
@@ -46,7 +46,7 @@ describe("composeStepPrompt (D5 envelope)", () => {
       role: "build",
     });
     // Preamble: card key, title, stage, context pointer. No step line —
-    // Building has no steps (t3o-19, D4).
+    // Building has no steps.
     assert.include(prompt, "T3-1");
     assert.include(prompt, "Ship it");
     assert.include(prompt, "Stage: Building.");
@@ -83,7 +83,7 @@ describe("composeStepPrompt (D5 envelope)", () => {
   });
 });
 
-// NOTE (t3o-15): the `selectNextStep (D4)` suite was deleted. Each stage now
+// NOTE: the `selectNextStep` suite was deleted. Each stage now
 // runs exactly ONE step whose config is frozen onto the card's step-state row at
 // stage entry, so there is no multi-step recipe to pick a "next step" from —
 // `selectNextStep` and `BoardResolvedRecipe` no longer exist.
@@ -113,7 +113,7 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
         "attempt" | "stallCount" | "maxAttempts" | "stepLabel" | "stageLabel"
       >,
       progressedSinceLastNudge: input.progressedSinceLastNudge ?? false,
-      // t3o-34 D6: default to "the turn ended with no question", so the
+      // Default to "the turn ended with no question", so the
       // question-specific case is the one that opts in.
       endedWithQuestion: input.endedWithQuestion ?? false,
       stageEntryRecoveries: input.stageEntryRecoveries ?? 0,
@@ -158,13 +158,8 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     }
   });
 
-  // t3o-19 AC 11: the escalation a human reads names the STEP only when the
-  // stage has steps. On every other stage `stepLabel` is null and naming a
-  // step would invent one.
-  // t3o-34 D6: the unattended half of blocked-agent handling. A human-in-the-loop
-  // run never reaches recovery, so the only agent that gets nudged here is one
-  // whose question nobody will ever answer — and saying so is what stops it
-  // asking again on the next turn and marching up the stall ladder.
+  // The escalation names the STEP only when the stage has steps. An unattended agent that
+  // asked a question is told nobody will answer, so it stops asking and climbing the ladder.
   it("tells a nudged unattended agent to decide its own question, and stays quiet otherwise", () => {
     const asked = decide({ stallCount: 1, endedWithQuestion: true });
     assert.strictEqual(asked.kind, "resume");
@@ -337,7 +332,7 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     assert.strictEqual(capped.kind, "escalate");
     if (capped.kind === "escalate") {
       // The human being escalated to reads this: it must name recoveries, not
-      // the invocation total that no longer exists (T3O-12, D4).
+      // the invocation total that no longer exists.
       assert.include(capped.question, "21 recoveries");
       assert.include(capped.question, "20 allowed");
       assert.notInclude(capped.question, "invocations");
@@ -354,15 +349,8 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
   });
 
   it("T3O-12: planned work never reaches the ceiling — a long review loop with no recoveries takes the ladder", () => {
-    // The regression this card exists for. Ten review rounds is 30 PLANNED
-    // steps; the old ceiling summed `attempt`, so past ~round 7 it was
-    // permanently blown and the first stall of any kind escalated instantly
-    // with no nudge and no ladder. Raising the round budget is what pushed a
-    // healthy loop over it — literally "extra rounds gives error".
-    //
-    // With the ceiling counting recoveries, a loop that has needed none is
-    // nowhere near it however long it has legitimately run, so an ordinary
-    // stall gets the ordinary nudge.
+    // The ceiling counts recoveries, not planned steps: a long loop that needed none is
+    // nowhere near it, so an ordinary stall gets the ordinary nudge.
     const nudged = decide({ stallCount: 0, stageEntryRecoveries: 0, attempt: 1 });
     assert.strictEqual(nudged.kind, "resume");
 
@@ -406,12 +394,8 @@ describe("reconcileStepDecision (boot reconciliation)", () => {
   });
 
   it("parks a human-in-the-loop step whose thread is present but idle", () => {
-    // The defect this covers (t3o-34): a planning agent that asked its question
-    // in prose and stopped was recovered at every boot — nudged with the
-    // unattended "nobody will answer you" text, an attempt burned, and the step
-    // left `running`, so the card pulsed its blue "being worked" dot for as long
-    // as it waited. It is waiting on the human, exactly as the live turn-ended
-    // path already decides.
+    // A human-in-the-loop agent that asked in prose and stopped is waiting on the human: boot
+    // must park it, not nudge it and leave it `running`.
     assert.deepStrictEqual(decide({ status: "running", humanInLoop: true, threadPresent: true }), {
       kind: "park",
     });
@@ -423,11 +407,8 @@ describe("reconcileStepDecision (boot reconciliation)", () => {
   });
 
   it("leaves a paused step exactly where the human put it (T3O-23)", () => {
-    // The same shape `stalled` has: non-terminal, so boot reconciliation keeps
-    // re-reading it, but supervision does not drive it. Recovering it would be
-    // the board undoing a human's stop across a restart — and unlike a stall,
-    // this one is the user's own instruction, so a live thread makes no
-    // difference either way.
+    // Like `stalled`: non-terminal, but not driven. Recovering it would undo a human's stop
+    // across a restart, so a live thread makes no difference.
     assert.deepStrictEqual(decide({ status: "paused" }), { kind: "resume-watch" });
     assert.deepStrictEqual(decide({ status: "paused", threadAlive: true }), {
       kind: "resume-watch",
@@ -446,7 +427,7 @@ describe("reconcileStepDecision (boot reconciliation)", () => {
   it("keeps waiting on a step parked for a PROSE question, which leaves no liveness", () => {
     // A prose question parks the step with no pending question on the thread, so
     // the thread reads idle. Keyed on liveness, a restart un-parked it and drove
-    // it as a stall — t3o-34's fix lasting exactly until the server bounced.
+    // it as a stall, undoing the park as soon as the server bounced.
     assert.deepStrictEqual(decide({ status: "awaiting-input", threadPresent: true }), {
       kind: "resume-watch",
     });
@@ -459,7 +440,7 @@ describe("reconcileStepDecision (boot reconciliation)", () => {
   it("re-offers a queued/pending step to the governor (t3o-11): reschedule, not recover", () => {
     // A slotless, never-started step is placed by the governor's schedule pass,
     // not treated as a stall — recovering it would burn an attempt on work that
-    // never ran (D11).
+    // never ran.
     assert.deepStrictEqual(decide({ status: "queued" }), { kind: "reschedule" });
     assert.deepStrictEqual(decide({ status: "pending" }), { kind: "reschedule" });
   });
@@ -474,7 +455,7 @@ describe("orderBoardQueue (governor ordering, t3o-11 D11)", () => {
     cardId: BoardCardId.make("card"),
     stepId: "build",
     providerInstanceId: ProviderInstanceId.make("codex"),
-    // Stage position in board order (t3o-15): Building is index 4, Code review 5
+    // Stage position in board order: Building is index 4, Code review 5
     // in the seed stage list — higher is later, and later ranks first.
     stageOrder: 4,
     started: false,

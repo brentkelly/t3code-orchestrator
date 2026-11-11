@@ -1,12 +1,7 @@
 /**
- * T3o board surface (t3o-05): mode tabs and project scope in a board-owned
- * top bar, the eight stage columns, and drag ordering.
- *
- * Every ordering number comes from `@t3tools/client-runtime` (t3o-04):
- * `compareBoardCardShells` orders columns, `boardColumnAppendOrderKey`
- * appends, `planBoardCardReorder` prices a drop, and the optimistic
- * placement overlay reconciles against the shell stream. This file decides
- * *when* to dispatch, never *what number* to store.
+ * Board surface: top bar, stage columns and drag ordering. Every ordering number
+ * comes from `@t3tools/client-runtime`; this file decides when to dispatch, never
+ * what number to store.
  */
 import { boardThreadStateSource } from "@t3tools/shared/boardThreadState";
 import {
@@ -31,6 +26,7 @@ import {
   resolveBoardStageExecution,
   type BoardCardShell,
   type BoardCardThreadShell,
+  type BoardSettings,
   type BoardStageDefinition,
   type BoardStageId,
   type BoardState,
@@ -61,7 +57,7 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 
 import { Button } from "../components/ui/button";
 import { SidebarInset } from "../components/ui/sidebar";
@@ -87,7 +83,6 @@ import {
 } from "./boardCardNav";
 import type { BoardCardNav } from "./BoardCardNavRails";
 import { useBoardAttentionSettle } from "./boardAttentionSettle";
-// T3o: the card face's amber "No PR" chip (T3O-48).
 import { boardCardNoPullRequest } from "./boardCardNotice";
 import { boardQueueInfo, type BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardCardTodoContext } from "./BoardCardItem";
@@ -150,7 +145,7 @@ function stageStateOf(
     stages,
     nextCardNumberByProject: {},
     // The stage helpers read a project's switches and overrides, which the
-    // shell carries; prompts and step bodies they never read (T3O-49).
+    // shell carries; prompts and step bodies they never read.
     ...(projectStageConfigs === undefined
       ? {}
       : {
@@ -184,12 +179,9 @@ interface BoardDragOver {
 }
 
 /**
- * The insertion index a pointer at `y` maps to within a column element,
- * measured in the cards' "unshifted" coordinates: any card sitting below the
- * inserted placeholder is offset by its height, so we subtract that before
- * comparing midpoints — otherwise inserting the placeholder shifts the cards
- * and the next dragover computes a different index, flickering. (Ported from
- * the prototype's `dropIndexIn`.)
+ * The insertion index a pointer at `y` maps to, in the cards' unshifted
+ * coordinates: cards below the placeholder are offset by its height first, or
+ * the next dragover computes a different index and flickers.
  */
 function boardDropIndexIn(columnEl: Element, y: number): number {
   const placeholder = columnEl.querySelector("[data-board-ph]");
@@ -213,17 +205,16 @@ function boardDropIndexIn(columnEl: Element, y: number): number {
 function BoardPage({
   scope = ROOT_BOARD_SCOPE,
 }: {
-  /** Which board this mount is (t3o-25, D1): the root board, or one parent's
+  /** Which board this mount is: the root board, or one parent's
       sub-board. The scope is data — the surface below is the same code. */
   readonly scope?: BoardScope;
 } = {}) {
-  // T3O-71: the board server this device nominated, or the primary environment.
+  // The board server this device nominated, or the primary environment.
   const board = useBoardEnvironment();
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       {/* The corner menu is chrome, not board content: it belongs to every
-          branch of this surface, connected or not, root board or sub-board
-          (T3O-34). */}
+          branch of this surface, connected or not, root board or sub-board. */}
       <BoardUtilityMenu />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
         {/* With no environment the bar carries the brand and the mode tabs
@@ -251,142 +242,36 @@ function BoardPage({
   );
 }
 
-function EnvironmentBoard({
+/**
+ * The board's live columns, through the attention settle. A hook of its own so
+ * its results reach the page frozen: the compiler drops the cache of any value
+ * the page later passes to a call after one of its hooks.
+ */
+function useBoardLiveColumns({
   environmentId,
-  scope,
+  boardSettings,
+  scopeProjectId,
+  orderedStages,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly scope: BoardScope;
+  readonly boardSettings: BoardSettings;
+  readonly scopeProjectId: ProjectId | null;
+  readonly orderedStages: ReadonlyArray<BoardStageDefinition>;
 }) {
-  // Both board routes carry the same search grammar (`validateBoardSearch`),
-  // so the non-strict read is safe on either mount.
-  const search = useSearch({ strict: false }) as BoardSearch;
-  const navigate = useNavigate();
-  /** Update the current route's search params in place — the scope (the
-      path) never changes here, only the selection/filter state riding it. */
-  const patchSearch = useCallback(
-    (updater: (previous: BoardSearch) => BoardSearch, options?: { readonly replace?: boolean }) => {
-      void navigate({
-        to: ".",
-        search: (previous) => updater(validateBoardSearch(previous)),
-        replace: options?.replace === true,
-      });
-    },
-    [navigate],
-  );
-  // Both drill-in and breadcrumb-back CARRY `?project` (a sub-board ignores
-  // it — its project is the parent's — but keeping it in the URL means the
-  // round trip lands back on the root board the user left, not "All
-  // projects"). `?card` and `?stalled` are per-board state and drop.
-  const openSubBoard = useCallback(
-    (parentCardId: string, cardId?: string, options?: { readonly replace?: boolean }) => {
-      void navigate({
-        to: "/board/$parentCardId",
-        params: { parentCardId },
-        search: (previous) => ({
-          ...(previous.project === undefined ? {} : { project: previous.project }),
-          ...(cardId === undefined ? {} : { card: cardId }),
-        }),
-        replace: options?.replace === true,
-      });
-    },
-    [navigate],
-  );
-  const openRootBoard = useCallback(
-    (cardId?: string, options?: { readonly replace?: boolean }) => {
-      void navigate({
-        to: "/board",
-        search: (previous) => ({
-          ...(previous.project === undefined ? {} : { project: previous.project }),
-          ...(cardId === undefined ? {} : { card: cardId }),
-        }),
-        replace: options?.replace === true,
-      });
-    },
-    [navigate],
-  );
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const cardsByProject = useAtomValue(boardEnvironment.cardsByProjectAtom(environmentId));
-  const labelCatalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
-  const labelsById = useMemo(() => indexBoardLabels(labelCatalogue), [labelCatalogue]);
-  const moveCard = useAtomCommand(boardEnvironment.moveCard);
-  const reorderCard = useAtomCommand(boardEnvironment.reorderCard);
+  // Optimistic drop placements: applied over the live shells immediately,
+  // pruned as the server's deltas confirm them, removed on rejection.
+  const [placements, setPlacements] = useState<ReadonlyArray<BoardCardPlacement>>([]);
 
-  const collapsedByStage = useBoardUiStore((state) => state.collapsedByStage);
-  const setColumnCollapsed = useBoardUiStore((state) => state.setColumnCollapsed);
-  const setDetailMaximisedCardId = useBoardUiStore((state) => state.setDetailMaximisedCardId);
-
-  // The user-defined stage list drives column order and labels (D13); falls
-  // back to the compiled seeds until the first shell snapshot arrives.
-  const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
-  const orderedStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
-  // Each project's delta (T3O-49): which stages its cards use.
-  const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
-  const stageState = useMemo(
-    () => stageStateOf(orderedStages, projectStageConfigs),
-    [orderedStages, projectStageConfigs],
-  );
-  const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
-  // The merge-role stage, for the armed-and-quiet `Auto` glyph (T3O-38, D13):
-  // an armed card in Building looks normal because it is, so the glyph is
-  // offered only where the merge is actually imminent.
-  const mergeStageId = boardStageWithRole(stageState, "merge")?.stageId ?? null;
-  const doneStageId = boardStageWithRole(stageState, "done")?.stageId ?? null;
-  /** Collapse state keys on `(scope, stageId)` (D1); the defaults are
-      `boardScopeColumnCollapsedByDefault`'s. */
-  const collapseKeyOf = useCallback(
-    (stageId: string) => boardScopeCollapseKey(scope, stageId),
-    [scope],
-  );
-
-  // Board settings (t3o-07): the per-project key prefix used when creating a
-  // card. Read once here and threaded down, rather than subscribed per card.
-  const boardSettings = useBoardSettings((settings) => settings.board);
-
-  // The board-wide arm (T3O-38, D2) — the third arming condition, and the one
-  // the card shell cannot carry, since the SQL snapshot producer cannot see
-  // settings. ORed into the glyph in the column exactly as `BoardCardDetail`
-  // ORs it into the modal chip.
-  const boardWideAutoMerge = useMemo(() => {
-    if (mergeStageId === null) return false;
-    const execution = resolveBoardStageExecution(boardSettings, mergeStageId);
-    return isBoardMergeStageExecution(execution) ? execution.autoMerge : false;
-  }, [boardSettings, mergeStageId]);
-
-  const allProjects = useMemo(
-    () => Option.getOrNull(shellState.snapshot)?.projects ?? [],
-    [shellState.snapshot],
-  );
-  // A project's Board colour is its icon colour (T3O-4), read from the live
-  // shell snapshot so an icon change in project settings recolours its cards
-  // without a reload. Keyed once here and threaded down, not looked up per card.
-  const accentNameFor = useMemo(() => {
-    const byProject = new Map(
-      allProjects.map((project) => [project.id, projectIconColorOf(project)] as const),
-    );
-    return (projectId: ProjectId) => byProject.get(projectId) ?? null;
-  }, [allProjects]);
-  // A hidden project (the settings eye toggle) leaves the board view entirely
-  // — scope picker, legend, add-card list and the merged columns below — while
-  // its cards and automation run on untouched.
-  const projects = useMemo(
-    () => allProjects.filter((project) => !isBoardProjectHidden(boardSettings, project.id)),
-    [allProjects, boardSettings],
-  );
-  // `?project` scopes the ROOT board only — a sub-board's project is implied
-  // by its parent, so the param is ignored there rather than double-filtering.
-  const scopeProjectId =
-    scope.kind === "root" ? ((search.project ?? null) as ProjectId | null) : null;
-  // A stale deep link (project deleted, hidden, or another environment's id)
-  // still needs a visible scope so the user can switch back to All projects.
-  const scopeIsStale =
-    scopeProjectId !== null &&
-    allProjects.length > 0 &&
-    !projects.some((project) => project.id === scopeProjectId);
-  const scopeIsHidden =
-    scopeProjectId !== null && isBoardProjectHidden(boardSettings, scopeProjectId);
-
-  const liveColumns = useMemo(() => {
+  // The thread shells, joined from the snapshot the client already holds. Read
+  // by the card todo strips and by the attention settle grace.
+  const threadShellsById = (() => {
+    const shells = Option.getOrNull(shellState.snapshot)?.threads ?? [];
+    return new Map(shells.map((thread) => [thread.id, thread]));
+  })();
+  const threadShellOf = (threadId: ThreadId) => threadShellsById.get(threadId);
+  const liveColumns = (() => {
     if (scopeProjectId !== null) {
       if (isBoardProjectHidden(boardSettings, scopeProjectId)) return EMPTY_COLUMNS;
       return cardsByProject.get(scopeProjectId) ?? EMPTY_COLUMNS;
@@ -396,31 +281,18 @@ function EnvironmentBoard({
         .filter(([projectId]) => !isBoardProjectHidden(boardSettings, projectId))
         .map(([, columns]) => columns),
     );
-  }, [boardSettings, cardsByProject, scopeProjectId]);
+  })();
 
-  // Optimistic drop placements: applied over the live shells immediately,
-  // pruned as the server's deltas confirm them, removed on rejection.
-  const [placements, setPlacements] = useState<ReadonlyArray<BoardCardPlacement>>([]);
-  useEffect(() => {
-    setPlacements((current) => {
-      if (current.length === 0) return current;
-      const remaining = current.filter(
-        (placement) => !isBoardCardPlacementSettled(liveColumns, placement),
-      );
-      return remaining.length === current.length ? current : remaining;
-    });
-  }, [liveColumns]);
-  const placedColumns = useMemo(
-    () => applyBoardCardPlacements(liveColumns, placements),
-    [liveColumns, placements],
-  );
+  const unsettledPlacements =
+    placements.length === 0
+      ? placements
+      : placements.filter((placement) => !isBoardCardPlacementSettled(liveColumns, placement));
+  if (unsettledPlacements.length !== placements.length) setPlacements(unsettledPlacements);
+  const placedColumns = applyBoardCardPlacements(liveColumns, unsettledPlacements);
 
-  // Sub-board pips (t3o-23, D6): `planTotal` / `planDone` are DERIVED here,
-  // client-side, from the children the shell already carries — the server
-  // never produces them. Injected onto the parents' shells so the summary /
-  // progress-block chain (which predates the data) lights up unchanged.
-  // `parentKeyById` feeds the children's "part of <key>" chip.
-  const { columns, parentKeyById, cardKeyById } = useMemo(() => {
+  // Plan pips are derived client-side from the children the shell already
+  // carries; the server never produces them.
+  const { columns, parentKeyById, cardKeyById } = (() => {
     const cards = Object.values(placedColumns).flat();
     const progress = deriveBoardCardPlanProgress({ cards, stages: orderedStages });
     const keyById = new Map(cards.map((card) => [String(card.cardId), card.key]));
@@ -450,172 +322,320 @@ function EnvironmentBoard({
       ]),
     ) as typeof placedColumns;
     return { columns: decorated, parentKeyById: parents, cardKeyById: keyById };
-  }, [placedColumns, orderedStages]);
-  const parentKeyFor = useCallback(
-    // Inside a sub-board every card is the same parent's child, so the chip
-    // would be forty copies of the header — resolve nothing there (D2).
-    (cardId: string) => (scope.kind === "root" ? parentKeyById.get(cardId) : undefined),
-    [parentKeyById, scope],
-  );
-  // The thread shells, joined here from the snapshot the client already holds.
-  // Read by the card todo strips below and by the attention settle grace next.
-  const threadShellsById = useMemo(() => {
-    const shells = Option.getOrNull(shellState.snapshot)?.threads ?? [];
-    return new Map(shells.map((thread) => [thread.id, thread]));
-  }, [shellState.snapshot]);
-  const threadShellOf = useCallback(
-    (threadId: ThreadId) => threadShellsById.get(threadId),
-    [threadShellsById],
-  );
-  // Every live shell, flat — the attention derivations below fold over it, and
-  // the sub-board's plan strip resolves this parent's children out of it
-  // (t3o-29, D1). The FULL columns, not the scoped ones: a child is filtered
+  })();
+  // Every live shell, flat: the attention derivations fold over it, and
+  // the sub-board's plan strip resolves this parent's children out of it.
+  // The FULL columns, not the scoped ones: a child is filtered
   // out of what renders, never out of what the client knows.
-  const allCards = useMemo(() => Object.values(columns).flat(), [columns]);
+  const allCards = Object.values(columns).flat();
   // Group rules read across every project, as the server's do: `?project=` and
   // hidden projects filter what renders, never a group's children.
-  const groupShells = useMemo(() => {
+  const groupShells = (() => {
     const seen = new Set(allCards.map((card) => String(card.cardId)));
     const elsewhere = [...cardsByProject.values()]
       .flatMap((projectColumns) => Object.values(projectColumns).flat())
       .filter((card) => !seen.has(String(card.cardId)));
     return elsewhere.length === 0 ? allCards : [...allCards, ...elsewhere];
-  }, [allCards, cardsByProject]);
-  // …and when each card's thread last went quiet, plus the clock that ticks once
-  // when a grace expires (T3O-29). Both feed `boardCardAttention` below, which
+  })();
+  // When each card's thread last went quiet, plus the clock that ticks once
+  // when a grace expires. Both feed `boardCardAttention`, which
   // withholds the "Needs a human" chips until the card has been still for
   // `BOARD_ATTENTION_SETTLE_MS`.
   const { threadIdleSinceByCard, now: attentionNow } = useBoardAttentionSettle({
     cards: allCards,
     threadOf: threadShellOf,
   });
-  // "Needs a human", derived client-side from the shell + stage list with no
-  // extra payload (t3o-27's split approval is one of its reasons). The card
-  // face turns this into a border, a fill tint and one chip.
-  const attentionFor = useCallback(
-    (card: BoardCardShell) => {
-      // Spread only where there is a timestamp to carry — a card whose thread
-      // has never finished a turn is passed through as the shell it already is.
-      const threadIdleSince = threadIdleSinceByCard.get(String(card.cardId));
-      return boardCardAttention({
-        card: threadIdleSince === undefined ? card : { ...card, threadIdleSince },
-        stages: orderedStages,
-        now: attentionNow,
-      });
-    },
-    [orderedStages, threadIdleSinceByCard, attentionNow],
-  );
-  // T3o (T3O-48): "this card is ready to merge and has nothing to merge" — the
-  // card face's amber `No PR` chip. Resolved here rather than in the column for
-  // the same reason `attentionFor` is: the settle grace is keyed on when the
-  // card's thread went quiet, which is a join across the thread shells only the
-  // page holds. Free otherwise — the stage and `hasPr` are already on the shell.
-  const noPullRequestFor = useCallback(
-    (card: BoardCardShell) =>
-      boardCardNoPullRequest({
-        atMergeStage: mergeStageId !== null && card.stage === mergeStageId,
-        hasPr: card.hasPr,
-        threadIdleSince: threadIdleSinceByCard.get(String(card.cardId)),
-        now: attentionNow,
+  return {
+    liveColumns,
+    setPlacements,
+    columns,
+    parentKeyById,
+    cardKeyById,
+    threadShellsById,
+    allCards,
+    groupShells,
+    threadIdleSinceByCard,
+    attentionNow,
+  };
+}
+
+/**
+ * Everything the page derives before its handlers. A hook of its own so the results
+ * reach the page frozen: the compiler drops the cache of a value the page might
+ * still mutate when a hook or an effect runs.
+ */
+function useBoardPageModel({
+  environmentId,
+  scope,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly scope: BoardScope;
+}) {
+  // Both board routes carry the same search grammar (`validateBoardSearch`),
+  // so the non-strict read is safe on either mount.
+  const search = useSearch({ strict: false }) as BoardSearch;
+  const navigate = useNavigate();
+  /** Update the current route's search params in place — the scope (the
+      path) never changes here, only the selection/filter state riding it. */
+  const patchSearch = (
+    updater: (previous: BoardSearch) => BoardSearch,
+    options?: { readonly replace?: boolean },
+  ) => {
+    void navigate({
+      to: ".",
+      search: (previous) => updater(validateBoardSearch(previous)),
+      replace: options?.replace === true,
+    });
+  };
+  // Both drill-in and breadcrumb-back CARRY `?project` (a sub-board ignores
+  // it — its project is the parent's — but keeping it in the URL means the
+  // round trip lands back on the root board the user left, not "All
+  // projects"). `?card` and `?stalled` are per-board state and drop.
+  const openSubBoard = (
+    parentCardId: string,
+    cardId?: string,
+    options?: { readonly replace?: boolean },
+  ) => {
+    void navigate({
+      to: "/board/$parentCardId",
+      params: { parentCardId },
+      search: (previous) => ({
+        ...(previous.project === undefined ? {} : { project: previous.project }),
+        ...(cardId === undefined ? {} : { card: cardId }),
       }),
-    [mergeStageId, threadIdleSinceByCard, attentionNow],
+      replace: options?.replace === true,
+    });
+  };
+  const openRootBoard = (cardId?: string, options?: { readonly replace?: boolean }) => {
+    void navigate({
+      to: "/board",
+      search: (previous) => ({
+        ...(previous.project === undefined ? {} : { project: previous.project }),
+        ...(cardId === undefined ? {} : { card: cardId }),
+      }),
+      replace: options?.replace === true,
+    });
+  };
+  const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
+  const cardsByProject = useAtomValue(boardEnvironment.cardsByProjectAtom(environmentId));
+  const labelCatalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
+  const moveCard = useAtomCommand(boardEnvironment.moveCard);
+  const reorderCard = useAtomCommand(boardEnvironment.reorderCard);
+
+  const collapsedByStage = useBoardUiStore((state) => state.collapsedByStage);
+  const setColumnCollapsed = useBoardUiStore((state) => state.setColumnCollapsed);
+  const setDetailMaximisedCardId = useBoardUiStore((state) => state.setDetailMaximisedCardId);
+
+  // The user-defined stage list drives column order and labels; falls
+  // back to the compiled seeds until the first shell snapshot arrives.
+  const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
+
+  const orderedStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
+  // Each project's delta: which stages its cards use.
+  const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
+  // Board settings: the per-project key prefix used when creating a
+  // card. Read once here and threaded down, rather than subscribed per card.
+  const boardSettings = useBoardSettings((settings) => settings.board);
+  // The confirmations a group drag or the Deferred column opens.
+  const [startingGroupId, setStartingGroupId] = useState<string | null>(null);
+  const [phaseGroupId, setPhaseGroupId] = useState<string | null>(null);
+  // The sub-board's dependency chart. Ephemeral: the page
+  // remounts per navigation, and persisted board UI state has already caused
+  // a navigation bug in this codebase.
+  const [subBoardChartOpen, setSubBoardChartOpen] = useState(false);
+  // Stays the same object across a clone's progress ticks, so those don't
+  // rebuild the queue or re-render the columns.
+  const cardWorkersState = useBoardWorkersCardView(environmentId);
+  // The strip's thread title and state are joined from the thread shells the
+  // client already holds; nothing is duplicated onto the wire.
+  const cardThreadsByCard = useAtomValue(boardEnvironment.cardThreadsByCardAtom(environmentId));
+  // Which cards have their extra threads revealed. In-memory and session-scoped:
+  // a collapse preference has near-zero value across reloads, and persisted
+  // board UI state has already caused a navigation bug in this codebase.
+  const [expandedThreadCards, setExpandedThreadCards] = useState<ReadonlySet<string>>(
+    () => new Set(),
   );
-  // T3O-52: a finished card still holding its worktree — the amber `Worktree
+  const [peekedColumns, setPeekedColumns] = useState<ReadonlySet<string>>(() => new Set());
+  // The top bar's filter box. Local state, not a search param: this is
+  // per-keystroke typing state, and routing every character would re-run route
+  // matching for a filter nobody wants to deep-link or land back on.
+  const queryKey = boardScopeQueryKey(scope);
+  const query = useBoardUiStore((state) => state.queryByBoard[queryKey] ?? "");
+  const setBoardQuery = useBoardUiStore((state) => state.setBoardQuery);
+  // Native HTML5 drag: dnd-kit's sortable transforms broke the virtualised list.
+  const [drag, setDrag] = useState<BoardDrag | null>(null);
+  const [dragOver, setDragOver] = useState<BoardDragOver | null>(null);
+  const [dragOpenedRail, setDragOpenedRail] = useState<BoardStageId | null>(null);
+  const [dragTip, setDragTip] = useState<string | null>(null);
+  // T3o: a drag out of Planning with no plan written waits for the
+  // human to confirm it, exactly as the detail pane's move does. The drop is
+  // held as the card it landed before, not as a column order: the column can
+  // change while the dialog is open, so the order is rebuilt on confirm.
+  const [unplannedDrop, setUnplannedDrop] = useState<{
+    readonly targetStage: BoardStageId;
+    /** The card the drop landed before; null appends to the column. */
+    readonly beforeId: string | null;
+    readonly source: FoundCard;
+  } | null>(null);
+  const snapshotArrived = useAtomValue(environmentBoard.snapshotValueAtom(environmentId)) !== null;
+  const setPaletteActions = useBoardUiStore((state) => state.setPaletteActions);
+  // The stage the create dialog prefills; null means closed.
+  const [createStage, setCreateStage] = useState<BoardStageId | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
+  const deleteCard = useAtomCommand(boardEnvironment.deleteCard);
+
+  // `?project` scopes the ROOT board only — a sub-board's project is implied
+  // by its parent, so the param is ignored there rather than double-filtering.
+  const scopeProjectId =
+    scope.kind === "root" ? ((search.project ?? null) as ProjectId | null) : null;
+  const {
+    liveColumns,
+    setPlacements,
+    columns,
+    parentKeyById,
+    cardKeyById,
+    threadShellsById,
+    allCards,
+    groupShells,
+    threadIdleSinceByCard,
+    attentionNow,
+  } = useBoardLiveColumns({ environmentId, boardSettings, scopeProjectId, orderedStages });
+  const parentKeyFor = (cardId: string) =>
+    scope.kind === "root" ? parentKeyById.get(cardId) : undefined;
+
+  const labelsById = indexBoardLabels(labelCatalogue);
+  const stageState = stageStateOf(orderedStages, projectStageConfigs);
+  const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
+  // The merge-role stage, for the armed-and-quiet `Auto` glyph:
+  // an armed card in Building looks normal because it is, so the glyph is
+  // offered only where the merge is actually imminent.
+  const mergeStageId = boardStageWithRole(stageState, "merge")?.stageId ?? null;
+  const doneStageId = boardStageWithRole(stageState, "done")?.stageId ?? null;
+  /** Collapse state keys on `(scope, stageId)`; the defaults are
+      `boardScopeColumnCollapsedByDefault`'s. */
+  const collapseKeyOf = (stageId: string) => boardScopeCollapseKey(scope, stageId);
+
+  // The board-wide arm — the third arming condition, and the one
+  // the card shell cannot carry, since the SQL snapshot producer cannot see
+  // settings. ORed into the glyph in the column exactly as `BoardCardDetail`
+  // ORs it into the modal chip.
+  const mergeExecution =
+    mergeStageId === null ? null : resolveBoardStageExecution(boardSettings, mergeStageId);
+  const boardWideAutoMerge =
+    mergeExecution !== null && isBoardMergeStageExecution(mergeExecution)
+      ? mergeExecution.autoMerge
+      : false;
+
+  const allProjects = Option.getOrNull(shellState.snapshot)?.projects ?? [];
+  // A project's Board colour is its icon colour, read from the live
+  // shell snapshot so an icon change in project settings recolours its cards
+  // without a reload. Keyed once here and threaded down, not looked up per card.
+  const accentByProject = new Map(
+    allProjects.map((project) => [project.id, projectIconColorOf(project)] as const),
+  );
+  const accentNameFor = (projectId: ProjectId) => accentByProject.get(projectId) ?? null;
+  // A hidden project (the settings eye toggle) leaves the board view entirely
+  // — scope picker, legend, add-card list and the merged columns below — while
+  // its cards and automation run on untouched.
+  const projects = allProjects.filter(
+    (project) => !isBoardProjectHidden(boardSettings, project.id),
+  );
+  // A stale deep link (project deleted, hidden, or another environment's id)
+  // still needs a visible scope so the user can switch back to All projects.
+  const scopeIsStale =
+    scopeProjectId !== null &&
+    allProjects.length > 0 &&
+    !projects.some((project) => project.id === scopeProjectId);
+  const scopeIsHidden =
+    scopeProjectId !== null && isBoardProjectHidden(boardSettings, scopeProjectId);
+
+  // "Needs a human", derived client-side from the shell + stage list with no
+  // extra payload (a split approval is one of its reasons). The card
+  // face turns this into a border, a fill tint and one chip.
+  const attentionFor = (card: BoardCardShell) => {
+    // Spread only where there is a timestamp to carry — a card whose thread
+    // has never finished a turn is passed through as the shell it already is.
+    const threadIdleSince = threadIdleSinceByCard.get(String(card.cardId));
+    return boardCardAttention({
+      card: threadIdleSince === undefined ? card : { ...card, threadIdleSince },
+      stages: orderedStages,
+      now: attentionNow,
+    });
+  };
+  // Resolved here, not in the column, because the settle grace joins the thread
+  // shells only the page holds.
+  const noPullRequestFor = (card: BoardCardShell) =>
+    boardCardNoPullRequest({
+      atMergeStage: mergeStageId !== null && card.stage === mergeStageId,
+      hasPr: card.hasPr,
+      threadIdleSince: threadIdleSinceByCard.get(String(card.cardId)),
+      now: attentionNow,
+    });
+  // A finished card still holding its worktree — the amber `Worktree
   // kept` notice. Here because the "finished" half needs the done-role stage
   // and `reclaimWorktreeOnDone`, which the shell cannot carry (its SQL producer
   // cannot see settings).
   const reclaimWorktreeOnDone = boardSettings.lifecycle.reclaimWorktreeOnDone;
-  const worktreeKeptFor = useCallback(
-    (card: BoardCardShell) =>
-      boardCardWorktreeKept({
-        worktreeReady: card.worktreeReady === true,
-        archived: card.archivedAt !== null,
-        inDoneStage: doneStageId !== null && card.stage === doneStageId,
-        reclaimWorktreeOnDone,
-        cancelledWork: boardCardWorktreeIsCancelledWork(card),
-      })
-        ? boardCardWorktreeKeptReason(card.worktreeKeptReason)
-        : null,
-    [doneStageId, reclaimWorktreeOnDone],
-  );
-  // …and the same question asked of each parent's CHILDREN, folded once for the
-  // whole board rather than per card: a split parent builds through its
-  // children, so a child that needs a human blocks the parent too and the
-  // parent wears the child's tone. Free, like the plan pips beside it — every
-  // input is already on the shells the board holds.
-  const childAttentionByParent = useMemo(
-    () =>
-      deriveBoardCardChildAttention({
-        // Only a sub-board CHILD can roll up, so only a child pays for the
-        // settle-grace join — on the ordinary board that is every card skipped.
-        cards: allCards.map((card) => {
-          if (card.parentCardId === undefined) return card;
-          const threadIdleSince = threadIdleSinceByCard.get(String(card.cardId));
-          return threadIdleSince === undefined ? card : { ...card, threadIdleSince };
-        }),
-        stages: orderedStages,
-        now: attentionNow,
-      }),
-    [allCards, orderedStages, threadIdleSinceByCard, attentionNow],
-  );
-  // Nearest wins (T3O-28): a card's own override, else its parent group's
+  const worktreeKeptFor = (card: BoardCardShell) =>
+    boardCardWorktreeKept({
+      worktreeReady: card.worktreeReady === true,
+      archived: card.archivedAt !== null,
+      inDoneStage: doneStageId !== null && card.stage === doneStageId,
+      reclaimWorktreeOnDone,
+      cancelledWork: boardCardWorktreeIsCancelledWork(card),
+    })
+      ? boardCardWorktreeKeptReason(card.worktreeKeptReason)
+      : null;
+  // A child that needs a human blocks its split parent too, so the parent wears
+  // the child's tone. Folded once for the whole board.
+  const childAttentionByParent = deriveBoardCardChildAttention({
+    // Only a sub-board CHILD can roll up, so only a child pays for the
+    // settle-grace join — on the ordinary board that is every card skipped.
+    cards: allCards.map((card) => {
+      if (card.parentCardId === undefined) return card;
+      const threadIdleSince = threadIdleSinceByCard.get(String(card.cardId));
+      return threadIdleSince === undefined ? card : { ...card, threadIdleSince };
+    }),
+    stages: orderedStages,
+    now: attentionNow,
+  });
+  // Nearest wins: a card's own override, else its parent group's
   // settings, else — top-level only — the board-wide default.
-  const autoMergeArmedByCard = useMemo(
-    () => boardShellAutoMergeArmedByCard({ shells: allCards, boardWide: boardWideAutoMerge }),
-    [allCards, boardWideAutoMerge],
-  );
-  const autoMergeArmedFor = useCallback(
-    (card: BoardCardShell) => autoMergeArmedByCard.get(String(card.cardId)) === true,
-    [autoMergeArmedByCard],
-  );
-  // The card face's Auto-build chip (T3O-38): a card waiting in the stage
+  const autoMergeArmedByCard = boardShellAutoMergeArmedByCard({
+    shells: allCards,
+    boardWide: boardWideAutoMerge,
+  });
+  const autoMergeArmedFor = (card: BoardCardShell) =>
+    autoMergeArmedByCard.get(String(card.cardId)) === true;
+  // The card face's Auto-build chip: a card waiting in the stage
   // before build that will start itself.
   const beforeBuildStageId = boardStageBeforeBuild(stageState)?.stageId ?? null;
-  const autoBuildArmedFor = useCallback(
-    (card: BoardCardShell) =>
-      card.stage === beforeBuildStageId &&
-      card.group === undefined &&
-      resolveBoardShellAutomation({
-        shells: allCards,
-        stages: stageState,
-        card: boardShellAutomationNode(card),
-        boardWideAutoMerge: false,
-      }).autoBuild.value,
-    [allCards, beforeBuildStageId, stageState],
-  );
-  const childAttentionFor = useCallback(
-    (card: BoardCardShell) => childAttentionByParent.get(card.cardId),
-    [childAttentionByParent],
-  );
-  // …and the working dot asked of the children too. A split parent builds
-  // THROUGH its children and runs no step of its own while they go, so on its
-  // own signals it reads the same whether the split is moving or the whole
-  // thing is queued — the one thing the dot is there to tell apart. Folded once
-  // for the board, like the roll-up above it, and just as free.
-  const childRunningByParent = useMemo(
-    () => deriveBoardCardChildRunning({ cards: allCards }),
-    [allCards],
-  );
-  const childRunningFor = useCallback(
-    (card: BoardCardShell) => childRunningByParent.get(card.cardId),
-    [childRunningByParent],
-  );
+  const autoBuildArmedFor = (card: BoardCardShell) =>
+    card.stage === beforeBuildStageId &&
+    card.group === undefined &&
+    resolveBoardShellAutomation({
+      shells: allCards,
+      stages: stageState,
+      card: boardShellAutomationNode(card),
+      boardWideAutoMerge: false,
+    }).autoBuild.value;
+  const childAttentionFor = (card: BoardCardShell) => childAttentionByParent.get(card.cardId);
+  // A split parent runs no step of its own while its children go, so its working
+  // dot comes from them.
+  const childRunningByParent = deriveBoardCardChildRunning({ cards: allCards });
+  const childRunningFor = (card: BoardCardShell) => childRunningByParent.get(card.cardId);
 
   // The parent this sub-board drills into, as a live (decorated) shell — null
   // on the root board, and null again the moment the parent leaves the live
-  // board (the D3 redirect below takes over).
-  const parentShell = useMemo(
-    () =>
-      scope.kind === "sub-board"
-        ? (findBoardCard(columns, scope.parentCardId)?.card ?? null)
-        : null,
-    [columns, scope],
-  );
+  // board (the redirect below takes over).
+  const parentShell =
+    scope.kind === "sub-board" ? (findBoardCard(columns, scope.parentCardId)?.card ?? null) : null;
 
-  // ── Groups (T3O-29) ────────────────────────────────────────────────
+  // ── Groups ────────────────────────────────────────────────
   // A group card's face, folded once per board render over the shells the
   // client already holds: no group adds a field to the wire.
-  const groupVmByCard = useMemo(() => {
+  const groupVmByCard = (() => {
     const input = { shells: groupShells, stages: stageState, attentionFor };
     const parents = new Set(
       groupShells.flatMap((card) =>
@@ -629,13 +649,10 @@ function EnvironmentBoard({
       if (vm !== null) out.set(String(card.cardId), vm);
     }
     return out;
-  }, [groupShells, stageState, attentionFor]);
-  const groupFor = useCallback(
-    (card: BoardCardShell) => groupVmByCard.get(String(card.cardId)) ?? null,
-    [groupVmByCard],
-  );
+  })();
+  const groupFor = (card: BoardCardShell) => groupVmByCard.get(String(card.cardId)) ?? null;
   const parentGroup = parentShell === null ? null : boardShellGroup(groupShells, parentShell);
-  // Where a new card lands by default: Planning inside a started group (T3O-53).
+  // Where a new card lands by default: Planning inside a started group.
   const defaultCreateStageId = boardCreateDefaultStage(
     stageState,
     parentGroup?.started === true,
@@ -643,66 +660,31 @@ function EnvironmentBoard({
   );
   // Ancestors of this sub-board's group, root first: the breadcrumb, and
   // where Back goes (one level up).
-  const ancestors = useMemo(
-    () =>
-      parentShell === null ? [] : [...boardShellAncestors(groupShells, parentShell)].reverse(),
-    [groupShells, parentShell],
-  );
+  const ancestors =
+    parentShell === null ? [] : [...boardShellAncestors(groupShells, parentShell)].reverse();
   /** One level up; `withSheet` opens this group's sheet there, which is
       where a group's own popup lives. */
-  const goUpOneLevel = useCallback(
-    (withSheet = false) => {
-      if (scope.kind !== "sub-board") return;
-      const up = ancestors.at(-1);
-      const sheet = withSheet ? scope.parentCardId : undefined;
-      if (up === undefined) openRootBoard(sheet);
-      else openSubBoard(up.cardId, sheet);
-    },
-    [ancestors, openRootBoard, openSubBoard, scope],
-  );
-  // Alt+Up leaves a sub-board for the level above, wherever focus is on the
-  // board — but not out of an open dialog, the card sheet or a text field.
-  useEffect(() => {
+  const goUpOneLevel = (withSheet = false) => {
     if (scope.kind !== "sub-board") return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.altKey || event.key !== "ArrowUp" || event.defaultPrevented) return;
-      if (isEditableFocused(event.target)) return;
-      if (document.querySelector("[role=dialog],[role=alertdialog]") !== null) return;
-      event.preventDefault();
-      goUpOneLevel();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [goUpOneLevel, scope.kind]);
-  // The confirmations a group drag or the Deferred column opens.
-  const [startingGroupId, setStartingGroupId] = useState<string | null>(null);
-  const [phaseGroupId, setPhaseGroupId] = useState<string | null>(null);
+    const up = ancestors.at(-1);
+    const sheet = withSheet ? scope.parentCardId : undefined;
+    if (up === undefined) openRootBoard(sheet);
+    else openSubBoard(up.cardId, sheet);
+  };
 
-  // The sub-board's dependency chart (t3o-29, D6). Ephemeral: the page
-  // remounts per navigation, and persisted board UI state has already caused
-  // a navigation bug in this codebase (D9).
-  const [subBoardChartOpen, setSubBoardChartOpen] = useState(false);
-
-  // Every card the environment holds, whatever project it belongs to and
-  // whether or not this scope renders it (t3o-33). The build queue is
-  // board-wide, so it is read from here rather than from the scoped columns: a
-  // hidden project's card still holds an agent, and a queue that skipped it
-  // would number every visible card wrong.
-  const everyCard = useMemo(
-    () => [...cardsByProject.values()].flatMap((byStage) => Object.values(byStage).flat()),
-    [cardsByProject],
+  // Every card in the environment, scoped or not: the build queue is board-wide,
+  // and a queue that skipped a hidden project's card would number the rest wrong.
+  const everyCard = [...cardsByProject.values()].flatMap((byStage) =>
+    Object.values(byStage).flat(),
   );
 
-  // The queued cards' pills and their tooltips. One derivation for the whole
-  // board — positions are a view over the queue, so they are recomputed
-  // together or not at all — and it costs a single pass when nothing is queued.
-  // T3O-65: the board's workers, for the queue's reasons and every card below.
-  const workersState = useAtomValue(boardEnvironment.workersAtom(environmentId));
-  // What the cards and the queue read: the same object across a clone's
-  // progress ticks, so those don't rebuild the queue or re-render the columns.
-  const cardWorkersState = useBoardWorkersCardView(workersState);
-  const queueSlots = useMemo(() => {
-    const queue = boardBuildQueue(everyCard, orderedStages, Date.now());
+  const queueSlots = (() => {
+    const queue = boardBuildQueue(
+      everyCard,
+      orderedStages,
+      // oxlint-disable-next-line react/purity -- Schedule-due samples the clock when the cards change; the compiler recomputes it only then.
+      Date.now(),
+    );
     if (queue.size === 0) return EMPTY_QUEUE_INFO;
     const running = boardRunningStepCount(everyCard);
     const cap = boardSettings.concurrency.globalMaxConcurrent;
@@ -727,86 +709,49 @@ function EnvironmentBoard({
       if (resolved !== null) info.set(cardId, resolved);
     }
     return info;
-  }, [allProjects, boardSettings.concurrency, everyCard, orderedStages, cardWorkersState]);
+  })();
 
-  // ── Card todo strips (t3o-18) ────────────────────────────────────────
-  // The card→thread links and their cached lists ride the shell snapshot as
-  // their own array; everything else the strip needs — the thread's title and
-  // whether it is running or waiting — is joined here from the thread shells the
-  // client already holds. Nothing is duplicated onto the wire, and no card opens
-  // a subscription.
-  const cardThreadsByCard = useAtomValue(boardEnvironment.cardThreadsByCardAtom(environmentId));
-  // Which cards have their extra threads revealed. In-memory and session-scoped
-  // (D9): a collapse preference has near-zero value across reloads, and persisted
-  // board UI state has already caused a navigation bug in this codebase.
-  const [expandedThreadCards, setExpandedThreadCards] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  const toggleCardThreads = useCallback((cardId: string) => {
+  const toggleCardThreads = (cardId: string) => {
     setExpandedThreadCards((current) => {
       const next = new Set(current);
       if (!next.delete(cardId)) next.add(cardId);
       return next;
     });
-  }, []);
-  const todoThreadStateOf = useCallback(
-    (threadId: ThreadId) => {
-      const shell = threadShellsById.get(threadId);
-      if (shell === undefined) return undefined;
-      const { threadState, awaitingInput } = deriveBoardCardThreadState(
-        boardThreadStateSource(shell),
-      );
-      return {
-        awaitingInput,
-        running: threadState === "working",
-        // A failed thread is stopped for the winner rule (t3o-10).
-        stopped: threadState === "stopped" || threadState === "failed" || threadState === "none",
-      };
-    },
-    [threadShellsById],
-  );
-  const todoThreadTitleOf = useCallback(
-    (threadId: ThreadId) => threadShellsById.get(threadId)?.title ?? "Thread",
-    [threadShellsById],
-  );
-  const todosFor = useCallback(
-    (cardId: string): BoardCardTodoContext => ({
-      threads: cardThreadsByCard.get(BoardCardId.make(cardId)) ?? EMPTY_CARD_THREADS,
-      stateOf: todoThreadStateOf,
-      titleOf: todoThreadTitleOf,
-      expanded: expandedThreadCards.has(cardId),
-      onToggleExpanded: () => toggleCardThreads(cardId),
-    }),
-    [
-      cardThreadsByCard,
-      expandedThreadCards,
-      todoThreadStateOf,
-      todoThreadTitleOf,
-      toggleCardThreads,
-    ],
-  );
+  };
+  const todoThreadStateOf = (threadId: ThreadId) => {
+    const shell = threadShellsById.get(threadId);
+    if (shell === undefined) return undefined;
+    const { threadState, awaitingInput } = deriveBoardCardThreadState(
+      boardThreadStateSource(shell),
+    );
+    return {
+      awaitingInput,
+      running: threadState === "working",
+      // A failed thread is stopped for the winner rule.
+      stopped: threadState === "stopped" || threadState === "failed" || threadState === "none",
+    };
+  };
+  const todoThreadTitleOf = (threadId: ThreadId) =>
+    threadShellsById.get(threadId)?.title ?? "Thread";
+  const todosFor = (cardId: string): BoardCardTodoContext => ({
+    threads: cardThreadsByCard.get(BoardCardId.make(cardId)) ?? EMPTY_CARD_THREADS,
+    stateOf: todoThreadStateOf,
+    titleOf: todoThreadTitleOf,
+    expanded: expandedThreadCards.has(cardId),
+    onToggleExpanded: () => toggleCardThreads(cardId),
+  });
 
-  // Stalled cards (t3o-17, D3): the "find every stalled card" affordance. Count
-  // them across every column, and when the `stalled` filter is on, show only
-  // the cards recovery gave up on — so a human never has to open forty cards to
-  // find the one that needs rescuing.
-  // Scope filtering (t3o-25, D1): the root board renders top-level cards, a
-  // sub-board renders one parent's children. Like the stalled filter below,
-  // this thins what RENDERS while `columns` stays the full ordering substrate
-  // — a drop between two visible cards anchors into the real column, so
-  // hidden cards keep their order.
-  const scopedColumns = useMemo(() => filterBoardColumnsByScope(columns, scope), [columns, scope]);
+  // Scope and the stalled filter thin what renders; `columns` stays the full
+  // ordering substrate so a drop anchors into the real column.
+  const scopedColumns = filterBoardColumnsByScope(columns, scope);
 
-  // Every live card, as the per-project stage helpers read them (T3O-43).
-  const pipelineView = useMemo(
-    () => ({ stages: orderedStages, projectStageConfigs, cards: everyCard }),
-    [orderedStages, projectStageConfigs, everyCard],
-  );
+  // Every live card, as the per-project stage helpers read them.
+  const pipelineView = { stages: orderedStages, projectStageConfigs, cards: everyCard };
   // The projects whose pipelines this view draws: the scoped project, a
   // sub-board's parent's and its children's (a child may sit in another
   // project), or every visible project.
   const parentProjectId = parentShell?.projectId ?? null;
-  const pipelineProjects = useMemo(() => {
+  const pipelineProjects = (() => {
     const subBoardProjectIds = new Set<string>();
     if (scope.kind === "sub-board") {
       if (parentProjectId !== null) subBoardProjectIds.add(parentProjectId);
@@ -821,52 +766,37 @@ function EnvironmentBoard({
           ? projects
           : allProjects.filter((project) => project.id === scopeProjectId);
     return inView.map((project) => ({ id: project.id, title: project.title }));
-  }, [allProjects, parentProjectId, projects, scope.kind, scopeProjectId, scopedColumns]);
-  const pipelineColumns = useMemo(
-    () =>
-      boardPipelineColumns({
-        view: pipelineView,
-        projects: pipelineProjects,
-        occupiedStageIds: new Set(
-          Object.entries(scopedColumns)
-            .filter(([, cards]) => cards.length > 0)
-            .map(([stageId]) => stageId),
-        ),
-      }),
-    [pipelineProjects, pipelineView, scopedColumns],
+  })();
+  const pipelineColumns = boardPipelineColumns({
+    view: pipelineView,
+    projects: pipelineProjects,
+    occupiedStageIds: new Set(
+      Object.entries(scopedColumns)
+        .filter(([, cards]) => cards.length > 0)
+        .map(([stageId]) => stageId),
+    ),
+  });
+  const pipelineColumnById = new Map(
+    pipelineColumns.map((column) => [String(column.stage.stageId), column]),
   );
-  const pipelineColumnById = useMemo(
-    () => new Map(pipelineColumns.map((column) => [String(column.stage.stageId), column])),
-    [pipelineColumns],
-  );
-  // The columns this SCOPE renders (t3o-25, D1; T3O-29): every stage the
-  // projects in view use (T3O-43) on the root board; Deferred and then those
+  // The columns this SCOPE renders: every stage the
+  // projects in view use on the root board; Deferred and then those
   // stages inside a group.
-  const renderedStages = useMemo(
-    () =>
-      boardScopeStages(
-        pipelineColumns.map((column) => column.stage),
-        scope,
-      ),
-    [pipelineColumns, scope],
+  const renderedStages = boardScopeStages(
+    pipelineColumns.map((column) => column.stage),
+    scope,
   );
-  const projectTitleById = useMemo(
-    () => new Map(allProjects.map((project) => [String(project.id), project.title])),
-    [allProjects],
+  const projectTitleById = new Map(
+    allProjects.map((project) => [String(project.id), project.title]),
   );
-  const stageGoneFor = useMemo(
-    () =>
-      boardCardStageGoneNotes(
-        pipelineView,
-        (projectId) => projectTitleById.get(projectId) ?? "its project",
-      ),
-    [pipelineView, projectTitleById],
+  const stageGoneFor = boardCardStageGoneNotes(
+    pipelineView,
+    (projectId) => projectTitleById.get(projectId) ?? "its project",
   );
 
-  // Auto-collapse empty stages (T3O-40). A peek opens an auto-folded column
+  // Auto-collapse empty stages. A peek opens an auto-folded column
   // for this mounted board only; it never touches `collapsedByStage`.
   const autoCollapseEmpty = boardSettings.display.autoCollapseEmptyStages;
-  const [peekedColumns, setPeekedColumns] = useState<ReadonlySet<string>>(() => new Set());
   // A peek ends once its column holds cards (or the setting or scope changes),
   // so the column folds again the next time it empties. Adjusted during
   // render, not in an effect, so the stale peek never paints.
@@ -878,31 +808,24 @@ function EnvironmentBoard({
       .map((stage) => collapseKeyOf(stage.stageId)),
   });
   if (livePeeks !== peekedColumns) setPeekedColumns(livePeeks);
-  const handleSetCollapsed = useCallback(
-    (stageId: BoardStageId, collapsed: boolean) => {
-      const key = boardScopeCollapseKey(scope, stageId);
-      const toggle = boardCollapseToggle({
-        autoCollapseEmpty,
-        cardCount: (scopedColumns[stageId] ?? EMPTY_CARDS).length,
-        key,
-        collapsed,
-        peeked: peekedColumns,
-      });
-      if (toggle.kind === "peek") setPeekedColumns(toggle.peeked);
-      else setColumnCollapsed(key, collapsed);
-    },
-    [autoCollapseEmpty, peekedColumns, scope, scopedColumns, setColumnCollapsed],
-  );
+  const handleSetCollapsed = (stageId: BoardStageId, collapsed: boolean) => {
+    const key = boardScopeCollapseKey(scope, stageId);
+    const toggle = boardCollapseToggle({
+      autoCollapseEmpty,
+      cardCount: (scopedColumns[stageId] ?? EMPTY_CARDS).length,
+      key,
+      collapsed,
+      peeked: peekedColumns,
+    });
+    if (toggle.kind === "peek") setPeekedColumns(toggle.peeked);
+    else setColumnCollapsed(key, collapsed);
+  };
   const showStalledOnly = search.stalled === true;
-  const stalledCount = useMemo(
-    () =>
-      Object.values(scopedColumns).reduce(
-        (total, cards) => total + cards.filter((card) => card.stalled).length,
-        0,
-      ),
-    [scopedColumns],
+  const stalledCount = Object.values(scopedColumns).reduce(
+    (total, cards) => total + cards.filter((card) => card.stalled).length,
+    0,
   );
-  const stalledColumns = useMemo(() => {
+  const stalledColumns = (() => {
     if (!showStalledOnly) return scopedColumns;
     return Object.fromEntries(
       Object.entries(scopedColumns).map(([stageId, cards]) => [
@@ -910,21 +833,9 @@ function EnvironmentBoard({
         cards.filter((card) => card.stalled),
       ]),
     ) as typeof scopedColumns;
-  }, [scopedColumns, showStalledOnly]);
-  // The top bar's filter box (T3O-16). Local state, not a search param: this is
-  // per-keystroke typing state, and routing every character would re-run route
-  // matching for a filter nobody wants to deep-link or land back on.
-  const queryKey = boardScopeQueryKey(scope);
-  const query = useBoardUiStore((state) => state.queryByBoard[queryKey] ?? "");
-  const setBoardQuery = useBoardUiStore((state) => state.setBoardQuery);
-  const setQuery = useCallback(
-    (next: string) => setBoardQuery(queryKey, next),
-    [queryKey, setBoardQuery],
-  );
-  const visibleColumns = useMemo(
-    () => filterBoardColumnsByQuery(stalledColumns, query),
-    [stalledColumns, query],
-  );
+  })();
+  const setQuery = (next: string) => setBoardQuery(queryKey, next);
+  const visibleColumns = filterBoardColumnsByQuery(stalledColumns, query);
   // Zero matches is a state the board has to SAY, or eight empty columns read
   // as a board that lost its cards.
   const noQueryMatches =
@@ -932,536 +843,550 @@ function EnvironmentBoard({
     countBoardColumnCards(visibleColumns) === 0 &&
     countBoardColumnCards(stalledColumns) > 0;
 
-  // ── Drag (native HTML5, the prototype's model) ──────────────────────
-  // dnd-kit's sortable transforms were incompatible with the virtualised
-  // list — cards vanished mid-drag and no gap opened. Native drag carries a
-  // tilted ghost clone; each column measures the drop index and opens a
-  // placeholder gap; the drop reuses the command layer below.
-  const [drag, setDrag] = useState<BoardDrag | null>(null);
-  const [dragOver, setDragOver] = useState<BoardDragOver | null>(null);
-  const [dragOpenedRail, setDragOpenedRail] = useState<BoardStageId | null>(null);
-  const [dragTip, setDragTip] = useState<string | null>(null);
+  return {
+    search,
+    patchSearch,
+    openSubBoard,
+    openRootBoard,
+    moveCard,
+    reorderCard,
+    collapsedByStage,
+    setColumnCollapsed,
+    setDetailMaximisedCardId,
+    orderedStages,
+    boardSettings,
+    startingGroupId,
+    setStartingGroupId,
+    phaseGroupId,
+    setPhaseGroupId,
+    subBoardChartOpen,
+    setSubBoardChartOpen,
+    cardWorkersState,
+    peekedColumns,
+    query,
+    drag,
+    setDrag,
+    dragOver,
+    setDragOver,
+    dragOpenedRail,
+    setDragOpenedRail,
+    dragTip,
+    setDragTip,
+    unplannedDrop,
+    setUnplannedDrop,
+    snapshotArrived,
+    setPaletteActions,
+    createStage,
+    setCreateStage,
+    archiveOpen,
+    setArchiveOpen,
+    unarchiveCard,
+    deleteCard,
+    scopeProjectId,
+    parentKeyFor,
+    labelsById,
+    stageState,
+    buildStageId,
+    mergeStageId,
+    collapseKeyOf,
+    boardWideAutoMerge,
+    allProjects,
+    accentNameFor,
+    projects,
+    scopeIsStale,
+    scopeIsHidden,
+    attentionFor,
+    noPullRequestFor,
+    worktreeKeptFor,
+    autoMergeArmedFor,
+    autoBuildArmedFor,
+    childAttentionFor,
+    childRunningFor,
+    parentShell,
+    groupFor,
+    parentGroup,
+    defaultCreateStageId,
+    ancestors,
+    goUpOneLevel,
+    everyCard,
+    queueSlots,
+    todosFor,
+    scopedColumns,
+    pipelineView,
+    pipelineProjects,
+    pipelineColumnById,
+    renderedStages,
+    stageGoneFor,
+    autoCollapseEmpty,
+    handleSetCollapsed,
+    showStalledOnly,
+    stalledCount,
+    setQuery,
+    visibleColumns,
+    noQueryMatches,
+    liveColumns,
+    setPlacements,
+    columns,
+    cardKeyById,
+    groupShells,
+  };
+}
+
+function EnvironmentBoard({
+  environmentId,
+  scope,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly scope: BoardScope;
+}) {
   const dragTipRef = useRef<HTMLDivElement | null>(null);
   const ghostRef = useRef<HTMLElement | null>(null);
   const dragRef = useRef<BoardDrag | null>(null);
+  const handledDeepLinkRef = useRef<string | null>(null);
+  const {
+    search,
+    patchSearch,
+    openSubBoard,
+    openRootBoard,
+    moveCard,
+    reorderCard,
+    collapsedByStage,
+    setColumnCollapsed,
+    setDetailMaximisedCardId,
+    orderedStages,
+    boardSettings,
+    startingGroupId,
+    setStartingGroupId,
+    phaseGroupId,
+    setPhaseGroupId,
+    subBoardChartOpen,
+    setSubBoardChartOpen,
+    cardWorkersState,
+    peekedColumns,
+    query,
+    drag,
+    setDrag,
+    dragOver,
+    setDragOver,
+    dragOpenedRail,
+    setDragOpenedRail,
+    dragTip,
+    setDragTip,
+    unplannedDrop,
+    setUnplannedDrop,
+    snapshotArrived,
+    setPaletteActions,
+    createStage,
+    setCreateStage,
+    archiveOpen,
+    setArchiveOpen,
+    unarchiveCard,
+    deleteCard,
+    scopeProjectId,
+    parentKeyFor,
+    labelsById,
+    stageState,
+    buildStageId,
+    mergeStageId,
+    collapseKeyOf,
+    boardWideAutoMerge,
+    allProjects,
+    accentNameFor,
+    projects,
+    scopeIsStale,
+    scopeIsHidden,
+    attentionFor,
+    noPullRequestFor,
+    worktreeKeptFor,
+    autoMergeArmedFor,
+    autoBuildArmedFor,
+    childAttentionFor,
+    childRunningFor,
+    parentShell,
+    groupFor,
+    parentGroup,
+    defaultCreateStageId,
+    ancestors,
+    goUpOneLevel,
+    everyCard,
+    queueSlots,
+    todosFor,
+    scopedColumns,
+    pipelineView,
+    pipelineProjects,
+    pipelineColumnById,
+    renderedStages,
+    stageGoneFor,
+    autoCollapseEmpty,
+    handleSetCollapsed,
+    showStalledOnly,
+    stalledCount,
+    setQuery,
+    visibleColumns,
+    noQueryMatches,
+    liveColumns,
+    setPlacements,
+    columns,
+    cardKeyById,
+    groupShells,
+  } = useBoardPageModel({ environmentId, scope });
 
-  const clearGhost = useCallback(() => {
+  const clearGhost = () => {
     if (ghostRef.current !== null) {
       ghostRef.current.remove();
       ghostRef.current = null;
     }
-  }, []);
+  };
 
   // Prices and dispatches a settled order for one column: the optimistic
   // placement lands first, then the move/reorder commands, with rejection
   // rollback and the Building queue toast. Shared by drop and (future) keyboard.
   // Reached through `dispatchDrop`, which may hold the drop for a confirm.
-  const performDrop = useCallback(
-    (targetStage: BoardStageId, orderedIds: ReadonlyArray<string>, source: FoundCard) => {
-      const cardId = source.card.cardId as string;
-      const isMove = targetStage !== source.stage;
-      if (!isMove) {
-        const currentIds = (columns[targetStage] ?? EMPTY_CARDS).map(
-          (card) => card.cardId as string,
-        );
-        if (
-          orderedIds.length === currentIds.length &&
-          orderedIds.every((id, index) => id === currentIds[index])
-        ) {
-          return;
-        }
-      }
-
-      const keysByCardId = new Map<string, string>(
-        (columns[targetStage] ?? EMPTY_CARDS).map((card) => [card.cardId as string, card.orderKey]),
-      );
-      keysByCardId.set(cardId, source.card.orderKey);
-      const assignments = planBoardCardReorder({
-        orderedCardIds: [...orderedIds],
-        keysByCardId,
-        movedCardId: cardId,
-      });
-      if (assignments.length === 0) return;
-
-      // Apply locally first — the drag never blocks on the round trip.
-      setPlacements((current) => [
-        ...current.filter(
-          (placement) => !assignments.some((next) => next.cardId === placement.cardId),
-        ),
-        ...assignments.map((assignment) => ({
-          cardId: assignment.cardId,
-          stage: targetStage,
-          orderKey: assignment.orderKey,
-        })),
-      ]);
-
-      const dispatches = assignments.map((assignment) => {
-        const command =
-          isMove && assignment.cardId === cardId
-            ? moveCard({
-                environmentId,
-                input: {
-                  cardId: source.card.cardId,
-                  toStage: targetStage,
-                  orderKey: assignment.orderKey,
-                  // A drag may cross several stages; override forces the
-                  // non-adjacent transition (never the dependency gate).
-                  ...(areBoardStagesAdjacent(
-                    pipelineView,
-                    source.stage,
-                    targetStage,
-                    source.card.projectId,
-                  )
-                    ? {}
-                    : { override: true }),
-                },
-              })
-            : reorderCard({
-                environmentId,
-                input: {
-                  cardId: BoardCardId.make(assignment.cardId),
-                  orderKey: assignment.orderKey,
-                },
-              });
-        return command.then((result) => ({ cardId: assignment.cardId, result }));
-      });
-
-      void Promise.all(dispatches).then((settled) => {
-        const rejected = settled.filter(
-          ({ result }) => result._tag === "Failure" && !isAtomCommandInterrupted(result),
-        );
-        if (rejected.length > 0) {
-          // Never let optimistic state survive a rejected command — and say
-          // why it bounced (the decider names the unmet dependency).
-          const rejectedIds = new Set(rejected.map(({ cardId: id }) => id));
-          setPlacements((current) =>
-            current.filter((placement) => !rejectedIds.has(placement.cardId)),
-          );
-          toastManager.add({
-            type: "error",
-            title: isMove ? "Move rejected" : "Reorder rejected",
-            description: describeBoardCommandFailure(rejected[0]!.result),
-          });
-          return;
-        }
-        if (targetStage === buildStageId) {
-          // D11: within Building, position is queue priority. Announce the
-          // slot the drop landed in — derived from the `queued` field, so a
-          // drop that did not land in the queue stays silent. Keyed on the
-          // stage's ROLE rather than the seed id, so a renamed build stage
-          // still announces (t3o-33: `buildStageId` was already resolved here
-          // for the old per-column derivation).
-          const movedAssignment = assignments.find((next) => next.cardId === cardId);
-          if (movedAssignment === undefined) return;
-          const slot = boardBuildQueue(
-            everyCard.map((existing) =>
-              existing.cardId === cardId
-                ? { ...existing, stage: targetStage, orderKey: movedAssignment.orderKey }
-                : existing,
-            ),
-            orderedStages,
-            Date.now(),
-          ).get(cardId);
-          if (slot !== undefined) {
-            toastManager.add({
-              type: "success",
-              title: slot.startsNext
-                ? "Queued — starts next"
-                : `Queued at position ${slot.position}`,
-              description: `${source.card.key} ${
-                slot.startsNext ? "is first in the build queue." : "joins the build queue."
-              }`,
-            });
-          }
-        }
-      });
-    },
-    [
-      columns,
-      environmentId,
-      everyCard,
-      liveColumns,
-      moveCard,
-      orderedStages,
-      pipelineView,
-      reorderCard,
-    ],
-  );
-
-  // T3o (T3O-19): a drag out of Planning with no plan written waits for the
-  // human to confirm it, exactly as the detail pane's move does. The drop is
-  // held as the card it landed before, not as a column order: the column can
-  // change while the dialog is open, so the order is rebuilt on confirm.
-  const [unplannedDrop, setUnplannedDrop] = useState<{
-    readonly targetStage: BoardStageId;
-    /** The card the drop landed before; null appends to the column. */
-    readonly beforeId: string | null;
-    readonly source: FoundCard;
-  } | null>(null);
-  const dispatchDrop = useCallback(
-    (targetStage: BoardStageId, orderedIds: ReadonlyArray<string>, source: FoundCard) => {
-      const isGroup = isBoardGroupShell(groupShells, source.card);
-      // Dropping a group on Building is the start gesture (T3O-29): it opens
-      // a confirmation rather than moving anything yet.
-      if (isGroup && targetStage === buildStageId && source.stage !== buildStageId) {
-        setStartingGroupId(String(source.card.cardId));
-        return;
-      }
+  const performDrop = (
+    targetStage: BoardStageId,
+    orderedIds: ReadonlyArray<string>,
+    source: FoundCard,
+  ) => {
+    const cardId = source.card.cardId as string;
+    const isMove = targetStage !== source.stage;
+    if (!isMove) {
+      const currentIds = (columns[targetStage] ?? EMPTY_CARDS).map((card) => card.cardId as string);
       if (
-        !isGroup &&
-        boardMoveLeavesPlanningUnwritten({
-          stages: orderedStages,
-          card: { stage: source.stage },
-          toStage: targetStage,
-          planCount: source.card.planCount ?? 0,
-        })
+        orderedIds.length === currentIds.length &&
+        orderedIds.every((id, index) => id === currentIds[index])
       ) {
-        const ownIndex = orderedIds.indexOf(source.card.cardId as string);
-        setUnplannedDrop({ targetStage, beforeId: orderedIds[ownIndex + 1] ?? null, source });
         return;
       }
-      performDrop(targetStage, orderedIds, source);
-    },
-    [groupShells, buildStageId, orderedStages, performDrop],
-  );
+    }
 
-  // Turns a target stage + raw insertion index into the settled card order.
-  // The index is measured against the RENDERED cards — `visibleColumns`, which
-  // the stalled filter may have thinned — so it is resolved to an anchor card
-  // in that same rendered list first, then mapped into the full column. A drop
-  // computed in filtered coordinates but spliced into the full list would
-  // persist a wrong order server-side, for every client.
-  const commitDrop = useCallback(
-    (targetStage: BoardStageId, insertIndex: number, cardId: string) => {
-      const source = findBoardCard(columns, cardId);
-      if (source === null) return;
-      const rendered = (visibleColumns[targetStage] ?? EMPTY_CARDS).map(
-        (card) => card.cardId as string,
+    const keysByCardId = new Map<string, string>(
+      (columns[targetStage] ?? EMPTY_CARDS).map((card) => [card.cardId as string, card.orderKey]),
+    );
+    keysByCardId.set(cardId, source.card.orderKey);
+    const assignments = planBoardCardReorder({
+      orderedCardIds: [...orderedIds],
+      keysByCardId,
+      movedCardId: cardId,
+    });
+    if (assignments.length === 0) return;
+
+    // Apply locally first — the drag never blocks on the round trip.
+    setPlacements((current) => [
+      ...current.filter(
+        (placement) => !assignments.some((next) => next.cardId === placement.cardId),
+      ),
+      ...assignments.map((assignment) => ({
+        cardId: assignment.cardId,
+        stage: targetStage,
+        orderKey: assignment.orderKey,
+      })),
+    ]);
+
+    const dispatches = assignments.map((assignment) => {
+      const command =
+        isMove && assignment.cardId === cardId
+          ? moveCard({
+              environmentId,
+              input: {
+                cardId: source.card.cardId,
+                toStage: targetStage,
+                orderKey: assignment.orderKey,
+                // A drag may cross several stages; override forces the
+                // non-adjacent transition (never the dependency gate).
+                ...(areBoardStagesAdjacent(
+                  pipelineView,
+                  source.stage,
+                  targetStage,
+                  source.card.projectId,
+                )
+                  ? {}
+                  : { override: true }),
+              },
+            })
+          : reorderCard({
+              environmentId,
+              input: {
+                cardId: BoardCardId.make(assignment.cardId),
+                orderKey: assignment.orderKey,
+              },
+            });
+      return command.then((result) => ({ cardId: assignment.cardId, result }));
+    });
+
+    void Promise.all(dispatches).then((settled) => {
+      const rejected = settled.filter(
+        ({ result }) => result._tag === "Failure" && !isAtomCommandInterrupted(result),
       );
-      // The rendered index still counts the dragged card; convert to a slot in
-      // the rendered list without it, matching the prototype.
-      const renderedOwn = rendered.indexOf(cardId);
-      const renderedRest = rendered.filter((id) => id !== cardId);
-      let renderedIndex = Math.max(0, Math.min(rendered.length, insertIndex));
-      if (renderedOwn >= 0 && renderedIndex > renderedOwn) renderedIndex -= 1;
-      // The visible card the drop lands BEFORE anchors the position; past the
-      // last visible card appends to the end of the full column.
-      const anchor = renderedRest[renderedIndex];
-      const ids = (columns[targetStage] ?? EMPTY_CARDS).map((card) => card.cardId as string);
-      const list = ids.filter((id) => id !== cardId);
-      const index = anchor === undefined ? list.length : Math.max(0, list.indexOf(anchor));
-      list.splice(index, 0, cardId);
-      dispatchDrop(targetStage, list, source);
-    },
-    [columns, visibleColumns, dispatchDrop],
-  );
+      if (rejected.length > 0) {
+        // Never let optimistic state survive a rejected command — and say
+        // why it bounced (the decider names the unmet dependency).
+        const rejectedIds = new Set(rejected.map(({ cardId: id }) => id));
+        setPlacements((current) =>
+          current.filter((placement) => !rejectedIds.has(placement.cardId)),
+        );
+        toastManager.add({
+          type: "error",
+          title: isMove ? "Move rejected" : "Reorder rejected",
+          description: describeBoardCommandFailure(rejected[0]!.result),
+        });
+        return;
+      }
+      if (targetStage === buildStageId) {
+        // Within Building, position is queue priority. Announce the slot the drop
+        // landed in, keyed on the stage's role so a renamed build stage still does.
+        const movedAssignment = assignments.find((next) => next.cardId === cardId);
+        if (movedAssignment === undefined) return;
+        const slot = boardBuildQueue(
+          everyCard.map((existing) =>
+            existing.cardId === cardId
+              ? { ...existing, stage: targetStage, orderKey: movedAssignment.orderKey }
+              : existing,
+          ),
+          orderedStages,
+          Date.now(),
+        ).get(cardId);
+        if (slot !== undefined) {
+          toastManager.add({
+            type: "success",
+            title: slot.startsNext ? "Queued: starts next" : `Queued at position ${slot.position}`,
+            description: `${source.card.key} ${
+              slot.startsNext ? "is first in the build queue." : "joins the build queue."
+            }`,
+          });
+        }
+      }
+    });
+  };
+
+  const dispatchDrop = (
+    targetStage: BoardStageId,
+    orderedIds: ReadonlyArray<string>,
+    source: FoundCard,
+  ) => {
+    const isGroup = isBoardGroupShell(groupShells, source.card);
+    // Dropping a group on Building is the start gesture: it opens
+    // a confirmation rather than moving anything yet.
+    if (isGroup && targetStage === buildStageId && source.stage !== buildStageId) {
+      setStartingGroupId(String(source.card.cardId));
+      return;
+    }
+    if (
+      !isGroup &&
+      boardMoveLeavesPlanningUnwritten({
+        stages: orderedStages,
+        card: { stage: source.stage },
+        toStage: targetStage,
+        planCount: source.card.planCount ?? 0,
+      })
+    ) {
+      const ownIndex = orderedIds.indexOf(source.card.cardId as string);
+      setUnplannedDrop({ targetStage, beforeId: orderedIds[ownIndex + 1] ?? null, source });
+      return;
+    }
+    performDrop(targetStage, orderedIds, source);
+  };
+
+  // The index is measured against the rendered (possibly filtered) cards, so it
+  // resolves to an anchor card there first, then maps into the full column.
+  // Splicing filtered coordinates into the full list would persist a wrong order.
+  const commitDrop = (targetStage: BoardStageId, insertIndex: number, cardId: string) => {
+    const source = findBoardCard(columns, cardId);
+    if (source === null) return;
+    const rendered = (visibleColumns[targetStage] ?? EMPTY_CARDS).map(
+      (card) => card.cardId as string,
+    );
+    // The rendered index still counts the dragged card; convert to a slot in
+    // the rendered list without it, matching the prototype.
+    const renderedOwn = rendered.indexOf(cardId);
+    const renderedRest = rendered.filter((id) => id !== cardId);
+    let renderedIndex = Math.max(0, Math.min(rendered.length, insertIndex));
+    if (renderedOwn >= 0 && renderedIndex > renderedOwn) renderedIndex -= 1;
+    // The visible card the drop lands BEFORE anchors the position; past the
+    // last visible card appends to the end of the full column.
+    const anchor = renderedRest[renderedIndex];
+    const ids = (columns[targetStage] ?? EMPTY_CARDS).map((card) => card.cardId as string);
+    const list = ids.filter((id) => id !== cardId);
+    const index = anchor === undefined ? list.length : Math.max(0, list.indexOf(anchor));
+    list.splice(index, 0, cardId);
+    dispatchDrop(targetStage, list, source);
+  };
 
   // Keyboard reorder (Ctrl/Cmd+ArrowUp/Down on a focused card): the pointer
   // drag's keyboard analogue. Moves relative to the RENDERED (possibly
   // stalled-filtered) neighbour, anchored into the full column exactly like
   // commitDrop, and commits through the same drop path.
-  const handleCardReorder = useCallback(
-    (card: BoardCardShell, direction: -1 | 1) => {
-      const source = findBoardCard(columns, card.cardId);
-      if (source === null) return;
-      const rendered = (visibleColumns[source.stage] ?? EMPTY_CARDS).map(
-        (candidate) => candidate.cardId as string,
-      );
-      const renderedIndex = rendered.indexOf(card.cardId);
-      const renderedTarget = renderedIndex + direction;
-      if (renderedIndex < 0 || renderedTarget < 0 || renderedTarget >= rendered.length) return;
-      const anchor = rendered[renderedTarget]!;
-      const ids = (columns[source.stage] ?? EMPTY_CARDS).map(
-        (candidate) => candidate.cardId as string,
-      );
-      const list = ids.filter((id) => id !== card.cardId);
-      const anchorIndex = list.indexOf(anchor);
-      if (anchorIndex < 0) return;
-      list.splice(direction > 0 ? anchorIndex + 1 : anchorIndex, 0, card.cardId);
-      dispatchDrop(source.stage, list, source);
-    },
-    [columns, visibleColumns, dispatchDrop],
-  );
+  const handleCardReorder = (card: BoardCardShell, direction: -1 | 1) => {
+    const source = findBoardCard(columns, card.cardId);
+    if (source === null) return;
+    const rendered = (visibleColumns[source.stage] ?? EMPTY_CARDS).map(
+      (candidate) => candidate.cardId as string,
+    );
+    const renderedIndex = rendered.indexOf(card.cardId);
+    const renderedTarget = renderedIndex + direction;
+    if (renderedIndex < 0 || renderedTarget < 0 || renderedTarget >= rendered.length) return;
+    const anchor = rendered[renderedTarget]!;
+    const ids = (columns[source.stage] ?? EMPTY_CARDS).map(
+      (candidate) => candidate.cardId as string,
+    );
+    const list = ids.filter((id) => id !== card.cardId);
+    const anchorIndex = list.indexOf(anchor);
+    if (anchorIndex < 0) return;
+    list.splice(direction > 0 ? anchorIndex + 1 : anchorIndex, 0, card.cardId);
+    dispatchDrop(source.stage, list, source);
+  };
 
-  const handleCardDragStart = useCallback(
-    (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => {
-      const element = event.currentTarget;
-      const rect = element.getBoundingClientRect();
-      event.dataTransfer.effectAllowed = "move";
-      try {
-        event.dataTransfer.setData("text/plain", card.cardId);
-      } catch {
-        // Some browsers disallow setData here; the drag still works without it.
-      }
-      // A tilted, shadowed clone is the drag image (the prototype's ghost). It
-      // sits off-screen just long enough for the browser to snapshot it.
-      const ghost = element.cloneNode(true) as HTMLElement;
-      ghost.classList.remove("opacity-40");
-      ghost.style.cssText +=
-        `;position:fixed;top:-1000px;left:-1000px;pointer-events:none;opacity:1;width:${rect.width}px;` +
-        "transform:rotate(4deg);box-shadow:0 18px 34px -14px rgb(0 0 0 / 55%)";
-      document.body.appendChild(ghost);
-      ghostRef.current = ghost;
-      event.dataTransfer.setDragImage(ghost, event.clientX - rect.left, event.clientY - rect.top);
-      setTimeout(clearGhost, 0);
+  const handleCardDragStart = (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => {
+    const element = event.currentTarget;
+    const rect = element.getBoundingClientRect();
+    event.dataTransfer.effectAllowed = "move";
+    try {
+      event.dataTransfer.setData("text/plain", card.cardId);
+    } catch {
+      // Some browsers disallow setData here; the drag still works without it.
+    }
+    // A tilted, shadowed clone is the drag image (the prototype's ghost). It
+    // sits off-screen just long enough for the browser to snapshot it.
+    const ghost = element.cloneNode(true) as HTMLElement;
+    ghost.classList.remove("opacity-40");
+    ghost.style.cssText +=
+      `;position:fixed;top:-1000px;left:-1000px;pointer-events:none;opacity:1;width:${rect.width}px;` +
+      "transform:rotate(4deg);box-shadow:0 18px 34px -14px rgb(0 0 0 / 55%)";
+    document.body.appendChild(ghost);
+    ghostRef.current = ghost;
+    event.dataTransfer.setDragImage(ghost, event.clientX - rect.left, event.clientY - rect.top);
+    setTimeout(clearGhost, 0);
 
-      const source = findBoardCard(columns, card.cardId);
-      const startIndex =
-        source === null
-          ? 0
-          : (columns[source.stage] ?? EMPTY_CARDS).findIndex((c) => c.cardId === card.cardId);
-      const next: BoardDrag = { cardId: card.cardId, height: Math.round(rect.height) };
-      dragRef.current = next;
-      setDrag(next);
-      setDragOver(source === null ? null : { stage: source.stage, index: startIndex });
-      setDragOpenedRail(null);
-    },
-    [clearGhost, columns],
-  );
+    const source = findBoardCard(columns, card.cardId);
+    const startIndex =
+      source === null
+        ? 0
+        : (columns[source.stage] ?? EMPTY_CARDS).findIndex((c) => c.cardId === card.cardId);
+    const next: BoardDrag = { cardId: card.cardId, height: Math.round(rect.height) };
+    dragRef.current = next;
+    setDrag(next);
+    setDragOver(source === null ? null : { stage: source.stage, index: startIndex });
+    setDragOpenedRail(null);
+  };
 
-  const handleCardDragEnd = useCallback(() => {
+  const handleCardDragEnd = () => {
     clearGhost();
     dragRef.current = null;
     setDrag(null);
     setDragOver(null);
     setDragOpenedRail(null);
     setDragTip(null);
-  }, [clearGhost]);
+  };
 
-  // Client-side pre-validation of a drop (T3O-29): a refused column is
+  // Client-side pre-validation of a drop: a refused column is
   // outlined and never `preventDefault`s, so the browser shows a no-drop
   // cursor, and a tooltip at the pointer says why.
-  const dropRefusalFor = useCallback(
-    (stage: BoardStageId): string | null => {
-      const active = dragRef.current;
-      if (active === null) return null;
-      const source = findBoardCard(columns, active.cardId);
-      if (source === null) return null;
-      return boardDropRefusal({
-        shells: groupShells,
-        stages: stageState,
-        card: source.card,
-        toStage: stage,
-      });
-    },
-    [groupShells, columns, stageState],
-  );
+  const dropRefusalFor = (active: BoardDrag, stage: BoardStageId): string | null => {
+    const source = findBoardCard(columns, active.cardId);
+    if (source === null) return null;
+    return boardDropRefusal({
+      shells: groupShells,
+      stages: stageState,
+      card: source.card,
+      toStage: stage,
+    });
+  };
   // The tip follows the pointer through the DOM, not state: a dragover fires
   // per pointer move, and the board must not re-render that often.
-  const handleRefusedDragOver = useCallback(
-    (stage: BoardStageId, refusal: string, event: DragEvent<HTMLElement>) => {
-      const tip = dragTipRef.current;
-      if (tip !== null) {
-        tip.style.transform = `translate(${event.clientX + 14}px, ${event.clientY + 16}px)`;
-      }
-      setDragTip(refusal);
-      setDragOver((current) => (current?.stage === stage ? current : { stage, index: 0 }));
-    },
-    [],
-  );
-  const handleRefusedDragLeave = useCallback(() => setDragTip(null), []);
-  const handleColumnDragOver = useCallback(
-    (stage: BoardStageId, event: DragEvent<HTMLElement>) => {
-      if (dragRef.current === null) return;
-      setDragTip(null);
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "move";
-      const index = boardDropIndexIn(event.currentTarget, event.clientY);
-      const hoveredAutoFolded = boardColumnAutoFolded({
-        autoCollapseEmpty,
-        cardCount: (scopedColumns[stage] ?? EMPTY_CARDS).length,
-      });
-      setDragOpenedRail((current) =>
-        boardDragOpenedRail({ current, hovered: stage, hoveredAutoFolded }),
-      );
-      setDragOver((current) =>
-        current !== null && current.stage === stage && current.index === index
-          ? current
-          : { stage, index },
-      );
-    },
-    [autoCollapseEmpty, scopedColumns],
-  );
+  const handleRefusedDragOver = (
+    stage: BoardStageId,
+    refusal: string,
+    event: DragEvent<HTMLElement>,
+  ) => {
+    const tip = dragTipRef.current;
+    if (tip !== null) {
+      tip.style.transform = `translate(${event.clientX + 14}px, ${event.clientY + 16}px)`;
+    }
+    setDragTip(refusal);
+    setDragOver((current) => (current?.stage === stage ? current : { stage, index: 0 }));
+  };
+  const handleRefusedDragLeave = () => setDragTip(null);
+  const handleColumnDragOver = (stage: BoardStageId, event: DragEvent<HTMLElement>) => {
+    if (dragRef.current === null) return;
+    setDragTip(null);
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const index = boardDropIndexIn(event.currentTarget, event.clientY);
+    const hoveredAutoFolded = boardColumnAutoFolded({
+      autoCollapseEmpty,
+      cardCount: (scopedColumns[stage] ?? EMPTY_CARDS).length,
+    });
+    setDragOpenedRail((current) =>
+      boardDragOpenedRail({ current, hovered: stage, hoveredAutoFolded }),
+    );
+    setDragOver((current) =>
+      current !== null && current.stage === stage && current.index === index
+        ? current
+        : { stage, index },
+    );
+  };
 
-  const handleColumnDrop = useCallback(
-    (stage: BoardStageId, event: DragEvent<HTMLElement>) => {
-      event.preventDefault();
-      const active = dragRef.current;
-      if (active === null || dropRefusalFor(stage) !== null) {
-        handleCardDragEnd();
-        return;
-      }
-      const index = boardDropIndexIn(event.currentTarget, event.clientY);
-      commitDrop(stage, index, active.cardId);
+  const handleColumnDrop = (stage: BoardStageId, event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    const active = dragRef.current;
+    if (active === null || dropRefusalFor(active, stage) !== null) {
       handleCardDragEnd();
-    },
-    [commitDrop, dropRefusalFor, handleCardDragEnd],
-  );
+      return;
+    }
+    const index = boardDropIndexIn(event.currentTarget, event.clientY);
+    commitDrop(stage, index, active.cardId);
+    handleCardDragEnd();
+  };
 
   // ── Selection and deep link (?card=…) ───────────────────────────────
   const selectedCardId = search.card ?? null;
-  const handleSelectCard = useCallback(
-    (card: BoardCardShell) => {
-      // Native drag doesn't fire a click on the source after a drop, so no
-      // click-suppression is needed here.
-      patchSearch((previous) => {
-        const { card: selected, ...rest } = previous;
-        return selected === card.cardId ? rest : { ...rest, card: card.cardId };
-      });
-    },
-    [patchSearch],
-  );
-  const handleCloseDetail = useCallback(() => {
+  const handleSelectCard = (card: BoardCardShell) => {
+    // Native drag doesn't fire a click on the source after a drop, so no
+    // click-suppression is needed here.
+    patchSearch((previous) => {
+      const { card: selected, ...rest } = previous;
+      return selected === card.cardId ? rest : { ...rest, card: card.cardId };
+    });
+  };
+  const handleCloseDetail = () => {
     patchSearch((previous) => {
       const { card: _card, ...rest } = previous;
       return rest;
     });
-  }, [patchSearch]);
-  // Fullscreen rides the store so it survives a STEP between cards (T3O-37,
-  // D5), and the store names the card it belongs to, so a card that opens any
-  // other way opens windowed whether or not it passed through "no card open"
-  // on the way in. This effect only has to forget the card once the sheet is
-  // gone, so that re-opening that same card later starts windowed too.
-  useEffect(() => {
-    if (selectedCardId === null) setDetailMaximisedCardId(null);
-  }, [selectedCardId, setDetailMaximisedCardId]);
-  // ── Stepping between cards (T3O-37) ────────────────────────────────
-  // The sibling list is `visibleColumns` itself — the very array each column
-  // renders — so what you step through is exactly what the board is currently
-  // showing: same scope, same project, same "Stalled only", same search box.
-  // There is no second filter here to drift from the first. A card that is not
-  // in it (a deep link, or one the query is hiding) resolves to index -1, and
-  // both the rails and the shortcuts go quiet rather than guessing.
-  //
-  // Read in `renderedStages` order, so a step runs off the bottom of one
-  // column into the top of the next (T3O-44): the columns are the list, not
-  // one column. `renderedStages` and not the full stage list — a sub-board
-  // steps through the columns it actually draws.
-  const stageOrder = useMemo(() => renderedStages.map((stage) => stage.stageId), [renderedStages]);
-  const stageLabels = useMemo(
-    () => new Map(renderedStages.map((stage) => [stage.stageId, stage.label] as const)),
-    [renderedStages],
-  );
-  const neighbours = useMemo(
-    () => resolveBoardCardNeighbours(visibleColumns, stageOrder, selectedCardId),
-    [selectedCardId, stageOrder, visibleColumns],
-  );
-  const stepCard = useCallback(
-    (direction: BoardCardStep) => {
-      const target = direction === -1 ? neighbours.prev : neighbours.next;
-      if (target === null) return;
-      // A step is the one card change that carries fullscreen with it (D5).
-      // Read non-reactively: the board does not re-render when the sheet above
-      // it is maximised.
-      const store = useBoardUiStore.getState();
-      store.setDetailMaximisedCardId(
-        boardCardMaximisedAfterStep(store.detailMaximisedCardId, selectedCardId, target.cardId),
-      );
-      // `replace`, not push (D4): reading ten cards in a row must not bury the
-      // board under ten history entries. Back closes the sheet to where the
-      // reading started. Clicking a card on the board still pushes.
-      patchSearch((previous) => ({ ...previous, card: target.cardId }), { replace: true });
-    },
-    [neighbours, patchSearch, selectedCardId],
-  );
-  const cardNav = useMemo<BoardCardNav | null>(() => {
-    if (neighbours.prev === null && neighbours.next === null) return null;
-    return {
-      prev: boardCardNavTarget(neighbours.prev, neighbours.stage, stageLabels),
-      next: boardCardNavTarget(neighbours.next, neighbours.stage, stageLabels),
-      onStep: stepCard,
-    };
-  }, [neighbours, stageLabels, stepCard]);
+  };
+  // Steps through `visibleColumns` in `renderedStages` order, exactly what the
+  // board shows, running off one column into the next. A card not in it resolves
+  // to index -1 and stepping goes quiet.
+  const stageOrder = renderedStages.map((stage) => stage.stageId);
+  const stageLabels = new Map(renderedStages.map((stage) => [stage.stageId, stage.label] as const));
+  const neighbours = resolveBoardCardNeighbours(visibleColumns, stageOrder, selectedCardId);
+  const stepCard = (direction: BoardCardStep) => {
+    const target = direction === -1 ? neighbours.prev : neighbours.next;
+    if (target === null) return;
+    // A step is the one card change that carries fullscreen with it.
+    // Read non-reactively: the board does not re-render when the sheet above
+    // it is maximised.
+    const store = useBoardUiStore.getState();
+    store.setDetailMaximisedCardId(
+      boardCardMaximisedAfterStep(store.detailMaximisedCardId, selectedCardId, target.cardId),
+    );
+    // `replace`, not push: reading ten cards in a row must not bury the
+    // board under ten history entries. Back closes the sheet to where the
+    // reading started. Clicking a card on the board still pushes.
+    patchSearch((previous) => ({ ...previous, card: target.cardId }), { replace: true });
+  };
+  const cardNav: BoardCardNav | null =
+    neighbours.prev === null && neighbours.next === null
+      ? null
+      : {
+          prev: boardCardNavTarget(neighbours.prev, neighbours.stage, stageLabels),
+          next: boardCardNavTarget(neighbours.next, neighbours.stage, stageLabels),
+          onStep: stepCard,
+        };
 
-  /** The stack affordance on a split parent's face (t3o-25, AC2): clicking it
+  /** The stack affordance on a split parent's face: clicking it
       drills into that parent's sub-board. */
-  const handleOpenSubBoard = useCallback(
-    (card: BoardCardShell) => openSubBoard(card.cardId),
-    [openSubBoard],
-  );
+  const handleOpenSubBoard = (card: BoardCardShell) => openSubBoard(card.cardId);
 
-  // Opening a card URL selects the card and brings it into view: expand its
-  // column if collapsed, scroll the row into place. The detail pane that
-  // opens from this selection is t3o-06's.
-  const handledDeepLinkRef = useRef<string | null>(null);
-  useEffect(() => {
-    const cardId = search.card;
-    if (cardId === undefined || handledDeepLinkRef.current === cardId) return;
-    const found = findBoardCard(columns, cardId);
-    // Out-of-scope cards are the redirect effect's job, not a scroll target.
-    if (found === null || !isBoardCardInScope(found.card, scope)) return;
-    handledDeepLinkRef.current = cardId;
-    const collapseKey = collapseKeyOf(found.stage);
-    if (
-      isBoardColumnCollapsed(
-        collapsedByStage,
-        collapseKey,
-        boardScopeColumnCollapsedByDefault({
-          scope,
-          stageState,
-          stageId: found.stage,
-          renderedIndex: renderedStages.findIndex((stage) => stage.stageId === found.stage),
-          // The card is in it, so it is not empty.
-          cardCount: 1,
-        }),
-      )
-    ) {
-      setColumnCollapsed(collapseKey, false);
-    }
-    // Two frames: the first lets a just-expanded column mount its list.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        document
-          .querySelector(`[data-board-card="${window.CSS.escape(cardId)}"]`)
-          ?.scrollIntoView({ block: "nearest", inline: "nearest" });
-      });
-    });
-  }, [
-    collapseKeyOf,
-    collapsedByStage,
-    columns,
-    renderedStages,
-    scope,
-    search.card,
-    setColumnCollapsed,
-    stageState,
-  ]);
-
-  // Cross-scope deep links resolve to the right board (t3o-25, AC4): a child
-  // card's URL opened over the root board — or over the wrong sub-board —
-  // navigates into its parent's sub-board with the sheet selection intact,
-  // and a top-level card's URL opened inside a sub-board goes back up.
-  useEffect(() => {
-    const cardId = search.card;
-    if (cardId === undefined) return;
-    const found = findBoardCard(columns, cardId);
-    if (found === null || isBoardCardInScope(found.card, scope)) return;
-    const parentId = found.card.parentCardId;
-    if (parentId !== undefined) {
-      openSubBoard(parentId, cardId, { replace: true });
-    } else {
-      openRootBoard(cardId, { replace: true });
-    }
-  }, [columns, openRootBoard, openSubBoard, scope, search.card]);
-
-  // Dead sub-board links resolve UP (t3o-25, D3): a URL naming a card with no
-  // children lands on the root board with that card's sheet open; a card that
-  // does not exist at all lands on the bare root board. Gated on the first
-  // snapshot so an empty pre-connection board is never mistaken for either.
-  const snapshotArrived = useAtomValue(environmentBoard.snapshotValueAtom(environmentId)) !== null;
-  useEffect(() => {
-    if (scope.kind !== "sub-board" || !snapshotArrived) return;
-    const entry = resolveSubBoardEntry(Object.values(liveColumns).flat(), scope.parentCardId);
-    if (entry.kind === "redirect-parent-sheet") {
-      openRootBoard(scope.parentCardId, { replace: true });
-    } else if (entry.kind === "redirect-root") {
-      openRootBoard(undefined, { replace: true });
-    }
-  }, [liveColumns, openRootBoard, scope, snapshotArrived]);
-
-  // The command palette's board actions (T3O-29): published while this board
-  // is mounted, cleared when it goes.
-  const setPaletteActions = useBoardUiStore((state) => state.setPaletteActions);
   const selectedShell =
     selectedCardId === null ? null : (findBoardCard(columns, selectedCardId)?.card ?? null);
   const selectedGroup =
@@ -1470,96 +1395,46 @@ function EnvironmentBoard({
   const selectedGroupKey = selectedGroup?.key ?? null;
   const selectedGroupTitle = selectedGroup?.title ?? null;
   const upKey = ancestors.at(-1)?.key ?? null;
-  useEffect(() => {
-    const actions = [
-      ...(scope.kind === "sub-board"
-        ? [
-            {
-              id: "up",
-              title: "Board: back up one level",
-              description: `To ${upKey ?? "the board"} (Alt+↑)`,
-              run: () => goUpOneLevel(),
-            },
-          ]
-        : []),
-      ...(selectedGroupId === null
-        ? []
-        : [
-            {
-              id: `open:${selectedGroupId}`,
-              title: `Open ${selectedGroupKey}'s board`,
-              description: selectedGroupTitle ?? "",
-              run: () => openSubBoard(selectedGroupId),
-            },
-          ]),
-    ];
-    setPaletteActions(actions);
-    return () => setPaletteActions([]);
-  }, [
-    goUpOneLevel,
-    openSubBoard,
-    scope.kind,
-    selectedGroupId,
-    selectedGroupKey,
-    selectedGroupTitle,
-    setPaletteActions,
-    upKey,
-  ]);
 
-  // ── Create dialog ───────────────────────────────────────────────────
-  // Both the column add buttons and the top-bar button open the same dialog
-  // (t3o-06). The dialog owns creation (title, brief, labels, project, stage
-  // and initial dependencies land in one atomic create); this only tracks
-  // which stage to prefill. Absent means closed.
-  const [createStage, setCreateStage] = useState<BoardStageId | null>(null);
-  const openCreate = useCallback((stage: BoardStageId) => setCreateStage(stage), []);
+  const openCreate = (stage: BoardStageId) => setCreateStage(stage);
 
-  // ── Archive (t3o-13, D7) ────────────────────────────────────────────
+  // ── Archive ────────────────────────────────────────────
   // Archived cards are off the live shell by design, so they need a place to
   // be seen and restored from — otherwise archiving is a one-way door.
-  const [archiveOpen, setArchiveOpen] = useState(false);
-  const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
-  const handleRestoreCard = useCallback(
-    (cardId: BoardCardId) => {
-      void unarchiveCard({ environmentId, input: { cardId } }).then((result) => {
-        if (result._tag === "Failure") {
-          if (isAtomCommandInterrupted(result)) return;
-          toastManager.add({
-            title: "Could not restore card",
-            description: describeBoardCommandFailure(result),
-          });
-          return;
-        }
-        // The card is back on the live board; drop it from the archive list.
-        refreshBoardArchivedCards(environmentId);
-      });
-    },
-    [environmentId, unarchiveCard],
-  );
+  const handleRestoreCard = (cardId: BoardCardId) => {
+    void unarchiveCard({ environmentId, input: { cardId } }).then((result) => {
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) return;
+        toastManager.add({
+          title: "Could not restore card",
+          description: describeBoardCommandFailure(result),
+        });
+        return;
+      }
+      // The card is back on the live board; drop it from the archive list.
+      refreshBoardArchivedCards(environmentId);
+    });
+  };
 
   // Deleting from the archive: the natural place to decide something is never
   // coming back is the list of things that already went away. The sheet owns
   // the confirmation; this only dispatches and re-reads the list.
-  const deleteCard = useAtomCommand(boardEnvironment.deleteCard);
-  const handleDeleteCard = useCallback(
-    (cardId: BoardCardId) => {
-      void deleteCard({ environmentId, input: { cardId } }).then((result) => {
-        if (result._tag === "Failure") {
-          if (isAtomCommandInterrupted(result)) return;
-          toastManager.add({
-            title: "Could not delete card",
-            description: describeBoardCommandFailure(result),
-          });
-          return;
-        }
-        refreshBoardArchivedCards(environmentId);
-      });
-    },
-    [deleteCard, environmentId],
-  );
+  const handleDeleteCard = (cardId: BoardCardId) => {
+    void deleteCard({ environmentId, input: { cardId } }).then((result) => {
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) return;
+        toastManager.add({
+          title: "Could not delete card",
+          description: describeBoardCommandFailure(result),
+        });
+        return;
+      }
+      refreshBoardArchivedCards(environmentId);
+    });
+  };
 
-  const addProjects = useMemo(() => {
-    // A sub-board creates into its parent's project, nothing else (t3o-25);
+  const addProjects = (() => {
+    // A sub-board creates into its parent's project, nothing else;
     // the root board follows its own `?project` scope.
     const parentProjectId = parentShell?.projectId ?? null;
     const inScope =
@@ -1573,15 +1448,15 @@ function EnvironmentBoard({
       title: project.title,
       projectIcon: project.projectIcon,
     }));
-  }, [projects, scope.kind, scopeProjectId, parentShell?.projectId]);
+  })();
 
   const canCreate = addProjects.length > 0;
 
-  return (
+  const view = (
     <BoardWorkersContext.Provider value={cardWorkersState}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <BoardTopBar>
-          {/* T3o (T3O-66): workers that are offline, revoked or incompatible,
+          {/* T3o: workers that are offline, revoked or incompatible,
             and the cards they hold. Renders nothing otherwise. */}
           <BoardWorkersAttentionPill
             cards={everyCard}
@@ -1600,7 +1475,7 @@ function EnvironmentBoard({
         <div className="flex shrink-0 items-center gap-3 px-3 py-2 sm:px-5">
           {scope.kind === "sub-board" ? (
             <>
-              {/* Back goes up one level (T3O-29): to the group above, or the
+              {/* Back goes up one level: to the group above, or the
                   root board from a top-level group. The breadcrumb names every
                   level on the way. */}
               <Button
@@ -1668,11 +1543,8 @@ function EnvironmentBoard({
                 scopeIsStale={scopeIsStale}
                 scopeProjectId={scopeProjectId}
               />
-              {/* The legend: which colour is which project, for as long as the board
-                is showing more than one project's cards. The prototype's swatch is
-                a short bar, not the scope picker's dot — the two never read as the
-                same control. Shown for a single project too: its colour is on every
-                card, so the board still owes you the key to it. */}
+              {/* The project legend. Shown for a single project too: its colour is on
+                  every card. */}
               {scopeProjectId === null && projects.length > 0 ? (
                 <div className="flex min-w-0 items-center gap-3 overflow-hidden">
                   {projects.map((project) => (
@@ -1704,7 +1576,7 @@ function EnvironmentBoard({
               }
               size="xs"
               variant={showStalledOnly ? "secondary" : "ghost"}
-              title="Show only stalled cards — recovery gave up and a human is needed"
+              title="Show only stalled cards: recovery gave up and a human is needed"
             >
               <TriangleAlertIcon />
               {showStalledOnly ? "Stalled only" : `Stalled ${stalledCount}`}
@@ -1723,7 +1595,7 @@ function EnvironmentBoard({
           </p>
         ) : null}
         {/* The chart and the final-review footer sit between the header row and
-          the columns (t3o-29), the order the prototype's drill-in uses. */}
+          the columns, the order the prototype's drill-in uses. */}
         {scope.kind === "sub-board" ? (
           <BoardSubBoardPlanStrip
             cards={groupShells}
@@ -1744,7 +1616,7 @@ function EnvironmentBoard({
           <div
             className={cn(
               "flex min-h-0 flex-1 items-start gap-2.5 overflow-auto px-3 sm:px-5",
-              // Reserved unconditionally (T3O-34, D5): no card comes to rest
+              // Reserved unconditionally: no card comes to rest
               // under the corner menu, and collapsing it does not reflow the
               // columns under the user's cursor.
               BOARD_UTILITY_MENU_RESERVED_SPACE,
@@ -1756,7 +1628,7 @@ function EnvironmentBoard({
                 ? (scopedColumns[stage.stageId] ?? EMPTY_CARDS)
                 : EMPTY_CARDS;
               const cardCount = (scopedColumns[stage.stageId] ?? EMPTY_CARDS).length;
-              const dropRefusal = drag === null ? null : dropRefusalFor(stage.stageId);
+              const dropRefusal = drag === null ? null : dropRefusalFor(drag, stage.stageId);
               const collapsed = boardColumnCollapsed({
                 autoCollapseEmpty,
                 cardCount,
@@ -1850,21 +1722,10 @@ function EnvironmentBoard({
             })}
           </div>
         </div>
-        {/* The card opens as a centred modal over the board (t3o-06), not a
-          rail beside it — so it never squeezes the columns.
-
-          `key` is what gives every per-card view state its reset on a step
-          (T3O-37, D5) — and stepping does NOT replay the sheet's open
-          transition, despite remounting the Dialog with it. Base UI only
-          animates a popup that goes from closed to open: `useTransitionStatus`
-          seeds `mounted` from `open`, so a Root that mounts already open never
-          reaches the `'starting'` status, and `data-starting-style` — which is
-          the sole hook for the backdrop's fade and the popup's scale in
-          `dialog-styles.ts` — is never written. This sheet is only ever
-          mounted open, so that has always been true of opening a card too; a
-          step swaps the sheet's contents in one commit and the frame under it
-          does not flinch. Hoisting the Dialog above the key would buy nothing
-          and cost the reset. */}
+        {/* `key` resets per-card view state on a step. Base UI only animates a
+            popup that goes closed to open, and this sheet always mounts open, so a
+            step swaps contents without replaying the open transition. Hoisting the
+            Dialog above the key would lose the reset. */}
         {selectedCardId !== null ? (
           <BoardCardDetail
             cardId={BoardCardId.make(selectedCardId)}
@@ -1916,7 +1777,7 @@ function EnvironmentBoard({
             />
           );
         })()}
-        {/* The refused drop's reason, at the pointer (T3O-29). */}
+        {/* The refused drop's reason, at the pointer. */}
         <div
           aria-live="polite"
           className={cn(
@@ -1983,6 +1844,147 @@ function EnvironmentBoard({
       </div>
     </BoardWorkersContext.Provider>
   );
+
+  // Alt+Up leaves a sub-board for the level above, wherever focus is on the
+  // board — but not out of an open dialog, the card sheet or a text field.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener for Alt+Up, held while this sub-board is mounted.
+  useEffect(() => {
+    if (scope.kind !== "sub-board") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.altKey || event.key !== "ArrowUp" || event.defaultPrevented) return;
+      if (isEditableFocused(event.target)) return;
+      if (document.querySelector("[role=dialog],[role=alertdialog]") !== null) return;
+      event.preventDefault();
+      goUpOneLevel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [goUpOneLevel, scope.kind]);
+  // Fullscreen rides the store so it survives a STEP between cards, and the store names the
+  // card it belongs to, so a card that opens any other way opens windowed whether or not it
+  // passed through "no card open" on the way in. This effect only has to forget the card once
+  // the sheet is gone, so that re-opening that same card later starts windowed too.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the board UI store forgets fullscreen once the URL (which back/forward also edits) drops the card.
+  useEffect(() => {
+    if (selectedCardId === null) setDetailMaximisedCardId(null);
+  }, [selectedCardId, setDetailMaximisedCardId]);
+  // Opening a card URL selects the card and brings it into view: expand its
+  // column if collapsed, scroll the row into place.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands the column and scrolls the DOM row into view for a card URL.
+  useEffect(() => {
+    const cardId = search.card;
+    if (cardId === undefined || handledDeepLinkRef.current === cardId) return;
+    const found = findBoardCard(columns, cardId);
+    // Out-of-scope cards are the redirect effect's job, not a scroll target.
+    if (found === null || !isBoardCardInScope(found.card, scope)) return;
+    handledDeepLinkRef.current = cardId;
+    const collapseKey = collapseKeyOf(found.stage);
+    if (
+      isBoardColumnCollapsed(
+        collapsedByStage,
+        collapseKey,
+        boardScopeColumnCollapsedByDefault({
+          scope,
+          stageState,
+          stageId: found.stage,
+          renderedIndex: renderedStages.findIndex((stage) => stage.stageId === found.stage),
+          // The card is in it, so it is not empty.
+          cardCount: 1,
+        }),
+      )
+    ) {
+      setColumnCollapsed(collapseKey, false);
+    }
+    // Two frames: the first lets a just-expanded column mount its list.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-board-card="${window.CSS.escape(cardId)}"]`)
+          ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      });
+    });
+  }, [
+    collapseKeyOf,
+    collapsedByStage,
+    columns,
+    handledDeepLinkRef,
+    renderedStages,
+    scope,
+    search.card,
+    setColumnCollapsed,
+    stageState,
+  ]);
+  // Cross-scope deep links resolve to the right board: a child
+  // card's URL opened over the root board — or over the wrong sub-board —
+  // navigates into its parent's sub-board with the sheet selection intact,
+  // and a top-level card's URL opened inside a sub-board goes back up.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- router: redirects a cross-scope card URL to the board that holds the card.
+  useEffect(() => {
+    const cardId = search.card;
+    if (cardId === undefined) return;
+    const found = findBoardCard(columns, cardId);
+    if (found === null || isBoardCardInScope(found.card, scope)) return;
+    const parentId = found.card.parentCardId;
+    if (parentId !== undefined) {
+      openSubBoard(parentId, cardId, { replace: true });
+    } else {
+      openRootBoard(cardId, { replace: true });
+    }
+  }, [columns, openRootBoard, openSubBoard, scope, search.card]);
+  // Dead sub-board links resolve UP: a URL naming a card with no
+  // children lands on the root board with that card's sheet open; a card that
+  // does not exist at all lands on the bare root board. Gated on the first
+  // snapshot so an empty pre-connection board is never mistaken for either.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- router: redirects a dead sub-board URL up once the first snapshot arrives.
+  useEffect(() => {
+    if (scope.kind !== "sub-board" || !snapshotArrived) return;
+    const entry = resolveSubBoardEntry(Object.values(liveColumns).flat(), scope.parentCardId);
+    if (entry.kind === "redirect-parent-sheet") {
+      openRootBoard(scope.parentCardId, { replace: true });
+    } else if (entry.kind === "redirect-root") {
+      openRootBoard(undefined, { replace: true });
+    }
+  }, [liveColumns, openRootBoard, scope, snapshotArrived]);
+  // The command palette's board actions: published while this board
+  // is mounted, cleared when it goes.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- command palette registry entries, held while this board is mounted.
+  useEffect(() => {
+    const actions = [
+      ...(scope.kind === "sub-board"
+        ? [
+            {
+              id: "up",
+              title: "Board: back up one level",
+              description: `To ${upKey ?? "the board"} (Alt+↑)`,
+              run: () => goUpOneLevel(),
+            },
+          ]
+        : []),
+      ...(selectedGroupId === null
+        ? []
+        : [
+            {
+              id: `open:${selectedGroupId}`,
+              title: `Open ${selectedGroupKey}'s board`,
+              description: selectedGroupTitle ?? "",
+              run: () => openSubBoard(selectedGroupId),
+            },
+          ]),
+    ];
+    setPaletteActions(actions);
+    return () => setPaletteActions([]);
+  }, [
+    goUpOneLevel,
+    openSubBoard,
+    scope.kind,
+    selectedGroupId,
+    selectedGroupKey,
+    selectedGroupTitle,
+    setPaletteActions,
+    upKey,
+  ]);
+
+  return view;
 }
 
 export default BoardPage;

@@ -1,7 +1,7 @@
 /**
- * T3o (T3O-63): the worker side's `boardWorker.gateway.*`, the MCP relay and
+ * T3o: the worker side's `boardWorker.gateway.*`, the MCP relay and
  * attachment staging, spread into the board's RPC handler record. Each is a
- * thin call into `WorkerGatewayHost`, read per call like the T3O-62 worker
+ * thin call into `WorkerGatewayHost`, read per call like the other worker
  * handlers, so building the record needs no service.
  */
 import {

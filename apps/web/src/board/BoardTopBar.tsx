@@ -1,17 +1,7 @@
 /**
- * T3o board top bar (T3O-16): the board surface's own header row.
- *
- * The board is mounted without a sidebar, so everything the sidebar carries on
- * the threads surface has to live here or nowhere — the brand first among
- * them. Geometry comes from the shared `WorkspacePageHeader`: the board used
- * to name a `workspace-topbar` class that does not exist in any stylesheet, so
- * the row had no height, no vertical centring and no reserved space for the
- * native window controls.
- *
- * The right-hand controls arrive as `children` rather than props, because the
- * shell renders this bar with no environment connected too: there is nothing
- * to filter and nothing to create then, but the mode tabs still have to be
- * there to get back to threads.
+ * The board surface's own header row. The board mounts without a sidebar, so
+ * the brand lives here. Right-hand controls arrive as `children` because the
+ * bar also renders with no environment connected.
  */
 import { SearchIcon, XIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -40,14 +30,9 @@ export function BoardTopBar({
 }
 
 /**
- * The wordmark, static. The sidebar's copy is a link to threads; here the mode
- * tabs sit right beside it and own that navigation, so a second, unlabelled
- * way to leave the board would only surprise.
- *
- * The mark is drawn here rather than imported from the sidebar's private copy:
- * that file is pristine upstream (`docs/t3o/seams.md`) and re-opening it to
- * export a brand constant buys a merge conflict on a file upstream edits often.
- * Mobile keeps its own copy for the same reason (`apps/mobile T3Wordmark`).
+ * The wordmark, static: the mode tabs beside it own navigation. Drawn here
+ * rather than exported from the sidebar's private copy, which is pristine
+ * upstream.
  */
 function BoardBrand() {
   return (

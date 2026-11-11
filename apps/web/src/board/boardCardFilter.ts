@@ -1,15 +1,7 @@
 /**
- * T3o board card filter (T3O-16): the top bar's filter box, as pure rules over
- * the columns the board already holds.
- *
- * Matching follows the rule the board's pickers already use
- * (`BoardPickerSearchBody`): a case-insensitive substring of the card's title
- * or its key, so "conflict" and "t3o-16" both land. One rule, so a card found
- * by the dependency picker is a card found by the board.
- *
- * Like the scope filter next door, this thins what RENDERS while the full
- * columns stay the ordering substrate — a drop between two matching cards
- * still anchors into the real column, so filtered-out cards keep their order.
+ * The top bar's filter: a case-insensitive substring of title or key, the same
+ * rule the pickers use. It thins what renders; the full columns stay the
+ * ordering substrate.
  */
 import type { BoardCardShell } from "@t3tools/contracts";
 import type { BoardStageColumns } from "@t3tools/client-runtime/state/shell";

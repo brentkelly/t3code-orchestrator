@@ -1,24 +1,9 @@
 /**
- * The card's per-stage model overrides (t3o-29), opened from the card modal's
- * kebab menu.
- *
- * One row per role-holding stage — Planning, Build and Review — each the same
- * `ModelRow` the pipeline settings and the review pane's per-round drawer use,
- * so model, reasoning and access level all arrive together and look identical
- * everywhere the board sets a model.
- *
- * The rows are role-resolved but the map is keyed by STAGE ID (D1): which rows
- * appear is a judgement about what belongs in a popover, not a claim about the
- * schema — which is why adding Planning (#119) was a UI change alone.
- *
- * It renders no trigger of its own. The kebab item and the header pill are both
- * doors into it, and a popover cannot have two triggers, so the caller owns
- * `open`/`onOpenChange` and anchors it. That is also why the kebab CLOSES when
- * this opens: `ModelRow` opens a Popover for the model list and a menu for the
- * traits, and nesting those inside a still-open menu stacks three focus traps
- * where picking a model is an outside-pointerdown on the menu containing it.
+ * The card's per-stage model overrides, keyed by stage id. It renders no trigger:
+ * the kebab item and the header pill both open it, and the kebab closes first so
+ * `ModelRow`'s own popover and menu do not nest inside a still-open menu.
  */
-import { useMemo, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import {
   type BoardCardModelOverrides,
@@ -46,16 +31,8 @@ import type { BoardCardModelRowSpec } from "./boardCardModelRows";
 import { useBoardServerProviders, useBoardSettings } from "./useBoardEnvironmentId";
 
 /**
- * The trigger text for a row with no override: the value it will actually run
- * on, and where that came from (D5). Three situations that would otherwise all
- * render as "Select a model".
- *
- * The unnamed case matters most. `ModelRow`'s own default placeholder is
- * "Select a model", which is right where a stage MUST name one — but on an
- * override row it is a lie in both directions: it reads as a required field
- * when leaving it blank is the whole point, and it hides that the workspace
- * has not named a model either. So an override row never says "Select"; it
- * says what it is deferring to, and the place to go fix it.
+ * A row with no override names what it defers to and where to change it, never
+ * "Select a model", which would read as a required field.
  */
 function placeholderFor(
   row: BoardCardModelRowSpec,
@@ -90,7 +67,7 @@ export function BoardCardModelsPopover({
       defaults. The decider normalises an emptied map to null too, so a Reset
       and a clear-the-last-row land in the same state. */
   readonly onChange: (next: BoardCardModelOverrides | null) => void;
-  /** Whether a step is in flight, for the "applies to the next run" note (D6).
+  /** Whether a step is in flight, for the "applies to the next run" note.
       Deliberately does NOT disable the controls: setting the model for the next
       round while this one runs is the common intent, not a mistake. */
   readonly stepRunning: boolean;
@@ -100,13 +77,10 @@ export function BoardCardModelsPopover({
   // provider list it pulls in costs nothing until the popover is opened.
   const settings = useBoardSettings();
   const ownProviders = useBoardServerProviders();
-  // T3O-65: and the instance ids only workers have, so a card can pick a model
+  // And the instance ids only workers have, so a card can pick a model
   // its worker offers.
   const workers = useBoardWorkersState();
-  const serverProviders = useMemo(
-    () => [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)],
-    [ownProviders, workers],
-  );
+  const serverProviders = [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)];
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
   );
@@ -121,11 +95,7 @@ export function BoardCardModelsPopover({
     onChange(Object.keys(rest).length === 0 ? null : rest);
   };
 
-  /** Clear this card's overrides — but only for the rows this popover actually
-      shows. The map is keyed by stage id and can in principle hold an entry for
-      a stage with no row here; wiping something the user cannot see, and was
-      never told about, is not what "Reset" offers to do. It is also the rule
-      the summary and the pill already follow, which count visible rows only. */
+  /** Clears only the rows this popover shows; entries for other stages are invisible here. */
   const reset = () => {
     const rest = { ...overrides };
     for (const row of rows) delete rest[row.stageId];
@@ -166,7 +136,7 @@ export function BoardCardModelsPopover({
               <ModelRow
                 ariaLabel={`${row.label} model for this card`}
                 getModelOptions={getModelOptions}
-                // An override is a model PLUS what it changes (D2): with no
+                // An override is a model PLUS what it changes: with no
                 // model there is nowhere to keep an access level, so the
                 // section stays hidden until one is picked — the same rule the
                 // per-round drawer follows.
@@ -214,7 +184,7 @@ export function BoardCardModelsPopover({
         })}
         {stepRunning ? (
           <p className="mt-2.5 text-[11px] text-muted-foreground">
-            A step is running. It keeps the model it started with — this applies to the next run.
+            A step is running. It keeps the model it started with. This applies to the next run.
           </p>
         ) : null}
       </PopoverPopup>

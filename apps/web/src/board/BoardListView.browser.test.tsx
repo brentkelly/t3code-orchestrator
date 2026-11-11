@@ -1,5 +1,5 @@
 /**
- * The List view (T3O-30): indent and outdent eligibility with their reasons,
+ * The List view: indent and outdent eligibility with their reasons,
  * range selection, the drop-zone thirds, filter ancestor dimming, the
  * started-card dialog on Tab, and Tab staying with text fields.
  */

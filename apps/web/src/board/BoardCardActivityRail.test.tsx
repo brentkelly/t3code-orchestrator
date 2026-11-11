@@ -1,9 +1,6 @@
 /**
- * The Activity rail's collapsed rendering (T3O-35). The grouping rule and the
- * expand/collapse behaviour behind the toggle are pinned in
- * `boardActivityGroups.test.ts`; these check the rail wires them to the screen —
- * a run reads as one sentence plus its toggle, and an unrepeated rail is left
- * alone.
+ * The rail wires its grouping to the screen; the grouping rule itself is pinned in
+ * `boardActivityGroups.test.ts`.
  */
 import {
   BoardActivityId,

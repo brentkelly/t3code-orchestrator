@@ -1,5 +1,5 @@
 /**
- * Board migrations 058 and 059 (T3O-43): project-owned stage rows and the
+ * Board migrations 058 and 059: project-owned stage rows and the
  * per-project stage config table.
  */
 import { assert, it } from "@effect/vitest";

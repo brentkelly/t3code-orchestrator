@@ -1,10 +1,6 @@
 /**
- * T3o (T3O-47): reading a refusal out of the host's own detail.
- *
- * This is the input to every auto-merge verdict, so the rules that matter are
- * the ones the classifier turns on: what counts as a failed check, what a
- * conflict outranks, and that "the host says it is fine and refused anyway"
- * is never read as a decision (T3O-67). The forge's own words explain it.
+ * The input to every auto-merge verdict: what counts as a failed check, what a
+ * conflict outranks, and that "fine but refused anyway" is never a decision.
  */
 import { assert, describe, it } from "@effect/vitest";
 import {

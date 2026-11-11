@@ -1,5 +1,5 @@
 /**
- * T3o board UI store (t3o-05): collapse defaults and persisted-state
+ * T3o board UI store: collapse defaults and persisted-state
  * sanitisation.
  */
 import { BOARD_SEED_STAGE_IDS } from "@t3tools/contracts";
@@ -27,7 +27,7 @@ function resetStore() {
 
 describe("isBoardColumnCollapsed", () => {
   it("collapses the first column by default and nothing else", () => {
-    // The default is now the read-model first stage (t3o-15), not a hard-coded
+    // The default is now the read-model first stage, not a hard-coded
     // "backlog": the first stage collapses, every later one stays open.
     expect(isBoardColumnCollapsed({}, BOARD_SEED_STAGE_IDS.backlog, true)).toBe(true);
     expect(isBoardColumnCollapsed({}, BOARD_SEED_STAGE_IDS.sprint, false)).toBe(false);
@@ -145,7 +145,7 @@ describe("modeForHref", () => {
     expect(modeForHref("/settings/board")).toBeNull();
     expect(modeForHref("/pair")).toBeNull();
     expect(modeForHref("/connect")).toBeNull();
-    // T3O-50: a redirect into project settings, and the full-page usage view.
+    // A redirect into project settings, and the full-page usage view.
     expect(modeForHref("/projects/github.com%2Fzeald%2Fcore.agent.advisor")).toBeNull();
     expect(modeForHref("/usage")).toBeNull();
     // The first-run gate replaces a thread view's location with onboarding.
@@ -285,18 +285,9 @@ describe("detailMaximisedCardId", () => {
   const maximisedCardId = () => useBoardUiStore.getState().detailMaximisedCardId;
 
   it("holds the open sheet's fullscreen across a step to the next card (T3O-37)", () => {
-    // The sheet remounts per card id, which is what resets every other
-    // per-card view state; fullscreen lives out here precisely so that remount
-    // does not throw the reader back into a window mid-read. A step hands the
-    // flag to the card it steps to.
-    //
-    // The field names the card it belongs to rather than being a bare "the
-    // sheet is fullscreen" boolean, which is what keeps the openings that
-    // never pass through "no card open" — a sub-board drill carrying a card
-    // argument, a deep link followed while a card is still open — from
-    // inheriting fullscreen. Which card may take the flag is decided by
-    // `boardCardMaximisedAfterStep`, and tested there; the store only has to
-    // hold whatever it is handed.
+    // Fullscreen lives outside the sheet so a step's remount keeps it, and names
+    // its card so other openings don't inherit it. Which card takes it is
+    // `boardCardMaximisedAfterStep`'s job; the store just holds it.
     resetStore();
     useBoardUiStore.getState().setDetailMaximisedCardId("card-a");
     expect(maximisedCardId()).toBe("card-a");

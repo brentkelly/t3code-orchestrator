@@ -1,14 +1,7 @@
 /**
- * The real stack, board included (T3O-56, T3O-59): upstream's orchestration-v2
- * engine on in-memory SQLite with no provider behind it, the v2 thread gateway
- * over it, and the board's own engine, queries and todo tail on the same
- * connection.
- *
- * `boardStackEngine` and `boardStackSnapshotQuery` are the two facades suites
- * talk to. The engine facade routes a board command to the board engine, a
- * project or thread creation to the v2 services that own them, and anything
- * else to v2's dispatch chokepoint; the snapshot facade reads the board back
- * from its tables, the form a restart boots from.
+ * The real stack on in-memory SQLite with no provider: upstream's v2 engine,
+ * the v2 thread gateway, and the board's engine, queries and todo tail. The
+ * snapshot facade reads the board from its tables, as a restart boots.
  */
 import {
   CommandId,
@@ -125,7 +118,7 @@ export const makeBoardStackTestLayer = (prefix: string) =>
   BoardRuntimeLive.pipe(
     Layer.provideMerge(ThreadGatewayV2Live),
     Layer.provideMerge(orchestrationStack(prefix)),
-    // T3O-62: a local-only board, for the subscription.
+    // A local-only board, for the subscription.
     Layer.provideMerge(BoardWorkersLocalOnlyTest),
   );
 

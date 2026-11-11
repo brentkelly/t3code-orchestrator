@@ -1,22 +1,7 @@
 /**
- * T3o: the ways out of a stalled step (T3O-13).
- *
- * A step that stalls — its thread died, or its spawn failed so it never had one
- * — drives nothing until a human acts. The card offers three exits as one split
- * button, Continue first:
- *
- *  - Continue re-queues the SAME step (`board.card.requeue-step`): its live
- *    thread is nudged, and a step with no thread gets a fresh one running the
- *    step's own prompt. In a review loop that is the phase the loop owes.
- *  - Restart supersedes it (`board.card.start-stage-thread`): the step is
- *    settled abandoned and the stage's executor plans again from its record,
- *    so a review loop starts its owed phase in a fresh thread.
- *  - Move to the next stage is the ordinary move, which settles the step.
- *
- * None of the three is gated on the card's thread state. That state is summed
- * over every linked thread, so a human talking to an earlier phase's thread
- * made the card read "in flight" and hid the only restart there was — while the
- * step that needed restarting had nothing running at all.
+ * The ways out of a stalled step: Continue (re-queue the same step), Restart
+ * (supersede it) or move on. None is gated on the card's thread state, which
+ * sums every linked thread and would hide the restart.
  */
 import type { BoardStageDefinition, BoardStageId } from "@t3tools/contracts";
 
@@ -47,7 +32,7 @@ export function resolveBoardStepRecovery(input: {
   /** False on a group card: its stage is derived from its children, so a hand
       move is not a way out. */
   readonly handMoves?: boolean;
-  /** The card has a live CI entry (T3O-44): it leaves CI by passing or by
+  /** The card has a live CI entry: it leaves CI by passing or by
       Skip CI, never by a move. */
   readonly ciEntryLive?: boolean;
 }): BoardStepRecovery | null {
@@ -71,8 +56,8 @@ export function resolveBoardStepRecovery(input: {
 
 /** How the Review pane shows a phase — not always what the ledger walk says.
     The walk calls the owed phase `running` because it is next, but off the
-    review stage nobody is in it (T3O-3), and when its step has stalled nothing
-    is running it either (T3O-13). */
+    review stage nobody is in it, and when its step has stalled nothing
+    is running it either. */
 export function boardReviewPhaseShownStatus(
   status: BoardReviewPhaseStatus,
   context: { readonly offStage: boolean; readonly stalled: boolean },
@@ -89,11 +74,9 @@ export function boardReviewPaneStopped(stepFailure: { readonly waiting: boolean 
   return stepFailure !== null && !stepFailure.waiting;
 }
 
-/** Whether the stage's ordinary forward move still renders beside the recovery
-    button. Not when the recovery caret already offers the same move — two
-    "Move to …" controls stacked on top of each other. A forward button that
-    carries a secondary caret (Submit for merge — no review) stays, or that
-    action would be lost. Merge is never a duplicate. */
+/** Whether the ordinary forward move renders beside the recovery button: not
+    when the recovery caret offers the same move. A forward button with its own
+    caret stays; Merge is never a duplicate. */
 export function boardForwardShownBesideRecovery(
   forward: { readonly kind: "move"; readonly toStage: BoardStageId } | { readonly kind: "merge" },
   recovery: BoardStepRecovery | null,

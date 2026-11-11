@@ -1,11 +1,6 @@
 /**
- * T3o (T3O-64, D21): `BoardWorkspaces`, the one answer to "where does this
- * card's git run".
- *
- * Built from the local workspace and a placement (T3O-65): a card runs where
- * it holds its worktree, else on its pin, else on the default worker, and its
- * project maps to that worker's checkout of the same repository. A board with
- * no workers places every card here, exactly as it always did.
+ * `BoardWorkspaces`: a card runs where it holds its worktree, else its pin, else
+ * the default worker, on that worker's checkout of the same repository.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
@@ -80,17 +75,17 @@ export function makeBoardWorkspaces(
         ),
       );
 
-  const forCard: BoardWorkspacesShape["forCard"] = (card) =>
-    Effect.gen(function* () {
-      const placement =
-        options.placementOf === undefined || options.remote === undefined
-          ? null
-          : yield* options.placementOf(card);
-      if (placement === null || options.remote === undefined) {
-        return yield* localProject(card.projectId);
-      }
-      return yield* options.remote(placement);
-    });
+  // Untraced: runs once per card on every orphan-worktree sweep.
+  const forCard: BoardWorkspacesShape["forCard"] = Effect.fnUntraced(function* (card) {
+    const placement =
+      options.placementOf === undefined || options.remote === undefined
+        ? null
+        : yield* options.placementOf(card);
+    if (placement === null || options.remote === undefined) {
+      return yield* localProject(card.projectId);
+    }
+    return yield* options.remote(placement);
+  });
 
   const isWithinRoot = (candidate: string, root: string) => {
     const relative = pathService.relative(root, candidate);
@@ -98,74 +93,70 @@ export function makeBoardWorkspaces(
   };
 
   /**
-   * Whether `path` is one of the project's worktrees on this server: a
-   * checkout the project's repository has registered, or — a checkout already
-   * gone from disk and from git, which a reclaim or forced removal may still
-   * name on retry — a missing path under the worktrees directory. A folder
-   * that exists there but is not the project's (another project's checkout,
-   * the per-repository container) is refused. With `owner`, a registered
-   * checkout still on disk must carry that board's marker too.
+   * A registered checkout of the project, or a missing path under the worktrees
+   * directory (a reclaim retry may still name it); an existing folder that isn't
+   * the project's is refused. With `owner`, a registered checkout on disk must
+   * carry that board's marker.
    */
-  const ownsWorktreePath: BoardWorkspacesShape["ownsWorktreePath"] = (projectId, path, owner) =>
-    Effect.gen(function* () {
-      const resolved = pathService.resolve(path);
-      const cwd = yield* deps.projectRoot(projectId);
-      if (cwd === null) return false;
-      const listed = yield* deps.git
-        .execute({
-          operation: "board.workspace.ownsWorktree",
-          cwd,
-          args: ["worktree", "list", "--porcelain"],
-          allowNonZeroExit: true,
-        })
-        .pipe(Effect.catch(() => Effect.succeed(null)));
-      if (listed === null || listed.exitCode !== 0) return false;
-      const registered = parseRegisteredWorktrees(listed.stdout)
-        .slice(1)
-        .some((worktree) => pathService.resolve(worktree.path) === resolved);
-      const exists = yield* deps.fileSystem.exists(resolved).pipe(Effect.orElseSucceed(() => true));
-      if (registered) {
-        return (
-          owner === undefined || !exists || (yield* boardWorktreeOwner(deps, resolved)) === owner
-        );
-      }
-      const roots = yield* deps.worktreeRoots;
-      if (!roots.some((root) => isWithinRoot(resolved, root))) return false;
-      return !exists;
-    });
+  const ownsWorktreePath: BoardWorkspacesShape["ownsWorktreePath"] = Effect.fn(
+    "BoardWorkspaces.ownsWorktreePath",
+  )(function* (projectId, path, owner) {
+    const resolved = pathService.resolve(path);
+    const cwd = yield* deps.projectRoot(projectId);
+    if (cwd === null) return false;
+    const listed = yield* deps.git
+      .execute({
+        operation: "board.workspace.ownsWorktree",
+        cwd,
+        args: ["worktree", "list", "--porcelain"],
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    if (listed === null || listed.exitCode !== 0) return false;
+    const registered = parseRegisteredWorktrees(listed.stdout)
+      .slice(1)
+      .some((worktree) => pathService.resolve(worktree.path) === resolved);
+    const exists = yield* deps.fileSystem.exists(resolved).pipe(Effect.orElseSucceed(() => true));
+    if (registered) {
+      return (
+        owner === undefined || !exists || (yield* boardWorktreeOwner(deps, resolved)) === owner
+      );
+    }
+    const roots = yield* deps.worktreeRoots;
+    if (!roots.some((root) => isWithinRoot(resolved, root))) return false;
+    return !exists;
+  });
 
   const centralMayUseBranch: BoardWorkspacesShape["centralMayUseBranch"] = (branch) =>
     options.ownBoardBranches === undefined
       ? Effect.succeed(true)
       : options.ownBoardBranches.pipe(Effect.map((own) => !own.has(branch)));
 
-  const centralMayDeleteBranch: BoardWorkspacesShape["centralMayDeleteBranch"] = (
-    projectId,
-    branch,
-  ) =>
-    Effect.gen(function* () {
-      if (!(yield* centralMayUseBranch(branch))) return false;
-      const cwd = yield* deps.projectRoot(projectId);
-      if (cwd === null) return false;
-      const listed = yield* deps.git
-        .execute({
-          operation: "board.workspace.branchHolders",
-          cwd,
-          args: ["worktree", "list", "--porcelain"],
-          allowNonZeroExit: true,
-        })
-        .pipe(Effect.catch(() => Effect.succeed(null)));
-      // Unreadable is refused: a branch kept is cheaper than one lost.
-      if (listed === null || listed.exitCode !== 0) return false;
-      for (const worktree of parseRegisteredWorktrees(listed.stdout)) {
-        if (worktree.branch !== branch || worktree.prunable) continue;
-        if ((yield* boardWorktreeOwner(deps, worktree.path)) !== "central") return false;
-      }
-      return true;
-    });
+  const centralMayDeleteBranch: BoardWorkspacesShape["centralMayDeleteBranch"] = Effect.fn(
+    "BoardWorkspaces.centralMayDeleteBranch",
+  )(function* (projectId, branch) {
+    if (!(yield* centralMayUseBranch(branch))) return false;
+    const cwd = yield* deps.projectRoot(projectId);
+    if (cwd === null) return false;
+    const listed = yield* deps.git
+      .execute({
+        operation: "board.workspace.branchHolders",
+        cwd,
+        args: ["worktree", "list", "--porcelain"],
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    // Unreadable is refused: a branch kept is cheaper than one lost.
+    if (listed === null || listed.exitCode !== 0) return false;
+    for (const worktree of parseRegisteredWorktrees(listed.stdout)) {
+      if (worktree.branch !== branch || worktree.prunable) continue;
+      if ((yield* boardWorktreeOwner(deps, worktree.path)) !== "central") return false;
+    }
+    return true;
+  });
 
-  const forWorker: BoardWorkspacesShape["forWorker"] = (workerId, projectId) =>
-    Effect.gen(function* () {
+  const forWorker: BoardWorkspacesShape["forWorker"] = Effect.fn("BoardWorkspaces.forWorker")(
+    function* (workerId, projectId) {
       if (workerId === BOARD_LOCAL_WORKER_ID || options.remote === undefined) {
         return yield* localProject(projectId);
       }
@@ -174,7 +165,8 @@ export function makeBoardWorkspaces(
           ? projectId
           : ((yield* options.workerProjectOf(workerId, projectId)) ?? projectId);
       return yield* options.remote({ workerId, projectId: workerProjectId });
-    });
+    },
+  );
 
   return {
     local,
@@ -185,21 +177,20 @@ export function makeBoardWorkspaces(
     forCard,
     localProject,
     forWorker,
-    groupByWorkspace: (cards) =>
-      Effect.gen(function* () {
-        const groups = new Map<
-          string,
-          { workspace: BoardCardWorkspace; cards: Array<(typeof cards)[number]> }
-        >();
-        for (const card of cards) {
-          const workspace = yield* forCard(card);
-          const key = `${workspace.workerId}\0${workspace.projectId}`;
-          const group = groups.get(key);
-          if (group === undefined) groups.set(key, { workspace, cards: [card] });
-          else group.cards.push(card);
-        }
-        return [...groups.values()];
-      }),
+    groupByWorkspace: Effect.fn("BoardWorkspaces.groupByWorkspace")(function* (cards) {
+      const groups = new Map<
+        string,
+        { workspace: BoardCardWorkspace; cards: Array<(typeof cards)[number]> }
+      >();
+      for (const card of cards) {
+        const workspace = yield* forCard(card);
+        const key = `${workspace.workerId}\0${workspace.projectId}`;
+        const group = groups.get(key);
+        if (group === undefined) groups.set(key, { workspace, cards: [card] });
+        else group.cards.push(card);
+      }
+      return [...groups.values()];
+    }),
   };
 }
 
@@ -238,7 +229,7 @@ export const localBoardWorkspaceDeps = Effect.gen(function* () {
 });
 
 /**
- * Each card's workspace where the board places it (T3O-65, D20). A worker with
+ * Each card's workspace where the board places it. A worker with
  * no checkout of the card's project yields a workspace whose `checkoutPath` is
  * null, which every caller already reads as "no checkout there".
  */
@@ -254,32 +245,35 @@ export const BoardWorkspacesLive = Layer.effect(
     };
     const connections = yield* WorkerConnections;
     const threads = yield* ThreadGateway;
-    const workerProjectOf = (workerId: EnvironmentId, projectId: ProjectId) =>
-      Effect.gen(function* () {
-        const project = yield* threads
-          .project(projectId)
-          .pipe(Effect.catchCause(() => Effect.succeed(null)));
-        const runtime = (yield* connections.current).get(workerId);
-        return (
-          resolveBoardWorkerCheckout(
-            boardRepositoryGroupingKey(project?.repositoryIdentity),
-            runtime?.snapshot?.checkouts ?? [],
-          )?.projectId ?? null
-        );
-      });
+    // Untraced: runs once per card on every orphan-worktree sweep.
+    const workerProjectOf = Effect.fnUntraced(function* (
+      workerId: EnvironmentId,
+      projectId: ProjectId,
+    ) {
+      const project = yield* threads
+        .project(projectId)
+        .pipe(Effect.catchCause(() => Effect.succeed(null)));
+      const runtime = (yield* connections.current).get(workerId);
+      return (
+        resolveBoardWorkerCheckout(
+          boardRepositoryGroupingKey(project?.repositoryIdentity),
+          runtime?.snapshot?.checkouts ?? [],
+        )?.projectId ?? null
+      );
+    });
     return makeBoardWorkspaces(deps, {
-      placementOf: (card) =>
-        Effect.gen(function* () {
-          const board = (yield* engine.getReadModel).board ?? EMPTY_BOARD_STATE;
-          const placed = board.cards.find((candidate) => candidate.id === card.id);
-          if (placed === undefined) return null;
-          const workerId = boardCardEffectiveWorkerId(placed, board.defaultWorkerId);
-          if (workerId === BOARD_LOCAL_WORKER_ID) return null;
-          return {
-            workerId,
-            projectId: (yield* workerProjectOf(workerId, card.projectId)) ?? card.projectId,
-          };
-        }),
+      // Untraced: runs once per card on every orphan-worktree sweep.
+      placementOf: Effect.fnUntraced(function* (card) {
+        const board = (yield* engine.getReadModel).board ?? EMPTY_BOARD_STATE;
+        const placed = board.cards.find((candidate) => candidate.id === card.id);
+        if (placed === undefined) return null;
+        const workerId = boardCardEffectiveWorkerId(placed, board.defaultWorkerId);
+        if (workerId === BOARD_LOCAL_WORKER_ID) return null;
+        return {
+          workerId,
+          projectId: (yield* workerProjectOf(workerId, card.projectId)) ?? card.projectId,
+        };
+      }),
       remote: remoteCardWorkspace(connections),
       workerProjectOf,
       ownBoardBranches: engine.getReadModel.pipe(

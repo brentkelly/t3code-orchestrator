@@ -1,15 +1,8 @@
 /**
- * T3o: a project's `t3o.json` as an import/export format (T3O-49).
- *
- * Reads the COMMITTED file from the project's default branch in this
- * server's checkout (`git show <remote>/<base>:t3o.json`), after a fetch of
- * the primary remote, keyed by its blob sha; with no fetch it falls back to
- * the local base, flagged "as of last fetch". Writes the working-tree file
- * uncommitted, and refuses to overwrite one with uncommitted edits. Never fails: a project with no checkout here is
- * `unavailable`, with the reason.
- *
- * A checkout that lives only on a worker is not read yet (it needs worker
- * git ops), so such a project's import/export is unavailable.
+ * A project's `t3o.json` as an import/export format. Reads the committed file
+ * from the fetched default branch (local base, flagged, when the fetch fails);
+ * writes the working-tree file but never over uncommitted edits. Never fails: a
+ * project with no checkout here is `unavailable`.
  */
 import { T3O_PROJECT_FILE_NAME, parseT3oProjectFile, type ProjectId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -177,22 +170,23 @@ const make = Effect.gen(function* () {
     } as const;
   });
 
-  const readCommitted: BoardProjectFileShape["readCommitted"] = (projectId, options) =>
-    Effect.gen(function* () {
-      const root = yield* checkout(projectId);
-      if (root === null) return { kind: "unavailable", reason: NO_CHECKOUT } as const;
-      const cached = memo.get(String(projectId));
-      const now = yield* Clock.currentTimeMillis;
-      if (options?.refresh !== true && cached !== undefined && now - cached.at < MEMO_MS) {
-        return cached.read;
-      }
-      const result: BoardProjectFileRead = yield* read(root);
-      memo.set(String(projectId), { at: now, read: result });
-      return result;
-    });
+  const readCommitted: BoardProjectFileShape["readCommitted"] = Effect.fn(
+    "BoardProjectFile.readCommitted",
+  )(function* (projectId, options) {
+    const root = yield* checkout(projectId);
+    if (root === null) return { kind: "unavailable", reason: NO_CHECKOUT } as const;
+    const cached = memo.get(String(projectId));
+    const now = yield* Clock.currentTimeMillis;
+    if (options?.refresh !== true && cached !== undefined && now - cached.at < MEMO_MS) {
+      return cached.read;
+    }
+    const result: BoardProjectFileRead = yield* read(root);
+    memo.set(String(projectId), { at: now, read: result });
+    return result;
+  });
 
-  const write: BoardProjectFileShape["write"] = (projectId, content) =>
-    Effect.gen(function* () {
+  const write: BoardProjectFileShape["write"] = Effect.fn("BoardProjectFile.write")(
+    function* (projectId, content) {
       const root = yield* checkout(projectId);
       if (root === null) return { kind: "unavailable", reason: NO_CHECKOUT } as const;
       const filePath = path.join(root, T3O_PROJECT_FILE_NAME);
@@ -216,7 +210,8 @@ const make = Effect.gen(function* () {
         path: filePath,
         blobSha: yield* run(root, ["hash-object", "--", T3O_PROJECT_FILE_NAME]),
       } as const;
-    });
+    },
+  );
 
   return { readCommitted, write } satisfies BoardProjectFileShape;
 });

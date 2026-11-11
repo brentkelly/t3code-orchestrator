@@ -1,5 +1,5 @@
 /**
- * `board.subscribeBoard` (T3O-57): the board's own subscription, off the
+ * `board.subscribeBoard`: the board's own subscription, off the
  * orchestration shell.
  *
  * The window coalescer is exercised over doubles; the snapshot, live hand-over

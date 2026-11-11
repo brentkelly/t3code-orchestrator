@@ -1,26 +1,8 @@
 /**
- * T3o (T3O-62, D19/D22): the central server's live connection to each worker.
- *
- * One fiber per registered worker dials it with the board's own bearer token,
- * runs the `boardWorker.hello` handshake, reads the worker's providers and
- * checkouts, and then holds the connection until it drops — and dials again,
- * with backoff. Every change is published, so the board subscription can send
- * clients the new `workers` state.
- *
- * Status rules:
- * - a dial or handshake that fails on the network: `offline`, retried;
- * - a handshake below `BOARD_WORKER_PROTOCOL_FLOOR`, or a server with no
- *   `boardWorker.hello` at all: `incompatible`, retried (it may be upgraded);
- * - a 401/403, a missing token, or a different server answering at the URL:
- *   `unauthorized`, NOT retried — only a re-pair (`restart`) recovers it.
- *
- * Upstream sessions expire after a fixed lifetime and are never refreshed, so
- * the loop renews the board's session `SESSION_RENEW_AHEAD` before it expires:
- * `boardWorker.renew`, store the successor, `release` the old one, and redial
- * quietly — the worker stays online throughout.
- *
- * Later plans build on `get` (a typed client, or `WorkerUnavailable`) and on
- * `changes`.
+ * The central server's live connection to each worker: dial, handshake, hold,
+ * redial with backoff. Network failures go `offline` and below-floor protocols go
+ * `incompatible`, both retried; a 401/403, missing token or different server goes
+ * `unauthorized`, which only a re-pair recovers.
  */
 import {
   BOARD_WORKER_PROTOCOL_FLOOR,
@@ -135,24 +117,25 @@ function sessionRenewalRetryDelay(failures: number): Duration.Duration {
 }
 
 /** A worker's providers and checkouts, read over its connection. */
-export const readWorkerSnapshot = (rpc: WorkerRpc) =>
-  Effect.gen(function* () {
-    const [providers, projects] = yield* Effect.all([rpc.providers, rpc.projects], {
-      concurrency: 2,
-    });
-    const reportedAt = DateTime.formatIso(yield* DateTime.now);
-    return {
-      providers: providers.providers,
-      projectsFolder: providers.projectsFolder,
-      checkouts: projects.projects.map((project) => ({
-        projectId: project.projectId,
-        title: project.title,
-        workspaceRoot: project.workspaceRoot,
-        repositoryKey: boardRepositoryGroupingKey(project.repositoryIdentity),
-      })),
-      reportedAt,
-    } satisfies BoardWorkerSnapshot;
+export const readWorkerSnapshot = Effect.fn("WorkerConnections.readWorkerSnapshot")(function* (
+  rpc: WorkerRpc,
+) {
+  const [providers, projects] = yield* Effect.all([rpc.providers, rpc.projects], {
+    concurrency: 2,
   });
+  const reportedAt = DateTime.formatIso(yield* DateTime.now);
+  return {
+    providers: providers.providers,
+    projectsFolder: providers.projectsFolder,
+    checkouts: projects.projects.map((project) => ({
+      projectId: project.projectId,
+      title: project.title,
+      workspaceRoot: project.workspaceRoot,
+      repositoryKey: boardRepositoryGroupingKey(project.repositoryIdentity),
+    })),
+    reportedAt,
+  } satisfies BoardWorkerSnapshot;
+});
 
 type AttemptOutcome =
   | { readonly _tag: "dropped" }
@@ -251,8 +234,8 @@ export const makeWorkerConnections = Effect.gen(function* () {
   /** Swap the board's session for its successor: store the new token, then
       give the old one back. False when the swap didn't happen, which leaves
       the old token in place. */
-  const renewSession = (worker: BoardWorker, rpc: WorkerRpc) =>
-    Effect.gen(function* () {
+  const renewSession = Effect.fn("WorkerConnections.renewSession")(
+    function* (worker: BoardWorker, rpc: WorkerRpc) {
       const renewal = yield* rpc.renew;
       const stored = yield* secrets
         .set(workerSecretName(worker.id), encodeWorkerToken(renewal.accessToken))
@@ -265,31 +248,37 @@ export const makeWorkerConnections = Effect.gen(function* () {
       // Unreturned, the old session only lingers until it expires.
       yield* rpc.release.pipe(Effect.ignore);
       return true;
-    }).pipe(Effect.catchCause(() => Effect.succeed(false)));
+    },
+    Effect.catchCause(() => Effect.succeed(false)),
+  );
 
   /** Hold an online link until it drops — or until its session is due for
       renewal, when the link is let go for one on the successor. A failed
       renewal is retried while the link is up: upstream doesn't close a
       socket whose session expires, so the next redial would be refused. */
-  const hold = (worker: BoardWorker, link: WorkerLink, hello: BoardWorkerHello) =>
-    Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      const delay = sessionRenewalDelay(hello.sessionExpiresAt, now.epochMilliseconds);
-      if (delay === null) {
-        yield* link.closed;
-        return { _tag: "dropped" } as const;
-      }
-      let wait = delay;
-      for (let failures = 0; ; failures++) {
-        const due = yield* Effect.raceFirst(
-          link.closed.pipe(Effect.as(false)),
-          Effect.sleep(wait).pipe(Effect.as(true)),
-        );
-        if (!due) return { _tag: "dropped" } as const;
-        if (yield* renewSession(worker, link.rpc)) return { _tag: "renewed" } as const;
-        wait = sessionRenewalRetryDelay(failures);
-      }
-    });
+  // Untraced: a span here would stay open for the connection's lifetime.
+  const hold = Effect.fnUntraced(function* (
+    worker: BoardWorker,
+    link: WorkerLink,
+    hello: BoardWorkerHello,
+  ) {
+    const now = yield* DateTime.now;
+    const delay = sessionRenewalDelay(hello.sessionExpiresAt, now.epochMilliseconds);
+    if (delay === null) {
+      yield* link.closed;
+      return { _tag: "dropped" } as const;
+    }
+    let wait = delay;
+    for (let failures = 0; ; failures++) {
+      const due = yield* link.closed.pipe(
+        Effect.as(false),
+        Effect.timeoutOrElse({ duration: wait, orElse: () => Effect.succeed(true) }),
+      );
+      if (!due) return { _tag: "dropped" } as const;
+      if (yield* renewSession(worker, link.rpc)) return { _tag: "renewed" } as const;
+      wait = sessionRenewalRetryDelay(failures);
+    }
+  });
 
   /** One dial, held until the connection drops or its session is renewed. */
   const attempt = (worker: BoardWorker, renewed: boolean): Effect.Effect<AttemptOutcome> =>
@@ -342,53 +331,53 @@ export const makeWorkerConnections = Effect.gen(function* () {
     );
 
   /** A worker's loop: dial, hold, and dial again until it is unauthorized. */
-  const runWorker = (worker: BoardWorker) =>
-    Effect.gen(function* () {
-      let failures = 0;
-      let renewed = false;
-      while (true) {
-        const outcome: AttemptOutcome = yield* attempt(worker, renewed);
-        renewed = outcome._tag === "renewed";
-        switch (outcome._tag) {
-          case "renewed":
-            // Straight back on, with the successor.
-            failures = 0;
-            continue;
-          case "unauthorized":
-            yield* setState(worker.id, "unauthorized");
-            return;
-          case "incompatible":
-            yield* setState(
-              worker.id,
-              "incompatible",
-              outcome.hello === null
-                ? {}
-                : {
-                    t3oVersion: outcome.hello.t3oVersion,
-                    protocolVersion: outcome.hello.protocolVersion,
-                  },
-            );
-            yield* persist(worker.id);
-            break;
-          case "dropped":
-            // It was online until this moment, which is when it was last seen.
-            failures = 0;
-            yield* setState(worker.id, "offline", { lastSeenAt: yield* nowIso });
-            yield* persist(worker.id);
-            break;
-          case "unreachable":
-            yield* setState(worker.id, "offline");
-            break;
-        }
-        yield* Effect.sleep(workerRedialDelay(failures));
-        failures += 1;
+  // Untraced: a span here would stay open for the worker's lifetime.
+  const runWorker = Effect.fnUntraced(function* (worker: BoardWorker) {
+    let failures = 0;
+    let renewed = false;
+    while (true) {
+      const outcome: AttemptOutcome = yield* attempt(worker, renewed);
+      renewed = outcome._tag === "renewed";
+      switch (outcome._tag) {
+        case "renewed":
+          // Straight back on, with the successor.
+          failures = 0;
+          continue;
+        case "unauthorized":
+          yield* setState(worker.id, "unauthorized");
+          return;
+        case "incompatible":
+          yield* setState(
+            worker.id,
+            "incompatible",
+            outcome.hello === null
+              ? {}
+              : {
+                  t3oVersion: outcome.hello.t3oVersion,
+                  protocolVersion: outcome.hello.protocolVersion,
+                },
+          );
+          yield* persist(worker.id);
+          break;
+        case "dropped":
+          // It was online until this moment, which is when it was last seen.
+          failures = 0;
+          yield* setState(worker.id, "offline", { lastSeenAt: yield* nowIso });
+          yield* persist(worker.id);
+          break;
+        case "unreachable":
+          yield* setState(worker.id, "offline");
+          break;
       }
-    });
+      yield* Effect.sleep(workerRedialDelay(failures));
+      failures += 1;
+    }
+  });
 
   const start = (worker: BoardWorker) => FiberMap.run(fibers, worker.id, runWorker(worker));
 
-  const sync: WorkerConnectionsShape["sync"] = (workers) =>
-    Effect.gen(function* () {
+  const sync: WorkerConnectionsShape["sync"] = Effect.fn("WorkerConnections.sync")(
+    function* (workers) {
       const before = yield* SubscriptionRef.get(entries);
       const wanted = new Map(workers.map((worker) => [worker.id, worker]));
       for (const [workerId] of before) {
@@ -423,7 +412,8 @@ export const makeWorkerConnections = Effect.gen(function* () {
         );
         yield* start(worker);
       }
-    });
+    },
+  );
 
   const restart: WorkerConnectionsShape["restart"] = (workerId) =>
     SubscriptionRef.get(entries).pipe(
@@ -464,8 +454,8 @@ export const makeWorkerConnections = Effect.gen(function* () {
       Effect.ignore,
     );
 
-  const record: WorkerConnectionsShape["record"] = (workerId, hello, snapshot) =>
-    Effect.gen(function* () {
+  const record: WorkerConnectionsShape["record"] = Effect.fn("WorkerConnections.record")(
+    function* (workerId, hello, snapshot) {
       const seenAt = yield* nowIso;
       const next: WorkerSnapshotRecord = {
         workerId,
@@ -486,7 +476,8 @@ export const makeWorkerConnections = Effect.gen(function* () {
           protocolVersion: hello.protocolVersion,
         },
       }));
-    });
+    },
+  );
 
   const runtimeOf = (map: ReadonlyMap<EnvironmentId, Entry>) =>
     new Map(

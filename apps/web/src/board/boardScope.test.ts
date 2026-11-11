@@ -1,5 +1,5 @@
 /**
- * Board scope (t3o-25): the pure rules behind the sub-board drill-in — what
+ * Board scope: the pure rules behind the sub-board drill-in — what
  * renders in each scope, which stages a sub-board shows, how collapse state
  * keys per scope, and where a dead sub-board URL resolves.
  */
@@ -59,7 +59,7 @@ describe("isBoardCardInScope", () => {
   it("keeps exactly one parent's children inside its sub-board", () => {
     expect(isBoardCardInScope(shell("card-2", "ready", parentId), SUB_SCOPE)).toBe(true);
     expect(isBoardCardInScope(shell("card-3", "ready", otherParentId), SUB_SCOPE)).toBe(false);
-    // The parent itself is a header there, never a card (D2).
+    // The parent itself is a header there, never a card.
     expect(isBoardCardInScope(shell(String(parentId), "building"), SUB_SCOPE)).toBe(false);
   });
 });

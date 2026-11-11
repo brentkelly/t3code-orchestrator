@@ -51,7 +51,7 @@ describe("stage execution mutations", () => {
     // stage resolves to — its seeded config for a seeded stage, the empty
     // all-defaults one for a custom stage — and produces a complete entry.
     const custom = setBoardStageExecution(boardWith({}), CUSTOM, { autoExecute: true });
-    // The resolved config now carries the effective access level (t3o-21): a
+    // The resolved config now carries the effective access level: a
     // custom stage is plan-mode by default, so `approval-required`.
     expect(custom[CUSTOM]).toEqual({
       ...DEFAULT_BOARD_STAGE_EXECUTION,

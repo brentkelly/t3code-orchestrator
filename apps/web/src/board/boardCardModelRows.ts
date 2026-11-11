@@ -1,12 +1,6 @@
 /**
- * What the card's model-override popover offers, and what each row falls back
- * to when the card says nothing (t3o-29, D1/D5).
- *
- * Pure and picker-free on purpose. The popover itself drags the model list, the
- * traits menu and the access picker, so it is lazily loaded — but the kebab
- * needs this card's summary ("Default" / "Planning · Build") to render the menu
- * item, before anyone has opened anything. Splitting the derivation out is what
- * lets the summary be eager and the pickers not.
+ * The card model-override popover's rows and fallbacks. Kept picker-free so the
+ * kebab's summary renders eagerly while the popover stays lazily loaded.
  */
 import {
   effectiveBoardStageRole,
@@ -30,10 +24,10 @@ export interface BoardCardModelRowSpec {
   readonly label: string;
   readonly note: string;
   /** The model this row inherits with no override set — the parent card's when
-      it has one (D4), else the workspace's. Null when nothing has named one. */
+      it has one, else the workspace's. Null when nothing has named one. */
   readonly inheritedModel: BoardModelSelection | null;
   /** The parent card's key when the inherited value comes from the parent
-      rather than the workspace, so the row can say so (D5). */
+      rather than the workspace, so the row can say so. */
   readonly inheritedFromCardKey: string | null;
   readonly inheritedRuntimeMode: RuntimeMode;
 }
@@ -46,21 +40,15 @@ const ROW_COPY = {
 } as const;
 
 /**
- * The rows the popover offers, resolved by ROLE — the stages holding the
- * `plan`, `build` and `review` roles, in pipeline order. A board whose
- * role-holder was deleted simply yields fewer rows, rather than offering an
- * override nothing would ever read. Planning is a simple stage, so its row
- * resolves exactly like Build's (#119).
- *
- * Only the REVIEW PHASE's model is reported for the review row: that is what a
- * card-level review override re-points (D3), so showing the stage's fallback
- * here would name a model the override does not actually replace.
+ * The popover's rows, resolved by role in pipeline order; a deleted role holder
+ * yields no row. The review row reports the review phase's model, the one a
+ * card-level override replaces.
  */
 export function boardCardModelRows(input: {
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly boardSettings: BoardSettings;
   readonly parentCard: Pick<BoardCard, "key" | "modelOverrides"> | null;
-  /** The card's project's overrides (T3O-43/49). */
+  /** The card's project's overrides. */
   readonly projectConfig?: BoardProjectExecutionConfig | null | undefined;
 }): ReadonlyArray<BoardCardModelRowSpec> {
   const rows: BoardCardModelRowSpec[] = [];
@@ -85,7 +73,7 @@ export function boardCardModelRows(input: {
     // The parent's override outranks the workspace for a child that has none of
     // its own, so it is what the row must NAME as the inherited value — telling
     // a child it will run the workspace model when it will actually run its
-    // parent's is the exact confusion D5 exists to prevent.
+    // parent's is the exact confusion this row exists to prevent.
     const inherited = input.parentCard?.modelOverrides?.[stage.stageId];
     rows.push({
       stageId: stage.stageId,

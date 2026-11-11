@@ -1,5 +1,5 @@
 /**
- * A running CI step's live reports (T3O-60), on the TestClock: progress is
+ * A running CI step's live reports, on the TestClock: progress is
  * throttled to one report per 10 s and only on a change, and silence is
  * flagged after 10 min and cleared by output.
  */

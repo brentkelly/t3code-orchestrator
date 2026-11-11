@@ -1,10 +1,6 @@
 /**
- * Unit tests for the stage executor seam (t3o-15, D15 — acceptance criterion
- * 19): `SimpleStageExecutor.planNext` is exercised with **no reactor, no
- * database and no git**. Nothing here constructs an Effect, opens a connection
- * or shells out; the whole point of the seam is that "what runs next" is a pure
- * decision over its inputs, testable in isolation exactly like `recoveryDecision`
- * and `reconcileStepDecision`.
+ * `SimpleStageExecutor.planNext` with no reactor, database or git: what runs next is a
+ * pure decision over its inputs.
  */
 import { describe, expect, it } from "@effect/vitest";
 
@@ -65,7 +61,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       kind: "run",
       round: 1,
       stepId: "building",
-      // No step identity (t3o-19, D4): the stage runs one step, so naming it
+      // No step identity: the stage runs one step, so naming it
       // would just echo the stage.
       stepLabel: null,
       prompt: "Implement the card's brief.",
@@ -115,7 +111,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
   });
 
   it("resolves complete/run from run progress, not from the card's all-time completions", () => {
-    // A prior visit's succeeded completion (D7 re-entry) is the reactor's
+    // A prior visit's succeeded completion (a re-entry) is the reactor's
     // concern, not the executor's: with nothing completed in THIS run the
     // executor still yields the step to run.
     const priorSuccess: BoardStepCompletion = {
@@ -169,7 +165,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       kind: "run",
       round: 2,
       stepId: "triage",
-      // A single-step stage plans NO step identity (t3o-19, D4) — the stage's
+      // A single-step stage plans NO step identity — the stage's
       // own label would only echo itself in the prompt.
       stepLabel: null,
       prompt: "Assess it.",
@@ -271,7 +267,7 @@ describe("per-card model overrides (t3o-29)", () => {
 });
 
 /**
- * The build executor (t3o-07, D4/D5). Pure over its run state, like everything
+ * The build executor. Pure over its run state, like everything
  * else in this file: what it decides is "did the SUBMIT step just settle?", and
  * nothing else about the card can answer that question for it.
  */
@@ -341,11 +337,9 @@ describe("BuildStageExecutor.planNext (t3o-07, D4/D5)", () => {
     expect(BuildStageExecutor.planNext(input).kind).toBe("run");
   });
 
-  // The regression D5 names. Completions are keyed `(cardId, stepId)` and never
-  // cleared, so a card dragged back to Building for a SECOND build still
-  // carries the submit completion from its first pass. Routing on that
-  // completion would send the rebuild straight to the merge stage the moment it
-  // finished — skipping review on a card nobody asked to skip review for.
+  // Completions are keyed `(cardId, stepId)` and never cleared, so a rebuilt card still
+  // carries its first pass's submit completion. Routing on it would skip review on a card
+  // nobody asked to skip review for.
   it("does NOT route on a stale submit COMPLETION when a rebuild is what settled", () => {
     const plan = BuildStageExecutor.planNext({
       card,

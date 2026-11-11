@@ -1,5 +1,5 @@
 /**
- * T3O-33 — `board.card.set-project`, the decider half.
+ * `board.card.set-project`, the decider half.
  *
  * The six refusals in the order the decider applies them, the happy path's
  * reissued key / cleared base pin, and the counter-sharing rule that keeps a
@@ -359,7 +359,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board.card.set-p
           key: "MW-43",
           cardNumber: 43,
           // A branch named in the old project's checkout says nothing about the
-          // new one, and a stale pin fails at provisioning hours later (D5).
+          // new one, and a stale pin fails at provisioning hours later.
           baseBranch: null,
           // Everything else survives: the card id never changes, so the open
           // modal, its attachments and its board position are unaffected.
@@ -389,7 +389,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board.card.set-p
         );
         assert.strictEqual(event.type, "board.card-project-changed");
         if (event.type !== "board.card-project-changed") return;
-        // D3: `dependsOn` stores card ids, and the decider has never enforced a
+        // `dependsOn` stores card ids, and the decider has never enforced a
         // same-project rule, so an inherited cross-project edge is legal and the
         // gate handles it. Nothing to rewrite.
         assert.deepStrictEqual([...event.payload.card.dependsOn], ["dep"]);
@@ -455,7 +455,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board.card.set-p
           }),
         );
         if (event.type !== "board.card-project-changed") return assert.fail("wrong event");
-        // Threads are history (D2). Stopping the live one is the reactor's job,
+        // Threads are history. Stopping the live one is the reactor's job,
         // and the plan a thread produced lives on the card, not in the thread.
         assert.strictEqual(event.payload.card.threadLinks.length, 1);
         assert.strictEqual(event.payload.card.threadLinks[0]!.tombstonedAt, null);

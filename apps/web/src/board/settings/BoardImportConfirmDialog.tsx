@@ -1,5 +1,5 @@
 /**
- * T3o: the import confirmation (T3O-49) — the only place an import applies.
+ * T3o: the import confirmation — the only place an import applies.
  * It shows the summary chips, every warning, the stages it creates, and the
  * full text of every new or changed command and prompt, so a merged
  * `t3o.json` can't install commands behind a "3 steps" chip.

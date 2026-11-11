@@ -1,11 +1,6 @@
 /**
- * T3o board MCP toolkit — the relay (T3O-63, D3).
- *
- * The central server runs the real board engine, queries and handlers on a
- * real board database, behind the thread router; the worker is in process
- * (`distributed.testkit.ts`). An agent's call on the worker goes through
- * `relayable` → the worker's relay host → the central server's relay client →
- * the handlers, and back, exactly as it would across the wire.
+ * The relay end to end: a worker-side call goes through `relayable`, the worker's relay host,
+ * the central relay client and the handlers on a real central board database, and back.
  */
 import {
   BoardCardAttachmentId,
@@ -80,6 +75,11 @@ const t0 = "2026-01-01T00:00:00.000Z";
 const PROJECT_ID = ProjectId.make("project-1");
 const CENTRAL_ROOT = "/home/central/repo";
 const CODEX = ProviderInstanceId.make("codex");
+const decodeCardContext = Schema.decodeEffect(
+  BoardToolkit.tools.board_get_card_context.successSchema as unknown as Schema.Codec<
+    Record<string, unknown>
+  >,
+);
 
 /** The central server's database, settings and files. */
 const centralBase = Layer.mergeAll(ServerSettings.layerTest(), BoardRelayStoreLive).pipe(
@@ -453,11 +453,7 @@ describe("the board MCP relay", () => {
           decisions: _decisions,
           ...older
         } = answer.value as Record<string, unknown>;
-        const decoded = yield* Schema.decodeUnknownEffect(
-          BoardToolkit.tools.board_get_card_context.successSchema as unknown as Schema.Codec<
-            Record<string, unknown>
-          >,
-        )(older);
+        const decoded = yield* decodeCardContext(older);
         assert.deepStrictEqual(decoded.ancestors, []);
         assert.isNull(decoded.sourcePlan);
         assert.deepStrictEqual(decoded.decisions, []);

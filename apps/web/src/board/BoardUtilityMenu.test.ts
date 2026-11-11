@@ -1,16 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * T3o board corner menu (T3O-34, D4/D5).
- *
- * Two things here are structural promises rather than logic, and both cost the
- * user something real if they quietly break, so they are asserted from source
- * the way `BoardTopBar.test.ts` pins the board header's composition:
- *
- *  - The items are upstream's `SidebarUtilityMenu`, not three buttons copied
- *    into the fork. Reimplementing them is how the board's menu and the
- *    sidebar's menu silently drift apart.
- *  - The board's column scroller reserves the corner's height, so no card can
- *    come to rest under the pill.
+ * Structural promises asserted from source: the items are upstream's
+ * `SidebarUtilityMenu`, not copies that drift, and the column scroller reserves
+ * the corner's height.
  */
 import * as NodeFS from "node:fs";
 

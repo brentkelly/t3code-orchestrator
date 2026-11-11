@@ -1,12 +1,6 @@
 /**
- * T3o merge-conflict copy (T3O-9). One place that turns "this card's merge is
- * held by conflicts" into the words every surface shows — the column card's
- * pill and its tooltip, and the card modal's banner — so the two can never tell
- * the user two different stories.
- *
- * Pure: the fact itself is `BoardCardShell.stepConflictFix`, derived on the
- * server from the step row's `Conflicts` label (`isBoardConflictFixLive`).
- * Nothing here reads state.
+ * Merge-conflict copy for the card pill, its tooltip and the modal banner, so
+ * they cannot disagree. Pure: the fact is the shell's `stepConflictFix`.
  */
 
 export interface BoardConflictFixInfo {
@@ -35,7 +29,7 @@ export interface BoardConflictFixInfo {
 export function boardConflictFix(input: {
   /** `BoardCardShell.stepConflictFix`: a live conflict fix, running or queued. */
   readonly live: boolean;
-  /** `BoardCardShell.stepChecksFix` (T3O-12): a live CI fix. The merge is held
+  /** `BoardCardShell.stepChecksFix`: a live CI fix. The merge is held
       the same way, so it wears the same amber pill and banner with its own
       words. */
   readonly checks?: boolean | undefined;
@@ -54,34 +48,31 @@ export function boardConflictFix(input: {
     return {
       label: "Conflicts",
       tooltip:
-        "The merge hit conflicts. An agent picks it up when one frees up — nothing is needed from you.",
+        "The merge hit conflicts. An agent picks it up when one frees up, so nothing is needed from you.",
       headline: `Waiting for an agent to resolve conflicts against ${base}`,
-      // Names the wait and stops there. The queued case also draws the
-      // build-queue banner (t3o-33) a few lines below in the wide layout, and
-      // that banner owns the mechanics — the position, the agent count, the two
-      // override buttons — so repeating "it starts on its own when an agent
-      // frees up" here would print the same sentence twice on one screen.
+      // The build-queue banner owns the queue mechanics in the wide layout, so this
+      // names the wait and stops.
       detail: "The merge holds until an agent is free and the thread finishes.",
       mergeDisabledReason: "Resolving conflicts…",
     };
   }
   return {
     label: "Conflicts",
-    tooltip: "The merge hit conflicts. A thread is resolving them — nothing is needed from you.",
+    tooltip: "The merge hit conflicts. A thread is resolving them, so nothing is needed from you.",
     headline: `Resolving conflicts against ${base}`,
     detail: "The merge holds until the thread finishes.",
     mergeDisabledReason: "Resolving conflicts…",
   };
 }
 
-/** The CI-fix story (T3O-12): the merge was refused for failing checks and an
+/** The CI-fix story: the merge was refused for failing checks and an
     agent is fixing them. */
 function boardChecksFix(queued: boolean): BoardConflictFixInfo {
   return queued
     ? {
         label: "Fixing CI",
         tooltip:
-          "The pull request's checks failed. An agent picks it up when one frees up — nothing is needed from you.",
+          "The pull request's checks failed. An agent picks it up when one frees up, so nothing is needed from you.",
         headline: "Waiting for an agent to fix the failing checks",
         detail: "The merge holds until an agent is free, the fix is pushed and CI passes.",
         mergeDisabledReason: "Fixing CI…",
@@ -89,7 +80,7 @@ function boardChecksFix(queued: boolean): BoardConflictFixInfo {
     : {
         label: "Fixing CI",
         tooltip:
-          "The pull request's checks failed. A thread is fixing them — nothing is needed from you.",
+          "The pull request's checks failed. A thread is fixing them, so nothing is needed from you.",
         headline: "Fixing the failing checks",
         detail: "The merge holds until the fix is pushed and CI passes.",
         mergeDisabledReason: "Fixing CI…",

@@ -1,5 +1,5 @@
 /**
- * Board migration 056 (T3O-41): retired thread links, backfilled for the
+ * Board migration 056: retired thread links, backfilled for the
  * threads the board unlinked while they were still alive.
  */
 import { assert, it } from "@effect/vitest";

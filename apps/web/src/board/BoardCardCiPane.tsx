@@ -1,11 +1,6 @@
 /**
- * The card view's CI tab (T3O-44/57): the current pass's steps with their
- * commands, durations and a failed step's output tail; a failed pass's fix as
- * its last step, one row per issue; earlier passes, collapsed; how the card
- * last left CI; and Skip CI.
- *
- * Lazy, like the review pane — a card that never reaches CI pays nothing. The
- * only per-second element is the running step's timer, its own component.
+ * The card's CI tab. Lazy, so a card that never reaches CI pays nothing; the only
+ * per-second element is the running step's timer, its own component.
  */
 import { Link } from "@tanstack/react-router";
 import {
@@ -78,7 +73,7 @@ function Chip({ label, tone }: { readonly label: string; readonly tone: BoardCiC
   );
 }
 
-/** What failed and why (T3O-61), at the top of a failed, fixing or held
+/** What failed and why, at the top of a failed, fixing or held
     pass, with the line it came from one click away. */
 function HeadlineBox({
   headline,
@@ -125,8 +120,8 @@ function RunningTimer({ startedAt }: { readonly startedAt: string }) {
   return <>{formatBoardCiTimer(nowMs - Date.parse(startedAt))}</>;
 }
 
-/** The step's limit once it is near (T3O-68) and "No output for N min" while
-    the script is quiet (T3O-60), each on its own line; nothing for a healthy
+/** The step's limit once it is near and "No output for N min" while
+    the script is quiet, each on its own line; nothing for a healthy
     step, whose time the right-hand timer already shows. */
 function RunningMeta({ step }: { readonly step: BoardCiPassStep }) {
   const nowMs = useNowSecond();
@@ -174,7 +169,7 @@ function StepProgress({
   );
 }
 
-/** The pass's log folder, copyable for a terminal (T3O-60). */
+/** The pass's log folder, copyable for a terminal. */
 function LogDirRow({ logDir }: { readonly logDir: string }) {
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "log folder" });
   return (
@@ -339,6 +334,7 @@ function StepRow({
           {step.result.failures.map((failure, index) => (
             <div
               className="flex flex-col border-l-2 border-warning pl-2"
+              // oxlint-disable-next-line react/no-array-index-key -- one result's failures never reorder and titles can repeat
               key={`${failure.title}:${index}`}
             >
               <span className="text-foreground">{failure.title}</span>
@@ -384,7 +380,7 @@ const ISSUE_STATUS_CLASS: Record<BoardCiFixRow["issues"][number]["status"], stri
   "cannot-fix": "text-attention-foreground",
 };
 
-/** A failed pass's fix, shown as the pass's last step (T3O-57). */
+/** A failed pass's fix, shown as the pass's last step. */
 const FIX_ROW_LABEL: Record<BoardCiFixRow["state"], string> = {
   running: "Fixing",
   "after-pass": "Waiting",
@@ -495,6 +491,7 @@ function PassSteps({
           <StepRow
             fixing={fixing}
             index={index}
+            // oxlint-disable-next-line react/no-array-index-key -- a step is its position in the pipeline; step names can repeat
             key={`${index}:${step.name}`}
             live={live}
             onOpenThread={onOpenThread}
@@ -608,19 +605,19 @@ export function BoardCardCiPane({
   onSendBack,
   completions = [],
 }: {
-  /** T3O-60: where the card lives, for its step logs. */
+  /** Where the card lives, for its step logs. */
   readonly environmentId: EnvironmentId;
   readonly cardId: BoardCardId;
   readonly cardKey: string;
-  /** The card's step completions, for each pass's fix report (T3O-57). */
+  /** The card's step completions, for each pass's fix report. */
   readonly completions?: ReadonlyArray<BoardStepCompletion> | undefined;
-  /** T3O-49: Retry CI on a stopped or held pass, and "Send back to review
+  /** Retry CI on a stopped or held pass, and "Send back to review
       anyway" on a stopped one. Human-only. */
   readonly onRetryCi?: (() => void) | undefined;
-  /** T3O-59: Stop CI on a queued, running or fixing pass. Human-only. */
+  /** Stop CI on a queued, running or fixing pass. Human-only. */
   readonly onStopCi?: (() => void) | undefined;
   readonly onSendBack?: (() => void) | undefined;
-  /** T3O-49: the card's project, for the "CI settings" link. */
+  /** The card's project, for the "CI settings" link. */
   readonly projectId?: ProjectId | undefined;
   /** The card sits in the CI stage: Skip CI and the fix box apply. */
   readonly inCi: boolean;
@@ -841,7 +838,7 @@ export function BoardCardCiPane({
               </span>
               <span className="flex-1" />
               <span className="text-[11px] text-muted-foreground tabular-nums">
-                {/* T3O-68: a live round shows its total time; the chip says Running. */}
+                {/* A live round shows its total time; the chip says Running. */}
                 {live && current.finishedAt === null && ci?.phase === "running" ? (
                   <RunningTimer startedAt={current.startedAt} />
                 ) : (

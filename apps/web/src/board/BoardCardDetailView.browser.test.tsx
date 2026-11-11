@@ -1,8 +1,8 @@
 /**
- * A group card's Thread and Planning pills (T3O-34), clicked: the pill the
+ * A group card's Thread and Planning pills, clicked: the pill the
  * user picks lights, Planning shows the planning thread, and picking a thread
  * from the Planning pane drops back to Thread. And an own-branch group's
- * action area from Code review on (T3O-37): Merge, View PR, Open board.
+ * action area from Code review on: Merge, View PR, Open board.
  */
 import { BOARD_SEED_STAGE_IDS, BoardCardId, ThreadId } from "@t3tools/contracts";
 import { useState } from "react";

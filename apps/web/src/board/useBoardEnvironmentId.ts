@@ -1,12 +1,7 @@
 /**
- * T3o: which environment's board this device shows (T3O-71).
- *
- * In the distributed board (D19–D22) one central server hosts the board. A desktop app's primary
- * environment is its own local server, so a client that only ever read the primary would show an
- * empty local board while paired with the central one. The per-device `boardEnvironmentId` client
- * setting nominates the board server; null means the primary. Every board surface — the board,
- * its card detail, and Settings → Board — reads its environment, its board settings and its
- * provider list through this module so they always agree on one server.
+ * Which environment's board this device shows: the `boardEnvironmentId` client
+ * setting, or the primary when null. Every board surface reads its environment,
+ * settings and providers through here so they agree on one server.
  */
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
@@ -18,7 +13,6 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { useMemo } from "react";
 
 import {
   mergeEnvironmentSettings,
@@ -93,17 +87,15 @@ export function useBoardEnvironment(): BoardEnvironmentResolution {
   const nominated = useClientSettings(selectBoardEnvironmentId);
   const primary = usePrimaryEnvironmentId();
   const { presentationById } = useEnvironments();
-  return useMemo(() => {
-    const candidates = new Map<EnvironmentId, BoardEnvironmentCandidate>();
-    for (const [environmentId, presentation] of presentationById) {
-      candidates.set(environmentId, {
-        label: presentation.entry.target.label,
-        enabled: presentation.entry.enabled,
-        phase: presentation.connection.phase,
-      });
-    }
-    return resolveBoardEnvironment({ nominated, primary, candidates });
-  }, [nominated, primary, presentationById]);
+  const candidates = new Map<EnvironmentId, BoardEnvironmentCandidate>();
+  for (const [environmentId, presentation] of presentationById) {
+    candidates.set(environmentId, {
+      label: presentation.entry.target.label,
+      enabled: presentation.entry.enabled,
+      phase: presentation.connection.phase,
+    });
+  }
+  return resolveBoardEnvironment({ nominated, primary, candidates });
 }
 
 /** The environment whose board to show, or null when there is none to show. */
@@ -127,11 +119,11 @@ export function useBoardSettings<T = UnifiedSettings>(
   );
   const clientSettings = useClientSettings();
   // Merged apart from the selector, which call sites pass inline, as `useMergedSettings` does.
-  const merged = useMemo(
-    () => mergeEnvironmentSettings(serverSettings ?? DEFAULT_SERVER_SETTINGS, clientSettings),
-    [clientSettings, serverSettings],
+  const merged = mergeEnvironmentSettings(
+    serverSettings ?? DEFAULT_SERVER_SETTINGS,
+    clientSettings,
   );
-  return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
+  return selector ? selector(merged) : (merged as T);
 }
 
 /** Writes settings to the board server (board settings live on the server that hosts the board). */

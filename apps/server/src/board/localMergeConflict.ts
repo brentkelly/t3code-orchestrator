@@ -1,25 +1,7 @@
 /**
- * T3o: ask git, not the forge, whether a card's branch conflicts with its base
- * (T3O-8).
- *
- * The board learns WHY a merge was refused from the forge's pull-request
- * detail. That read can fail for reasons that have nothing to do with the pull
- * request — a token without the permission for one field, a rate limit, a host
- * the workspace has no CLI for — and a conflict the board cannot see is a
- * conflict nobody resolves: the card just stops. A conflict is the one refusal
- * git can prove on its own, so when the forge cannot answer this does.
- *
- * It compares what the forge compares: the PUSHED branch against the PUSHED
- * base, both fetched first. A local branch with unpushed commits is not what
- * the pull request holds, and a stale base is exactly the case being looked
- * for. `git merge-tree --write-tree` merges in memory and touches no checkout,
- * so it is safe in the project root whatever is checked out there.
- *
- * Total, and three-valued on purpose. Starting a fix agent on a branch with
- * nothing wrong with it is the expensive mistake, so only git's own exit code
- * for "this merge has conflicts" says `conflict`; every failure to look is
- * `unknown`, which the caller treats exactly as it treated a failed probe
- * before this existed.
+ * Ask git, not the forge, whether a card's PUSHED branch conflicts with its PUSHED base, for when
+ * the forge's merge detail cannot be read. `git merge-tree --write-tree` touches no checkout.
+ * Three-valued: only git's own conflict exit code says `conflict`; any failure to look is `unknown`.
  */
 import * as Effect from "effect/Effect";
 
@@ -40,7 +22,7 @@ export const probeLocalMergeConflict = Effect.fn("probeLocalMergeConflict")(func
 
   const remoteName = yield* git
     .resolvePrimaryRemoteName(cwd)
-    .pipe(Effect.catch(() => Effect.succeed(null)));
+    .pipe(Effect.orElseSucceed(() => null));
   if (remoteName === null) return "unknown" satisfies BoardLocalMergeConflict;
 
   const run = (operation: string, args: ReadonlyArray<string>, timeoutMs: number) =>

@@ -1,11 +1,7 @@
 /**
- * Test fixtures for the board decider (T3O-56).
- *
- * The decider used to read projects and threads straight off upstream's
- * command read model. It now takes them as a loaded `BoardDecisionContext`,
- * which the engine reads from upstream's tables. Suites that hold a whole
- * `BoardOrchestrationReadModel` derive the same context from it here, so a fixture
- * still says "this project exists" by putting the project in the model.
+ * Derives the decider's `BoardDecisionContext` from a whole
+ * `BoardOrchestrationReadModel`, so a fixture still says "this project exists"
+ * by putting the project in the model.
  */
 import type { ProjectId, ThreadId } from "@t3tools/contracts";
 

@@ -1,16 +1,7 @@
 /**
- * T3o (T3O-65, D20): what the supervisor needs to know about workers to place
- * a card's step on one.
- *
- * Where a card runs is read-model state (`boardCardEffectiveWorkerId`). Whether
- * it can run there NOW is not: the worker must be online, have a checkout of
- * the card's project, and have the step's provider instance. Those come from
- * the board's worker summary, which this service hands the supervisor along
- * with a tick whenever it changes — a clone finishing or a worker reconnecting
- * is what starts a held card.
- *
- * Absent on a local-only harness: everything runs on this server, which always
- * qualifies.
+ * Whether a worker can run a card's step NOW (online, has a checkout of the
+ * project, has the provider instance), with a tick whenever that changes so a
+ * held card starts. Absent on a local-only harness, where this server always qualifies.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
@@ -32,7 +23,7 @@ export interface BoardPlacementShape {
   readonly workers: Effect.Effect<BoardWorkersState>;
   /** The summary after every change to it, as it was then. Each access
       subscribes. A worker that drops and returns before the supervisor gets
-      to the change is still seen to have dropped (T3O-66). */
+      to the change is still seen to have dropped. */
   readonly changes: Stream.Stream<BoardWorkersState>;
 }
 
@@ -82,19 +73,9 @@ export const BoardPlacementLive = Layer.effect(
 );
 
 /**
- * Whether a step can start on a worker now (D20):
- *
- * - `ready` — go.
- * - `offline` — the worker is not online (or no longer registered). Held
- *   silently; the worker's own notice says why (T3O-66).
- * - `no-checkout` — the worker has no checkout of the project: one is being
- *   set up, a setup failed, or none was ever made. Held as queued; the card
- *   says which from the board's setups.
- * - `provider-missing` — the worker does not have the step's provider
- *   instance. The step stalls amber for a human: a different worker, or a
- *   model this one offers.
- *
- * This server always qualifies — its projects and providers are the board's.
+ * Whether a step can start on a worker now. `offline` holds silently (the
+ * worker's own notice says why), `no-checkout` holds as queued, and
+ * `provider-missing` stalls amber for a human. This server always qualifies.
  */
 export type BoardPlacementGate =
   | { readonly kind: "ready"; readonly workerProjectId: ProjectId | null }

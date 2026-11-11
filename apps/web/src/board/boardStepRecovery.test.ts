@@ -1,5 +1,5 @@
 /**
- * The ways out of a stalled step (T3O-13): Continue, Restart, and Move to the
+ * The ways out of a stalled step: Continue, Restart, and Move to the
  * next stage, offered as one split button.
  */
 import { BOARD_SEED_STAGE_IDS, BOARD_SEED_STAGES } from "@t3tools/contracts";
@@ -12,7 +12,7 @@ import {
   resolveBoardStepRecovery,
 } from "./boardStepRecovery";
 
-// The global pipeline: CI only joins a project's (T3O-44).
+// The global pipeline: CI only joins a project's.
 const stages = BOARD_SEED_STAGES.filter((stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.ci);
 
 describe("resolveBoardStepRecovery", () => {

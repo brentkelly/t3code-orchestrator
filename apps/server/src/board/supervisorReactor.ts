@@ -1,20 +1,8 @@
 /**
- * T3o supervisor reactor (t3o-10) — the core of T3o. The board stops being a
- * record of work and starts causing it.
- *
- * A `DrainableWorker`-backed reactor following `CheckpointReactor` /
- * `ProviderCommandReactor`. It consumes board and thread-lifecycle events and
- * dispatches commands, driving each card's step through Select → Admit → Spawn
- * → Run → Settle → Release (D4). All *decisions* are pure functions in
- * `supervisor.ts`; this module is the effectful shell: read state, spawn
- * threads, provision worktrees, dispatch commands.
- *
- * Death is routine, not exceptional (the module notes on t3o-09/t3o-10): a step
- * thread that settles without calling `board_complete_step` has died or stalled
- * (`ProviderSessionReaper` makes "the thread is gone" a normal path), so it is
- * handled as control flow. Recovery escalates and never loops (D13). Boot
- * reconciliation re-reads every non-terminal step on startup, because the
- * server will restart mid-step.
+ * The board's effectful shell: consumes board and thread-lifecycle events and drives each
+ * card's step through Select, Admit, Spawn, Run, Settle, Release. Decisions are pure functions
+ * in `supervisor.ts`. Thread death is routine control flow, recovery escalates and never loops,
+ * and boot reconciliation re-reads every non-terminal step because the server restarts mid-step.
  */
 import {
   BOARD_CI_STOPPED_BY_YOU_REASON,
@@ -140,7 +128,7 @@ import {
   type BoardCardPullRequestTarget,
   type BoardLinkCardPullRequestResult,
   type ProjectId,
-  // T3o: the refresh answers rather than staying silent (T3O-48).
+  // T3o: the refresh answers rather than staying silent.
   type BoardRefreshCardPullRequestResult,
   type BoardCardStepAwaitingReason,
   type BoardCardStepState,
@@ -229,7 +217,7 @@ import {
   type BoardOfflineInterval,
   type BoardQueueCandidate,
 } from "./supervisor.ts";
-// T3o: the auto-merge classification and retry ladder (T3O-38, D5/D6).
+// T3o: the auto-merge classification and retry ladder.
 import {
   boardAutoMergeLadderStep,
   classifyBoardAutoMergeRefusal,
@@ -266,22 +254,21 @@ import { boardReleasedThreadIds } from "./threadRelease.ts";
 export type BoardMergeAttemptResult =
   | { readonly outcome: "merged"; readonly number: number }
   | { readonly outcome: "conflict"; readonly detail: string }
-  /** T3o (T3O-12): the checks failed and a CI-fix step has been started. */
+  /** T3o: the checks failed and a CI-fix step has been started. */
   | { readonly outcome: "checks-fix"; readonly detail: string }
   | {
       readonly outcome: "refused";
       readonly detail: string;
-      /** T3o (T3O-47): the probe that produced `detail`, for the ladder to
-          classify. Absent where the refusal was decided without asking the
-          forge — a retargeted base, a gate this board applied itself — which
-          the ladder reads as unclassifiable, the safe direction. Internal to
-          the supervisor; the RPC layer reads `detail` and nothing else. */
+      /**
+       * The probe that produced `detail`. Absent when the refusal was decided without asking the
+       * forge, which the ladder reads as unclassifiable (the safe direction). Internal: the RPC
+       * layer reads only `detail`.
+       */
       readonly mergeState?: BoardMergeState | null;
-      /** T3o (T3O-47): the refusal is known to be permanent — a merge strategy
-          this host does not offer, a permission this account lacks — so the
-          ladder must not spend eight rungs re-asking. Reads exactly like the
-          `not-open` / `no-pull-request` outcomes below, which have bypassed the
-          probe since D8. */
+      /**
+       * The refusal is permanent (an unsupported merge strategy, a missing permission), so the
+       * ladder must not re-ask; it reads like the `not-open` / `no-pull-request` outcomes.
+       */
       readonly permanent?: boolean;
     }
   | { readonly outcome: "not-open"; readonly state: "closed" | "merged" }
@@ -290,13 +277,13 @@ export type BoardMergeAttemptResult =
   /** The card is not in the merge-role stage. The button only renders there,
       so this is a client that called the RPC without one. */
   | { readonly outcome: "wrong-stage" }
-  /** The card's base moved since its last review round started (t3o-24, D2):
+  /** The card's base moved since its last review round started:
       the card went back to review to rebase and run one gate round instead of
       merging an unreviewed combined diff. */
   | { readonly outcome: "stale-base" }
   | { readonly outcome: "unknown-card" };
 
-/** What a "Submit for merge — no review" click did (t3o-07, D1), for the RPC
+/** What a "Submit for merge — no review" click did, for the RPC
     to turn into a sentence on the card. */
 export type BoardSubmitAttemptResult =
   | { readonly outcome: "started" }
@@ -313,7 +300,7 @@ export type BoardSubmitAttemptResult =
   | { readonly outcome: "unknown-card" }
   | { readonly outcome: "failed" };
 
-/** What "Another review round" / "Request review" did (T3O-39, D6/D7), for
+/** What "Another review round" / "Request review" did, for
     the RPC to turn into a sentence on the card. */
 export type BoardRequestReviewRoundResult =
   | { readonly outcome: "started"; readonly round: number }
@@ -326,7 +313,7 @@ export type BoardRequestReviewRoundResult =
   | { readonly outcome: "stuck" }
   | { readonly outcome: "failed" };
 
-/** What "Remove worktree" did (T3O-52, D5), for the RPC to turn into a
+/** What "Remove worktree" did, for the RPC to turn into a
     sentence on the card. */
 export type BoardForceRemoveWorktreeResult =
   | { readonly outcome: "removed" }
@@ -335,7 +322,7 @@ export type BoardForceRemoveWorktreeResult =
   | { readonly outcome: "unknown-card" }
   | { readonly outcome: "failed" };
 
-/** What one reclaim attempt on a card's worktree did (T3O-52): removed, kept
+/** What one reclaim attempt on a card's worktree did: removed, kept
     with the refusal it recorded, or skipped because another reclaim of the
     same card was already running. */
 type BoardCardReclaimAttempt =
@@ -344,24 +331,15 @@ type BoardCardReclaimAttempt =
   | { readonly outcome: "busy" }
   | { readonly outcome: "failed" };
 
-/** How a CI hold marks the pass beyond its reason (T3O-61). */
+/** How a CI hold marks the pass beyond its reason. */
 type CiHoldOptions = { readonly machine?: boolean; readonly headline?: BoardCiHeadline };
 
 const isThreadCommandFailed = Schema.is(ThreadCommandFailedError);
 
 /**
- * What a failed spawn left behind (T3O-66, D22), read off the remote
- * gateway's cause:
- *
- * - `none`: refused, failed where the board could see it fail, or failed
- *   before the spawn call was sent (staging the card's files). No thread is
- *   left (the gateway deletes one whose first turn never started).
- * - `worker-offline`: the worker couldn't be reached, so nothing was sent.
- * - `unknown`: any `WorkerRpcError` on the spawn call itself. The connection
- *   went mid-call, or the worker died partway through (a defect, which the
- *   transport marks `unsupported`; an online worker is past the protocol
- *   floor, so it does have the call). Either way the worker may have created
- *   the thread, so it must not be read as "no thread".
+ * What a failed spawn left behind, read off the remote gateway's cause: `none` (no thread
+ * exists), `worker-offline` (nothing was sent), or `unknown` (a `WorkerRpcError` on the spawn
+ * call itself: the worker may have created the thread, so it must not be read as none).
  */
 const spawnFailureLeft = (cause: Cause.Cause<unknown>) => {
   const error = Cause.findErrorOption(cause).pipe(Option.getOrUndefined);
@@ -372,10 +350,10 @@ const spawnFailureLeft = (cause: Cause.Cause<unknown>) => {
 };
 
 // Consecutive git failures provisioning one card's branch before the build
-// step parks for a human instead of retrying again (T3O-15).
+// step parks for a human instead of retrying again.
 const TRANSIENT_PROVISION_FAILURE_LIMIT = 3;
 
-/** What provisioning a card's worktree came to (T3O-15): a path, a failure
+/** What provisioning a card's worktree came to: a path, a failure
     only a human can fix, or one the next scheduling pass may get past. */
 type WorktreeOutcome =
   | { readonly kind: "ready"; readonly path: string }
@@ -388,40 +366,40 @@ export interface SupervisorReactorShape {
   readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   /** Reconcile every non-terminal step against the live world (boot / test). */
   readonly reconcile: Effect.Effect<void>;
-  /** One timeout-sweep pass over running unattended steps (t3o-17). In
+  /** One timeout-sweep pass over running unattended steps. In
       production the worker runs it on a timer; exposed so tests can drive the
       liveness clock deterministically. */
   readonly sweep: Effect.Effect<void>;
   /** One scheduled-start pass: clear every card whose time has arrived, which
-      is what makes it act (T3O-19, D3/D4). Rides the same 30s timer as the
+      is what makes it act. Rides the same 30s timer as the
       sweep in production; exposed for the same reason, so a test can fire a due
       card without wall-clock time. */
   readonly fireSchedules: Effect.Effect<void>;
-  /** One auto-archive pass over idle Done cards (T3O-77). Same 30s timer;
+  /** One auto-archive pass over idle Done cards. Same 30s timer;
       exposed so a test can age a card with `TestClock` and fire the pass. */
   readonly fireAutoArchives: Effect.Effect<void>;
   /** One auto-start pass: move every armed card whose dependencies are all met
-      into the build-role stage (T3O-24, D3/D6). Rides the same 30s timer and
+      into the build-role stage. Rides the same 30s timer and
       boot reconciliation; exposed so a test can drive the self-healing pass
       without wall-clock time. */
   readonly startArmed: Effect.Effect<void>;
-  /** One retry pass: requeue every step whose backoff rung has arrived (T3O-22,
-      D7). Rides the same 30s timer and boot reconciliation; exposed so a test
+  /** One retry pass: requeue every step whose backoff rung has arrived.
+      Rides the same 30s timer and boot reconciliation; exposed so a test
       can fire a due rung without waiting two minutes of wall-clock time. */
   readonly fireRetries: Effect.Effect<void>;
   /** One auto-merge pass: attempt every armed card whose retry rung has
-      arrived (T3O-38, D5). Same 30s timer and boot reconciliation as the
+      arrived. Same 30s timer and boot reconciliation as the
       passes above; exposed so a test can walk the ladder without
       waiting eighty-six minutes of wall-clock time. */
   readonly fireAutoMerges: Effect.Effect<void>;
-  /** One release pass: settle every thread the board is finished with (t3o-13).
+  /** One release pass: settle every thread the board is finished with.
       Runs on the same timer as the sweep and at every step boundary; exposed so
       tests can drive the retry that lands after an agent's turn ends. */
   readonly releaseThreads: Effect.Effect<void>;
   /** Resolves when the internal queue, and the per-card worktree cleanup it
       hands off, are empty and idle (test hook). */
   readonly drain: Effect.Effect<void>;
-  /** Ask for a worktree-cleanup pass (T3O-52, D4); single-flight, so a burst
+  /** Ask for a worktree-cleanup pass; single-flight, so a burst
       of requests runs at most one pass plus one follow-up. */
   readonly sweepWorktrees: (options?: {
     readonly refreshOpenPullRequests?: boolean;
@@ -429,28 +407,24 @@ export interface SupervisorReactorShape {
   /** Resolves when the reactor's queue is idle and no worktree-cleanup pass
       is running or queued (test hook). */
   readonly drainWorktreeSweep: Effect.Effect<void>;
-  /** A human's "Remove worktree" on a finished card (T3O-52, D5). */
+  /** A human's "Remove worktree" on a finished card. */
   readonly forceRemoveWorktree: (
     cardId: BoardCardId,
   ) => Effect.Effect<BoardForceRemoveWorktreeResult>;
-  /** A human's "Check again" on a card that kept its worktree (T3O-52): a
+  /** A human's "Check again" on a card that kept its worktree: a
       forced pull-request refresh, then the settle, answering what the reclaim
       did — so a repeat refusal, which writes nothing, still says so. */
   readonly checkWorktree: (cardId: BoardCardId) => Effect.Effect<BoardCheckCardWorktreeResult>;
-  /** Re-resolve one card's pull request from the forge and record any change.
-      The client-driven refresh triggers (card detail opened, View PR clicked)
-      call this through the board RPC.
-
-      T3o (T3O-48): `force` is a human's "Check again", which bypasses the
-      two-minute lookup cache and its failure backoff. It ANSWERS, too — the
-      automatic callers ignore the value, but a button whose result is silence
-      cannot tell "there is no pull request" from "the forge could not be
-      asked", which is the confusion this card was filed about. */
+  /**
+   * Re-resolve one card's pull request from the forge and record any change. `force` is a
+   * human's "Check again": it bypasses the lookup cache and its backoff, and the answer tells
+   * "no pull request" apart from "the forge could not be asked".
+   */
   readonly refreshPullRequest: (
     cardId: BoardCardId,
     options?: { readonly force?: boolean },
   ) => Effect.Effect<BoardRefreshCardPullRequestResult>;
-  /** Check a pull request can be linked to a card in this project (T3O-18):
+  /** Check a pull request can be linked to a card in this project:
       on the project's repository, and known to the forge. Records nothing. */
   readonly resolvePullRequestLink: (
     projectId: ProjectId,
@@ -459,8 +433,8 @@ export interface SupervisorReactorShape {
     | { readonly outcome: "resolved"; readonly pullRequest: BoardCardPullRequest }
     | { readonly outcome: "refused"; readonly detail: string }
   >;
-  /** Link a pull request to a card explicitly, or clear the link with `null`
-      (T3O-18). `resolved` is a `resolvePullRequestLink` answer the caller
+  /** Link a pull request to a card explicitly, or clear the link with `null`.
+      `resolved` is a `resolvePullRequestLink` answer the caller
       already holds. */
   readonly linkPullRequest: (
     cardId: BoardCardId,
@@ -470,15 +444,15 @@ export interface SupervisorReactorShape {
   /** Merge a card's pull request and advance it (the Merge button). */
   readonly mergePullRequest: (cardId: BoardCardId) => Effect.Effect<BoardMergeAttemptResult>;
   /** Open the card's pull request from Building and route it past Code review
-      ("Submit for merge — no review", t3o-07, D1). */
+      ("Submit for merge — no review"). */
   readonly submitForMerge: (cardId: BoardCardId) => Effect.Effect<BoardSubmitAttemptResult>;
-  /** Run one more review round on a settled loop (T3O-39, D6) — "Another
+  /** Run one more review round on a settled loop — "Another
       review round" from Code review or Ready for merge, and "Request review"
       on a card that has never had one. */
   /** Wait until no CI pass is running and what each one's end started has
-      been handled (T3O-44). Tests drain on it. */
+      been handled. Tests drain on it. */
   readonly drainCi: Effect.Effect<void>;
-  /** Skip CI for a card in the CI stage (T3O-44): a human's override. `stamp`
+  /** Skip CI for a card in the CI stage: a human's override. `stamp`
       marks the commands it dispatches as the human's. */
   readonly skipCi: (
     cardId: BoardCardId,
@@ -488,9 +462,9 @@ export interface SupervisorReactorShape {
     cardId: BoardCardId,
     carry?: BoardRequestReviewRoundInput["carry"] | undefined,
   ) => Effect.Effect<BoardRequestReviewRoundResult>;
-  /** Retry CI and "Send back to review anyway" (T3O-49): a human's way out
+  /** Retry CI and "Send back to review anyway": a human's way out
       of a stopped or held CI pass. */
-  /** Retry CI, or Stop CI (T3O-59) with `action: "stop"`. */
+  /** Retry CI, or Stop CI with `action: "stop"`. */
   readonly retryCi: (
     cardId: BoardCardId,
     action?: "retry" | "stop",
@@ -507,7 +481,7 @@ const clip = (text: string, max: number): string =>
 const clockNowMs = Effect.map(DateTime.now, DateTime.toEpochMillis);
 
 /** How long past a provider's reset time the board's own safety-net wake
-    waits for a usage-limit park (T3O-72). The engine resumes the thread AT the
+    waits for a usage-limit park. The engine resumes the thread AT the
     reset; the grace keeps the board from racing it to the same thread. */
 const USAGE_LIMIT_RESUME_GRACE_MS = 10 * 60_000;
 
@@ -521,32 +495,32 @@ type SupervisorInput =
   // Boot reconcile, run THROUGH the worker so it is serialised before the live
   // events it causes (the subscriptions attach first — see `start`).
   | { readonly source: "reconcile" }
-  // Periodic timeout sweep (t3o-17): the edge-triggered turn.completed path
+  // Periodic timeout sweep: the edge-triggered turn.completed path
   // cannot see a turn that HANGS, so a timer funnels overdue running steps
   // into the same recovery ladder.
   | { readonly source: "timeout-sweep" }
-  // T3O-65: the board's workers changed — a clone finished, a worker came
+  // The board's workers changed — a clone finished, a worker came
   // online, an instance appeared — which may start a held card.
   | { readonly source: "workers" }
-  // T3O-44: a CI pass finished on its own fiber; what follows is decided here.
+  // A CI pass finished on its own fiber; what follows is decided here.
   | { readonly source: "ci"; readonly finished: BoardCiPassFinished };
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-/** How much of a forge refusal an auto-merge hold keeps (T3O-38, D4). The
+/** How much of a forge refusal an auto-merge hold keeps. The
     reason rides every card-carrying event and renders in a banner; `gh` will
     happily print several paragraphs. Long enough for the sentence that
     matters, short enough that it cannot bloat the log. */
 const MAX_AUTO_MERGE_REASON_LENGTH = 400;
 
-/** The board with the projects its cards live in (T3O-58). */
+/** The board with the projects its cards live in. */
 interface BoardWorld {
   readonly board: BoardState | undefined;
   readonly projects: ReadonlyArray<BoardProject>;
 }
 
 /**
- * A card whose work was cancelled to make it a parent (T3O-28) and whose
+ * A card whose work was cancelled to make it a parent and whose
  * checkout is still there. Only an own-branch group legitimately holds a ready
  * worktree, and the decider refuses `target=own` until this one is reclaimed
  * and refuses dropping `own` while a group's integration worktree exists.
@@ -576,19 +550,9 @@ function earlierArchivedSubtrees(
 }
 
 /**
- * The model/access override in force for a card's CURRENT stage (t3o-29),
- * resolved through the parent for a sub-board child, or null when the
- * workspace config governs.
- *
- * The reactor resolves it because it is the only layer that can see both the
- * card and the board it sits on; what the override then GOVERNS is the
- * executor's call, so this is handed down on the config rather than folded into
- * `model` (see `BoardStageExecutorConfig.cardOverride`). That is what keeps the
- * reactor from having to know that a review stage treats it differently.
- *
- * Free: the ancestors are already in the aggregate every caller holds, so this
- * is an in-memory walk, not a read. Groups nest (T3O-27), so the whole chain is
- * consulted, nearest first.
+ * The model/access override for the card's current stage, nearest group ancestor first, or
+ * null when the workspace config governs. Handed down on the executor config rather than
+ * folded into `model`, so only the executor knows how a review stage treats it.
  */
 function cardStageModelOverride(
   board: BoardState,
@@ -602,25 +566,10 @@ function cardStageModelOverride(
 }
 
 /**
- * Whether the card's step row is a review-loop phase that settled `succeeded`
- * while the card is still in its review stage — the one quiet state in which
- * the loop may still owe a phase nobody started (T3O-5). Scoped to the review
- * stage so a step left behind by a card that has since moved on is never
- * re-planned against the stage it moved to.
- *
- * Known gaps: only an owed `run` is resumed, and the resume never measures
- * base staleness. So three halts stay parked in Code review until a human
- * moves the card:
- * - the loop's FINAL phase settled and the `advanceStage` after it failed. The
- *   plan is `complete`, which the re-plan ignores, because routing it to
- *   `advanceStage` could re-advance a graduated card.
- * - the failed dispatch was an owed `sync@N` (a clean round on a stale base).
- *   With staleness pinned unmeasured, the resume plans `complete` instead.
- *   Nothing merges unsynced: the review→merge crossing and the Merge click
- *   re-measure staleness.
- * - the stage-entry kickoff failed, so `review@1` never started after the
- *   move into review. The step row is still the previous stage's, which this
- *   check rejects.
+ * Whether the step row is a review-loop phase that settled `succeeded` while the card is still
+ * in its review stage, so the loop may owe a phase nobody started. Only an owed `run` resumes,
+ * without measuring base staleness: a failed final `advanceStage`, an owed `sync@N` and a failed
+ * stage-entry kickoff stay parked until a human moves the card.
  */
 function settledReviewPhase(
   board: BoardState,
@@ -632,7 +581,7 @@ function settledReviewPhase(
   return stage !== null && effectiveBoardStageRole(stage) === "review";
 }
 
-/** Triage and adjudication steps, which never wait on a human (T3O-55). */
+/** Triage and adjudication steps, which never wait on a human. */
 const isReviewDecidingStep = (state: Pick<BoardCardStepState, "stepId">): boolean =>
   boardReviewQuestionAnswer(state.stepId) !== null;
 
@@ -643,20 +592,16 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadGateway;
   const serverSettings = yield* ServerSettingsService;
   const slots = yield* BoardStepSlots;
-  // T3O-64 (D21): every git and forge operation for a card runs in the card's
+  // Every git and forge operation for a card runs in the card's
   // workspace — this server's, or the worker it is placed on.
   const workspaces = yield* BoardWorkspaces;
   const workspaceFor = (card: Pick<BoardCard, "id" | "projectId">) => workspaces.forCard(card);
   const setupRunner = yield* BoardSetupScriptRunner;
-  // The activation boundary the boot reconcile waits on (t3o-10, D3). Captured
-  // at CONSTRUCTION, where the reference is in scope (`activationLayer` is
-  // provided to the runtime services layer), because `reconcile` itself runs on
-  // the worker fiber in the caller's context. It is a `Context.Reference`
-  // defaulting to `undefined`, so every test that wires no activation waits for
-  // nothing.
+  // Captured at construction, where the reference is in scope: `reconcile` runs on the worker
+  // fiber in the caller's context. Defaults to `undefined`, so tests wire no activation.
   const serverActivation = yield* ServerActivation;
-  // T3O-43: each project's committed t3o.json, read from its checkout here.
-  // T3O-44: CI steps run by the board itself, here or on a card's worker.
+  // Each project's committed t3o.json, read from its checkout here.
+  // CI steps run by the board itself, here or on a card's worker.
   const ciRunner = yield* BoardCiRunner;
   const workerConnections = yield* Effect.serviceOption(WorkerConnections);
 
@@ -669,7 +614,7 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Where a step's slot is held (T3O-65, D11): the worker its thread runs on,
+   * Where a step's slot is held: the worker its thread runs on,
    * or — before it has one — the worker its card runs on. A release lands on
    * the worker its acquire did: a move is refused while a step runs, and every
    * parked status gives its slot back first.
@@ -703,9 +648,9 @@ const make = Effect.gen(function* () {
   const liveThread = (threadId: ThreadId) =>
     threads.threadState(threadId).pipe(
       Effect.flatMap((state) =>
-        // T3o (T3O-63): a thread on a worker the board cannot reach is neither
+        // T3o: a thread on a worker the board cannot reach is neither
         // gone nor alive, so no decision may be taken on it: surfaced as a
-        // read failure until offline handling (T3O-66) owns it.
+        // read failure until offline handling owns it.
         state === UNKNOWN_THREAD_STATE
           ? Effect.fail(
               new ThreadReadError({
@@ -733,33 +678,11 @@ const make = Effect.gen(function* () {
 
   const dispatch = (command: BoardCommand) => logged(command.type, dispatchAny(command));
 
-  /** `dispatch`, but a REFUSAL is an expected answer rather than a fault.
-   *
-   *  A handful of the supervisor's writes are speculative by design: the
-   *  reactor cannot know whether the command still applies by the time the
-   *  decider sees it, so it asks and accepts "no". The graduation sweep fires a
-   *  settle at every thread the card holds without checking which are still
-   *  running; the review loop settles the phase it just left; a refresh records
-   *  a pull request another trigger may have recorded a moment earlier. In each
-   *  case the decider's refusal IS the guard the caller is relying on, and the
-   *  plain helper logging it at WARN turns the normal path into a stream of
-   *  warnings about nothing.
-   *
-   *  Only a refusal is demoted — that is the decider saying "this command does
-   *  not apply", which is what these callers asked about. Anything else (a
-   *  storage failure, a defect) is still a warning, because none of these call
-   *  sites is speculating about THAT.
-   *
-   *  Two tags count as a refusal: the board decider's
-   *  `BoardCommandInvariantError`, and the thread gateway's
-   *  `ThreadCommandRefusedError`. The latter includes the settle guard saying
-   *  the thread is still busy, which for the release sweep (t3o-13) is not
-   *  merely expected but the NORMAL answer — an agent reports its step
-   *  complete from inside its own turn — so logging it at WARN would turn the
-   *  healthy path into a stream of warnings about nothing.
-   *
-   *  Returns whether the command LANDED, so a caller that is retrying until it
-   *  does (again, the release sweep) can stop asking. */
+  /**
+   * `dispatch`, but a refusal (`BoardCommandInvariantError` or `ThreadCommandRefusedError`) is
+   * an expected answer logged quietly: these callers speculate and the refusal is their guard.
+   * Other failures still warn. Returns whether the command landed, so a retrying caller can stop.
+   */
   const optional = (
     commandType: string,
     effect: Effect.Effect<unknown, BoardDispatchError | ThreadCommandError>,
@@ -788,21 +711,11 @@ const make = Effect.gen(function* () {
     );
   const dispatchOptional = (command: BoardCommand) => optional(command.type, dispatchAny(command));
 
-  /** `dispatch`, but the caller learns WHY the decider said no: the refusal's
-      own sentence, or `null` when the command landed.
-   *
-   *  For the one write whose refusal has to reach the USER rather than the log
-   *  — the directed advance behind "Submit for merge — no review" (t3o-07,
-   *  D6). It runs after the submit step has pushed the branch and opened the
-   *  pull request, so a swallowed refusal leaves the card in Building with a
-   *  fresh pull request and no account of why it stayed. D6 promises those
-   *  gates "refuse it with their own message"; this is how the message gets
-   *  out.
-   *
-   *  Only an INVARIANT refusal comes back as a sentence. Anything else is a
-   *  fault, not the decider answering, and is logged like any other dispatch —
-   *  the card must not display an infrastructure hiccup as though a rule had
-   *  refused it. */
+  /**
+   * `dispatch`, answering the decider's refusal sentence, or `null` when the command landed. For
+   * writes whose refusal must reach the user, not the log. Only an invariant refusal comes back;
+   * any other failure is a fault, logged like any dispatch, never shown as a rule refusing.
+   */
   const dispatchRefusal = (command: BoardCommand) =>
     dispatchAny(command).pipe(
       Effect.as<string | null>(null),
@@ -829,11 +742,8 @@ const make = Effect.gen(function* () {
     effect.pipe(
       Effect.as(true),
       Effect.catchCause((cause) =>
-        // An interrupt-only cause is a teardown, not a rejection: the command's
-        // fate is unknown, so reporting "did not land" would have the caller
-        // compensate — delete a thread that may exist, stall a step on a server
-        // that is merely shutting down. Re-interrupt instead, mirroring the WS
-        // bootstrap path's own guard.
+        // An interrupt-only cause is a teardown: the command's fate is unknown, and "did not land"
+        // would make the caller compensate (delete a thread that may exist). Re-interrupt instead.
         Cause.hasInterruptsOnly(cause)
           ? Effect.interrupt
           : Effect.logWarning("board supervisor dispatch failed", {
@@ -849,16 +759,10 @@ const make = Effect.gen(function* () {
     Effect.catchCause(() => Effect.succeed(DEFAULT_BOARD_SETTINGS)),
   );
 
-  /** What a stage with no model of its own runs on: the board's own default
-      model when the user has set one (t3o-30, D1), and only otherwise the app's
-      text-generation selection.
-   *
-   * The board still has no compiled-in pair — a hardcoded one is a pair the user
-   * may not have enabled, which is exactly how a conflict-resolution step came
-   * to spawn onto a codex CLI that was not installed. `Settings → Board` now
-   * names the fallback, so an unset stage runs on something the user chose and
-   * can see. The per-stage picker is still the recommended answer; this is what
-   * a never-configured stage lands on. */
+  /**
+   * What a stage with no model of its own runs on: the board's default model when set, else the
+   * app's text-generation selection. No compiled-in pair: it may name a provider not installed.
+   */
   const fallbackModelSelection = serverSettings.getSettings.pipe(
     Effect.map((settings) =>
       resolveBoardDefaultModelSelection(settings.board ?? DEFAULT_BOARD_SETTINGS, {
@@ -874,27 +778,9 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // Progress signal (t3o-17 D2, re-pointed by t3o-18 D16). The reactor — not the
-  // pure `recoveryDecision` — resolves whether a step made progress since the
-  // last nudge, from two OR'd sources: the step thread's TODO LIST advancing (a
-  // `turn.plan.updated` whose done count rose or whose in-progress item changed,
-  // recorded as `advancedAt` on `board_thread_todos`), or a new commit on the
-  // card's branch (read from git). A step with a live progress signal has its
-  // consecutive `stallCount` reset, so a long productive job never escalates.
-  //
-  // This replaces t3o-17's `board_report_progress` watermark, deleted by D13 —
-  // and it is a better signal on t3o-17's own terms. It wanted "the agent
-  // asserting it did some work" and rejected token output and tool-call counts as
-  // noise: a ticked todo names the specific item finished, where a prose note
-  // asserted only that the model still had tokens to spend. It is also durable
-  // rather than in-memory, so a restart no longer costs an un-reset stall.
-  // Threads spawned for a step whose admit was then rejected (see
-  // admitBuildCandidate): their turn must be stopped, but an interrupt fired
-  // milliseconds after spawn races provider session startup and no-ops. The
-  // set makes it durable — the runtime stream's `session.started` for an
-  // orphan re-dispatches the interrupt once a session exists to interrupt.
-  // Entries clear on interrupt or on the orphan's own turn.completed, so the
-  // set stays bounded.
+  // Threads spawned for a step whose admit was then rejected. An interrupt fired right after
+  // spawn races provider session startup and no-ops, so `session.started` for an orphan
+  // re-dispatches it. Entries clear on interrupt or the orphan's turn end, keeping the set bounded.
   const orphanedThreads = new Set<string>();
   const interruptOrphan = Effect.fn("board-supervisor-interruptOrphan")(function* (
     threadId: ThreadId,
@@ -905,66 +791,39 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // Threads the board unlinked while they were still alive — a leftover step a
-  // stage move abandoned, a conflict fix that finished. An unlink of a LIVE
-  // thread removes the link outright, so these are the one release
-  // `boardReleasedThreadIds` cannot derive from the card. Entries clear the
-  // first time a settle lands, so the set stays bounded by "abandoned this
-  // process".
+  // Threads unlinked while still alive: the one release `boardReleasedThreadIds` cannot derive
+  // from the card. Entries clear the first time a settle lands.
   const abandonedThreads = new Set<string>();
-  /** Thread → the interview run auto-plan interrupted to steer (T3O-32). Only
+  /** Thread → the interview run auto-plan interrupted to steer. Only
       that run's question, Stop and end are ignored; the next turn end clears it. */
   const steeredThreads = new Map<string, string>();
   /** Thread → an auto-plan instruction held until its usage limit lifts. */
   const deferredSteers = new Map<string, string>();
   /** Thread → the run the board interrupted to recover a review step that
-      asked a question (T3O-55). Its Stop and question are the board's own; the
+      asked a question. Its Stop and question are the board's own; the
       next turn end clears it. */
   const boardInterruptedRuns = new Set<string>();
-  /** Card → the `stepId attempt` whose question the board already answered
-      (T3O-55): a second question in the same attempt is recovered instead.
+  /** Card → the `stepId attempt` whose question the board already answered:
+      a second question in the same attempt is recovered instead.
       Keyed by card so a later step or attempt replaces it. */
   const answeredReviewQuestions = new Map<string, string>();
   const answeredReviewQuestion = (state: BoardCardStepState) =>
     answeredReviewQuestions.get(state.cardId) === `${state.stepId} ${state.attempt}`;
   /** The live thread is still running the run auto-plan interrupted. */
-  const stillOnSteeredRun = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const runId = steeredThreads.get(String(threadId));
-      if (runId === undefined) return false;
-      const shell = yield* liveThread(threadId).pipe(Effect.orElseSucceed(() => undefined));
-      return shell?.activeTurnRef === runId;
-    });
+  const stillOnSteeredRun = Effect.fn("board-supervisor-stillOnSteeredRun")(function* (
+    threadId: ThreadId,
+  ) {
+    const runId = steeredThreads.get(String(threadId));
+    if (runId === undefined) return false;
+    const shell = yield* liveThread(threadId).pipe(Effect.orElseSucceed(() => undefined));
+    return shell?.activeTurnRef === runId;
+  });
 
   /**
-   * Settle every thread the board is finished with (t3o-13).
-   *
-   * The ONE place the board settles a thread. It re-derives the whole released
-   * set from state rather than settling at the moment a thread becomes finished,
-   * because that moment is exactly when the settle cannot land: an agent reports
-   * its step complete from inside its own turn, and the decider refuses to
-   * settle a thread whose session is still running. Every trigger therefore
-   * calls this, and a refused settle is retried by the next one — a step
-   * boundary, the 30-second sweep, or boot reconcile.
-   *
-   * `thread.auto-settle` rather than `thread.settle` for the two guards it adds
-   * over the plain command: it refuses an already-settled thread (so a repeating
-   * sweep does not re-emit a `thread.settled` event per thread per pass) and it
-   * refuses one a human explicitly un-settled (so "keep this in my inbox"
-   * sticks).
-   *
-   * The two pre-filters are not those guards duplicated — they are what keeps a
-   * settle nobody could accept from writing a REJECTED command receipt on every
-   * pass, forever. They are split by cost, because a mature board holds hundreds
-   * of released threads and all but a handful are settled already:
-   *
-   *  1. One batch read of the cheap facts: gone, or its settlement already
-   *     decided. On a settled board it retires the entire set.
-   *  2. The thread engine's own auto-settle policy (`autoSettleCandidate`) on
-   *     the survivors — the same policy upstream's inactivity sweep gates on,
-   *     so "can this be settled automatically" has one definition. It costs a
-   *     query per candidate, which is why it runs second: after (1), on a
-   *     steady board, there are none.
+   * Settle every thread the board is finished with. The only place it settles: it re-derives
+   * the released set each pass because an agent completes its step inside its own turn, when the
+   * settle is refused. Pre-filters (one batch read, then `autoSettleCandidate`) keep a settle
+   * nobody could accept from writing a rejected receipt every pass.
    */
   const releaseFinishedThreads = Effect.gen(function* () {
     const board = yield* readBoard;
@@ -974,8 +833,8 @@ const make = Effect.gen(function* () {
       steeredThreads.delete(String(threadId));
       deferredSteers.delete(String(threadId));
       const thread = records.get(threadId);
-      // No record is no answer: the thread's worker couldn't be asked
-      // (T3O-66), so an abandoned thread there is kept for the next pass.
+      // No record is no answer: the thread's worker couldn't be asked,
+      // so an abandoned thread there is kept for the next pass.
       if (thread === undefined) continue;
       if (thread.deleted || thread.archived || thread.settlementDecided) {
         // Nothing left to ask about — and an abandoned thread that reaches this
@@ -1009,25 +868,11 @@ const make = Effect.gen(function* () {
     return Number.isFinite(a) && Number.isFinite(b) && a > b;
   };
 
-  /** The latest commit time (strict ISO 8601) of a commit unique to the card's
-      OWN branch, or null on any error / no such commit — a new commit since the
-      last nudge is progress (D2). Best-effort: git failure never blocks
-      recovery.
-   *
-      Scoped with `--not <base>` (t3o-10, D4) rather than reading the worktree
-      tip. A base sync fast-forwards commits that are reachable from the base
-      into the card's branch — a sibling card's squash merge, most often — and
-      the unscoped tip read every one of those as this agent's heartbeat, so a
-      dead build step re-armed its watchdog for another `timeoutMs` for as long
-      as siblings kept merging. Commits reachable from the base are excluded by
-      construction; everything the agent itself committed is kept, including a
-      merge commit its own sync-base step created, which IS agent work.
-   *
-      An unresolvable base ref (git exits 128) answers null, the same as "no
-      such commit": the heartbeat cannot be measured, so it shields nothing and
-      the step falls back to the todo-advance signal and the nudge ladder. That
-      direction is deliberate — the alternative, reading the tip when the scoped
-      read fails, is the exact defect this replaced. */
+  /**
+   * Latest commit time unique to the card's own branch (`--not <base>`), or null on any error.
+   * Scoped so base syncs (a sibling's merge) never count as this agent's heartbeat. An unresolvable
+   * base answers null rather than falling back to the tip, so it shields nothing.
+   */
   const latestBranchCommitIso = (card: BoardCard, worktreePath: string, baseRefName: string) =>
     workspaceFor(card).pipe(
       Effect.flatMap((workspace) => workspace.branchHeartbeat({ worktreePath, baseRefName })),
@@ -1035,7 +880,7 @@ const make = Effect.gen(function* () {
       Effect.catchCause(() => Effect.succeed(null as string | null)),
     );
 
-  /** The step thread's cached todo row, or null (t3o-18). Best-effort: a
+  /** The step thread's cached todo row, or null. Best-effort: a
       snapshot query built without the board factory (upstream test mocks) or a
       read failure both answer "no list", which reads as "no progress" — the
       conservative direction. */
@@ -1048,16 +893,11 @@ const make = Effect.gen(function* () {
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
   });
 
-  /** When the step thread last produced OUTPUT — an assistant message or an
-      activity row — or null (T3O-12, D1). Best-effort in the same shape as
-      `threadTodoState`: a missing `boardQueries` or a read failure answers
-      null, which reads as "no life sign" and is the conservative direction,
-      identical to the behaviour before this signal existed.
-
-      LIVENESS, not progress. Only the timeout sweep reads it; it is deliberately
-      kept out of `resolveProgressedSinceLastNudge` (D2), because chatter is not
-      progress and an agent thrashing in a tool loop must still climb the stall
-      ladder to a human. */
+  /**
+   * When the step thread last produced output, or null on a missing read model or failure.
+   * Liveness, not progress: only the timeout sweep reads it, so a thrashing agent still climbs
+   * the stall ladder.
+   */
   const threadLastSignalAt = Effect.fn("board-supervisor-threadLastSignalAt")(function* (
     threadId: ThreadId | null,
   ) {
@@ -1068,31 +908,10 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Whether a turn has been REQUESTED on this step's thread since the board
-   * last set the step working, and has not begun (T3O-18).
-   *
-   * The completion the reactor is holding is then for a turn the human has
-   * already moved past: they sent the next message while the previous turn was
-   * still finishing, so the agent is not stopped and not dead — it is about to
-   * be handed more work. Parking on that completion is a lie the card wears for
-   * the rest of the run, because nothing re-resumes it: the resume signal
-   * (`thread.turn-start-requested`) fired FIRST, found a running step, and did
-   * nothing. `turn.started` is deliberately not a second resume signal (t3o-34,
-   * D5), and rightly so — adapters synthesise it for background output nobody
-   * asked for.
-   *
-   * `session.activeTurnId`, which the caller checks beside this, cannot see the
-   * window: the requested turn has no id until the provider starts it, so the
-   * session names the ended turn or nothing at all.
-   *
-   * Bounded by `lastNudgeAt ?? startedAt`, the same reference the timeout sweep
-   * measures from: only a request made since the board last put this step to
-   * work can supersede its completion, so a pending row left behind by a turn
-   * that never started cannot suppress parking for ever.
-   *
-   * Best-effort in the shape of `threadTodoState` beside it: a missing
-   * `boardQueries` or a read failure answers false, which is exactly the
-   * behaviour before this signal existed.
+   * Whether a turn was requested on the step's thread since `lastNudgeAt ?? startedAt` and has
+   * not begun. Its completion is then one the human already moved past, and nothing would
+   * re-resume a park on it. `session.activeTurnId` cannot see this window. A read failure
+   * answers false.
    */
   const supersededByPendingTurn = Effect.fn("board-supervisor-supersededByPendingTurn")(function* (
     state: BoardCardStepState,
@@ -1106,11 +925,11 @@ const make = Effect.gen(function* () {
     return requestedAt !== null && isAfter(requestedAt, floor);
   });
 
-  /** Resolve `progressedSinceLastNudge` for a step (t3o-17 D2 / t3o-18 D16): the
-      step thread's todo list ADVANCED, or a new commit landed on the card's
-      branch, both since the recorded `lastNudgeAt`. The first stall has no nudge
-      window yet, so it is never counted as progress. Kept out of
-      `recoveryDecision`, which stays pure — no git, no SQL. */
+  /**
+   * The step thread's todo list advanced, or a commit landed on the card's branch, since
+   * `lastNudgeAt`. The first stall has no nudge window, so never counts. Kept out of the pure
+   * `recoveryDecision`.
+   */
   const resolveProgressedSinceLastNudge = Effect.fn(
     "board-supervisor-resolveProgressedSinceLastNudge",
   )(function* (state: BoardCardStepState, card: BoardCard) {
@@ -1131,19 +950,18 @@ const make = Effect.gen(function* () {
     return yield* committedSince(state, card, since);
   });
 
-  /** A commit unique to the card's branch landed after `since`. The
-      background-wait check-ins (T3O-20) read only this half of the progress
-      signal: answering a check-in is itself a todo edit, so a todo advance
-      would restart the schedule on every reply and the wait would never reach
-      the ladder's ceiling. */
+  /**
+   * A commit unique to the card's branch landed after `since`. Background-wait check-ins read
+   * only this half: answering one is itself a todo edit, which would restart the schedule forever.
+   */
   const committedSince = Effect.fn("board-supervisor-committedSince")(function* (
     state: BoardCardStepState,
     card: BoardCard,
     since: string,
   ) {
-    // A commit counts too (D2); only a build-mode step has a worktree to
+    // A commit counts too; only a build-mode step has a worktree to
     // inspect, and only a commit unique to the card's branch is its agent's
-    // work (t3o-10, D4) — otherwise a sibling's merge, synced in from the base,
+    // work — otherwise a sibling's merge, synced in from the base,
     // would reset this card's stall counter.
     const worktreePath = card.worktree?.path ?? null;
     const baseRefName = card.worktree?.baseRefName ?? null;
@@ -1152,22 +970,11 @@ const make = Effect.gen(function* () {
     return committedAt !== null && isAfter(committedAt, since);
   });
 
-  /** Whether the step's agent stopped with something for a human to answer
-      (t3o-34, D2).
-   *
-      The reactor does the SQL and `boardTextEndsWithQuestion` does the reading,
-      the same split `progressedSinceLastNudge` uses to keep `recoveryDecision`
-      pure. A read failure — or a thread with no assistant message at all —
-      answers `false`, which routes a human-in-the-loop stop to the louder
-      "Needs a human" and leaves the unattended nudge exactly as it was.
-
-      Only a message the agent wrote SINCE the work last resumed counts. A turn
-      that ends having said nothing — interrupted, errored, tool-only — leaves an
-      older message newest, and taking it at face value would re-park the card on
-      a question the human has already answered, and prepend "you asked a
-      question" to every nudge from then on. The reference point is
-      `lastNudgeAt`, which every resume and every nudge moves to now, falling
-      back to when the step started. */
+  /**
+   * Whether the agent stopped with a question for a human. Only an assistant message since
+   * `lastNudgeAt ?? startedAt` counts, so a silent turn never re-parks on an answered question.
+   * A read failure, or no message, answers false.
+   */
   const endedWithQuestion = Effect.fn("board-supervisor-endedWithQuestion")(function* (
     state: Pick<BoardCardStepState, "threadId" | "lastNudgeAt" | "startedAt">,
   ) {
@@ -1198,29 +1005,26 @@ const make = Effect.gen(function* () {
     return project?.workspaceRoot ?? null;
   };
 
-  /** A card's Automation toggles (T3O-38) off the board alone. Board-wide
+  /** A card's Automation toggles off the board alone. Board-wide
       auto-merge lives in settings; a caller that needs Auto-merge reads
       `automationOf`. */
   const automationIn = (board: BoardState, card: BoardCard): BoardResolvedAutomation =>
     resolveBoardCardAutomationIn({ board, card, boardWideAutoMerge: false });
 
-  /** The build stage's per-card human-in-the-loop default (D6): a card with a
-      plan uses `humanInLoopWithPlan`, one without uses `humanInLoopWithoutPlan`
-      — so writing a plan moves the default with it. A sub-board child counts
-      as planned (its approved plan became its brief, so it owns no plan row):
-      `boardBuildHumanInLoopDefault` is the one rule, shared with the card
-      detail so the toggle's hint and the run agree. */
+  /**
+   * The build stage's per-card human-in-the-loop default; a sub-board child counts as planned.
+   * Shared with the card detail so the toggle's hint and the run agree.
+   */
   const buildHumanInLoopDefault = (
     board: BoardState,
     exec: BoardStageExecution,
     card: BoardCard,
   ): boolean => boardBuildHumanInLoopDefault(exec, isBoardCardPlanned(board, card.id));
 
-  /** The resolved human-in-the-loop stance for a fresh (first-entry) run of a
-      stage (D5/D6). The build role reads the per-card toggle over its two
-      defaults; every other stage uses its own `humanInLoop` setting. A
-      re-entry (D7) forces human-in-the-loop regardless and is handled by the
-      caller. */
+  /**
+   * The human-in-the-loop stance for a stage's first-entry run: the build role reads the
+   * per-card toggle, other stages their own setting. Re-entry is the caller's to force.
+   */
   const resolveHumanInLoop = (
     board: BoardState,
     settings: BoardSettings,
@@ -1229,7 +1033,7 @@ const make = Effect.gen(function* () {
   ): boolean => {
     const stage = boardStageById(board, card.stage);
     const role = stage === null ? null : effectiveBoardStageRole(stage);
-    // The Automation toggles are the human's authorisation (T3O-38): Auto-build
+    // The Automation toggles are the human's authorisation: Auto-build
     // runs the build unattended over the card's own stance, and an
     // auto-planned card is planned unattended — nobody is there to answer.
     if (role === "build") {
@@ -1246,7 +1050,7 @@ const make = Effect.gen(function* () {
   };
 
   /** Whether the card already has a live (non-tombstoned) linked thread for a
-      stage's step (D7): auto-kickoff is suppressed so a manually adopted thread
+      stage's step: auto-kickoff is suppressed so a manually adopted thread
       is never trampled. The step's role is the stage id. */
   const hasLiveStageThread = (card: BoardCard, stageId: string): boolean =>
     card.threadLinks.some((link) => link.role === stageId && isLiveBoardCardThreadLink(link));
@@ -1256,12 +1060,10 @@ const make = Effect.gen(function* () {
   const sendTurn = Effect.fn("board-supervisor-sendTurn")(function* (input: {
     readonly threadId: ThreadId;
     readonly text: string;
-    /** The frozen run-row authority (t3o-21). A nudge/resume on an EXISTING
-        thread inherits that thread's posture, so this is inert today — but
-        passing the step's real value rather than a hardcoded `full-access`
-        keeps the "board never forces full-access" invariant true at every
-        dispatch and removes a footgun if the turn command ever stops ignoring
-        it for existing threads. */
+    /**
+     * Inert for existing threads today; passing the step's real value keeps the "board never
+     * forces full-access" invariant true at every dispatch.
+     */
     readonly runtimeMode: BoardCardStepState["runtimeMode"];
   }) {
     yield* logged(
@@ -1277,11 +1079,10 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /** Report a worktree failure onto the card, with the reason a human can act
-      on. Every arm of `ensureWorktree` reports through here so a build that
-      cannot start is visible on the card (activity rail) rather than only in
-      the server log — including the pre-flight arms that fail before a worktree
-      record exists, which the decider accepts for exactly that reason. */
+  /**
+   * Report a worktree failure onto the card with an actionable reason, including pre-flight
+   * arms that fail before a worktree record exists, so it is visible in the activity rail.
+   */
   const failWorktree = Effect.fn("board-supervisor-failWorktree")(function* (
     card: BoardCard,
     error: string,
@@ -1295,12 +1096,8 @@ const make = Effect.gen(function* () {
     });
   });
 
-  // The project checkout's DEFAULT branch (resolved in the card's workspace,
-  // `LocalBoardWorkspace.resolveDefaultBranch`). Shared by worktree
-  // provisioning and integration-branch creation; `defaultBranch === ""` is
-  // the failure signal, `detachedHead` and `unbornBranch` (a repository with
-  // no commits) disambiguate the message, and `unavailable` is a worker the
-  // board cannot reach — not a repository fault, so nothing is reported for it.
+  // `defaultBranch === ""` is the failure signal; `detachedHead` and `unbornBranch`
+  // disambiguate the message. `unavailable` is an unreachable worker, so nothing is reported.
   const resolveDefaultBranch = (workspace: BoardCardWorkspace) =>
     workspace.resolveDefaultBranch({}).pipe(
       Effect.map((resolved) => ({ ...resolved, unavailable: false })),
@@ -1338,11 +1135,8 @@ const make = Effect.gen(function* () {
         : `${cwd} is not a git repository, or has no commits yet, so there is no branch to cut ${what} from.`;
 
   /**
-   * Make sure `base` names a LOCAL branch in the card's checkout (T3O-5, D7),
-   * creating it from `<remote>/<base>` when it exists only on the remote
-   * (`LocalBoardWorkspace.ensureLocalBaseBranch`). Answers whether the caller
-   * may go on to cut from it, or `unavailable` for a worker the board cannot
-   * reach.
+   * Make sure `base` names a local branch, creating it from `<remote>/<base>` when only the
+   * remote has it. Answers whether the caller may cut from it, or `unavailable`.
    */
   const ensureLocalBaseBranch = (workspace: BoardCardWorkspace, base: string) =>
     workspace.ensureLocalBaseBranch({ base }).pipe(
@@ -1355,33 +1149,25 @@ const make = Effect.gen(function* () {
       Effect.catchCause(() => Effect.succeed<boolean | "unavailable">(false)),
     );
 
-  // Provision the card's branch + worktree (t3o-09 effects), reporting every
-  // failure arm through `failWorktree` so the card carries a visible reason.
-  // Answers the worktree path, or why there is none. `stuck` failures are
-  // deterministic — retrying on the next scheduling pass changes nothing until a
-  // human fixes the repo — so the caller parks the step (`provisionBuildStep`);
-  // a transient one (git itself failing, a provision already in flight) leaves
-  // the step pending for the next pass to retry, as it always did.
+  // Answers the worktree path, or why there is none. `stuck` failures are deterministic, so the
+  // caller parks the step; transient ones leave it pending for the next pass to retry.
   const ensureWorktree = Effect.fn("board-supervisor-ensureWorktree")(function* (card: BoardCard) {
     if (card.worktree !== null && card.worktree.status === "ready" && card.worktree.path !== null) {
       return { kind: "ready", path: card.worktree.path } as WorktreeOutcome;
     }
     const stuck = (reason: string) =>
       failWorktree(card, reason).pipe(Effect.as<WorktreeOutcome>({ kind: "stuck", reason }));
-    // T3O-64: a worker the board cannot reach is no fault of the repository.
+    // A worker the board cannot reach is no fault of the repository.
     // Nothing is reported, no attempt is spent, and the next pass retries.
     const unreachable = { kind: "transient" } as WorktreeOutcome;
     const workspace = yield* workspaceFor(card);
     const cwd = workspace.checkoutPath;
-    // Every pre-flight failure below reports through `fail-worktree` rather
-    // than a server-side log: the card is the only place the human is looking,
-    // and a build that cannot start must say so THERE (the activity rail's
-    // "could not prepare the worktree: …" row) instead of leaving the card
-    // parked in its stage with nothing running and no explanation.
+    // Pre-flight failures report onto the card, not the server log: the card is where the human
+    // is looking.
     if (cwd === null) {
       return yield* stuck(noWorkspaceFolderReason(workspace));
     }
-    // A provision the worker dropped mid-way (T3O-64) resumes on the slice it
+    // A provision the worker dropped mid-way resumes on the slice it
     // already recorded: `provision-worktree` would be refused for a worktree
     // still `provisioning`, and re-dispatching it would count an attempt.
     const resuming =
@@ -1395,28 +1181,15 @@ const make = Effect.gen(function* () {
       });
     }
     const branch = boardCardWorktreeBranchName(card);
-    // A sub-board plan card branches off its parent's integration branch
-    // (D12); a top-level card off the project default.
+    // A sub-board plan card branches off its parent's integration branch;
+    // a top-level card off the project default.
     const resolved = yield* resolveDefaultBranch(workspace);
     if (resolved.unavailable) return unreachable;
     const { defaultBranch } = resolved;
-    // A child of a LIVE split retries the integration-branch creation HERE,
-    // BEFORE resolving its base (t3o-23, D5): approval fires the creation
-    // once, but the reactor may have been down or git transiently broken at
-    // that moment, and a fire-once side effect with no second chance would
-    // strand the split. The trigger is the parent's state, not a null
-    // resolution — a second-round parent (reclaimed slice, merged pull
-    // request retired into history) resolves to the OLD round's base rather
-    // than null, so a null-trigger would silently route every child there. A
-    // live split parent is exactly one thing: frozen in the build-role stage
-    // with a slice that names no live branch. A DONE parent is not touched —
-    // its merged baseRef below is the right base for a straggler child.
-    // Each child build attempt is the organic retry; `ensureIntegrationBranch`
-    // is idempotent, so a raced pair of children converges on the one branch.
-    // Why the parent's integration branch could not be cut, when this pass
-    // tried and failed — the child's own "no base" reason quotes it, because
-    // the fix (a first commit, a checked-out branch) is in the PARENT's repo
-    // state and the child is the card the human is looking at (T3O-15).
+    // A live split's child retries the integration-branch creation before resolving its base:
+    // approval fires it once and may have failed. Triggered by the parent's state, not a null base
+    // (a second-round parent resolves to its old base). `parentFailure` is quoted in the child's
+    // "no base" reason, since the fix is in the parent's repo state.
     let parentFailure: {
       readonly key: string;
       readonly reason: string;
@@ -1424,7 +1197,7 @@ const make = Effect.gen(function* () {
     } | null = null;
     if (card.parentCardId !== null) {
       const board = yield* readBoard;
-      // The group whose integration branch this card is cut from (T3O-27):
+      // The group whose integration branch this card is cut from:
       // the nearest own-target ancestor; inherit groups pass through.
       const parent = boardCardIntegrationAncestor(board, card) ?? undefined;
       const buildStage = boardStageWithRole(board, "build");
@@ -1472,12 +1245,8 @@ const make = Effect.gen(function* () {
             : "The parent card has no branch yet, so there is no base to cut this card's branch from.",
       );
     }
-    // The base must exist LOCALLY (T3O-5, D7): `worktree.baseRefName` is read
-    // back as `refs/heads/<base>` by `measureBaseTip`, fetched as
-    // `<base>:<base>` by `pullMergedBaseBranch`, and used verbatim as the
-    // rebase target — each breaks silently on a remote-qualified name. So a
-    // base that exists only on the remote is materialised first, exactly as
-    // `ensureIntegrationBranch` materialises its own branch below.
+    // The base must exist locally: `measureBaseTip`, `pullMergedBaseBranch` and the rebase all
+    // use it as a local name and break silently on a remote-qualified one.
     const baseExists = yield* ensureLocalBaseBranch(workspace, baseRefName);
     if (baseExists === "unavailable") return unreachable;
     if (!baseExists) {
@@ -1520,7 +1289,7 @@ const make = Effect.gen(function* () {
       : "The card's project has no checkout on its worker.";
 
   /**
-   * Cards whose provision the worker dropped mid-way (T3O-64): their worktree
+   * Cards whose provision the worker dropped mid-way: their worktree
    * is recorded `provisioning`, and the next pass finishes the provision on
    * that slice instead of starting another. In memory — after a restart the
    * boot reconcile sees the slice as it always did.
@@ -1587,18 +1356,9 @@ const make = Effect.gen(function* () {
     return { kind: "ready", path: provisioned.path } as WorktreeOutcome;
   });
 
-  // Provision a build step's worktree, parking the step `stalled` with reason
-  // `no-worktree` when the failure is one only a human can fix (T3O-15). Left
-  // `pending`, such a step had no thread, no chip and no queue position — the
-  // card sat in Building looking idle, and every scheduling pass re-failed it
-  // into another identical activity row. Parked, it is amber on the board with
-  // the reason as its error, and Continue (a requeue) retries provisioning.
-  // Spends no recovery budget: the agent never ran, so nothing failed it.
-  // A git failure is retried on the next pass, but only so many times in a
-  // row: one that keeps failing (a stale ref lock, a full or read-only disk)
-  // is not a hiccup, and left pending it would recreate exactly the idle,
-  // thread-less card this exists to prevent. The count lives in memory and is
-  // dropped on success or park, so Continue starts a fresh run of retries.
+  // A failure only a human can fix parks the step `stalled` (`no-worktree`) so the card shows
+  // it, spending no recovery budget. Git failures retry on later passes up to a limit; the
+  // in-memory count clears on success or park, so Continue starts fresh.
   const transientProvisionFailures = new Map<string, number>();
   const provisionBuildStep = Effect.fn("board-supervisor-provisionBuildStep")(function* (
     card: BoardCard,
@@ -1646,16 +1406,9 @@ const make = Effect.gen(function* () {
     return null;
   });
 
-  // Create a fresh thread for a step and link it to the card, returning the new
-  // thread id. Shared by the initial spawn and by recovery when the step's
-  // thread has vanished (reaped/deleted). The card↔thread link is what lets the
-  // agent's board_* tools resolve their card (the MCP write path keys on it, D3).
-  // The one push (t3o-32, K4): a build-mode or plan-mode spawn carries the
-  // brief's images natively, so a "screenshot plus 'fix this'" card is seen on
-  // turn one. Staged as fresh pending uploads so upstream's Normalizer claims
-  // them into thread scope untouched. Absent config (the test harness) means
-  // nothing to stage — the manifest still reaches every thread through
-  // `board_get_card_context`.
+  // Spawn and link a fresh thread for a step (initial spawn, or recovery of a vanished
+  // thread); the link is how the agent's board_* tools resolve their card. Build and plan-mode
+  // spawns stage the brief's images as pending uploads; with no config nothing is staged.
   const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
   // The reactor's shape promises `never` requirements, so the file services
   // its storage helpers need are captured here and provided at the call.
@@ -1688,7 +1441,7 @@ const make = Effect.gen(function* () {
             ),
     });
 
-  // T3O-65 (D20): the board's workers as placement sees them — absent on a
+  // The board's workers as placement sees them — absent on a
   // local-only harness, where every card runs here.
   const placement = yield* Effect.serviceOption(BoardPlacement);
   const workersNow = Option.match(placement, {
@@ -1721,11 +1474,8 @@ const make = Effect.gen(function* () {
       }),
     } as const;
   });
-  // ── Offline workers (T3O-66, D22) ────────────────────────────────────
-  // A worker the board can't reach is unknown, not dead (D4): nothing it ran
-  // may be decided on until it is back and its steps have been reconciled.
-  // In memory, like the slot counts: a restart starts every worker unreconciled,
-  // so the boot pass hands each to `reconcileWorker` once it is online.
+  // A worker the board can't reach is unknown, not dead: nothing it ran is decided on until it
+  // is back and reconciled. In memory, so a restart starts every worker unreconciled.
   /** Workers online and reconciled since they last came back. */
   const reconciledWorkers = new Set<BoardWorkerId>();
   /** When each registered worker the board can't reach went out of reach. */
@@ -1764,7 +1514,7 @@ const make = Effect.gen(function* () {
       workerId !== BOARD_LOCAL_WORKER_ID && !(online.has(workerId) && workerReconciled(workerId));
   });
 
-  // T3O-63: the brief's files a thread on a worker reads from where they were
+  // The brief's files a thread on a worker reads from where they were
   // staged there.
   const stagedBriefFiles = (card: BoardCard) => ({
     cardId: String(card.id),
@@ -1785,25 +1535,25 @@ const make = Effect.gen(function* () {
 
   const spawnStepThread = Effect.fn("board-supervisor-spawnStepThread")(function* (input: {
     readonly card: BoardCard;
-    /** The frozen run-row fields a spawn needs (D12). */
+    /** The frozen run-row fields a spawn needs. */
     readonly step: {
       readonly stepId: string;
-      /** Null on a stage with no steps (t3o-19, D4); the title falls back to
+      /** Null on a stage with no steps; the title falls back to
           the frozen stage label. */
       readonly stepLabel: string | null;
       readonly stageLabel: string | null;
       readonly providerInstanceId: BoardCardStepState["providerInstanceId"];
       readonly model: string;
-      /** Frozen run-row mode (D5/D12): governs resources (worktree + slot). */
+      /** Frozen run-row mode: governs resources (worktree + slot). */
       readonly mode: BoardCardStepState["mode"];
-      /** Frozen run-row agent authority (t3o-21): the user-chosen posture, read
+      /** Frozen run-row agent authority: the user-chosen posture, read
           verbatim — the board never derives it from `mode`. */
       readonly runtimeMode: BoardCardStepState["runtimeMode"];
-      /** Frozen run-row model options (reasoning/effort, t3o-21). */
+      /** Frozen run-row model options (reasoning/effort). */
       readonly modelOptions: BoardCardStepState["modelOptions"];
     };
     /** Where the thread runs: the card's worktree for a `build`-mode step, the
-        project workspace root for a `plan`-mode step (no worktree, D5). */
+        project workspace root for a `plan`-mode step (no worktree). */
     readonly worktreePath: string;
     /** The branch to open the thread on — the worktree's branch for `build`,
         null for `plan` (read-only, no branch). */
@@ -1811,19 +1561,15 @@ const make = Effect.gen(function* () {
     /** Whether to run the worktree setup script — build only. */
     readonly runSetup: boolean;
     readonly text: string;
-    /** The brief's images on a build/plan spawn (t3o-32, K4); `[]` elsewhere. */
+    /** The brief's images on a build/plan spawn (K4); `[]` elsewhere. */
     readonly attachments: ReadonlyArray<ChatAttachment>;
   }) {
     const { card, step } = input;
     const threadId = yield* freshThreadId;
-    // The agent authority is the USER's choice, frozen onto the run row at
-    // stage entry (t3o-21) and read verbatim here — the board no longer forces
-    // `full-access` on build-mode steps (a security defect). If the chosen
-    // posture asks for approval on a command, the run surfaces as "Input
-    // needed" and continues once a human approves. Tool access stays
-    // `interactionMode: "default"` (the MCP write tools are a separate axis).
+    // The user's agent authority, frozen onto the run row at stage entry; the board never forces
+    // `full-access`. An approval-gated command surfaces as "Input needed".
     const runtimeMode = step.runtimeMode;
-    // T3O-65 (D20): the worker the thread runs on — where the card holds its
+    // The worker the thread runs on — where the card holds its
     // worktree, else its pin, else the default — recorded as the card's
     // placement before anything spawns there.
     const board = yield* readBoard;
@@ -1839,22 +1585,18 @@ const make = Effect.gen(function* () {
       });
     }
     const remoteWorker = workerId === BOARD_LOCAL_WORKER_ID ? null : workerId;
-    // T3o (T3O-24): pin the agent's gh to origin on every build-mode spawn,
+    // T3o: pin the agent's gh to origin on every build-mode spawn,
     // not only at provisioning, so a worktree that predates the pin gets it
     // before its next agent runs. Idempotent and never fails the spawn.
     if (input.branch !== null) {
       yield* workspaceFor(card).pipe(
         Effect.flatMap((workspace) => workspace.pinGhDefault({ worktreePath: input.worktreePath })),
-        Effect.catchCause(() => Effect.void),
+        Effect.ignoreCause,
       );
     }
-    // A spawn whose create or first turn is refused leaves no thread behind
-    // (the gateway deletes a thread whose first turn never started), so such
-    // a failure is simply "no thread". A worker that couldn't be reached was
-    // sent nothing, and the step waits for it (D22). One that dropped
-    // mid-call may have created the thread: it is linked and run as spawned,
-    // so the worker's reconcile when it is back watches it if it is alive and
-    // recovers the step if it isn't — never a second agent in the worktree.
+    // A refused spawn leaves no thread. An unreachable worker was sent nothing, so the step waits.
+    // A mid-call drop may have created the thread: it is linked and run as spawned, so the worker's
+    // reconcile watches or recovers it, never a second agent in the worktree.
     const spawned = yield* threads
       .spawn({
         commandId: yield* commandId("spawn-thread"),
@@ -1899,7 +1641,7 @@ const make = Effect.gen(function* () {
       ...(remoteWorker === null ? {} : { workerId: remoteWorker }),
       createdAt: yield* nowIso,
     });
-    // Run the worktree setup script in the build thread's terminal (t3o-09).
+    // Run the worktree setup script in the build thread's terminal.
     // Build-mode only — a plan-mode step has no worktree. Best-effort.
     if (input.runSetup && remoteWorker === null) {
       yield* runBoardCardWorktreeSetup({
@@ -1915,15 +1657,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A spawn that produced no thread (the create or its first turn was
-   * rejected). Nothing is running, so the step must NOT be admitted as
-   * `running` against a thread that does not exist: that phantom state reads as
-   * a live run, so every later kickoff — a drag back in, the card's "+ →
-   * restart" — hits the one-step-at-a-time guard and silently does nothing.
-   *
-   * Land it in `stalled` instead, the same status recovery escalates to: the
-   * card shows the loud badge, and an on-demand restart explicitly supersedes a
-   * stalled step, so the human has a way back.
+   * A spawn that produced no thread lands the step `stalled`, not `running`: a phantom running
+   * step would block every later kickoff, while a stalled one shows and can be restarted.
    */
   const escalateSpawnFailure = Effect.fn("board-supervisor-escalateSpawnFailure")(
     function* (input: { readonly card: BoardCard; readonly state: BoardCardStepState }) {
@@ -1945,7 +1680,7 @@ const make = Effect.gen(function* () {
         createdAt: yield* nowIso,
       });
       // Escalation releases the step's slot exactly as the recovery escalation
-      // does (D4), gated on the PERSISTED `slotHeld`: a step that reached this
+      // does, gated on the PERSISTED `slotHeld`: a step that reached this
       // through recovery holds one, a step that never got admitted does not
       // (its caller releases the slot it had just acquired itself).
       yield* releaseSlot(input.state);
@@ -1959,23 +1694,16 @@ const make = Effect.gen(function* () {
       ? Effect.succeed(true)
       : liveThread(threadId).pipe(Effect.map((state) => state === undefined));
 
-  /** The prompt for a step's run, composed from the frozen run row (D12). The
-      role keys the envelope's deliverable postamble segment; roles are seeded,
-      never created, so the card's stage id resolves it without a board read.
-
-      The base branch (T3O-5, D9) is the one thing that needs a lookup: the
-      envelope names it on every stage, and answering it for an UNPINNED card
-      means asking git what the project's default branch is. Preference order is
-      the concrete fact first — `worktree.baseRefName` is what the branch was
-      really cut from — then the pin, then the resolved default, so a build or
-      review step states the branch it is genuinely working against rather than
-      the one someone has just retargeted it at but not yet rebased onto. */
+  /**
+   * The prompt for a step's run, composed from the frozen run row. The base branch prefers
+   * `worktree.baseRefName` (what the branch was really cut from), then the pin, then the default.
+   */
   const stepPromptFor = Effect.fn("board-supervisor-stepPromptFor")(function* (
     card: BoardCard,
     state: BoardCardStepState,
   ) {
     const role = boardSeedStageRole(card.stage);
-    // A started plan review rides every respawn and nudge (T3O-39), so a
+    // A started plan review rides every respawn and nudge, so a
     // recovered planning thread resumes it rather than completing without it.
     const planReview =
       role === "plan" && state.planReviewStartedAt !== undefined
@@ -2003,7 +1731,7 @@ const make = Effect.gen(function* () {
   });
 
   /** The instructions of the plan review running on this step, or null when
-      none is (plan review, T3O-39). */
+      none is (plan review). */
   const runningPlanReviewFor = Effect.fn("board-supervisor-runningPlanReviewFor")(function* (
     card: BoardCard,
     state: BoardCardStepState,
@@ -2014,7 +1742,7 @@ const make = Effect.gen(function* () {
     return planReviewInstructions({ board, card, settings, state });
   });
 
-  /** A human turned a running plan review off (plan review, T3O-39): tell the
+  /** A human turned a running plan review off (plan review): tell the
       planning thread to wrap up. A paused step is not told, for the reason
       the human-in-the-loop retune gives: the turn would un-pause it. */
   const handlePlanReviewStopped = Effect.fn("board-supervisor-handlePlanReviewStopped")(function* (
@@ -2037,15 +1765,15 @@ const make = Effect.gen(function* () {
     });
   });
 
-  /** A human turned plan review on after the plan was posted (plan review,
-      T3O-39): no tool result will carry the instructions, so send them as a
+  /** A human turned plan review on after the plan was posted:
+      no tool result will carry the instructions, so send them as a
       turn. The decider has already resumed a paused step or reopened a
-      finished one (T3O-50), so the state it reads here is running. */
+      finished one, so the state it reads here is running. */
   const handlePlanReviewStartedLate = Effect.fn("board-supervisor-handlePlanReviewStartedLate")(
     function* (event: Extract<BoardEvent, { type: "board.plan-review-started" }>) {
       if (event.payload.turnedOnLate !== true) return;
       // Putting the step to work overtakes a schedule, as the
-      // `board.card-step-recovered` arm does for every other resume (T3O-19, D6).
+      // `board.card-step-recovered` arm does for every other resume.
       yield* clearScheduleForCard(event.payload.cardId);
       const board = yield* readBoard;
       const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
@@ -2070,7 +1798,7 @@ const make = Effect.gen(function* () {
     },
   );
 
-  /** A human changed a running plan review's rounds (T3O-50): tell the
+  /** A human changed a running plan review's rounds: tell the
       planning thread the new total. A paused step is not told, as with a
       stop; it reads the new count when it resumes. */
   const handlePlanReviewRoundsChanged = Effect.fn("board-supervisor-handlePlanReviewRoundsChanged")(
@@ -2098,7 +1826,7 @@ const make = Effect.gen(function* () {
     },
   );
 
-  /** Whether the Code review stage's open-as-draft setting is on (T3O-12). */
+  /** Whether the Code review stage's open-as-draft setting is on. */
   const draftPullRequestsOn = Effect.fnUntraced(function* (card: BoardCard) {
     const board = yield* readBoard;
     const reviewStage = boardStageWithRole(board, "review");
@@ -2131,32 +1859,16 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Admit a step that already owns a LIVE thread, by nudging that thread
-   * (T3O-23) — a step the human paused and the board is now resuming.
-   *
-   * Not a spawn: the agent's context, its todo list and its half-finished work
-   * are all in the thread it already has, and re-sending the whole step prompt
-   * into a second one would throw that away and put two writers on the same
-   * worktree. A thread that is GONE answers `no-thread`, and the caller falls
-   * through to its ordinary spawn, which is the right recovery.
-   *
-   * Admits BEFORE nudging, the opposite order to a spawn, and for a reason a
-   * spawn does not have: there is no thread to orphan here. A refused admit
-   * after the nudge would leave an agent working on a step the board still
-   * records as queued, holding a slot nothing releases; a nudge that fails after
-   * a landed admit leaves a `running` step with no turn, which the timeout sweep
-   * already recovers.
+   * Admit a step that owns a live thread by nudging it, keeping the agent's context and never
+   * putting two writers on one worktree. A gone thread answers `no-thread` and the caller spawns.
+   * Admits before nudging: a refused admit after a nudge would leave an agent on a queued step.
    */
   const resumeExistingStepThread = Effect.fn("board-supervisor-resumeExistingStepThread")(
     function* (input: { readonly card: BoardCard; readonly state: BoardCardStepState }) {
       const { card, state } = input;
       if (state.threadId === null) return "no-thread";
-      // A card moved since this thread ran (T3O-65): the thread is on the old
-      // worker, in a checkout that was retired. The step starts afresh where
-      // the card is now; the old thread stays linked, on its old worker. This
-      // is checked before the thread is read: the old worker may be offline or
-      // removed (T3O-66), and reading through it would fail after the caller
-      // acquired a slot.
+      // A card moved since this thread ran starts afresh where it is now. Checked before reading
+      // the thread: the old worker may be offline or removed, and the caller already holds a slot.
       const board = yield* readBoard;
       const link = card.threadLinks.find((candidate) => candidate.threadId === state.threadId);
       const fresh = board.cards.find((candidate) => candidate.id === card.id) ?? card;
@@ -2177,12 +1889,8 @@ const make = Effect.gen(function* () {
         createdAt: yield* nowIso,
       });
       if (!admitted) return "refused";
-      // What the agent is told depends on WHY it stopped (T3O-22). A human's
-      // Stop and a scheduled hold both resume as "you were paused, carry on"; a
-      // provider that ran out of quota resumes as "the window reopened"; and a
-      // backoff rung reaching its time resumes with the recovery nudge it would
-      // have carried had it gone out immediately, recomposed from the step row
-      // rather than dragged across a park, a restart and a queue.
+      // The resume text depends on why it stopped; a backoff rung resumes with the recovery nudge
+      // recomposed from the step row.
       const text =
         state.stalledReason === "usage-limit"
           ? BOARD_STEP_USAGE_LIMIT_RESUME_NUDGE
@@ -2203,7 +1911,7 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Leave a step queued, saying which limit holds it (T3O-65, D11). A pending
+   * Leave a step queued, saying which limit holds it. A pending
    * step is recorded queued; a queued one is re-recorded only when the limit
    * changed, so a card waiting on a full worker writes one event, not one per
    * scheduling pass.
@@ -2226,8 +1934,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Stall a step whose provider instance its worker does not have (T3O-65,
-   * D10): the board never runs it elsewhere or on another provider. Amber, for
+   * Stall a step whose provider instance its worker does not have: the
+   * board never runs it elsewhere or on another provider. Amber, for
    * a human — another worker, or a model this one offers — and it spends no
    * recovery budget, because the agent never ran.
    */
@@ -2251,11 +1959,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Stall a step its worker can't be asked about any more (T3O-66, D22): the
-   * worker was removed, or the card was force-moved off it. Amber, spending no
-   * recovery budget — the agent did nothing wrong — and its slot is released.
-   * It continues once the card is moved, or the worker is added back
-   * (`requeueResolvedPlacementStalls`).
+   * Stall a step its worker can't be asked about any more (removed, or the card force-moved off
+   * it): amber, no recovery budget spent, slot released.
    */
   const stallWorkerRemoved = Effect.fn("board-supervisor-stallWorkerRemoved")(function* (
     state: BoardCardStepState,
@@ -2278,11 +1983,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Whether a step is bound to its thread where that thread is: running on
-   * it, or parked on it — a question, a backoff rung, a usage-limit park —
-   * waiting to be resumed there. A human's Pause is left alone: the decider
-   * refuses to recover it, and their resume starts afresh wherever the card
-   * now is (`resumeExistingStepThread`).
+   * Whether a step is running on its thread or parked on it waiting to resume there. A human's
+   * Pause is excluded: their resume starts afresh wherever the card now is.
    */
   const stepBoundToThread = (state: BoardCardStepState) =>
     state.threadId !== null &&
@@ -2291,8 +1993,8 @@ const make = Effect.gen(function* () {
       state.status === "awaiting-input" ||
       (state.status === "stalled" && state.stalledReason !== "worker-removed"));
 
-  /** Every step running or parked on a worker just removed from the board
-      (D22). A card that follows the default from now on restarts there. */
+  /** Every step running or parked on a worker just removed from the board.
+      A card that follows the default from now on restarts there. */
   const stallStepsOnRemovedWorker = Effect.fn("board-supervisor-stallStepsOnRemovedWorker")(
     function* (workerId: BoardWorkerId) {
       reconciledWorkers.delete(workerId);
@@ -2309,11 +2011,8 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * A card's live step still reads as running, or parked, on a worker the
-   * board can't reach, while the card itself now runs somewhere else — it was
-   * force-moved, or re-pinned off it (T3O-66). Nothing will ever end or resume
-   * that run as the board sees it, so it is stalled, and continues where the
-   * card is now.
+   * A live step still reads as running or parked on an unreachable worker while the card now
+   * runs elsewhere. Nothing will end or resume that run, so it is stalled.
    */
   const stallStrandedStep = Effect.fn("board-supervisor-stallStrandedStep")(function* (
     cardId: BoardCardId,
@@ -2332,12 +2031,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Provision a freshly selected build step's worktree at stage entry, but only
-   * where the step can run now (T3O-65). A card mid-move, or one whose worker
-   * is offline, still cloning or missing the provider, is left to `schedule()`,
-   * whose gates hold or stall it and provision once the worker is ready —
-   * provisioning here would cut the worktree on the wrong worker, or stall a
-   * card that is merely waiting on a clone.
+   * Provision a build step's worktree at stage entry only where it can run now. Other cards are
+   * left to `schedule()`, so a worktree is never cut on the wrong worker.
    */
   const provisionPlacedBuildStep = Effect.fn("board-supervisor-provisionPlacedBuildStep")(
     function* (cardId: BoardCardId) {
@@ -2352,16 +2047,9 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Put a step stalled for a missing provider back in the queue once its card
-   * can run it (T3O-65): it was pinned elsewhere, or the instance appeared on
-   * the worker. A model change restarts the stage instead, which re-freezes the
-   * step. The scheduling pass that follows re-checks, so a step whose worker
-   * still lacks the instance simply stalls again.
-   *
-   * And one stalled because its worker was removed (T3O-66), once the card
-   * holds no more: it was moved or re-pinned, or the worker was added back.
-   * Requeued, it resumes its thread where that thread still is, or starts
-   * afresh on the card's new worker.
+   * Requeue a step stalled for a missing provider once its card can run it, or one stalled for
+   * a removed worker once the card is moved, re-pinned or the worker is back. The following pass
+   * re-checks, so a step whose worker still can't run it simply stalls again.
    */
   const requeueResolvedPlacementStalls = Effect.fn(
     "board-supervisor-requeueResolvedPlacementStalls",
@@ -2405,8 +2093,8 @@ const make = Effect.gen(function* () {
   });
 
   // Offer one build-mode step to the governor: acquire a slot under the resolved
-  // caps and spawn its thread on the card's worktree, or leave it queued (D11).
-  // Enforces the one-writer-per-worktree invariant (t3o-09) BEFORE acquiring, so
+  // caps and spawn its thread on the card's worktree, or leave it queued.
+  // Enforces the one-writer-per-worktree invariant BEFORE acquiring, so
   // a refused spawn never leaks a slot.
   const admitBuildCandidate = Effect.fn("board-supervisor-admitBuildCandidate")(function* (input: {
     readonly card: BoardCard;
@@ -2421,7 +2109,7 @@ const make = Effect.gen(function* () {
       workerId: input.workerId,
       providerInstanceId: state.providerInstanceId,
     };
-    // One writer at a time per worktree (t3o-09 invariant). The assertion counts
+    // One writer at a time per worktree (an invariant). The assertion counts
     // the writer we are ABOUT to spawn, so an existing writer plus the new one
     // fails it; on failure we REFUSE before acquiring a slot, so the invariant
     // blocks rather than stranding a slot.
@@ -2431,7 +2119,7 @@ const make = Effect.gen(function* () {
     // it — admitting would be rejected AFTER the slot was acquired.
     const fresh = board.cards.find((candidate) => candidate.id === card.id);
     if (fresh === undefined || fresh.archivedAt !== null) return;
-    // A step being RE-admitted already owns its thread (T3O-23: a paused step
+    // A step being RE-admitted already owns its thread (a paused step
     // resumed through the queue keeps the conversation it had), so counting it
     // alongside the `board-admit:` sentinel below would be counting the same
     // writer twice and the re-admission would refuse itself every time.
@@ -2458,32 +2146,24 @@ const make = Effect.gen(function* () {
     );
     if (wouldConflict) return;
 
-    // A human asked for this step over the cap (t3o-33), so the slot is TAKEN,
-    // not requested: `restore` is the same unconditional take boot
-    // reconciliation uses. The count stays honest — it simply sits above the
-    // ceiling until this step settles and releases it exactly once, like every
-    // other step — and the policy in `acquire` is never quietly bypassed on the
-    // ordinary path.
+    // A human forced this step over the cap, so the slot is taken unconditionally (`restore`); the
+    // count sits above the ceiling until this step releases it, exactly once.
     const admission = yield* state.forceStart
       ? slots.restore(slotKey).pipe(Effect.as({ admitted: true } as const))
       : slots.acquire(slotKey, input.limits);
     if (!admission.admitted) {
       // No slot right now. A fresh (pending) step is recorded queued so the card
       // shows its badge; a queued step stays put and is re-offered next
-      // boundary — re-recorded only when the limit holding it changed (T3O-65).
+      // boundary — re-recorded only when the limit holding it changed.
       yield* holdQueued(state, admission.blockedBy);
       return;
     }
 
-    // Until an admit lands, the slot just taken is this candidate's alone:
-    // the persisted `slotHeld` is still false, so no settle path would ever
-    // give it back. Any failure before then — the step's worker dropping
-    // between the placement gate and the read of its thread (T3O-66) — returns
-    // it here. Nothing after an admit lands can fail, so this never releases
-    // a slot the step row holds.
+    // Until an admit lands the slot is this candidate's alone (`slotHeld` is still false), so any
+    // failure before then returns it here. Nothing after a landed admit can fail.
     yield* Effect.gen(function* () {
-      // A step that already owns a live thread is being RESUMED, not started
-      // (T3O-23): it was paused, a human pressed Resume, and the governor has just
+      // A step that already owns a live thread is being RESUMED, not started:
+      // it was paused, a human pressed Resume, and the governor has just
       // admitted it. A refused resume must give the slot straight back, or the
       // acquire above leaks capacity nothing will ever release.
       const resumed = yield* resumeExistingStepThread({ card, state });
@@ -2526,11 +2206,8 @@ const make = Effect.gen(function* () {
         yield* holdQueued(state, "worker-offline");
         return;
       }
-      // Observe the admit dispatch (the generic `dispatch` helper swallows
-      // rejections): if admit-step does not land, the persisted `slotHeld` stays
-      // false and the settle path can never release the slot just acquired — a
-      // permanent under-capacity leak. Release it here and unlink the orphaned
-      // thread instead.
+      // If admit-step does not land, `slotHeld` stays false and nothing would release the slot:
+      // release it here and unlink the orphaned thread.
       const admitLanded = yield* boardEngine
         .dispatch({
           type: "board.card.admit-step",
@@ -2556,12 +2233,8 @@ const make = Effect.gen(function* () {
         );
       if (!admitLanded) {
         yield* slots.release(slotKey);
-        // The spawn already started an agent turn — interrupt it so the orphan
-        // is not left burning tokens against a step the board refused to admit.
-        // The immediate dispatch only lands if the provider session has already
-        // bound (a slow admit); the usual case is caught durably by the
-        // orphanedThreads set — the runtime `session.started` for this thread
-        // re-dispatches the interrupt once there is a session to interrupt.
+        // Interrupt the orphan's turn. This lands only if the session has bound; otherwise
+        // `orphanedThreads` re-dispatches it on the thread's `session.started`.
         orphanedThreads.add(String(threadId));
         yield* interruptOrphan(threadId);
         yield* dispatch({
@@ -2571,14 +2244,14 @@ const make = Effect.gen(function* () {
           threadId,
           createdAt: yield* nowIso,
         });
-        // Unlinked while alive, so no card derives it any more (t3o-13). It is a
+        // Unlinked while alive, so no card derives it any more. It is a
         // thread for a step the board refused to admit — nothing will use it.
         abandonedThreads.add(String(threadId));
       }
     }).pipe(Effect.onError(() => slots.release(slotKey)));
   });
 
-  // A plan-mode step holds no slot and needs no worktree (D5): spawn it directly
+  // A plan-mode step holds no slot and needs no worktree: spawn it directly
   // in the project workspace root and mark it admitted. The decider records
   // `slotHeld: false` for a plan-mode admit, so nothing is charged against the
   // concurrency ceiling.
@@ -2587,11 +2260,8 @@ const make = Effect.gen(function* () {
     readonly state: BoardCardStepState;
   }) {
     const { card, state } = input;
-    // A plan-mode step can be paused and resumed too (T3O-23), and a planning
-    // conversation is precisely the thing worth continuing rather than
-    // restarting — so it takes the same existing-thread branch a build step
-    // does. It holds no slot, so a refusal here leaks nothing and simply leaves
-    // the step queued for the next pass.
+    // A paused plan-mode step resumes its existing thread like a build step. It holds no slot, so
+    // a refusal leaks nothing and leaves the step queued.
     const resumed = yield* resumeExistingStepThread({ card, state });
     if (resumed !== "no-thread") return;
     const model = yield* readModel;
@@ -2646,8 +2316,8 @@ const make = Effect.gen(function* () {
     });
   });
 
-  // The governor's scheduling pass (t3o-11, D11). Plan-mode steps spawn
-  // immediately (no slot, no worktree, D5). Build-mode steps waiting for a slot,
+  // The governor's scheduling pass. Plan-mode steps spawn
+  // immediately (no slot, no worktree). Build-mode steps waiting for a slot,
   // whose worktree is ready, are ordered by the priority rule (stage desc →
   // started before unstarted → drag order) and offered to the governor greedily.
   const schedule = Effect.fn("board-supervisor-schedule")(function* () {
@@ -2677,15 +2347,15 @@ const make = Effect.gen(function* () {
       if (card === undefined || card.archivedAt !== null) continue;
       // A card moving to another worker holds until its new worktree is
       // ready, and one whose move failed until a human retries or picks
-      // another worker (T3O-65) — its old worktree is gone.
+      // another worker — its old worktree is gone.
       if (card.workerMove !== null) continue;
-      // Placement (T3O-65, D20): the step runs on the card's worker, and only
+      // Placement: the step runs on the card's worker, and only
       // once that worker is online, has a checkout of the project and has the
       // step's provider instance. Ahead of the plan branch: a planning thread
       // needs the checkout as much as a build does.
       const placed = yield* placementFor(board, card, state);
       if (placed.gate.kind === "offline") {
-        // Held, saying so (T3O-66): the card wears Worker offline until its
+        // Held, saying so: the card wears Worker offline until its
         // worker is back.
         yield* holdQueued(state, "worker-offline");
         continue;
@@ -2701,39 +2371,20 @@ const make = Effect.gen(function* () {
       if (state.mode === "plan") {
         // Plan-mode holds no slot: spawn a freshly selected step now. Nothing
         // withholds a plan step, so `queued` used to be unreachable here — but a
-        // paused planning step sent back through Resume (T3O-23) arrives exactly
+        // paused planning step sent back through Resume arrives exactly
         // that way, and skipping it would wedge the card in the queue forever.
         yield* admitPlanStep({ card, state });
         continue;
       }
-      // The scheduled-start gate (T3O-19, D2). FIRST, before the worktree is
-      // provisioned and long before a slot is offered, so a card scheduled for
-      // tomorrow morning holds no slot, takes no queue position ahead of cards
-      // genuinely waiting on an agent, and cuts no branch overnight from a base
-      // that will have moved by the time it runs. The cost is that provisioning
-      // happens at the due moment, so the start is seconds late rather than
-      // instant; worth it.
-      //
-      // Deliberately AFTER the plan-mode branch above: a plan step is never
-      // withheld, which is what makes the create dialog's promise true — "no
-      // effect unless the card has reached Ready or Building by then, planning
-      // and approval still need you".
-      //
-      // `forceStart` wins, as it does over the concurrency cap: a human pressing
-      // "start it anyway" has overtaken a time they set earlier.
+      // Scheduled-start gate, before provisioning or a slot: a future card holds neither and cuts
+      // no branch from a base that will have moved. After the plan-mode branch, since a plan step
+      // is never withheld. `forceStart` wins.
       if (!state.forceStart && !isBoardCardScheduleDue(card.scheduledStartAt, nowMs)) {
         continue;
       }
-      // A build-mode step needs a ready worktree to spawn into. Anything that
-      // is not `ready` and not mid-flight `provisioning` is (re)provisioned
-      // right here, so a provisioning failure is a visible, retried step —
-      // never a silently wedged pending one. That set is: `null` (never
-      // provisioned), `failed` (retry), `reclaimed` (a card dragged back out
-      // of Done to be reworked), and `branch-only` (a split PARENT reaching
-      // its own review — its integration branch exists but no worktree does
-      // yet, t3o-23 D5). `ensureWorktree` is idempotent and attaches to an
-      // existing branch, so each of these resolves to a real worktree; only a
-      // slice already `provisioning` is left to be re-offered when it lands.
+      // Anything not `ready` or mid-`provisioning` is (re)provisioned here, so a failure is a
+      // visible, retried step rather than a wedged pending one. `ensureWorktree` is idempotent
+      // and attaches to an existing branch.
       let worktreePath =
         card.worktree !== null && card.worktree.status === "ready" ? card.worktree.path : null;
       if (
@@ -2764,18 +2415,15 @@ const make = Effect.gen(function* () {
         stepId: state.stepId,
         providerInstanceId: state.providerInstanceId,
         stageOrder: boardStageIndex(board, card.stage),
-        // …or the step already owns a thread (T3O-23): a paused step sent back
-        // through the queue is genuinely mid-stage and has no recorded
-        // completion to prove it, so without this it would rank as fresh work
-        // and could be starved behind the very cards this rule exists to
-        // outrank.
+        // …or the step already owns a thread: a paused step sent back through the queue is
+        // mid-stage with no recorded completion, and would otherwise rank as fresh work.
         started:
           state.threadId !== null ||
           boardCardStepCompletions(board, card.id).some((c) => c.stepId === state.stepId),
         orderKey: card.orderKey,
       });
     }
-    // A force-started step (t3o-33) is offered FIRST, and its position in the
+    // A force-started step is offered FIRST, and its position in the
     // priority order is irrelevant: it is not competing for a slot, it takes
     // one. Leaving it in place would only make it wait behind candidates the
     // governor is about to refuse anyway.
@@ -2790,13 +2438,8 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // ── Base-tip measurement (t3o-24, D1; T3O-64, D21) ─────────────────────
-  // The base's tip as the REMOTE has it, fetched first, in the card's
-  // workspace (`LocalBoardWorkspace.measureBaseTip`): a merge landed from
-  // another worker is base movement here too. Null is the honest failure
-  // signal (no worktree slice, no checkout, an unresolvable ref, an
-  // unreachable worker): staleness is measured, never assumed, so an
-  // unmeasurable tip records nothing and intercepts nothing.
+  // The base's tip as the remote has it, fetched first, so a merge from another worker counts as
+  // movement. Null when unmeasurable: staleness is measured, never assumed.
   const measureBaseTip = Effect.fn("board-supervisor-measureBaseTip")(function* (card: BoardCard) {
     const baseRefName = card.worktree?.baseRefName ?? null;
     if (baseRefName === null) return null;
@@ -2808,37 +2451,19 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // Whether the card's base has MOVED since the run row's recorded
-  // `baseTipAtRoundStart` (t3o-24, D1) — the reactor's one impure input to
-  // `planNext` and to the crossing/merge-click interceptions. Generic on
-  // purpose (D15): it compares two commit ids off the run row it already
-  // owns, and learns nothing about review rounds. Scoped to sub-board
-  // children: siblings are CREATED to collide on their shared base, while a
-  // top-level card's base moving is the universal condition of trunk
-  // development, reviewed at the human's discretion (t3o-24, scope).
+  // Whether the base moved since the run row's `baseTipAtRoundStart`; the reactor's one impure
+  // input to `planNext` and the crossing/merge-click interceptions.
   const resolveBaseStale = Effect.fn("board-supervisor-resolveBaseStale")(function* (
     card: BoardCard,
   ) {
-    // ── RETARGET (T3O-5, D10) ────────────────────────────────────────────
-    // Evaluated at ANY level, unlike the tip-moved condition below. A human
-    // pointed the card at a different branch after it was cut, so the card's
-    // stated base and its actual cut point disagree: opening a pull request
-    // against the new base would show every commit the old base has that the
-    // new one does not — a review of a diff nobody wrote. Reusing the sync
-    // step is what makes the picker honest after the branch exists.
-    //
-    // CONSEQUENCE, deliberate: a TOP-LEVEL card can now receive a sync step,
-    // which it never could before.
+    // A retarget counts at any level: the stated base and the actual cut point disagree, so a pull
+    // request would show commits nobody wrote. This lets even a top-level card get a sync step.
     if (yield* resolveBaseRetargeted(card)) return true;
-    // ── TIP MOVED (t3o-24, D1) ───────────────────────────────────────────
-    // Scoped to sub-board children exactly as it was: siblings are CREATED to
-    // collide on their shared base, while a top-level card's base moving is the
-    // universal condition of trunk development, reviewed at the human's
-    // discretion. Widening it would change behaviour for every card on the
-    // board.
+    // Tip movement counts only for sub-board children: siblings are created to collide on their
+    // shared base, while a top-level base moving is ordinary trunk development.
     if (card.parentCardId === null) return false;
     const board = yield* readBoard;
-    // Only cards merging into an integration branch (T3O-27): a child of an
+    // Only cards merging into an integration branch: a child of an
     // inherit group lands on trunk like a top-level card.
     if (!boardCardMergesIntoIntegrationBranch(board, card)) return false;
     const recorded = boardCardStepState(board, card.id)?.baseTipAtRoundStart ?? null;
@@ -2849,26 +2474,16 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * The base the card has been RETARGETED at (T3O-5, D10/D14) — its effective
-   * base when that differs from the one its branch was actually cut from — or
-   * null when the two agree, when it has no live branch, or when the base
-   * cannot be resolved (staleness is measured, never assumed).
-   *
-   * The retarget trigger, the sync prompt's new target, and the value
-   * `record-base-ref` writes once the rebase lands, all from one place; the
-   * card's amber divergence line renders from the same derived condition, so
-   * the warning cannot outlive the rebase that clears it or appear before one
-   * is needed.
+   * The base the card was retargeted at, when it differs from the one its branch was cut from;
+   * null when they agree, with no live branch, or when unresolvable. The one source for the
+   * retarget trigger, the sync target, `record-base-ref` and the card's divergence line.
    */
   const resolveBaseRetargetTarget = Effect.fn("board-supervisor-resolveBaseRetargetTarget")(
     function* (card: BoardCard) {
       const recorded = card.worktree?.baseRefName ?? null;
       if (recorded === null || !boardCardHasLiveBranch(card)) return null;
-      // The project default is the only input that costs git, and it is needed
-      // for exactly one shape: an unpinned top-level card. A pinned card
-      // answers from its own field, and a child from its parent's slice — so
-      // the common case of this check (which runs at every stage plan and every
-      // merge crossing) does no I/O at all.
+      // Only an unpinned top-level card needs the project default (git); everything else answers
+      // from fields, so this check, run at every plan and crossing, usually does no I/O.
       const needsDefault =
         card.parentCardId === null
           ? card.baseBranch === null
@@ -2898,11 +2513,8 @@ const make = Effect.gen(function* () {
     return (yield* resolveBaseRetargetTarget(card)) !== null;
   });
 
-  // The tip a select-step command records (t3o-24, D1): measured fresh when
-  // the executor's plan STARTS a review round (`recordBaseTip` — the
-  // executor's signal, so the reactor never parses review step ids), else
-  // carried forward from the row being replaced, so a round's later steps
-  // keep the tip their round's review started from.
+  // Measured fresh when the plan starts a review round (`recordBaseTip`), else carried forward
+  // so a round's later steps keep the tip their review started from.
   const baseTipForPlan = Effect.fn("board-supervisor-baseTipForPlan")(function* (
     card: BoardCard,
     recordBaseTip: boolean,
@@ -2912,12 +2524,9 @@ const make = Effect.gen(function* () {
     return boardCardStepState(board, card.id)?.baseTipAtRoundStart ?? null;
   });
 
-  // Generic auto-kickoff (D7): a card entering a stage (drag or create), or an
-  // on-demand thread request, resolves the stage's execution config, freezes it
-  // onto the run row (select-step), and spawns. Auto-kickoff acts only when the
-  // stage auto-executes; on-demand always starts a thread. First entry runs the
-  // stage prompt; a re-entry opens a clean human-in-the-loop thread with no
-  // prompt injected. A stage the card already has a live thread for is skipped.
+  // Resolves the stage's execution config, freezes it onto the run row and spawns. Auto-kickoff
+  // acts only on auto-executing stages; on-demand always starts. A re-entry opens a clean
+  // human-in-the-loop thread with no prompt; a stage with a live thread is skipped.
   const beginStageRun = Effect.fn("board-supervisor-beginStageRun")(function* (input: {
     readonly card: BoardCard;
     readonly onDemand: boolean;
@@ -2931,14 +2540,10 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const stage = boardStageById(board, card.stage);
     if (stage === null) return;
-    // A split parent builds THROUGH its children (t3o-23, D4): while any
-    // child is unfinished, no run starts for it — not the build stage's
-    // auto-execute (its move into Building is part of the approval), and not
-    // an on-demand start either, because a thread spawned for a frozen card
-    // could only watch. Its review-stage entry, which only happens after the
-    // last child finished, kicks off normally.
+    // A split parent builds through its children: while any is unfinished no run starts, since a
+    // thread for a frozen card could only watch.
     if (boardCardUnfinishedChildren(board, card.id).length > 0) return;
-    // A group's pipeline is paused (T3O-27): it runs only the integration
+    // A group's pipeline is paused: it runs only the integration
     // review of its own branch, once every active child is done. An inherit
     // group or an empty heading never runs anything.
     {
@@ -2957,47 +2562,24 @@ const make = Effect.gen(function* () {
       boardProjectStageConfig(board, card.projectId),
     );
     const mergeRole = effectiveBoardStageRole(stage) === "merge";
-    // An on-demand request for a stage that runs nothing (Backlog, Done, any
-    // stage with no auto-execute and no prompt) must not spawn a promptless
-    // thread. The merge role runs its conflict step with auto-execute forced
-    // off, and the review loop's prompts live on its phases, so both count as
-    // runnable here. Restart is still offered on a stalled step of an empty
-    // stage (t3o-30 D3), so this guard waits until after that step is
-    // superseded — returning first would accept the click and leave the stall.
+    // An on-demand request for a stage that runs nothing must not spawn a promptless thread.
+    // Checked after superseding a stalled step, which Restart still offers on an empty stage.
     const emptyOnDemand =
       onDemand &&
       !exec.autoExecute &&
       !mergeRole &&
       !isBoardReviewStageExecution(exec) &&
       exec.prompt.trim() === "";
-    // One step at a time (D4): the AUTOMATIC kickoff does not start a run while
-    // one is live, and never tramples a thread already on the stage.
-    //
-    // An ON-DEMAND request is the opposite case (T3O-21). It is a human
-    // clicking "New thread — restart <stage>", so it SUPERSEDES whatever the
-    // card is resting on rather than no-opping: settle the old step abandoned,
-    // stop and unlink its thread, then spawn a fresh one. Only `stalled` used
-    // to be superseded, and both guards below then swallowed the click for
-    // every other resting state — a step parked on a question, and (because a
-    // step thread's link role IS the stage id on a simple stage) any stage the
-    // card had ever run. The menu row was enabled, the command was accepted,
-    // and nothing happened.
-    //
-    // Superseding is safe because the step being replaced is settled here and
-    // its thread is interrupted, so no two threads ever believe they own the
-    // same step. It is not reckless either: the client disables the row while a
-    // run is genuinely in flight, so this path is reached at rest.
+    // The automatic kickoff never starts a run while one is live or tramples a thread on the stage.
+    // An on-demand restart supersedes whatever the card rests on instead: settle the old step
+    // abandoned, stop its thread, spawn fresh, so no two threads own one step.
     const existing = boardCardStepState(board, card.id);
     let kept: ThreadId | null = null;
     if (onDemand) {
       if (existing !== null && !isBoardTerminalStepStatus(existing.status)) {
         yield* settleStep({ card, state: existing, outcome: "abandoned" });
-        // A stalled step already gave up and drives nothing (t3o-17), and a
-        // paused one had its turn stopped when the human stopped it (T3O-23), so
-        // both are left alone; anything else may still have a turn running
-        // against the card's worktree, and a second writer is the one thing a
-        // restart must not create. Best-effort, like every other orphan
-        // interrupt.
+        // Stalled and paused steps drive nothing; anything else may still have a turn in the
+        // worktree, and a restart must not create a second writer.
         if (
           existing.status !== "stalled" &&
           existing.status !== "paused" &&
@@ -3009,14 +2591,8 @@ const make = Effect.gen(function* () {
           abandonedThreads.add(String(existing.threadId));
         }
       }
-      // Clear the stage's own threads off the card: the superseded step's, plus
-      // any left by an earlier run of this stage (their link role is the stage
-      // id). Both would otherwise trip the live-stage-thread guard on the very
-      // next kickoff and wedge the card exactly as before. A thread a human
-      // ADOPTED is untouched — adoption links with role `linked`, never the
-      // stage — so the restart never takes a conversation off the card that the
-      // board did not put there.
-      // Retired, not unlinked (T3O-41): they stay on the card as history.
+      // Retire the stage's own threads (role = stage id) so they don't trip the live-stage-thread
+      // guard on the next kickoff. Adopted threads (role `linked`) are untouched.
       for (const link of card.threadLinks) {
         if (!isLiveBoardCardThreadLink(link)) continue;
         if (link.role !== card.stage && link.threadId !== existing?.threadId) continue;
@@ -3030,8 +2606,8 @@ const make = Effect.gen(function* () {
       }
       if (emptyOnDemand) return;
     } else {
-      // Never trample a thread already running this stage (D7) — except the
-      // planning thread the card kept when it left unfinished (T3O-19), which
+      // Never trample a thread already running this stage — except the
+      // planning thread the card kept when it left unfinished, which
       // the step resumes on below rather than spawning a fresh interview.
       kept = keptPlanningThreadId(board, card);
       let stageLinks = card.threadLinks;
@@ -3054,61 +2630,25 @@ const make = Effect.gen(function* () {
         return;
       if (existing !== null && !isBoardTerminalStepStatus(existing.status)) return;
     }
-    // Auto-kickoff fires only for an auto-executing stage; on-demand runs any
-    // stage that has work (gated above).
-    // An auto-plan run is always a fresh planning run (T3O-32): it starts
-    // whether or not Planning auto-executes, and a card that was planned
-    // before is re-planned unattended rather than handed the empty re-entry
-    // conversation, so its earlier planning step is set aside.
+    // Auto-kickoff fires only for an auto-executing stage; on-demand runs any stage that
+    // has work. An auto-plan run is always a fresh, unattended planning run, even when Planning
+    // does not auto-execute, so the card's earlier planning step is set aside.
     const autoPlanRun =
       effectiveBoardStageRole(stage) === "plan" && isBoardCardAutoPlanPending(card);
     if (!onDemand && !exec.autoExecute && !autoPlanRun) return;
     const completions = boardCardStepCompletions(board, card.id).filter(
       (completion) => !autoPlanRun || completion.stepId !== card.stage,
     );
-    // First entry vs re-entry (D7): a recorded completion for this stage's step
-    // means the card has been here before, so re-run nothing — open a clean
-    // human-in-the-loop conversation. This is reactor policy, orthogonal to the
-    // executor's "what runs next".
-    // The merge role does not follow the re-entry rule at all; it follows a
-    // stricter one of its own. Nothing in this stage may run UNATTENDED unless
-    // the board itself asked for it, which the pending-merge arm marks.
-    //
-    //  - Armed (a Merge click hit a conflict): run the conflict prompt
-    //    unattended, however many times the card has been here. The step is
-    //    requested once per conflict, not once per stage entry, so a second
-    //    request is as real as the first — the re-entry rule would have given
-    //    it an empty prompt and resolved nothing.
-    //  - Not armed (a human restarted the stage thread by hand): a clean
-    //    conversation, never an agent that merges base into their branch and
-    //    pushes it. This holds even on the card's FIRST visit, where the
-    //    ordinary rule would have run unattended.
-    //
-    // Every other stage keeps the ordinary rule: re-entry means the card came
-    // back, and coming back must not silently redo the stage's work.
-    // Which fix, when armed (T3O-12): a failed-checks refusal arms a CI fix,
-    // which runs the compiled-in CI prompt instead of the stage's conflict one.
+    // Re-entry (a recorded completion for this stage's step) runs nothing and opens a clean
+    // human-in-the-loop conversation. The merge role is stricter: it runs unattended only when
+    // armed by the board (a Merge click that hit a conflict or failed checks), on any visit; an
+    // unarmed merge stage is always a conversation, even on the card's first visit.
     const armedFix = mergeRole ? (mergeAwaitingConflictFix.get(String(card.id)) ?? null) : null;
     const armedConflictFix = armedFix !== null;
-    // An ARMED card's merge stage is not a conversation (t3o-28 D3, widened by
-    // T3O-38 D1), so the "not armed means talk to a human" arm above does not
-    // apply to it — the same carve-out `autoMergeCard` documents, for the same
-    // reason: somebody already initiated this merge, and a card parked here
-    // strands whatever depends on it.
-    //
-    // It re-attempts the MERGE rather than assuming a conflict, because the
-    // arm can be missing for two very different reasons and only the forge can
-    // tell them apart: a conflict fix that escalated (`recoverStep` disarms) or
-    // a server restart (the set is in-memory) both leave a real conflict or
-    // CI fix unarmed, while a merge refused for a policy block was never armed
-    // at all. Running a fix prompt blind on that last case spawns an agent to
-    // "fix" a branch with nothing wrong with it — the asymmetric mistake
-    // `probeMergeState` exists to avoid. Asking the forge again gets a
-    // conflict re-armed and its step started unattended through the ordinary
-    // path below, and gets a policy block onto the activity rail instead.
-    //
-    // Gated on `!armedConflictFix` so the conflict step this very call can
-    // start does not re-enter here and merge in a loop.
+    // An armed card's merge stage is never a conversation. Re-attempt the merge rather than
+    // assume a conflict: a lost arm (escalation or restart) and a policy refusal look alike,
+    // and only the forge can tell them apart. Gated on `!armedConflictFix` so the conflict step
+    // this call starts does not re-enter here and merge in a loop.
     if (mergeRole && !armedConflictFix && (yield* cardAutoMergeArmed(card))) {
       yield* autoMergeCard(card);
       return;
@@ -3122,11 +2662,8 @@ const make = Effect.gen(function* () {
     if (bootPass && !firstEntry) return;
     const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
     const cardOverride = cardStageModelOverride(board, card);
-    // Ask the stage executor what runs next (D15): the reactor delegates the
-    // "what to execute" decision rather than computing it inline. A card
-    // entering its stage has no completed step for this run, so a simple stage
-    // yields its single seeded step; the `complete`/`escalate` arms are the seam
-    // t3o-16's review executor returns through and are not reached at entry.
+    // The stage executor decides what runs next. At entry a simple stage yields its single
+    // seeded step; `complete`/`escalate` are not reached here.
     const plan = stageExecutorFor(stage.role, exec).planNext({
       card,
       config: {
@@ -3152,7 +2689,7 @@ const make = Effect.gen(function* () {
         baseRetargetedTo: yield* resolveBaseRetargetTarget(card),
       },
     });
-    // CI (T3O-44): entering the stage, or restarting it, runs the steps.
+    // CI: entering the stage, or restarting it, runs the steps.
     if (plan.kind === "ci-pass" || plan.kind === "ci-stop") {
       // A pass already under way (the boot recovery got there first) is this
       // entry's pass; only a human's restart replaces it.
@@ -3161,13 +2698,9 @@ const make = Effect.gen(function* () {
       return;
     }
     if (plan.kind === "complete") {
-      // The executor considers this entry already complete — a multi-step
-      // executor plans from the card's ALL-TIME completions, so a review loop
-      // that previously converged, was stopped, or exhausted its rounds reports `complete`
-      // forever. A re-entry drag-back or an explicit on-demand request still
-      // deserves a conversation (D7): open a clean human-in-the-loop thread on
-      // the stage's own step id, exactly as a simple-stage re-entry does.
-      // Never from the boot pass, though — a restart is not a human action.
+      // A multi-step executor plans from ALL-TIME completions, so a finished review loop reports
+      // `complete` forever. A re-entry or on-demand request still gets a clean human-in-the-loop
+      // thread on the stage's own step id, but never from the boot pass: a restart is not a human.
       if (bootPass) return;
       const reentryModel =
         cardOverride === null ? model : boardModelSelectionOfOverride(cardOverride);
@@ -3176,17 +2709,13 @@ const make = Effect.gen(function* () {
         commandId: yield* commandId("select-step"),
         cardId: card.id,
         stepId: card.stage,
-        // A re-entry conversation on the stage's own step: no step identity
-        // (t3o-19, D4), just the stage's name.
+        // A re-entry conversation on the stage's own step: no step identity,
+        // just the stage's name.
         stepLabel: null,
         stageLabel: stage.label,
         prompt: "",
-        // The card's override governs its re-entry conversation too (t3o-29):
-        // this is still this card's run of this stage, and a user who pinned
-        // the model would not expect dragging the card back to silently drop
-        // it. Applied here rather than by an executor because no executor plans
-        // a re-entry — the reactor owns it (D7) — and it is unconditional, so
-        // it teaches the reactor nothing about stage kinds.
+        // The card's model override governs its re-entry conversation too; no executor plans a
+        // re-entry, so the reactor applies it.
         providerInstanceId: reentryModel.instanceId,
         model: reentryModel.model,
         runtimeMode: cardOverride?.runtimeMode ?? exec.runtimeMode,
@@ -3196,7 +2725,7 @@ const make = Effect.gen(function* () {
         maxAttempts: exec.maxAttempts,
         timeoutMs: exec.timeoutMs,
         // A re-entry conversation starts no review round: carry the recorded
-        // tip forward (t3o-24, D1) so a parked card's staleness stays
+        // tip forward so a parked card's staleness stays
         // answerable.
         baseTipAtRoundStart: yield* baseTipForPlan(card, false),
         createdAt: yield* nowIso,
@@ -3205,7 +2734,7 @@ const make = Effect.gen(function* () {
       return;
     }
     if (plan.kind !== "run") return;
-    // Mode (D5) and human-in-the-loop (D5/D6/D7) are reactor policy layered onto
+    // Mode and human-in-the-loop are reactor policy layered onto
     // the executor's step: a re-entry forces a clean human-in-the-loop thread
     // with no prompt injected.
     const humanInLoop = firstEntry ? resolveHumanInLoop(board, settings, card, exec) : true;
@@ -3215,18 +2744,9 @@ const make = Effect.gen(function* () {
       commandId: yield* commandId("select-step"),
       cardId: card.id,
       stepId: plan.stepId,
-      // The armed conflict fix is stamped with its own step label (T3O-9), which
-      // is what makes "this card's merge is held by conflicts" a persisted fact
-      // instead of a client-side guess at a running merge-stage step. Stamped
-      // HERE because this is the one place that knows the card is armed; the
-      // executor is role-blind by design. `recoverStep` re-dispatches the row's
-      // label, so a nudged fix keeps it, and the unarmed re-entry conversation
-      // above selects with `stepLabel: null` and so is never one.
-      //
-      // Through `boardSelectedStepLabel` rather than a ternary, because the
-      // label IS the fix's identity downstream: it also takes the reserved
-      // label back off a plan that was not armed, so no future executor can
-      // light the conflict pill and disable Merge by naming a step `Conflicts`.
+      // The step label is the armed fix's persisted identity ("this merge is held by conflicts").
+      // `boardSelectedStepLabel` strips the reserved label from an unarmed plan, so no executor
+      // can light the conflict pill by naming a step `Conflicts`. `recoverStep` re-dispatches it.
       stepLabel: boardSelectedStepLabel(armedFix, plan.stepLabel),
       stageLabel: stage.label,
       prompt,
@@ -3239,7 +2759,7 @@ const make = Effect.gen(function* () {
       maxAttempts: plan.maxAttempts,
       timeoutMs: plan.timeoutMs,
       // Measured fresh when this plan starts a review round, carried forward
-      // otherwise (t3o-24, D1).
+      // otherwise.
       baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
       createdAt: yield* nowIso,
     });
@@ -3247,55 +2767,34 @@ const make = Effect.gen(function* () {
       yield* resumeKeptPlanningThread({ card, stepId: plan.stepId, threadId: kept });
       return;
     }
-    // Provisioning is `schedule`'s job, not a second call here: it already
-    // provisions (or retries) the worktree of every pending build-mode step,
-    // including the one just selected, and plan mode needs none. Doing it
-    // twice was invisible while provisioning succeeded — the second call
-    // short-circuits on a `ready` worktree — but a FAILING one reported its
-    // failure onto the card twice for a single click.
+    // `schedule` provisions the selected step's worktree; provisioning here as well would
+    // report a failing provision onto the card twice.
     yield* schedule();
   });
 
-  // Auto-advance to the next stage in order (D8): on a successful run, if the
-  // stage's `autoAdvance` is on, move the card to the next stage — never the
-  // hardcoded "review". Whoever was in the loop: a human-in-the-loop step that
-  // reached `board_complete_step` is finished exactly as an unattended one is
-  // (T3O-76), and a stage that should wait for a human ships with `autoAdvance`
-  // off. That includes a drag-back re-entry conversation (D7), which is always
-  // human-in-the-loop: its completion moves the card on too. Never when the
-  // stage is last. Rides the ordinary move command, gated like every other
-  // transition (a crossing into a blocked build boundary is refused, leaving the
-  // card put).
+  // On a successful run, move the card to the next stage in order when the stage's
+  // `autoAdvance` is on, whether or not a human was in the loop. Never past the last stage. Rides
+  // the ordinary move command, so a refused crossing leaves the card put.
   const advanceStage = Effect.fn("board-supervisor-advanceStage")(function* (input: {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;
-    /** The role the executor said this stage ends TOWARD (t3o-07, D5/D6).
-     *
-     * A DIRECTED advance, and the two differences from the ordinary one are
-     * both deliberate. It ignores `autoAdvance`, which governs the automatic
-     * crossing after a successful run — a human who clicked "Submit for merge
-     * — no review" asked for this move explicitly, and it must not silently do
-     * nothing because auto-advance is switched off. And it moves with
-     * `override`, because the target is non-adjacent by construction (it steps
-     * over the review stage) and the decider refuses a non-adjacent move
-     * without it. Every other gate still applies: an unapproved split, an
-     * unfinished sub-board child and unmet dependencies each refuse the move
-     * with their own message, and the card simply stays put. */
+    /**
+     * The role a DIRECTED advance ends toward. It ignores `autoAdvance` (a human asked for
+     * this move) and moves with `override`, since the target is non-adjacent by construction.
+     * Every other gate still applies, and a refused move leaves the card put.
+     */
     readonly toRole?: BoardStageRole;
   }) {
     const board = yield* readBoard;
     if (input.toRole !== undefined) {
-      // A card bound for merge in a CI project (T3O-44) goes through CI first.
+      // A card bound for merge in a CI project goes through CI first.
       const target =
         input.toRole === "merge" && isBoardCiActive(board, input.card.projectId)
           ? boardStageById(board, BOARD_SEED_STAGE_IDS.ci)
           : boardStageWithRole(board, input.toRole);
       if (target === null) {
-        // The stage this step was aimed at was deleted from the pipeline while
-        // the step ran — the same half-state as the gate-closed race below (the
-        // branch is pushed, the pull request is open) reached a different way,
-        // so it gets a sentence rather than a silent return. The card is held,
-        // so its forward button is the way out.
+        // The target stage was deleted while the step ran. The branch is already pushed and the
+        // pull request open, so say so on the card rather than return silently.
         yield* dispatch({
           type: "board.card.record-note",
           commandId: yield* commandId("advance-directed-missing"),
@@ -3317,12 +2816,9 @@ const make = Effect.gen(function* () {
         createdAt: yield* nowIso,
       });
       if (refusal === null) return;
-      // A gate closed between the click and here — the step it paid for has
-      // already pushed the branch and opened the pull request, and nobody is
-      // watching a return value any more. `submitCardForMerge` pre-checks
-      // these same gates so the ordinary refusal costs no agent run; this is
-      // the race, and it must not be silent either. The decider's own sentence
-      // is the message, exactly as D6 promises.
+      // A gate closed between the click and here, after the step pushed and opened the pull
+      // request. `submitCardForMerge` pre-checks these gates; this is the race, and the decider's
+      // own sentence is recorded so it is not silent.
       yield* dispatch({
         type: "board.card.record-note",
         commandId: yield* commandId("advance-directed-refused"),
@@ -3342,7 +2838,7 @@ const make = Effect.gen(function* () {
     if (!exec.autoAdvance) return;
     const next = boardNextStageId(board, input.card.stage, input.card.projectId);
     if (next === null) return;
-    // The board's own move (T3O-44): it may carry a card into CI.
+    // The board's own move: it may carry a card into CI.
     yield* dispatch({
       type: "board.card.pipeline-move",
       commandId: yield* commandId("advance"),
@@ -3352,12 +2848,9 @@ const make = Effect.gen(function* () {
     });
   });
 
-  // ── Continuous integration (T3O-44) ──────────────────────────────────────
-  //
-  // The board runs a CI project's steps itself, in the card's worktree. A
-  // pass moves the card on and runs no agent; a failure is the CI executor's
-  // to decide (a fix agent, or back to review). Passes run on their own fibers
-  // (`ciPasses`); their ends come back through the serial worker.
+  // The board runs a CI project's steps itself, in the card's worktree. A pass moves the card
+  // on and runs no agent; a failure is the CI executor's to decide. Passes run on their own
+  // fibers (`ciPasses`); their ends come back through the serial worker.
 
   const ciPasses: BoardCiPasses = yield* makeBoardCiPasses({
     runner: ciRunner,
@@ -3385,7 +2878,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * CI was switched off for the card's project while it sat in CI (T3O-49):
+   * CI was switched off for the card's project while it sat in CI:
    * stop its pass and move it on with auto-merge disarmed, so nothing merges
    * that never passed CI. The confirmation in Settings said so.
    */
@@ -3411,7 +2904,7 @@ const make = Effect.gen(function* () {
     yield* advanceFromCi(card);
   });
 
-  /** A project's config changed (T3O-49): with CI now off, its cards in CI
+  /** A project's config changed: with CI now off, its cards in CI
       move on. Cards in CI with no steps left wait (`startCiPass` holds them). */
   const handleProjectConfigSet = Effect.fn("board-supervisor-handleProjectConfigSet")(function* (
     projectId: ProjectId,
@@ -3471,12 +2964,12 @@ const make = Effect.gen(function* () {
         : holdInCi(held, action === undefined ? why : `${why} ${action}`);
     const steps = projectConfig.ci.steps;
     if (steps.length === 0) {
-      // T3O-49: emptying the step list doesn't turn CI off; the card waits.
+      // Emptying the step list doesn't turn CI off; the card waits.
       yield* holdBeforeStart(card, "This project's CI has no steps.", "Add one, or skip CI.");
       return;
     }
     const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
-    // A placed card's steps run on its worker (D21), streamed back here.
+    // A placed card's steps run on its worker, streamed back here.
     const runner =
       workerId === BOARD_LOCAL_WORKER_ID
         ? undefined
@@ -3533,7 +3026,7 @@ const make = Effect.gen(function* () {
         queued: true,
         fixThreadId: options.fixThreadId,
         ...(options.fresh === true ? { fresh: true } : {}),
-        // T3O-57: frozen on the pass, so a flip applies from the next one.
+        // Frozen on the pass, so a flip applies from the next one.
         ...(boardCiStopsOnFailure(projectConfig.ci) ? {} : { continueOnFailure: true }),
       },
       createdAt: yield* nowIso,
@@ -3544,7 +3037,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Run a pass from step `from` (T3O-49): the script groups up to the next
+   * Run a pass from step `from`: the script groups up to the next
    * agent or forge step on the runner (holding a slot), or that step, or —
    * past the last step — the pass's end. A pass is segments between its agent
    * and forge steps, and the runner never holds a slot while one runs.
@@ -3566,7 +3059,7 @@ const make = Effect.gen(function* () {
       if (card === undefined || !isCiPassLive(card, runId)) return;
       const segment = boardCiNextSegment(steps, from);
       if (segment.kind === "done") {
-        // T3O-57: fail closed. A pass whose record can't be read is held, and
+        // Fail closed. A pass whose record can't be read is held, and
         // one with any failed step fails, whatever the setting.
         const read = yield* ciPassFailures(card.id, runId);
         if (read === null) {
@@ -3621,7 +3114,7 @@ const make = Effect.gen(function* () {
         return;
       }
       const settings = yield* boardSettings;
-      // T3O-59: the board's own disk (its database) needs room to record the
+      // The board's own disk (its database) needs room to record the
       // pass; a worker's worktree disk is the runner's to check.
       if (Option.isSome(serverConfig)) {
         const lowDisk = yield* boardCiLowDiskReason(serverConfig.value.stateDir);
@@ -3731,7 +3224,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A CI agent step (T3O-49): a card step through the ordinary executor
+   * A CI agent step: a card step through the ordinary executor
    * machinery — slots, the watchdog, recovery and `board_complete_step` —
    * run alone. Its prompt is the project's, inside the board's prefix and
    * suffix.
@@ -3802,7 +3295,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Forge-check steps in flight (T3O-49), by card: the pass and step, when
+   * Forge-check steps in flight, by card: the pass and step, when
    * it started, whether the board readied the pull request, and the last
    * reading recorded (so only changes are). In memory: a restart re-runs the
    * pass from the top.
@@ -3855,7 +3348,7 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * A pass's failures, read off its row (T3O-57): every failed or timed-out
+   * A pass's failures, read off its row: every failed or timed-out
    * step in order, and the fix issues they make. Null when the row can't be
    * read.
    */
@@ -3902,7 +3395,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Fail a pass and ask the CI executor what follows (T3O-57), with every
+   * Fail a pass and ask the CI executor what follows, with every
    * failure on the pass row. A row that can't be read, or lists none, falls
    * back to the card's failed steps, then to `fallback`: the executor always
    * gets at least one failure.
@@ -3997,7 +3490,7 @@ const make = Effect.gen(function* () {
     });
   });
 
-  /** Stop the card in CI for a human (T3O-57), with why. A card with no CI
+  /** Stop the card in CI for a human, with why. A card with no CI
       entry can't record a stop, so it is held with the reason instead. */
   const stopCiForHuman = Effect.fn("board-supervisor-stopCiForHuman")(function* (
     card: BoardCard,
@@ -4072,7 +3565,7 @@ const make = Effect.gen(function* () {
     );
 
   /** Whether `runId` is the card's pass and still under way: in CI, live,
-      and not yet passed, held or stopped (T3O-59). */
+      and not yet passed, held or stopped. */
   const isCiPassLive = (
     card: BoardCard,
     runId: string,
@@ -4084,7 +3577,7 @@ const make = Effect.gen(function* () {
 
   /** Whether the result just recorded for `runId` took: a Stop or hold that
       landed between the liveness read and the record leaves the card's pass
-      settled, and nothing may move it on (T3O-59). */
+      settled, and nothing may move it on. */
   const ciPassRecordedAs = (cardId: BoardCardId, runId: string, result: "passed" | "failed") =>
     readCard(cardId).pipe(
       Effect.map((card) =>
@@ -4099,7 +3592,7 @@ const make = Effect.gen(function* () {
     );
 
   /**
-   * Results whose record didn't land (T3O-59), by run id: in memory only, to
+   * Results whose record didn't land, by run id: in memory only, to
    * word the hold the sweep makes. Nothing re-sends them — a resend that
    * keeps failing is its own wedge.
    */
@@ -4115,11 +3608,11 @@ const make = Effect.gen(function* () {
   >();
 
   /** Cards the last sweep found with a pass nothing is running, by card, with
-      the run it saw. A second sighting of the same run holds it (T3O-59). */
+      the run it saw. A second sighting of the same run holds it. */
   const ciSuspectPasses = new Map<string, string>();
 
   /**
-   * A pass with nothing behind it (T3O-59): live in CI at `running` or
+   * A pass with nothing behind it: live in CI at `running` or
    * `queued`, with no pass fiber (running, finishing or queued), no CI agent
    * step of this run or fix step still going, and no forge step polling.
    * Terminal step states stay on the card, so only live ones count.
@@ -4149,8 +3642,8 @@ const make = Effect.gen(function* () {
     return [`The CI script ended${code} but its result couldn't be saved. Retry CI.`, {}];
   };
 
-  /** Hold every pass that has had nothing behind it on two sweeps in a row
-      (T3O-59). One sighting isn't enough: a worktree being readied, an agent
+  /** Hold every pass that has had nothing behind it on two sweeps in a row.
+      One sighting isn't enough: a worktree being readied, an agent
       step settling before the next segment, or a queued result look the same
       for a moment. A hold that doesn't land is tried on the next sweep. */
   const sweepOrphanedCiPasses = Effect.gen(function* () {
@@ -4188,12 +3681,9 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Read one card's forge checks and act on them (T3O-49). Before the first
-   * read a draft pull request is marked ready, since draft-gated workflows
-   * never run. Fails on the first failing check (filtered by `only`), passes
-   * once every check passed, and waits up to `appearTimeoutMinutes` for any
-   * to appear; `whenNoChecks` decides an empty set. No pull request, an
-   * unreadable forge, or five failed reads in a row hold the card.
+   * Read one card's forge checks and act on them. A draft pull request is marked ready first,
+   * since draft-gated workflows never run. No pull request, an unreadable forge, or five failed
+   * reads in a row hold the card.
    */
   const pollCiForgeStep: (cardId: BoardCardId) => Effect.Effect<void> = Effect.fn(
     "board-supervisor-pollCiForgeStep",
@@ -4265,11 +3755,8 @@ const make = Effect.gen(function* () {
       };
       const nowMs = yield* clockNowMs;
       const elapsedMs = nowMs - entry.startedMs;
-      const settle = (
-        status: "passed" | "failed" | "timed-out",
-        note: string,
-      ): Effect.Effect<void> =>
-        Effect.gen(function* () {
+      const settle = Effect.fn("board-supervisor-settleForgeStep")(
+        function* (status: "passed" | "failed" | "timed-out", note: string) {
           forgeSteps.delete(String(cardId));
           const recorded = yield* recordCiStep(card.id, entry.runId, entry.index, {
             ...row,
@@ -4292,13 +3779,13 @@ const make = Effect.gen(function* () {
             tail: note,
             logPath: null,
           });
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("board supervisor: forge step settle failed", {
-              cause: Cause.pretty(cause),
-            }),
-          ),
-        );
+        },
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: forge step settle failed", {
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
       if (checks.failed > 0) {
         yield* settle(
           "failed",
@@ -4371,7 +3858,7 @@ const make = Effect.gen(function* () {
     }
   });
 
-  /** A CI agent step reported (T3O-49): its verdict on the pass row, then
+  /** A CI agent step reported: its verdict on the pass row, then
       the next step — or, failed, the pass's failure. */
   const finishCiAgentStep: (
     card: BoardCard,
@@ -4399,7 +3886,7 @@ const make = Effect.gen(function* () {
         result: { summary, failures },
         ...(threadId === null ? {} : { threadId }),
       });
-      // T3O-57: without stop on failure a failed agent step is recorded and
+      // Without stop on failure a failed agent step is recorded and
       // the pass carries on; the end of the pass fails it.
       if (passed || (recorded && card.ci.continueOnFailure === true)) {
         yield* runCiSegment(card.id, plan.runId, steps, plan.index + 1);
@@ -4425,7 +3912,7 @@ const make = Effect.gen(function* () {
 
   /** Back to the review-role stage with the CI failure as a must-fix finding,
       for a fresh round: one more round when the card had used them all. Only
-      a human's "Send back to review anyway" reaches it (T3O-57). */
+      a human's "Send back to review anyway" reaches it. */
   const sendBackFromCi = Effect.fn("board-supervisor-sendBackFromCi")(function* (
     card: BoardCard,
     input: {
@@ -4532,7 +4019,7 @@ const make = Effect.gen(function* () {
       readonly fixThreadId: ThreadId | null;
       readonly stageLabel: string;
       readonly exec: ReturnType<typeof resolveBoardStageExecution>;
-      /** How many issues a fix plan works on (T3O-57). */
+      /** How many issues a fix plan works on. */
       readonly fixIssues?: number;
     },
   ) {
@@ -4593,7 +4080,7 @@ const make = Effect.gen(function* () {
 
   /** A pass's fiber finished: record it, then move on or fix. */
   const handleCiPassFinished = (finished: BoardCiPassFinished) =>
-    // T3O-59: handled once, by the launch's token; a duplicate report, or one
+    // Handled once, by the launch's token; a duplicate report, or one
     // from a launch cancelled since, finds nothing to claim. The entry stays
     // until this is done, so the sweep never mistakes it for a dead pass.
     Effect.suspend(() =>
@@ -4624,7 +4111,7 @@ const make = Effect.gen(function* () {
     }
     const passed = finished.outcome.result === "passed";
     if (passed) {
-      // T3O-49: a segment passed; the pass goes on from its next step.
+      // A segment passed; the pass goes on from its next step.
       const { steps } = yield* ciPassSnapshot(card.id, finished.runId);
       if (steps === null) {
         // Without its frozen steps the pass can't tell what comes next, and
@@ -4639,7 +4126,7 @@ const make = Effect.gen(function* () {
       yield* runCiSegment(card.id, finished.runId, steps, finished.segmentEnd);
       return;
     }
-    // T3O-61: a machine problem is held for a human before any failure is
+    // A machine problem is held for a human before any failure is
     // recorded, so no fix agent starts and no fix or round trip is used.
     const verdict = finished.outcome.headline;
     if (verdict?.machine === true) {
@@ -4667,7 +4154,7 @@ const make = Effect.gen(function* () {
       logPath: null,
       headline: verdict ?? null,
     };
-    // T3O-57: without stop on failure, a segment that ran every step carries
+    // Without stop on failure, a segment that ran every step carries
     // on — but only when its failure is on the pass record, so a lost step
     // record never turns a failed pass into a passed one.
     if (card.ci.continueOnFailure === true && finished.outcome.ranAll) {
@@ -4751,7 +4238,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Retry CI (T3O-49): a human's restart of a stopped or held card. From
+   * Retry CI: a human's restart of a stopped or held card. From
    * stopped it is a fresh start — new fix attempts, no round trips; from held
    * the count is kept. Refused while the project's CI is off.
    */
@@ -4761,7 +4248,7 @@ const make = Effect.gen(function* () {
     if (card === undefined || card.archivedAt !== null) return { outcome: "unknown-card" } as const;
     if (card.stage !== BOARD_SEED_STAGE_IDS.ci) return { outcome: "not-in-ci" } as const;
     if (!isBoardCiSwitchedOn(board, card.projectId)) return { outcome: "ci-off" } as const;
-    // T3O-59: a pass with nothing behind it can be retried before the sweep
+    // A pass with nothing behind it can be retried before the sweep
     // holds it; the new pass settles its row as interrupted.
     if (
       card.ci !== null &&
@@ -4775,7 +4262,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Stop CI (T3O-59): a human's stop of a queued, running or fixing pass. Its
+   * Stop CI: a human's stop of a queued, running or fixing pass. Its
    * fiber is cancelled, a CI agent or fix step is abandoned and its turn
    * interrupted, a forge step stops polling, and the pass is held. Retry CI
    * runs it again.
@@ -4830,7 +4317,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  /** "Send back to review anyway" (T3O-49), from a stopped card. */
+  /** "Send back to review anyway", from a stopped card. */
   const ciSendBack = Effect.fn("board-supervisor-ciSendBack")(function* (cardId: BoardCardId) {
     const card = yield* readCard(cardId);
     if (card === null || card.archivedAt !== null) return { outcome: "unknown-card" } as const;
@@ -4853,7 +4340,7 @@ const make = Effect.gen(function* () {
     return { outcome: "sent-back" } as const;
   });
 
-  /** Boot (T3O-44): a pass the restart cut off is marked interrupted and runs
+  /** Boot: a pass the restart cut off is marked interrupted and runs
       again from the top; one that passed but never moved the card moves it.
       A held pass stays held. */
   const recoverCiPasses = Effect.fn("board-supervisor-recoverCiPasses")(function* () {
@@ -4882,24 +4369,10 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * The sub-board runs itself once the parent starts it (t3o-28, D3).
-   *
-   * The parent's arrival at the build-role stage is the Begin build for the
-   * WHOLE split, so every child the plan graph does not block moves off the
-   * materialisation floor into build — and every later call starts whatever
-   * the last finisher unblocked, so a four-plan chain walks itself from #1 to
-   * #4 with no human in between.
-   *
-   * Each child rides an ordinary `board.card.move` (floor → build is adjacent
-   * by construction, so no override), which means `handleCardMoved` does the
-   * rest exactly as it does for a drag: step selection, a worktree cut from
-   * the integration branch, the thread spawn, and the governor's slots. A
-   * cascaded child is indistinguishable from a dragged one — including when
-   * there is no slot free, where it simply queues.
-   *
-   * D18's "approving a split cannot fan out into N running agents" is intact:
-   * `handleCardCreated` still refuses to start a materialised child. The
-   * fan-out moved to the gesture that means it.
+   * Start every child of a started split that the plan graph no longer blocks, each by an
+   * ordinary adjacent `board.card.move` from the floor into build, so `handleCardMoved` treats
+   * it like a drag (and it queues when no slot is free). Called again as each child finishes,
+   * so a chain walks itself. `handleCardCreated` still never starts a materialised child.
    */
   const cascadeUnblockedChildren = Effect.fn("board-supervisor-cascadeChildren")(function* (
     parentCardId: BoardCardId,
@@ -4908,17 +4381,15 @@ const make = Effect.gen(function* () {
     const parent = board.cards.find((candidate) => candidate.id === parentCardId);
     if (parent === undefined || parent.archivedAt !== null) return;
     const group = boardCardGroupOf(board, parent);
-    // Only a group with auto-build on starts its own children (T3O-27); one
+    // Only a group with auto-build on starts its own children; one
     // with it off is started child by child.
     if (group === null || !group.autoBuild) return;
     const buildStage = boardStageWithRole(board, "build");
     const floor = boardSubBoardFloorStage(board);
     if (buildStage === null || floor === null) return;
-    // Fire once the group has BEGUN (T3O-38): `started`, set by the decider
-    // when a human starts the group or moves a child into build, never by a
-    // child's own Auto-build. Before that, approval alone starts nothing
-    // (t3o-28 D1). After it, the group runs to completion wherever the human
-    // parked it, so dragging it back must not strand freed siblings.
+    // Only once the group has BEGUN (`started`, set when a human starts the group or moves a
+    // child into build; never by a child's own Auto-build). After that the group runs to
+    // completion wherever it is parked, so dragging it back must not strand freed siblings.
     if (!group.started) return;
     for (const child of boardCardActiveChildren(board, parent.id)) {
       // Waiting on the floor is the only state this starts. A child further
@@ -4926,10 +4397,10 @@ const make = Effect.gen(function* () {
       // none of those want a move. A child group on the floor is started the
       // same way, and its own arrival cascades one level down.
       if (child.stage !== floor.stageId) continue;
-      // One mover per card (T3O-38): a child with its own Auto-build value is
+      // One mover per card: a child with its own Auto-build value is
       // the due check's (own on) or stays put (own off).
       if (child.autoBuildSetting !== null) continue;
-      // The D11 dependency gate would refuse this move anyway; skipping it
+      // The dependency gate would refuse this move anyway; skipping it
       // here keeps the cascade from teaching the rule by refusal.
       const unmet = unmetBoardCardDependencies({
         board,
@@ -4948,11 +4419,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * What a regrouping means for the supervisor (T3O-27). Grouping never
-   * touches git; it only stops what can no longer run and starts what now
-   * may. A card that became a group abandons its live step — an unstarted
-   * leaf's planning, cheap to drop, its plans kept as a record. A card that
-   * landed in a started group with auto-build on may start right away.
+   * Grouping never touches git: a card that became a group abandons its live step, and a card
+   * that landed in a started group with auto-build on may start right away.
    */
   const applyRegroup = Effect.fn("board-supervisor-applyRegroup")(function* (
     updated: BoardCard,
@@ -4970,7 +4438,7 @@ const make = Effect.gen(function* () {
       }
     }
     if (marks.regrouped) {
-      // A new parent changes what the card inherits (T3O-38), so its toggles
+      // A new parent changes what the card inherits, so its toggles
       // take effect as if its group's had changed — leaving a group mid
       // auto-plan stops the run.
       yield* reevaluateCardAutomation(card.id, { group: true });
@@ -4981,7 +4449,7 @@ const make = Effect.gen(function* () {
   });
 
   /** Cascade every group holding a card that waits on `cardId`, directly or
-      through a group it sits in (T3O-27). */
+      through a group it sits in. */
   const cascadeDependentGroups = Effect.fn("board-supervisor-cascadeDependentGroups")(function* (
     cardId: BoardCardId,
   ) {
@@ -4997,7 +4465,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Heal a group out of step with its children (T3O-27). The decider derives
+   * Heal a group out of step with its children. The decider derives
    * every group in the same decision as the child change, so this normally
    * finds nothing; it catches an event the decider did not shape — a boot
    * after migration, a legacy log — by asking the decider to re-derive.
@@ -5027,7 +4495,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Whether this card's merge runs itself (T3O-38, D1), reading the board-wide
+   * Whether this card's merge runs itself, reading the board-wide
    * merge-stage setting the shared predicate cannot see for itself.
    */
   const cardAutoMergeArmed = Effect.fn("board-supervisor-cardAutoMergeArmed")(function* (
@@ -5049,12 +4517,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Write — or clear — a card's auto-merge hold.
-   *
-   * `dispatchOptional`, because a refusal here is the decider's no-op guard
-   * doing its job, not a fault: the sweep re-probes a held card every rung and
-   * a probe that finds nothing new lands no event. The plain helper would
-   * turn the healthy path into a stream of warnings about nothing.
+   * Write or clear a card's auto-merge hold. `dispatchOptional`, because the sweep re-probes
+   * held cards and a refusal here is the decider's no-op guard, not a fault.
    */
   const recordAutoMergeHold = Effect.fn("board-supervisor-recordAutoMergeHold")(function* (
     cardId: BoardCardId,
@@ -5069,55 +4533,27 @@ const make = Effect.gen(function* () {
     });
   });
 
-  /** Clear a hold that is no longer about anything (T3O-38, D10). Cheap and
+  /** Clear a hold that is no longer about anything. Cheap and
       guarded: a card with no hold dispatches nothing at all. */
   const clearAutoMergeHold = (card: BoardCard) =>
     card.autoMergeHold === null ? Effect.void : recordAutoMergeHold(card.id, null);
 
   /**
-   * Merge an ARMED card, on its arrival at the merge-role stage or on a rung
-   * of the retry ladder (T3O-38).
-   *
-   * The merge spec's rule — "no merge happens that a human did not initiate" —
-   * is about a card whose merge nobody asked for. An armed card is not that
-   * card: a sub-board child was initiated by Begin build on the parent
-   * (t3o-28 D3), a per-card arm is a human pointing at this card, and the
-   * board-wide setting is a human setting policy. What was never initiated is
-   * an UNARMED card, and that one still waits for a click.
-   *
-   * What this adds over the old sub-board-only path is what happens when the
-   * forge says no. A refusal used to record a note and stop for ever, which
-   * stranded a whole split on a check that was still running when the review
-   * loop converged. Now the refusal is CLASSIFIED against a structured probe
-   * — never against the forge's prose — and either climbs a retry ladder or
-   * stops loudly with the reason on the card.
+   * Merge an ARMED card on arrival at the merge-role stage or on a retry rung. An armed card's
+   * merge was initiated by a human (Begin build, a per-card arm, or board policy); an unarmed
+   * card still waits for a click. A refusal is classified against a structured probe, never the
+   * forge's prose, and either climbs the retry ladder or stops with the reason on the card.
    */
   /**
-   * Cards whose auto-merge was deferred because they were BLOCKED when their
-   * turn came (T3O-38, D8).
-   *
-   * Eligibility to auto-merge is decided once, at the moment the card arrives
-   * — an ordinary forward step into the merge stage, or a human arming a card
-   * already parked there. A blocked card is skipped rather than merged, and
-   * nothing about the card afterwards records that it was ever eligible, so
-   * without this set the sweep has nothing to go on: it would either never ask
-   * again (the card strands until someone clicks Merge) or have to merge every
-   * armed card parked here, which is exactly the bulk-merge D2 forbids.
-   *
-   * In-memory deliberately, following `mergeAwaitingConflictFix`. After a
-   * restart the set is empty, so the card falls back to waiting for a click —
-   * the conservative direction, and never a merge nobody asked for.
+   * Armed cards skipped because they were BLOCKED when their turn came, so the sweep can retry
+   * them once unblocked without merging every armed card parked here. In-memory: after a
+   * restart the card waits for a click, never a merge nobody asked for.
    */
   const autoMergeDeferredUntilUnblocked = new Set<string>();
 
   const autoMergeCard = Effect.fn("board-supervisor-autoMergeCard")(function* (card: BoardCard) {
-    // A blocked card is skipped silently (D8): it already wears the amber
-    // blocked callout naming the unmet dependency, and a second amber pill
-    // making a different claim about the same card is worse than nothing. No
-    // attempt, no rung charged — but the skip is REMEMBERED, or the sweep
-    // would never revisit a card it recorded no hold for and the dependency
-    // landing overnight would leave the card parked anyway, which is the exact
-    // complaint this feature exists to answer.
+    // A blocked card already shows the callout naming its dependency, so no hold and no rung
+    // are recorded. The skip is remembered so the sweep revisits it once the dependency lands.
     if (card.blocked) {
       autoMergeDeferredUntilUnblocked.add(String(card.id));
       return;
@@ -5128,12 +4564,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Fold a merge attempt's outcome into the card's hold (T3O-38, D4/D8/D10).
-   *
-   * Shared by the armed path and the human Merge click, so the two can never
-   * tell the card two different stories about the same refusal. The click
-   * passes `resetLadder`, per D10: a human intervened, so the clock starts
-   * over rather than continuing from whatever rung the automation had reached.
+   * Fold a merge attempt's outcome into the card's hold, for both the armed path and the Merge
+   * click. The click passes `resetLadder`: a human intervened, so the ladder starts over.
    */
   const recordAutoMergeOutcome = Effect.fn("board-supervisor-recordAutoMergeOutcome")(function* (
     cardId: BoardCardId,
@@ -5145,15 +4577,12 @@ const make = Effect.gen(function* () {
 
     switch (outcome.outcome) {
       // Landed: the merge advanced the card to Done, so a hold about it is a
-      // stale label (D10).
+      // stale label.
       case "merged":
         yield* clearAutoMergeHold(fresh);
         return;
-      // Already in hand: a conflict step is running and will finish the merge
-      // itself (the existing one-shot fix, never the ladder — D8), and a stale
-      // base has already sent the card back for one more review round. Both
-      // leave the merge stage's business to another path, so a hold would be
-      // describing something that is no longer happening.
+      // Another path owns the merge now (a running conflict fix, or a stale base sent back to
+      // review), so a hold would describe something that is not happening.
       case "conflict":
       case "checks-fix":
       case "stale-base":
@@ -5170,11 +4599,8 @@ const make = Effect.gen(function* () {
         break;
     }
 
-    // Structural outcomes bypass the probe entirely (D8): retrying cannot
-    // succeed, so there is nothing to classify and nothing to wait for. A
-    // refusal the gateway has already established is permanent — a strategy
-    // this host does not offer, a permission this account lacks (T3O-47) —
-    // belongs in the same bucket, and brings its own sentence with it.
+    // Structural outcomes skip the probe: retrying cannot succeed. A refusal the gateway
+    // already knows is permanent (an unsupported strategy, a missing permission) joins them.
     const structural =
       outcome.outcome === "not-open"
         ? `Its pull request is ${outcome.state}, so there was nothing to merge.`
@@ -5218,12 +4644,8 @@ const make = Effect.gen(function* () {
     };
     yield* recordAutoMergeHold(fresh.id, hold);
 
-    // The rail gets ONE row, at the moment the ladder actually stops. Eight
-    // rungs would be eight rows saying the same thing, and a wait that is
-    // still going is not news — the pill already says so. Suppressed when the
-    // card had ALREADY stopped, so re-reading the same refusal does not stack
-    // rows. A human's own click reports through its return value and needs no
-    // row at all.
+    // One rail row, when the ladder actually stops, and not again if it had already stopped.
+    // A human's click reports through its return value instead.
     if (!options.resetLadder && hold.retryAt === null && previous?.retryAt !== null) {
       yield* dispatch({
         type: "board.card.record-note",
@@ -5237,21 +4659,13 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * The blue Merge button's entry point (T3O-38, D10/D11).
-   *
-   * The click stays authoritative and out of band: the button is live
-   * throughout a hold, precisely because a hold means nothing is running and
-   * clicking is the escape hatch. What it adds over a bare
-   * `mergeCardPullRequest` is bookkeeping — a success clears the hold, and a
-   * refusal on an ARMED card re-records it with the ladder reset to rung 0,
-   * which is how an exhausted ladder gets a second chance.
-   *
-   * An unarmed card records nothing: it has no ladder, and the refusal goes
-   * back to the human who is waiting on the answer.
+   * The Merge button. Live throughout a hold, as the escape hatch. A success clears the hold;
+   * a refusal on an ARMED card re-records it with the ladder reset to rung 0. An unarmed card
+   * records nothing: the refusal goes back to the waiting human.
    */
   const mergeCardPullRequestByHand = Effect.fn("board-supervisor-mergeCardPullRequestByHand")(
     function* (cardId: BoardCardId) {
-      // A human's click buys one more automatic CI fix (T3O-12), and is a
+      // A human's click buys one more automatic CI fix, and is a
       // fresh decision: an unarmed card's wait on its last fix's checks ends.
       checksFixSpent.delete(String(cardId));
       mergeAwaitingChecks.delete(String(cardId));
@@ -5288,7 +4702,7 @@ const make = Effect.gen(function* () {
 
   /**
    * Merge a card whose arm was just switched on, if it is sitting at the merge
-   * stage with a pull request and nothing else running (T3O-38, D3).
+   * stage with a pull request and nothing else running.
    *
    * Re-reads the card rather than trusting the event's copy: the arm is a
    * human click, and what it does is irreversible.
@@ -5307,7 +4721,7 @@ const make = Effect.gen(function* () {
   });
 
   /** A held descendant with no strategy of its own, nor any group between it
-      and this one, merged with this card's (T3O-80), so a change here
+      and this one, merged with this card's, so a change here
       releases it the same way a change to its own would: hold cleared, and
       the merge re-attempted now. */
   const releaseInheritingChildHolds = Effect.fn("board-supervisor-releaseInheritingChildHolds")(
@@ -5332,25 +4746,15 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Ask the forge WHY it refused, and classify the answer (T3O-38, D6/D7).
-   *
-   * One extra forge call, and only on a refusal — the happy path stays a
-   * single merge. A probe that fails (an unsupported provider, a network
-   * blip) is `soft`: an answer we cannot read costs a few extra retries and
-   * must never produce a hard verdict.
+   * Classify why the forge refused. A probe that failed is soft: an unreadable answer costs a
+   * few retries and never produces a hard verdict.
    */
   const probeMergeRefusal = (state: BoardMergeState | null): BoardAutoMergeVerdict =>
     state === null ? UNCLASSIFIED_AUTO_MERGE_VERDICT : classifyBoardAutoMergeRefusal(state);
 
-  // A step settled `succeeded`: ask the stage executor what runs NEXT before
-  // advancing the card (t3o-16). For a single-step stage the executor reports
-  // `complete` (its one step is done) and this advances exactly as before; for a
-  // multi-step stage (the review loop) it returns the next round-scoped step and
-  // this selects it, re-entering the ordinary select-step → schedule → spawn
-  // path. The reactor stays generic — it never learns which kind of stage it is
-  // driving, only what the executor says to run. A terminal loop outcome
-  // (`blocked`, a broken reviewer payload) leaves the card put with its
-  // completions visible (D8).
+  // A step succeeded: the stage executor decides what runs next. `complete` advances the card;
+  // a `run` plan (the review loop's next step) re-enters select-step, schedule, spawn. A
+  // terminal loop outcome leaves the card put with its completions visible.
   const continueStage = Effect.fn("board-supervisor-continueStage")(function* (input: {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;
@@ -5391,7 +4795,7 @@ const make = Effect.gen(function* () {
       completions,
       // The step in `state` has just SETTLED, so nothing is in flight; its
       // round is already counted through its recorded completion. Which step
-      // it was is the build executor's routing signal (t3o-07, D5).
+      // it was is the build executor's routing signal.
       runState: {
         round: 1,
         completedStepIds,
@@ -5403,17 +4807,9 @@ const make = Effect.gen(function* () {
     });
     switch (plan.kind) {
       case "run": {
-        // Only auto-EXECUTE a stage that opts into it. A completed step is
-        // normally the card's current stage's own, but if the card was dragged
-        // to another column while a step was still in flight and that step later
-        // finishes, `card.stage` is now the DESTINATION — and the simple
-        // executor, seeing no completion for it, plans a fresh `run`. That is
-        // how a finished Planning run, on a card already moved to the manual
-        // Sprint column, once spawned a spurious Sprint thread on the app's
-        // fallback provider. The move handler now abandons such leftovers before
-        // they complete; this is the second lock. Gating only the `run` arm (not
-        // the whole continuation) leaves a manual stage's `complete` → auto-
-        // advance path intact — this blocks a spurious SPAWN, not a crossing.
+        // Only auto-execute a stage that opts in. A step that finishes after its card was dragged
+        // elsewhere would otherwise plan a spurious `run` in the destination stage. Gating only the
+        // `run` arm keeps a manual stage's `complete` auto-advance intact.
         if (!exec.autoExecute) return;
         // A continuation is executor-driven, never a human re-entry: inject the
         // planned prompt and honour the stage's own human-in-the-loop stance.
@@ -5434,15 +4830,11 @@ const make = Effect.gen(function* () {
           humanInLoop,
           maxAttempts: plan.maxAttempts,
           timeoutMs: plan.timeoutMs,
-          // An intra-stage continuation carries the stage entry's running
-          // RECOVERY total forward (t3o-17 D5, re-pointed by T3O-12 D4): the
-          // projector keeps one step-state row per card, so without the carry
-          // each phase selection would reset the runaway ceiling and the real
-          // bound would become rounds × phases × ceiling. `attempt` is NOT
-          // carried any more — a new phase is a new step and counts its own.
+          // Carry the stage entry's recovery total forward: one step-state row per card, so
+          // resetting it per phase would multiply the runaway ceiling. `attempt` is not carried.
           priorRecoveries: boardStageEntryRecoveryCount(board, card.id),
           // Measured fresh when this plan starts a review round, carried
-          // forward otherwise (t3o-24, D1).
+          // forward otherwise.
           baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
           createdAt: yield* nowIso,
         });
@@ -5450,13 +4842,9 @@ const make = Effect.gen(function* () {
         return;
       }
       case "complete": {
-        // The stage is done. A SUCCESSFUL stage may auto-advance (D8) — for the
-        // review loop that means a converged round and nothing else. Every
-        // other terminal outcome leaves the card put with its findings visible:
-        // a broken reviewer payload, a loop the user stopped, and — since
-        // t3o-22 D1 — a loop that ran out of rounds with findings still open,
-        // which carries a converged loop's round counts and the opposite
-        // meaning.
+        // Only a SUCCESSFUL stage may auto-advance (for the review loop, a converged round). A
+        // broken payload, a stopped loop, or a loop out of rounds with findings open leaves the
+        // card put with its findings visible.
         if (plan.outcome === "succeeded") {
           yield* advanceStage({
             card,
@@ -5466,7 +4854,7 @@ const make = Effect.gen(function* () {
         }
         return;
       }
-      // CI (T3O-44/57): a fix agent reported — re-run every step, or stop
+      // CI: a fix agent reported — re-run every step, or stop
       // for a human.
       case "ci-pass":
       case "ci-stop":
@@ -5478,14 +4866,8 @@ const make = Effect.gen(function* () {
         });
         return;
       case "escalate": {
-        // The executor cannot proceed and wants a human (e.g. a phase that
-        // completed with an unreadable payload). Leave the card put — there is no
-        // live step to gate. t3o-18 D13 deleted `board.card.request-input`, the
-        // command this used to record the question with, and the Activity rail's
-        // curated kinds (D12) have no "escalation note" among them. Nothing
-        // rendered that activity row before either, so nothing regresses
-        // visually; the question goes to the server log, where the operator
-        // reading a card that stopped moving will find it.
+        // The executor wants a human. Leave the card put (there is no live step to gate); the
+        // question goes to the server log.
         yield* Effect.logWarning("board supervisor: stage executor escalated to a human", {
           cardId: card.id,
           stepId: state.stepId,
@@ -5497,26 +4879,10 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Ask a SETTLED stage's executor whether an edit gave it more to run
-   * (t3o-22, D6), and start that step if so.
-   *
-   * The path exists for the review loop: a loop held at its round cap is
-   * terminal, so raising the card's budget must make it plan round N+1 — but
-   * `continueStage` only ever runs off a step settling, and nothing settles
-   * here. It stays role-agnostic on purpose (t3o-16 AC10): it asks whatever
-   * executor the stage has and acts ONLY on a `run` plan.
-   *
-   * A `complete` plan is a deliberate no-op. `SimpleStageExecutor` reports
-   * exactly that for its already-recorded step, so every non-review stage falls
-   * straight through — and, more importantly, routing a `complete` back into
-   * `advanceStage` would let any card edit re-advance a card that already
-   * graduated.
-   *
-   * `resume` marks a re-plan that only resumes a loop halted between phases
-   * (T3O-5) rather than reacting to an edit. It leaves base staleness
-   * unmeasured, so resuming never plans a rebase-and-force-push sync the loop
-   * did not already owe: staleness stays measured lazily at the review→merge
-   * crossing and the Merge click, as it is for any converged, parked card.
+   * Ask a SETTLED stage's executor whether an edit gave it more to run (a raised round cap),
+   * and start that step. Acts only on a `run` plan: routing `complete` into `advanceStage` would
+   * let any edit re-advance a graduated card. `resume` leaves base staleness unmeasured, so a
+   * resume never plans a rebase-and-force-push sync the loop did not already owe.
    */
   const replanSettledStage = Effect.fn("board-supervisor-replanSettledStage")(function* (
     card: BoardCard,
@@ -5560,7 +4926,7 @@ const make = Effect.gen(function* () {
       // The stage is settled, so nothing of this card's is in flight — and no
       // step is settling right now either: this is a re-plan off a card EDIT,
       // not off a completion, so a card whose submit step succeeded long ago
-      // must not be routed again by an unrelated title change (t3o-07, D5).
+      // must not be routed again by an unrelated title change.
       runState: {
         round: 1,
         completedStepIds,
@@ -5587,14 +4953,11 @@ const make = Effect.gen(function* () {
       humanInLoop: resolveHumanInLoop(board, settings, card, exec),
       maxAttempts: plan.maxAttempts,
       timeoutMs: plan.timeoutMs,
-      // Carried forward exactly as an intra-stage continuation does (t3o-17
-      // D5, re-pointed by T3O-12 D4). Resuming a held loop spends more of the
-      // SAME stage entry's recovery budget, so the ceiling still applies; a
-      // resume that stalls on it is the stall guard working, and it surfaces on
-      // the card.
+      // Carried forward as in an intra-stage continuation, so a resume spends the same stage
+      // entry's recovery budget and the ceiling still applies.
       priorRecoveries: boardStageEntryRecoveryCount(board, card.id),
       // Measured fresh when this plan starts a review round, carried forward
-      // otherwise (t3o-24, D1).
+      // otherwise.
       baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
       createdAt: yield* nowIso,
     });
@@ -5603,27 +4966,17 @@ const make = Effect.gen(function* () {
   });
 
   // Release the step's slot on settlement — a no-op for a plan-mode step, which
-  // never held one (D5). The provider is read off the frozen run row (D12),
-  // the worker off the step's thread (T3O-65).
+  // never held one. The provider is read off the frozen run row,
+  // the worker off the step's thread.
   const releaseSlot = (state: BoardCardStepState) =>
     state.slotHeld
       ? readBoard.pipe(Effect.flatMap((board) => slots.release(slotKeyFor(board, state))))
       : Effect.void;
 
   /**
-   * Park a step on the human gate (t3o-34, D3) and give its slot back (T3O-23).
-   *
-   * The ONE way a step reaches `awaiting-input`, so the release cannot be
-   * forgotten at a sixth call site: five dispatch it today (two on a completed
-   * turn, one on an `blocked` completion, one on a structured question, one at
-   * boot reconcile) and every one of them left the card holding a worker while
-   * nothing ran. The rationale is the escalation path's, word for word: no
-   * thread is running, so a parked card must not hold capacity for a weekend —
-   * and an unanswered question parks a card for exactly as long as a stall does.
-   *
-   * The dispatch is OBSERVED rather than fire-and-forget: a refused park (the
-   * step moved on under us) must not release a slot the step still holds and
-   * will still release at settle.
+   * The one way a step reaches `awaiting-input`, releasing its slot: nothing runs while a card
+   * waits on a human. Observed, not fire-and-forget: a refused park (the step moved on) must
+   * not release a slot the step still holds.
    */
   const parkStepForInput = Effect.fn("board-supervisor-parkStepForInput")(function* (input: {
     readonly card: BoardCard;
@@ -5648,16 +5001,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Resume a re-entered planning step on the thread the card kept when it left
-   * Planning unfinished (T3O-19), instead of spawning a fresh interview.
-   *
-   * The planning prompt is not resent: the conversation picks up where it
-   * stopped. A turn still running is left to end on its own, and its
-   * `turn.completed` drives the step as usual. An idle thread is handled here
-   * the way a completed turn would be, so the card never shows a running step
-   * that nothing is running: it parks on the human. Planning is always
-   * human-in-the-loop (`resolveBoardStageExecution` forces it), so the
-   * unattended arm is a guard, and does what a completed turn would do there.
+   * Resume a re-entered planning step on the thread the card kept, without resending the
+   * prompt. A running turn ends on its own; an idle thread is handled as a completed turn
+   * would be, so the card never shows a running step that nothing is running.
    */
   const resumeKeptPlanningThread = Effect.fn("board-supervisor-resumeKeptPlanningThread")(
     function* (input: {
@@ -5677,7 +5023,7 @@ const make = Effect.gen(function* () {
       });
       // Refused (the step moved on under us): the ordinary pass spawns for it.
       if (!admitted) return yield* schedule();
-      // Back in Planning with Auto-plan on (T3O-38): the kept thread is
+      // Back in Planning with Auto-plan on: the kept thread is
       // steered to finish unattended, never replaced.
       {
         const board = yield* readBoard;
@@ -5727,18 +5073,9 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Park a live step as `paused`: stop its turn, give back its slot, keep its
-   * thread and worktree. The shared body of the two ways a step is paused — a
-   * human pressing Stop (`pauseStepForHumanStop`), and a scheduled time set on
-   * a card that is working right now (T3O-19, D13). One implementation, so the
-   * two cannot drift on the thing that matters most: the slot going back.
-   *
-   * Callers own the status guard, because they do not agree on it. A human Stop
-   * accepts `awaiting-input` and `stalled` too — they asked for the neutral
-   * `Paused` and should get it. A schedule accepts only `running`: every other
-   * parked status is already parked, and converting one would throw away the
-   * reason the card is showing (an unanswered question, an escalation) to say
-   * nothing new.
+   * Park a live step as `paused`: stop its turn, release its slot, keep its thread and
+   * worktree. Shared by a human Stop and a schedule set on a working card. Callers own the
+   * status guard: a Stop also accepts `awaiting-input` and `stalled`; a schedule only `running`.
    */
   const pauseStepNow = Effect.fn("board-supervisor-pauseStepNow")(function* (input: {
     readonly card: BoardCard;
@@ -5770,40 +5107,10 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A HUMAN stopped a board-run step (T3O-23) — the way into `paused`.
-   *
-   * Driven by `thread.turn-interrupt-requested` on the domain stream, acted on
-   * immediately rather than waiting for the trailing `turn.completed`. Acting on
-   * the interrupt is what makes the card say `Paused` the moment the human
-   * presses Stop; it also means the `turn.completed` that follows finds a
-   * `paused` step and returns at `handleTurnCompleted`'s existing status guard,
-   * so the stop is not undone by a recovery nudge a beat later — which is the
-   * bug this exists to fix.
-   *
-   * The board interrupts threads of its own, and those must NOT read as a human
-   * stop: an orphan whose admit was rejected, and a thread abandoned mid-flight.
-   * Both are already tracked in their own sets, so the guard is free.
-   *
-   * The re-interrupt at the end is not redundant. Both streams funnel into the
-   * one serialised worker, and in the interleaving where `turn.completed` is
-   * processed FIRST, `recoverStep` has already sent a fresh nudge turn — leaving
-   * a step that says `Paused` while an agent works. Interrupting again makes the
-   * stop stick against that. The cost of that rare race is one wasted nudge and
-   * one `stageEntryRecoveries` increment. The interrupt this dispatch emits
-   * re-enters here, finds the step already `paused`, and stops.
-   *
-   * That same reverse interleaving has a second, sharper end. When the ladder
-   * has no budget left, `recoverStep` does not nudge — it ESCALATES, and the
-   * step is `stalled` by the time the interrupt is processed. So `stalled` is
-   * accepted here too, and the human's Stop wins: they get the neutral `Paused`
-   * they asked for rather than the loud "Needs a human" chip, and the resume
-   * that follows resets `stallCount`, so the escalation is not spent for
-   * nothing. Covered by "a human stop still parks the card when an escalation
-   * won the ordering race" in `pausedStep.test.ts`.
-   *
-   * A Stop pauses and does nothing else: the card's human-in-the-loop stance is
-   * the human's to set through its own toggle (T3O-76), and resuming carries on
-   * under whichever stance the card already had.
+   * A human stopped a board-run step: act on the interrupt so the card says `Paused` at once.
+   * The board's own interrupts are excluded. `stalled` is accepted because an escalation can win
+   * the race with `turn.completed`; the re-interrupt at the end stops a nudge `recoverStep` may
+   * already have sent in that race. The interrupt re-enters here, finds `paused`, and stops.
    */
   const pauseStepForHumanStop = Effect.fn("board-supervisor-pauseStepForHumanStop")(function* (
     threadId: ThreadId,
@@ -5833,8 +5140,8 @@ const make = Effect.gen(function* () {
       return;
     }
     yield* pauseStepNow({ card: found.card, state: found.state });
-    // A human stopping an unattended planning run turns Auto-plan off with it
-    // (T3O-38): a machine stop leaves the toggle on, a human one does not.
+    // A human stopping an unattended planning run turns Auto-plan off with it:
+    // a machine stop leaves the toggle on, a human one does not.
     if (isBoardCardAutoPlanPending(found.card)) {
       const stage = boardStageById(board, found.card.stage);
       if (stage !== null && effectiveBoardStageRole(stage) === "plan") {
@@ -5852,12 +5159,8 @@ const make = Effect.gen(function* () {
     readonly state: BoardCardStepState;
     readonly outcome: "succeeded" | "failed" | "abandoned";
   }) {
-    // A conflict fix that did NOT succeed must not leave the card armed. The
-    // success path consumes the entry itself (and needs it, to complete the
-    // merge), so only the other terminal outcomes clear it here — otherwise a
-    // failed, timed-out or abandoned fix leaves a stale entry that the next
-    // merge-stage step to succeed, possibly one a human started by hand days
-    // later, would consume and turn into a merge nobody asked for.
+    // A fix that did not succeed must not leave the card armed (the success path consumes
+    // the arm itself), or a later merge-stage step would turn it into a merge nobody asked for.
     if (input.outcome !== "succeeded") {
       disarmPendingMerge(input.card.id);
     }
@@ -5872,23 +5175,18 @@ const make = Effect.gen(function* () {
     yield* releaseSlot(input.state);
   });
 
-  // ── Parking to retry (T3O-22, T3O-72) ────────────────────────────────
+  // ── Parking to retry ────────────────────────────────
 
   /**
-   * Park a step as `stalled` with a reason and, usually, a time it will try
-   * again — the ONE way a step reaches every reading of `stalled` except a
-   * spawn failure.
-   *
-   * The dispatch is OBSERVED rather than fire-and-forget, exactly as
-   * `parkStepForInput` is: a refused park (the step moved on under us) must not
-   * release a slot the step still holds and will still release at settle.
+   * The one way a step reaches `stalled` (except a spawn failure). Observed, like
+   * `parkStepForInput`: a refused park must not release a slot the step still holds.
    */
   const parkStepForRetry = Effect.fn("board-supervisor-parkStepForRetry")(function* (input: {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;
     readonly reason: BoardCardStepStalledReason;
     readonly retryAt: string | null;
-    /** Whether this park spends the retry budget (D12). A usage-limit park does not. */
+    /** Whether this park spends the retry budget. A usage-limit park does not. */
     readonly chargeBudget: boolean;
     readonly progressed: boolean;
     readonly lastError?: string | null;
@@ -5920,7 +5218,7 @@ const make = Effect.gen(function* () {
     return true;
   });
 
-  /** A delay spread by ±60s (D8), so a fleet of parked cards never hits one
+  /** A delay spread by ±60s, so a fleet of parked cards never hits one
       provider on a precise cadence. The randomness is bound here and the
       arithmetic stays pure. */
   const jittered = (delayMs: number) =>
@@ -5929,7 +5227,7 @@ const make = Effect.gen(function* () {
   const isoAfter = (nowMs: number, delayMs: number) =>
     DateTime.formatIso(DateTime.makeUnsafe(nowMs + delayMs));
 
-  /** The forge's refusal, bounded for the card aggregate (T3O-38, D4). The
+  /** The forge's refusal, bounded for the card aggregate. The
       text is persisted on every card-carrying event and rendered in a banner,
       and `gh` will happily print a paragraph. Trimmed to non-empty because the
       schema brands it so — a forge that said nothing still needs a reason. */
@@ -5942,24 +5240,10 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * Park an unattended step whose turn ended on a provider usage limit
-   * (T3O-72). Detection and the resume itself are orchestration-v2's: its
-   * adapters classify the failure (`usageLimit` on the thread state) and its
-   * recovery worker resumes the thread at the reset time once
-   * `armLimitRecovery` has armed it, whatever the user's global auto-resume
-   * setting. The board only has to stop counting the stop as a failure.
-   *
-   * So the step parks `usage-limit` without spending its retry budget, with
-   * `retryAt` a grace past the reset. The engine's resume reaches the board as
-   * `limit-resumed`, which un-parks the step (`resumeParkedStep`); if it never
-   * comes, the retry sweep wakes the step at `retryAt`. Whichever lands first
-   * wins and the other finds the step no longer parked.
-   *
-   * Answers whether it parked. A limit with no reset time, or one whose reset
-   * has already passed, is not parked here: there is nothing to wait for, so
-   * it takes the ordinary recovery ladder.
-   * There is no account-wide hold either — a sibling card on the same account
-   * hits the limit on its own turn and parks the same way.
+   * Park an unattended step stopped by a provider usage limit, without spending its retry
+   * budget. Orchestration resumes the thread (`limit-resumed` un-parks it); `retryAt`, a grace
+   * past the reset, is the fallback. Whichever lands first wins. Answers whether it parked: no
+   * reset time, or one already past, takes the ordinary recovery ladder.
    */
   const parkForUsageLimit = Effect.fn("board-supervisor-parkForUsageLimit")(function* (found: {
     readonly card: BoardCard;
@@ -5968,7 +5252,7 @@ const make = Effect.gen(function* () {
     const threadId = found.state.threadId;
     if (threadId === null) return false;
     // A read failure answers "no limit", leaving recovery as it was. A thread
-    // on a worker the board can't reach fails instead (T3O-66, D22): unknown
+    // on a worker the board can't reach fails instead: unknown
     // is no answer, and reading it as "no limit" would recover a limited turn.
     const thread = yield* threads.threadState(threadId).pipe(Effect.orElseSucceed(() => null));
     if (thread === UNKNOWN_THREAD_STATE) {
@@ -6003,18 +5287,15 @@ const make = Effect.gen(function* () {
   });
 
   /** Land a step `stalled` for a human: recovery gave up. Shared by the
-      ladder (`recoverStep`) and the background-wait check-ins (T3O-20), so a
+      ladder (`recoverStep`) and the background-wait check-ins, so a
       wait that exhausts the budget ends exactly the way a stall does. */
   const escalateStep = Effect.fn("board-supervisor-escalateStep")(function* (input: {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;
     readonly progressed: boolean;
   }) {
-    // Escalation lands the step `stalled` — non-terminal, so it never reaches
-    // `settleStep` and its disarm. A conflict fix that stalls has handed the
-    // card to a human, and the human's next move must be an explicit Merge
-    // click; leaving the card armed would let some later merge-stage step
-    // succeeding turn into a merge nobody asked for.
+    // Escalation lands `stalled`, which never reaches `settleStep`'s disarm. The human's next
+    // move must be an explicit Merge click, so disarm here.
     disarmPendingMerge(input.card.id);
     yield* dispatch({
       type: "board.card.recover-step",
@@ -6024,12 +5305,12 @@ const make = Effect.gen(function* () {
       threadId: input.state.threadId,
       escalateToHuman: true,
       progressed: input.progressed,
-      // The loud reading of `stalled` (T3O-22, D10): recovery gave up, and
+      // The loud reading of `stalled`: recovery gave up, and
       // there is no time at which it will try again.
       stalledReason: "gave-up",
       createdAt: yield* nowIso,
     });
-    // Release the held slot exactly once (D4), riding the existing machinery:
+    // Release the held slot exactly once, riding the existing machinery:
     // the pre-escalation state's `slotHeld` gates the release, and the decider
     // has set the persisted `slotHeld` to false, so a re-run releases nothing.
     yield* releaseSlot(input.state);
@@ -6040,8 +5321,8 @@ const make = Effect.gen(function* () {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;
   }) {
-    // Resolve the two things the pure decision needs but must not read itself
-    // (D2/D5): the progress signal (git/activity) and the stage-entry recovery
+    // Resolve the two things the pure decision needs but must not read itself:
+    // the progress signal (git/activity) and the stage-entry recovery
     // total and its ceiling (settings). `recoveryDecision` stays pure.
     const board = yield* readBoard;
     const settings = yield* boardSettings;
@@ -6059,28 +5340,16 @@ const make = Effect.gen(function* () {
       stepState: input.state,
       progressedSinceLastNudge,
       stageEntryRecoveries,
-      // The settings key keeps its older name (T3O-12, D6); the pure function's
+      // The settings key keeps its older name; the pure function's
       // parameter says what it actually bounds.
       maxRecoveriesPerStageEntry: exec.maxInvocationsPerStageEntry,
       endedWithQuestion: yield* endedWithQuestion(input.state),
     });
 
-    // Recovery gives up (t3o-17, D3/D4): consecutive stalls exhausted
-    // `maxAttempts`, or the stage-entry invocation ceiling was crossed. Ask the
-    // human (retry / switch provider / take it over) as a visible card activity,
-    // and land the step in the distinct `stalled` status — loud, not the same
-    // `awaiting-input` a healthy question reaches — while RELEASING its slot: no
-    // thread is running, so a parked card must not hold capacity for a weekend.
-    // Crucially do NOT drive the agent — escalation is a human decision, and
-    // sending another turn would re-arm death detection and re-escalate every
-    // turn. Not driving the agent is what makes recovery "escalate and never
-    // loop": it stops here until a human acts.
+    // Recovery gives up: ask the human, landing the step `stalled` and releasing its slot. Do
+    // NOT drive the agent: another turn would re-arm death detection and re-escalate every turn.
     if (decision.kind === "escalate") {
-      // The escalation question used to be recorded with
-      // `board.card.request-input`; t3o-18 D13 deleted that command. The
-      // human-facing signal is the card's `stalled` badge (t3o-17, D3) — loud,
-      // and the board offers a way to find every stalled card — and the question
-      // itself goes to the server log.
+      // The card's `stalled` badge is the human-facing signal; the question goes to the log.
       yield* Effect.logWarning("board supervisor: recovery escalated to a human", {
         cardId: input.card.id,
         stepId: input.state.stepId,
@@ -6095,30 +5364,10 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // The retry BACKOFF (T3O-22, D7). Before this there was no gap at all — the
-    // next nudge went the instant the previous reply landed — which is how two
-    // cards on the live board spent their entire five-nudge budget in twelve
-    // seconds against a provider that was out of quota and answering in 0.7s.
-    //
-    // So the ladder is charged HERE, at the stop, and the nudge is delivered
-    // later: the step parks `stalled` with reason `waiting-retry` and a
-    // `retryAt`, releases its slot, and the retry sweep requeues it when its
-    // moment arrives. The nudge text is recomposed from the row at delivery
-    // (`resumeExistingStepThread`), so nothing has to survive the wait.
-    //
-    // Applied to EVERY nudge, not only recognised usage limits: a provider
-    // refusal the engine does not classify is still harmless, instead of five
-    // requests in twelve seconds. The cost is escalation latency — a genuinely
-    // dead card reaches a human after about an hour instead of instantly — and
-    // it is worth paying, because for that hour the card is honestly labelled
-    // and holds no capacity.
-    //
-    // First, the pre-existing "can this recovery act at all" test, unchanged in
-    // meaning and moved earlier: a step whose thread is gone and which cannot be
-    // respawned (no worktree, no workspace root) has nowhere to send anything,
-    // and burning an attempt on a recovery that will send nothing is what this
-    // guard has always prevented. It has to be asked BEFORE the park now,
-    // because the park is what spends the budget.
+    // Every nudge is backed off: the ladder is charged here, at the stop, and the step parks
+    // `waiting-retry` with a `retryAt` and no slot until the retry sweep requeues it. So the
+    // "can this recovery act at all" test (thread gone, no way to respawn) runs first, because
+    // the park is what spends the budget.
     const gone = yield* threadGone(input.state.threadId);
     const canRespawn = yield* Effect.gen(function* () {
       if (input.state.mode === "build") return input.card.worktree?.path != null;
@@ -6127,7 +5376,7 @@ const make = Effect.gen(function* () {
     });
     if (gone && !canRespawn) {
       yield* Effect.logWarning(
-        "board supervisor: cannot recover step — no thread and cannot respawn",
+        "board supervisor: cannot recover step: no thread and cannot respawn",
         { cardId: input.card.id, stepId: input.state.stepId },
       );
       return;
@@ -6144,13 +5393,7 @@ const make = Effect.gen(function* () {
     });
   });
 
-  // A step thread's turn ended (runtime `turn.completed`): the death/stall test
-  // (D4). A step that is running OR awaiting a human answer, with no completion
-  // and no pending question left on the thread, settled without completing —
-  // recover. A still-pending question is the legitimate gate (D13), not death.
-  // ── Card ↔ pull request ─────────────────────────────────────────────
-
-  /** T3o (T3O-24): `BoardCardPullRequest.closedAt` from a forge answer —
+  /** T3o: `BoardCardPullRequest.closedAt` from a forge answer —
       when it stopped being open, keyed only on a non-open pull request. */
   const boardClosedAtOf = (found: {
     readonly state: BoardCardPullRequest["state"];
@@ -6159,78 +5402,33 @@ const make = Effect.gen(function* () {
   }): { readonly closedAt?: string | null } =>
     found.state === "open" ? {} : { closedAt: found.mergedAt ?? found.closedAt ?? null };
 
-  /** T3o (T3O-48): the card's link, as the refresh RPC reports it. */
+  /** T3o: the card's link, as the refresh RPC reports it. */
   const boardRefreshOutcomeOf = (
     pullRequest: BoardCardPullRequest | null,
   ): BoardRefreshCardPullRequestResult =>
     pullRequest === null ? { outcome: "none" } : { outcome: "linked", number: pullRequest.number };
 
   /**
-   * Re-resolve the card's pull request from the forge and record it if it
-   * moved.
-   *
-   * Called from the refresh triggers, never on a timer. There is deliberately
-   * NO periodic sweep: the cost of PR lookups is driven by how many branches
-   * are asked about, not how often, and a board-wide poll would grow with the
-   * board while telling us nothing new about cards nobody is touching.
-   *
-   * Three cheap refusals come first, and between them they keep the lookup set
-   * bounded by "cards actually in flight":
-   *
-   *  1. A MERGED pull request — the one state that can never change again, so a
-   *     card stops costing branch lookups the moment its PR lands. A merged
-   *     link whose title is still null is the exception: it costs one cached
-   *     lookup by number on each refresh trigger until a title arrives (forced
-   *     only by a human's "Check again"). `closed` deliberately does NOT stop
-   *     them: it can be reopened, and a branch whose PR was closed is the one
-   *     most likely to get a new one.
-   *  2. No ready worktree — no branch, so nothing to look up.
-   *  3. A lookup FAILURE records nothing, leaving the last known link in
-   *     place. This mirrors `rememberLastKnownPr` in `GitManager` and exists
-   *     for the same reason: a rate limit or a network blip must not blank a
-   *     card's PR badge. "No PR" and "could not ask" are different answers and
-   *     only the first is worth recording.
+   * Re-resolve the card's pull request from the forge and record it if it moved. No periodic
+   * sweep: lookup cost grows with branches asked about. A merged PR (once titled) or no branch
+   * costs no lookup. A lookup failure records nothing, so a rate limit never blanks the badge.
    */
   const refreshCardPullRequestLink = Effect.fn("board-supervisor-refreshCardPullRequestLink")(
     function* (
       card: BoardCard,
-      /** T3o (T3O-48): a human's "Check again" bypasses the lookup cache and
+      /** T3o: a human's "Check again" bypasses the lookup cache and
           its failure backoff. Every automatic caller omits it and keeps the
           cheap cached path. */
       options?: { readonly force?: boolean },
     ) {
       const worktree = card.worktree;
-      // No branch means nothing to look up — a card that never entered Building
-      // has no worktree at all. But a RECLAIMED worktree still has its branch
-      // name (reclaim nulls `path`, not `branch`) and its card can still be
-      // merged, so it must still be refreshable: falling back to the project
-      // root keeps "the worktree was tidied away" from silently freezing the
-      // card's link at whatever it last said.
+      // A reclaimed worktree keeps its branch name (reclaim nulls `path`) and can still be
+      // merged, so fall back to the project root rather than freeze the card's link.
       const recorded = card.pullRequest;
-      // T3o (T3O-48): a merged pull request is the one state that can never
-      // change again, so the lookup is skipped — but the card HAS a link, and
-      // saying so is the whole point of answering. A title that is still null
-      // is the one exception: records written before the field existed decode
-      // as null, and this is the one backfill that can fill it without
-      // announcing the merge a second time (`updated`, not `state-changed`).
-      // Look that backfill up by NUMBER: Done may already have deleted the
-      // board branch, and a branch lookup then answers "none" and would unlink
-      // the merge. A failure, a different number, or a same-number answer that
-      // is not still merged keeps the recorded link — lastGoodSummary can
-      // still say "open" after the merge landed, and writing that would let
-      // the next branch lookup unlink it. Skip the held summary so a live
-      // merged result can still fill the title.
-      //
-      // T3o (T3O-18): an explicitly linked pull request takes the same
-      // by-number path for every state, never the branch lookup — the card
-      // may have no worktree at all, or the link may name a PR on another
-      // branch (a stack layer), and either way the branch would answer wrong.
-      //
-      // T3o (T3O-24): a merged link the board ADOPTED that closed before the
-      // card existed is an earlier card's, found on a reused branch name. It
-      // skips this path and goes to the branch lookup, which replaces it with
-      // the card's own pull request or with nothing. A merged link recorded
-      // before `closedAt` existed is looked up by number once to learn it.
+      // Linked PRs and merged ones still missing a title (or `closedAt`) are looked up by NUMBER:
+      // Done may have deleted the branch, and a link may name another branch's PR. Only a
+      // still-merged same-number answer updates a merged link. A merged link adopted from a reused
+      // branch that closed before the card existed goes to the branch lookup to be replaced.
       const linked = recorded?.linked === true;
       // The pull request the card holds but never owned, once known.
       let disowned: number | null =
@@ -6343,11 +5541,8 @@ const make = Effect.gen(function* () {
         return { outcome: "no-branch" } as const;
       }
 
-      // T3o (T3O-48): a failure carries the forge's own words out rather than
-      // only logging them. "We looked and there is none" and "we could not
-      // look" are different answers, and a refresh that cannot tell them apart
-      // is what this card was filed about. Recording is unchanged: neither
-      // branch below writes anything, so the card's last known link stands.
+      // A failure carries the forge's words out: "there is none" and "could not look" are
+      // different answers. Neither branch below records anything.
       const found = yield* workspace
         .pullRequestByBranch({
           branch: worktree.branch,
@@ -6376,7 +5571,7 @@ const make = Effect.gen(function* () {
         return { outcome: "lookup-failed", detail: found.failure } as const;
       }
 
-      // T3o (T3O-24): a pull request that closed before the card existed is
+      // T3o: a pull request that closed before the card existed is
       // an earlier card's on the same branch name — the lookup falls back to
       // the newest pull request on the branch when none is open — so it is
       // no pull request at all for this card.
@@ -6399,24 +5594,13 @@ const make = Effect.gen(function* () {
               checkedAt: yield* nowIso,
             } satisfies BoardCardPullRequest);
 
-      // Re-read before deciding. The lookup above is a forge round trip, and
-      // the card handed in was read BEFORE it — so every trigger this card has
-      // (a card opening in one browser tab, the same card opening in another, a
-      // review step boundary, a stage move) spends that whole window holding a
-      // pull request state that another trigger may have already recorded. The
-      // guards below are all comparisons against what the card holds NOW, so
-      // they have to run against the freshest read available or they compare
-      // against a state that has already been superseded.
+      // Re-read after the forge round trip: concurrent triggers may have recorded a newer state,
+      // and the guards below compare against what the card holds now.
       const current = (yield* readCard(card.id)) ?? card;
 
-      // A merged link is never unlinked or demoted from a branch lookup.
-      // Done may already have deleted `board/<key>`, so `find` answers null
-      // for a fork head or a missing remote; that is "could not see it", not
-      // "there is none". A same-number open or closed answer is the lookup
-      // that started while the link was still open — lastGoodSummary can
-      // still say that after another refresh recorded the merge — and writing
-      // it would let the next null find unlink the badge.
-      // T3o (T3O-24): except a link the card never owned (see above).
+      // A branch lookup never unlinks or demotes a merged link: Done may have deleted the branch,
+      // and a same-number open or closed answer may predate the merge. Except a link the card
+      // never owned.
       const currentDisowned =
         current.pullRequest !== null &&
         current.pullRequest.linked !== true &&
@@ -6431,15 +5615,9 @@ const make = Effect.gen(function* () {
         return boardRefreshOutcomeOf(current.pullRequest);
       }
 
-      // A pull request at or below the floor belongs to a round this card has
-      // already finished (see `BoardCard.pullRequestFloor`). The decider refuses
-      // it too — that refusal is the load-bearing one — but a card on its second
-      // round resolves its retired pull request on EVERY lookup until the new
-      // round opens one, so catching it here keeps that from being a rejected
-      // dispatch and a warning log every single time. `open` and the card's
-      // current link are exempt for the reasons the decider gives: the first is
-      // the branch's live pull request rather than a finished round's, and the
-      // second is how a link adopted while open records its own merge.
+      // A PR at or below the floor belongs to a finished round. The decider refuses it too; this
+      // keeps a second-round card from a rejected dispatch on every lookup. `open` and the current
+      // link are exempt, as in the decider.
       const isCurrentLink =
         next !== null && current.pullRequest !== null && current.pullRequest.number === next.number;
       if (
@@ -6458,15 +5636,12 @@ const make = Effect.gen(function* () {
           state: next.state,
           floor: current.pullRequestFloor,
         });
-        // T3o (T3O-48): the card's OWN link is the answer, not the retired
+        // T3o: the card's OWN link is the answer, not the retired
         // round's number this lookup happened to resolve.
         return boardRefreshOutcomeOf(current.pullRequest);
       }
-      // The decider rejects a no-op too, but checking here keeps the common case
-      // — a refresh that found exactly what we already knew — from generating a
-      // rejected dispatch on every card open. It cannot close the window
-      // entirely: two refreshes that overlap can both pass this and only one
-      // can land, which is why the dispatch below tolerates the refusal.
+      // Skip a no-op without a rejected dispatch. Overlapping refreshes can still both pass this,
+      // which is why the dispatch below tolerates the refusal.
       if (boardCardPullRequestsEqual(current.pullRequest, next)) return boardRefreshOutcomeOf(next);
 
       yield* dispatchOptional({
@@ -6481,36 +5656,23 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Refresh the card's pull request, then settle it if that leaves a merged
-   * pull request on a card sitting in Done.
-   *
-   * The settle is deliberately hung off the REFRESH rather than off the stage
-   * move. "In Done" and "merged" are two facts that can become true in either
-   * order — the card can arrive in Done with its pull request already merged,
-   * or sit there while somebody merges it on the forge — and only the second
-   * fact to arrive can act on the pair. Every refresh trigger the card already
-   * has (a merge click, a stage move, the card's detail being opened) therefore
-   * doubles as a settle trigger, and none of them costs a forge call it was not
-   * already making. Nothing here polls.
+   * Refresh the card's pull request, then settle it if a merged PR sits in Done. Hung off the
+   * refresh because "in Done" and "merged" arrive in either order and only the second can act
+   * on the pair; every refresh trigger doubles as a settle trigger. Nothing here polls.
    */
   const refreshCardPullRequest = Effect.fn("board-supervisor-refreshCardPullRequest")(function* (
     card: BoardCard,
-    /** The stage to settle against, when the caller holds better authority than
-        the read model does. Only `handleCardMoved` passes it: a `board.card-moved`
-        payload carries the post-move stage, which is the rule that handler
-        already states for itself, and the read model has not necessarily caught
-        up. Every other caller — the RPC path included — omits it and gets the
-        card's own stage as re-read, which is the freshest thing available to
-        them; overriding with a stage they read EARLIER would be strictly
-        staler, not fresher. */
+    /**
+     * The post-move stage, passed only by `handleCardMoved` because the read model may lag the
+     * move. Every other caller gets the card's re-read stage, which is fresher than anything
+     * they read earlier.
+     */
     movedToStage?: BoardCard["stage"],
-    /** T3o (T3O-48): `force` is threaded through to the lookup. Only the RPC's
-        "Check again" passes it; every internal caller omits it.
-
-        T3O-52: `deferSettle` hands the settle to `cardCleanupWorker` instead
-        of running it here. The reactor's own worker passes it: the settle's
-        reclaim fetches from the remote, and the serialised worker must not
-        wait on the network. */
+    /**
+     * `force` bypasses the lookup cache ("Check again"). `deferSettle` hands the settle to
+     * `cardCleanupWorker`: its reclaim fetches from the remote, and the serialised worker must
+     * not wait on the network.
+     */
     options?: { readonly force?: boolean; readonly deferSettle?: boolean },
   ) {
     const outcome = yield* refreshCardPullRequestLink(card, options);
@@ -6527,18 +5689,15 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Resolve a pull request to link to a card in `projectId` (T3O-18): parse
-   * and repository-check the target, then ask the forge — forced, because a
-   * person or agent naming a pull request is asking about it now. Refuses a
-   * pull request that is not on the project's repository or that the forge
-   * does not know, in words fit to show them. Records nothing, so a caller
-   * creating a card can check its pull request before the card exists.
+   * Resolve a pull request to link to a card in `projectId`, forced. Refuses one not on the
+   * project's repository or unknown to the forge, in words fit to show. Records nothing, so a
+   * caller can check it before the card exists.
    */
   const resolvePullRequestLink = Effect.fn("board-supervisor-resolvePullRequestLink")(function* (
     workspace: BoardCardWorkspace,
     target: BoardCardPullRequestTarget,
   ) {
-    // T3o (T3O-24): the board's repository — `origin` — not the project
+    // T3o: the board's repository — `origin` — not the project
     // identity, which in a fork names upstream.
     const repository = yield* workspace
       .pullRequestRepository({})
@@ -6577,11 +5736,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Link a pull request to a card explicitly, or clear such a link (T3O-18).
-   * The one path behind `board_create_card` / `board_update_card` and the
-   * card detail's "Link one". `resolved` skips the lookup for a caller that
-   * has just made it. After a link lands the card is settled like after any
-   * refresh, so a card already in Done with a merged pull request settles.
+   * Link a pull request to a card, or clear the link. `resolved` skips the lookup. The card
+   * is then settled like after any refresh.
    */
   const linkPullRequest = Effect.fn("board-supervisor-linkPullRequest")(function* (
     cardId: BoardCardId,
@@ -6627,18 +5783,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Delete a card's branch on arrival at Done, when its PR is merged and the
-   * merge stage's `deleteBranchOnDone` is on.
-   *
-   * Runs AFTER a refresh, so the decision is made against what the forge says
-   * now rather than whatever was last cached — the difference matters most in
-   * exactly the case this exists for, a PR merged on GitHub while the card sat
-   * in the merge stage.
-   *
-   * Best-effort throughout: a cleanup that fails is reported on the card and
-   * never blocks the move to Done. A branch that outlives its card is untidy;
-   * a card that cannot reach Done because a `git push --delete` failed is
-   * broken.
+   * Delete a card's branch on arrival at Done when its PR is merged and `deleteBranchOnDone`
+   * is on. Runs after a refresh, against what the forge says now. Best-effort: a failure is
+   * reported on the card and never blocks the move to Done.
    */
   const cleanupBranchOnDone = Effect.fn("board-supervisor-cleanupBranchOnDone")(function* (
     card: BoardCard,
@@ -6646,7 +5793,7 @@ const make = Effect.gen(function* () {
     const worktree = card.worktree;
     if (worktree === null) return;
     if (card.pullRequest === null || card.pullRequest.state !== "merged") return;
-    // T3o (T3O-24): an earlier card's merge on a reused branch name.
+    // T3o: an earlier card's merge on a reused branch name.
     if (
       card.pullRequest.linked !== true &&
       boardPullRequestPredatesCard(card.pullRequest, card.createdAt)
@@ -6668,7 +5815,7 @@ const make = Effect.gen(function* () {
     const workspace = yield* workspaceFor(card);
     if (workspace.checkoutPath === null) return;
 
-    // T3O-18: a linked pull request can live on another branch (a stack
+    // A linked pull request can live on another branch (a stack
     // layer). Its merge says nothing about the card's own branch, which may
     // hold pushed commits that exist nowhere else.
     if (card.pullRequest.headBranch !== worktree.branch) {
@@ -6677,7 +5824,7 @@ const make = Effect.gen(function* () {
         commandId: yield* commandId("branch-cleanup"),
         cardId: card.id,
         kind: "card-branch-kept",
-        detail: `Kept branch ${worktree.branch} — the merged pull request #${card.pullRequest.number} is on ${card.pullRequest.headBranch}, not this branch`,
+        detail: `Kept branch ${worktree.branch}: the merged pull request #${card.pullRequest.number} is on ${card.pullRequest.headBranch}, not this branch`,
         createdAt: yield* nowIso,
       });
       return;
@@ -6693,20 +5840,17 @@ const make = Effect.gen(function* () {
       ),
     );
     if (result === null) return;
-    // Report it on the card, not just in the log. Deleting a branch is
-    // irreversible, and a partial cleanup — remote gone, local still held by a
-    // worktree — is a real outcome whenever `reclaimWorktreeOnDone` is off, so
-    // the user needs to be told which of their branches still exist without
-    // reading server logs to find out.
+    // Report it on the card: deleting a branch is irreversible, and a partial cleanup is a
+    // real outcome when `reclaimWorktreeOnDone` is off.
     const deleted = [
       ...(result.remoteDeleted ? ["remote"] : []),
       ...(result.localDeleted ? ["local"] : []),
     ];
     const detail =
       deleted.length === 0
-        ? `Kept branch ${worktree.branch}${result.skippedReason === null ? "" : ` — ${result.skippedReason}`}`
+        ? `Kept branch ${worktree.branch}${result.skippedReason === null ? "" : `: ${result.skippedReason}`}`
         : `Deleted ${deleted.join(" and ")} branch ${worktree.branch}${
-            result.skippedReason === null ? "" : ` — ${result.skippedReason}`
+            result.skippedReason === null ? "" : `: ${result.skippedReason}`
           }`;
     yield* dispatch({
       type: "board.card.record-note",
@@ -6719,25 +5863,18 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Cards whose reclaim is running right now (T3O-52). A reclaim can be asked
-   * for from several places at once — the sweep fiber, a card open, an archive
-   * — and two concurrent ones would both probe and then race to remove the
-   * same checkout. The test and the add are synchronous, so no yield
-   * separates them.
+   * Cards whose reclaim is running now, so concurrent reclaims never race to remove the same
+   * checkout. The test and the add are synchronous, so no yield separates them.
    */
   const reclaimingCards = new Set<string>();
 
   /**
-   * Whether `card` is still finished with the checkout at `path`, read fresh:
-   * the same checkout still `ready`, and the card archived, or in the same
-   * round with no live step — a step queued or running is an agent about to
-   * write there. Not the stage: the read model can lag a move event, which is
-   * why `settleCardAtDone` re-asserts on the round too. A read that fails
-   * answers no — keeping a worktree is always the safe side, and the next
-   * sweep asks again.
+   * Whether `card` is still finished with the checkout at `path`, read fresh: same checkout
+   * still `ready`, and archived or in the same round with no live step. Not the stage: the
+   * read model can lag a move. A failed read answers no; keeping a worktree is the safe side.
    */
-  const cardStillFinished = (card: BoardCard, path: string) =>
-    Effect.gen(function* () {
+  const cardStillFinished = Effect.fn("board-supervisor-cardStillFinished")(
+    function* (card: BoardCard, path: string) {
       const board = yield* readBoard;
       const current = board.cards.find((candidate) => candidate.id === card.id);
       if (current === undefined || current.worktree?.status !== "ready") return false;
@@ -6746,26 +5883,15 @@ const make = Effect.gen(function* () {
       if (boardCardRound(current) !== boardCardRound(card)) return false;
       const state = boardCardStepState(board, current.id);
       return state === null || isBoardTerminalStepStatus(state.status);
-    }).pipe(Effect.orElseSucceed(() => false));
+    },
+    Effect.orElseSucceed(() => false),
+  );
 
   /**
-   * Remove a card's worktree when its work is durable, reporting the outcome
-   * onto the card (T3O-52, D1).
-   *
-   * Shared by every moment a worktree is reclaimed — the card in Done, the
-   * sweep, and archive — so all get the same safety rule, the same rail entry
-   * and the same never-fatal error handling. Reclaim NEVER deletes uncommitted
-   * work or commits that exist nowhere else: such a tree is kept and the
-   * reason recorded (t3o-09, D6).
-   *
-   * Idempotent: a worktree that is not `ready` is already gone (or never
-   * arrived), and a refusal identical to the one the card already holds
-   * dispatches nothing, so re-asking on every card open writes no event.
-   *
-   * The card is re-read between the probe and the removal
-   * (`cardStillFinished`): `card` is the caller's snapshot, and the probe's
-   * fetches leave minutes for a human to unarchive it or drag it back out of
-   * Done and start work in that very checkout.
+   * Remove a card's worktree when its work is durable, else keep it and record why. Never
+   * deletes uncommitted or unpushed work. Idempotent: a repeated refusal dispatches nothing.
+   * The card is re-read before removal, since the probe's fetches leave time for a human to
+   * bring it back into use.
    */
   const reclaimCardWorktree = Effect.fn("board-supervisor-reclaimCardWorktree")(function* (
     card: BoardCard,
@@ -6790,7 +5916,7 @@ const make = Effect.gen(function* () {
       ...(card.pullRequest === null ? [] : [card.pullRequest]),
     ];
     // An unreachable worker reads as "failed" here, which records nothing:
-    // the next sweep asks again (T3O-64).
+    // the next sweep asks again.
     const reclaimed = yield* workspace
       .reclaimWorktree(
         {
@@ -6801,7 +5927,7 @@ const make = Effect.gen(function* () {
             .filter(
               (pullRequest) =>
                 pullRequest.state === "merged" &&
-                // T3o (T3O-24): an earlier card's merge on a reused branch name
+                // T3o: an earlier card's merge on a reused branch name
                 // proves nothing about this card's work.
                 (pullRequest.linked === true ||
                   !boardPullRequestPredatesCard(pullRequest, card.createdAt)),
@@ -6846,67 +5972,26 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * The round each card's BRANCH CLEANUP last ran in, this process — see
-   * `settleCardAtDone`. Keyed by ROUND rather than being a plain set of card
-   * ids, and cleared by nothing but archive.
-   *
-   * A per-card flag cleared on the move out of Done looked equivalent and was
-   * not: a settle already in flight when the card moved would finish afterwards
-   * and re-add the flag, and round two would then silently never settle. The
-   * round index moves with the card instead, so a late write from round one
-   * records round one and cannot mask round two.
-   *
-   * `pullRequestHistory.length` IS the round index: it increments exactly once,
-   * at the boundary, when the card leaves the done-role stage carrying a pull
-   * request.
-   *
-   * It guards the branch half ONLY (T3O-52, D2). The worktree half is
-   * idempotent on its own and is retried freely, so a refusal that later
-   * clears — a stray file deleted, a pull request merged — is acted on.
+   * The round each card's branch cleanup last ran in (`pullRequestHistory.length`), cleared
+   * only by archive. Keyed by round, not a flag cleared on leaving Done, so a late settle from
+   * round one cannot mask round two. Guards the branch half only; the worktree half is
+   * idempotent and retried freely.
    */
   const settledAtDone = new Map<string, number>();
   const boardCardRound = (card: BoardCard): number => card.pullRequestHistory.length;
 
   /**
-   * Cards whose branch cleanup is running right now.
-   *
-   * `settledAtDone` is marked on COMPLETION, deliberately — a cleanup that dies
-   * partway must be retryable. That leaves a check-then-set window across every
-   * yield in between, and the `board.refreshPullRequest` RPC is not serialised
-   * through the reactor's worker, so two card opens really can be in that
-   * window together and both run the cleanup. This closes it: the test and the
-   * add below are synchronous, so no yield separates them.
+   * Cards whose branch cleanup is running now. `settledAtDone` is marked on completion so a
+   * failed cleanup can retry, and the RPC path is not serialised, so this closes the window.
+   * The test and the add are synchronous.
    */
   const settlingAtDone = new Set<string>();
 
   /**
-   * Give a finished card its disk back: reclaim the worktree, then delete the
-   * branches. Two halves with two different gates (T3O-52, D2):
-   *
-   * - **Worktree.** Any ARCHIVED card, unconditionally — archive is the
-   *   guaranteed cleanup point, so a human's "Check again" on an archived card
-   *   re-runs the reclaim whatever its stage or the setting. Otherwise any card
-   *   in the done-role stage, with `reclaimWorktreeOnDone` on. No
-   *   pull-request requirement: the safety rule
-   *   (`reclaimBoardCardWorktree`) asks git whether the work is durable, which
-   *   also covers a card merged straight into its base, or one that reached
-   *   Done with nothing new to merge.
-   * - **Branches.** Only with a MERGED pull request, because that is what
-   *   makes deleting them safe — the commits already live in the base branch.
-   *   Once per round (`settledAtDone`).
-   *
-   * THE ORDER IS THE POINT. `deleteCardBranch` refuses to delete a local
-   * branch a worktree still has checked out, so reclaiming first means the
-   * branch is unheld by the time the delete is attempted, and the worktree and
-   * the local branch go together, in one move.
-   *
-   * `branchCleanup: "after-reclaim"` is the sweep's mode: it runs the branch
-   * half only when this call actually removed the worktree, so a kept card
-   * does not get another branch-cleanup row on every boot.
-   *
-   * Best-effort throughout, both halves. A card that cannot reach Done because
-   * a `git push --delete` failed is broken; a branch that outlives its card is
-   * merely untidy.
+   * Reclaim the worktree (any archived card, or in Done with `reclaimWorktreeOnDone`), then
+   * delete the branches (merged PR only, once per round). Order matters: a local branch held by
+   * a worktree cannot be deleted. `"after-reclaim"` (the sweep) cleans branches only when this
+   * call removed the worktree. Best-effort throughout.
    */
   const settleCardAtDone = Effect.fn("board-supervisor-settleCardAtDone")(function* (
     card: BoardCard,
@@ -6926,21 +6011,9 @@ const make = Effect.gen(function* () {
     let removedHere = false;
     let attempt: BoardCardReclaimAttempt | null = null;
     if (archived || settings.lifecycle.reclaimWorktreeOnDone) {
-      // Re-assert immediately before the destructive half. Every check above
-      // ran against the snapshot this was called with, and there are yields
-      // in between — long enough for a human to drag the card straight back
-      // out of Done and start round two in that very checkout. Removing it
-      // then would delete work that had just begun, and the durability rule
-      // does not cover it: a checkout can be clean and durable and still be
-      // the one an agent is about to write to.
-      //
-      // Re-asserted on the ROUND, not on the stage. Re-reading the stage
-      // would contradict the rule `handleCardMoved` states — the move event's
-      // payload is the authority for where a card is, precisely because the
-      // read model may not have caught up — so a lagging read would cancel
-      // legitimate reclaims. The round index has no such ambiguity: it only
-      // ever advances, and it advances on exactly the move being guarded
-      // against.
+      // Re-assert on the round before removing: the yields above let a human drag the card back out
+      // of Done and start work in this checkout. Not on the stage, which the read model can lag;
+      // the round only advances, and advances on exactly that move.
       const current = yield* readCard(card.id);
       if (current !== null && boardCardRound(current) === round) {
         const wasReady = current.worktree?.status === "ready";
@@ -6952,7 +6025,7 @@ const make = Effect.gen(function* () {
 
     if (!inDone) return attempt;
     if (card.pullRequest === null || card.pullRequest.state !== "merged") return attempt;
-    // T3o (T3O-24): a pull request that merged before the card existed is an
+    // T3o: a pull request that merged before the card existed is an
     // earlier card's on a reused branch name; it says nothing about this
     // card's work, which may be sitting unmerged on that very branch.
     if (
@@ -6962,16 +6035,9 @@ const make = Effect.gen(function* () {
       return attempt;
     }
     if (options?.branchCleanup === "after-reclaim" && !removedHere) return attempt;
-    // Branch cleanup hangs off the pull-request refresh, and a refresh fires
-    // every time anyone OPENS the card — so without a guard a card sitting in
-    // Done would re-run `git push --delete` on an already-deleted branch and
-    // append another "Deleted branch…" row to its activity rail on every
-    // single open.
-    //
-    // In memory, following `mergeAwaitingConflictFix`. After a restart a card
-    // still sitting in Done can settle once more, which costs one idempotent
-    // cleanup attempt — the remote delete reports "remote ref does not exist"
-    // and is treated as success — rather than an unbounded stream of them.
+    // Branch cleanup hangs off the pull-request refresh, which fires on every card open, so this
+    // guard stops a Done card re-deleting its branch and re-noting it each time. In memory: after a
+    // restart one idempotent cleanup may run again.
     if (settledAtDone.get(String(card.id)) === round) return attempt;
     // Both checks and the add are synchronous — nothing yields between them —
     // so a concurrent caller cannot slip through into the same cleanup.
@@ -6986,11 +6052,8 @@ const make = Effect.gen(function* () {
       const reclaimed = yield* readCard(card.id);
       yield* cleanupBranchOnDone(reclaimed ?? card);
     }).pipe(Effect.ensuring(Effect.sync(() => settlingAtDone.delete(String(card.id)))));
-    // "Settled" means THIS ROUND HAS HAD ITS ATTEMPT — not "achieved
-    // everything". A `git push --delete` that failed on a network blip has
-    // already said so on the card's activity rail, which is where a human
-    // looks; the round index moves when the card next leaves Done carrying a
-    // pull request, giving that round its own attempt.
+    // Settled means this round has had its attempt, not that it succeeded: a failed delete already
+    // says so on the rail, and the next round out of Done gets its own attempt.
     settledAtDone.set(String(card.id), round);
     return attempt;
   });
@@ -7017,22 +6080,9 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * Remove `board/*` worktrees no card owns any more (T3O-52, D4): the card
-   * was deleted while its removal failed, or the card's worktree record moved
-   * on (reclaimed, or re-provisioned at another path) while the old checkout
-   * stayed registered with git.
-   *
-   * Only durable ones go — proof (1) and (3) of the safety rule, since there
-   * is no card to name a pull request. Anything else is logged: there is no
-   * card to flag. A card that is mid-provisioning, failed or branch-only owns
-   * its branch's checkout and is left alone.
-   *
-   * Once per workspace — per worker and project (T3O-64) — and judged only
-   * against the cards placed on that worker. Each workspace lists only the checkouts
-   * under ITS OWN worktrees directory: another T3 environment on the same
-   * repository — a dev server seeded with a copy of the live database, say —
-   * has its own board, and its in-use `board/*` checkouts are no orphans of
-   * ours.
+   * Remove durable `board/*` worktrees no card owns any more; anything else is only logged. Judged
+   * per workspace against the cards placed there, listing only that workspace's own worktrees
+   * directory: another T3 environment on the same repository has its own board and checkouts.
    */
   const sweepOrphanWorktrees = Effect.fn("board-supervisor-sweepOrphanWorktrees")(function* (
     board: BoardState,
@@ -7113,18 +6163,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * One worktree-cleanup pass (T3O-52, D4). Candidates:
-   *
-   * - Done-role cards holding a `ready` worktree, when `reclaimWorktreeOnDone`
-   *   is on. Re-evaluated every pass whatever the last refusal said, so a tree
-   *   that has since become clean or durable is collected.
-   * - Archived cards holding one, regardless of the setting: archive is the
-   *   guaranteed cleanup point.
-   * - Board orphans (`sweepOrphanWorktrees`).
-   *
-   * `refreshOpenPullRequests` is the boot pass's extra (D3): a Done card still
-   * cached `open` may have merged on the forge since, and the refresh settles
-   * it. That set is tiny by construction, so it is the one forge call here.
+   * One worktree-cleanup pass over Done-role cards (when `reclaimWorktreeOnDone` is on), archived
+   * cards (always), and orphans. `refreshOpenPullRequests` (boot) re-reads Done cards still cached
+   * `open`, which may have merged since; that tiny set is the only forge call here.
    */
   // Pending group-archive discards the sweep has already retried this process.
   const sweptDiscards = new Set<BoardCardId>();
@@ -7136,7 +6177,7 @@ const make = Effect.gen(function* () {
     forgetSettledProvisions(board);
     const fetchedBases = new Set<string>();
     for (const card of board.cards) {
-      // T3o (T3O-18): a linked pull request settles its card whether or not
+      // T3o: a linked pull request settles its card whether or not
       // the card holds a worktree — it may never have had one — so its boot
       // refresh is not gated on the worktree or the reclaim setting.
       const cardStage = boardStageById(board, card.stage);
@@ -7186,11 +6227,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A deleted card's checkout (T3O-23): retire it — forced, as the human
-   * confirmed the delete — then delete its branch, which git refuses while a
-   * worktree still has it checked out. Queued rather than run in the delete
-   * handler because the remove scripts can take minutes; the card is gone
-   * already, so a script failure has no rail to land on and is only logged.
+   * Retire a deleted card's checkout (forced: the human confirmed the delete), then delete its
+   * branch, which git refuses while a worktree has it checked out. Queued because remove scripts
+   * can take minutes; with the card gone a failure can only be logged.
    */
   const retireDeletedCardWorktree = Effect.fn("board-supervisor-retireDeletedCardWorktree")(
     function* (request: {
@@ -7245,12 +6284,9 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map((retired) => (retired?.outcome === "removed" ? retired.hookWarning : null)));
 
   /**
-   * Per-card cleanup the reactor's own worker asks for (T3O-52): the settle on
-   * a move into Done, and the reclaim on archive. Both probe the remote before
-   * removing anything, so they run here rather than inline — a slow or
-   * unreachable remote then holds up cleanup, never step handling. FIFO, so a
-   * card's requests land in the order its events did; the per-card guards in
-   * `reclaimCardWorktree` and `settleCardAtDone` cover a concurrent sweep.
+   * Per-card cleanup (settle on Done, reclaim on archive) off the reactor's worker, because both
+   * probe the remote and a slow remote must never hold up step handling. FIFO keeps a card's
+   * requests in event order; per-card guards cover a concurrent sweep.
    */
   const cardCleanupWorker = yield* makeDrainableWorker(
     (
@@ -7277,39 +6313,36 @@ const make = Effect.gen(function* () {
         if (card !== null) yield* reclaimCardWorktree(card);
         if (card !== null) yield* reclaimArchivedIntegrationBranch(card);
       }).pipe(
-        Effect.catchCause((cause) =>
-          Cause.hasInterruptsOnly(cause)
-            ? Effect.failCause(cause)
-            : Effect.logWarning("board supervisor: card worktree cleanup failed", {
-                cause: Cause.pretty(cause),
-              }),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("board supervisor: card worktree cleanup failed", {
+              cause: Cause.pretty(cause),
+            }),
         ),
       ),
   );
 
   /**
-   * Deleted cards' retirements (T3O-23), on a worker of their own: each runs
+   * Deleted cards' retirements, on a worker of their own: each runs
    * the remove scripts, minutes apiece at worst, and a Done settle or archive
    * reclaim queued behind one would wait that long for no reason.
    */
   const cardRetireWorker = yield* makeDrainableWorker(
     (request: Parameters<typeof retireDeletedCardWorktree>[0]) =>
       retireDeletedCardWorktree(request).pipe(
-        Effect.catchCause((cause) =>
-          Cause.hasInterruptsOnly(cause)
-            ? Effect.failCause(cause)
-            : Effect.logWarning("board supervisor: card worktree cleanup failed", {
-                cause: Cause.pretty(cause),
-              }),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("board supervisor: card worktree cleanup failed", {
+              cause: Cause.pretty(cause),
+            }),
         ),
       ),
   );
 
-  // Single-flight (T3O-52, D4): one pass at a time, and triggers that arrive
-  // while one runs coalesce into ONE follow-up. Run off the reactor's worker,
-  // because a pass fetches from the remote and must never hold up the
-  // handlers. `sweepQueued` is cleared as a pass STARTS, so a trigger landing
-  // mid-pass queues the follow-up that sees its effect.
+  // Single-flight: triggers during a pass coalesce into one follow-up. `sweepQueued` is cleared as
+  // a pass starts, so a trigger landing mid-pass queues a follow-up that sees its effect.
   let sweepQueued = false;
   let sweepRefreshQueued = false;
   const worktreeSweepWorker = yield* makeDrainableWorker(() =>
@@ -7319,12 +6352,12 @@ const make = Effect.gen(function* () {
       sweepRefreshQueued = false;
       return sweepWorktrees({ refreshOpenPullRequests });
     }).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("board supervisor: worktree sweep failed", {
-              cause: Cause.pretty(cause),
-            }),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.logWarning("board supervisor: worktree sweep failed", {
+            cause: Cause.pretty(cause),
+          }),
       ),
     ),
   );
@@ -7337,11 +6370,9 @@ const make = Effect.gen(function* () {
     });
 
   /**
-   * A human's "Remove worktree" (T3O-52, D5): remove a kept worktree past the
-   * safety rule, after a dialog that named what would be lost. The BRANCH is
-   * kept, so committed work survives at no disk cost. Refused for any card
-   * that is not finished with its worktree — archived, or in the done-role
-   * stage — since an active card's checkout is where its agent writes.
+   * A human's "Remove worktree": removes a kept worktree past the safety rule but keeps the branch.
+   * Refused unless the card is archived or in the done-role stage, since an active card's checkout
+   * is where its agent writes.
    */
   const forceRemoveCardWorktree = Effect.fn("board-supervisor-forceRemoveCardWorktree")(function* (
     cardId: BoardCardId,
@@ -7371,7 +6402,7 @@ const make = Effect.gen(function* () {
       Effect.catchTags({ WorkerUnavailable: () => Effect.succeed(null) }),
     );
     // The worker is out of reach: nothing was removed, and saying so beats
-    // recording a removal that did not happen (T3O-64).
+    // recording a removal that did not happen.
     if (removed === null) return { outcome: "failed" } as const;
     const { hookWarning } = removed;
     yield* dispatchOptional({
@@ -7413,56 +6444,31 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Cards whose human-initiated merge is waiting on a conflict fix.
-   *
-   * The merge stage runs nothing on entry, but a human CAN start a thread there
-   * by hand (the card's stage-restart menu). Without this set, that thread
-   * reporting success would merge the pull request — a merge nobody asked for,
-   * which is the one thing this design refuses to do. An entry is added only
-   * when a Merge click hits a conflict, and consumed by the step that resolves
-   * it.
-   *
-   * In-memory deliberately. After a restart the set is empty, so a conflict
-   * step that finishes across a restart does NOT auto-merge and the human
-   * clicks Merge again — the conservative direction, and the only one
-   * consistent with "no merge happens that a human did not initiate".
+   * Cards whose human-initiated merge waits on a conflict fix. Without it, a hand-started thread in
+   * the merge stage reporting success would merge unasked. In memory on purpose: after a restart
+   * the human clicks Merge again, never a merge nobody initiated.
    */
   //
-  // Keyed by WHICH fix was armed (T3O-12): a conflict runs the stage's own
+  // Keyed by WHICH fix was armed: a conflict runs the stage's own
   // prompt, a failed-checks refusal runs `DEFAULT_BOARD_CHECKS_FIX_PROMPT`.
   // One map rather than two sets, so the two arms can never both be live.
   const mergeAwaitingConflictFix = new Map<string, BoardMergeFixKind>();
 
   /**
-   * Cards that have already had their one automatic CI fix (T3O-12).
-   *
-   * A conflict fix is bounded by `viaConflictFix` because its completion
-   * re-attempts the merge straight away. A CI fix cannot be bounded that way:
-   * its push re-runs CI, so the immediate re-attempt sees PENDING checks, and
-   * the failure that matters arrives later through the ladder's own retry —
-   * which is a fresh `mergeCardPullRequest` call. So the spend is remembered
-   * here until a human's Merge click (or a fresh arrival at the merge stage)
-   * buys one more. In-memory like the arm; a restart grants one more fix,
-   * which is the cheap direction.
+   * Cards that have had their one automatic CI fix. Unlike a conflict fix it cannot be bounded by
+   * `viaConflictFix`: its push re-runs CI, so the failure arrives later via a fresh merge call.
+   * Cleared by a Merge click or a fresh merge-stage arrival; a restart grants one more fix.
    */
   const checksFixSpent = new Set<string>();
 
   /**
-   * UNARMED cards whose merge is waiting on the checks their own CI fix
-   * re-ran (T3O-12).
-   *
-   * A human's Merge click started that fix, so the merge it re-attempts is
-   * still the one the human asked for — but the fix's push re-ran CI, so the
-   * re-attempt meets pending checks. An armed card waits on its retry ladder;
-   * this set lets an unarmed card ride the same ladder for that one wait,
-   * rather than stopping with a refusal the moment CI starts. Dropped when
-   * the card leaves the merge stage or a human clicks Merge again. In-memory
-   * like the arm: after a restart the sweep clears the hold and the card waits
-   * for a click, which is never a merge nobody asked for.
+   * Unarmed cards whose merge waits on the checks their own CI fix re-ran: the human asked for that
+   * merge, so it rides the retry ladder for this one wait instead of refusing on pending CI.
+   * Dropped on leaving the merge stage or a new Merge click; in memory, so a restart waits a click.
    */
   const mergeAwaitingChecks = new Set<string>();
 
-  /** When the board last readied each card's draft (T3O-12), so a Merge click
+  /** When the board last readied each card's draft, so a Merge click
       inside the ladder's first rung waits for the CI that readying started.
       In-memory: after a restart the window has long passed anyway. */
   const readiedAt = new Map<string, number>();
@@ -7476,29 +6482,10 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * Mark a card's draft pull request ready for review (T3O-12) — the moment
-   * the repository's full CI starts.
-   *
-   * Only when the forge says, live, that the pull request is an open draft: a
-   * pull request a human already readied is left alone. That live read is also
-   * what makes this retry-safe — running it twice readies once and writes one
-   * activity row.
-   *
-   * On arrival (`forMerge: false`) it also needs the review stage's
-   * `draftPullRequests` on, so a draft opened before the setting was on is left
-   * alone. A merge attempt (`forMerge: true`) skips that gate: a merge was
-   * asked for and the forge refuses to merge a draft, so turning the setting
-   * off while board-opened drafts are in flight must not strand them.
-   *
-   * A failure never throws: it writes a note naming the forge's reason, and the
-   * next merge attempt (`mergeCardPullRequest`) calls this again before it
-   * merges. A retry ladder already waiting on this card writes no further
-   * note: the first one said it, and the ladder writes its own row if it stops.
-   *
-   * Returns whether it readied the pull request just now, in which case the
-   * caller must not merge yet: the CI that readying started has not
-   * registered its checks, and a repository that skips its jobs on drafts
-   * would read as green.
+   * Ready a draft pull request, only when the forge says live it is an open draft (so retries ready
+   * once). On arrival it also needs `draftPullRequests` on; a merge attempt skips that. A failure
+   * writes a note, never throws. True when readied now: the caller must not merge yet, since the CI
+   * readying started has not registered its checks.
    */
   const markCardPullRequestReady = Effect.fn("board-supervisor-markCardPullRequestReady")(
     function* (card: BoardCard, options: { readonly forMerge: boolean }) {
@@ -7537,7 +6524,7 @@ const make = Effect.gen(function* () {
     },
   );
 
-  /** The merge outcome for a pull request readied a moment ago (T3O-12): a
+  /** The merge outcome for a pull request readied a moment ago: a
       soft refusal, so the merge waits a rung for the CI it just started. */
   const justReadiedRefusal = (
     number: number,
@@ -7548,21 +6535,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Ask the forge WHY it just refused a merge, once (T3O-47).
-   *
-   * The answer drives two very different responses — start an agent to resolve
-   * a conflict, or stop and tell the human — and the cost of the two mistakes
-   * is very asymmetric. Mistaking a conflict for a policy block just means the
-   * user reads the real reason and clicks again; mistaking a policy block for a
-   * conflict spawns an agent to "fix" a branch that has nothing wrong with it,
-   * which then merges base into a healthy branch and pushes for no reason.
-   *
-   * It is answered from the host's structured mergeability rather than from
-   * the refusal's prose, which was always the weaker test and which upstream's
-   * process layer no longer carries out of a subprocess at all. The one probe
-   * serves both readers: the conflict route here, and the ladder's
-   * classification in `recordAutoMergeOutcome`, which is handed this state
-   * rather than spending a second round trip on it.
+   * Ask the forge once, from structured mergeability rather than refusal prose, why a merge was
+   * refused. Mistaking a policy block for a conflict spawns an agent to "fix" a healthy branch, so
+   * a conflict must be proven. The result also feeds `recordAutoMergeOutcome`.
    */
   const probeMergeState = Effect.fn("board-supervisor-probeMergeState")(function* (
     card: BoardCard,
@@ -7573,27 +6548,16 @@ const make = Effect.gen(function* () {
       .pullRequestMergeState({ number: pullRequest.number })
       .pipe(
         Effect.map((state) => ({ state, failure: undefined })),
-        // The probe's own words go on the card (T3O-8): a probe that failed is
+        // The probe's own words go on the card: a probe that failed is
         // not a forge that gave no reason, and the failure usually names its fix.
         Effect.catch((error) => Effect.succeed({ state: null, failure: error.detail })),
       );
   });
 
   /**
-   * Merge a card's pull request, then advance it — the blue Merge button.
-   *
-   * Always human-initiated: nothing in the merge stage auto-executes, so no
-   * merge ever happens that someone did not ask for. What follows a refusal
-   * depends on WHY:
-   *
-   * - **Conflicts** — start the merge stage's conflict-resolution step. It
-   *   runs through the ordinary step machine (slot, timeout, stall detection,
-   *   attempt ladder) and reports through `board_complete_step`, which is the
-   *   only channel an agent has to say "done, and it worked". On success
-   *   `handleStepCompleted` finishes the merge the human already asked for.
-   * - **Anything else** (failing checks, missing approvals) — report the
-   *   forge's own reason and stop. That block needs a human, so the next
-   *   attempt should be a human's too; there is no automatic retry.
+   * Merge a card's pull request, then advance it. Always human-initiated. A conflict refusal starts
+   * the merge stage's conflict step, whose success finishes this merge; any other refusal reports
+   * the forge's reason and stops, with no automatic retry.
    */
   const mergeCardPullRequest = Effect.fn("board-supervisor-mergeCardPullRequest")(function* (
     cardId: BoardCardId,
@@ -7604,11 +6568,8 @@ const make = Effect.gen(function* () {
     const card = yield* readCard(cardId);
     if (card === null) return { outcome: "unknown-card" } as const;
 
-    // Re-check first. This is a cache read, not a guaranteed round trip: the
-    // underlying lookup has a 2-minute TTL, so it narrows the staleness window
-    // rather than closing it. That is the honest bound, and it is enough —
-    // acting on a stale `open` costs a refused merge the user reads and
-    // retries, not a wrong merge, because the forge is the one that decides.
+    // A cached re-check (2-minute TTL): it narrows the staleness window, not closes it. Acting on a
+    // stale `open` costs a refused merge, never a wrong one, because the forge decides.
     yield* refreshCardPullRequest(card);
     const fresh = (yield* readCard(cardId)) ?? card;
 
@@ -7628,19 +6589,9 @@ const make = Effect.gen(function* () {
       return { outcome: "wrong-stage" as const };
     }
 
-    // The merge-click staleness gate (t3o-24, D2): the crossing was checked
-    // when the card entered this stage, but the human may have PARKED it here
-    // while a sibling merged underneath — so the click re-measures. A stale
-    // card goes back to the review-role stage (where the sync-base step and
-    // the gate round run) instead of merging a diff that was never reviewed
-    // against the base it merges into. Skipped when the board has no
-    // review-role stage to send it to — there is then no loop to gate with.
-    //
-    // The sub-board scope test that used to sit here has moved INTO
-    // `resolveBaseStale` (T3O-5, D10), which is the only place that can tell
-    // the two staleness conditions apart: tip-moved is still children-only,
-    // while a RETARGET applies at any level — and a top-level card is exactly
-    // where retargeting happens, since a child's picker is read-only.
+    // The merge-click staleness gate: a sibling may have merged while the card sat here, so a stale
+    // card goes back to the review-role stage instead of merging an unreviewed diff. Skipped when
+    // there is no review-role stage. `resolveBaseStale` owns the sub-board scope rules.
     if (yield* resolveBaseStale(fresh)) {
       const reviewStage = boardStageWithRole(stages, "review");
       if (reviewStage !== null) {
@@ -7669,13 +6620,9 @@ const make = Effect.gen(function* () {
       }
     }
 
-    // A draft that arrival did not ready gets readied here (T3O-12): a
-    // transient forge failure costs one merge attempt rather than a card that
-    // can never merge, and a draft left over from before the setting was
-    // turned off still merges. Keyed on the RECORDED link so an ordinary merge
-    // spends no extra forge read; the helper re-reads live before it acts.
-    // Readying it starts CI, so this attempt stops there and the merge waits
-    // on the retry ladder — an unarmed card too, since a human asked for it.
+    // Ready a draft arrival did not, keyed on the recorded link so ordinary merges spend no forge
+    // read. Readying starts CI, so this attempt stops and the merge waits on the retry ladder, an
+    // unarmed card too, since a human asked for it.
     if (
       pullRequest.isDraft === true &&
       (yield* markCardPullRequestReady(fresh, { forMerge: true }))
@@ -7684,22 +6631,9 @@ const make = Effect.gen(function* () {
       return justReadiedRefusal(pullRequest.number);
     }
 
-    // The pull request has to merge into the branch this card is actually
-    // based on (T3O-5, D10). A retarget rebases the branch and moves the
-    // recorded base, but a pull request that was already open keeps whatever
-    // base it was created against: the board opens none itself, and the
-    // retarget round does not cross the Done boundary, so `startsNewRound` is
-    // false and no fresh one is opened either. Merging that pull request would
-    // land these commits on a branch the card is no longer based on, carrying
-    // every commit the two bases do not share.
-    //
-    // The sync step's prompt asks the agent to retarget it; this is what
-    // happens when that did not take. Refused rather than merged-anyway or
-    // silently retargeted here, because the board has no forge operation that
-    // moves a base — and a refusal a human reads beats a merge nobody asked
-    // for. Compared against the RECORDED base (the cut point), not the
-    // effective one: that is the branch the diff was actually built on, and
-    // the stale gate above has already reconciled the two.
+    // An open pull request keeps the base it was created against, so after a retarget merging it
+    // would land these commits on a branch the card is no longer based on. Refused, not retargeted:
+    // the board has no forge operation that moves a base. Compared against the recorded base.
     const recordedBase = fresh.worktree?.baseRefName ?? null;
     if (recordedBase !== null && pullRequest.baseRef !== recordedBase) {
       return {
@@ -7708,22 +6642,15 @@ const make = Effect.gen(function* () {
       };
     }
 
-    // T3o (T3O-47): the PROJECT's checkout, not the card's worktree. The merge
-    // is a forge operation addressed by `{ projectId, repository }`, and
-    // `PullRequestService` runs the host's CLI in the project's own workspace
-    // root — so that is the one path whose absence makes a card unmergeable. A
-    // reclaimed worktree is irrelevant to it, which is what this guard used to
-    // have to say explicitly.
+    // The project's checkout, not the card's worktree: the merge runs the host CLI in the project
+    // root, so only its absence makes a card unmergeable.
     const workspace = yield* workspaceFor(fresh);
     if (workspace.checkoutPath === null) return { outcome: "no-workspace" } as const;
 
     const settings = yield* boardSettings;
-    // Resolved from the MERGE-ROLE stage, not from `fresh.stage`. They are the
-    // same stage today because of the gate above, but reading the role holder
-    // is what makes the strategy the user configured the one that runs —
-    // resolving off the card's own stage would silently fall back to squash
-    // the moment those two could differ. The card's own override, then its
-    // nearest ancestor group's, wins over it (T3O-80).
+    // Resolved from the merge-role stage, not `fresh.stage`, so the configured strategy is the one
+    // that runs even if the two ever differ. The card's own override, then its nearest ancestor
+    // group's, wins over it.
     const boardNow = yield* readBoard;
     const exec = resolveBoardStageExecution(
       settings,
@@ -7744,15 +6671,9 @@ const make = Effect.gen(function* () {
       );
 
     if (failure !== null) {
-      // Only the HOST's own refusal is worth a probe (T3O-47). Everything else
-      // was refused before the merge was ever put to it — a strategy or an
-      // action this host does not offer, a permission this account lacks, a
-      // missing CLI, a rate limit — and those failures carry their own words,
-      // which name the fix. Probing there would describe a pull request that
-      // was never the problem: a green, up-to-date, unconflicted one, and the
-      // card would describe the pull request instead of the merge-strategy
-      // setting. So: the attempt's own sentence, no probe, no conflict route,
-      // and a ladder that stops where a retry cannot help.
+      // Only the host's own refusal is worth a probe. Other refusals (unsupported strategy, missing
+      // permission or CLI, rate limit) carry words that name the fix; probing would describe a
+      // healthy pull request instead. No conflict route, and the ladder stops.
       if (failure.refusal !== undefined && failure.refusal !== "host") {
         return {
           outcome: "refused" as const,
@@ -7762,14 +6683,11 @@ const make = Effect.gen(function* () {
         };
       }
       // One probe answers both questions: is this a conflict, and what does the
-      // card say about it (T3O-47).
+      // card say about it.
       const probe = yield* probeMergeState(fresh);
-      // A forge that could not say why leaves one refusal git can still prove
-      // (T3O-8): a conflict. Asked only then, and only `conflict` changes
-      // anything — a failed read used to stop the card with a conflict nobody
-      // was resolving. Otherwise `state` stays null, and the card says the read
-      // failed and gives its error: an unread refusal is never GUESSED to be a
-      // conflict, because starting a fix agent is the expensive mistake.
+      // When the forge cannot say why, git can still prove a conflict, so only `conflict` changes
+      // anything. An unread refusal is never guessed to be a conflict: starting a fix agent is the
+      // expensive mistake.
       const state =
         probe.state === null &&
         (yield* workspace
@@ -7783,10 +6701,10 @@ const make = Effect.gen(function* () {
           )) === "conflict"
           ? LOCAL_CONFLICT_MERGE_STATE
           : probe.state;
-      // T3O-67: the host's own words ride along. Without them a clean pull
+      // The host's own words ride along. Without them a clean pull
       // request's refusal had no explanation at all.
       const detail = boardHostMergeRefusalReason(state, probe.failure, failure.detail);
-      // T3O-18: both automatic fixes run in the card's OWN worktree. A linked
+      // Both automatic fixes run in the card's OWN worktree. A linked
       // pull request on another branch (a stack layer, a card with no
       // worktree) would have that agent fix the wrong branch, so the refusal
       // goes to a human instead, naming the branch to fix.
@@ -7806,30 +6724,10 @@ const make = Effect.gen(function* () {
         };
       }
       if (state?.blockedReason === "conflict" && !viaConflictFix) {
-        // Ask for the stage's own thread: the merge stage resolves to the
-        // conflict-resolution prompt in build mode, so this is the conflict
-        // step and nothing else can run here.
-        //
-        // `viaConflictFix` bounds the cycle at ONE automatic attempt per click:
-        // this call is itself the completion of a conflict fix, and conflicting
-        // again means the fix did not work. Starting another step there would
-        // loop a pair of agents against a branch that keeps re-conflicting,
-        // burning provider capacity with nobody watching. Fall through to
-        // `refused` instead, so the card says so and waits for a human.
-        // Reporting `conflict` puts the card into "Resolving conflicts…" and
-        // DISABLES the Merge button, so it must only ever be said when a fix
-        // will actually run. Two checks, because a kickoff can fail in two
-        // very different places:
-        //
-        //  - Up front, against the guards `beginStageRun` applies AFTER the
-        //    command has already landed. Those are silent `return`s, not
-        //    failures, so nothing downstream can report them — a card with a
-        //    hand-started thread on this stage would otherwise sit disabled
-        //    forever, claiming work that never started.
-        //  - `dispatchLanded` for a decider rejection (an archived card).
-        //
-        // Either way: disarm and report the refusal, which leaves the button
-        // live so the human can act.
+        // `viaConflictFix` bounds this to one automatic fix per click; re-conflicting falls through
+        // to `refused`. Report `conflict` (which disables Merge) only when a fix will run:
+        // pre-check the silent guards `beginStageRun` applies after the command lands, and use
+        // `dispatchLanded`. Otherwise disarm and refuse, leaving the button live.
         const liveStep = boardCardStepState(stages, fresh.id);
         const stageBusy =
           hasLiveStageThread(fresh, fresh.stage) ||
@@ -7853,15 +6751,9 @@ const make = Effect.gen(function* () {
         }
         return { outcome: "conflict" as const, detail };
       }
-      // Failing CI (T3O-12): the conflict fix's twin, for every card. A
-      // conflict outranks it — it is checked first, and a conflicted branch's
-      // CI result says nothing useful. ONE automatic fix until a human clicks
-      // Merge again (`checksFixSpent`); after that a failure is the ladder's
-      // hard stop, "Merge needs you", exactly as before this existed. Checks
-      // the token could not read are never a failure to fix, and neither is
-      // a refusal the forge pinned on something else (a draft, a branch
-      // behind its base): a pushed fix cannot clear those, so it would spend
-      // the one fix and stop the card on the wrong reason.
+      // Failing CI gets one automatic fix until the next Merge click (`checksFixSpent`); conflicts
+      // outrank it. Unread checks and refusals the forge pinned on something else (a draft, a
+      // branch behind its base) are never fixed: a push cannot clear them.
       if (
         state !== null &&
         state.blockedReason === null &&
@@ -7902,15 +6794,11 @@ const make = Effect.gen(function* () {
     yield* refreshCardPullRequest(fresh);
     const merged = (yield* readCard(cardId)) ?? fresh;
 
-    // Pull the just-merged commits into the LOCAL base branch of the project
-    // ROOT checkout, never a card worktree. The merge ran on the forge, so the
-    // clone new worktrees fork from is now behind; without this the next card
-    // branches off pre-merge history. Best-effort and fast-forward-only — a
-    // base we can't cleanly advance is a staleness the next fetch fixes, never
-    // a reason to fail a merge that already landed.
+    // Fast-forward the project root's local base branch, never a card worktree, so new worktrees
+    // fork from post-merge history. Best-effort: a failure here never fails a landed merge.
     const baseBranch = merged.pullRequest?.baseRef ?? null;
     if (baseBranch !== null) {
-      // Only on this card's worker (T3O-64): every other worker sees the merge
+      // Only on this card's worker: every other worker sees the merge
       // through the fetch `measureBaseTip` makes.
       yield* workspace.pullMergedBaseBranch({ baseBranch }).pipe(
         Effect.flatMap((sync) =>
@@ -7939,8 +6827,7 @@ const make = Effect.gen(function* () {
         cardId: merged.id,
         toStage: nextStage,
         // No key: an advance names no position, so the card keeps its own —
-        // except into the done-role stage, where the decider lands it on top
-        // (T3O-15).
+        // except into the done-role stage, where the decider lands it on top.
         createdAt: yield* nowIso,
       });
     }
@@ -7948,25 +6835,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * "Submit for merge — no review" (t3o-07, D1) — the Build stage's second
-   * exit, behind the caret beside its forward button.
-   *
-   * It does NOT move the card. It selects one short unattended step in the
-   * card's existing worktree — push the branch, ensure an open pull request,
-   * write its title and body — and the card moves only when that step settles
-   * `succeeded`, routed by `BuildStageExecutor` (D4/D5). That ordering is the
-   * whole design: a card moved straight to the merge-role stage arrives with
-   * no pull request, and `boardStagePrimaryAction` renders Merge only for an
-   * OPEN one, so the user would be left pressing a button labelled "Move to
-   * Done" that ships nothing.
-   *
-   * An already-open pull request is not a problem — the step finds it and
-   * completes — which is the case where a card ran review, was dragged back to
-   * Building, and is being submitted again.
-   *
-   * Mirrors `mergeCardPullRequest`: request-scoped, outside the serialised
-   * worker, and TOTAL — every refusal is a value the card can show, because a
-   * button that silently does nothing is exactly what this replaces.
+   * "Submit for merge, no review": selects a short unattended step that pushes the branch and
+   * ensures an open pull request; the card moves only when it succeeds, since Merge needs an open
+   * one. Request-scoped and total: every refusal is a value the card can show.
    */
   const submitCardForMerge = Effect.fn("board-supervisor-submitCardForMerge")(function* (
     cardId: BoardCardId,
@@ -7985,19 +6856,13 @@ const make = Effect.gen(function* () {
     // run, so the user is not charged an agent run for a board that cannot
     // use its result.
     if (boardStageWithRole(board, "merge") === null) return { outcome: "no-merge-stage" } as const;
-    // The dependency gate is not overridable (D18), and the directed move
+    // The dependency gate is not overridable, and the directed move
     // would be refused by the decider anyway — say so instead of teaching the
     // rule by refusal after an agent has already pushed.
     if (card.blocked) return { outcome: "blocked" } as const;
-    // The decider's other two forward gates past the build role, pre-checked
-    // for the same reason and with more force: they bite only at the directed
-    // advance, which happens AFTER the submit step has pushed the branch and
-    // opened the pull request. Refused there, the move is swallowed and the
-    // card sits in Building with a fresh pull request and no account of why —
-    // the half-state D9 exists to forbid. Refusing up front costs the user
-    // nothing and names the thing to fix. (`advanceStage` still writes a note
-    // if a gate closes while the step runs; this is the cheap path, not the
-    // only one.)
+    // Pre-check the decider's other forward gates: they bite only at the advance after the step has
+    // pushed and opened a pull request, leaving the card stuck in Building with no explanation.
+    // `advanceStage` still notes a gate closing mid-step.
     const unfinished = boardCardUnfinishedChildren(board, card.id);
     if (unfinished.length > 0) {
       return {
@@ -8017,7 +6882,7 @@ const make = Effect.gen(function* () {
     }
     // Nothing to push.
     if (card.worktree === null) return { outcome: "no-branch" } as const;
-    // One step at a time (D4). The caret only shows on a HELD card, so this is
+    // One step at a time. The caret only shows on a HELD card, so this is
     // a stale client or a race.
     const live = boardCardStepState(board, card.id);
     if (live !== null && !isBoardTerminalStepStatus(live.status)) {
@@ -8037,11 +6902,8 @@ const make = Effect.gen(function* () {
     const submit = isBoardBuildStageExecution(exec)
       ? exec.submit
       : DEFAULT_BOARD_BUILD_STAGE_EXECUTION.submit;
-    // The step's own model when it names one, else the stage's — the same
-    // ladder a review phase follows. The card's per-stage override is NOT
-    // applied: this is machinery, like the review loop's sync-base step, and
-    // "the model I want this card BUILT on" says nothing about who should
-    // write its pull request description.
+    // The step's own model, else the stage's. The card's per-stage override is not applied: this is
+    // machinery, and the model a card is built on says nothing about who writes its description.
     const model =
       submit.model ?? resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
     const landed = yield* dispatchLanded({
@@ -8057,13 +6919,13 @@ const make = Effect.gen(function* () {
       runtimeMode: effectiveBoardRuntimeMode(submit.runtimeMode, "build"),
       ...(model.options === undefined ? {} : { modelOptions: model.options }),
       mode: "build",
-      // Unattended whatever the card's human-in-the-loop stance (D10): there is
+      // Unattended whatever the card's human-in-the-loop stance: there is
       // no conversation to have about pushing a branch, and the prompt tells it
       // to complete `failed` rather than guess.
       humanInLoop: false,
       maxAttempts: submit.maxAttempts,
       timeoutMs: submit.timeoutMs,
-      // Starts no review round: carry the recorded tip forward (t3o-24, D1).
+      // Starts no review round: carry the recorded tip forward.
       baseTipAtRoundStart: yield* baseTipForPlan(card, false),
       createdAt: yield* nowIso,
     });
@@ -8075,12 +6937,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Open review round `round` on a card (T3O-51): the one write behind every
-   * path that books another round — a human's request or ruling, and CI's
-   * send-back. It asks for the round and clears a pending stop; a human's
-   * ruling on a stuck loop also waives the stuck round and carries the ruling
-   * in. All in one `set-review-carry`, awaited, so a caller's stage move can
-   * never land before it.
+   * Open review round `round`: the one write behind a human's request or ruling and CI's send-back.
+   * One awaited `set-review-carry` (clearing a stop, waiving a stuck round), so a caller's stage
+   * move can never land before it.
    */
   const openReviewRound = Effect.fn("board-supervisor-openReviewRound")(function* (input: {
     readonly cardId: BoardCardId;
@@ -8102,32 +6961,10 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * "Another review round" / "Request review" (T3O-39, D6) — the one verb
-   * behind all three entry points: the rail button at Code review, the rail
-   * button at Ready for merge, and the Review pane's "Run round N+1".
-   *
-   * ORDERING is why this cannot be two client calls. Move first and the
-   * executor re-plans a converged loop, gets `complete/succeeded`, and
-   * `advanceStage` bounces the card straight back to Ready for merge — or
-   * `beginStageRun`'s `complete` arm opens an empty conversation. Either way
-   * the click looks broken. The override is written FIRST, here, where the
-   * server owns the order.
-   *
-   * Beyond that it dispatches nothing the reactor does not already handle:
-   *
-   * - a card already on the review stage needs the update alone —
-   *   `handleCardUpdated` → `replanSettledStage` fires on an edit whose settled
-   *   step succeeded, which is exactly a converged loop that did not
-   *   auto-advance;
-   * - a card at the merge stage needs the move — `handleCardMoved` →
-   *   `beginStageRun` → `planNext`.
-   *
-   * A card with no review completions at all resolves to round 1, which is
-   * `review@1`: "Request review" is the same verb with an empty ledger, not a
-   * second feature.
-   *
-   * Request-scoped and TOTAL, like merging and submitting: the caller is a
-   * human waiting on an answer, and every refusal is a sentence the card shows.
+   * "Another review round" / "Request review" from every entry point. The override is written
+   * first, server-side: moving first would re-plan a converged loop and bounce the card back or
+   * open an empty conversation. Request-scoped and total: every refusal is a sentence the card
+   * shows. With no review completions it resolves to round 1.
    */
   const requestReviewRound = Effect.fn("board-supervisor-requestReviewRound")(function* (
     cardId: BoardCardId,
@@ -8142,15 +6979,12 @@ const make = Effect.gen(function* () {
     if (reviewStage === null) return { outcome: "no-review-stage" } as const;
     const stage = boardStageById(board, card.stage);
     const role = stage === null ? null : effectiveBoardStageRole(stage);
-    // The stage gate (D8), enforced here and not only on the button. Done is
-    // deliberately excluded (D12): leaving the done-role stage retires the
-    // card's pull request into history and raises `pullRequestFloor`, so
-    // pulling a merged card back would orphan the pull request — a larger
-    // operation that must not hide behind this button.
+    // Done is excluded: leaving the done-role stage retires the pull request into history, so
+    // pulling a merged card back would orphan it.
     if (role !== "review" && role !== "merge") return { outcome: "wrong-stage" } as const;
     // Nothing to review.
     if (card.worktree === null) return { outcome: "no-branch" } as const;
-    // One step at a time (D9), the decider's own invariant. This is also what
+    // One step at a time, the decider's own invariant. This is also what
     // keeps an armed merge-conflict fix from being superseded mid-rebase: a
     // conflict fix IS a live step, so the button is disabled rather than
     // killing a rebase someone is halfway through.
@@ -8159,7 +6993,7 @@ const make = Effect.gen(function* () {
       return { outcome: "step-running" } as const;
     }
 
-    // A stuck loop (T3O-51) takes a ruling, never a plain request: a fresh
+    // A stuck loop takes a ruling, never a plain request: a fresh
     // round would only re-raise the same dispute. A ruling on a loop that is
     // not stuck is a stale client.
     const completions = boardCardStepCompletions(board, card.id);
@@ -8194,7 +7028,7 @@ const make = Effect.gen(function* () {
     });
     if (!landed) return { outcome: "failed" } as const;
 
-    // The only record of WHY (D10). `card-moved` says where, never why, and a
+    // The only record of WHY. `card-moved` says where, never why, and a
     // card jumping from Ready for merge back to Code review with no account of
     // itself reads as a drag that silently snapped back.
     yield* dispatch({
@@ -8251,57 +7085,16 @@ const make = Effect.gen(function* () {
     );
     if (completed) return; // the completion handler owns this step
     const shell = yield* liveThread(threadId);
-    // Another turn is already live on the thread — typically the recovery
-    // nudge `handleStepCompleted` sent for a `failed` completion moments
-    // before this turn.completed arrived. The thread is not dead; the live
-    // turn's own completion will re-run this test.
-    //
-    // Compared by IDENTITY, not presence. The shell is read from the
-    // projection, which a DIFFERENT subscriber of this same runtime stream
-    // writes, so at the moment this handler runs it usually still names the
-    // turn that just ENDED as the live one. Reading that as "something else is
-    // working" made this whole handler a coin flip against the projector: when
-    // it lost, a human-in-the-loop step whose agent asked in prose was never
-    // parked, so `stepRunning` stayed true and the card pulsed its blue
-    // "being worked" dot until a restart's reconcile pass caught it.
-    //
-    // A provider that stamps no `turnId` keeps the old presence test: with no
-    // identity to compare there is nothing better to do, and "assume the thread
-    // is busy" is the conservative half of the trade.
-    //
-    // The inverse race — a genuinely live SECOND turn B (a recovery nudge)
-    // while the projection still names the ended turn A — does not reopen here,
-    // because the projection was never an authoritative "B is live" signal to
-    // begin with. `turn.started(B)` follows `turn.completed(A)` on the one
-    // ordered provider stream (B is only dispatched in reaction to A ending),
-    // so a projection that still shows `activeTurnId === A` has by definition
-    // not applied A's completion yet, let alone B's start: B is invisible to it.
-    // The old presence check only caught the nudge race in the sub-window where
-    // the projector had raced AHEAD to show B; in the equally-reachable window
-    // where it showed `null` (A cleared, B not yet set) the old code already
-    // fell through to exactly this park/recover. This change makes the A-shows
-    // window consistent with that pre-existing null window — it removes an
-    // accidental guard, not a reliable one — and it is REQUIRED for the fix
-    // above, where `activeTurnId` also equals the just-ended turn. The residual
-    // cost is a nudge landing on a step a retry already re-armed; that is
-    // bounded by the recovery ceiling (`maxInvocationsPerStageEntry` →
-    // escalate, never loop), whose failure mode is asking a human one turn
-    // early, not a stuck or corrupted card.
+    // Another turn is live, typically a recovery nudge; its own completion re-runs this. Compared
+    // by identity, because the projection usually still names the just-ended turn as live. Without
+    // a `turnId`, presence is the conservative test. A nudge racing past this is bounded by the
+    // recovery ceiling.
     const liveTurnId = shell?.activeTurnRef ?? null;
     const namedByAnotherTurn =
       liveTurnId !== null && (completedTurnId === undefined || liveTurnId !== completedTurnId);
-    // The identity test above has one blind spot, and it is where this handler
-    // parked a card that was working perfectly well (T3O-18): a human can send
-    // the next message while the previous turn is still FINISHING, and until
-    // the provider starts that turn it has no id at all — so the session names
-    // the ended turn or nothing, and the completion reads as the agent
-    // stopping. `supersededByPendingTurn` reads the requested-but-unstarted
-    // turn upstream already records, which is that turn's only trace.
-    //
-    // Checked second so it costs a query only on the completions the identity
-    // test does not already settle, and independently of the shell: it is its
-    // own evidence, and a shell the projection has not caught up with is
-    // exactly the case that needs it.
+    // A human's message sent while the previous turn was finishing has no turn id yet, so the
+    // identity test misses it; `supersededByPendingTurn` reads the requested-but-unstarted turn.
+    // Checked second (it costs a query) and independently of the possibly stale shell.
     if (
       (namedByAnotherTurn || (yield* supersededByPendingTurn(found.state))) &&
       !(shell?.awaitingUserInput ?? false)
@@ -8309,7 +7102,7 @@ const make = Effect.gen(function* () {
       return;
     }
     if (shell !== undefined && shell.awaitingUserInput) {
-      // Triage and adjudication never wait on a human (T3O-55). An attempt
+      // Triage and adjudication never wait on a human. An attempt
       // already answered is resuming: the projection may still show the
       // question.
       if (found.state.status === "running" && isReviewDecidingStep(found.state)) {
@@ -8319,37 +7112,17 @@ const make = Effect.gen(function* () {
         return;
       }
       // A proper structured question — "Input needed", not a failure, no retry
-      // consumed (D13). Move (or keep) the step on the human gate. A no-op when
+      // consumed. Move (or keep) the step on the human gate. A no-op when
       // it is already awaiting-input.
       if (found.state.status === "running") {
         yield* parkStepForInput({ card: found.card, state: found.state, reason: "question" });
       }
       return;
     }
-    // The agent ended its turn to wait on its own background work: subagents
-    // ("working", T3O-9), or a background command or monitor ("monitoring",
-    // T3O-20). The provider wakes it when that work reports back, so this is a
-    // wait, not a stop: recovering here parked the card as "nothing is
-    // running" and nudged the agent mid-wait with "your turn ended without
-    // calling board_complete_step", so it replied "still waiting", ended
-    // another turn and climbed the stall ladder while the work ran. Read the
-    // field that draws the thread's own "Working"/"Monitoring" banner, so the
-    // board and the thread cannot disagree.
-    //
-    // A wait is still supervised — work can hang, die unnoticed or run for
-    // ever — but by the timeout sweep's check-ins (`sweepBackgroundWait`), not
-    // by recovery. A human-in-the-loop run keeps its pre-T3O-20 handling of a
-    // monitor: it parks on the human, who is the pacing there.
-    //
-    // An unattended turn is checked for a usage limit FIRST: a refused turn
-    // that happens to end with a monitor still live is the provider stopping,
-    // not the agent waiting, and must park until the limit resets (T3O-72)
-    // rather than be checked in on until it escalates.
-    //
-    // The sweep supervises running steps alone, so an unattended step still
-    // awaiting input (its agent answered and started a job) is put back to
-    // running first; a wait noted on a parked step would never be checked in
-    // on, and the card would sit violet while its agent worked.
+    // Ended to wait on its own background work: a wait, not a stop, supervised by the timeout
+    // sweep's check-ins rather than recovery. A usage limit is checked first. A parked unattended
+    // step goes back to running, since the sweep only checks in on running steps. A
+    // human-in-the-loop run still parks on a monitor.
     const backgroundLiveness = shell?.backgroundWork ?? null;
     if (
       backgroundLiveness !== null &&
@@ -8366,19 +7139,9 @@ const make = Effect.gen(function* () {
       return;
     }
     backgroundWaits.delete(String(threadId));
-    // The free turn-ending a human's own turn bought (T3O-17, D3). Either this
-    // IS that turn completing, or it is the turn the human's message
-    // superseded arriving late — neither is a stall, and neither should draw a
-    // nudge in on top of what the human just said.
-    //
-    // Spent here and only here (D6). `recoverStep` is also reached from the
-    // timeout sweep, which never sees a `turn.completed`, so a guard down there
-    // would mean the free ending is never consumed and a genuinely hung agent
-    // is never caught. The sweep must keep crying.
-    //
-    // ONE ending, then the supervisor is back on duty. An open-ended "a human
-    // is involved, stop nudging" wedges it for good, because the only thing
-    // that would ever clear the suppression is the nudge being suppressed.
+    // The one free turn-ending a human's turn bought: spent here only, since the timeout sweep also
+    // reaches `recoverStep` and must still catch a hung agent. One ending, then supervision
+    // resumes; an open-ended suppression could never be cleared.
     if (found.state.humanTurnAt !== null) {
       yield* dispatchOptional({
         type: "board.card.note-human-turn",
@@ -8390,19 +7153,9 @@ const make = Effect.gen(function* () {
       });
       return;
     }
-    // A human-in-the-loop run that ends a turn without completing is WAITING on
-    // the human, not dead (D5): no drop monitoring, no recovery, no attempt
-    // consumed, no slot released. But it is NOT running either, and until t3o-34
-    // this arm said nothing at all — so the step stayed `running`, the shell's
-    // `stepRunning` stayed true, and the card pulsed its blue "being worked" dot
-    // for as long as it sat there. The agent had stopped.
-    //
-    // So park it, and say which kind of stop it was (D1/D3). The envelope asks
-    // agents to raise blockers through the structured mechanism and forbids
-    // ending a turn with a question in prose; they do it anyway, most of all in
-    // planning, where a question with a paragraph of consequence per option is a
-    // poor fit for a picker. Reading the last message is how the board stops
-    // depending on an instruction that does not hold.
+    // A human-in-the-loop run that ends a turn is waiting on the human, not dead: no recovery, no
+    // attempt spent. Park it so the card stops showing as worked on, recording whether it ended on
+    // a prose question, since agents ask in prose despite the envelope.
     if (found.state.humanInLoop) {
       // Already parked and still parked: re-deciding the reason would churn a
       // delta per turn.completed for no change.
@@ -8414,20 +7167,9 @@ const make = Effect.gen(function* () {
       });
       return;
     }
-    // The usage-limit park (T3O-22, D11; T3O-72). HERE, between the
-    // human-in-the-loop arm above and ordinary recovery below, so only an
-    // UNATTENDED step ever reaches it and arms 1-4 behave exactly as they did.
-    //
-    // Human-in-the-loop is EXCLUDED rather than covered, and the argument is not
-    // close. Planning is an interview: a stopped planning card is waiting on a
-    // person whatever the provider is doing, so waking it at 2:50am achieves
-    // nothing — while agents in that stage routinely stop by asking a question
-    // in PROSE, which is a legitimate stop, and any resume that woke one would
-    // shove an unanswered question back into work. A real risk of overriding a
-    // human gate, for a saving measured in minutes.
-    //
-    // Additive: it fires only on a limit with a reset time, and otherwise
-    // control falls through to `recoverStep` exactly as before.
+    // The usage-limit park, only for unattended steps: a human-in-the-loop stop is waiting on a
+    // person, and waking it could push an unanswered question back into work. Fires only on a limit
+    // with a reset time; otherwise falls through to recovery.
     if (yield* parkForUsageLimit(found)) return;
     // Unattended, running with no question → died mid-work. Awaiting-input with
     // no pending question → the human answered and the agent ran another turn
@@ -8436,24 +7178,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A turn ending, on the ONE runtime stream the reactor consumes.
-   *
-   * That stream is unscoped: `turn.completed` arrives for every thread on the
-   * machine, whether the board spawned it or not. So this reads the board once
-   * and spends it twice — on the step handler, and on the question of whether
-   * the release sweep (t3o-13) has anything to do at all.
-   *
-   * A turn ending is the moment a thread stops being busy, which is the one
-   * reason a release is refused on the hot path. Asking again here — after the
-   * handler has settled the step this turn finished — drops a finished thread
-   * out of the inbox within a beat rather than at the next periodic sweep. But
-   * only its OWN thread ending can have unblocked it, so a thread the board does
-   * not own buys nothing: the sweep would walk every card and pay a thread-shell
-   * read per unsettled candidate, on an event a busy machine fires constantly.
-   * Ownership is the broad test (any live link, or a thread the board abandoned
-   * mid-flight), not "the card's current step" — the thread a release is usually
-   * waiting on is the one that just finished a step, whose step row has already
-   * moved on to the next thread.
+   * A turn ending, for every thread on the machine. One board read serves the step handler and the
+   * release sweep, which runs only for a thread the board owns (any live link or an abandoned
+   * thread): a turn ending is what unblocks a release, and foreign threads would make it costly.
    */
   const handleTurnEnded = Effect.fn("board-supervisor-handleTurnEnded")(function* (
     threadId: ThreadId,
@@ -8469,7 +7196,7 @@ const make = Effect.gen(function* () {
     if (steeredRun === undefined || completedTurnId !== steeredRun) {
       yield* handleTurnCompleted(board, threadId, completedTurnId);
     }
-    // Retired links count: their thread still has to be settled (T3O-41).
+    // Retired links count: their thread still has to be settled.
     const owned =
       board.cards.some((card) =>
         card.threadLinks.some((link) => link.threadId === threadId && link.tombstonedAt === null),
@@ -8478,7 +7205,7 @@ const make = Effect.gen(function* () {
     yield* releaseFinishedThreads;
   });
 
-  /** A rail row for something auto-planning did, or could not do (T3O-32). */
+  /** A rail row for something auto-planning did, or could not do. */
   const autoPlanNote = Effect.fn("board-supervisor-autoPlanNote")(function* (
     cardId: BoardCardId,
     detail: string,
@@ -8494,14 +7221,14 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * End a pending auto-plan request without approving anything (T3O-32). The
+   * End a pending auto-plan request without approving anything. The
    * card goes back to ordinary planning: later runs are human-in-the-loop
    * again, their plan waits on the gate, and the Auto-plan button is back.
    */
   const endAutoPlan = Effect.fn("board-supervisor-endAutoPlan")(function* (
     cardId: BoardCardId,
     detail: string,
-    /** A human caused the stop (T3O-38): Auto-plan goes off with the run. */
+    /** A human caused the stop: Auto-plan goes off with the run. */
     options: { readonly turnOff?: boolean } = {},
   ) {
     const ended = yield* dispatchOptional({
@@ -8515,12 +7242,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * An auto-plan run the board has stopped driving ends the request (T3O-32):
-   * a step parked on a human (a question, a Stop, an escalation with no retry
-   * coming) or settled `failed`. An `abandoned` settle is a restart superseding
-   * the step, or the card leaving planning, which ends the request itself.
-   * Reads the live step, not the event's, so a step already put back to work
-   * by the time this runs keeps its request.
+   * End the auto-plan request when the board stopped driving the run: a step parked on a human or
+   * settled `failed`. Reads the live step, so one already back at work keeps its request.
    */
   const endAutoPlanIfUndriven = Effect.fn("board-supervisor-endAutoPlanIfUndriven")(function* (
     cardId: BoardCardId,
@@ -8545,16 +7268,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Approve an unattended planning run's plan (T3O-32, T3O-38) — only when the
-   * card's Auto-build authorises it; otherwise the plan waits at the human
-   * gate and the run record stays pending, so turning Auto-build on later (or
-   * a group starting) approves it, and a revision asked for there is planned
-   * unattended again. Unclear decisions never gate. A single plan moves to
-   * Ready and on to Building when its dependencies are met. A split is
-   * approved with the card's resolved toggles; the new group starts only when
-   * the card's Auto-build is on — an inherited one waiting for its own group
-   * to start leaves the new group unstarted too. A refused approval ends the
-   * run record, with the reason on the rail.
+   * Approve an unattended planning run's plan only when the card's Auto-build authorises it;
+   * otherwise it waits at the human gate with the run record pending. A split's new group starts
+   * only when the card's own Auto-build is on. A refused approval ends the run record.
    */
   const approveAutoPlannedCard = Effect.fn("board-supervisor-approveAutoPlannedCard")(function* (
     card: BoardCard,
@@ -8664,11 +7380,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Start a card waiting in the stage before build because its Auto-build is
-   * on (T3O-38): its own, as the `cause: "auto-build"` move that begins no
-   * group, or an inherited one from a group that has begun, as the cascade's
-   * ordinary move. Unmet dependencies leave it waiting; it starts itself when
-   * they land.
+   * Start a card waiting before build because Auto-build is on: its own, as an `auto-build` move,
+   * or a begun group's, as the cascade's move. Unmet dependencies leave it waiting.
    */
   const startAutoBuildCard = Effect.fn("board-supervisor-startAutoBuildCard")(function* (
     cardId: BoardCardId,
@@ -8707,7 +7420,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Stamp an unattended planning run (T3O-38): a leaf arriving in, or starting
+   * Stamp an unattended planning run: a leaf arriving in, or starting
    * a run in, planning with its Auto-plan on — its own, or its group's. Returns
    * the card the kickoff should use.
    */
@@ -8732,14 +7445,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Put a live planning thread on an unattended footing and tell it so
-   * (T3O-38). Retuned first, so a question the in-flight turn was about to ask
-   * does not park the step behind the steer. A pending structured question is
-   * answered with the instruction; otherwise the in-flight turn is interrupted
-   * and the instruction sent. A parked step is then resumed. A step stalled on
-   * a usage limit keeps the instruction until the limit lifts. Null when the
-   * steer landed (or is held for the limit), else why it did not — with the
-   * step's previous stance restored.
+   * Put a live planning thread on an unattended footing: retuned first, so an in-flight question
+   * does not park it behind the steer. Null when the steer landed or is held for a usage limit,
+   * else the reason, with the previous stance restored.
    */
   const steerPlanningThread = Effect.fn("board-supervisor-steerPlanningThread")(function* (
     cardId: BoardCardId,
@@ -8824,11 +7532,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Auto-plan turned on for a card in Planning (T3O-38). The card's current
-   * planning thread is steered whatever its non-terminal status — running,
-   * parked on a question, paused or stalled — and never replaced: a fresh
-   * unattended run starts only when there is no live planning thread. A steer
-   * that does not land ends the run record with the reason on the rail.
+   * Auto-plan turned on in Planning: steer the current non-terminal planning thread, never replace
+   * it; start a fresh run only when there is none. A steer that fails ends the run record.
    */
   const startOrSteerAutoPlan = Effect.fn("board-supervisor-startOrSteerAutoPlan")(function* (
     card: BoardCard,
@@ -8883,7 +7588,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Auto-plan turned off for a card mid-planning (T3O-38): the step goes back
+   * Auto-plan turned off for a card mid-planning: the step goes back
    * to the stage's own stance, the run record ends, and a running interview is
    * told the user is back. A paused step is not sent anything — a turn would
    * resume it against the human's Stop.
@@ -8924,12 +7629,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Bring one card in line with its resolved Automation toggles (T3O-38) —
-   * the one place a toggle change takes effect, whether the card's own toggle
-   * moved or its group's. Each branch is idempotent, so a card re-evaluated
-   * twice does nothing new. Enforces the invariant "a pending run record in
-   * the plan stage means Auto-plan is on". Returns what it did, for the
-   * group-level summary.
+   * Bring one card in line with its resolved Automation toggles. Idempotent per branch. Enforces "a
+   * pending run record in the plan stage means Auto-plan is on".
    */
   const reevaluateCardAutomation = Effect.fn("board-supervisor-reevaluateCardAutomation")(
     function* (cardId: BoardCardId, changed: BoardAutomationChanged) {
@@ -8992,7 +7693,7 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * A group's Automation settings changed, or it began (T3O-38): every child
+   * A group's Automation settings changed, or it began: every child
    * that inherits is re-evaluated, best-effort and one by one, and the group's
    * rail gets one summary line. Children with their own value are untouched.
    */
@@ -9034,7 +7735,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A human answered the planning agent's question themselves (T3O-38): they
+   * A human answered the planning agent's question themselves: they
    * are planning with it, so the card's own Auto-plan goes off. The board's
    * own answer — the steer — carries `byBoard` and never reaches here.
    */
@@ -9093,15 +7794,8 @@ const make = Effect.gen(function* () {
     const state = boardCardStepState(board, completion.cardId);
     if (card === undefined || state === null || state.stepId !== completion.stepId) return;
     if (isBoardTerminalStepStatus(state.status)) {
-      // Ordinarily an already-settled step means this is an idempotent retry
-      // and there is nothing to do. A REPAIRED completion is the exception
-      // (T3O-14): the ledger row the stage executor reads just changed — an
-      // unreadable `succeeded` payload replaced with a readable one, or the
-      // round reopened from the pane — so the stage has to be asked again what
-      // runs next, or the card stays exactly as stuck as the broken record left
-      // it. `replanSettledStage` is the same role-agnostic re-plan a card edit
-      // uses, and acts only on a `run` plan, so a repair the executor has
-      // nothing new to do about stays a no-op.
+      // An already-settled step is normally an idempotent retry. A repaired completion changed the
+      // ledger row the executor reads, so re-plan; `replanSettledStage` acts only on a `run` plan.
       if (event.payload.repaired === true) {
         // The phase that recorded the broken result is finished with its
         // thread, exactly as an intra-stage continuation is. Best-effort: a
@@ -9120,12 +7814,8 @@ const make = Effect.gen(function* () {
         yield* replanSettledStage(card);
         return;
       }
-      // A REPEATED success of a review phase is the agent's retry when the
-      // loop went quiet (T3O-5): the settle landed but the continuation after
-      // it did not (a full disk failed the next phase's dispatch), so the
-      // ledger owes a step nobody started. Ask again — `replanSettledStage`
-      // acts only on a `run` plan, so a loop with nothing left to run stays a
-      // no-op, exactly as an ordinary idempotent retry always was.
+      // A repeated review-phase success is the agent retrying after the continuation failed to
+      // dispatch; re-plan, which is a no-op when nothing is left to run.
       if (completion.outcome === "succeeded" && settledReviewPhase(board, card, state)) {
         yield* replanSettledStage(card, { resume: true });
       }
@@ -9145,16 +7835,9 @@ const make = Effect.gen(function* () {
     switch (completion.outcome) {
       case "succeeded":
         yield* settleStep({ card, state, outcome: "succeeded" });
-        // A RETARGET sync that succeeded actually rebased the branch onto the
-        // new base (T3O-5, D10), so move the recorded base to match: the
-        // derived divergence line clears, `measureBaseTip` starts measuring
-        // against the branch the card is really on, and the pull request's
-        // diff is the one somebody wrote. Dispatched BEFORE `continueStage`, so
-        // the gate round that follows plans against the reconciled fact.
-        //
-        // Only on `succeeded`. A failed rebase leaves the recorded base where
-        // it was and the card keeps showing an unreconciled state — which is
-        // the truth, and what makes the next round plan another sync.
+        // A succeeded retarget sync rebased the branch, so move the recorded base before
+        // `continueStage` so the next round plans against it. A failed one leaves the base, so the
+        // next round syncs again.
         if (parseReviewStepId(state.stepId)?.phase === "sync") {
           const retargetedTo = yield* resolveBaseRetargetTarget(card);
           if (retargetedTo !== null) {
@@ -9167,44 +7850,20 @@ const make = Effect.gen(function* () {
             });
           }
         }
-        // The conflict-resolution step reporting success finishes the merge the
-        // human already asked for. Gated on the pending-merge set, NOT merely
-        // on the stage: a thread a human restarted by hand in this stage must
-        // not merge anything. This is not auto-merge — every merge it can
-        // complete was initiated by a Merge click that hit a conflict.
-        //
-        // An ARMED card carries that authorisation permanently (t3o-28 D3,
-        // widened by T3O-38 D1 — the same carve-out `autoMergeCard` and
-        // `beginStageRun` apply), so it does not need the arm. A sub-board
-        // child is the case that made this necessary: without it, a conflict
-        // fix that succeeds
-        // across a server restart — the set is in-memory — falls through to
-        // `continueStage`, and the merge stage's `autoAdvance` is off by
-        // design, so the child strands at Merge with its conflicts resolved and
-        // nothing left that would ever merge it.
-        //
-        // `delete` is the consumption, and it is the FIRST operand so a child
-        // never short-circuits past it: a stale arm left behind would be
-        // consumed by some later merge-stage step and turn into a merge nobody
-        // asked for. It stays behind the role test, so no other stage's step
-        // completing can clear a merge stage's arm.
-        // Read before the `delete` consumes it: which fix finished decides the
-        // re-attempt's bound and the note's wording (T3O-12).
+        // A conflict fix's success finishes the merge a human asked for, gated on the pending-merge
+        // arm (or an armed card), never just the stage. `get` reads which fix finished before
+        // `delete` consumes it, and `delete` comes first so a stale arm can never cause an unasked
+        // merge later.
         const finishedFix =
           stageRole === "merge" ? (mergeAwaitingConflictFix.get(String(card.id)) ?? null) : null;
         if (
           stageRole === "merge" &&
           (mergeAwaitingConflictFix.delete(String(card.id)) || (yield* cardAutoMergeArmed(card)))
         ) {
-          // Release this fix's thread before anything else. Its link's role is
-          // the stage id, which is exactly what `hasLiveStageThread` refuses to
-          // trample — so leaving it live means the NEXT Merge click on a branch
-          // that conflicts again opens nothing at all, while the card still
-          // says it is resolving conflicts. The fix is finished with its thread
-          // either way: the merge either lands (and the card graduates) or it
-          // does not (and the human clicks Merge again).
+          // Release the fix's thread first: left live, `hasLiveStageThread` would make the next
+          // Merge click on a re-conflict open nothing while the card claims to be resolving.
           if (state.threadId !== null) {
-            // Retired (T3O-41): the fix stays on the card as a past thread.
+            // Retired: the fix stays on the card as a past thread.
             yield* dispatch({
               type: "board.card.retire-thread",
               commandId: yield* commandId("retire-conflict-fix"),
@@ -9214,35 +7873,20 @@ const make = Effect.gen(function* () {
             });
           }
           yield* schedule();
-          // The human clicked Merge, watched it say "resolving conflicts", and
-          // is not watching the server log. If this completion does not
-          // actually merge — the fix landed but the branch conflicts again, or
-          // the forge now refuses for some other reason — the card has to say
-          // so, or the Merge click ends in nothing at all.
-          // A CI fix's re-attempt may still start a conflict fix — the base can
-          // have moved while it ran — so only a conflict fix passes the bound.
-          // The CI fix's own bound is `checksFixSpent`.
-          // An unarmed card's CI fix hands its merge to the ladder, which
-          // waits out the checks the fix's push just re-ran.
+          // Only a conflict fix passes the `viaConflictFix` bound (a CI fix's re-attempt may still
+          // need a conflict fix; its own bound is `checksFixSpent`). An unarmed card's CI fix hands
+          // its merge to the ladder to wait out the re-run checks.
           if (finishedFix === "checks") mergeAwaitingChecks.add(String(card.id));
           const outcome = yield* mergeCardPullRequest(card.id, finishedFix !== "checks");
-          // The hold follows the same rules here as anywhere (T3O-38, D8): a
-          // merge that lands clears it, and a conflict fix that resolved into
-          // a policy block records one — on an ARMED card, which is the only
-          // card that has a ladder to place it on. A re-conflict comes back as
-          // `refused` (this call passes `viaConflictFix`), so it is a HARD
-          // stop rather than a rung: the fix already had its one attempt.
+          // Record on the ladder only for armed cards. A re-conflict comes back `refused` (via
+          // `viaConflictFix`), a hard stop: the fix already had its one attempt.
           const armed =
             mergeAwaitingChecks.has(String(card.id)) || (yield* cardAutoMergeArmed(card));
           if (armed) {
             yield* recordAutoMergeOutcome(card.id, outcome, { resetLadder: false });
           }
-          // A fix that handed over to ANOTHER fix (a CI fix whose re-attempt
-          // hit a conflict) has nothing to report yet: that fix will.
-          // And a CI fix's re-attempt always went to the ladder above (its
-          // push re-ran CI, so it lands on PENDING checks by design): the hold
-          // pill tells that wait, and the ladder writes the row if it stops.
-          // So does a re-attempt that readied a draft and now waits on its CI.
+          // Nothing to report yet when another fix took over, when a CI fix's re-attempt went to
+          // the ladder (pending checks by design), or when a readied draft waits on its CI.
           if (
             outcome.outcome !== "merged" &&
             outcome.outcome !== "conflict" &&
@@ -9267,7 +7911,7 @@ const make = Effect.gen(function* () {
           }
           return;
         }
-        // An auto-planned card's plan is approved by the board (T3O-32): the
+        // An auto-planned card's plan is approved by the board: the
         // click or the group's setting authorised it, so the plan never waits
         // on the gate — and the stage's own auto-advance must not move it too.
         if (stageRole === "plan") {
@@ -9279,27 +7923,19 @@ const make = Effect.gen(function* () {
             return;
           }
         }
-        // Ask the stage executor what runs next (t3o-16): a single-step stage
-        // reports `complete` and this auto-advances to the next stage in order
-        // on a successful unattended run (D8), re-triggering auto-kickoff there;
-        // a multi-step stage (the review loop) selects its next round-scoped
-        // step here instead. Then let the freed slot flow to the queue.
+        // Ask the stage executor what runs next: complete (auto-advance) or the loop's next step.
         yield* continueStage({ card, state });
-        // The step that just succeeded is behind the card — either the loop
-        // moved to the next phase within the stage, or the stage advanced. Ask
-        // for the threads it left behind (t3o-13). This one almost never lands
-        // on the first ask: the agent reports its step complete from INSIDE its
-        // turn, so its session is still `running` and the decider refuses. The
-        // retry that does land is the sweep, on this thread's `turn.completed`.
+        // Ask for the threads left behind. Usually refused: the agent completes from inside its
+        // turn, so its session is still running; the sweep on its `turn.completed` lands it.
         yield* releaseFinishedThreads;
         yield* schedule();
         return;
       case "failed":
-        // A clean failure report still enters recovery (D4): retry or escalate.
+        // A clean failure report still enters recovery: retry or escalate.
         yield* recoverStep({ card, state });
         return;
       case "blocked":
-        // The agent needs a human (D13): park the step on the gate. An agent
+        // The agent needs a human: park the step on the gate. An agent
         // that reported `blocked` asked for a human by name.
         yield* parkStepForInput({ card, state, reason: "question" });
         return;
@@ -9307,18 +7943,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A step's thread asked a human a question (t3o-18, D13). Moving the step to
-   * `awaiting-input` is what stops a card waiting on a human from being counted
-   * as stalled.
-   *
-   * RE-SOURCED, not removed: this used to react to the `board.card-input-requested`
-   * domain event that the deleted `board_request_input` tool produced. It now
-   * reacts to the runtime `user-input.requested` event on the stream the reactor
-   * already consumes, resolving the card from the emitting thread. That is
-   * strictly more complete than what it replaces, because it fires for EVERY
-   * input request rather than only the ones an agent remembered to double-report
-   * — an agent that asked normally and skipped the tool used to leave the board
-   * blind, which was the actual failure mode.
+   * A step's thread asked a human a question: `awaiting-input` stops the card counting as stalled.
+   * Driven by the runtime `user-input.requested` event, so it fires for every input request.
    */
   const handleInputRequested = Effect.fn("board-supervisor-handleInputRequested")(function* (
     threadId: ThreadId,
@@ -9336,11 +7962,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A triage or adjudication step asked a question (T3O-55). Nobody answers
-   * those: the board replies "decide it yourself" once per attempt. When that
-   * reply cannot land, or the agent asks again, the board interrupts the turn
-   * and recovers the step, whose nudge says the same and charges the stall
-   * ladder — so an agent that keeps asking ends `stalled`, never parked.
+   * Nobody answers a triage or adjudication question: the board replies "decide it yourself" once
+   * per attempt. If that cannot land or the agent asks again, interrupt and recover the step, which
+   * charges the stall ladder, so a persistent asker ends `stalled`, never parked.
    */
   const handleReviewStepQuestion = Effect.fn("board-supervisor-handleReviewStepQuestion")(
     function* (card: BoardCard, state: BoardCardStepState) {
@@ -9377,20 +8001,9 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Clear a card's scheduled start (T3O-19, D4).
-   *
-   * Through the ordinary `board.card.update` command — no new event, no new
-   * projector path, and no card field mutating out of a step event, which would
-   * force the card aggregate to react to `board.card-step-admitted` in both
-   * projectors.
-   *
-   * The resulting `board.card-updated` is what ACTS on the schedule: it re-enters
-   * this reactor through the same serialised worker and reaches
-   * `applyScheduleEdit` below. That is what makes clear-before-act structural
-   * rather than a convention — a crash between the two leaves a
-   * cleared-but-unstarted card, which the next scheduling pass (or boot's
-   * reconcile) starts. The other order would leave a stale time that re-gates
-   * the NEXT stage, which is the failure this ordering exists to prevent.
+   * Clear a card's scheduled start through `board.card.update`; the resulting `board.card-updated`
+   * is what acts on it, so clear-before-act is structural. A crash between leaves a cleared,
+   * unstarted card the next pass starts, not a stale time that re-gates the next stage.
    */
   const clearCardSchedule = Effect.fn("board-supervisor-clearCardSchedule")(function* (
     card: BoardCard,
@@ -9399,7 +8012,7 @@ const make = Effect.gen(function* () {
     // OBSERVED, not fire-and-forget: a refused clear must not be followed by
     // the act. The only way this is refused is the card being archived or gone,
     // and neither should start — while acting anyway would leave the stale time
-    // that D4's ordering exists to prevent.
+    // that this ordering exists to prevent.
     return yield* dispatchOptional({
       type: "board.card.update",
       commandId: yield* commandId("clear-schedule"),
@@ -9422,21 +8035,15 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Make the move the supervisor would otherwise make now (T3O-19, D3) — the
-   * one action a schedule reaching its moment, or being cleared, performs.
-   *
-   * A PARKED step goes back through the ordinary governor queue (T3O-23's
-   * `requeue-step`), which keeps its thread, so admission nudges the
-   * conversation the agent already has rather than starting a fresh one; the
-   * `board.card-step-recovered` handler runs the scheduling pass for it, and a
-   * full board simply leaves it `Queued`, which is the honest answer. Anything
-   * else is a step the gate was withholding, and one pass admits it.
+   * Make the move the supervisor would otherwise make now. A parked step is requeued keeping its
+   * thread, so admission nudges the existing conversation; anything else is a step the gate
+   * withheld, and one pass admits it.
    */
   const startOrResumeCard = Effect.fn("board-supervisor-startOrResumeCard")(function* (
     cardId: BoardCardId,
-    /** T3O-22 (D12): the board's OWN timed resumes keep the retry budget, so a
+    /** The board's OWN timed resumes keep the retry budget, so a
         genuinely dead card still climbs its ladder to a human across any number
-        of backoff rungs and quota waits. A human's Resume, and T3O-19's
+        of backoff rungs and quota waits. A human's Resume, and a
         scheduled start, reset it — a person intervening IS progress. */
     options?: { readonly preserveBudget?: boolean },
   ) {
@@ -9453,24 +8060,15 @@ const make = Effect.gen(function* () {
         createdAt: yield* nowIso,
       });
     }
-    // Unconditional, and deliberately not left to the `board.card-step-recovered`
-    // handler: the requeue is dispatched from INSIDE this reactor, and a card
-    // whose only route back to the governor was its own event coming round again
-    // would be one stream hop from sitting `queued` forever. The handler stays —
-    // it is the seam for the client's Resume button — and a second pass finds
-    // the step already admitted and does nothing.
+    // Unconditional: the requeue was dispatched from inside this reactor, and relying on its own
+    // event to schedule it is one hop from sitting `queued` forever. A second pass is a no-op.
     yield* schedule();
   });
 
   /**
-   * Fire ONE card's scheduled start: clear the field, then act (T3O-19, D4).
-   *
-   * The order is the whole content of this function. A crash between the two
-   * leaves a cleared-but-unstarted card, which the next scheduling pass — or
-   * boot's reconcile, which ends in one — starts. Acting first would leave a
-   * stale time behind on a crash, and that time would re-gate the NEXT stage
-   * from a decision the user made about something else. Benign in one
-   * direction, silently wrong in the other.
+   * Fire one card's scheduled start: clear the field, then act. A crash between leaves a cleared,
+   * unstarted card the next pass starts; acting first would leave a stale time re-gating the next
+   * stage.
    */
   const fireCardSchedule = Effect.fn("board-supervisor-fireCardSchedule")(function* (
     card: BoardCard,
@@ -9480,7 +8078,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * React to an edit that TOUCHED the card's scheduled start (T3O-19, D3/D6).
+   * React to an edit that TOUCHED the card's scheduled start.
    *
    * One rule, in both directions: if the time has arrived (or was cleared),
    * make the move the supervisor would otherwise make now; if it has not, hold
@@ -9493,22 +8091,16 @@ const make = Effect.gen(function* () {
     const card = board.cards.find((candidate) => candidate.id === cardId);
     if (card === undefined || card.archivedAt !== null) return;
     if (!isBoardCardScheduleDue(card.scheduledStartAt, Date.parse(yield* nowIso))) {
-      // Held for later. A step that is RUNNING is stopped now and picked up
-      // then — the popover says so before the click, and clearing the time
-      // resumes it, which is what makes a confirm dialog unnecessary (D13).
-      //
-      // Only `running`. Every other parked status (`awaiting-input`, `stalled`,
-      // `paused`) is already parked and holds no slot, and re-parking one would
-      // throw away the reason the card is showing to say nothing new; the time
-      // simply schedules its exit. A `pending`/`queued` step needs nothing at
-      // all — the gate in `schedule()` withholds it.
+      // Only a running step is stopped now and picked up at the scheduled time. Other parked
+      // statuses hold no slot and keep their reason; pending or queued steps are withheld by
+      // `schedule()`.
       const state = boardCardStepState(board, cardId);
       if (state !== null && state.status === "running") {
         yield* pauseStepNow({ card, state });
       }
       return;
     }
-    // A time set in the PAST means "now" (D6), so it fires here rather than
+    // A time set in the PAST means "now", so it fires here rather than
     // waiting up to 30s for the tick — and the card never wears a pill for a
     // moment that has already gone.
     if (card.scheduledStartAt !== null) return yield* fireCardSchedule(card);
@@ -9516,7 +8108,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Fire every card whose scheduled start has arrived (T3O-19, D3).
+   * Fire every card whose scheduled start has arrived.
    *
    * Rides the existing 30s sweep tick rather than a timer of its own: ±30s
    * granularity on a control whose finest input is one minute, and no new
@@ -9544,11 +8136,8 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Archive every card that has sat untouched in Done for the configured days
-   * (T3O-77, D15). An ordinary `board.card.archive` with the system actor, so
-   * the archive handler's settle, safe reclaim and cascades all run as for a
-   * human's archive. `boardCardAutoArchiveDue` pre-checks the decider's
-   * refusals; one that still lands (a raced edit) is expected, not a fault.
+   * Archive cards untouched in Done for the configured days, as an ordinary system-actor archive so
+   * settle, reclaim and cascades run. A refusal that still lands (a raced edit) is expected.
    */
   const fireDueAutoArchives = Effect.fn("board-supervisor-fireDueAutoArchives")(function* () {
     const { lifecycle } = yield* boardSettings;
@@ -9576,30 +8165,9 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Start every armed card the selector picks out whose last dependency has
-   * landed (T3O-24, D3) — the top-level analogue of `cascadeUnblockedChildren`,
-   * and modelled on it.
-   *
-   * The dispatch is an ORDINARY forward `board.card.move` into the build-role
-   * stage, exactly the one the human's Begin build would have made. Pre-build →
-   * build is adjacent by construction, so no `override`; everything downstream —
-   * worktree provisioning, the concurrency governor, `queued` visibility —
-   * is untouched, and an auto-started card that finds no free slot sits
-   * `Queued #n` like any other, which is the honest answer.
-   *
-   * The decider's dependency gate stays the single authority;
-   * `boardCardAutoStartDue` pre-checks it here so the fire path never teaches
-   * the rule by refusal — the same discipline the child cascade keeps.
-   *
-   * Re-entrant by construction: the move clears the arm and carries the card
-   * out of the pre-build stage in one event (D4), so a second pass over the
-   * same card finds it not due. That is what makes a raced targeted call and
-   * the 30s sweep safe to run over the same board.
-   *
-   * Reads the board itself rather than taking its caller's: every call site is
-   * at the END of a handler that has already dispatched, so the caller's copy
-   * is stale — and this decides whether to MOVE a card, which is the last thing
-   * that should be decided off a board read from several events ago.
+   * Start armed cards whose last dependency landed, via an ordinary forward move into the
+   * build-role stage. The decider's dependency gate stays the authority; re-entrant because the
+   * move clears the arm. Reads the board itself: callers' copies are stale.
    */
   const startArmedCards = Effect.fn("board-supervisor-startArmedCards")(function* (
     /** Which cards to consider. The targeted paths narrow to the one card that
@@ -9612,18 +8180,15 @@ const make = Effect.gen(function* () {
     for (const card of board.cards) {
       if (!select(card, board)) continue;
       if (!boardCardAutoBuildDue({ board, card })) continue;
-      // A move the decider would refuse for a NON-dependency reason (D5). The
-      // card stays ARMED and nothing is said: a pending split is already a
-      // human-facing state saying what it wants, and the card fires by itself
-      // once that gate clears. Clearing the arm here would silently spend it on
-      // a move that never happened.
+      // A non-dependency refusal: the card stays armed and fires once the gate clears; clearing the
+      // arm here would spend it on a move that never happened.
       if (boardCardPendingSplit(board, card.id)) continue;
       yield* dispatch({
         type: "board.card.move",
         commandId: yield* commandId("auto-start"),
         cardId: card.id,
         toStage: buildStage.stageId,
-        // An own Auto-build start begins no group (T3O-38), so it never starts
+        // An own Auto-build start begins no group, so it never starts
         // the card's siblings.
         cause: "auto-build",
         createdAt: yield* nowIso,
@@ -9631,7 +8196,7 @@ const make = Effect.gen(function* () {
     }
   });
 
-  /** The targeted narrowing (T3O-24, D6): only a card that DEPENDS on the one
+  /** The targeted narrowing: only a card that DEPENDS on the one
       that just finished or was archived can have become due, so a done arrival
       on an ordinary board costs one board read and a filter rather than a
       whole-board dependency resolution. */
@@ -9641,18 +8206,9 @@ const make = Effect.gen(function* () {
     );
 
   /**
-   * Requeue every step whose backoff rung has arrived (T3O-22, D7/D10).
-   *
-   * Rides the existing 30s sweep tick, exactly as the scheduled-start and
-   * auto-start passes do: ±30s granularity on waits measured in minutes, and no
-   * new fiber. `preserveBudget` is what makes the ladder honest — the clock
-   * advancing proves nothing, so a genuinely dead card keeps climbing toward a
-   * human across every rung it waits out.
-   *
-   * A `usage-limit` park is swept too, as the safety net under the engine's
-   * own resume (T3O-72): its `retryAt` sits a grace past the provider's reset,
-   * so the engine's `limit-resumed` normally un-parks it first and this pass
-   * then finds nothing stalled. Its budget is preserved the same way.
+   * Requeue every step whose backoff rung arrived, on the 30s sweep tick. `preserveBudget` keeps a
+   * dead card climbing toward a human. Usage-limit parks are swept too, as a safety net under the
+   * engine's own `limit-resumed`.
    */
   const fireDueRetries = Effect.fn("board-supervisor-fireDueRetries")(function* () {
     const board = yield* readBoard;
@@ -9678,26 +8234,10 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * Attempt every armed card whose retry rung has arrived (T3O-38, D5).
-   *
-   * Rides the existing 30s sweep tick exactly as the auto-start and retry
-   * passes do: ±30s granularity on waits measured in minutes, and no new
-   * fiber. TOTAL rather than targeted, for the reason `sweepArmedCards` is —
-   * a hold that survived a server restart is picked up by this same pass at
-   * boot, which is what makes the ladder outlive the process that started it.
-   *
-   * A HARD hold is never polled (D9): its `retryAt` is null, so it simply
-   * never comes due. Its two revival paths are a human clicking Merge and the
-   * card leaving and re-entering the merge stage.
-   *
-   * It carries two more errands, both about a card whose hold is no longer the
-   * whole story:
-   *
-   *  - the card DEFERRED as blocked, which has no hold at all and is waiting
-   *    on its dependency rather than on a rung;
-   *  - the held card that is no longer armed, whose hold the sweep CLEARS —
-   *    the board-wide setting going off disarms cards without touching them,
-   *    so nothing else would.
+   * Attempt every armed card whose retry rung has arrived, on the 30s sweep tick. Total, so a
+   * hold that survived a restart is picked up at boot. A hard hold (null `retryAt`) never comes
+   * due. Also re-checks a card deferred as blocked, and clears the hold of a card no longer
+   * armed: the board-wide setting disarms cards without touching them, so nothing else would.
    */
   const fireDueAutoMerges = Effect.fn("board-supervisor-fireDueAutoMerges")(function* () {
     const board = yield* readBoard;
@@ -9722,14 +8262,9 @@ const make = Effect.gen(function* () {
         mergeAwaitingChecks.delete(String(card.id));
         continue;
       }
-      // A hold on a card that is no longer ARMED is a label about automation
-      // that is switched off, and "the board is retrying" is then a lie (D10).
-      // The per-card disarm clears its own hold in the decider; the board-wide
-      // setting is not a card command and cannot, so this is where that clear
-      // lands — for an exhausted hold too, exactly as the per-card disarm
-      // clears one. Checked BEFORE the rung is due, or the stale pill would
-      // sit there for up to the forty minutes of the last rung.
-      // An unarmed card waiting on its CI fix's checks rides the ladder too.
+      // A hold on a card no longer armed claims a retry that will not happen. The board-wide
+      // setting is not a card command, so its clear lands here; checked before the rung is due so
+      // the stale pill does not linger. An unarmed card waiting on its CI fix's checks still rides.
       if (
         !boardCardAutoMergeArmed({ board, card, boardWide }) &&
         !mergeAwaitingChecks.has(String(card.id))
@@ -9738,18 +8273,15 @@ const make = Effect.gen(function* () {
         yield* clearAutoMergeHold(card);
         continue;
       }
-      // A HARD hold is never polled (D9): its `retryAt` is null, so it simply
+      // A HARD hold is never polled: its `retryAt` is null, so it simply
       // never comes due. A deferred card with no hold has no rung to wait for
       // — its wait is the dependency, and `autoMergeCard` re-checks that.
       const dueMs = hold?.retryAt == null ? null : Date.parse(hold.retryAt);
       const rungDue = dueMs !== null && Number.isFinite(dueMs) && nowMs >= dueMs;
       if (!rungDue && !(deferred && hold === null)) continue;
-      // Nothing else running on the card — a conflict fix in flight owns the
-      // merge, and a second attempt underneath it would race the branch it is
-      // rewriting. The pull request is NOT pre-checked here:
-      // `mergeCardPullRequest` re-resolves it, and a card whose link went
-      // missing should record the hard hold that says so rather than retry in
-      // silence for ever.
+      // A live conflict fix owns the merge; a second attempt would race the branch it rewrites. The
+      // pull request is not pre-checked: `mergeCardPullRequest` re-resolves it, so a missing link
+      // records a hard hold rather than retrying silently.
       const liveStep = boardCardStepState(board, card.id);
       if (liveStep !== null && !isBoardTerminalStepStatus(liveStep.status)) continue;
       if (hasLiveStageThread(card, card.stage)) continue;
@@ -9778,11 +8310,9 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * The stance a live step should hold over the one it froze at entry, or
-   * null when nothing overrides it. The Automation toggles come first
-   * (T3O-38): an unattended planning run, or a build with Auto-build on, stays
-   * unattended whatever the card's own toggle says — so an edit or a restart
-   * never undoes the retune. Then the card's explicit override (T3O-17).
+   * The stance a live step should hold over the one it froze at entry, or null. An unattended
+   * planning run, or a build with Auto-build on, stays unattended whatever the card's toggle
+   * says; otherwise the card's explicit override applies.
    */
   const stanceOverride = (
     board: BoardState,
@@ -9797,16 +8327,9 @@ const make = Effect.gen(function* () {
     return card.humanInLoop;
   };
 
-  // Mid-run human-in-the-loop toggle (D5/D6): when the per-card Build toggle is
-  // flipped on a card with a non-terminal step, retune the run row so
-  // drop-monitoring and auto-advance honour the new stance, and — if the step
-  // has a LIVE thread — send a turn into it (the `/unattended` stance switching
-  // to unattended, the question-friendly stance switching back). A queued or
-  // pending step has no thread yet, so it only needs the frozen stance updated;
-  // the flip would otherwise be lost before the step admits and spawns. Slot,
-  // worktree and thread are untouched. Only an EXPLICIT toggle
-  // (`card.humanInLoop` non-null and different from the frozen stance) reacts,
-  // so an unrelated card edit never flips a run.
+  // Mid-run human-in-the-loop toggle: retune the run row, and send a stance turn when the step
+  // has a live thread (a queued or pending step only needs the frozen stance updated). Only an
+  // explicit toggle differing from the frozen stance reacts, so unrelated edits never flip a run.
   const handleCardUpdated = Effect.fn("board-supervisor-handleCardUpdated")(function* (
     event: Extract<BoardEvent, { type: "board.card-updated" }>,
   ) {
@@ -9814,42 +8337,21 @@ const make = Effect.gen(function* () {
       becameGroup: event.payload.becameGroup === true,
       regrouped: event.payload.regrouped === true,
     });
-    // A schedule edit acts FIRST and on its own terms (T3O-19, D3): it is the
-    // one edit that must reach a card with no live step row at all, and the one
-    // that acts on a step this handler's other arms would have returned past.
-    // Only an edit that NAMED the field reacts — the payload key says so — so
-    // an unrelated edit never resumes a card parked for another reason.
+    // A schedule edit acts first: it must reach a card with no live step row, and a step the arms
+    // below would return past. Keyed on the payload naming the field, so an unrelated edit never
+    // resumes a card parked for another reason.
     if (event.payload.scheduledStartAt !== undefined) {
       yield* applyScheduleEdit(event.payload.cardId);
     }
-    // Any edit that leaves the card's own Auto-build on may have made it due
-    // (T3O-24 D6, T3O-38), so the check keys on the card's state rather than
-    // on the payload's marker — two of the three ways a card becomes due here
-    // did not touch the toggle:
-    //
-    //  - the arm itself, where the last dependency finished between the modal
-    //    rendering and the click, so no done-arrival event is coming;
-    //  - an edit that DROPS the last blocking edge;
-    //  - a dependency being DELETED, which the decider answers by rewriting the
-    //    edge out of every dependent — as one `card-updated` each.
-    //
-    // Unarmed cards are the overwhelming majority, so an ordinary title edit
-    // still pays nothing.
+    // Keyed on the card's state, not the payload marker: a card also becomes due when an edit drops
+    // its last blocking edge or a dependency is deleted, or when its last dependency finished
+    // between the modal rendering and the arm. Unarmed cards, the majority, pay nothing.
     if (event.payload.card.autoBuildSetting === true) {
       yield* startArmedCards((candidate) => candidate.id === event.payload.cardId);
     }
-    // Arming a card that is ALREADY parked at the merge stage merges it NOW
-    // (T3O-38, D3). It is morally identical to clicking Merge, and a control
-    // that visibly does nothing to the card in front of you is the exact
-    // complaint this feature exists to fix.
-    //
-    // Keyed on the payload MARKER, not on the card's state: only an edit that
-    // touched the arm may fire a merge, or a title edit on an armed card
-    // parked here would merge it. This is also the one path that bypasses the
-    // adjacency guard — a human pointing at one card is not a blanket policy.
-    // A toggle change takes effect here (T3O-38), and owns the step's stance
-    // and its one message, so the generic stance arm below stands aside. A
-    // group's change reaches every child that inherits it.
+    // A toggle change owns the step's stance and its one message, so the generic stance arm below
+    // stands aside. Arming a card already parked at merge merges it now: only an edit that touched
+    // the arm may, and it bypasses the adjacency guard. A group change reaches inheriting children.
     const automationChanged = event.payload.automationChanged;
     if (automationChanged !== undefined) {
       if (automationChanged.group === true) {
@@ -9864,7 +8366,7 @@ const make = Effect.gen(function* () {
       }
       return;
     }
-    // A strategy change cleared the hold that WAS the retry (T3O-80), so the
+    // A strategy change cleared the hold that WAS the retry, so the
     // card re-attempts now, under the new strategy, rather than sitting with
     // no hold for the sweep to find. Only an armed card, or one whose CI fix
     // is still riding the ladder, merges by itself.
@@ -9882,13 +8384,9 @@ const make = Effect.gen(function* () {
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
     const state = boardCardStepState(board, event.payload.cardId);
     if (card === undefined || state === null) return;
-    // A step stalled because its worker lacks its provider (T3O-65) never ran,
-    // and its model was frozen at stage entry — so a human's "Change model",
-    // which is a card edit, only lands if the stage starts over and resolves it
-    // again. Only an edit to the model overrides does it — a title edit must
-    // not restart a stage — and a worker that still lacks the provider stalls
-    // the fresh step the same way. Optional: a restart the decider refuses
-    // (say, a dependency now unmet) leaves the stall for a human.
+    // A step stalled for a provider missing on its worker froze its model at entry, so a model
+    // change only lands if the stage restarts. Only a model-overrides edit restarts it; a restart
+    // the decider refuses leaves the stall for a human.
     if (
       event.payload.modelOverridesEdited === true &&
       state.status === "stalled" &&
@@ -9902,55 +8400,27 @@ const make = Effect.gen(function* () {
       });
       return;
     }
-    // A SETTLED stage may have more to run after an edit (t3o-22, D6). The
-    // review loop is why: a loop held at its round cap is terminal, and raising
-    // the card's budget from the pane must make it plan the next round — but
-    // nothing else in the reactor would ever ask again.
-    //
-    // Deliberately role-AGNOSTIC. An `if (stage.role === "review")` here would
-    // be the first leak of review logic into the reactor and would break
-    // t3o-16 AC10, so this asks whatever executor the stage has and acts ONLY
-    // on a `run` plan. `SimpleStageExecutor` sees its one step recorded and
-    // plans `complete`, so a non-review stage is untouched — and a `complete`
-    // plan must stay a no-op here regardless, because re-running the advance
-    // path from an edit is exactly the double-advance this must not cause.
-    // Only a SUCCEEDED settle can have more to run. A terminal-but-unsuccessful
-    // step (`abandoned`, `stalled`, `failed`) is not a stage waiting on budget,
-    // and re-planning one is actively dangerous: `SimpleStageExecutor` decides
-    // from *succeeded* completions alone, so a card carrying an `abandoned`
-    // step at an auto-executing stage plans a fresh `run` — and a title edit
-    // would spawn a full stage run. Before this path existed, nothing happened.
+    // A settled stage may have more to run after an edit (raising a held review loop's budget).
+    // Role-agnostic: asks the stage's executor and acts only on a `run` plan; `complete` stays a
+    // no-op to avoid a double advance. Only a succeeded settle re-plans: an abandoned step at an
+    // auto stage would otherwise plan a fresh run on a title edit.
     if (isBoardTerminalStepStatus(state.status)) {
       if (state.status !== "succeeded") return;
       return yield* replanSettledStage(card);
     }
-    // The card's explicit override wins at EVERY stage, not just a build one
-    // (T3O-17). Only an explicit override can differ from the stance the step
-    // froze at entry, so no other behaviour moves — but without this, a human
-    // ticking the toggle on a review or planning step changes the card while
-    // the step carries on being supervised as before, a half-applied stance.
+    // The card's explicit override wins at every stage, or a toggle on a review or planning step
+    // changes the card while the step stays supervised the old way.
     const desired = stanceOverride(board, card, state) ?? state.humanInLoop;
     if (desired === state.humanInLoop) return;
-    // A `paused` step is NOT told about the switch. This is load-bearing, not
-    // cosmetic: a human toggling the checkbox on a card they just stopped
-    // re-enters this handler, and a turn sent into the paused step would raise
-    // `thread.turn-start-requested`, hit `resumeParkedStep` and un-pause the
-    // card — putting the agent straight back to work against the human's Stop.
-    // The stance still lands on the row through the retune below, so the step
-    // reads correctly when a human does resume it.
-    //
-    // ONLY `paused`, deliberately. The other two parked statuses are told, and
-    // the turn resuming them through `resumeParkedStep` is the point: flipping
-    // the stance on a step waiting on a question (`awaiting-input`) or one
-    // recovery gave up on (`stalled`) is a human saying how the work should
-    // carry on, and it has always put the step back to work. Only `paused`
-    // carries an explicit "stop" this must not overturn.
+    // A paused step is not told: the turn would resume it through `resumeParkedStep` and overturn
+    // the human's Stop. The stance still lands on the row below. Awaiting-input and stalled steps
+    // are told, and resuming them is intended.
     if (state.threadId !== null && state.status !== "paused") {
       const text = desired
         ? `Switching to human-in-the-loop: ask me anything you need directly, and it is fine to end a turn waiting on my answer. Call board_complete_step when the work is done.`
         : isReviewDecidingStep(state)
-          ? `Switching to unattended: do not stop to ask permission — make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished. ${boardBlockedInstruction(state.stepId)}`
-          : `Switching to unattended: do not stop to ask permission — make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished; if you are truly blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}, and never end a turn with an unanswered question in prose.`;
+          ? `Switching to unattended: do not stop to ask permission: make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished. ${boardBlockedInstruction(state.stepId)}`
+          : `Switching to unattended: do not stop to ask permission: make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished; if you are truly blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}, and never end a turn with an unanswered question in prose.`;
       yield* sendTurn({ threadId: state.threadId, text, runtimeMode: state.runtimeMode });
     }
     yield* dispatch({
@@ -9963,7 +8433,7 @@ const make = Effect.gen(function* () {
     });
   });
 
-  /** Interrupt every live turn on a card's threads (T3O-28). The release
+  /** Interrupt every live turn on a card's threads. The release
       sweep settles them once their turns have ended. */
   const stopCardThreads = Effect.fn("board-supervisor-stopCardThreads")(function* (
     card: BoardCard,
@@ -9984,7 +8454,7 @@ const make = Effect.gen(function* () {
     }
   });
 
-  /** Close a card's open pull request on the forge (T3O-28). Best-effort: a
+  /** Close a card's open pull request on the forge. Best-effort: a
       refusal is logged, and the branch deletion that follows a discard closes
       it on most hosts anyway. */
   const closeCardPullRequest = Effect.fn("board-supervisor-closeCardPullRequest")(function* (
@@ -10018,7 +8488,7 @@ const make = Effect.gen(function* () {
       ...(result.remoteDeleted ? ["remote"] : []),
       ...(result.localDeleted ? ["local"] : []),
     ];
-    const skipped = result.skippedReason === null ? "" : ` — ${result.skippedReason}`;
+    const skipped = result.skippedReason === null ? "" : `: ${result.skippedReason}`;
     yield* dispatchOptional({
       type: "board.card.record-note",
       commandId: yield* commandId("branch-cleanup"),
@@ -10033,7 +8503,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A confirmed group archive's git half (T3O-28, decision 14): the card's
+   * A confirmed group archive's git half (decision 14): the card's
    * worktree goes, forced, then its branch — local and remote — including a
    * group's `branch-only` integration branch. No further work, ever.
    */
@@ -10089,7 +8559,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * An archived group's `branch-only` integration branch (T3O-28): it has no
+   * An archived group's `branch-only` integration branch: it has no
    * checkout for the reclaim to remove, so without this it outlives its card.
    * A plain archive is reversible, so the branch goes only once its merge made
    * the work durable; a confirmed group archive deletes it regardless.
@@ -10103,7 +8573,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A cancelled card's worktree (T3O-28, decision 12): reclaimed by the usual
+   * A cancelled card's worktree (decision 12): reclaimed by the usual
    * safety rule, so work that exists nowhere else is kept and said so. The
    * branch is kept until that reclaim removes the checkout, and goes with it.
    */
@@ -10138,8 +8608,8 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * A started leaf's work was cancelled to make it a parent (T3O-28, decision
-   * 12): its step is abandoned, its threads stop, its pull request closes, and
+   * A started leaf's work was cancelled to make it a parent: its
+   * step is abandoned, its threads stop, its pull request closes, and
    * its worktree is reclaimed — the card is already a group.
    */
   const handleWorkCancelled = Effect.fn("board-supervisor-handleWorkCancelled")(function* (
@@ -10177,16 +8647,11 @@ const make = Effect.gen(function* () {
     }
     // Before the reclaim below pulls the worktree out from under its steps.
     yield* stopCiOnArchive(card);
-    // Reclaim the card's worktree at archive (t3o-09, D6/D15) — without this,
-    // every archived card leaks its worktree and `board/*` branch on disk.
-    //
-    // UNCONDITIONAL, and it reads no setting on purpose. Archive is the
-    // guaranteed cleanup point: `reclaimWorktreeOnDone` chooses whether a card
-    // is reclaimed EARLIER, at Done, and never whether it is reclaimed at all.
-    // A worktree may not outlive its card.
-    //
+    // Archive is the guaranteed cleanup point, so the reclaim reads no setting:
+    // `reclaimWorktreeOnDone` only chooses whether it happens earlier. A worktree may not outlive
+    // its card.
     if (event.payload.discard === true) {
-      // A confirmed group archive (T3O-28): nothing here is coming back.
+      // A confirmed group archive: nothing here is coming back.
       yield* stopCardThreads(card);
       yield* closeCardPullRequest(card, card.pullRequest);
       yield* cardCleanupWorker.enqueue({ kind: "discard", cardId: card.id });
@@ -10197,47 +8662,30 @@ const make = Effect.gen(function* () {
         yield* cardCleanupWorker.enqueue({ kind: "discard", cardId: earlier.id });
       }
     } else {
-      // Off this worker (T3O-52): the reclaim fetches from the remote first.
+      // Off this worker: the reclaim fetches from the remote first.
       yield* cardCleanupWorker.enqueue({ kind: "reclaim", cardId: card.id });
     }
-    // An archived card is done with every thread it holds (t3o-13).
+    // An archived card is done with every thread it holds.
     yield* releaseFinishedThreads;
-    // An archived child counts as finished (t3o-23, D6), so this may have
+    // An archived child counts as finished, so this may have
     // been the parent's last unfinished one — or the one whose finishing
-    // unblocks a sibling still waiting on the floor (t3o-28, D3).
+    // unblocks a sibling still waiting on the floor.
     if (card.parentCardId !== null) {
       yield* cascadeUnblockedChildren(card.parentCardId);
       yield* syncAncestorGroups(card.parentCardId);
     }
-    // An ARCHIVED dependency stops gating (t3o-13, D1), so archiving a blocker
-    // frees its dependents exactly as finishing it would (T3O-24, D6) — in
-    // any group (T3O-27).
+    // An ARCHIVED dependency stops gating, so archiving a blocker
+    // frees its dependents exactly as finishing it would — in
+    // any group.
     yield* startArmedDependents(card.id);
     yield* cascadeDependentGroups(card.id);
   });
 
   /**
-   * A card was DELETED — the destructive follow-through archive never does.
-   *
-   * The card itself comes entirely from the event payload: it left the read
-   * model and its rows left the tables in the same transaction that produced
-   * this event, so nothing about the card can be looked up any more. The one
-   * board read is for the project's workspace root (`projectCwd`) — the project
-   * outlives its cards, so it is still there — which the git work needs as its
-   * cwd.
-   *
-   * The order is deliberate. Threads go first, so the agents writing into the
-   * worktree are stopped before it is pulled out from under them. The worktree
-   * goes next, FORCED — the normal clean-and-pushed refusal exists to protect
-   * work the user might still want, and the user has just said, at a dialog
-   * that spells it out, that they do not. The branches go last, because
-   * `deleteCardBranch` refuses a local branch a worktree still holds and the
-   * reclaim is what unholds it.
-   *
-   * Every step is best-effort and reports only to the log. There is no card to
-   * put an activity row on, and there is no useful way to fail: the card is
-   * already gone from the user's board, so an error here can only be tidied up
-   * by hand, never retried.
+   * A card was deleted. The card comes from the payload (its rows are gone); the board read is only
+   * for the project's cwd. Order: threads stop first, then the worktree is removed FORCED (the
+   * human confirmed), then branches, since `deleteCardBranch` refuses one a worktree holds.
+   * Each step is best-effort and logs only: there is no card left to report on or retry.
    */
   const handleCardDeleted = Effect.fn("board-supervisor-handleCardDeleted")(function* (
     event: Extract<BoardEvent, { type: "board.card-deleted" }>,
@@ -10249,15 +8697,11 @@ const make = Effect.gen(function* () {
     autoMergeDeferredUntilUnblocked.delete(String(card.id));
     transientProvisionFailures.delete(card.id);
     disarmPendingMerge(card.id);
-    // Release the slot the card's step held. NOT a `board.card.settle-step`
-    // dispatch: that command requires the card to exist, and it does not any
-    // more. The step state was frozen into the payload for exactly this — the
-    // slot count is in-memory, so nothing else could ever recover it and the
-    // board would run one step short of its ceiling for the rest of the
-    // process's life.
+    // Not `board.card.settle-step`: that needs the card to exist. The slot count is in-memory, so
+    // without this release the board would run one step short of its ceiling until restart.
     const stepState = event.payload.stepState;
     if (stepState !== null) yield* releaseSlot(stepState);
-    // Its CI pass (T3O-44), running or queued, dies with it; the pass rows
+    // Its CI pass, running or queued, dies with it; the pass rows
     // left with the card's other rows.
     if ((yield* ciPasses.cancel(card.id)) !== null) yield* schedule();
 
@@ -10268,7 +8712,7 @@ const make = Effect.gen(function* () {
       );
     }
 
-    // The brief's files go with the card (t3o-32, K1): board-owned storage,
+    // The brief's files go with the card (K1): board-owned storage,
     // so nothing else will ever reclaim it.
     yield* Option.match(serverConfig, {
       onNone: () => Effect.void,
@@ -10282,7 +8726,7 @@ const make = Effect.gen(function* () {
     if (worktree !== null) {
       const workspace = yield* workspaceFor(card);
       if (workspace.checkoutPath !== null) {
-        // T3O-23: retiring runs the remove scripts, which can take minutes, so
+        // Retiring runs the remove scripts, which can take minutes, so
         // it goes to its own worker and the delete handler moves on. The queue
         // is in memory: a restart before it runs leaves the branch behind, so
         // the log names it for whoever finds it.
@@ -10303,41 +8747,19 @@ const make = Effect.gen(function* () {
     // The released slot is capacity the board can hand to whatever is queued.
     yield* schedule();
 
-    // Deleting a child removes it from the parent's unfinished set (t3o-23,
-    // D4) — which may release a sibling that depended on it (t3o-28, D3), and
-    // if it was the last one standing, advances the parent (the helper itself
-    // refuses when NO children remain: an emptied split waits for the human).
+    // Deleting a child removes it from the parent's unfinished set, which may release a sibling
+    // that depended on it, and if it was the last one standing, advances the parent (the helper
+    // itself refuses when NO children remain: an emptied split waits for the human).
     if (card.parentCardId !== null) {
       yield* cascadeUnblockedChildren(card.parentCardId);
       yield* syncAncestorGroups(card.parentCardId);
     }
   });
 
-  // The split's integration branch (t3o-23, D5): create it — branch only, no
-  // worktree, no setup script — so the first child to begin building has a
-  // base to cut from, and push it so child pull requests have a remote
-  // target. Effect-then-record, like every worktree mutation: the git work
-  // happens first, `record-integration-branch` reports it. A failed PUSH is a
-  // note, not a failure — a local-only project still builds and reviews
-  // locally, and the missing remote base surfaces at the child's review step
-  // with the forge CLI's own words (the t3o-20 stance).
-  //
-  // IDEMPOTENT and multi-entry: approval fires it, and any child whose base
-  // resolution finds no parent branch fires it again (`ensureWorktree`), so a
-  // reactor that was down at approval — or a transient git failure — heals on
-  // the next build attempt instead of stranding the split. A parent whose
-  // slice says the branch is live (`branch-only` / `provisioning` / `ready`)
-  // is left alone — its branch exists and IS the integration branch — while
-  // `failed` and `reclaimed` proceed: a failed attempt retries, and a
-  // reclaimed slice is a SECOND-ROUND split (a merged parent dragged back and
-  // re-approved) whose old branch was deleted at Done and needs a fresh one.
-  //
-  // Answers why the branch could not be cut, or null when it exists (or there
-  // was nothing to do): a child that triggered the attempt quotes the reason on
-  // its own card (T3O-15). `transient` marks git itself failing on a repo that
-  // is otherwise fine — the child retries on its next pass rather than parking.
-  // A nested own group is cut from its own integration ancestor (T3O-27), so
-  // the chain is ensured outermost first; the first failure stops it.
+  // Create and push the split's integration branch (branch only), then record it. A failed push
+  // is a note: local-only projects still work. Idempotent: approval and any child finding no
+  // parent branch call it; a live slice is left alone, `failed`/`reclaimed` proceed. Returns why
+  // the branch could not be cut, or null; nested groups are ensured outermost first.
   const ensureIntegrationBranch = Effect.fn("board-supervisor-ensureIntegrationBranch")(function* (
     card: BoardCard,
   ) {
@@ -10368,7 +8790,7 @@ const make = Effect.gen(function* () {
       type Failure = {
         readonly reason: string;
         readonly transient: boolean;
-        /** The parent's worker is out of reach (T3O-64): nothing was recorded,
+        /** The parent's worker is out of reach: nothing was recorded,
           and the child retries on its next pass. */
         readonly unavailable?: boolean;
       } | null;
@@ -10379,10 +8801,10 @@ const make = Effect.gen(function* () {
         transient: true,
         unavailable: true,
       };
-      // An inherit group has no branch of its own (T3O-27), and grouping alone
+      // An inherit group has no branch of its own, and grouping alone
       // never touches git.
       if (boardCardGroupOf(yield* readBoard, card)?.target === "inherit") return null;
-      // Cut on the PARENT's worker and pushed (D12): a child placed elsewhere
+      // Cut on the PARENT's worker and pushed: a child placed elsewhere
       // cuts its own branch from the remote copy.
       const workspace = yield* workspaceFor(card);
       const cwd = workspace.checkoutPath;
@@ -10396,12 +8818,8 @@ const make = Effect.gen(function* () {
       if (defaultBranch === "") {
         return yield* fail(noDefaultBranchReason(cwd, resolved, "the integration branch"));
       }
-      // The integration branch is cut from the PARENT's base (T3O-5, D8), not
-      // unconditionally from the project default. This is a latent bug the
-      // per-card base exposes rather than new behaviour: without it a split
-      // parent based on `release/2.4` would get an integration branch cut from
-      // `main`, and every child would silently inherit the error. A parent with
-      // no pin resolves to the default, which is exactly what this used to do.
+      // Cut from the parent's effective base, not the project default, or every child of a parent
+      // pinned to another branch would inherit the wrong base.
       const integrationBase =
         resolveBoardCardEffectiveBase({
           card,
@@ -10470,17 +8888,12 @@ const make = Effect.gen(function* () {
     event: Extract<BoardEvent, { type: "board.plans-approved" }>,
   ) {
     yield* ensureIntegrationBranch(event.payload.card);
-    // Approval normally leaves the parent short of build (t3o-28, D1), and the
-    // cascade waits for its later move into the build stage (D3). But approving
-    // a split on a parent ALREADY sitting at build (legal — a card built
-    // conversationally can be split before its build starts in earnest) emits
-    // no move, so that trigger never comes. Nudge the cascade here: the helper
-    // no-ops unless the parent is at the build stage, so the ordinary
-    // approve-from-planning path pays nothing and only this one path starts.
+    // Approving a split on a parent already at build emits no move, so the cascade's usual trigger
+    // never comes. The helper no-ops unless the parent is at build.
     yield* cascadeUnblockedChildren(event.payload.card.id);
   });
 
-  // A card was created (D10): if it landed in an auto-executing stage, kick off
+  // A card was created: if it landed in an auto-executing stage, kick off
   // exactly as a drag would. The created payload is flat, so re-read the card.
   const handleCardCreated = Effect.fn("board-supervisor-handleCardCreated")(function* (
     event: Extract<BoardEvent, { type: "board.card-created" }>,
@@ -10488,35 +8901,19 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
     if (card === undefined) return;
-    // A sub-board child materialised by `board.plans.approve` (t3o-23, D3/D18)
-    // must NOT auto-start on arrival, even if its floor stage auto-executes:
-    // approving a split is one human act and cannot fan out into N running
-    // agents. Each child's build is a deliberate later "Begin build" — a drag
-    // (`board.card-moved`) which DOES kick off. The decider cannot enforce
-    // this (it has no settings, D8), so the reactor does, keyed on the child's
-    // `sourcePlanId`. Any other card created straight into an auto stage
-    // (D10) kicks off here — including one a human created inside a group
-    // (T3O-27), which arrives exactly as a card moved into it would.
+    // A sub-board child created by plan approval must not auto-start: one approval cannot fan out
+    // into N running agents, and the decider has no settings to enforce it. Any other card created
+    // in an auto stage kicks off here, including one created inside a group.
     if (card.sourcePlanId !== null) return;
     yield* beginStageRun({ card: yield* markAutoPlanIfOn(card), onDemand: false });
     if (card.parentCardId !== null) yield* cascadeUnblockedChildren(card.parentCardId);
   });
 
   /**
-   * A card moved to another project (T3O-33). The card's stage does not change,
-   * but the repository it works in does, so anything live is now editing the
-   * wrong checkout: abandon it, clear the stage's threads off the card, and let
-   * the stage start again on a fresh thread if it auto-executes.
-   *
-   * The thread records themselves are KEPT (D2). A planning thread's real
-   * output is the plan, and that lives on the card; only a running agent is
-   * genuinely broken by the move, so it is stopped rather than deleted.
-   *
-   * The clearing mirrors `beginStageRun`'s on-demand arm rather than
-   * `handleCardMoved`'s: the destination stage is the stage the card is already
-   * in, so a link left by an EARLIER run of that stage (its role is the stage
-   * id) would trip the live-stage-thread guard and wedge the restart. A thread
-   * a human ADOPTED links with role `linked` and is left alone.
+   * A card moved to another project: anything live is editing the wrong checkout, so abandon it,
+   * clear the stage's threads (records kept) and let the stage restart if it auto-executes.
+   * Mirrors `beginStageRun`'s on-demand arm: an earlier run's link would trip the live-thread
+   * guard. Adopted (`linked`) threads are left alone.
    */
   const handleCardProjectChanged = Effect.fn("board-supervisor-handleCardProjectChanged")(
     function* (event: Extract<BoardEvent, { type: "board.card-project-changed" }>) {
@@ -10544,12 +8941,8 @@ const make = Effect.gen(function* () {
         // the inbox forever. The card is finished with it — name it.
         abandonedThreads.add(String(link.threadId));
       }
-      // Stop the turn of the step that was actually running. A `stalled` step
-      // already gave up and a `paused` one had its turn stopped when the human
-      // stopped it, so neither needs an interrupt; anything else may still have
-      // a turn writing the OLD project's checkout, which is exactly what this
-      // move must not leave running. Best-effort, like every other orphan
-      // interrupt.
+      // A stalled or paused step has no turn running; anything else may still be writing the old
+      // project's checkout. Best-effort.
       if (
         live &&
         existing.threadId !== null &&
@@ -10578,17 +8971,9 @@ const make = Effect.gen(function* () {
     },
   );
 
-  // A card crossed into a new stage (drag, or an auto-advance). The card holds
-  // ONE step-state row, and until this move nothing has selected a step for the
-  // destination — so any non-terminal step still on the row is a LEFTOVER from
-  // the stage the card just left (a run that stalled or was mid-flight in the
-  // old stage; auto-advance settles its step before moving, so a legitimate
-  // continuation is already terminal here). That leftover otherwise reads to
-  // the auto-kickoff guard as "a live step for the current stage" and blocks
-  // the destination's run — the card lands in the new stage with no thread,
-  // which is exactly the "moved to planning, no thread" report. Abandon it
-  // first (releasing any slot and unlinking its thread), then kick off the
-  // destination stage on a fresh read so its own guards see a clean card.
+  // A non-terminal step left on the card's one step row belongs to the stage it left (auto-advance
+  // settles first), and would block the destination's kickoff. Abandon it, then kick off the
+  // destination on a fresh read.
   const handleCardMoved = Effect.fn("board-supervisor-handleCardMoved")(function* (
     event: Extract<BoardEvent, { type: "board.card-moved" }>,
   ) {
@@ -10597,18 +8982,11 @@ const make = Effect.gen(function* () {
     // which is the one authority every other move path already trusts.
     const card = event.payload.card;
     // A card leaving or re-entering a stage starts a fresh run of provisioning
-    // retries: a count from an earlier visit would park it early (T3O-15).
+    // retries: a count from an earlier visit would park it early.
     transientProvisionFailures.delete(card.id);
     const board = yield* readBoard;
-    // ── The review→merge crossing gate (t3o-24, D2) ────────────────────────
-    // A card ARRIVING at the merge-role stage on a forward move —
-    // the auto-advance that raced a sibling's merge, or a human drag — is
-    // checked against its recorded round-start tip. Stale sends it straight
-    // back to the review-role stage, where `beginStageRun`'s plan enqueues the
-    // sync-base step and the gate round: the merge-role stage means "reviewed
-    // and ready", and a card whose base moved under its reviewed diff is
-    // neither. The early return leaves any live step alone — the card is
-    // going back to the stage that owns it.
+    // A forward arrival at merge with a stale round-start tip goes straight back to review, where
+    // the plan enqueues sync-base and the gate round. The early return leaves the live step alone.
     {
       const toStage = boardStageById(board, event.payload.toStage);
       const reviewStage = boardStageWithRole(board, "review");
@@ -10620,7 +8998,7 @@ const make = Effect.gen(function* () {
         reviewStage !== null &&
         fromIndex >= 0 &&
         toIndex > fromIndex &&
-        // Scope lives in `resolveBaseStale` (T3O-5, D10), not here: tip-moved
+        // Scope lives in `resolveBaseStale`, not here: tip-moved
         // stays children-only, a retarget applies at any level.
         (yield* resolveBaseStale(card))
       ) {
@@ -10645,7 +9023,7 @@ const make = Effect.gen(function* () {
         return;
       }
     }
-    // A card leaving CI (T3O-44) stops its pass; the move cleared its CI state.
+    // A card leaving CI stops its pass; the move cleared its CI state.
     if (
       event.payload.fromStage === BOARD_SEED_STAGE_IDS.ci &&
       event.payload.toStage !== BOARD_SEED_STAGE_IDS.ci
@@ -10660,13 +9038,10 @@ const make = Effect.gen(function* () {
         existing.threadId !== null &&
         keepsPlanningThreadOnExit(board, existing, event.payload.toStage)
       ) {
-        // A planning interview left before it finished (T3O-19) keeps its
-        // thread: linked, and its turn left to run, so a plan it is still
-        // writing lands. Back in Planning, `beginStageRun` resumes the step on
-        // this same thread instead of starting the interview from scratch.
-        // The release sweep leaves it in the inbox until the interview finishes.
+        // An unfinished planning interview keeps its thread and its running turn, so a plan it is
+        // still writing lands and `beginStageRun` resumes on the same thread back in Planning.
       } else if (existing.threadId !== null) {
-        // Retired (T3O-41): the abandoned step's thread stays on the card.
+        // Retired: the abandoned step's thread stays on the card.
         yield* dispatch({
           type: "board.card.retire-thread",
           commandId: yield* commandId("retire-moved"),
@@ -10674,21 +9049,13 @@ const make = Effect.gen(function* () {
           threadId: existing.threadId,
           createdAt: yield* nowIso,
         });
-        // Stop the abandoned thread's turn: a leftover step can be genuinely
-        // mid-flight (a stuck-running provider, or a build run the human dragged
-        // away from), and settling the row does not touch the agent. Left alone
-        // it keeps burning provider capacity and — for a build-mode leftover —
-        // keeps writing the worktree while the destination stage spawns a second
-        // thread, breaking the one-writer invariant. Best-effort, like every
-        // other orphan interrupt (the dispatch helper swallows a reject).
+        // Settling the row does not stop the agent: a leftover can still be mid-flight, burning
+        // capacity and writing the worktree beside the destination's thread. Best-effort.
         yield* interruptOrphan(existing.threadId);
         // Named so the interrupt above is not read as a human Stop.
         abandonedThreads.add(String(existing.threadId));
-        // Reflect the retire onto the card handed to the kickoff: `beginStageRun`
-        // reads the links to decide whether a live stage thread already exists,
-        // and the leftover link we just retired (its role is the old step id
-        // — the destination stage itself on a re-entry) would otherwise trip
-        // that guard against the very thread we are abandoning.
+        // `beginStageRun` checks the links for a live stage thread, and the link just retired would
+        // otherwise trip that guard against the thread being abandoned.
         kickoffCard = {
           ...card,
           threadLinks: card.threadLinks.map((link) =>
@@ -10703,20 +9070,12 @@ const make = Effect.gen(function* () {
     }
     const fromIndex = boardStageIndex(board, event.payload.fromStage);
     const toIndex = boardStageIndex(board, event.payload.toStage);
-    // Refresh trigger: a stage change. The card may have crossed into the
-    // merge stage (where the Merge button needs a current PR state) or into
-    // Done (where the settle gates on it), and either way this is a moment the
-    // answer plausibly changed. The arrival-at-Done case needs no branch of its
-    // own: `refreshCardPullRequest` settles the card whenever the refresh
-    // leaves it in Done with a merged pull request, which is exactly this.
+    // A stage change may need a current PR state (merge stage) or settle at Done;
+    // `refreshCardPullRequest` settles a Done card with a merged PR itself.
     yield* refreshCardPullRequest(card, card.stage, { deferSettle: true });
 
-    // Arrival at the merge-role stage is where a draft pull request becomes
-    // ready and CI starts (T3O-12) — however the card got here: the loop
-    // converging, a human drag, a card moved on past the round cap. BEFORE the
-    // kickoff and the auto-merge below, so the merge never meets a draft. A
-    // fresh arrival also buys the card a fresh automatic CI fix, and ends any
-    // wait a previous visit's CI fix left behind.
+    // Arrival at merge readies a draft PR and starts CI however the card got here, before the
+    // kickoff and auto-merge so the merge never meets a draft. It also resets the CI fix budget.
     let readiedOnArrival = false;
     if (
       boardStageWithRole(board, "merge")?.stageId === event.payload.toStage &&
@@ -10731,43 +9090,20 @@ const make = Effect.gen(function* () {
 
     kickoffCard = yield* markAutoPlanIfOn(kickoffCard);
     yield* beginStageRun({ card: kickoffCard, onDemand: false });
-    // The card changed stage, so the threads it left behind are finished work
-    // (t3o-13). Run AFTER the kickoff, so the destination's own freshly linked
+    // The card changed stage, so the threads it left behind are finished work.
+    // Run AFTER the kickoff, so the destination's own freshly linked
     // thread is already the card's current work and is left alone.
     yield* releaseFinishedThreads;
 
-    // An ARMED card reaching the merge-role stage merges itself
-    // (see `autoMergeCard`). Deliberately BEFORE the cascade block below
-    // rather than left to the move it dispatches: a successful merge advances
-    // the card to Done, and running the three sub-board helpers on the far
-    // side of that means one arrival resolves the whole chain — merge → Done →
-    // the dependency it satisfied → the freed siblings into build — instead of
-    // waiting for the Done move to come back around the event loop.
-    // One ordinary forward STEP into the merge stage — the pipeline delivering
-    // the card — and nothing else. Merging is irreversible, so the two shapes
-    // this excludes both matter:
-    //
-    //  - BACKWARD (a human pulling the card out of Done) is an undo, and
-    //    answering an undo by re-merging on the forge is surprising at best.
-    //  - A forward JUMP that skipped stages is a human overriding the pipeline
-    //    (`override: true` on a non-adjacent drag). Dragging a child from
-    //    Building straight onto Merge would otherwise merge a diff no review
-    //    round has ever seen.
-    //
-    // Adjacency rather than "came from the review-role stage": a board with no
-    // review stage advances Building → Merge as its ORDINARY path, and keying
-    // on the review role would silently disable auto-merge there — breaking
-    // the automation on exactly the boards that opted out of reviewing.
-    //
-    // The guard holds for ALL THREE arming conditions (T3O-38, D2), not just
-    // the sub-board one it was written for. The one path that bypasses it is a
-    // human toggling the arm on a card already parked here, which is a person
-    // pointing at one card rather than a policy — see `handleCardUpdated`.
+    // An armed card arriving at merge merges before the cascade below, so one arrival resolves the
+    // chain. Only an adjacent forward step: a backward move is an undo and a jump is a human
+    // override, and merging is irreversible. Adjacency, not "came from review", so boards without
+    // a review stage still auto-merge. Arming a card already here bypasses this.
     if (
       boardStageWithRole(board, "merge")?.stageId === event.payload.toStage &&
       fromIndex >= 0 &&
       toIndex > fromIndex &&
-      // Adjacent in the card's own pipeline (T3O-44): the CI seed sits
+      // Adjacent in the card's own pipeline: the CI seed sits
       // between review and merge globally, but only in a CI project's list.
       areBoardStagesAdjacent(
         board,
@@ -10778,7 +9114,7 @@ const make = Effect.gen(function* () {
       (yield* cardAutoMergeArmed(card))
     ) {
       // A pull request readied a moment ago has CI that has not registered
-      // its checks yet (T3O-12): start the card on the ladder's first rung
+      // its checks yet: start the card on the ladder's first rung
       // rather than merging into checks that only look green.
       if (readiedOnArrival && card.pullRequest !== null) {
         yield* recordAutoMergeOutcome(card.id, justReadiedRefusal(card.pullRequest.number), {
@@ -10788,12 +9124,8 @@ const make = Effect.gen(function* () {
         yield* autoMergeCard(card);
       }
     }
-    // A card that LEFT the merge stage carries no hold with it (T3O-38, D10):
-    // a hold explains a merge that is no longer imminent, and a card sitting
-    // in review wearing "Merge held" is the stale label this codebase refuses
-    // to ship. Covers the human drag and the stale-base return alike. Read off
-    // the freshly moved card, because the merge above may have advanced it to
-    // Done — where the clear is equally right.
+    // A card that left the merge stage drops its hold, or it would show "Merge held" elsewhere.
+    // Read off the moved card, since the merge above may have taken it to Done.
     if (
       card.autoMergeHold !== null &&
       boardStageWithRole(board, "merge")?.stageId !== event.payload.toStage
@@ -10805,40 +9137,37 @@ const make = Effect.gen(function* () {
       yield* clearAutoMergeHold(moved);
     }
 
-    // A child changing stage may free a sibling to start (t3o-28, D3); the
-    // decider already re-derived its groups in the same decision (T3O-27), so
+    // A child changing stage may free a sibling to start; the
+    // decider already re-derived its groups in the same decision, so
     // the sync is a cheap check that heals an event it did not shape.
     if (card.parentCardId !== null) {
       yield* cascadeUnblockedChildren(card.parentCardId);
       yield* syncAncestorGroups(card.parentCardId);
     }
-    // A group arriving at the build-role stage is the Begin build for its
-    // children (t3o-28, D3): start every child the dependency graph does not
-    // block. Groups nest, so a child group's own arrival cascades one level
-    // further down. LIVE children only: a fully-wrapped group can cascade
-    // nothing, so it should not pay the helper's own board read.
+    // A group reaching build begins its unblocked children; a child group cascades further. Only
+    // groups with live children pay the helper's board read.
     if (boardCardChildren(board, card.id).some((child) => child.archivedAt === null)) {
       yield* cascadeUnblockedChildren(card.id);
     }
-    // Dependencies cross groups (T3O-27): a card reaching Done may free a
+    // Dependencies cross groups: a card reaching Done may free a
     // card waiting in another group.
     if (boardStageWithRole(board, "done")?.stageId === event.payload.toStage) {
       yield* cascadeDependentGroups(card.id);
     }
     // Arriving in the done-role stage is what SATISFIES this card as a
-    // dependency (T3O-24, D6), so it is the moment an armed dependent can
+    // dependency, so it is the moment an armed dependent can
     // become due. The targeted trigger, for latency: the 30s sweep would find
     // the same cards, up to half a minute later.
     if (boardStageWithRole(board, "done")?.stageId === event.payload.toStage) {
       yield* startArmedDependents(card.id);
     }
     // Arriving in the stage before build with its own Auto-build on starts the
-    // card once its dependencies are met (T3O-38).
+    // card once its dependencies are met.
     if (boardStageBeforeBuild(board)?.stageId === event.payload.toStage) {
       yield* startArmedCards((candidate) => candidate.id === card.id);
     }
-    // A move into build begins the group it sits in, or the group itself
-    // (T3O-38): children waiting on its inherited Auto-build go on now.
+    // A move into build begins the group it sits in, or the group itself:
+    // children waiting on its inherited Auto-build go on now.
     if (boardStageWithRole(board, "build")?.stageId === event.payload.toStage) {
       if (card.parentCardId !== null) {
         yield* reevaluateGroupChildren(card.parentCardId, { quiet: true });
@@ -10847,7 +9176,7 @@ const make = Effect.gen(function* () {
         yield* reevaluateGroupChildren(card.id, { quiet: true });
       }
     }
-    // Dragged back, so the toggle that would relaunch it is off (T3O-38).
+    // Dragged back, so the toggle that would relaunch it is off.
     const disarmed = event.payload.automationChanged;
     if (disarmed !== undefined) {
       const which = [
@@ -10863,7 +9192,7 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // On-demand kickoff request (D7): start a thread for the card's current stage.
+  // On-demand kickoff request: start a thread for the card's current stage.
   const handleStageThreadRequested = Effect.fn("board-supervisor-handleStageThreadRequested")(
     function* (event: Extract<BoardEvent, { type: "board.card-stage-thread-requested" }>) {
       const board = yield* readBoard;
@@ -10874,27 +9203,10 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * A step whose turn NEVER STARTED (t3o-30, D2).
-   *
-   * The provider reactor reports this as a `provider.turn.start.failed` activity
-   * on the step's thread — the CLI is not installed, the session would not
-   * spawn, the instance rejected the model. It is categorically different from a
-   * turn that ran and went quiet, which is what the recovery ladder is for:
-   * there is no agent to nudge, and no amount of waiting makes one appear, so
-   * the ladder would spend `timeoutMs` per rung re-sending turns into a provider
-   * that cannot start one. Meanwhile the card renders a spinner for a thread
-   * that is already dead — the lying spinner this whole path exists to avoid.
-   *
-   * So it lands `stalled` immediately, carrying the provider's own error text
-   * onto the run row for the card to render, and releases the slot. Stalled is
-   * the right terminus rather than `failed`: it is non-terminal and the on-
-   * demand restart path already SUPERSEDES a stalled step, so the card's Restart
-   * button works with no new command. A merge card additionally gets its Merge
-   * button back, because that button is gated on a live step.
-   *
-   * Never retried automatically, even onto the board's default model. The stage
-   * names the model it runs on; silently running the work somewhere else is a
-   * worse outcome than saying plainly that the chosen one could not start.
+   * A step whose turn never started (`provider.turn.start.failed`): no agent to nudge, so the
+   * ladder would only waste time while the card shows a lying spinner. Land it `stalled` with the
+   * provider's error and release the slot; Restart supersedes it. Never retried on another
+   * model: the stage names its model.
    */
   const failStepAtSpawn = Effect.fn("board-supervisor-failStepAtSpawn")(function* (input: {
     readonly threadId: ThreadId;
@@ -10907,11 +9219,8 @@ const make = Effect.gen(function* () {
     // Not a board step's thread, or a step that has already settled — a human's
     // own thread failing to start is theirs to see in the thread itself.
     if (state === undefined || isBoardTerminalStepStatus(state.status)) return;
-    // Already stalled for this same reason: the provider reactor can append the
-    // activity more than once for one dead session, and re-landing would inflate
-    // `attempt` and double-release the slot. A step a human PAUSED is parked for
-    // their reason, not a failure — driving it here would undo the stop and
-    // charge a recovery for a turn nobody wanted started (T3O-23).
+    // The activity can repeat for one dead session, and re-landing would inflate `attempt` and
+    // double-release the slot. A paused step is parked by a human, not failed.
     if (state.status === "stalled" || state.status === "paused") return;
     const card = board.cards.find((candidate) => candidate.id === state.cardId);
     if (card === undefined || card.archivedAt !== null) return;
@@ -10952,40 +9261,10 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A parked step goes back to work (t3o-17 D3; t3o-34 D5). Exactly two signals
-   * reach here, and the pair is deliberate:
-   *
-   * - `thread.turn-start-requested` (domain) — a turn was ASKED for. The decider
-   *   emits it only for `thread.turn.start`, so it means a human or the board
-   *   sent a message. This is t3o-17's signal, and it covers every step that
-   *   parked between turns: a stall, or a turn that ended with a question in
-   *   prose.
-   * - `user-input.resolved` (runtime) — a structured question was ANSWERED, as
-   *   distinct from cancelled (`isAnsweredUserInput`). That question is raised
-   *   from INSIDE a running turn (the adapter's `canUseTool` path) and answering
-   *   it merely resolves the deferred the turn is blocked on, so the same turn
-   *   carries on: no turn is ever asked for and none starts. This is the only
-   *   signal that sees it.
-   *
-   * The runtime's `turn.started` is deliberately NOT one of them, though it
-   * looks like it belongs. Adapters synthesise it for assistant activity that
-   * arrives with no active turn (`ClaudeAdapter`, background/subagent output
-   * between prompts) — nobody sent anything. Resuming on that would clear the
-   * card's badge with no human involved, and on a `stalled` step it would be
-   * worse: `resume-step` zeroes `stallCount` and re-arms the timeout sweep, so a
-   * t3o-17 escalation that is supposed to stop until a human acts would quietly
-   * un-escalate itself. It also buys nothing the two signals above do not
-   * already cover, at the cost of a worker item for every turn start of every
-   * thread on the box.
-   *
-   * Both funnel through here, so whichever arrives second finds the step already
-   * `running` and does nothing.
-   *
-   * T3O-23 adds `paused` to the statuses this un-parks, on exactly the same
-   * terms: a human typing in the thread of a step they stopped has restarted it
-   * themselves. It also makes the resume TAKE a slot, because every parked
-   * status now releases one — see the decider's `resume-step`, and the
-   * `slots.restore` below that keeps the in-memory count matching the row.
+   * A parked step goes back to work on `thread.turn-start-requested` (a turn was asked for) or
+   * an answered `user-input.resolved` (answers mid-turn start no turn). Not on runtime
+   * `turn.started`: adapters synthesise it without a human, and it would un-escalate a stall.
+   * Un-parks `paused` too, and takes a slot; the later of the two signals finds it running.
    */
   const resumeParkedStep = Effect.fn("board-supervisor-resumeParkedStep")(function* (
     threadId: ThreadId,
@@ -11016,49 +9295,26 @@ const make = Effect.gen(function* () {
     });
     if (!landed) return false;
     // A human put this step back to work themselves, so a schedule that would
-    // stop it again later has been overtaken (T3O-19, D6). Cleared here rather
+    // stop it again later has been overtaken. Cleared here rather
     // than only on the `board.card-step-recovered` this dispatch produces,
     // because that event is raised from inside this reactor.
     yield* clearScheduleForCard(found.card.id);
-    // The decider wrote `slotHeld: true` for a build step, so the in-memory
-    // count has to match it. `restore` rather than `acquire`: the human already
-    // sent the turn and the agent is already working, so this is a take, not a
-    // request — the `forceStart` and boot-reconcile precedent. The count may sit
-    // over the ceiling until the step settles and releases exactly once.
+    // The decider wrote `slotHeld: true`; `restore`, not `acquire`, since the agent is already
+    // working. The count may exceed the ceiling until the step releases it once.
     if (found.state.mode === "build") yield* slots.restore(slotKeyFor(board, found.state));
     return true;
   });
 
   /**
-   * A HUMAN started a turn on a running unattended step's thread (T3O-17).
-   *
-   * Typing into a working agent is STEERING (D1) — a correction to fold into
-   * the autonomous run, not an instruction to end its autonomy. So the card
-   * stays unattended and the board keeps supervising; all this does is make
-   * sure the supervisor does not talk over the human. It records the instant on
-   * the step row, which buys the human's turn exactly one free ending (D3) and
-   * restarts the recovery ladder.
-   *
-   * Without it, the resume nudge lands right behind the human's message — the
-   * two-bubble order in this card's attachment. `handleTurnCompleted`'s
-   * existing guards only cover the window where the human's turn is still
-   * QUEUED: `namedByAnotherTurn` loses to projection lag, and
-   * `supersededByPendingTurn` stops matching the moment the provider claims the
-   * turn id. This is the signal that survives both, because it is written when
-   * the turn is REQUESTED and read whenever the completion arrives.
-   *
-   * Only for a step that is `running` and unattended:
-   *
-   *  - A step still parked when this runs was not resumed by this turn — it
-   *    belongs to another thread's card, or the resume was refused — so there
-   *    is no live turn whose ending could be nudged over.
-   *  - A human-in-the-loop step never recovers on a turn end (that arm parks),
-   *    so there is nothing to suppress and recording would be noise per turn.
+   * A human started a turn on a running unattended step's thread: steering, not ending autonomy.
+   * Recording the instant buys that turn one free ending, so the board does not nudge over the
+   * human once the turn id is claimed. Only for running unattended steps: a parked step was not
+   * resumed by this turn, and a human-in-the-loop step never recovers on a turn end.
    */
   const noteHumanTurn = Effect.fn("board-supervisor-noteHumanTurn")(function* (
     signal: Extract<ThreadSignal, { type: "turn-requested" }>,
   ) {
-    // The board mints `server:board-…`; a client mints a bare UUID (D2). A
+    // The board mints `server:board-…`; a client mints a bare UUID. A
     // nudge of our own must not buy itself a free ending, or the escalation
     // ceiling would never be reached.
     if (signal.byBoard) return;
@@ -11079,17 +9335,13 @@ const make = Effect.gen(function* () {
   const handleTurnStartRequested = Effect.fn("board-supervisor-handleTurnStartRequested")(
     function* (signal: Extract<ThreadSignal, { type: "turn-requested" }>) {
       yield* resumeParkedStep(signal.threadId);
-      // AFTER the resume, deliberately: a human typing into a PAUSED step both
-      // resumes it and steers it, and reading the step second is what lets the
-      // one event do both. The `running` test in `noteHumanTurn` then passes
-      // for a step this line has just put back to work, which is right — the
-      // turn the human just sent is no more a stall than any other.
+      // After the resume: a turn typed into a paused step both resumes and steers it.
       yield* noteHumanTurn(signal);
     },
   );
 
   /** Carry a card's explicit human-in-the-loop override onto its live step row
-      when the two have diverged (T3O-17) — the crash-recovery half of
+      when the two have diverged — the crash-recovery half of
       `handleCardUpdated`'s stance arm. A no-op when they agree, which is every
       card on an ordinary boot. */
   const reconcileStanceOverride = Effect.fn("board-supervisor-reconcileStanceOverride")(function* (
@@ -11109,11 +9361,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Reconcile one live step against its thread (t3o-10): the boot pass's body,
-   * and a worker's when it comes back (T3O-66). `restoreSlot` is the boot
-   * pass's — its in-memory counts start empty — while a worker coming back
-   * still holds the slots its steps never gave up. Returns the decision, so
-   * the caller re-derives an advanced card's kickoff.
+   * Reconcile one live step against its thread, at boot or when its worker returns.
+   * `restoreSlot` is boot's (in-memory counts start empty); a returning worker still holds its
+   * slots. Returns the decision so the caller re-derives an advanced card's kickoff.
    */
   const reconcileStep = Effect.fn("board-supervisor-reconcileStep")(function* (input: {
     readonly board: BoardState;
@@ -11122,23 +9372,9 @@ const make = Effect.gen(function* () {
     readonly restoreSlot: boolean;
   }) {
     const { board, card, state } = input;
-    // Re-settle the stance a lost `board.card-updated` never carried onto the
-    // row (T3O-17). `streamDomainEvents` is a LIVE PubSub, not a durable
-    // replay from a watermark, so an edit committed to the log in the instant
-    // before a kill is never re-delivered: the card's override says one thing
-    // and the frozen run row says another, for as long as the step lives.
-    //
-    // Reachable from the ordinary human-in-the-loop toggle, and made common
-    // by the Stop button, which now dispatches exactly that edit — and there
-    // the divergence is the whole defect surviving a crash: a card that says
-    // a human took the wheel, resuming an agent that runs unattended.
-    //
-    // Cheap enough to be unconditional: a field comparison per non-terminal
-    // step, no I/O, and a dispatch only when they actually disagree, which is
-    // never in the ordinary case because the live handler already did it.
-    // Idempotent, so a restart loop re-runs it harmlessly. No turn is sent —
-    // boot is not the moment to message an agent, and `handleCardUpdated`
-    // would not have sent one into a parked step either.
+    // Re-settle a stance a lost `board.card-updated` never carried: domain events are a live
+    // PubSub, not a durable replay, so an edit committed just before a kill is never redelivered.
+    // A field comparison per step, dispatching only on disagreement; idempotent, and sends no turn.
     yield* reconcileStanceOverride(card, state);
     const hasSucceeded = boardCardStepCompletions(board, card.id).some(
       (entry) => entry.stepId === state.stepId && entry.outcome === "succeeded",
@@ -11154,13 +9390,9 @@ const make = Effect.gen(function* () {
       humanInLoop: state.humanInLoop,
       hasSucceeded,
     });
-    // The in-memory slot Ref is empty after a restart, so any step that still
-    // holds a slot must RESTORE it here — whether we go on to watch it
-    // (resume-watch) or recover it (recover keeps the slot, D13) — otherwise
-    // its eventual release would floor at zero and under-count throughput.
-    // Restore is unconditional (never rejected by a cap): the step genuinely
-    // holds the slot, and this must run before `schedule` admits anything, so
-    // the restored steps count against the ceiling the governor then honours.
+    // Slot counts are empty after a restart, so a step that holds a slot restores it whether
+    // watched or recovered. Never capped, and before `schedule`, so restored steps count against
+    // the ceiling.
     if (input.restoreSlot && state.slotHeld && decision.kind !== "advance") {
       yield* slots.restore(slotKeyFor(yield* readBoard, state));
     }
@@ -11169,20 +9401,16 @@ const make = Effect.gen(function* () {
         yield* settleStep({ card, state, outcome: "succeeded" });
         // Ask the executor what runs next: advance a finished single-step
         // stage, or resume the next round-scoped step of a multi-step loop
-        // whose phase settled during downtime (t3o-16).
+        // whose phase settled during downtime.
         yield* continueStage({ card, state });
         break;
       case "recover":
         yield* recoverStep({ card, state });
         break;
       case "park":
-        // The boot-time twin of `handleTurnCompleted`'s human-in-the-loop arm
-        // (t3o-34): say WHICH kind of stop it was, off the same last-message
-        // read, so the card shows "Input needed" or "Needs a human" rather
-        // than claiming the agent is working. The slot restored above is given
-        // straight back (T3O-23) — net zero, and correct: a parked step holds
-        // no capacity. The human's next turn on the thread un-parks it through
-        // `resumeParkedStep`, which re-takes the slot.
+        // Boot twin of the human-in-the-loop arm of `handleTurnCompleted`: name the kind of stop.
+        // The slot restored above is given back, since a parked step holds none; `resumeParkedStep`
+        // re-takes it.
         yield* parkStepForInput({
           card,
           state,
@@ -11191,13 +9419,13 @@ const make = Effect.gen(function* () {
         break;
       case "reschedule":
         // Pending/queued and slotless — placed by the final schedule pass
-        // below, once every restored running step is counted (D11).
+        // below, once every restored running step is counted.
         break;
       case "resume-watch":
         // Still running with a live thread — the slot was restored above; let
         // the live turn-completion path catch its settlement. A triage or
         // adjudication question pending across the restart has nobody to
-        // answer it but the board (T3O-55).
+        // answer it but the board.
         if (state.status === "running" && shell?.awaitingUserInput === true) {
           if (isReviewDecidingStep(state)) yield* handleReviewStepQuestion(card, state);
         }
@@ -11207,13 +9435,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * The kickoff pass for cards a reconcile advanced: their card-moved events
-   * may have had no live subscriber (the boot pass runs before activation
-   * opens the streams), so the next stage's auto-kickoff is re-derived from
-   * state. `bootPass` restricts it to first entries (or executor-driven
-   * continuations) — a re-entry's clean human thread never opens as a restart
-   * side effect — and beginStageRun's own guards (autoExecute, live thread,
-   * live step) make the pass idempotent.
+   * Kickoff for cards a reconcile advanced: their card-moved events may have had no subscriber,
+   * so it is re-derived from state. `bootPass` limits it to first entries and executor-driven
+   * continuations; `beginStageRun`'s guards make it idempotent.
    */
   const kickoffAdvanced = Effect.fn("board-supervisor-kickoffAdvanced")(function* (
     advanced: ReadonlyArray<BoardCard["id"]>,
@@ -11230,13 +9454,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Reconcile the steps placed on one worker, as it comes back (T3O-66, D22):
-   * the boot pass, scoped to that worker, run before any of its held signals.
-   * Threads match by id, so a thread still alive there is watched, never
-   * respawned. False when a step's thread could not be read — the worker went
-   * again — so the caller tries again rather than treat it as reconciled. The
-   * threads whose steps it settled, recovered or parked, whose held signals it
-   * has already accounted for, are added to `decidedThreads` either way.
+   * Reconcile one returning worker's steps before any of its held signals. Threads match by id,
+   * so a live one is watched, not respawned. False when a thread could not be read, so the
+   * caller retries. Threads it decided on are added to `decidedThreads` either way.
    */
   const reconcileWorker = Effect.fn("board-supervisor-reconcileWorker")(function* (
     workerId: BoardWorkerId,
@@ -11277,13 +9497,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Bring what the supervisor knows of each worker's reach up to date (T3O-66,
-   * D22). A worker that dropped is unreconciled again, and its time out of
-   * reach starts; one that is back online is reconciled first, then its held
-   * signals are released — already deduped by sequence on the feed, and those
-   * for a thread the reconcile just decided on are dropped, so nothing is
-   * handled twice — and its time out of reach becomes an interval the timeout
-   * sweep does not count. The caller schedules afterwards.
+   * Update each worker's reach. A dropped worker is unreconciled and its offline time starts; one
+   * back online is reconciled, then its held signals released (minus those for threads just
+   * decided), and its offline interval is excluded from timeouts. The caller schedules after.
    */
   const syncWorkerReach = Effect.gen(function* () {
     if (Option.isNone(placement)) return;
@@ -11348,27 +9564,14 @@ const make = Effect.gen(function* () {
   });
 
   const reconcile = Effect.gen(function* () {
-    // Read the world only once the server is ACTIVATED (t3o-10, D3). This item
-    // is enqueued from `start`, which runs in the `reactors.start` startup
-    // phase — one phase EARLIER than upstream's `provider-sessions.reconcile`,
-    // which is what marks a session orphaned by a restart `error`. Reading
-    // before that phase means every thread shell still shows its killed turn as
-    // active, so a dead step reads alive and resume-watches forever.
-    //
-    // The wait is here rather than on the ordering of two upstream startup
-    // phases: an upstream sync that reshuffles them would silently restore the
-    // bug with no test that could catch it. `ServerActivation` is a
-    // `Context.Reference` defaulting to undefined, so wherever activation is
-    // not wired (every test but the one that drives this) the await is absent.
-    // The item is still ENQUEUED first, so live events stay queued behind it
-    // and the "serialised ahead of live events" guarantee is untouched.
+    // Wait for activation: upstream's `provider-sessions.reconcile` runs a phase after this and
+    // marks restart-orphaned sessions, so reading earlier makes dead steps look alive. Waited here
+    // rather than relying on phase order. Absent where activation is not wired (tests); the item
+    // is still enqueued first, so live events stay queued behind it.
     if (serverActivation !== undefined) yield* serverActivation;
-    // Sweep cached todo rows whose thread or link no longer exists (t3o-18,
-    // AC 20). The cache is a projection with no event to un-apply, so a row can
-    // outlive its link when a delete lands while the server is down; a single
-    // set-difference DELETE at boot is the cheap, total answer. Best-effort — a
-    // sweep failure must never block reconciliation of live steps. The clock is
-    // read first so a thread born after the list was taken keeps its row.
+    // Sweep cached todo rows whose thread or link is gone: a delete while the server was down
+    // leaves rows with no event to un-apply. Best-effort, never blocks reconcile. The clock is
+    // read first so a thread born after the listing keeps its row.
     const listedAt = yield* nowIso;
     yield* threads.listLiveThreadIds().pipe(
       Effect.flatMap((liveThreadIds) =>
@@ -11381,13 +9584,10 @@ const make = Effect.gen(function* () {
       ),
     );
     const board = yield* readBoard;
-    // Cards whose step reconcile settles as succeeded: `continueStage` may
-    // auto-advance them, and the `board.card-moved` that publishes goes into a
-    // live-only PubSub whose subscribers are PARKED until server activation
-    // (forkParked) — so their auto-kickoff must be re-derived from state at
-    // the end of this pass instead of riding the stream.
+    // Cards reconcile settles as succeeded may auto-advance, but subscribers are parked until
+    // activation, so their kickoff is re-derived from state at the end of the pass.
     const advanced: BoardCard["id"][] = [];
-    // T3O-66 (D22): a step on a worker is left for that worker's own reconcile
+    // A step on a worker is left for that worker's own reconcile
     // (`syncWorkerReach`, below), which needs it online — a worker the board
     // can't reach supplies no evidence. Its slot is restored now all the same:
     // it is held until that reconcile, or a removal, gives it back.
@@ -11410,16 +9610,11 @@ const make = Effect.gen(function* () {
     yield* schedule();
     // Kickoff pass for the cards reconcile itself advanced.
     yield* kickoffAdvanced(advanced);
-    // CI passes the restart cut off run again from the top (T3O-44).
+    // CI passes the restart cut off run again from the top.
     yield* recoverCiPasses();
-    // Resume review loops that halted BETWEEN phases (T3O-5). The pass above
-    // only walks steps still in flight, but a loop whose phase settled
-    // `succeeded` while the dispatch of the next one failed has nothing in
-    // flight at all: the ledger owes a step, the row says the stage is quiet,
-    // and no event will ever arrive to ask again. A converged or held loop
-    // plans `complete`, which `replanSettledStage` ignores; `resume` leaves
-    // base staleness unmeasured so a restart never turns a parked, converged
-    // card into an unattended sync.
+    // Resume review loops halted between phases: nothing is in flight, so no event will ask again.
+    // Converged or held loops plan `complete`, which `replanSettledStage` ignores; `resume` leaves
+    // base staleness unmeasured so a restart never starts an unattended sync.
     const quiet = yield* readBoard;
     for (const card of quiet.cards) {
       if (card.archivedAt !== null) continue;
@@ -11427,35 +9622,24 @@ const make = Effect.gen(function* () {
       if (state === null || !settledReviewPhase(quiet, card, state)) continue;
       yield* replanSettledStage(card, { resume: true });
     }
-    // Worktree cleanup (T3O-52, D4): every finished card holding a worktree is
-    // re-evaluated under the durability rule on every boot — including ones a
-    // previous rule refused — plus board orphans, and the Done cards whose
-    // cached pull request is still `open` get one refresh (D3). Off the worker:
-    // the pass fetches from remotes, and boot must not wait on the network.
+    // Re-evaluate every finished card's worktree and the board's orphans on boot, refreshing Done
+    // cards whose cached PR is still open. Off the worker: it fetches from remotes.
     yield* requestWorktreeSweep({ refreshOpenPullRequests: true });
-    // Settle every thread the board finished with while the server was down —
-    // and every one it finished with before this shipped (t3o-13). The release
-    // is a predicate over state rather than an event to catch, so boot needs no
-    // backlog to replay: it simply asks the question once, and a settle that
-    // could not land is retried by the 30s sweep. Unlike the Done sweep above
-    // this is free and self-terminating by construction — no forge calls, and a
-    // settled thread stops being a candidate the moment it settles.
+    // Settle threads the board finished with while down. A predicate over state, so no backlog
+    // replay; a settle that cannot land is retried by the 30s sweep.
     yield* releaseFinishedThreads;
-    // Start every card whose last dependency landed while the server was down
-    // (T3O-24, D6). A predicate over state rather than an event to catch, so
+    // Start every card whose last dependency landed while the server was down.
+    // A predicate over state rather than an event to catch, so
     // boot needs no backlog to replay — it simply asks the question once, and
     // the 30s sweep asks it again from then on.
     yield* sweepArmedCards;
-    // And every retry rung that came due while the server was down (T3O-22).
+    // And every retry rung that came due while the server was down.
     // A predicate over state rather than an event to catch, exactly like the
     // armed-card pass above, so a card parked for a rung that expired hours ago
     // does not wait another 30s.
     yield* sweepRetries;
-    // And every auto-merge rung that came due while the server was down
-    // (T3O-38, D5). Last, because it is the only sweep that can make a forge
-    // call, and because a card it merges advances to Done — which is exactly
-    // what the armed-card pass above was looking for, so running it first
-    // would have the boot pass resolve a chain in the wrong order.
+    // Last: it is the only sweep that may call the forge, and a card it merges moves to Done, which
+    // the armed-card pass above must not see first.
     yield* sweepAutoMergeHolds;
   }).pipe(
     Effect.catchCause((cause) =>
@@ -11463,32 +9647,15 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // When each step thread was last seen held on a permission prompt, or had
-  // one answered (T3O-16). The sweep skips a held prompt below, but the skip
-  // alone leaves the clock where the prompt found it: after an overnight prompt
-  // every honoured life sign is stale (output past its ceiling, no todo, no
-  // commit), so the first sweep after approval would nudge the freshly resumed
-  // agent. Reading the stamp as a life sign gives it a full window instead.
-  // Two writers: the human's answer (`thread.approval-response-requested`),
-  // which stamps the moment of approval even for a prompt raised and answered
-  // before the step ever looked overdue; and the sweep, which stamps a held
-  // prompt it finds on an overdue step and from then on re-reads that thread
-  // every sweep, re-stamping while the prompt holds. In-memory: a restart
-  // mid-prompt re-stamps on the next overdue sweep. An entry is dropped once
-  // released and a window old, and with the step once it leaves running.
+  // When each step thread was last seen held on a permission prompt, or had one answered. Read
+  // as a life sign, so a freshly approved agent gets a full window instead of an immediate nudge.
+  // Stamped by the human's answer and by the sweep while a prompt holds. In-memory; dropped once
+  // released and a window old, or when the step leaves running.
   const permissionHeldAt = new Map<string, string>();
 
-  // Step threads whose agent ended its turn with background work still running
-  // (T3O-20): when the wait began, how many check-ins it has had, and whether
-  // the latest one is still unanswered. Begun by the turn end (or by the sweep
-  // finding a quiet thread with background work). The turn that answers a
-  // check-in keeps the schedule; any other turn ending still waiting — the
-  // provider waking the agent, a human's message — starts a fresh one, as does
-  // a commit since the wait began — which the next check-in reports as
-  // progress, resetting the stall ladder. Cleared by a turn that ends with no
-  // background work, and with the step once it leaves running.
-  // In-memory on purpose: background work dies with the server, so after a
-  // restart ordinary recovery is the right supervisor.
+  // Step threads waiting on their own background work: start, check-ins sent, and whether the
+  // latest is unanswered. Only a check-in's reply keeps the schedule; other turns or a commit
+  // start a fresh wait. In-memory on purpose: background work dies with the server.
   const backgroundWaits = new Map<
     string,
     {
@@ -11505,13 +9672,11 @@ const make = Effect.gen(function* () {
       checkInOutstanding: false,
       progressed,
     });
-  /** A turn ended with background work still running. Only the reply to a
-      check-in continues the current schedule: what the agent writes while
-      answering one — a todo edit, a "still running" — is not new work, and
-      counting it would restart the free check-ins on every reply. Any other
-      turn starts a fresh wait, carrying forward a commit made since the old
-      one began: the fresh wait's `since` is now, so the sweep could never see
-      a commit the woken turn itself made. */
+  /**
+   * Only a check-in's reply continues the schedule, or replies would restart the free check-ins.
+   * Any other turn starts a fresh wait, carrying forward a commit made since the old one began,
+   * which the new `since` would hide.
+   */
   const noteBackgroundTurnEnd = Effect.fn("board-supervisor-noteBackgroundTurnEnd")(function* (
     found: { readonly card: BoardCard; readonly state: BoardCardStepState },
     threadId: ThreadId,
@@ -11532,18 +9697,10 @@ const make = Effect.gen(function* () {
     liveThread(threadId).pipe(Effect.map((shell) => shell?.waitingOnBackground ?? false));
 
   /**
-   * Supervise a step whose agent is waiting on its own background work
-   * (T3O-20). Answers whether the step was handled here, in which case the
-   * ordinary timeout logic must not run: a waiting agent is not stalled, and
-   * the stall nudge is exactly what made it end turn after turn saying "still
-   * waiting".
-   *
-   * Check-ins go out at +5, +15 and +30 minutes from the start of the wait,
-   * then every 30 minutes, and ask the agent to VERIFY the work is alive. The
-   * first three are free; after that each is charged like a recovery, and the
-   * one that would cross a ceiling escalates instead. Charged check-ins skip
-   * the backoff park (T3O-22, D7): that exists to stop rapid-fire requests, and
-   * these are already half an hour apart. The step stays running throughout.
+   * Supervise a step waiting on its own background work; true means the timeout logic must not
+   * run. Check-ins at +5, +15, +30 minutes, then every 30, asking the agent to verify the work.
+   * The first three are free; later ones are charged like recoveries (no backoff park) and the
+   * one crossing a ceiling escalates. The step stays running.
    */
   const sweepBackgroundWait = Effect.fn("board-supervisor-sweepBackgroundWait")(function* (input: {
     readonly board: BoardState;
@@ -11585,7 +9742,7 @@ const make = Effect.gen(function* () {
       return true;
     }
     // A human's message is already on its way in; the board's would land
-    // behind it (T3O-17).
+    // behind it.
     if (yield* supersededByPendingTurn(state)) return true;
     const charged = boardBackgroundCheckInCharged(wait.checkInsSent);
     if (charged) {
@@ -11644,21 +9801,21 @@ const make = Effect.gen(function* () {
   const processDomainEvent = (event: BoardEvent) => {
     switch (event.type) {
       case "board.card-moved":
-        // Generic auto-kickoff (D7): a card landing in ANY stage may start a run
+        // Generic auto-kickoff: a card landing in ANY stage may start a run
         // — not just Building. The stage's `autoExecute` setting gates it. The
         // handler first clears any leftover step from the stage the card left,
         // so a card carrying a stalled/in-flight step still starts the new one.
         return handleCardMoved(event);
       case "board.card-project-changed":
-        // T3O-33: the card is now in a different repository, so anything live
+        // The card is now in a different repository, so anything live
         // is working the wrong checkout. Abandon it and restart the stage.
         return handleCardProjectChanged(event);
       case "board.card-created":
         // Creating a card straight into an auto-executing stage is a real path
-        // now (D10) and must behave identically to a drag.
+        // now and must behave identically to a drag.
         return handleCardCreated(event);
       case "board.card-stage-thread-requested":
-        // On-demand kickoff (D7), the counterpart of auto-kickoff.
+        // On-demand kickoff, the counterpart of auto-kickoff.
         return handleStageThreadRequested(event);
       case "board.card-updated":
         return event.payload.workCancelled === true
@@ -11677,31 +9834,18 @@ const make = Effect.gen(function* () {
       case "board.card-step-settled":
         return endAutoPlanIfUndriven(event.payload.cardId);
       case "board.card-step-force-start-requested":
-        // A human took a slot over the cap (t3o-33). Scheduling here is what
+        // A human took a slot over the cap. Scheduling here is what
         // makes the click start the card: without it the override would sit on
         // the row until some unrelated step boundary happened to run a pass.
         return schedule();
       case "board.card-step-recovered":
-        // A resume overtakes a schedule (T3O-19, D6): a card a human put back to
-        // work at 3pm must not be re-paused at 9pm by a decision they have
-        // already overtaken. Every way out of a parked step publishes this
-        // event — the Resume button, a turn typed into the thread, an answered
-        // question — so one clear here covers them all. The board's OWN timed
-        // resume arrives with the field already null and clears nothing.
-        //
-        // Safe against a recovery nudge, which publishes this event too: a card
-        // holding a future schedule never has a running step to nudge, because
-        // setting the time paused it and the gate withholds everything else.
+        // A resume overtakes a schedule: every way out of a parked step publishes this event, so
+        // one clear covers them all. Safe against a recovery nudge: a card with a future schedule
+        // has no running step to nudge.
         return clearScheduleForCard(event.payload.cardId).pipe(
           Effect.andThen(
-            // The board's way out of a parked step (T3O-23): `requeue-step` lands
-            // it `queued`, holding no slot, and this is what offers it back to the
-            // governor on the click rather than at some unrelated step boundary.
-            // The event is also emitted by every recovery nudge and by an in-thread
-            // resume, neither of which is queued — hence the status test, not a
-            // blanket pass. `requeue-step` is the ONE seam: the card's Resume button
-            // dispatches it directly, and T3O-19's scheduled resume will too, so
-            // neither needs a private path into the governor.
+            // A `requeue-step` lands `queued` with no slot; offer it to the governor now. Nudges
+            // and in-thread resumes also emit this event, hence the status test.
             event.payload.state.status === "queued" ? schedule() : Effect.void,
           ),
           Effect.andThen(endAutoPlanIfUndriven(event.payload.cardId)),
@@ -11713,19 +9857,19 @@ const make = Effect.gen(function* () {
       case "board.card-deleted":
         return handleCardDeleted(event);
       case "board.plans-approved":
-        // The split's integration branch (t3o-23, D5).
+        // The split's integration branch.
         return handlePlansApproved(event);
       case "board.card-worker-pinned":
         // A re-pin may give a step stalled for a missing provider a worker
-        // that has it, and a held card a worker that is ready (T3O-65) — and
-        // takes a card off a worker it may have a step stranded on (T3O-66).
+        // that has it, and a held card a worker that is ready — and
+        // takes a card off a worker it may have a step stranded on.
         return stallStrandedStep(event.payload.cardId).pipe(
           Effect.andThen(requeueResolvedPlacementStalls(event.payload.cardId)),
           Effect.andThen(schedule()),
         );
       case "board.card-worker-move-recorded":
-        // A force-move's start strands whatever ran on the old worker (T3O-66);
-        // a move that landed releases the card's held step (T3O-65).
+        // A force-move's start strands whatever ran on the old worker;
+        // a move that landed releases the card's held step.
         if (event.payload.step.phase === "start") return stallStrandedStep(event.payload.cardId);
         return event.payload.step.phase === "done" || event.payload.step.phase === "restarted"
           ? requeueResolvedPlacementStalls(event.payload.cardId).pipe(Effect.andThen(schedule()))
@@ -11734,7 +9878,7 @@ const make = Effect.gen(function* () {
         return stallStepsOnRemovedWorker(event.payload.workerId).pipe(Effect.andThen(schedule()));
       case "board.card-worker-removal":
         // A re-add reattaches the card; whatever its removal stalled resumes
-        // once the worker is online (T3O-66).
+        // once the worker is online.
         return event.payload.outcome === "reattached"
           ? requeueResolvedPlacementStalls(event.payload.cardId).pipe(Effect.andThen(schedule()))
           : Effect.void;
@@ -11754,31 +9898,31 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * A thread signal, unless its worker is not reconciled (T3O-66, D22): then it
+   * A thread signal, unless its worker is not reconciled: then it
    * is held until `syncWorkerReach` has reconciled that worker, so the boot
    * reconcile scoped to it acts first. A removed worker's signals are dropped —
    * its steps were stalled, and nothing it says changes that.
    */
-  const gateThreadSignal = (signal: ThreadSignal) =>
-    Effect.gen(function* () {
-      if (Option.isNone(placement)) return yield* processThreadSignal(signal);
-      const board = yield* readBoard;
-      if ((board.workers ?? []).length === 0) return yield* processThreadSignal(signal);
-      const workerId = threadWorkerId(board, signal.threadId);
-      if (workerId === null || workerId === BOARD_LOCAL_WORKER_ID || workerReconciled(workerId)) {
-        return yield* processThreadSignal(signal);
-      }
-      if (!(board.workers ?? []).some((worker) => worker.id === workerId)) return;
-      const held = heldSignals.get(workerId) ?? [];
-      held.push(signal);
-      if (held.length > HELD_SIGNALS_MAX) held.shift();
-      heldSignals.set(workerId, held);
-    });
+  // Untraced: runs once per thread signal, a per-event hot path.
+  const gateThreadSignal = Effect.fnUntraced(function* (signal: ThreadSignal) {
+    if (Option.isNone(placement)) return yield* processThreadSignal(signal);
+    const board = yield* readBoard;
+    if ((board.workers ?? []).length === 0) return yield* processThreadSignal(signal);
+    const workerId = threadWorkerId(board, signal.threadId);
+    if (workerId === null || workerId === BOARD_LOCAL_WORKER_ID || workerReconciled(workerId)) {
+      return yield* processThreadSignal(signal);
+    }
+    if (!(board.workers ?? []).some((worker) => worker.id === workerId)) return;
+    const held = heldSignals.get(workerId) ?? [];
+    held.push(signal);
+    if (held.length > HELD_SIGNALS_MAX) held.shift();
+    heldSignals.set(workerId, held);
+  });
 
   const processThreadSignal = (signal: ThreadSignal) => {
     switch (signal.type) {
       case "turn-requested":
-        // A human restarting a stalled step by hand (t3o-17, D3) — the board's own
+        // A human restarting a stalled step by hand — the board's own
         // turns land here too and no-op, since only a `stalled` step resumes.
         return handleTurnStartRequested(signal);
       case "limit-resumed":
@@ -11789,20 +9933,17 @@ const make = Effect.gen(function* () {
           Effect.andThen(deliverDeferredSteer(signal.threadId)),
         );
       case "interrupt-requested":
-        // A human pressing Stop on a board-run step (T3O-23). The board's own
+        // A human pressing Stop on a board-run step. The board's own
         // interrupts land here too and are filtered inside, off the sets that
         // already track them.
         return pauseStepForHumanStop(signal.threadId);
       case "approval-responded":
-        // A human answered a permission prompt (T3O-16): a life sign for the
+        // A human answered a permission prompt: a life sign for the
         // timeout sweep, so the resumed agent is not nudged seconds into work.
         return stampPermissionAnswered(signal.threadId);
       case "turn-start-failed":
-        // A step's turn failing to start at all (t3o-30, D2). Everything else
-        // about a thread reaches the board through its own turn ending; this
-        // failure has no turn to end, so without it the step holds a slot and
-        // renders a spinner until the timeout sweep eventually notices,
-        // `timeoutMs` later.
+        // A turn that never started has no turn end, so without this the step holds a slot and
+        // shows a spinner until the timeout sweep.
         return failStepAtSpawn({ threadId: signal.threadId, detail: signal.detail });
       case "session-started":
         // Only matters for an orphan: the session the spawn raced now exists —
@@ -11817,11 +9958,11 @@ const make = Effect.gen(function* () {
         // second turn.
         return handleTurnEnded(signal.threadId, signal.turnRef);
       case "input-requested":
-        // An ordinary agent question (t3o-18, D13): fires for EVERY input
+        // An ordinary agent question: fires for EVERY input
         // request.
         return handleInputRequested(signal.threadId);
       case "input-resolved":
-        // A structured question being ANSWERED (t3o-34, D5) — the one way a
+        // A structured question being ANSWERED — the one way a
         // parked step goes back to work that no turn request sees. A
         // cancellation resolves the question too, and must not resume.
         if (!signal.answered) return Effect.void;
@@ -11836,12 +9977,8 @@ const make = Effect.gen(function* () {
     }
   };
 
-  // Enforce `timeoutMs` on unattended running steps (t3o-17): recovery is
-  // otherwise edge-triggered on turn.completed, so a turn that HANGS (or whose
-  // completion event was dropped) holds its slot unsupervised forever. Overdue
-  // steps funnel into the same recovery ladder — nudge, then escalate — so a
-  // hung step is eventually landed `stalled` and its slot released. Human-in-
-  // the-loop runs are exempt (a human is the pacing, per the contracts doc).
+  // Enforce `timeoutMs` on unattended running steps: recovery is otherwise edge-triggered on
+  // turn end, so a hung turn would hold its slot forever. Human-in-the-loop runs are exempt.
   const sweepTimeouts = Effect.gen(function* () {
     const board = yield* readBoard;
     const now = yield* nowIso;
@@ -11849,41 +9986,19 @@ const make = Effect.gen(function* () {
     const paused = yield* workerPausedNow;
     for (const state of board.stepStates ?? []) {
       if (state.status !== "running" || state.humanInLoop) continue;
-      // A step on a worker out of reach is not timed (T3O-66, D22): nothing it
+      // A step on a worker out of reach is not timed: nothing it
       // does can be seen, and silence from it is not evidence of anything.
       const workerId = slotKeyFor(board, state).workerId;
       if (paused(workerId)) continue;
       // Ahead of the `timeoutMs` gate: a background wait runs on its own fixed
-      // schedule (T3O-20), and with turn-end recovery suppressed for it, a
+      // schedule, and with turn-end recovery suppressed for it, a
       // step with no timeout would otherwise never be checked on at all.
       if (yield* sweepBackgroundWait({ board, state, now, nowMs })) continue;
       if (state.timeoutMs <= 0) continue;
-      // The clock runs from the LATEST life sign: the last nudge/start, the step
-      // thread's todo list ADVANCING (`advancedAt` on `board_thread_todos`), the
-      // thread's last OUTPUT (T3O-12, D1), and — checked below, only once a step
-      // already looks overdue — a fresh commit on the card's branch. Without
-      // this, a healthy hours-long turn would be nudged mid-turn every
-      // timeoutMs and marched toward the stall ceiling.
-      //
-      // The thread signal is what this sweep never had, and its absence is the
-      // whole of T3O-12's first defect: a review phase writes no commits and
-      // need not churn a todo list, so a phase that had been reading files
-      // productively for fifty minutes looked exactly like a dead one. It was
-      // escalated — the card went red saying "Nothing is running" — while the
-      // agent carried on and finished the round. "The agent is emitting output
-      // right now" was not a life sign anywhere in this function.
-      //
-      // It is a life sign HERE and nowhere else: `resolveProgressedSinceLastNudge`
-      // does not read it (D2), so a thrashing agent still climbs the ladder.
-      //
-      // And it is a life sign only for a while (D9). Output is satisfied by
-      // noise as readily as by work, so a tool-loop thrash would otherwise
-      // renew the shield every window forever and never be nudged, never climb
-      // the ladder, and never reach a human — the inverse of the bug this card
-      // fixed, and the worse direction for a supervisor. Past
-      // `outputSignalShieldsStep` the sweep falls back to exactly the life
-      // signs it had before T3O-12. The other two have no ceiling: a todo list
-      // that advances and a commit that lands are evidence of work.
+      // The clock runs from the latest life sign: nudge or start, todo advance, thread output, and
+      // (only once overdue) a fresh commit. Output shields only for `outputSignalShieldsStep`, so a
+      // thrashing agent still climbs the ladder; `resolveProgressedSinceLastNudge` ignores it.
+      // Todo advances and commits have no ceiling.
       const heldAt =
         state.threadId === null ? undefined : permissionHeldAt.get(String(state.threadId));
       if (state.threadId !== null && heldAt !== undefined) {
@@ -11912,8 +10027,8 @@ const make = Effect.gen(function* () {
           .map((value) => Date.parse(value))
           .filter((value) => Number.isFinite(value)),
       );
-      // Its worker's time out of reach since that life sign is not counted
-      // (T3O-66): the reference shifts by the offline interval, not resets.
+      // Its worker's time out of reach since that life sign is not counted:
+      // the reference shifts by the offline interval, not resets.
       const offlineMs = Number.isFinite(referenceMs)
         ? boardOfflineCreditMs(offlineIntervals.get(workerId) ?? [], referenceMs, nowMs)
         : 0;
@@ -11929,24 +10044,13 @@ const make = Effect.gen(function* () {
         const committedMs = committedAt === null ? Number.NaN : Date.parse(committedAt);
         if (Number.isFinite(committedMs) && nowMs - committedMs <= state.timeoutMs) continue;
       }
-      // A turn has been REQUESTED on this thread and the provider has not
-      // started it yet (T3O-17). Until it does the turn has no id, emits no
-      // output and advances no todo list, so every life sign above is blind to
-      // it — and this sweep, unlike `handleTurnCompleted`, had no guard for it
-      // at all. Nudging here would put the board's message behind a human's
-      // that is already on its way in.
-      //
-      // Last, and only for a step that already looks overdue, so the common
-      // case pays nothing extra. This is a delay, not a shield: the pending row
-      // is bounded by `lastNudgeAt ?? startedAt`, so a request that never starts
-      // stops suppressing at the next nudge, and the step is swept then.
+      // A requested turn the provider has not started is invisible to every life sign; nudging
+      // would land behind a human's message. A delay, not a shield: bounded by
+      // `lastNudgeAt ?? startedAt`.
+      // Checked last, so only overdue steps pay.
       if (yield* supersededByPendingTurn(state)) continue;
-      // A thread blocked on a permission prompt is waiting on a human, not hung
-      // (T3O-16): it emits nothing, so every life sign above reads it as dead.
-      // Nudging it would land a board message mid-prompt and, rung by rung,
-      // replace the card's violet "Needs permission" with an amber stall.
-      // Exempt for the same reason a human-in-the-loop run is: a human is the
-      // pacing. Read last, so only an already-overdue step pays for it.
+      // A thread on a permission prompt is waiting on a human and emits nothing; nudging it would
+      // replace "Needs permission" with a stall. Read last, so only overdue steps pay.
       if (state.threadId !== null && (yield* threadAwaitingPermission(state.threadId))) {
         permissionHeldAt.set(String(state.threadId), now);
         continue;
@@ -11966,11 +10070,8 @@ const make = Effect.gen(function* () {
     for (const id of backgroundWaits.keys()) {
       if (!runningThreadIds.has(id)) backgroundWaits.delete(id);
     }
-    // An offline interval is only read for a running step on its worker, and
-    // only from that step's reference time, which is never before its last
-    // nudge or start. So a worker with no running step drops its history, and
-    // an interval that ended before its earliest running step's nudge or start
-    // can never count again — a flapping worker's list stays bounded.
+    // Offline intervals are read only from a running step's last nudge or start, so a worker
+    // without running steps drops its history and a flapping worker's list stays bounded.
     const earliestReference = new Map<BoardWorkerId, number>();
     for (const state of board.stepStates ?? []) {
       if (state.status !== "running") continue;
@@ -12008,34 +10109,16 @@ const make = Effect.gen(function* () {
       case "ci":
         return handleCiPassFinished(input.finished);
       case "workers":
-        // T3O-66: a worker back online is reconciled before anything is
+        // A worker back online is reconciled before anything is
         // scheduled onto it.
         return syncWorkerReach.pipe(
           Effect.andThen(requeueResolvedPlacementStalls()),
           Effect.andThen(schedule()),
         );
       case "timeout-sweep":
-        // The release sweep rides the same tick (t3o-13): it is a board read
-        // and an in-memory pass, it must be serialised against the handlers for
-        // the same reason the timeout sweep is, and 30s is already the board's
-        // "check on things nothing told us about" cadence. It is also the only
-        // path that retries a release nothing else will ask about again — a
-        // thread whose turn.completed was dropped, or a card the server
-        // restarted underneath.
-        // And the scheduled-start sweep (T3O-19, D3): the same argument again —
-        // a board read and an in-memory pass, serialised against the handlers
-        // for the same reason, on the cadence the board already has for
-        // "check on things nothing told us about".
-        // And the auto-start sweep (T3O-24, D6): the same argument a third
-        // time. It is the self-healing half of the feature — a dropped
-        // targeted trigger costs one tick instead of stranding an armed card
-        // forever.
-        // And the retry pass (T3O-22, D7): the same argument a fourth time. A
-        // board read and an in-memory pass, serialised against the handlers,
-        // on the board's cadence for "check on things nothing told us about".
-        // And a worker whose reconcile could not finish is tried again here
-        // (T3O-66): nothing else would ask while its status stays the same.
-        // And the auto-archive pass (T3O-77): idle Done cards age out on it.
+        // These sweeps ride the 30s tick: each is a board read plus an in-memory pass serialised
+        // against the handlers, and the tick is the only retry for work nothing else will ask about
+        // again (dropped turn ends, a restart, a worker whose reconcile did not finish).
         return syncWorkerReach.pipe(
           Effect.andThen(sweepTimeouts),
           Effect.andThen(releaseFinishedThreads),
@@ -12043,9 +10126,9 @@ const make = Effect.gen(function* () {
           Effect.andThen(sweepArmedCards),
           Effect.andThen(sweepRetries),
           Effect.andThen(sweepAutoMergeHolds),
-          // T3O-49: forge-check CI steps poll on the same cadence.
+          // Forge-check CI steps poll on the same cadence.
           Effect.andThen(sweepCiForgeSteps),
-          // T3O-59: a pass with nothing behind it is held on the second tick.
+          // A pass with nothing behind it is held on the second tick.
           Effect.andThen(sweepOrphanedCiPasses),
           Effect.andThen(sweepAutoArchives),
         );
@@ -12054,35 +10137,30 @@ const make = Effect.gen(function* () {
 
   const processInputSafely = (input: SupervisorInput) =>
     processInput(input).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("board supervisor failed to process input", {
-              source: input.source,
-              eventType:
-                input.source === "domain"
-                  ? input.event.type
-                  : input.source === "thread"
-                    ? input.signal.type
-                    : input.source,
-              cause: Cause.pretty(cause),
-            }),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.logWarning("board supervisor failed to process input", {
+            source: input.source,
+            eventType:
+              input.source === "domain"
+                ? input.event.type
+                : input.source === "thread"
+                  ? input.signal.type
+                  : input.source,
+            cause: Cause.pretty(cause),
+          }),
       ),
     );
 
   const worker = yield* makeDrainableWorker(processInputSafely);
 
   const start: SupervisorReactorShape["start"] = Effect.fn("board-supervisor-start")(function* () {
-    // Subscriptions are forked first, but forkParked PARKS them until server
-    // activation — so reconcile (enqueued below, processed immediately by the
-    // unparked worker) cannot rely on the live PubSub for its own follow-
-    // through. That is why `reconcile` ends with a state-derived kickoff pass;
-    // the forked-first ordering still matters once activation opens the
-    // streams, so live events enqueue behind the reconcile item in the one
-    // sequential worker.
+    // forkParked holds these subscriptions until activation, so reconcile cannot rely on them and
+    // ends with a state-derived kickoff. Forked first so live events queue behind reconcile.
     yield* forkParked(
       Stream.runForEach(boardEngine.liveBoardEvents, (event) => {
-        // T3O-52 (D4): a worktree provisioned or cleaned up triggers a cleanup
+        // A worktree provisioned or cleaned up triggers a cleanup
         // pass. Straight to the single-flight sweep, not the worker: the pass
         // never touches step state, and it coalesces a burst into one run.
         if (
@@ -12093,7 +10171,7 @@ const make = Effect.gen(function* () {
         }
         if (
           event.type !== "board.card-moved" &&
-          // T3O-33: a card changed project. Human-only and rare, and the whole
+          // A card changed project. Human-only and rare, and the whole
           // point is that the agent working the card in the OLD repository is
           // stopped now rather than at the next step boundary.
           event.type !== "board.card-project-changed" &&
@@ -12101,16 +10179,16 @@ const make = Effect.gen(function* () {
           event.type !== "board.card-stage-thread-requested" &&
           event.type !== "board.card-updated" &&
           event.type !== "board.card-step-completed" &&
-          // A human's "start it anyway" (t3o-33). Rare, and the whole point is
+          // A human's "start it anyway". Rare, and the whole point is
           // that it takes effect on the click rather than at the next step
           // boundary, so it has to cross this filter.
           event.type !== "board.card-step-force-start-requested" &&
-          // A step going back to the build queue (T3O-23). Emitted by every
+          // A step going back to the build queue. Emitted by every
           // recovery too, which is a handful of events an hour at most — far
           // below the volume that made thread activity need filtering at the
           // gateway (`ThreadGatewayV1.observe`).
           event.type !== "board.card-step-recovered" &&
-          // T3O-32: a step parked or settled may end a pending auto-plan
+          // A step parked or settled may end a pending auto-plan
           // request. Step boundaries, so a handful an hour.
           event.type !== "board.card-step-awaiting-input" &&
           event.type !== "board.card-step-paused" &&
@@ -12118,18 +10196,18 @@ const make = Effect.gen(function* () {
           event.type !== "board.card-archived" &&
           event.type !== "board.card-deleted" &&
           event.type !== "board.plans-approved" &&
-          // T3O-65: a re-pin or a finished move can start a held card.
+          // A re-pin or a finished move can start a held card.
           event.type !== "board.card-worker-pinned" &&
           event.type !== "board.card-worker-move-recorded" &&
-          // T3O-66: a worker removed stalls what ran there; a re-add can
+          // A worker removed stalls what ran there; a re-add can
           // resume it.
           event.type !== "board.worker-removed" &&
           event.type !== "board.card-worker-removal" &&
-          // T3O-49: a project's CI switched off moves its cards on from CI.
+          // A project's CI switched off moves its cards on from CI.
           // Settings edits, so rare.
           event.type !== "board.project-stage-config-set" &&
-          // T3O-39: a human turned a running plan review off, or turned one
-          // on after the plan was posted; T3O-50: changed its rounds.
+          // A human turned a running plan review off, or turned one
+          // on after the plan was posted; Changed its rounds.
           event.type !== "board.plan-review-stopped" &&
           event.type !== "board.plan-review-rounds-changed" &&
           !(event.type === "board.plan-review-started" && event.payload.turnedOnLate === true)
@@ -12153,7 +10231,7 @@ const make = Effect.gen(function* () {
         return worker.enqueue({ source: "thread", signal });
       }),
     );
-    // T3O-65: worker changes — status, providers, checkouts, setups — can
+    // Worker changes — status, providers, checkouts, setups — can
     // start a card held for its worker. Absent on a local-only harness.
     if (Option.isSome(placement)) {
       yield* forkParked(
@@ -12173,7 +10251,7 @@ const make = Effect.gen(function* () {
     // The server restarts mid-step: reconcile persisted step state, serialised
     // ahead of the live events now flowing into the same worker queue.
     yield* worker.enqueue({ source: "reconcile" });
-    // Periodic timeout sweep (t3o-17): rides the worker so it never races the
+    // Periodic timeout sweep: rides the worker so it never races the
     // event handlers. 30s granularity is plenty against minutes-scale timeouts.
     yield* forkParked(
       Effect.forever(
@@ -12187,7 +10265,7 @@ const make = Effect.gen(function* () {
   return {
     start,
     reconcile,
-    // T3O-49: forge-check CI steps poll on the sweep too.
+    // Forge-check CI steps poll on the sweep too.
     sweep: sweepTimeouts.pipe(
       Effect.andThen(sweepCiForgeSteps),
       Effect.andThen(sweepOrphanedCiPasses),
@@ -12202,7 +10280,7 @@ const make = Effect.gen(function* () {
       Effect.andThen(cardCleanupWorker.drain),
       Effect.andThen(cardRetireWorker.drain),
     ),
-    // CI passes (T3O-44) run on their own fibers and report through the
+    // CI passes run on their own fibers and report through the
     // worker; a pass's end can start the next one, so this loops until none
     // is running. Never used by `drain`: a long pass would block it.
     drainCi: Effect.suspend(function drainCi(): Effect.Effect<void> {
@@ -12259,35 +10337,24 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.as({ outcome: "failed" } as const)),
         ),
       ),
-    // Both run OUTSIDE the serialised worker: they are request-scoped, the
-    // caller is waiting on the answer, and neither touches step state — the
-    // conflict step they can start goes through the ordinary
-    // `start-stage-thread` event, which the worker picks up as usual.
-    // Both are TOTAL: they are called from an RPC handler that owes the user a
-    // response, and a read-model hiccup must surface as "the merge did not
-    // happen, here is why" rather than as an unhandled failure on a button
-    // click.
-    // T3o (T3O-18): TOTAL for the same reason — an agent's tool call and the
-    // card's "Link one" both owe their caller an answer.
-    // A card being created has no placement yet, so its project's own
-    // checkout on this server answers.
+    // Outside the serialised worker: request-scoped, and they touch no step state. Total: an RPC
+    // or agent tool call owes its caller an answer, not an unhandled failure. A card being created
+    // has no placement, so its project's local checkout answers.
     resolvePullRequestLink: (projectId, target) =>
-      workspaces
-        .localProject(projectId)
-        .pipe(Effect.flatMap((workspace) => resolvePullRequestLink(workspace, target)))
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("board supervisor: pull request link lookup failed", {
-              projectId,
-              cause: Cause.pretty(cause),
-            }).pipe(
-              Effect.as({
-                outcome: "refused",
-                detail: "The pull request could not be looked up. See the server log for details.",
-              } as const),
-            ),
+      workspaces.localProject(projectId).pipe(
+        Effect.flatMap((workspace) => resolvePullRequestLink(workspace, target)),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: pull request link lookup failed", {
+            projectId,
+            cause: Cause.pretty(cause),
+          }).pipe(
+            Effect.as({
+              outcome: "refused",
+              detail: "The pull request could not be looked up. See the server log for details.",
+            } as const),
           ),
         ),
+      ),
     linkPullRequest: (cardId, target, options) =>
       linkPullRequest(cardId, target, options).pipe(
         Effect.catchCause((cause) =>
@@ -12313,7 +10380,7 @@ const make = Effect.gen(function* () {
             cardId,
             cause: Cause.pretty(cause),
           }).pipe(
-            // T3o (T3O-48): TOTAL, like the merge beside it — the RPC owes the
+            // T3o: TOTAL, like the merge beside it — the RPC owes the
             // user an answer, and "the lookup broke" is one they can act on.
             Effect.as({
               outcome: "lookup-failed",

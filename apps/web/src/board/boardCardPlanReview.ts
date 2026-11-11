@@ -1,5 +1,5 @@
 /**
- * T3o: the card sidebar's Plan review section (plan review, T3O-39), as data.
+ * T3o: the card sidebar's Plan review section (plan review), as data.
  * Pure, so the visibility and clamp rules are tested without rendering.
  */
 import {
@@ -22,7 +22,7 @@ export interface BoardCardPlanReviewView {
   readonly enabled: boolean;
   readonly rounds: number;
   /** A review is running on the live planning step. Its rounds can still
-      change; the agent is told the new total (T3O-50). */
+      change; the agent is told the new total. */
   readonly inProgress: boolean;
   readonly summary: string;
   readonly note: string;

@@ -1,11 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * T3o (T3O-23): retiring a worktree — stop its processes, run its remove
- * scripts, then remove it.
- *
- * The retirer is the real one; terminals, the thread gateway, settings
- * and git are doubles (see `worktreeRetire.testkit.ts`). Remove scripts run as
- * real child processes in a real temporary worktree folder.
+ * Retiring a worktree with the real retirer over doubled terminals, thread gateway, settings
+ * and git. Remove scripts run as real child processes in a real temporary folder.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";

@@ -26,7 +26,7 @@ describe("boardQueueInfo", () => {
   it("drops the tasks-ahead clause at the front of the queue", () => {
     const info = boardQueueInfo({ slot: slot(1, 2), running: 3, cap: 3 })!;
     expect(info.label).toBe("Next");
-    expect(info.headline).toBe("Queued — starts next");
+    expect(info.headline).toBe("Queued: starts next");
     expect(info.detail).toBe("3 of 3 agents busy. It starts on its own when an agent frees up.");
   });
 
@@ -36,18 +36,15 @@ describe("boardQueueInfo", () => {
     );
   });
 
-  // The client cannot see every slot-holder: a step parked on a question keeps
-  // its slot and reaches the shell as neither running nor queued, and a
-  // per-instance cap holds work back with the global count below its ceiling.
-  // A fraction here would imply spare capacity the card demonstrably could not
-  // get, so it is not stated.
+  // The client cannot see every slot-holder (parked steps, per-instance caps),
+  // so a fraction below the cap could imply capacity that isn't there.
   it("states no fraction below the cap, where the count could be an undercount", () => {
     const detail = boardQueueInfo({ slot: slot(1, 1), running: 1, cap: 3 })!.detail;
     expect(detail).toContain("No agent is free for this task");
     expect(detail).not.toContain("of 3 agents");
   });
 
-  // A force start deliberately runs over the limit (t3o-33). "4 of 3" reads as
+  // A force start deliberately runs over the limit. "4 of 3" reads as
   // a bug, so past the ceiling the sentence stops being a fraction.
   it("reports the limit rather than a nonsense fraction once over the cap", () => {
     expect(boardQueueInfo({ slot: slot(2, 2), running: 4, cap: 3 })!.detail).toContain(
@@ -55,7 +52,7 @@ describe("boardQueueInfo", () => {
     );
   });
 
-  // T3O-32: the queue is one board-wide line for every stage's step, so a card
+  // The queue is one board-wide line for every stage's step, so a card
   // waiting for a review or planning slot showed "Queued for build" and named
   // work it was not about to do. No string here may name a stage.
   it("never names a stage, at any position in the queue", () => {

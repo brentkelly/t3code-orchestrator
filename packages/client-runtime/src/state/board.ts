@@ -1,24 +1,7 @@
 /**
- * T3o board client state (D17: lives in client-runtime so a future mobile
- * board is a UI project, not a rewrite).
- *
- * Three concerns share this module:
- *
- * - The board reducer (`boardReducer.ts`) and subscription
- *   (`boardSubscription.ts`) over `board.subscribeBoard` (T3O-57),
- *   re-exported here. Cards arrive with
- *   thread-derived fields at their "none" resting state; the views overlay
- *   them from the thread shells (`withBoardThreadFields`).
- * - Atom factories: card lists grouped by project and stage (sorted by
- *   `orderKey`, with thread-derived fields overlaid live so a thread
- *   starting or stopping updates its card without any card event), a
- *   card-detail subscription keyed by card, and dispatch helpers for every
- *   board command.
- * - Fractional-order planning for drag/reorder, reusing the `threadSort.ts`
- *   pin-order helpers — `BoardCard.orderKey` commits to that split (client
- *   computes, server stores); this module does not reimplement them.
- *
- * Exported to apps through `state/shell.ts`.
+ * Board client state, in client-runtime so a mobile board can reuse it. Cards arrive with
+ * thread-derived fields at rest; views overlay them from thread shells
+ * (`withBoardThreadFields`). Order keys reuse the `threadSort.ts` pin-order helpers.
  */
 import {
   BOARD_WS_METHODS,
@@ -217,11 +200,8 @@ export type {
 
 type ThreadShellLookup = (threadId: ThreadId) => OrchestrationV2ThreadShell | undefined;
 
-/** Every live-linked thread id of a card (t3o-18, D7). `boardCardThreads` rides
-    the shell snapshot with one entry per live link; a client that has not
-    received it yet (or a card with no links) falls back to `activeThreadId`, so
-    the aggregate degrades to exactly the pre-t3o-18 behaviour rather than to
-    nothing. */
+/** Every live-linked thread id of a card. Falls back to `activeThreadId` when
+    `boardCardThreads` has not arrived, so the aggregate degrades rather than empties. */
 function liveCardThreadIds(
   card: BoardCardShell,
   cardThreads: ReadonlyArray<BoardCardThreadShell> | undefined,
@@ -233,13 +213,9 @@ function liveCardThreadIds(
   return card.activeThreadId === null ? [] : [card.activeThreadId];
 }
 
-/** Thread-derived fields recomputed from the current thread shells; returns
-    the same card reference when nothing changed so memoized consumers keep
-    their identity.
-
-    Aggregated across EVERY live-linked thread (t3o-18, D7), matching the
-    server's snapshot enrichment exactly — the two must agree, or the badge would
-    flicker between a snapshot and the next delta. */
+/** Aggregated across every live-linked thread, matching the server's snapshot enrichment
+    exactly, or the badge flickers between a snapshot and the next delta. Returns the same
+    card reference when nothing changed. */
 function withDerivedThreadFields(
   card: BoardCardShell,
   threadById: ThreadShellLookup,
@@ -257,7 +233,7 @@ function withDerivedThreadFields(
   ) {
     return card;
   }
-  // T3O-20: the key is omitted when false, matching the server's shell.
+  // The key is omitted when false, matching the server's shell.
   const { waitingOnBackground: _previous, ...rest } = card;
   return {
     ...rest,
@@ -276,11 +252,9 @@ export function compareBoardCardShells(left: BoardCardShell, right: BoardCardShe
   return compare(left.orderKey, right.orderKey) || compare(left.cardId, right.cardId);
 }
 
-/** Order key for a card appended at the bottom of a column. Scans for the
-    maximum existing key rather than trusting input order, so callers may
-    pass the column in any order (snapshot order is createdAt, not
-    orderKey). Falls back to the open-bounds midpoint when the column is
-    empty or its bottom key is corrupt. */
+/** Scans for the maximum key rather than trusting input order (snapshot order is
+    createdAt). Falls back to the open-bounds midpoint when the column is empty or its
+    bottom key is corrupt. */
 export function boardColumnAppendOrderKey(
   column: ReadonlyArray<Pick<BoardCardShell, "orderKey">>,
 ): string {
@@ -292,12 +266,9 @@ export function boardColumnAppendOrderKey(
 }
 
 /**
- * Assignments realizing a drop within (or into) a stage column — a thin
- * card-shaped veneer over `planPinnedReorder` (single write to the moved
- * card in the common case; whole-column key rewrite only when existing keys
- * are corrupt). Callers dispatch `board.card.reorder` per assignment, or
- * `board.card.move` with the moved card's key when the drop crossed
- * stages.
+ * Assignments realizing a drop within or into a stage column, over `planPinnedReorder`.
+ * Callers dispatch `board.card.reorder` per assignment, or `board.card.move` with the moved
+ * card's key when the drop crossed stages.
  */
 export function planBoardCardReorder(input: {
   /** Card ids in the desired visual order (after the move). */
@@ -312,11 +283,11 @@ export function planBoardCardReorder(input: {
   }).map((assignment) => ({ cardId: assignment.id, orderKey: assignment.orderKey }));
 }
 
-// ── Board views and drag support (t3o-05) ──────────────────────────────
-// Pure helpers shared by every board UI (D17): the web board consumes them
+// ── Board views and drag support ──────────────────────────────
+// Pure helpers shared by every board UI: the web board consumes them
 // today, a mobile board reuses them without a rewrite.
 
-// Columns are keyed by stage id (t3o-15): stages are user-defined, so the
+// Columns are keyed by stage id: stages are user-defined, so the
 // column map is dynamic — only stages that hold cards appear. The board UI
 // iterates the read-model stage list and reads `columns[stageId] ?? []`, so an
 // empty stage still renders as an empty column without needing a key here.
@@ -333,11 +304,9 @@ function pushColumn(
 }
 
 /**
- * The board snapshot with each card's thread-derived fields overlaid from the
- * thread shells the client already holds (t3o-18, D7): the server leaves them
- * at rest, so a thread starting or stopping updates its card with no board
- * delta. Returns the same snapshot when no card changed, so memoized consumers
- * keep their identity.
+ * The server leaves thread-derived fields at rest, so overlaying them here lets a thread
+ * starting or stopping update its card with no board delta. Returns the same snapshot when
+ * no card changed.
  */
 export function withBoardThreadFields(
   board: BoardShellSnapshot,
@@ -410,12 +379,9 @@ export interface BoardCardPlacement {
 }
 
 /**
- * Columns with optimistic placements laid over the live shells. Pure and
- * idempotent — re-applying a placement the server has since confirmed
- * changes nothing, and a placement for a card that left the board is
- * ignored — so callers only prune placements to bound the list (see
- * `isBoardCardPlacementSettled`). Returns the input columns object when no
- * placement changes anything, so memoized consumers keep their identity.
+ * Pure and idempotent: a confirmed placement changes nothing and one for a departed card is
+ * ignored, so callers prune only to bound the list (`isBoardCardPlacementSettled`). Returns
+ * the input columns object when no placement changes anything.
  */
 export function applyBoardCardPlacements(
   columns: BoardStageColumns,
@@ -466,7 +432,7 @@ export function isBoardCardPlacementSettled(
   return true;
 }
 
-/** One queued card's place in the board-wide build queue (t3o-33). Positions
+/** One queued card's place in the board-wide build queue. Positions
     are a VIEW over the queue and are never stored on a card: every one of
     these is recomputed whenever the queue changes. */
 export interface BoardQueueSlot {
@@ -480,31 +446,10 @@ export interface BoardQueueSlot {
 }
 
 /**
- * Queue view of every card holding for a concurrency slot (D11), across the
- * WHOLE environment — every project, and every stage that runs build-mode
- * steps, not just Building.
- *
- * Mirrors the governor's own ordering (`orderBoardQueue`, apps/server): later
- * stage first, then the cards' drag order. That is what makes the number
- * honest — an earlier per-project reading of one Building column numbered a
- * card `#1` while another project's review step was ahead of it in the only
- * queue that exists.
- *
- * ONE DIVERGENCE, deliberately: the server breaks a stage tie by admitting an
- * already-started step before an unstarted one. That needs step completions,
- * which are card detail, and it only separates two queued steps on the same
- * stage where one is a re-run. Buying it would cost a field on every shell, so
- * the client orders by drag order alone there.
- *
- * Derived strictly from the `queued` flag on the shells, so a board with
- * nothing queued yields an empty map and costs a single pass.
- *
- * A card holding a FUTURE scheduled start is excluded (T3O-19, D9), and that is
- * load-bearing rather than cosmetic. A card already `queued` when its schedule
- * is set keeps that step status — nothing transitions it back to `pending` —
- * while the server's gate has stopped offering it a slot. Left in, it would go
- * on counting against cards genuinely waiting for an agent, and every other
- * card's position number would be wrong.
+ * Mirrors the server's `orderBoardQueue` across the whole environment: later stage first,
+ * then drag order. It skips the server's started-before-unstarted tiebreak, which needs card
+ * detail. A future scheduled start is excluded: such a card stays `queued` while the server
+ * no longer offers it a slot, and counting it would misnumber every card behind it.
  */
 export function boardBuildQueue(
   cards: ReadonlyArray<BoardCardShell>,
@@ -514,7 +459,7 @@ export function boardBuildQueue(
       silently number a scheduled card into the queue. */
   nowMs: number,
 ): ReadonlyMap<string, BoardQueueSlot> {
-  // A card held for its offline worker (T3O-66) waits on no slot, so it takes
+  // A card held for its offline worker waits on no slot, so it takes
   // no place in the queue; its notice says Worker offline instead.
   const queued = cards.filter(
     (card) =>
@@ -547,7 +492,7 @@ export function boardBuildQueue(
 
 const EMPTY_QUEUE: ReadonlyMap<string, BoardQueueSlot> = new Map();
 
-/** Steps the executor is actually running, board-wide (t3o-33) — the numerator
+/** Steps the executor is actually running, board-wide — the numerator
     of "3 of 3 agents busy". Counted from the same shells the queue is, so the
     two halves of that sentence can never disagree. */
 export function boardRunningStepCount(cards: ReadonlyArray<BoardCardShell>): number {
@@ -557,15 +502,9 @@ export function boardRunningStepCount(cards: ReadonlyArray<BoardCardShell>): num
 }
 
 /**
- * The reorder that moves a queued card to the front of the build queue
- * (t3o-33), or null when there is no such move.
- *
- * Null in two cases, and the second is the point: the card is already first,
- * or reordering CANNOT improve its position. Drag order is the governor's last
- * tiebreak, so a card queued behind one on a later stage does not overtake it
- * however low its key goes — and a button that visibly does nothing is worse
- * than an absent one. The check is the derivation itself, run once against the
- * projected key, so it can never drift from what the queue will actually show.
+ * Null when the card is already first or reordering cannot improve its position (drag order
+ * is only the last tiebreak). Checked by running the derivation against the projected key,
+ * so it cannot drift from what the queue will show.
  */
 export function planBoardQueueMoveToFront(input: {
   readonly cards: ReadonlyArray<BoardCardShell>;
@@ -634,14 +573,9 @@ export function createBoardEnvironmentAtoms<R, ER>(
   );
 
   /**
-   * Live card→thread links and their cached todo summaries (t3o-18, D3), keyed
-   * by card id. Rides the board snapshot once and is kept current by the
-   * `card-threads` delta, so this is a cheap projection over held state, not a
-   * subscription — and `BoardCardShell` still carries no todo field.
-   *
-   * Empty until the first snapshot. A card with no entry has no live-linked
-   * thread; a thread with no todo fields is linked but has never emitted a
-   * `turn.plan.updated` (D14: the cache fills forward only).
+   * Live card-thread links and cached todo summaries, keyed by card id; a projection over the
+   * snapshot kept current by `card-threads`, not a subscription. A thread with no todo fields
+   * is linked but has never emitted `turn.plan.updated` (the cache fills forward only).
    */
   const EMPTY_CARD_THREADS: ReadonlyMap<
     BoardCardId,
@@ -661,7 +595,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
     }).pipe(Atom.withLabel(`environment-board-card-threads:${environmentId}`)),
   );
 
-  /** The board's label catalogue (t3o-06a) — the vocabulary every card chip
+  /** The board's label catalogue — the vocabulary every card chip
       and the label picker read. Includes tombstoned labels (a card carrying
       one renders it muted); the picker filters `deletedAt !== null`. Empty
       until the first snapshot. */
@@ -672,8 +606,8 @@ export function createBoardEnvironmentAtoms<R, ER>(
     ).pipe(Atom.withLabel(`environment-board-labels:${environmentId}`)),
   );
 
-  /** The board's user-defined stage list (t3o-15) in canonical order — the
-      source of column order and labels the board UI reads (D13). Empty until
+  /** The board's user-defined stage list in canonical order — the
+      source of column order and labels the board UI reads. Empty until
       the first snapshot (the caller falls back to the compiled seeds via
       `boardStages`). */
   const EMPTY_STAGES: ReadonlyArray<BoardStageDefinition> = [];
@@ -684,7 +618,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
     }).pipe(Atom.withLabel(`environment-board-stages:${environmentId}`)),
   );
 
-  /** Each project's delta from the global pipeline (T3O-49), shell-sized.
+  /** Each project's delta from the global pipeline, shell-sized.
       Empty when no project has one. */
   const EMPTY_PROJECT_STAGE_CONFIGS: Readonly<Record<string, BoardProjectStageConfigShell>> = {};
   const projectStageConfigsAtom = Atom.family((environmentId: EnvironmentId) =>
@@ -695,7 +629,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
     ).pipe(Atom.withLabel(`environment-board-project-stage-configs:${environmentId}`)),
   );
 
-  /** The board's workers (T3O-62, D19), or the local-only summary when the
+  /** The board's workers, or the local-only summary when the
       board has none — which is every board until a worker is added. */
   const workersAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(
@@ -704,7 +638,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
     ).pipe(Atom.withLabel(`environment-board-workers:${environmentId}`)),
   );
 
-  /** The archive page's cards (t3o-13), read when the page opens. */
+  /** The archive page's cards, read when the page opens. */
   const archivedCardsAtom = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:board:archived-cards",
     tag: BOARD_WS_METHODS.getArchivedCards,
@@ -749,7 +683,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
       }),
     );
 
-  /** One CI step's log in the viewer (T3O-60). Closing the viewer stops the
+  /** One CI step's log in the viewer. Closing the viewer stops the
       read almost at once: a followed log polls on the server. */
   const ciLogAtom = createEnvironmentSubscriptionAtomFamily(runtime, {
     label: "environment-board-ci-log",
@@ -796,7 +730,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
       execute: (input: { readonly cardId: BoardCardId; readonly force?: boolean }) =>
         refreshBoardCardPullRequest(input),
     }),
-    /** Link a pull request to the card by hand (T3O-18). Resolves to the
+    /** Link a pull request to the card by hand. Resolves to the
         outcome the card shows — linked, or the server's refusal. */
     linkCardPullRequest: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:link-card-pull-request",
@@ -810,25 +744,25 @@ export function createBoardEnvironmentAtoms<R, ER>(
       execute: (input: { readonly cardId: BoardCardId }) => mergeBoardCardPullRequest(input),
     }),
     /** Open the card's pull request from Building and route it past Code
-        review (t3o-07). Resolves to the outcome the card reports — started, or
+        review. Resolves to the outcome the card reports — started, or
         the reason it was refused. */
     submitCardForMerge: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:submit-card-for-merge",
       execute: (input: { readonly cardId: BoardCardId }) => submitBoardCardForMerge(input),
     }),
-    /** Run one more review round on a settled loop (T3O-39). Resolves to the
+    /** Run one more review round on a settled loop. Resolves to the
         round it bought, or the reason it was refused. */
     requestReviewRound: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:request-review-round",
       execute: (input: { readonly cardId: BoardCardId }) => requestBoardReviewRound(input),
     }),
-    /** Skip CI for a card in the CI stage (T3O-44). Resolves to where the
+    /** Skip CI for a card in the CI stage. Resolves to where the
         card went, or why it could not. */
     retryCi: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:retry-ci",
       execute: (input: { readonly cardId: BoardCardId }) => retryBoardCardCi(input),
     }),
-    /** Stop CI (T3O-59): hold the card's pass; Retry CI runs it again. */
+    /** Stop CI: hold the card's pass; Retry CI runs it again. */
     stopCi: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:stop-ci",
       execute: (input: { readonly cardId: BoardCardId }) =>
@@ -842,17 +776,17 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:skip-ci",
       execute: (input: { readonly cardId: BoardCardId }) => skipBoardCardCi(input),
     }),
-    /** Remove a finished card's kept worktree past the safety rule (T3O-52). */
+    /** Remove a finished card's kept worktree past the safety rule. */
     removeCardWorktree: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:remove-card-worktree",
       execute: (input: { readonly cardId: BoardCardId }) => removeBoardCardWorktree(input),
     }),
-    /** Re-run a kept worktree's cleanup and say what it did (T3O-52). */
+    /** Re-run a kept worktree's cleanup and say what it did. */
     checkCardWorktree: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:check-card-worktree",
       execute: (input: { readonly cardId: BoardCardId }) => checkBoardCardWorktree(input),
     }),
-    /** Attach a pending upload to a card's brief (t3o-32). Resolves with the
+    /** Attach a pending upload to a card's brief. Resolves with the
         stored record — the name may have been de-duplicated server-side. */
     attachCardFile: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:attach-card-file",
@@ -862,7 +796,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:detach-card-file",
       execute: (input: BoardDetachCardFileInput) => detachBoardCardFile(input),
     }),
-    // T3O-62: managing the board's workers. Each answers with what the
+    // Managing the board's workers. Each answers with what the
     // Workers settings show: the add summary, or a refusal to read inline.
     addWorker: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:add-worker",
@@ -892,7 +826,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:dismiss-worker-setup",
       execute: (input: BoardWorkersDismissSetupInput) => dismissBoardWorkerSetup(input),
     }),
-    /** Regroup cards (T3O-27); the board's New phase and shared parent. */
+    /** Regroup cards; the board's New phase and shared parent. */
     moveCards: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:move-cards",
       execute: (input: MoveBoardCardsInput) => moveBoardCards(input),
@@ -901,7 +835,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:set-group-settings",
       execute: (input: SetBoardCardGroupSettingsInput) => setBoardCardGroupSettings(input),
     }),
-    /** A card's own Automation toggles (T3O-38). */
+    /** A card's own Automation toggles. */
     setCardAutomation: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:set-card-automation",
       execute: (input: SetBoardCardAutomationInput) => setBoardCardAutomation(input),
@@ -915,19 +849,19 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:reorder-card",
       execute: (input: ReorderBoardCardInput) => reorderBoardCard(input),
     }),
-    /** Start a queued step now, over the agent cap (t3o-33). */
+    /** Start a queued step now, over the agent cap. */
     forceStartStep: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:force-start-step",
       execute: (input: ForceStartBoardCardStepInput) => forceStartBoardCardStep(input),
     }),
-    /** Resume a card's paused step (T3O-23): it re-enters the build queue and
+    /** Resume a card's paused step: it re-enters the build queue and
         the governor admits it into its EXISTING thread when a slot frees. */
     requeueStep: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:requeue-step",
       execute: (input: RequeueBoardCardStepInput) => requeueBoardCardStep(input),
     }),
-    /** Send a settled step back because its recorded payload cannot be read
-        (T3O-14) — the way out of a review round that halted `unreadable`. */
+    /** Send a settled step back because its recorded payload cannot be read —
+         the way out of a review round that halted `unreadable`. */
     reopenStep: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:reopen-step",
       execute: (input: ReopenBoardCardStepInput) => reopenBoardCardStep(input),
@@ -936,18 +870,18 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:update-card",
       execute: (input: UpdateBoardCardInput) => updateBoardCard(input),
     }),
-    /** Move a card to another project (T3O-33) — human-only, and refused by the
+    /** Move a card to another project — human-only, and refused by the
         decider once the card has ever been built. */
     setCardProject: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:set-card-project",
       execute: (input: SetBoardCardProjectInput) => setBoardCardProject(input),
     }),
-    /** Pin a card to a worker, or follow the default (T3O-65). */
+    /** Pin a card to a worker, or follow the default. */
     pinCardWorker: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:pin-card-worker",
       execute: (input: PinBoardCardWorkerInput) => pinBoardCardWorker(input),
     }),
-    /** The Move dialog's check / move / ask-push (T3O-65). */
+    /** The Move dialog's check / move / ask-push. */
     cardWorkerMove: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:card-worker-move",
       execute: (input: BoardCardWorkerMoveRequest) => boardCardWorkerMove(input),
@@ -1010,7 +944,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:delete-stage",
       execute: (input: DeleteBoardStageInput) => deleteBoardStage(input),
     }),
-    // T3O-49: stage defaults and per-project config, at the settings tier.
+    // Stage defaults and per-project config, at the settings tier.
     setStageDefault: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:set-stage-default",
       execute: (input: SetBoardStageDefaultInput) => setBoardStageDefault(input),

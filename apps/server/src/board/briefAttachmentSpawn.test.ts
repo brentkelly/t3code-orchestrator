@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * The one push (t3o-32, K4): a plan-mode or build-mode spawn carries the
+ * The one push (K4): a plan-mode or build-mode spawn carries the
  * brief's images natively on its first turn, staged as fresh pending uploads;
  * non-image files never ride a turn (they are pulled by path instead).
  */

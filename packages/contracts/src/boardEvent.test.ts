@@ -11,8 +11,8 @@ const decodeBoardItem = Schema.decodeUnknownExit(BoardShellStreamItem);
 const decodeV2Command = Schema.decodeUnknownExit(OrchestrationV2Command);
 const decodeV2Event = Schema.decodeUnknownExit(OrchestrationV2DomainEvent);
 
-// T3O-56: board events and commands belong to the board's own engine, not to
-// upstream's orchestration unions. T3O-57: clients send board commands over
+// Board events and commands belong to the board's own engine, not to
+// upstream's orchestration unions. Clients send board commands over
 // `board.dispatchCommand`, so upstream's wire union carries none either.
 const cardCreated = {
   sequence: 1,

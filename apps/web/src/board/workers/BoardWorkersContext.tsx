@@ -1,11 +1,18 @@
 /**
- * T3o (T3O-65): the board's worker summary for every card surface below the
+ * T3o: the board's worker summary for every card surface below the
  * board page — the worker chip, the move notices, the worker field — so a
  * local-only board's cards read one empty summary rather than each
  * subscribing.
  */
-import { EMPTY_BOARD_WORKERS_STATE, type BoardWorkersState } from "@t3tools/contracts";
-import { createContext, useContext, useMemo } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  EMPTY_BOARD_WORKERS_STATE,
+  type BoardWorkersState,
+  type EnvironmentId,
+} from "@t3tools/contracts";
+import { createContext, useContext, useState } from "react";
+
+import { boardEnvironment } from "../../state/board";
 
 export const BoardWorkersContext = createContext<BoardWorkersState>(EMPTY_BOARD_WORKERS_STATE);
 
@@ -28,7 +35,14 @@ function boardWorkersCardView(state: BoardWorkersState): BoardWorkersState {
 }
 
 /** `boardWorkersCardView`, kept the same object until what it holds changes. */
-export function useBoardWorkersCardView(state: BoardWorkersState): BoardWorkersState {
-  const key = JSON.stringify(boardWorkersCardView(state));
-  return useMemo(() => JSON.parse(key) as BoardWorkersState, [key]);
+export function useBoardWorkersCardView(environmentId: EnvironmentId): BoardWorkersState {
+  const state = useAtomValue(boardEnvironment.workersAtom(environmentId));
+  const view = boardWorkersCardView(state);
+  const key = JSON.stringify(view);
+  // Held in state, as `useStableHandoffRuns` does: the compiler caches on `state`, which
+  // every clone-progress tick replaces.
+  const [stable, setStable] = useState({ key, view });
+  if (stable.key === key) return stable.view;
+  setStable({ key, view });
+  return view;
 }

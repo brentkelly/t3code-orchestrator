@@ -1,16 +1,7 @@
 /**
- * The thread gateway's contract, run against `ThreadGatewayV2` on the real
- * orchestration-v2 stack (T3O-58, T3O-59).
- *
- * Everything the board relies on the thread engine for, stated in the gateway's
- * own vocabulary: what a spawn leaves behind, which commands are refused, what
- * signals the engine's own events become, and what the reads answer.
- *
- * Signals are checked against the events the real engine LOGGED for each
- * command, not hand-built ones, so a drift in upstream's event shapes fails
- * here rather than silently in the supervisor. The stack runs no provider, so
- * what a provider would write (a plan, an assistant message) is written to the
- * engine's own event sink, which projects it exactly as a provider's would.
+ * The thread gateway's contract, run against `ThreadGatewayV2` on the real orchestration-v2
+ * stack. Signals are checked against the events the engine LOGGED, so upstream event drift fails
+ * here. No provider runs; provider output is written to the engine's own event sink.
  */
 import {
   CommandId,
@@ -645,7 +636,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
       }),
     );
 
-    // T3O-12: the timeout sweep's life sign moves with the agent's output, here
+    // The timeout sweep's life sign moves with the agent's output, here
     // a todo list rewritten deep in a turn that writes no prose.
     it.effect("the last signal moves with the thread's activity", () =>
       Effect.gen(function* () {
@@ -675,7 +666,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
       }),
     );
 
-    // T3O-18: a turn exists from the moment it is asked for, and is pending
+    // A turn exists from the moment it is asked for, and is pending
     // until it runs. Without this, the previous turn's completion parks a step
     // whose human has already sent the next message.
     it.effect("a requested turn is pending until it runs, and not once it is gone", () =>

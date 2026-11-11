@@ -1,18 +1,7 @@
 /**
- * T3o mode tabs in the thread sidebar's header (T3O-34, D7/D8/D9).
- *
- * The tabs have one appearance and two homes. Their first home is the
- * workspace top bar, beside the breadcrumb. Their second is right here, next
- * to the wordmark, which is where they read best — but only when this header
- * actually has room for them, because the alternative is two pieces of chrome
- * overlapping in the app's most visible row.
- *
- * Room is measured, never calculated: the sidebar is user-dragged, and what is
- * left over also depends on the toggle inset, the macOS traffic-light inset,
- * fullscreen, and whether the environment-identification pill is on. The
- * wrapper below is `flex-1 min-w-0`, so its width is the leftover space and
- * does **not** depend on whether the tabs are inside it — no feedback loop, so
- * no flapping mid-drag.
+ * Hosts the mode tabs in the thread sidebar header when it has room. Room is
+ * measured, never calculated; the `flex-1 min-w-0` wrapper's width does not
+ * depend on whether the tabs are inside it, so hosting cannot flap mid-drag.
  */
 import { observeResize } from "../lib/observeResize";
 import { useLayoutEffect, useRef, useState } from "react";
@@ -34,6 +23,7 @@ export function BoardModeTabsSidebarSlot() {
   // Layout phase for the same reason as the write below: seeding the width
   // after paint would show one frame of the tabs in the top bar on every mount
   // of a sidebar wide enough to hold them.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the header wrapper's width to decide whether the tabs fit
   useLayoutEffect(() => {
     const wrapper = wrapperRef.current;
     if (wrapper === null) return;
@@ -57,6 +47,7 @@ export function BoardModeTabsSidebarSlot() {
   // render, while the top bar's copy waits on this store write. A passive
   // effect would land after paint, so crossing the width threshold would show
   // one frame with the tabs doubled (going wider) or missing (going narrower).
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the store's sidebar-hosts-tabs flag while this slot is mounted and hands it back on unmount
   useLayoutEffect(() => {
     setSidebarHostsModeTabs(hosting);
     // On unmount the sidebar is gone (settings, the board, a route without

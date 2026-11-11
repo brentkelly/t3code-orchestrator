@@ -1,19 +1,7 @@
-// T3o: seed the label catalogue and convert each existing card's type to a
-// one-element label set (t3o-06a). The migration in disguise — the closed
-// `feature | bug | chore` type becomes exactly one seed label per card, so no
-// card loses information.
-//
-// The seed values (ids, colours, staggered genesis timestamps) are FROZEN and
-// MUST match `BOARD_SEED_LABELS` in packages/contracts/src/board.ts — they are
-// compiled into `EMPTY_BOARD_STATE`, so a from-empty event replay and this
-// table rehydration must start from an identical catalogue (a migration writes
-// tables but emits no event). They are hardcoded here, not imported, because a
-// migration is a frozen historical artifact: an already-applied migration must
-// never change behaviour. `label-<type>` is exactly the id the projector's
-// `legacyBoardCardTypeLabelId` maps a legacy `cardType` to on replay.
-//
-// Never edited after it has been applied — additive only, guarded and
-// idempotent (INSERT OR IGNORE).
+// Converts each card's legacy type to one seed label. The seed values are FROZEN
+// and MUST match `BOARD_SEED_LABELS` in contracts board.ts (a from-empty replay
+// starts from that catalogue); hardcoded, not imported, so this never changes.
+// `label-<type>` is the id `legacyBoardCardTypeLabelId` maps a legacy type to.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

@@ -1,10 +1,6 @@
 /**
- * t3o-14 — the card thread `+` menu's restart gate (D1).
- *
- * The load-bearing safety property: the menu must never offer a restart that
- * would put a second thread on a step the supervisor already owns. That reduces
- * to two pure decisions — is a run in flight, and does the current stage even
- * auto-execute — pinned here so the connected component stays a thin adapter.
+ * The `+` menu's restart gate: never offer a restart that would put a second
+ * thread on a step the supervisor owns.
  */
 import type { BoardCardShell, BoardCardThreadState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -86,9 +82,8 @@ describe("resolveBoardThreadStageRestart", () => {
     ).toEqual({ label: "Planning", disabledReason: BOARD_STAGE_RESTART_IN_FLIGHT_REASON });
   });
 
-  // t3o-30, D3. The merge stage runs nothing on entry but still spawns a
-  // conflict-resolution step; when that step died there was no way to clear it
-  // from the card at all.
+  // The merge stage runs nothing on entry but still spawns a
+  // conflict-resolution step, and a dead one must be clearable from the card.
   it("offers a restart on a stalled step even where the stage does not auto-execute", () => {
     expect(
       resolveBoardThreadStageRestart({
@@ -127,7 +122,7 @@ describe("resolveBoardThreadStageRestart", () => {
     ).toEqual({ label: "Building", disabledReason: BOARD_STAGE_RESTART_IN_FLIGHT_REASON });
   });
 
-  // T3O-13. The thread state is summed over every linked thread, so a human
+  // The thread state is summed over every linked thread, so a human
   // talking to an earlier phase's thread reads as "in flight" while the stalled
   // step has nothing running. The restart must stay enabled.
   it("keeps a stalled step's restart enabled while another linked thread is busy", () => {

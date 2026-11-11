@@ -1,13 +1,5 @@
-// T3o: the split gate's Planned flag and recommendation (T3O-31).
-//
-//   board_plans.planned — 1 when a split plan is a full implementation plan, 0
-//     when it is a brief that still needs planning. Every older row is 1,
-//     matching `BoardPlan.planned` reading absent as planned.
-//   board_cards.split_recommendation — JSON `{ autoBuild, mergeTarget }`, the
-//     agent's advice for the split it proposed. NULL for every older row and
-//     every card without a pending split; readers apply the fallback rules.
-//
-// Both additive and guarded, so re-running is a no-op.
+// Older plans read as planned (1); a NULL `split_recommendation` falls back to
+// the readers' rules. Additive and guarded.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 

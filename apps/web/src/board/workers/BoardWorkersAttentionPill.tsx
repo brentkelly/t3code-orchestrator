@@ -1,11 +1,7 @@
 /**
- * T3o (T3O-66, D22; prototype 6.3): the board header's worker indicator.
- *
- * Shows only while a worker is offline, revoked or incompatible — so a healthy
- * board's header, and every local-only one, is exactly as it was — and lists
- * each such worker with the cards it has paused. Amber
- * (`docs/t3o/status-colours.md`): the cards are held on something outside
- * themselves. Every string comes from `boardWorkersAttention`.
+ * The board header's worker indicator, shown only while a worker is offline,
+ * revoked or incompatible, listing the cards each has paused. Amber: the cards
+ * are held on something outside themselves.
  */
 import type { BoardCardShell, BoardWorkersState } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";

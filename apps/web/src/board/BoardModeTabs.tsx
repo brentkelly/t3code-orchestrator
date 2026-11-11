@@ -1,32 +1,18 @@
 /**
- * T3o Board/List/Threads segmented control (t3o-05, T3O-30), rendered before the
- * breadcrumb in the workspace top bar. The threads surface mounts it through
- * the one D1 shell-tab seam in `ChatView`; the board surface's top bar is
- * board-owned and mounts it directly.
- *
- * The mounting surface declares which mode its location belongs to; the
- * board UI store remembers each mode's last location so toggling returns to
- * where you were, not to that mode's root.
+ * The Board/List/Threads segmented control. The board UI store remembers each
+ * mode's last location so toggling returns to where you were.
  */
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { Columns3Icon, ListTreeIcon, MessageSquareIcon } from "lucide-react";
-import { useCallback, useEffect } from "react";
+import { useEffect } from "react";
 
 import { cn } from "../lib/utils";
 import { isModeTabDestination, useBoardUiStore, type WorkspaceMode } from "./boardUiStore";
 
 /**
- * Where a mode tab points: that mode's last-seen location, or its root when
- * there is none or when the stored location does not actually belong to it.
- *
- * Only honour a stored location that belongs to `mode`. A store poisoned with
- * a thread href under `board` would otherwise send a Board click to that
- * thread, and one poisoned with `/settings/...` under `threads` would send a
- * Threads click into settings. `isModeTabDestination` is the guard — it
- * rejects non-workspace routes like settings and tabless pages like the PR
- * list. The
- * store sanitises too, but this keeps navigation correct even before the
- * store re-hydrates.
+ * A mode's last-seen location, or its root. Only a stored location that belongs
+ * to `mode` is honoured (`isModeTabDestination`), so a poisoned or not-yet
+ * re-hydrated store cannot send a tab into a thread or settings.
  */
 function locationForMode(
   mode: WorkspaceMode,
@@ -38,13 +24,8 @@ function locationForMode(
 }
 
 /**
- * The `href` to put on a mode tab's anchor, so the tabs behave like the links
- * they are: middle-click and ctrl/cmd-click open the other mode in a new tab,
- * right-click offers copy-link, and the status bar shows where the tab goes.
- *
- * `history.createHref` is what makes that address real rather than decorative:
- * the desktop app runs on hash history, where the location above has to be
- * written `#/board` to mean anything to the browser.
+ * The tab anchor's `href`, so middle-click, copy-link and the status bar work.
+ * `history.createHref` makes it real under the desktop app's hash history.
  */
 export function modeTabHref(
   history: { readonly createHref: (href: string) => string },
@@ -65,15 +46,9 @@ interface ModeTabClick {
 }
 
 /**
- * A click on a mode tab: ours, or the browser's.
- *
- * A modified or non-primary click is the browser's, and is left strictly
- * alone — that is how open-in-new-tab (ctrl/cmd or middle), open-in-new-window
- * (shift) and download (alt) are expressed, and swallowing them is the whole
- * complaint that made these tabs anchors. Every other click is ours, so an
- * ordinary one switches mode through the router instead of reloading the app.
- *
- * Mirrors what TanStack's own `<Link>` does with a click.
+ * A modified or non-primary click is the browser's (new tab, window, download)
+ * and is left alone; any other click switches mode through the router, as
+ * TanStack's `<Link>` does.
  */
 export function handleModeTabClick(event: ModeTabClick, onSelect: () => void): void {
   if (event.button !== 0 || event.defaultPrevented) return;
@@ -83,15 +58,8 @@ export function handleModeTabClick(event: ModeTabClick, onSelect: () => void): v
 }
 
 /**
- * Switch the workspace to `target` mode, returning to that mode's last-seen
- * location.
- *
- * Navigate through `router.navigate`, never `router.history.push`: a raw
- * history push does not re-run route matching in this TanStack version, so the
- * tab click silently did nothing.
- *
- * Extracted from the component so it can be regression tested against a real
- * router without a DOM. See BoardModeTabs.test.ts.
+ * Navigates through `router.navigate`, never `router.history.push`: a raw push
+ * does not re-run route matching, so the click silently did nothing.
  */
 export function navigateToMode(
   router: { readonly navigate: (options: { readonly href: string }) => unknown },
@@ -110,7 +78,7 @@ export function BoardModeTabs({
 }: {
   readonly mode: WorkspaceMode;
   readonly className?: string;
-  /** Which of the control's two homes this mount is (T3O-34, D7). The top-bar
+  /** Which of the control's two homes this mount is. The top-bar
       copy stands down while the thread sidebar's header is holding the tabs;
       the sidebar copy is the one doing the holding. */
   readonly placement?: "topbar" | "sidebar";
@@ -121,18 +89,15 @@ export function BoardModeTabs({
   const lastLocationByMode = useBoardUiStore((state) => state.lastLocationByMode);
   const sidebarHostsModeTabs = useBoardUiStore((state) => state.sidebarHostsModeTabs);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the router's committed location per mode so switching back returns to it
   useEffect(() => {
     recordModeLocation(mode, locationHref);
   }, [locationHref, mode, recordModeLocation]);
 
-  const switchTo = useCallback(
-    (target: WorkspaceMode) => navigateToMode(router, mode, target, lastLocationByMode),
-    [lastLocationByMode, mode, router],
-  );
-  const hrefFor = useCallback(
-    (target: WorkspaceMode) => modeTabHref(router.history, target, lastLocationByMode),
-    [lastLocationByMode, router],
-  );
+  const switchTo = (target: WorkspaceMode) =>
+    navigateToMode(router, mode, target, lastLocationByMode);
+  const hrefFor = (target: WorkspaceMode) =>
+    modeTabHref(router.history, target, lastLocationByMode);
 
   // After the hooks, never before: the hidden copy must keep recording the
   // last threads location, or the moment the sidebar takes over there is
@@ -151,7 +116,7 @@ export function BoardModeTabs({
       )}
       role="group"
     >
-      {/* Board leads (T3O-34): the board is the app's primary mode, and the
+      {/* Board leads: the board is the app's primary mode, and the
           tab order is the clearest place to say so. */}
       <ModeTab
         active={mode === "board"}
@@ -161,7 +126,7 @@ export function BoardModeTabs({
       >
         <Columns3Icon />
       </ModeTab>
-      {/* T3o (T3O-30): the whole card tree as an outline. */}
+      {/* T3o: the whole card tree as an outline. */}
       <ModeTab
         active={mode === "list"}
         href={hrefFor("list")}

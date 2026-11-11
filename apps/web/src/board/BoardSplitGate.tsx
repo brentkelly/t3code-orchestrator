@@ -1,12 +1,7 @@
 /**
- * The split approval gate (T3O-31), docked at the end of the planning thread:
- * every proposed child with its dependencies, whether it arrives Planned or
- * Needs planning and where it lands, and the agent's recommended group
- * settings pre-set and editable. Approving creates the children and starts
- * nothing.
- *
- * The Planned / Needs planning badges are deliberately neutral: they describe
- * what a child carries, not a work state (`docs/t3o/status-colours.md`).
+ * The split approval gate at the end of the planning thread. Approving creates
+ * the children and starts nothing. Planned / Needs planning badges are neutral:
+ * they describe content, not a work state.
  */
 import type { BoardPlan, BoardSplitRecommendation } from "@t3tools/contracts";
 import { CircleAlertIcon, FileCheckIcon } from "lucide-react";

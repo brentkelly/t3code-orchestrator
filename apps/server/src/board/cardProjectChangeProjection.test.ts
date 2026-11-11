@@ -1,16 +1,8 @@
 /**
- * T3O-33 — `board.card.set-project` through the real seams: decider, event
- * store, SQL projection and the rehydrated read model.
- *
- * The assertion that matters here is the CARD-NUMBER FLOOR. The read model's
- * `nextCardNumberByProject` is not stored — it is rebuilt from the tables as
- * `MAX(card_number)` over `board_cards` UNION `board_card_number_floor`,
- * grouped by project. A card leaving a project takes its `card_number` row with
- * it, so if it held that project's highest number the counter REGRESSES and the
- * next card created there is handed a key that already exists elsewhere on the
- * board. Raising the old project's floor is what prevents it, and the bug is
- * invisible until the read model is rebuilt — which is exactly what
- * `getCommandReadModel` does on every call.
+ * `board.card.set-project` through the real seams. The read model's next card
+ * number is rebuilt from the tables, so a card leaving a project with its
+ * highest number would regress the counter unless the old project's floor is
+ * raised. Only a rehydrated read model shows it.
  */
 import {
   BoardCardId,
@@ -139,7 +131,7 @@ it.layer(makeTestLayer("t3o-board-project-1b-"))("a card carrying a base-branch 
       const readModel = yield* snapshotQuery.getCommandReadModel();
       const card = readModel.board?.cards.find((candidate) => candidate.id === highCardId);
       // `release/2.0` almost certainly does not exist in Beta's repository and
-      // would fail at `ensureLocalBaseBranch` hours later at provisioning (D5).
+      // would fail at `ensureLocalBaseBranch` hours later at provisioning.
       assert.strictEqual(card?.baseBranch, null);
     }),
   );
@@ -174,11 +166,8 @@ it.layer(makeTestLayer("t3o-board-project-2-"))("the old project's card-number f
 it.layer(makeTestLayer("t3o-board-project-2b-"))(
   "the next card created in the old project",
   (it) => {
-    // The failure the floor exists to prevent, spelled out. The counter is only
-    // ever wrong AFTER A RESTART — while the server is up the in-memory read
-    // model carries the number forward — so this decides the next create against
-    // the REHYDRATED read model, which is precisely what a restarted server
-    // decides against.
+    // The counter is only wrong after a restart, so the next create is decided
+    // against the rehydrated read model.
     it.effect("never re-issues the moved card's key", () =>
       Effect.gen(function* () {
         const engine = yield* seedBoard;

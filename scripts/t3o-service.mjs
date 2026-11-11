@@ -1,30 +1,9 @@
 #!/usr/bin/env node
 /**
- * Install the built t3o server as a systemd service.
- *
- *   pnpm run install-t3o-service              # build, sync, write the unit
- *   pnpm run install-t3o-service -- --takeover # ...and switch off t3code.service
- *   pnpm run uninstall-t3o-service            # ...and hand the port back
- *
- * `--takeover` records the unit it displaced, and uninstall re-enables it, so
- * the switch is reversible rather than a one-way door.
- *
- * Upstream's `t3 service install` is not usable here: it runs
- * `npm install t3@<version>` from the public registry (see
- * apps/server/src/cloud/pinnedRuntime.ts) and would install upstream's server
- * against this fork's data. This writes a unit pointing at our own build.
- *
- * The service never runs out of the worktree. `vp pack` cleans apps/server/dist
- * on every build, which would pull the tree out from under a live process, so
- * the build is rsynced to <home>/app and the unit executes from there. Rebuild,
- * re-run this, and only the changed chunks move.
- *
- * `dist` alone is not runnable: the bundle deliberately leaves the native
- * packages external, and outside the worktree there is no node_modules for Node
- * to resolve them from. So the app dir also gets a small manifest of exactly
- * those roots -- the same list the bundler is configured from -- and an npm
- * install that only re-runs when a version moves, plus a pass that re-applies
- * the repo's pnpm patches that npm knows nothing about.
+ * Install the built server as a systemd unit: `pnpm run install-t3o-service [-- --takeover]`,
+ * `pnpm run uninstall-t3o-service`. Upstream's `t3 service install` would fetch upstream's
+ * server from npm. The build is rsynced to <home>/app because `vp pack` cleans dist, and
+ * the native externals are npm-installed there with the repo's pnpm patches re-applied.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -166,16 +145,8 @@ function servicePath() {
 }
 
 /**
- * What `--takeover` displaced, so `uninstall` can put it back automatically.
- *
- * Only the name and the enablement state are recorded, because takeover
- * destroys nothing: it runs `systemctl disable --now`, which leaves the unit
- * file on disk and removes only the wants/ symlink. Backing up the unit file
- * would copy something that never went away, while the enablement bit -- the
- * one thing actually lost -- is not recoverable from the filesystem.
- *
- * It lives in the data directory rather than the app directory so that
- * `rm -rf <appDir>`, which uninstall itself suggests, cannot orphan the claim.
+ * Only the name and enablement are recorded: `disable --now` keeps the unit file, so
+ * enablement is the one thing lost. Kept in the data dir so `rm -rf <appDir>` cannot orphan it.
  */
 const statePath = NodePath.join(t3Home, ".t3o-service-takeover.json");
 
@@ -209,12 +180,8 @@ function buildUnit() {
     `ExecStart=${process.execPath} ${NodePath.join(appDir, "dist/bin.mjs")} serve --host ${values.host} --port ${values.port}`,
     "Restart=on-failure",
     "RestartSec=5",
-    // Board agents run builds as children of this unit, so its memory is
-    // theirs too. Cap the cgroup so a runaway build is OOM-killed in here
-    // instead of the kernel picking unrelated services machine-wide, and keep
-    // the unit up when that happens (the default OOMPolicy=stop takes the
-    // server down with the build). No OOMScoreAdjust: children inherit it, and
-    // -500 made every agent build outrank the rest of the box for survival.
+    // Agent builds run in this unit's cgroup: cap it so a runaway build is OOM-killed here,
+    // and keep the unit up when that happens. No OOMScoreAdjust: children would inherit it.
     "MemoryHigh=65%",
     "MemoryMax=80%",
     "OOMPolicy=continue",
@@ -225,14 +192,9 @@ function buildUnit() {
 }
 
 /**
- * Install the packages the bundle expects to load from disk beside it.
- *
- * The roots come from the same list that configures the bundler's `neverBundle`
- * (scripts/lib/cli-external-packages.ts), so this cannot drift from what was
- * actually left external. Versions are pinned to what the worktree resolved, so
- * the service runs the code the bundle was built against rather than whatever a
- * range happens to pick up later. npm is skipped entirely when nothing moved,
- * but the pnpm patches are re-applied either way (see syncPnpmPatches).
+ * Roots come from the bundler's `neverBundle` list, so this cannot drift from what was
+ * left external; versions are pinned to what the worktree resolved. npm is skipped when
+ * nothing moved, but pnpm patches are re-applied either way.
  */
 function syncRuntimeDependencies() {
   const declared = JSON.parse(
@@ -276,25 +238,9 @@ function syncRuntimeDependencies() {
 }
 
 /**
- * Re-apply the repo's pnpm patches to the app directory's npm install.
- *
- * npm knows nothing about pnpm's `patchedDependencies`, so installing these
- * packages from the registry yields the unpatched originals. That is not
- * cosmetic: the fff-node patch is what adds the `require` condition to its
- * `exports`, and the bundle reaches it through `createRequire`, so without the
- * patch the service exits at startup with ERR_PACKAGE_PATH_NOT_EXPORTED and
- * the port serves nothing.
- *
- * npm hoists, so every patched package -- a declared root or one of their
- * transitive dependencies -- sits at the top level of node_modules and a
- * single-level scan finds them all. It runs on every sync, including the path
- * where nothing was installed, because editing a patch moves no version and
- * would otherwise never reach the app directory.
- *
- * An already-patched package is skipped. One carrying an older version of its
- * patch (the patch was edited between commits) is reinstalled pristine and
- * patched again; only a patch that still will not apply stops the sync. See
- * scripts/lib/pnpm-patches.ts.
+ * npm ignores pnpm's `patchedDependencies`, and without the fff-node patch the service
+ * exits with ERR_PACKAGE_PATH_NOT_EXPORTED. Runs on every sync since a patch edit moves
+ * no version; a stale patch reinstalls the package pristine first. See scripts/lib/pnpm-patches.ts.
  */
 function syncPnpmPatches() {
   try {
@@ -374,19 +320,11 @@ if (command === "uninstall") {
   process.exit(0);
 }
 
-// ---------------------------------------------------------------------------
-// install / sync
-// ---------------------------------------------------------------------------
-
 const distDir = NodePath.join(repoRoot, "apps/server/dist");
 
 /**
- * Build (unless --no-build) and confirm the artefacts landed.
- *
- * Deliberately separate from publishing: the build only writes inside the
- * worktree, so a redeploy can keep serving right through it. Only the publish
- * step below needs the service down, which is the difference between a minute
- * of downtime per upgrade and a couple of seconds.
+ * Separate from publishing: the build writes only inside the worktree, so the service
+ * keeps serving through it and only the publish step needs it down.
  */
 function buildBundle() {
   if (!values["no-build"]) {
@@ -412,7 +350,7 @@ function publishBuild() {
 }
 
 /**
- * The git credential helper and gh shims over <home>/userdata/gitenv (T3O-58). The gitconfig
+ * The git credential helper and gh shims over <home>/userdata/gitenv. The gitconfig
  * is never edited: the lines to add are printed when they are missing.
  */
 // Runs while the service is stopped, so a failure here warns rather than leaving it down.

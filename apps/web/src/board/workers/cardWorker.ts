@@ -1,12 +1,7 @@
 /**
- * T3o (T3O-65, D20; prototype screens 3–6): every word the card's worker field,
- * its chip, the worker picker, the queue reasons and the move notices show, as
- * pure functions of the board's worker summary.
- *
- * Neither the field nor the chip exists on a board with one worker: a
- * local-only board renders exactly as it always has. The chip never takes a
- * status colour (`docs/t3o/status-colours.md`) — worker trouble goes in the
- * card's notice slot.
+ * The copy for a card's worker field, chip, picker, queue reasons and move
+ * notices. None show on a single-worker board. The chip never takes a status
+ * colour; worker trouble goes in the card's notice slot.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
@@ -69,7 +64,7 @@ export function boardCardWorkerChip(
   return {
     label: workerId === BOARD_LOCAL_WORKER_ID ? "local" : name,
     bound,
-    tooltip: bound ? `Runs on ${name}` : `Follows the default worker — ${name}`,
+    tooltip: bound ? `Runs on ${name}` : `Follows the default worker (${name})`,
   };
 }
 
@@ -212,14 +207,14 @@ export function boardWorkerChoices(input: {
   return [local, ...rows];
 }
 
-/** The closed Worker field: "Follow default — This server", or the pin. */
+/** The closed Worker field: "Follow default (This server)", or the pin. */
 export function boardWorkerFieldLabel(
   pinnedWorkerId: BoardWorkerId | null,
   state: BoardWorkersState,
 ): { readonly label: string; readonly pinned: boolean } {
   return pinnedWorkerId === null
     ? {
-        label: `Follow default — ${boardWorkerLabel(state.defaultWorkerId, state)}`,
+        label: `Follow default (${boardWorkerLabel(state.defaultWorkerId, state)})`,
         pinned: false,
       }
     : { label: boardWorkerLabel(pinnedWorkerId, state), pinned: true };
@@ -249,7 +244,7 @@ export function boardWorkerCheckoutWarning(input: {
     : `${worker.label} has no checkout of ${input.projectName}. The card waits until it is set up there. Set up on worker or pick another.`;
 }
 
-// ── Queue reasons (D11, prototype notice copy) ─────────────────────────
+// ── Queue reasons (prototype notice copy) ─────────────────────────
 
 /** What a queued card is waiting on, ready for `boardQueueInfo`. */
 export type BoardQueueReason =
@@ -300,7 +295,7 @@ export function boardQueueReason(input: {
       return { kind: "board", running, limit: input.concurrency.globalMaxConcurrent };
     }
     case "worker-offline":
-      // The card's Worker offline notice says it (T3O-66).
+      // The card's Worker offline notice says it.
       return null;
     case "setup": {
       const setup = setupOf(input.state, workerId, input.card.projectId);
@@ -315,7 +310,7 @@ export function boardQueueReason(input: {
   }
 }
 
-// ── Worker trouble (T3O-66, D22; prototype 6) ──────────────────────────
+// ── Worker trouble (prototype 6) ──────────────────────────
 
 /** Whether the board can't run anything on a worker now. `connecting` is a
     first dial, over in seconds, and is not trouble; a redial of a worker
@@ -356,7 +351,7 @@ export function boardCardWorkerTrouble(
       workerLabel: worker,
       label: "Move this card",
       tooltip: `${worker} was removed from the board. Move this card to keep going.`,
-      panelTitle: "Worker removed — move this card",
+      panelTitle: "Worker removed: move this card",
       panelBody: `${worker} was removed from the board while this card had work there. Pick a new worker and the card continues from its pushed branch.`,
     };
   }
@@ -517,11 +512,9 @@ export function boardCardMoveNotice(
 }
 
 /**
- * Where a move the Move dialog started has got to, read off the card. Until the
- * server records this move's start the card still shows whatever was there
- * before — no move on a first move, the last failure on a Retry — so a move
- * counts as this one only once its `startedAt` differs from the one seen when
- * the human pressed Move, and done only once the card is placed on the target.
+ * Where a Move-dialog move has got to. A move counts as this one only once its
+ * `startedAt` differs from the one seen when Move was pressed, and done only once
+ * the card is placed on the target.
  */
 export type BoardMoveDialogStatus = "pending" | "moving" | "retired" | "done" | "failed";
 
@@ -583,14 +576,12 @@ export function boardThreadMoveDividers(input: {
   return dividers;
 }
 
-// ── Model pickers (D10) ────────────────────────────────────────────────
+// ── Model pickers ────────────────────────────────────────────────
 
 /**
- * Provider instances only workers have, shaped like this server's own so the
- * stage and card model pickers can offer them (T3O-65): a recipe names an
- * instance id, and the id resolves on whichever worker the card is placed on.
- * The central server's own list is unchanged and comes first; an id it already
- * has is never repeated.
+ * Provider instances only workers have, shaped like this server's own for the
+ * model pickers; an id resolves on whichever worker runs the card. This server's
+ * list comes first and its ids are never repeated.
  */
 export function boardWorkerOnlyProviders(
   state: BoardWorkersState,

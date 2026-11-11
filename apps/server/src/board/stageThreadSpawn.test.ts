@@ -1,20 +1,8 @@
 /**
- * How a supervised step gets its thread — the seam between the board and the
- * thread aggregate.
- *
- * The board once dispatched straight into the orchestration engine. A
- * `thread.turn.start` carrying `bootstrap.createThread` does NOT create a
- * thread there: that block is unpacked by the WebSocket dispatch path
- * (`dispatchBootstrapTurnStart` in ws.ts), so an engine dispatch is decided as
- * an ordinary turn start and rejected — "thread does not exist". The board
- * shipped exactly that, and every auto-executing stage silently admitted a step
- * as `running` against a thread that was never created: no thread appeared on
- * the card, and the phantom live step then made the "+ → restart" menu a no-op
- * (one step at a time). The board now spawns through the thread gateway
- * (T3O-58), whose `spawn` is create-then-first-turn in one call; the fake
- * gateway refuses a turn sent to a thread that was never created. These tests
- * pin both halves — the spawn creates its own thread, and a spawn that fails
- * leaves the card recoverable.
+ * How a supervised step gets its thread. An engine `thread.turn.start` with
+ * `bootstrap.createThread` does NOT create a thread (only ws.ts unpacks it), so the board
+ * spawns through the gateway; the fake gateway refuses a turn to a thread never created.
+ * Pinned: the spawn creates its own thread, and a failed spawn leaves the card recoverable.
  */
 import {
   BoardCardId,
@@ -94,11 +82,8 @@ it.effect("a card dropped into an auto-executing stage gets a thread of its own"
           ),
           "the first turn is never sent separately from the create",
         );
-        // The link is what puts the thread on the card in the UI, and it is
-        // asserted through the read model rather than the dispatch log: a
-        // link-thread the decider REJECTED still appears in `commands` (the
-        // reactor's dispatch helper swallows the rejection), which is the exact
-        // failure this file exists to catch.
+        // Asserted through the read model, not the dispatch log: a link-thread the decider
+        // rejected still appears in `commands` because the dispatch helper swallows rejections.
         const linked = (yield* board).cards.find((entry) => entry.id === cardId);
         assert.isDefined(
           linked?.threadLinks.find(
@@ -171,7 +156,7 @@ it.effect("a build-mode spawn failure gives the slot back, so the next card stil
   ),
 );
 
-// T3O-24: the gh pin used to run only while provisioning a worktree, so a card
+// The gh pin used to run only while provisioning a worktree, so a card
 // whose worktree was already ready never got it. Every build-mode spawn pins.
 it.effect("a build spawn into an already-ready worktree pins gh's default repository", () =>
   withGovernor(
@@ -192,14 +177,8 @@ it.effect("a build spawn into an already-ready worktree pins gh's default reposi
   ),
 );
 
-// ── Moving a card that still carries a leftover step ────────────────────────
-// The reported regression: a card is moved into Planning and lands with NO
-// thread. A card holds ONE step-state row, so a run that stalled (or was still
-// in flight) in the stage the card just left is read by the auto-kickoff guard
-// as "a live step for the current stage" and blocks the destination's run. The
-// card sits threadless and nothing appears in the thread view. Both cards the
-// user hit were in this state — a stalled planning step, and a stuck-running
-// sprint step whose provider had failed to spawn.
+// A card holds ONE step-state row, so a stalled or in-flight run in the stage it just
+// left must not read as a live step for the new stage and block its kickoff.
 
 /** A leftover step-state row for `card-1`, non-terminal so it blocks kickoff,
     seeded `stalled` so boot reconcile leaves it untouched (resume-watch). */
@@ -332,14 +311,8 @@ it.effect("re-entering a stage with a stalled step of its own still restarts it"
   ),
 );
 
-// A completion for a step whose stage the card has since LEFT must not spawn a
-// thread on the card's new (manual) stage. This is the second defect behind the
-// "codex thread on Sprint" report: the card was dragged Planning→Sprint while a
-// planning run was still live (the leftover-step bug above); when that run
-// finally finished, `continueStage` keyed off the card's CURRENT stage (Sprint,
-// which does not auto-execute) and spawned a fresh step there on the app's
-// fallback provider. `continueStage` now refuses a stage that does not
-// auto-execute.
+// A completion for a step whose stage the card has since LEFT must not spawn a thread on
+// its new stage: `continueStage` refuses a stage that does not auto-execute.
 const planningCompletedFor = (threadId: ThreadId, sequence: number): HarnessEvent =>
   ({
     type: "board.card-step-completed",
@@ -401,9 +374,9 @@ it.effect("a step completing after the card left its stage does not spawn on the
   ),
 );
 
-/** The signal the gateway raises when a requested turn never starts (t3o-30,
-    D2) — the CLI is missing, the session will not spawn. It is the ONLY signal
-    the board gets: no turn ran, so no turn completes. */
+/** The signal the gateway raises when a requested turn never starts: the CLI is
+    missing, the session will not spawn. It is the ONLY signal the board gets: no
+    turn ran, so no turn completes. */
 const turnStartFailed = (threadId: ThreadId, detail: string, _sequence?: number): ThreadSignal => ({
   type: "turn-start-failed",
   threadId,

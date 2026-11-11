@@ -1,9 +1,6 @@
 /**
- * The card face's CI rows (T3O-44/57): one segment per step and, once a step
- * failed, one for the fix; the phase chip, the passed count and the step in
- * flight — or, once the card has left CI other than by passing, the line
- * saying so. Nothing here animates; the elapsed
- * minutes repaint on the shared minute tick.
+ * The card face's CI rows. Nothing animates; elapsed minutes repaint on the shared
+ * minute tick.
  */
 import type { BoardCardCi, BoardCardCiLastOutcome } from "@t3tools/contracts";
 import { ChevronsRightIcon, Undo2Icon } from "lucide-react";
@@ -45,7 +42,7 @@ export const BOARD_CI_CHIP_CLASS: Record<BoardCiChipTone, string> = {
   success: "bg-success/15 text-success-foreground",
   neutral: "bg-muted text-muted-foreground",
   warning: "bg-warning/12 text-warning-foreground",
-  // Violet: waiting on a human (T3O-49's "Stopped for you").
+  // Violet: waiting on a human ("Stopped for you").
   attention: "bg-attention/13 text-attention-foreground",
 };
 
@@ -70,6 +67,7 @@ function BoardCardCiProgress({ ci }: { readonly ci: BoardCardCi }) {
         <div className="flex gap-[3px]">
           {face.segments.map((segment, index) => (
             <span
+              // oxlint-disable-next-line react/no-array-index-key -- a segment is its step's position in the pipeline; step names can repeat
               key={`${index}:${segment.name}`}
               aria-label={segment.tooltip}
               className={cn("h-[5px] flex-1 rounded-[2px]", SEGMENT_CLASS[segment.state])}

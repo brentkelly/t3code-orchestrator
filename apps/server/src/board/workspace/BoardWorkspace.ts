@@ -1,21 +1,8 @@
 /**
- * T3o (T3O-64, D21): where a card's git and forge work runs.
- *
- * A `BoardWorkspace` is one worker's set of NAMED operations — the
- * `boardWorker.git.*` vocabulary in `@t3tools/contracts` — each taking that
- * worker's project id and typed arguments, never raw git. `LocalBoardWorkspace`
- * runs them on this server; `RemoteBoardWorkspace` sends them to a worker,
- * which runs the very same local implementation.
- *
- * The supervisor never picks one itself. `BoardWorkspaces.forCard` answers
- * where a card runs, bound to the card's checkout there, so every call site
- * reads the same: `(yield* workspaceFor(card)).measureBaseTip(...)`. Where a
- * card runs is its placement (T3O-65); on a local-only board, this server.
- *
- * Failures are two kinds and callers must keep them apart: `BoardWorkerGitError`
- * is the operation failing, `WorkerUnavailable` is the worker being out of
- * reach — not a git failure, never counted as an attempt, retried on the next
- * pass.
+ * Where a card's git and forge work runs: a worker's named operations, never raw
+ * git. Callers must keep the two failures apart: `BoardWorkerGitError` is the
+ * operation failing; `WorkerUnavailable` is the worker out of reach, never
+ * counted as an attempt and retried on the next pass.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
@@ -72,11 +59,9 @@ export interface BoardWorkspaceReclaimInput {
 export interface BoardWorkspace extends BoardWorkspaceOperations<BoardWorkspaceFailure> {
   readonly workerId: BoardWorkerId;
   /**
-   * Remove a card's worktree when it is gone already, or clean and durable
-   * (T3O-52), asking `stillWanted` again before anything is removed. Not a
-   * named operation of its own: `stillWanted` is a question for the board,
-   * so on a remote worker it is composed from `goneWorktreePath`,
-   * `probeWorktreeDurability` and `retireWorktree`.
+   * Remove a gone or clean, durable worktree, asking `stillWanted` again before
+   * removing. Not a named operation: on a remote worker it is composed from
+   * `goneWorktreePath`, `probeWorktreeDurability` and `retireWorktree`.
    */
   readonly reclaimWorktree: (
     input: BoardWorkspaceReclaimInput,
@@ -106,12 +91,9 @@ type Bound<Op extends BoardWorkerGitOperation> = (
 >;
 
 /**
- * One card's workspace: a worker, bound to the card's project checkout there.
- *
- * The forge operations fail with `BoardWorkerGitError` alone. An unreachable
- * worker reads as the pull-request gateway's `unavailable` refusal — "the
- * attempt could not be made right now, a retry may well work" — which is
- * exactly what every forge caller already does with it.
+ * One card's workspace, bound to its project checkout. An unreachable worker
+ * reads as the forge's `unavailable` refusal, which every forge caller already
+ * retries.
  */
 export type BoardCardWorkspace = {
   readonly [Op in BoardWorkerGitOperation]: Bound<Op>;
@@ -162,16 +144,16 @@ export function bindBoardWorkspace(input: {
 
 /**
  * A reclaim composed from the named operations, for a worker that cannot be
- * handed `stillWanted` (T3O-52's rule, unchanged): a checkout whose folder is
+ * handed `stillWanted`: a checkout whose folder is
  * gone only loses its registration; anything else is probed, judged, and
  * retired only while the board still wants it gone.
  */
-export const reclaimThroughOperations = (
-  workspace: BoardWorkspaceOperations<BoardWorkspaceFailure> & { readonly workerId: string },
-  input: BoardWorkspaceReclaimInput,
-  stillWanted?: Effect.Effect<boolean>,
-) =>
-  Effect.gen(function* () {
+export const reclaimThroughOperations = Effect.fn("BoardWorkspace.reclaimThroughOperations")(
+  function* (
+    workspace: BoardWorkspaceOperations<BoardWorkspaceFailure> & { readonly workerId: string },
+    input: BoardWorkspaceReclaimInput,
+    stillWanted?: Effect.Effect<boolean>,
+  ) {
     const wanted = stillWanted ?? Effect.succeed(true);
     const gone = yield* workspace.goneWorktreePath({
       projectId: input.projectId,
@@ -220,9 +202,10 @@ export const reclaimThroughOperations = (
       reason: null,
       ...(retired.hookWarning === null ? {} : { hookWarning: retired.hookWarning }),
     } satisfies BoardCardWorktreeReclaimResult;
-  });
+  },
+);
 
-/** Where a card runs, when it is not here. Supplied by placement (T3O-65);
+/** Where a card runs, when it is not here. Supplied by placement;
     tests supply their own. */
 export interface BoardWorkspacePlacement {
   readonly workerId: Exclude<BoardWorkerId, typeof BOARD_LOCAL_WORKER_ID>;
@@ -238,15 +221,10 @@ export interface BoardWorkspacesShape {
       orphan sweep lists only those (`BoardWorktreeOwner`). */
   readonly forCentral: BoardWorkspace;
   /**
-   * Whether `path` is one of `projectId`'s worktrees on this server: under its
-   * worktrees directory, or registered with the checkout's git (never the
-   * checkout itself). The worker checks every path a central server names.
-   *
-   * With `owner`, a checkout still on disk must also be that board's
-   * (`BoardWorktreeOwner`): the worker asks it before anything that changes or
-   * removes a checkout, so a central server can never touch the worker's own
-   * board's checkouts or a user's thread worktree. A checkout already gone
-   * has no owner to read and is still allowed, for a retry to finish.
+   * Whether `path` is one of `projectId`'s worktrees on this server (never the
+   * checkout itself). With `owner`, a checkout still on disk must be that board's,
+   * so a central server never touches this server's own board's or a user's
+   * worktrees; one already gone is allowed, for a retry to finish.
    */
   readonly ownsWorktreePath: (
     projectId: ProjectId,
@@ -254,11 +232,9 @@ export interface BoardWorkspacesShape {
     owner?: BoardWorktreeOwner,
   ) => Effect.Effect<boolean>;
   /**
-   * Whether a central server may delete `branch`, local and remote, from
-   * `projectId`'s checkout on this server: not a branch on this server's own
-   * board's cards, and not checked out in a worktree the central board did
-   * not make (this board's, or a user's thread's). The worker asks it before
-   * `deleteCardBranch`, which names no path for `ownsWorktreePath` to check.
+   * Whether a central server may delete `branch` here: not on this server's own
+   * board's cards, and not checked out in a worktree the central board didn't
+   * make. `deleteCardBranch` names no path for `ownsWorktreePath` to check.
    */
   readonly centralMayDeleteBranch: (projectId: ProjectId, branch: string) => Effect.Effect<boolean>;
   /**
@@ -275,7 +251,7 @@ export interface BoardWorkspacesShape {
   /** A project's workspace on this server — for work that has no card yet. */
   readonly localProject: (projectId: ProjectId) => Effect.Effect<BoardCardWorkspace>;
   /** A board project's workspace on a given worker, bound to that worker's
-      checkout of it — where a card is about to move (T3O-65). */
+      checkout of it — where a card is about to move. */
   readonly forWorker: (
     workerId: BoardWorkerId,
     projectId: ProjectId,

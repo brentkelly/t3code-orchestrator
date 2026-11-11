@@ -1,18 +1,7 @@
 /**
- * T3o board subscription state (t3o-26 D4, T3O-57).
- *
- * The board has its own log and sequence, so it rides its own stream,
- * `board.subscribeBoard`, rather than the orchestration shell. One subscription
- * per environment, held for as long as the environment's board atoms are
- * mounted; `applyBoardShellStreamItem` (boardReducer.ts) is its reducer.
- *
- * Every (re)subscription sends the cursor of the snapshot already held, so a
- * reconnect replays only the board events it missed — or, past the server's
- * gap bound or with a cursor ahead of the server's log, receives a fresh
- * snapshot. A replaced board whose log has already reached the cursor is not
- * detected: the cursor carries no log identity. Nothing is persisted: the
- * board waits for its first snapshot on a cold start rather than painting a
- * cached board it cannot vouch for.
+ * Each (re)subscription sends the held snapshot's cursor, so a reconnect replays only missed
+ * events or gets a fresh snapshot. The cursor carries no log identity, so a replaced board
+ * that already reached it goes undetected. Nothing is persisted across cold starts.
  */
 import {
   BOARD_WS_METHODS,

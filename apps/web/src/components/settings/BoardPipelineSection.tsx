@@ -1,21 +1,7 @@
 /**
- * Settings → Board → Pipeline (board settings redesign, after
- * `.plans/prototype/T3 Settings.dc.html`): a single bordered accordion of
- * stages — drag-handle reorder, inline rename, role key chips, collapsed-state
- * summary chips — where exactly one stage is expanded at a time.
- *
- * The per-stage body exposes only what the stage's effective role leaves
- * configurable: Planning (role `plan`) is forced read-only + human-in-the-loop
- * and Building (role `build`) forced build-mode at RESOLUTION
- * (`resolveBoardStageExecution`), so neither renders a mode or pause control
- * that could disagree with the runtime. The retired "pause when a plan
- * exists" toggle is gone with it. Roleless stages keep the capability behind
- * a clearer control — "Agent can edit the card's worktree" writes `mode`.
- *
- * Each prompt renders between its system Preamble / Postamble — composed by
- * the SAME contracts functions the server runs (`boardEnvelope.ts`), with
- * `{{card-key}}` placeholders where a run interpolates card identity — so
- * what the user reads here is exactly what wraps their prompt at run time.
+ * Settings > Board > Pipeline: one accordion of stages. A stage body shows only
+ * what its effective role leaves configurable, and each prompt renders inside
+ * the same envelope the server composes at run time.
  */
 import {
   BOARD_REVIEW_PHASE_IDS,
@@ -99,7 +85,7 @@ import {
   RotateCcwIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { boardEnvironment } from "../../state/board";
 import { environmentShell } from "../../state/shell";
@@ -186,24 +172,10 @@ function ToggleRow(props: {
   );
 }
 
-/** The prototype's −/value/+ number control, shared by rounds, timeouts,
-    attempts and the concurrency rows.
-
-    The field is a plain `<input>`, not the shared `Input`: that component puts
-    the class list on a bordered wrapper span and keeps the real element out of
-    reach, so neither the stepper's own chrome nor the `appearance` reset that
-    hides the browser's native spin buttons (redundant beside −/+, and they
-    crowd the value) could be applied to it. The value is controlled with a
-    free-text draft so typing is never fought, and the draft is dropped the
-    moment −/+ writes a new value — an uncontrolled field would keep showing
-    what the user last typed.
-
-    A `nullable` stepper also carries an unset state — per-instance concurrency
-    means "no override", not zero — shown as `placeholder` and reached by
-    clearing the field. −/+ never lands back on it: from unset they step off
-    `stepFrom`, the value the unset state actually resolves to (the global
-    limit), so the first nudge continues from what the user sees rather than
-    from the minimum. */
+/** The -/value/+ number control. A plain `<input>` because the shared `Input`
+    keeps the real element out of reach of the spin-button reset. A `nullable`
+    stepper's unset state is cleared-field only; -/+ step off `stepFrom`, the
+    value unset resolves to. */
 type NumberStepperCommon = {
   min: number;
   max: number;
@@ -300,11 +272,8 @@ function NumberRow(props: { label: string; hint?: string; stepper: ReactNode }) 
   );
 }
 
-/** One side of the system envelope, rendered inline above or below the
-    editable body: the text the server composes around the prompt, tagged
-    "System" so it reads as chrome rather than something the user can type in.
-    Empty envelopes (a phase with no postamble, say) render nothing at all
-    rather than an empty grey band. */
+/** One side of the system envelope around the editable body. An empty side
+    renders nothing. */
 function SystemEnvelope(props: { text: string; edge: "top" | "bottom"; label: string }) {
   if (props.text.trim().length === 0) return null;
   return (
@@ -328,22 +297,9 @@ function SystemEnvelope(props: { text: string; edge: "top" | "bottom"; label: st
 }
 
 /**
- * The prompt row, laid out as the single document a run actually sends:
- * system preamble, the editable body, system postamble — one bordered card,
- * read top to bottom, so the envelope is visible in place instead of hidden
- * behind a disclosure the user has to open to see what wraps their words.
- *
- * The body is the only editable band: clicking it (or Edit) swaps in a
- * textarea. While editing, the text is a local `draft` committed to the store
- * on blur — the same commit-on-blur pattern the number steppers use — so
- * typing never writes settings per keystroke and Reset can rewrite the field
- * in place without a remount race. The whole document clamps to a few hundred
- * pixels with a fade + "See more" so a long envelope cannot push the rest of
- * the stage off screen.
- *
- * When `defaultValue` is given, a prompt that differs from it is "Modified":
- * the badge shows while reading, and while editing it becomes a Reset control
- * (confirmed by a modal, since a reset discards the user's prompt text).
+ * The prompt as the single document a run sends: preamble, editable body,
+ * postamble. Edits are a local draft committed on blur, so settings are never
+ * written per keystroke and Reset can rewrite the field without a remount race.
  */
 function PromptRow(props: {
   id: string;
@@ -367,14 +323,11 @@ function PromptRow(props: {
     confirmResetOpenRef.current = open;
     setConfirmReset(open);
   };
-  // Clipping is MEASURED, not guessed from character count: a short prompt
-  // with many lines overflows the clamp just as a long single-line one does,
-  // and a silent cut with no fade or "See more" would hide content. The
-  // measurement is on the document, not the body, because the envelope shares
-  // the same clamp.
+  // Clipping is measured, not guessed from length: many short lines overflow too.
   const documentRef = useRef<HTMLDivElement | null>(null);
   const [clipped, setClipped] = useState(false);
   const clamped = !editing && !expanded;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the clamped prompt element before paint to show the fade and "See more".
   useLayoutEffect(() => {
     const element = documentRef.current;
     if (element === null || !clamped) {
@@ -382,7 +335,13 @@ function PromptRow(props: {
       return;
     }
     setClipped(element.scrollHeight > element.clientHeight + 1);
-  }, [props.value, props.preamble, props.postamble, clamped]);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- New text in the prompt or its envelope must re-measure the clamp.
+    props.value,
+    props.preamble,
+    props.postamble,
+    clamped,
+  ]);
 
   // The live text: the draft while editing, the stored value otherwise, so
   // "Modified" tracks what is on screen — after a reset the draft equals the
@@ -495,9 +454,7 @@ function PromptRow(props: {
               {props.value.trim().length > 0 ? (
                 props.value
               ) : (
-                <span className="text-muted-foreground/70">
-                  No prompt yet — click to write one.
-                </span>
+                <span className="text-muted-foreground/70">No prompt yet. Click to write one.</span>
               )}
             </button>
           </BoardHint>
@@ -575,15 +532,8 @@ function PhaseHeader(props: { step?: number; label: string }) {
 
 // ── stage rows ─────────────────────────────────────────────────────────
 
-/**
- * A stage's name: plain text that becomes a field only once you click it.
- *
- * Rendering every name in a permanent text box drew a border and a drop shadow
- * around each one and reserved a fixed-width well, which shoved the role chip
- * far off the name it labels. Text sized to its content keeps the chip beside
- * the name, and the box appears exactly when it means something — you are
- * typing in it.
- */
+/** A stage's name: plain text that becomes a field only once clicked, so the
+    role chip stays beside the name. */
 function StageNameField(props: {
   label: string;
   editable: boolean;
@@ -659,7 +609,7 @@ function stageBoardState(stages: ReadonlyArray<BoardStageDefinition>): BoardStat
   return { cards: [], stages, nextCardNumberByProject: {} };
 }
 
-/** Client mirror of the decider's order rules (D3, T3O-49): an order that
+/** Client mirror of the decider's order rules: an order that
     breaks them is refused server-side, so don't offer it. */
 function orderKeepsSpine(stages: ReadonlyArray<BoardStageDefinition>): boolean {
   return boardStageOrderViolation(stages) === null;
@@ -675,7 +625,7 @@ export function BoardPipelineSection() {
   );
   const stages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
   const ordered = boardStagesInOrder(stageBoardState(stages));
-  // T3O-49: which projects use each stage, and which run CI.
+  // Which projects use each stage, and which run CI.
   const projectStageConfigs = useAtomValue(
     boardEnvironment.projectStageConfigsAtom(environmentId ?? ("" as EnvironmentId)),
   );
@@ -683,33 +633,22 @@ export function BoardPipelineSection() {
     environmentShell.stateValueAtom(environmentId ?? ("" as EnvironmentId)),
   );
   const shellProjects = Option.getOrNull(shellState.snapshot)?.projects;
-  const projects = useMemo(
-    () =>
-      (shellProjects ?? [])
-        .filter((project) => !isBoardProjectHidden(board, project.id))
-        .map((project) => ({ id: project.id, title: project.title })),
-    [board, shellProjects],
-  );
-  const stageView = useMemo(
-    () => ({ stages, projectStageConfigs, cards: [] }),
-    [projectStageConfigs, stages],
-  );
-  const ciProjects = useMemo(
-    () =>
-      projects.flatMap((project) => {
-        const config = projectStageConfigs?.[project.id];
-        if (config === undefined || config.ciSteps.length === 0) return [];
-        return [
-          {
-            id: project.id,
-            title: project.title,
-            steps: config.ciSteps.length,
-            active: config.stageSwitches[BOARD_SEED_STAGE_IDS.ci] === true,
-          },
-        ];
-      }),
-    [projectStageConfigs, projects],
-  );
+  const projects = (shellProjects ?? [])
+    .filter((project) => !isBoardProjectHidden(board, project.id))
+    .map((project) => ({ id: project.id, title: project.title }));
+  const stageView = { stages, projectStageConfigs, cards: [] };
+  const ciProjects = projects.flatMap((project) => {
+    const config = projectStageConfigs?.[project.id];
+    if (config === undefined || config.ciSteps.length === 0) return [];
+    return [
+      {
+        id: project.id,
+        title: project.title,
+        steps: config.ciSteps.length,
+        active: config.stageSwitches[BOARD_SEED_STAGE_IDS.ci] === true,
+      },
+    ];
+  });
   const canWrite = useEnvironmentScope(
     environmentId ?? ("" as EnvironmentId),
     AuthSettingsWriteScope,
@@ -726,17 +665,12 @@ export function BoardPipelineSection() {
   // ProviderModelPicker context (shared across every stage row).
   const settings = useBoardSettings();
   const ownProviders = useBoardServerProviders();
-  // T3O-65: and the instance ids only workers have — a recipe names an id, and
+  // And the instance ids only workers have — a recipe names an id, and
   // it resolves on the worker the card runs on.
   // The card view keeps the same object across a clone's progress ticks, which
   // this page streams and the provider lists don't depend on.
-  const workers = useBoardWorkersCardView(
-    useAtomValue(boardEnvironment.workersAtom(environmentId ?? ("" as EnvironmentId))),
-  );
-  const serverProviders = useMemo(
-    () => [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)],
-    [ownProviders, workers],
-  );
+  const workers = useBoardWorkersCardView(environmentId ?? ("" as EnvironmentId));
+  const serverProviders = [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)];
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
   );
@@ -749,7 +683,7 @@ export function BoardPipelineSection() {
     update({ board: { pipeline: setBoardStageExecution(board, stageId, patch) } });
   };
 
-  // The workspace default (t3o-30, D1) — what every stage below that names no
+  // The workspace default — what every stage below that names no
   // model of its own actually runs on.
   const defaultModel = board.defaultModel;
   const inheritedModelName =
@@ -800,7 +734,7 @@ export function BoardPipelineSection() {
     void setStageDefault({ environmentId, input: { stageId: stage.stageId, on } });
   };
 
-  // T3O-49: a new stage lands just before CI, never between CI and merge.
+  // A new stage lands just before CI, never between CI and merge.
   // "For one project" makes it off by default and on for that project.
   const onAddStage = (forProjectId: ProjectId | null) => {
     if (environmentId === null) return;
@@ -858,7 +792,7 @@ export function BoardPipelineSection() {
             });
           }}
           // The default carries no access level: a stage's own posture is a
-          // per-stage decision (t3o-21) and every stage already names one, so
+          // per-stage decision and every stage already names one, so
           // there is nothing here for a default to fill in.
           hideRuntimeMode
           runtimeMode="approval-required"
@@ -932,7 +866,7 @@ export function BoardPipelineSection() {
 }
 
 /**
- * A `ModelRow`'s inheritance props (t3o-30, D1). With a name to inherit the row
+ * A `ModelRow`'s inheritance props. With a name to inherit the row
  * shows it as the placeholder and is no longer required; with nothing to inherit
  * it keeps the required-field language it had before there was a default.
  */
@@ -949,9 +883,9 @@ function StageAccordionRow(props: {
   stage: BoardStageDefinition;
   index: number;
   exec: BoardStageExecution;
-  /** The projects with CI steps (T3O-49). */
+  /** The projects with CI steps. */
   ciProjects: ReadonlyArray<BoardCiProject>;
-  /** Which visible projects use the stage (T3O-49). */
+  /** Which visible projects use the stage. */
   coverage: BoardStageProjectCoverage;
   projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
   onSetDefault: (on: boolean) => void;
@@ -959,11 +893,8 @@ function StageAccordionRow(props: {
   crudEnabled: boolean;
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
-  /** The workspace default's display name (t3o-30, D1), or null when nothing is
-      set. A row with no model of its own inherits it, so the row names it
-      instead of reading "Select a model" — three different situations rendered
-      identically is what left a stage silently running on a codex pair nobody
-      picked. */
+  /** The workspace default's display name, or null. A row with no model of its
+      own names the one it inherits rather than reading "Select a model". */
   inheritedModelName: string | null;
   onToggle: () => void;
   onRename: (label: string) => void;
@@ -979,7 +910,7 @@ function StageAccordionRow(props: {
   const isReview = isBoardReviewStageExecution(exec);
   const isMerge = isBoardMergeStageExecution(exec);
   // CI is a seed stage with no role, but it is the board's own: it is never
-  // renamed, reordered or removed here (T3O-44).
+  // renamed, reordered or removed here.
   const isCi = isBoardCiStageExecution(exec);
   const fixed = isCi || stage.stageId === BOARD_SEED_STAGE_IDS.ci;
   const switchable = role === null && !fixed;
@@ -1174,7 +1105,7 @@ interface BoardCiProject {
   readonly active: boolean;
 }
 
-/** T3O-49: a stage's default for projects, and the projects it applies to.
+/** A stage's default for projects, and the projects it applies to.
     Each chip opens that project's Pipeline tab. */
 function StageProjectsRow(props: {
   stage: BoardStageDefinition;
@@ -1246,10 +1177,7 @@ function useBoardSettingsProjectTitles(): ReadonlyMap<string, string> {
     environmentShell.stateValueAtom(environmentId ?? ("" as EnvironmentId)),
   );
   const projects = Option.getOrNull(shellState.snapshot)?.projects;
-  return useMemo(
-    () => new Map((projects ?? []).map((project) => [String(project.id), project.title])),
-    [projects],
-  );
+  return new Map((projects ?? []).map((project) => [String(project.id), project.title]));
 }
 
 /** Removing a stage asks first; cards already in it stay as a retired column
@@ -1286,7 +1214,7 @@ function RemoveStageButton(props: { disabled: boolean; onDelete: () => void }) {
   );
 }
 
-/** T3O-49: a new stage for every project, or made for one (off for the rest). */
+/** A new stage for every project, or made for one (off for the rest). */
 function AddStageChooser(props: {
   projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
   onAdd: (forProjectId: ProjectId | null) => void;
@@ -1336,7 +1264,7 @@ function AddStageChooser(props: {
 }
 
 /**
- * The Continuous integration stage's body (T3O-44). The board runs the steps
+ * The Continuous integration stage's body. The board runs the steps
  * itself; what is configured here is the fix agent that runs when one fails.
  * The steps belong to each project's t3o.json, so they are listed, not edited.
  */
@@ -1456,14 +1384,8 @@ function CiStageBody(props: {
 }
 
 /**
- * The merge-role stage's body.
- *
- * Deliberately short, and deliberately WITHOUT an "Auto execute" row: nothing
- * in this stage RUNS on entry. The only agent this stage ever starts is the
- * conflict-resolution step — started by a merge that was refused for
- * conflicts, never by a card arriving here. Auto-merge below is a forge
- * operation, not an agent run, which is why it gets its own row rather than
- * folding into the auto-execute one every other stage has.
+ * The merge-role stage's body. No "Auto execute" row: nothing runs on entry.
+ * Auto-merge is a forge operation, not an agent run.
  */
 function MergeStageBody(props: {
   stage: BoardStageDefinition;
@@ -1500,7 +1422,7 @@ function MergeStageBody(props: {
       </div>
       <ToggleRow
         label="Auto-merge when ready"
-        hint="Merges every card that arrives here as soon as the forge accepts it, retrying a check that is still running. Cards already waiting here keep their Merge button — this is the policy for what arrives next. Leaving it off is what means “ask me before merging”; individual cards can still be armed from their own menu."
+        hint="Merges every card that arrives here as soon as the forge accepts it, retrying a check that is still running. Cards already waiting here keep their Merge button; this is the policy for what arrives next. Leaving it off is what means “ask me before merging”; individual cards can still be armed from their own menu."
         checked={exec.autoMerge}
         ariaLabel="Auto-merge when ready"
         onChange={(checked) => set({ autoMerge: checked })}
@@ -1521,7 +1443,7 @@ function MergeStageBody(props: {
           card: { key: PREVIEW_CARD_KEY, title: PREVIEW_CARD_TITLE, stage: stage.stageId },
           stageLabel: stage.label,
           // One step in this stage, so the run carries no step identity
-          // (t3o-19, D4) and the preview shows no `Step:` line.
+          // and the preview shows no `Step:` line.
           step: { stepLabel: null },
         })}
         postamble={boardStepPostamble({
@@ -1562,11 +1484,7 @@ function MergeStageBody(props: {
   );
 }
 
-/** Every non-review stage body. The rows a stage exposes follow its effective
-    role: `plan` is forced read-only + human-in-the-loop (no mode / pause /
-    ceiling rows), `build` runs the worktree unattended-with-plan (no worktree
-    or generic pause rows), and a roleless stage keeps the full set behind the
-    clearer worktree-access toggle. */
+/** Every non-review stage body; its rows follow the stage's effective role. */
 function SimpleStageBody(props: {
   stage: BoardStageDefinition;
   role: BoardStageRole | null;
@@ -1611,7 +1529,7 @@ function SimpleStageBody(props: {
               card: { key: PREVIEW_CARD_KEY, title: PREVIEW_CARD_TITLE, stage: stage.stageId },
               stageLabel: stage.label,
               // This stage runs one step, so the run carries no step identity
-              // (t3o-19, D4) and the preview shows no `Step:` line — exactly
+              // and the preview shows no `Step:` line — exactly
               // what the agent will see.
               step: { stepLabel: null },
             })}
@@ -1673,12 +1591,9 @@ function SimpleStageBody(props: {
                 ariaLabel="Human in the loop when no plan exists"
                 onChange={(checked) => set({ humanInLoopWithoutPlan: checked })}
               />
-              {/* The other half of the D6 pair. Previously only the no-plan
-                  default was offered, which left the with-plan one reachable
-                  solely by hand-editing settings.json — and it is the setting a
-                  sub-board child reads, since a child always counts as planned
-                  (`boardBuildHumanInLoopDefault`). Without this row there is no
-                  way in the UI to make a split's children pause. */}
+              {/* The with-plan default is the one a sub-board child reads (a child always
+                  counts as planned), so this row is the only UI way to make a split's
+                  children pause. */}
               <ToggleRow
                 label="Pause for a human when a plan exists"
                 hint="Also governs sub-board children: a child's approved plan became its brief, so it counts as planned."
@@ -1706,7 +1621,7 @@ function SimpleStageBody(props: {
               />
               <NumberRow
                 label="Stall timeout"
-                hint="Time with no sign of life — no todo-list progress, no new commit — before the supervisor nudges the step. Not a cap on total run time: a build that keeps working never trips it."
+                hint="Time with no sign of life (no todo-list progress, no new commit) before the supervisor nudges the step. Not a cap on total run time: a build that keeps working never trips it."
                 stepper={
                   <NumberStepper
                     value={msToMinutes(exec.timeoutMs)}
@@ -1755,7 +1670,7 @@ function SimpleStageBody(props: {
 }
 
 /**
- * Plan review defaults (T3O-39), on the plan-role stage. The default prompt is
+ * Plan review defaults, on the plan-role stage. The default prompt is
  * never written into settings: Reset and an untouched prompt both store null.
  */
 function PlanReviewSettingsBlock(props: {
@@ -1814,14 +1729,9 @@ function PlanReviewSettingsBlock(props: {
 }
 
 /**
- * "Submit for merge — no review" (t3o-07) — the Build stage's second exit,
- * configured like a review phase because it is the same kind of thing: one
- * short agent run with its own prompt, model, access level and limits.
- *
- * Outside the `Auto execute` conditional above, deliberately. Auto-execute
- * governs whether a card arriving at this stage starts BUILDING on its own;
- * submitting is a human clicking a button on a card that has already built, and
- * it stays available on a stage the user drives entirely by hand.
+ * "Submit for merge (no review)": the Build stage's second exit, configured like
+ * a review phase. Outside the `Auto execute` conditional because submitting is a
+ * human click, available on a stage driven entirely by hand.
  */
 function SubmitStepBlock(props: {
   stage: BoardStageDefinition;
@@ -1838,10 +1748,10 @@ function SubmitStepBlock(props: {
   const { stage, submit } = props;
   return (
     <>
-      <PhaseHeader label="Submit for merge — no review" />
+      <PhaseHeader label="Submit for merge (no review)" />
       <p className="mb-1 max-w-[62ch] text-[12.5px] leading-[1.55] text-muted-foreground">
         The caret beside a finished card&apos;s forward button. One unattended run pushes the branch
-        and opens its pull request, writing the title and body from the work — then the card goes
+        and opens its pull request, writing the title and body from the work, then the card goes
         straight to the merge stage, skipping code review.
       </p>
       <PromptRow
@@ -1855,7 +1765,7 @@ function SubmitStepBlock(props: {
           step: { stepLabel: BOARD_SUBMIT_STEP_LABEL },
         })}
         postamble={boardStepPostamble({
-          // Machinery, and always unattended whatever the card's stance (D10).
+          // Machinery, and always unattended whatever the card's stance.
           humanInLoop: false,
           role: "build",
           step: { stepId: BOARD_SUBMIT_STEP_ID, stepLabel: BOARD_SUBMIT_STEP_LABEL },
@@ -1970,15 +1880,11 @@ function ReviewStageBody(props: {
               />
             }
           />
-          {/* The review loop runs unattended by definition (D2/D6), so this
-              stage has no human-in-the-loop gate to hide the row behind the
-              way `SimpleStageBody` does — the loop ending IS the verdict, and
-              a converged card left sitting in Code review is one someone has
-              to notice. Reachable here or the setting is unreachable at all:
-              the reactor reads `autoAdvance` for every stage, review included. */}
+          {/* The review loop runs unattended, so there is no human-in-the-loop gate
+              to hide this behind; the reactor reads `autoAdvance` for review too. */}
           <ToggleRow
             label="Auto advance to the next stage"
-            hint="On: the card moves itself on when the loop ends — a round with nothing blocking, or the round cap."
+            hint="On: the card moves itself on when the loop ends: a round with nothing blocking, or the round cap."
             checked={exec.autoAdvance}
             ariaLabel="Auto advance to the next stage"
             onChange={(checked) => set({ autoAdvance: checked })}
@@ -1990,7 +1896,7 @@ function ReviewStageBody(props: {
             ariaLabel="Open pull requests as drafts"
             onChange={(checked) => set({ draftPullRequests: checked })}
           />
-          {/* The loop's shape (T3O-51): the follow-ups are machinery with no
+          {/* The loop's shape: the follow-ups are machinery with no
               settings of their own, so they show here and nowhere else. */}
           <div className="flex flex-col gap-1.5 py-2.5">
             <div className="flex flex-wrap items-center gap-2">
@@ -2041,13 +1947,8 @@ function ReviewStageBody(props: {
                   label="Prompt"
                   value={phase.prompt}
                   defaultValue={DEFAULT_BOARD_REVIEW_PHASES[phaseId].prompt}
-                  // A review phase's real run is the step envelope wrapped
-                  // around the phase envelope (the executor composes the phase
-                  // prompt, and the reactor then wraps THAT). The preview
-                  // reproduces both layers so the user sees the whole thing —
-                  // and since t3o-19 D6 moved the completion sentence out of
-                  // the protocol and into the postamble, showing only the
-                  // phase layer would hide the completion contract entirely.
+                  // The real run wraps the step envelope around the phase envelope, and the
+                  // completion sentence lives in the postamble, so the preview shows both.
                   preamble={[
                     boardStepPreamble({
                       card: {
@@ -2064,7 +1965,7 @@ function ReviewStageBody(props: {
                     boardReviewPhasePreamble({ phase: phaseId, round: 1, rounds: exec.rounds }),
                   ].join("\n\n")}
                   postamble={[
-                    // The draft line (T3O-12) is the envelope's, not the
+                    // The draft line is the envelope's, not the
                     // user's, so it rides the preview rather than the prompt.
                     ...(boardDraftPullRequestLine({
                       draftPullRequests: exec.draftPullRequests,
@@ -2074,7 +1975,7 @@ function ReviewStageBody(props: {
                     boardStepPostamble({
                       // The review stage's role is fixed — `resolveBoardStageExecution`
                       // coerces this stage to the review member — and the loop
-                      // always runs unattended (D2/D6).
+                      // always runs unattended.
                       humanInLoop: false,
                       role: "review",
                       step: {

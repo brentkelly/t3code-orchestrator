@@ -1,5 +1,5 @@
 /**
- * The Summary pane's derived recap (T3O-5). Pure over card detail + stages +
+ * The Summary pane's derived recap. Pure over card detail + stages +
  * optional plan rows — empty copy, skip-review, a running loop, a split
  * parent, and a title-absent PR are the cases the pane must not invent.
  */

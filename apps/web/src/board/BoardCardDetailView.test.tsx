@@ -1,11 +1,7 @@
 /**
- * T3o card detail view (t3o-06). Renders the modal's contents to static markup
- * — no atoms, no live subscription — proving the panel is a pure function of
- * the `board.subscribeCard` detail plus resolved lookups. (The dialog frame
- * around it portals, and a portal renders nothing on the server, so the panel
- * is what these assertions mount.) Covers the archived, no-project-on-disk
- * case (nothing here reads the repo) and the tombstoned thread link (struck
- * through, role preserved, no dead deep-link).
+ * Renders the panel to static markup: it must be a pure function of the
+ * `board.subscribeCard` detail plus resolved lookups. The dialog frame portals,
+ * and portals render nothing on the server, so the panel is what is mounted.
  */
 import {
   BOARD_SEED_STAGE_IDS,
@@ -82,12 +78,8 @@ describe("BoardCardDetailPanel", () => {
     expect(html).toContain("More actions");
   });
 
-  // The review loop lives in its own pane (t3o-16, D9): the header gains a
-  // Review pill, and the pane itself (lazy, tested in BoardCardReviewPane
-  // tests) renders the rounds. The pill exists at EVERY stage once the board
-  // has a review-role stage — a round's model is only settable before the
-  // executor freezes it, so the pane must open ahead of the loop — and on any
-  // card carrying review completions, so past reviews stay readable.
+  // A round's model is only settable before the executor freezes it, so the
+  // Review pane must open ahead of the loop; past reviews stay readable.
   it("shows the Review pill at every stage once the board has a review role", () => {
     const onReviewStage = renderToStaticMarkup(
       <BoardCardDetailPanel
@@ -139,7 +131,7 @@ describe("BoardCardDetailPanel", () => {
     expect(backlog).toContain(">Review</button>");
   });
 
-  // ── "Another review round" / "Request review" (T3O-39) ──────────────────
+  // ── "Another review round" / "Request review" ──────────────────
 
   /** A converged round 1 on the ledger — what makes a card read as one that
       has been through review. */
@@ -206,8 +198,8 @@ describe("BoardCardDetailPanel", () => {
       BOARD_SEED_STAGE_IDS.planning,
       BOARD_SEED_STAGE_IDS.ready,
       BOARD_SEED_STAGE_IDS.building,
-      // Leaving Done retires the card's pull request and raises the floor
-      // (D12): a bigger operation that must not hide behind this button.
+      // Leaving Done retires the card's pull request and raises the floor:
+      // a bigger operation that must not hide behind this button.
       BOARD_SEED_STAGE_IDS.done,
     ]) {
       const html = renderToStaticMarkup(
@@ -370,7 +362,7 @@ describe("BoardCardDetailPanel", () => {
     );
     expect(html).toContain("Auto-merge stopped");
     // Amber while the board will end the wait itself, red once it will not —
-    // the treatment the stalled banner has had since t3o-30.
+    // the same treatment as the stalled banner.
     expect(html).toContain("border-destructive/30");
     expect(html).not.toContain("Auto-merge is retrying");
   });
@@ -403,7 +395,7 @@ describe("BoardCardDetailPanel", () => {
   });
 
   it("renders an archived dependency as the card it is, not as an unknown id", () => {
-    // The bug (t3o-13): the shell snapshot drops archived cards, so resolving
+    // The bug: the shell snapshot drops archived cards, so resolving
     // a dependency from it produced "Unknown task" on "unknown card".
     const html = renderToStaticMarkup(
       <BoardCardDetailPanel
@@ -727,7 +719,7 @@ describe("BoardCardDetailPanel", () => {
     expect(withPlan).toContain(">Plan</button>");
   });
 
-  // t3o-29, D2: the Plans panel replaces the markdown pane once — and only
+  // The Plans panel replaces the markdown pane once — and only
   // once — children exist. The plan pill then labels its pane by what the
   // pane holds.
   it("labels the plan pill Plan before a split is approved, and by count after", () => {
@@ -759,7 +751,7 @@ describe("BoardCardDetailPanel", () => {
       <BoardCardDetailPanel
         {...baseProps}
         // Three plans, three children, one of them archived — the panel still
-        // shows three rows (D4), so the pill still says three.
+        // shows three rows, so the pill still says three.
         childShells={splitShells(2)}
         detail={splitDetail({ childCount: 3, archivedFrom: 2 })}
         projectName="P"
@@ -1388,7 +1380,7 @@ describe("initialBoardCardThreadId", () => {
 });
 
 /**
- * How a done card says it is done (t3o-36). The sheet used to wear a lime wash
+ * How a done card says it is done. The sheet used to wear a lime wash
  * over its surface tokens; it now reads as done from two marks that cost the
  * rest of the sheet nothing — the stage chip cut as a success chip, and a check
  * after the title.
@@ -1438,7 +1430,7 @@ describe("BoardCardDetailPanel done marks", () => {
     expect(panel(BOARD_SEED_STAGE_IDS.done)).not.toContain("board-card-done");
   });
 
-  // T3o (T3O-48): the bug as filed. A card finished its review, landed at
+  // T3o: the bug as filed. A card finished its review, landed at
   // Ready for merge, and the pane offered "Move to Done" and nothing else — no
   // pull request link, no Merge button, and no word about why.
   it("says a merge-stage card has no pull request, and offers a way to look again", () => {
@@ -1468,7 +1460,7 @@ describe("BoardCardDetailPanel done marks", () => {
     expect(html).toContain("Move to Done");
   });
 
-  // T3o (T3O-48, review round 1): the card face's `No PR` chip fires on the
+  // T3o (review round 1): the card face's `No PR` chip fires on the
   // stage and `hasPr` alone — the shell carries no worktree — so a merge-stage
   // card that never built a branch wore the chip and opened onto a pane that
   // said nothing. The notice covers it, minus the button it has nothing to ask.

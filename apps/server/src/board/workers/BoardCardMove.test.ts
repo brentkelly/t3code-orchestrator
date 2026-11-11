@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-65, prototype 5.1–5.4): moving a card to another worker.
+ * T3o (prototype 5.1–5.4): moving a card to another worker.
  *
  * The mover against a decider-backed engine double and stub workspaces that
  * log which worker each git operation ran on — so "retired on A, provisioned
@@ -199,7 +199,7 @@ interface Fixture {
   readonly provisionFails?: string;
   /** The source refuses to retire: a git error, or something written since the check. */
   readonly retireFails?: "error" | "blocked";
-  /** The card's branch was never pushed (T3O-66). */
+  /** The card's branch was never pushed. */
   readonly noRemoteBranch?: boolean;
   /** The target can't reach the remote to ask about the branch. */
   readonly remoteUnreachable?: boolean;
@@ -751,7 +751,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       ),
     );
 
-    // ── Force-move (T3O-66, prototype 5.5–5.6) ──────────────────────────
+    // ── Force-move (prototype 5.5–5.6) ──────────────────────────
 
     /** A card with a worktree on W1, which is offline. */
     const onOfflineW1 = (stepStates?: ReadonlyArray<BoardCardStepState>): Fixture => ({

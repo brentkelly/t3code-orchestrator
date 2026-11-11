@@ -1,5 +1,5 @@
 /**
- * The new-card draft store (T3O-26): one draft per board scope, written
+ * The new-card draft store: one draft per board scope, written
  * through debounced storage, sanitised on the way back in.
  */
 import { BOARD_SEED_STAGE_IDS, BoardCardId, ProjectId } from "@t3tools/contracts";

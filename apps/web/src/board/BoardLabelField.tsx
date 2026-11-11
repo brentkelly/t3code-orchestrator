@@ -1,25 +1,7 @@
 /**
- * T3o label field (t3o-06a, reshaped by T3O-31) — one control for both the
- * create dialog and the card modal's rail: a trigger button showing the card's
- * labels as chips (or a muted "Add labels"), and a popover behind it holding
- * the search box and the catalogue.
- *
- * The always-visible search input it replaces was the first text box in the
- * create dialog, so a typed title landed in it and was lost. Behind a trigger
- * there is nothing to type into by accident, and the search box only takes
- * focus once you have said you want it.
- *
- * Selection is loud on purpose. The list stays open across picks (labels are a
- * set, so you choose several in one visit), which means a quiet selection
- * reads as a click that did nothing: a picked row gets a filled checkbox, a
- * tint of its own colour, a colour-matched ring and a left bar
- * (`boardLabelRowStyle`).
- *
- * Colour editing lives on the row's pencil and dispatches a
- * `board.label.update`, so a recolour repaints every card via the catalogue
- * delta — there is no local-only colour state. Delete and restore stay
- * (a tombstoned label is never a one-way door, t3o-06a); the bin is quiet
- * until you hover the row.
+ * The label control for the create dialog and card rail: a trigger with chips and
+ * a popover holding search and the catalogue. The list stays open across picks, so
+ * selection is loud (`boardLabelRowStyle`). Recolours go through `board.label.update`.
  */
 import { BOARD_LABEL_SWATCHES, type BoardLabel, type BoardLabelId } from "@t3tools/contracts";
 import {
@@ -58,12 +40,8 @@ const TRIGGER_CHIP_CLASS =
     restore rows so the list reads as one list. */
 const ROW_CLASS = "flex h-[30px] items-center gap-2 rounded-[7px] px-2 text-[12.5px]";
 
-/** Every control in the popover acts on CLICK, not on mousedown: a keyboard
-    activation dispatches a click and no mousedown, so a mousedown-only button
-    would sit in the tab order doing nothing. `mousedown` is still prevented —
-    but only to suppress the focus shift, so a mouse pick leaves the caret in
-    the search box and you can type, pick, type again. Same pair as
-    `CommandPaletteResults`/`ComposerCommandMenu`. */
+/** Controls act on click so keyboard activation works; mousedown is prevented only
+    to keep focus in the search box between picks. */
 const keepFocus = (event: { preventDefault: () => void }) => {
   event.preventDefault();
 };
@@ -195,12 +173,8 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                     onMouseDown={keepFocus}
                     type="button"
                   >
-                    {/* The checkbox draws the selection state that
-                        `aria-pressed` above announces, so it is hidden from
-                        assistive tech. It fills with the label's own colour,
-                        and the tick's colour is COMPUTED from that fill — a
-                        flat white tick disappears on the amber and yellow
-                        swatches. */}
+                    {/* Decorative twin of `aria-pressed`; the tick colour is computed
+                        from the fill so it stays visible on light swatches. */}
                     <span
                       aria-hidden="true"
                       className={cn(
@@ -298,7 +272,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
 
             {model.matches.length === 0 && !model.canCreate ? (
               <div className="px-2 py-2 text-[12.5px] text-muted-foreground">
-                No labels yet — type a name to create one.
+                No labels yet. Type a name to create one.
               </div>
             ) : null}
 

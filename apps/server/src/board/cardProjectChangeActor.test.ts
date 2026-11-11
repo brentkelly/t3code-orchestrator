@@ -1,14 +1,6 @@
 /**
- * The card→project cache inside `boardActorStamp` (T3O-33).
- *
- * The stamp resolves a human actor's name from the card's PROJECT git identity,
- * and caches the card→project mapping. That cache was documented as valid
- * forever, on the grounds that a card never changes project. It does now — so
- * without an eviction, every activity row a moved card ever writes is
- * attributed to the git identity of the project it LEFT, for the life of the
- * server process.
- *
- * The git driver is faked down to the two calls this path makes.
+ * The card-to-project cache inside `boardActorStamp` must be evicted when a card changes project,
+ * or every activity row it writes is attributed to the git identity of the project it LEFT.
  */
 import { BoardCardId, CommandId, ProjectId, type BoardCardDetail } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";

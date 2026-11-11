@@ -1,12 +1,7 @@
 /**
- * T3o card thread `+` menu — pure derivations (t3o-14).
- *
- * The menu's restart affordance is gated by two facts about the card's current
- * stage: whether it auto-executes (the item exists at all) and whether a
- * supervised run is in flight (the item is disabled). Both are computed here as
- * pure functions so the D1 safety gate — "never offer a restart that would put
- * two threads on the same step" — is assertable without mounting the connected
- * component.
+ * Pure derivations for the card thread `+` menu, so the safety gate (never
+ * offer a restart that would put two threads on one step) is testable without
+ * mounting the component.
  */
 import type { BoardCardShell } from "@t3tools/contracts";
 
@@ -15,9 +10,9 @@ import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 /** The reason the restart item is disabled while a run is in flight — surfaced
     in the menu and pinned by the tests. */
 export const BOARD_STAGE_RESTART_IN_FLIGHT_REASON =
-  "A run is already in flight for this card — drag it out and back to restart.";
+  "A run is already in flight for this card. Drag it out and back to restart.";
 
-/** Disable restart when D11 would refuse `start-stage-thread` (#142). */
+/** Disable restart when the dependency gate would refuse `start-stage-thread`. */
 export function boardStageRestartBlockedReason(unmetKeys: ReadonlyArray<string>): string {
   if (unmetKeys.length === 0) return "This card is blocked by unmet dependencies.";
   if (unmetKeys.length === 1) return `Blocked until ${unmetKeys[0]} is done.`;
@@ -25,13 +20,9 @@ export function boardStageRestartBlockedReason(unmetKeys: ReadonlyArray<string>)
 }
 
 /**
- * Whether a supervised run is in flight for the card (t3o-14 D1). The step-state
- * read model is server-only, so the client reads the card shell's derived live
- * status as its proxy: an actively working thread, one awaiting the human
- * (`waiting`), or a build holding in the governor queue all count. A live
- * linked thread that is idle or DEAD (`stopped` / `failed` / `none`) does NOT —
- * restarting onto it is the whole point of the explicit escape hatch (D2), so
- * it must stay enabled.
+ * Whether a supervised run is in flight, read from the shell's derived status
+ * (step state is server-only). Idle or dead threads do not count: restarting
+ * onto them is the point of the escape hatch.
  */
 export function isBoardCardRunInFlight(
   shell: Pick<BoardCardShell, "threadState" | "queued"> | undefined,
@@ -41,48 +32,33 @@ export function isBoardCardRunInFlight(
 }
 
 /**
- * A stage label as it reads MID-SENTENCE ("New thread — restart planning").
- * Stage labels are user-editable, so this cannot simply lowercase: `QA`,
- * `PR Review` and `UAT` are names, not sentence-case words, and lowercasing
- * them mangles them. Only a label that starts uppercase-then-lowercase — an
- * ordinary capitalised word — is de-capitalised, and only its first character,
- * so "Code review" reads "code review" while "QA" stays "QA". `toLowerCase`
- * (not `toLocaleLowerCase`) keeps the result independent of the host locale.
+ * A user-editable stage label as it reads mid-sentence. Only an ordinary
+ * capitalised word loses its first capital ("Code review" -> "code review",
+ * "QA" stays). `toLowerCase` keeps it locale-independent.
  */
 export function boardStageLabelMidSentence(label: string): string {
   return /^\p{Lu}\p{Ll}/u.test(label) ? label.charAt(0).toLowerCase() + label.slice(1) : label;
 }
 
 /**
- * The `+` menu's restart affordance (t3o-14 D1/D4): `null` when there is nothing
- * to restart (the item is absent, not disabled); otherwise the stage label plus
- * a disabled reason that is non-null exactly while a supervised run is in
- * flight and the step has not stalled.
- *
- * Offered on a stage that auto-executes, and — t3o-30, D3 — on ANY stage whose
- * step has stalled. A stage that runs nothing on entry still spawns steps
- * (the merge role's conflict fix is one), and when one of those dies the stage
- * had no restart item at all: the card said a thread was running, the button
- * that would have cleared it was absent because the stage does not auto-execute,
- * and archiving the card was the only way out. A stalled step is by definition
- * something a human has to restart, whatever the stage does on entry.
+ * The restart item: `null` when absent; otherwise the stage label and a reason
+ * that is non-null while a run is in flight and the step has not stalled. Offered
+ * on auto-executing stages and on any stage whose step has stalled.
  */
 export function resolveBoardThreadStageRestart(input: {
   readonly autoExecute: boolean;
   readonly stageLabel: string;
   readonly runInFlight: boolean;
-  /** Whether the card's live step has given up (t3o-17, D3). */
+  /** Whether the card's live step has given up. */
   readonly stalled: boolean;
-  /** Non-null when start-stage-thread would be refused for unmet deps (#142). */
+  /** Non-null when start-stage-thread would be refused for unmet deps. */
   readonly blockedReason?: string | null;
 }): BoardThreadStageRestart | null {
   if (!input.autoExecute && !input.stalled) return null;
   return {
     label: input.stageLabel,
     // A stalled step has nothing running it, whatever the summed thread state
-    // says (T3O-13): a human chatting with another linked thread must not grey
-    // out the restart the stall needs. A blocked card's restart is refused by
-    // the server, so it is disabled regardless (#142).
+    // says. A blocked card's restart is refused by the server, so it is disabled.
     disabledReason:
       input.runInFlight && !input.stalled
         ? BOARD_STAGE_RESTART_IN_FLIGHT_REASON
@@ -91,11 +67,8 @@ export function resolveBoardThreadStageRestart(input: {
 }
 
 /**
- * The settled outcome of one command dispatch, flattened for the pure
- * orchestrator: `"ok"` succeeded, `"failed"` settled as a definite failure, and
- * `"interrupted"` was cancelled before settling (unmount, or a newer command
- * preempting it) so its SERVER outcome is unknown — the write may or may not
- * have landed.
+ * One dispatch's settled outcome. `"interrupted"` was cancelled before settling,
+ * so the server outcome is unknown: the write may have landed.
  */
 export type BlankThreadStep = "ok" | "failed" | "interrupted";
 
@@ -124,17 +97,9 @@ export const BLANK_THREAD_WARN = {
 } as const;
 
 /**
- * Orchestrate "new blank thread" (t3o-14 D3): create a server thread, then link
- * it to the card. Returns `true` when the thread is created AND linked, so the
- * caller can open it; `false` on any other outcome.
- *
- * Rollback policy is the load-bearing decision here. On a DEFINITE link failure
- * the thread demonstrably never joined the card, so it is deleted — nothing
- * orphans. On an INTERRUPTED link the server outcome is UNKNOWN: the link may
- * have landed, and deleting a validly-linked thread (destroying the card's
- * thread) is strictly worse than the alternative, which is at most a harmless
- * empty, unlinked thread the user can delete. So an interrupted link is NOT
- * rolled back. An interrupted create/link also skips the (expected) log.
+ * Create a server thread, then link it to the card; `true` when both landed. A
+ * definite link failure deletes the thread. An interrupted link is NOT rolled
+ * back: it may have landed, and deleting a linked thread is worse than an orphan.
  */
 export async function runBlankThreadCreation(handlers: BlankThreadCreation): Promise<boolean> {
   const created = await handlers.createThread();

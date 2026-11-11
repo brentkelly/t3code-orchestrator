@@ -1,22 +1,8 @@
 /**
- * The runaway ceiling counts RECOVERIES, not planned work (T3O-12, D4/D5),
- * driven end to end through the live reactor.
- *
- * The card this exists for: a Code review loop hit its five-round cap without
- * converging, the user granted it two more rounds, and the loop resumed and ran
- * correctly — while the card went red saying recovery had given up. The ceiling
- * used to be read off `attempt`, which every PLANNED phase selection carried
- * forward: five rounds of three phases is 15 of the default 20 before a single
- * thing has gone wrong, and the observed card reached `attempt = 45` against a
- * `maxAttempts` of 5. Past roughly round 7 the ceiling was permanently blown,
- * so the first stall of any kind escalated instantly with no ladder at all.
- * Raising the round budget was what pushed a healthy loop over it.
- *
- * `recoveryDecision`'s own arithmetic is unit-tested in `supervisor.test.ts`
- * and the decider's stamping in `decider.step.test.ts`. What is only provable
- * here is the wiring: that the reactor carries the recovery total across a
- * phase boundary, resets it on a genuine stage entry, and does not charge the
- * loop's planned steps to it.
+ * The runaway ceiling counts RECOVERIES, not planned work: a review loop given extra
+ * rounds must not blow it. The arithmetic is unit-tested in `supervisor.test.ts`; this
+ * pins the wiring: the total carries across a phase boundary, resets on a genuine stage
+ * entry, and is not charged for the loop's planned steps.
  */
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -106,7 +92,7 @@ const critical: BoardReviewFinding = {
 };
 
 /** Each phase's payload has its own required shape, and a `succeeded`
-    completion whose payload does not parse to it halts the loop (T3O-14) —
+    completion whose payload does not parse to it halts the loop —
     which would silently end these tests one phase early. */
 const phasePayload = (stepId: string): string => {
   if (stepId.startsWith("review@")) {
@@ -249,8 +235,8 @@ it.effect(
           const thread = liveThread(yield* board);
           yield* Ref.set(shells, shellsFor([[String(thread), idleThreadShell(String(thread))]]));
 
-          // First recovery: within budget, so the step is RETRIED. Since T3O-22
-          // (D7) a retry waits its backoff rung, so both outcomes now wear the
+          // First recovery: within budget, so the step is RETRIED. A
+          // retry waits its backoff rung, so both outcomes now wear the
           // `stalled` status and the REASON is what tells them apart — waiting
           // to retry, with a time, versus recovery having given up with none.
           yield* pumpRuntime(turnCompleted(thread));
@@ -259,12 +245,9 @@ it.effect(
           assert.strictEqual(retrying?.stalledReason, "waiting-retry");
           assert.ok(retrying?.retryAt !== null, "a retry says when it will try again");
 
-          // Second: crosses the ceiling. `maxAttempts` is nowhere near exhausted
-          // (this is stall #2 of a default 5), so the ladder is not what stops it
-          // — the runaway detector is, which is the job it keeps.
-          // Wait the rung out and let the retry sweep put the step back to
-          // work, which is the real path — the ladder is charged at the stop and
-          // the nudge is delivered here.
+          // Second stall crosses the ceiling while `maxAttempts` is nowhere near exhausted, so the
+          // runaway detector is what stops it. The retry sweep puts the step back to work first:
+          // the ladder is charged at the stop and the nudge delivered here.
           yield* TestClock.adjust(Duration.minutes(5));
           yield* reactor.fireRetries;
           yield* reactor.drain;

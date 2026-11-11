@@ -1,5 +1,5 @@
 /**
- * T3o board command feedback (t3o-06). One place that turns a rejected board
+ * T3o board command feedback. One place that turns a rejected board
  * command into a human sentence — the decider's invariant rejections carry a
  * `detail` string (the unmet dependency, the cycle-closing edge, the label
  * cap), and that is what the user needs to see, not a generic failure.
@@ -34,16 +34,8 @@ export function describeBoardCommandFailure(result: unknown): string {
 }
 
 /**
- * The sentence a Merge click leaves on the card.
- *
- * Every outcome is a normal answer rather than an error, so each gets a
- * message written for someone who just pressed the button and wants to know
- * what to do next. A forge refusal is quoted verbatim: GitHub already explains
- * why it will not merge — which check failed, which approval is missing — and
- * paraphrasing that would only lose detail.
- *
- * `merged` returns null: the card visibly moves to Done, which says it better
- * than a sentence would.
+ * The sentence a Merge click leaves on the card. Forge refusals are quoted
+ * verbatim. `merged` returns null: the card visibly moves to Done.
  */
 export function describeBoardMergeOutcome(result: BoardMergeCardPullRequestResult): string | null {
   switch (result.outcome) {
@@ -75,19 +67,9 @@ export function describeBoardMergeOutcome(result: BoardMergeCardPullRequestResul
 }
 
 /**
- * The sentence "Check again" leaves on the card (T3O-48).
- *
- * Every arm answers, including the happy one. Unlike a merge or a submit, a
- * successful re-check may change nothing the eye can see — the card was at
- * Ready for merge before and it is at Ready for merge now — so returning null
- * would give the click no acknowledgement at all, which is the shape of the bug
- * this whole card is about.
- *
- * `linked` is the exception that stays silent: the Merge button and the View PR
- * link both appear, which says it better than a sentence would.
- *
- * `branch` is named rather than assumed known: the pane's notice says which
- * branch it looked for, and the answer should be about the same one.
+ * The sentence "Check again" leaves on the card. Every arm answers because a
+ * successful re-check may change nothing visible; only `linked` is silent, as
+ * the Merge button appears.
  */
 export function describeBoardRefreshOutcome(
   result: BoardRefreshCardPullRequestResult,
@@ -114,12 +96,8 @@ export function describeBoardRefreshOutcome(
 }
 
 /**
- * The sentence "Submit for merge — no review" leaves on the card (t3o-07).
- *
- * `started` returns null: the card visibly picks up a "Submit for merge" step
- * and, when it finishes, moves — which says it better than a sentence would.
- * Every other outcome names the thing the user has to fix, because a button
- * that silently does nothing is what this action replaces.
+ * The sentence "Submit for merge (no review)" leaves on the card. `started`
+ * returns null: the card visibly picks up the step.
  */
 export function describeBoardSubmitOutcome(result: BoardSubmitCardForMergeResult): string | null {
   switch (result.outcome) {
@@ -147,13 +125,8 @@ export function describeBoardSubmitOutcome(result: BoardSubmitCardForMergeResult
 }
 
 /**
- * The sentence "Another review round" / "Request review" leaves on the card
- * (T3O-39).
- *
- * `started` says the round outright rather than returning null: unlike a merge
- * or a submit, the card may not visibly move — a loop that converged in place
- * is already on the review stage — so without the sentence the click has no
- * acknowledgement at all.
+ * The sentence "Another review round" / "Request review" leaves on the card.
+ * `started` answers too: a converged loop may not visibly move.
  */
 export function describeBoardReviewRoundOutcome(
   result: BoardRequestReviewRoundResult,
@@ -174,7 +147,7 @@ export function describeBoardReviewRoundOutcome(
     case "unknown-card":
       return "This card no longer exists.";
     case "stuck":
-      return "The review is stuck. Rule on the stuck findings in Code review — Fix it or Reviewer is wrong — or advance the card. If the card has left Code review, move it back there first.";
+      return "The review is stuck. Rule on the stuck findings in Code review (Fix it or Reviewer is wrong), or advance the card. If the card has left Code review, move it back there first.";
     case "not-stuck":
       return "The review is no longer stuck, so there is nothing to rule on.";
     case "failed":
@@ -183,7 +156,7 @@ export function describeBoardReviewRoundOutcome(
 }
 
 /**
- * The sentence "Remove worktree" leaves on the card (T3O-52), or null when it
+ * The sentence "Remove worktree" leaves on the card, or null when it
  * did what was asked — the banner disappearing is the acknowledgement.
  */
 export function describeBoardRemoveWorktreeOutcome(
@@ -203,7 +176,7 @@ export function describeBoardRemoveWorktreeOutcome(
 }
 
 /**
- * The sentence "Check again" on a kept worktree leaves on the card (T3O-52),
+ * The sentence "Check again" on a kept worktree leaves on the card,
  * or null when the worktree went — the banner disappearing says that. A
  * repeat refusal writes nothing to the card, so without this the banner would
  * look exactly as it did before the click.
@@ -228,7 +201,7 @@ export function describeBoardCheckWorktreeOutcome(
   }
 }
 
-/** The toast "Skip CI" leaves (T3O-44). `stageLabel` names where it went. */
+/** The toast "Skip CI" leaves. `stageLabel` names where it went. */
 export function describeBoardSkipCiOutcome(
   result: BoardSkipCiResult,
   cardKey: string,

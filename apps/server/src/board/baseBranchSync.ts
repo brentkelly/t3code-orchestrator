@@ -1,23 +1,8 @@
 /**
- * Pull a just-merged card's commits into the LOCAL base branch of the
- * project-root checkout.
- *
- * The merge itself happens entirely on the forge (`gh pr merge`), so the local
- * clone the board branches new worktrees from is left behind the moment a card
- * merges: its `main` still points at the pre-merge tip. The next worktree would
- * then fork off stale history. This module fast-forwards that local base branch
- * back up to the remote so future branches start from the merged commits.
- *
- * Two rules, both about safety:
- *
- * - **Fast-forward only.** We never rewrite local history. A base branch that
- *   somehow carries un-pushed local commits (divergence) is left exactly as it
- *   is rather than force-moved — the refspec has no leading `+`, and the
- *   checked-out path uses `pull --ff-only`.
- * - **Best-effort.** Every failure — no remote, a dirty checkout, a diverged
- *   base — is a reported skip, never an error. The card is already merged; a
- *   base branch we could not advance is a staleness the next fetch fixes, not a
- *   reason to strand the merge outcome.
+ * Fast-forwards the project-root checkout's local base branch after a forge
+ * merge, so new worktrees branch from the merged commits. Fast-forward only:
+ * a diverged base is left alone. Best-effort: every failure is a reported
+ * skip, since the card is already merged.
  */
 import * as Effect from "effect/Effect";
 
@@ -50,7 +35,7 @@ export const pullMergedBaseBranch = Effect.fn("pullMergedBaseBranch")(function* 
 
   const remoteName = yield* git
     .resolvePrimaryRemoteName(cwd)
-    .pipe(Effect.catch(() => Effect.succeed(null)));
+    .pipe(Effect.orElseSucceed(() => null));
   if (remoteName === null) {
     return {
       updated: false,
@@ -58,11 +43,9 @@ export const pullMergedBaseBranch = Effect.fn("pullMergedBaseBranch")(function* 
     } satisfies BoardBaseBranchSyncResult;
   }
 
-  // Which branch the root checkout has out right now decides HOW the local base
-  // ref can move. `git fetch <remote> base:base` refuses to update the ref of a
-  // branch that is currently checked out, so when base IS checked out we
-  // fast-forward it in place with a --ff-only pull instead. `--show-current`
-  // prints nothing on a detached HEAD, which correctly takes the fetch path.
+  // `git fetch <remote> base:base` refuses to update a checked-out branch, so a
+  // checked-out base is pulled `--ff-only` in place instead. A detached HEAD
+  // prints nothing and takes the fetch path.
   const showCurrent = yield* git
     .execute({
       operation: "board.pullMergedBaseBranch.currentBranch",
@@ -70,7 +53,7 @@ export const pullMergedBaseBranch = Effect.fn("pullMergedBaseBranch")(function* 
       args: ["branch", "--show-current"],
       allowNonZeroExit: true,
     })
-    .pipe(Effect.catch(() => Effect.succeed(null)));
+    .pipe(Effect.orElseSucceed(() => null));
   const currentBranch =
     showCurrent !== null && showCurrent.exitCode === 0 ? showCurrent.stdout.trim() : null;
 
@@ -95,7 +78,7 @@ export const pullMergedBaseBranch = Effect.fn("pullMergedBaseBranch")(function* 
       args: fastForward.args,
       allowNonZeroExit: true,
     })
-    .pipe(Effect.catch(() => Effect.succeed(null)));
+    .pipe(Effect.orElseSucceed(() => null));
 
   if (result !== null && result.exitCode === 0) {
     return { updated: true, skippedReason: null } satisfies BoardBaseBranchSyncResult;

@@ -1,12 +1,6 @@
 /**
- * T3o migration 020 (t3o-19, D4/D5): `board_card_step_state.step_label` becomes
- * nullable and `stage_label` is added.
- *
- * The rebuild is the risk — SQLite has no ALTER COLUMN, so relaxing NOT NULL
- * means create-copy-drop-rename, and a copy that forgot a column added by 014
- * or 015 would silently discard a running card's frozen execution config. These
- * lock the shape: every column survives with its value, history is not rewritten
- * (D7), and a null step label can now be written where it could not before.
+ * The create-copy-drop-rename must keep every column and value, and a null step
+ * label must now be writable.
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -24,8 +18,7 @@ const NOW = "2026-01-01T00:00:00.000Z";
     are not idempotent, so the lineage is run once, by hand, exactly as 016's
     test does. */
 const migrateToPrevious = Effect.gen(function* () {
-  // T3o-26: board tables live in the attached board database now, so the
-  // attach has to happen before any board migration, exactly as at boot.
+  // Board tables live in the attached board database, so attach first, as at boot.
   yield* attachBoardDatabase();
   yield* runMigrations();
   for (const [id, , migration] of BOARD_MIGRATIONS) {
@@ -70,7 +63,7 @@ describe("migration 020: nullable step label + frozen stage label", () => {
       assert.deepStrictEqual(rows[0], {
         card_id: "card-legacy",
         step_id: "building",
-        // D7: history is NOT rewritten. The legacy row keeps the label it
+        // History is NOT rewritten. The legacy row keeps the label it
         // recorded, so it renders exactly as it did before this migration.
         step_label: "Building",
         // New column: null on every pre-existing row.
@@ -131,7 +124,7 @@ describe("migration 020: nullable step label + frozen stage label", () => {
       yield* insertLegacyRow;
       yield* Migration020;
 
-      // The projector upserts on card_id (one live step per card, D4). A
+      // The projector upserts on card_id (one live step per card). A
       // rebuild that lost the PRIMARY KEY would silently turn that into an
       // append and duplicate every step transition.
       yield* sql`

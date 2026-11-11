@@ -1,13 +1,6 @@
 /**
- * T3o board MCP toolkit — handler integration (t3o-08, D3/D8).
- *
- * Drives the real board tool handlers against the real orchestration engine
- * and projection: a linked thread resolves its own card with no card id in the
- * payload; an unlinked thread is rejected with an actionable message; the
- * completion contract is idempotent (twice → one transition); and the plan
- * tools validate, store and read back. Every write goes MCP handler → command
- * → decider → event → projector → table, so this exercises the whole write
- * path end to end.
+ * The real board tool handlers against the real orchestration engine and projection, so every
+ * write runs MCP handler, command, decider, event, projector and table end to end.
  */
 import {
   BoardCardAttachmentId,
@@ -49,7 +42,7 @@ import {
   makeBoardStackTestLayer,
 } from "../../../board/boardStack.testkit.ts";
 
-/** The forge as these tests see it (T3O-18): #75, #76 and #77 exist, nothing
+/** The forge as these tests see it: #75, #76 and #77 exist, nothing
     else. #77 resolves but its link is then refused (`refusedLink`). */
 const forgePullRequests = new Map<number, BoardCardPullRequest>(
   [75, 76, 77].map((number) => [
@@ -68,11 +61,9 @@ const forgePullRequests = new Map<number, BoardCardPullRequest>(
 );
 
 /**
- * The supervisor's two link methods (T3O-18) over the fake forge above, with
- * the link landing through the REAL engine, decider and projector — so a test
- * sees the card actually hold the pull request. The supervisor's own lookup,
- * refresh-by-number and settle are covered against the live reactor in
- * `board/linkedPullRequest.test.ts`; nothing else here calls the supervisor.
+ * The supervisor's link methods over the fake forge above, landing through the REAL engine so a
+ * test sees the card hold the pull request. The supervisor's own lookup and settle are covered in
+ * `board/linkedPullRequest.test.ts`.
  */
 const refusedLink = 77;
 
@@ -130,7 +121,7 @@ const SupervisorLinkStub = Layer.effect(
 const makeLayer = (prefix: string) =>
   makeBoardStackTestLayer(prefix).pipe(
     // The create tool reads (and may assign) the project's key prefix from
-    // board settings (D14) — an in-memory settings runtime is enough.
+    // board settings — an in-memory settings runtime is enough.
     Layer.provideMerge(ServerSettings.layerTest()),
     // On top, so the stub links through the same engine the handlers write to.
     (base) => SupervisorLinkStub.pipe(Layer.provideMerge(base)),
@@ -280,7 +271,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       yield* seed();
       const context = yield* boardHandlers.board_get_card_context().pipe(withScope(linkedThread));
       // The link exists, so the thread rides — with no todo fields until it
-      // emits its first `turn.plan.updated` (D14: the cache fills forward).
+      // emits its first `turn.plan.updated` (the cache fills forward).
       assert.deepStrictEqual(
         context.threads.map((entry) => entry.threadId),
         [linkedThread],
@@ -329,18 +320,13 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
-  // ── t3o-19: the completion contract without a step id ──────────────
-  //
-  // Before this, the agent was never told its stepId — the preamble carried
-  // the step LABEL and `board_get_card_context.steps` was history — yet the
-  // decider rejected any stepId that was not the live step. Non-review stages
-  // only worked because the stage line happened to print a string equal to
-  // their step id, which broke outright for a custom stage (a UUID).
+  // The completion contract without a step id: an agent is never told its stepId on a stage
+  // that runs a single step.
 
   /** A card of its own, plus a thread linked to it — the toolkit's tests share
       one layer (and so one database), so a step-lifecycle test that reused
       `card-1` would collide with whatever step an earlier test left live. */
-  /** A build-role completion the handler accepts (T3O-21). */
+  /** A build-role completion the handler accepts. */
   const validBuild = {
     lead: "Built it on `board/x`, 1 commit, pushed.",
     notes: [],
@@ -480,11 +466,8 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
   const stringifiedPayload = JSON.stringify(validBuild);
   const encodedPlainPayload = JSON.stringify("all done");
 
-  // T3O-2: agents reach this tool over MCP, and some of them hand it a payload
-  // they have already `JSON.stringify`d rather than the object itself.
-  // Stringifying that a second time stored a JSON *string* where every reader
-  // expects an object, and a review round that had run to a clean conclusion
-  // was reported as "reviewer payload unreadable". Storage stays canonical.
+  // Some agents hand over a payload they already `JSON.stringify`d; storing it twice-wrapped
+  // reads back as an unreadable payload.
   it.effect("stores an already-stringified payload unwrapped", () =>
     Effect.gen(function* () {
       yield* seed();
@@ -509,7 +492,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     Effect.gen(function* () {
       yield* seed();
       const own = yield* seedOwnCard("plain-string");
-      // An opaque step — the build step now owes a structured payload (T3O-21).
+      // An opaque step — the build step now owes a structured payload.
       yield* startStep({ ...own, suffix: "plain-string", stepId: "planning" });
       yield* boardHandlers
         .board_complete_step({ outcome: "succeeded", summary: "Built", payload: "all done" })
@@ -519,7 +502,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
-  // T3O-19: a card leaving Planning unfinished abandons the step but keeps its
+  // A card leaving Planning unfinished abandons the step but keeps its
   // thread, whose interview may still finish after the move. Its completion has
   // to land, or the finished plan reads as unfinished on re-entry.
   it.effect("records the completion of a planning thread the card kept past the move", () =>
@@ -638,7 +621,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       // A second thread linked to the same card — an adopted conversation, say.
       // It owns no run, so it has nothing to complete. Adopted under `linked`,
       // as every client links: only the board links a thread under a stage, and
-      // a planning link outliving its stage is a kept interview (T3O-19).
+      // a planning link outliving its stage is a kept interview.
       const engine = yield* boardStackEngine;
       const sibling = ThreadId.make("thread-other-idle");
       yield* engine.dispatch({
@@ -721,7 +704,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
-  // ── T3O-21: the build step owes the Summary pane a structured payload ──
+  // ── The build step owes the Summary pane a structured payload ──
 
   it.effect("refuses a succeeded build with no payload, and accepts the retry", () =>
     Effect.gen(function* () {
@@ -800,7 +783,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       yield* seed();
       const own = yield* seedOwnCard("build-legacy");
       yield* startStep({ ...own, suffix: "build-legacy" });
-      // What every pre-T3O-21 build left behind: a success with no payload,
+      // What an older build left behind: a success with no payload,
       // written straight to the decider as the handler once did.
       const engine = yield* boardStackEngine;
       yield* engine.dispatch({
@@ -824,14 +807,8 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
-  // ── T3O-14: a broken completion must not become a deadlock ───────────
-  //
-  // On card CAA-5, step `review@10`, the caller's `payload` argument arrived
-  // folded into `summary` — tags and all — and `payload` persisted as null. The
-  // board recorded a `succeeded` review nothing could read; the loop refused to
-  // converge on it (correctly), the idempotency rule refused to let it be
-  // rewritten, and the executor cannot re-run a step already recorded. Triage
-  // never started and the card was stuck for good.
+  // A broken completion must not become a deadlock: a recorded `succeeded` review nothing can
+  // read can be neither converged on nor rewritten, so the loop would be stuck for good.
 
   const validReview = { reviewedSha: "abc123", findings: [] };
 
@@ -1122,7 +1099,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
           .board_complete_step({
             stepId: "review@1",
             outcome: "succeeded",
-            // Verbatim the shape CAA-5 recorded: the summary runs on into the
+            // The leaked shape: the summary runs on into the
             // serialised markup of the argument that never arrived.
             summary:
               'Completed the round-10 PR review.</summary>\n<parameter name="payload">{"reviewedSha":"abc123","findings":[]}',
@@ -1172,7 +1149,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       const own = yield* seedOwnCard("repair");
       yield* startStep({ ...own, suffix: "repair", stepId: "review@1" });
       const engine = yield* boardStackEngine;
-      // The record CAA-5 was left holding — written straight to the engine,
+      // The unreadable record, written straight to the engine,
       // because the handler now refuses to create one.
       yield* engine.dispatch({
         type: "board.card.complete-step",
@@ -1253,11 +1230,8 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
         })
         .pipe(withScope(own.ownThread));
       yield* settleStep({ ownCard: own.ownCard, suffix: "confirm", stepId: "review@1" });
-      // The payload contract guards what gets RECORDED. A repeat call on a step
-      // already recorded validly records nothing — the decider re-emits the
-      // stored completion and drops these arguments — so demanding a payload
-      // from it would break the documented retry-safety of the tool: an agent
-      // re-confirming after a dropped reply would be told its round was invalid.
+      // A repeat call on a step already recorded validly records nothing, so demanding a
+      // payload from it would break the tool's documented retry-safety.
       const retry = yield* boardHandlers
         .board_complete_step({ stepId: "review@1", outcome: "succeeded", summary: "Reviewed" })
         .pipe(withScope(own.ownThread));
@@ -1508,7 +1482,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
-  // t3o card 11: the tool is where the split rule is enforced in practice, so
+  // The tool is where the split rule is enforced in practice, so
   // the rejection has to arrive HERE — at the moment the agent makes the call —
   // rather than only in the decider's unit tests.
   it.effect("board_propose_plans refuses a split with no rationale, and forwards a real one", () =>
@@ -1548,7 +1522,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
         .pipe(withScope(orphanThread));
       // The key carries the project's acronym, not the compiled-in default:
       // "Project A" -> PA, the same prefix the client would assign, so agent-
-      // and human-created cards share one key namespace (D14).
+      // and human-created cards share one key namespace.
       assert.strictEqual(created.key, "PA-2");
       const listed = yield* boardHandlers
         .board_list_cards({ stage: BoardStageId.make("sprint") })
@@ -1590,9 +1564,9 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
   it.effect("board_create_card can create directly into any stage, Building included (D10)", () =>
     Effect.gen(function* () {
       yield* seed();
-      // BOARD_CREATABLE_STAGES is deleted (D10): a card may be created into any
+      // BOARD_CREATABLE_STAGES is deleted: a card may be created into any
       // stage, so a create straight into Building succeeds. The auto-execute
-      // warning is a create-dialog concern (AC16), not a handler-level refusal.
+      // warning is a create-dialog concern, not a handler-level refusal.
       const created = yield* boardHandlers
         .board_create_card({
           projectId,
@@ -1653,7 +1627,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
   it.effect("board_create_card lands the new card at the bottom of the stage's column", () =>
     Effect.gen(function* () {
       yield* seed();
-      // A resident in the same stage but ANOTHER project (T3O-27). The board's
+      // A resident in the same stage but ANOTHER project. The board's
       // default scope merges the two into one column, and this tool's own read
       // model is filtered to one project — so the placement has to come from
       // the decider, which sees both.
@@ -1706,7 +1680,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
   it.effect("board_move_card lands below a resident of ANOTHER project in the same column", () =>
     Effect.gen(function* () {
       yield* seed();
-      // The merged column, not this project's slice of it (T3O-27). The only
+      // The merged column, not this project's slice of it. The only
       // resident of the target column belongs to another project, so a
       // per-project scope sees an EMPTY column and hands back the column
       // minimum — landing the moved card level with, not below, the resident.
@@ -1738,7 +1712,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
   it.effect("board_move_card lands a card moved into Done at the TOP of that column", () =>
     Effect.gen(function* () {
       yield* seed();
-      // Done is the one column read newest-first (T3O-15), so the agent tool
+      // Done is the one column read newest-first, so the agent tool
       // sends no key at all and the decider places the arrival.
       const resident = yield* boardHandlers
         .board_create_card({
@@ -1781,7 +1755,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
-  // ── Grouping (T3O-27) ────────────────────────────────────────────────
+  // ── Grouping ────────────────────────────────────────────────
 
   const readCards = Effect.gen(function* () {
     const snapshotQuery = yield* boardStackSnapshotQuery;
@@ -2304,12 +2278,8 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
-  // ── T3O-2: the card lifecycle verbs ────────────────────────────────
-  //
-  // Archive, unarchive and delete each take an explicit card id — an agent
-  // tidying a board acts on cards that are not its own — so every case below
-  // works on a card of its own (`seedOwnCard`), never the shared `card-1`
-  // whose stage, labels and key earlier tests assert on.
+  // The card lifecycle verbs take an explicit card id, so each case works on a card of its own
+  // (`seedOwnCard`), never the shared `card-1` that earlier tests assert on.
 
   it.effect(
     "board_archive_card takes the card off the board, board_unarchive_card puts it back",
@@ -2453,11 +2423,8 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
         const { ownCard, ownThread } = yield* seedOwnCard(suffix);
         yield* startStep({ ownCard, ownThread, suffix });
 
-        // A DIFFERENT thread — the self-guard does not apply, and before this
-        // the delete went straight through: `board.card-deleted` force-reclaims
-        // the target's worktree (dirty and unpushed included) and deletes the
-        // threads on it, so an agent tidying the board could destroy a peer's
-        // in-flight work with no human at a dialog.
+        // A DIFFERENT thread, so the self-guard does not apply: delete would force-reclaim a
+        // peer's dirty, unpushed worktree and delete its threads.
         const failure = yield* Effect.flip(
           boardHandlers.board_delete_card({ cardId: ownCard }).pipe(withScope(orphanThread)),
         );
@@ -2564,7 +2531,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
   );
 });
 
-// T3O-53: reading other cards, and editing a brief or dependency set without
+// Reading other cards, and editing a brief or dependency set without
 // replacing it. A fresh database of its own, so each case creates the cards it
 // edits and nothing here can disturb the assertions above.
 it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edits", (it) => {
@@ -3125,7 +3092,7 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
   );
 });
 
-// T3O-18: an agent links a pull request to ANY card — one it just made for
+// An agent links a pull request to ANY card — one it just made for
 // the pull request, or one somebody else's thread works — not only its own.
 it.layer(makeLayer("t3o-board-mcp-link-pr-test-"))(
   "board mcp toolkit — linking pull requests to cards",

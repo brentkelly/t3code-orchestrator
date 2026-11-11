@@ -1,9 +1,7 @@
 /**
- * The v2 gateway's pure halves (T3O-59): how stored engine events become the
- * supervisor's signals, and how a thread shell reads as the board's thread
- * state. The contract suite drives the same code through the real engine; these
- * pin the cases that engine never produces without a provider — a run's
- * repeated terminal updates, a question answered or cancelled, a usage limit.
+ * The v2 gateway's pure halves, for the cases the contract suite's engine never
+ * produces without a provider: repeated terminal updates, a question answered or
+ * cancelled, a usage limit.
  */
 import {
   CommandId,
@@ -293,7 +291,7 @@ describe("makeSignalReader", () => {
   it("reads a queued run steered in, deleted or archived away as neither a Stop nor a turn end", () => {
     // Promote-to-steer, a queue delete and an archive all cancel the queued run
     // under the human's own command id, never started — the shape a start-up
-    // Stop has. Seeing it queued first is what tells them apart (T3O-76).
+    // Stop has. Seeing it queued first is what tells them apart.
     for (const created of ["run.created", "run.updated"]) {
       const read = makeSignalReader();
       read(stored(created, run("queued", null, { queuePosition: 1 }), CLIENT_COMMAND_ID));

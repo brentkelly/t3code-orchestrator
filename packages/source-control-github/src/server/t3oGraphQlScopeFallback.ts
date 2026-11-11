@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-8, T3O-54): the pull request reads' missing-scope fallback. Upstream retries only a
+ * T3o: the pull request reads' missing-scope fallback. Upstream retries only a
  * reviewer node refusal; a classic token's `INSUFFICIENT_SCOPES` and any check rollup refusal
  * fail the document, so these are upstream's operations with the gated selections cut out.
  */
@@ -191,7 +191,7 @@ export const T3oScopeFallbackGraphQLGroup = GraphQLGroup.make(
 const REFUSAL = /required scopes|not been granted|not accessible by|INSUFFICIENT_SCOPES/i;
 
 /**
- * GitHub refusing the token a gated field (T3O-8), on a 200: as the client's raw
+ * GitHub refusing the token a gated field, on a 200: as the client's raw
  * `ResponseError`, or as the `GitHubApiResponseError` `GitHubGraphQlClient.call` maps it to.
  */
 export const isMissingScopeRefusal = (error: unknown): boolean => {
@@ -225,7 +225,7 @@ export interface T3oCoreReads<A> {
 }
 
 /**
- * T3O-8, T3O-59: the pull request core read with the missing-scope fallback. `finish` turns
+ * The pull request core read with the missing-scope fallback. `finish` turns
  * each raw read into the core (the same pipeline upstream runs on its own read). Only a scope
  * refusal is retried, once per gated field. A read that had to drop the check rollup is marked
  * `checksUnread`: its empty checks mean "could not look", not "none".
@@ -248,7 +248,7 @@ export const readCoreWithScopeFallback = <Raw, A extends object, E, R>(
 };
 
 /**
- * T3O-54: the summary read, again through `read(false)` (the batch without the check rollup)
+ * The summary read, again through `read(false)` (the batch without the check rollup)
  * on a scope refusal. The decoder reads the rollup's absence as checks unknown.
  */
 export const readSummariesWithScopeFallback = <A, E, R>(

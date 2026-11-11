@@ -1,10 +1,7 @@
 /**
- * T3o card placement and moving, the decider half (T3O-65, D20).
- *
- * A card has a pin (a chosen worker, or null to follow the default) and a
- * placement (where its threads spawned). A worktree binds the card to where it
- * was placed: from then on only a move changes it, and a move is refused while
- * a step runs. These pin the rules the supervisor and the Move dialog lean on.
+ * Card placement in the decider: a worktree binds the card to where it was
+ * placed, only a move changes it after that, and a move is refused while a
+ * step runs.
  */
 import {
   BOARD_LOCAL_WORKER_ID,

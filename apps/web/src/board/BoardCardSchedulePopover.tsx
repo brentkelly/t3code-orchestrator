@@ -1,18 +1,7 @@
 /**
- * The card's scheduled start (T3O-19): a clock trigger that stays a bare icon
- * until a time is set, and a small popover behind it.
- *
- * One component for all three surfaces — the create dialog's footer, the card
- * modal's header and the board column card — because the whole control is the
- * trigger plus its copy, and three copies of that would be three places for the
- * wording to drift. The caller supplies the situation (`kind`) and the stage
- * name; every string comes from `boardScheduleCopy`.
- *
- * There is no date picker anywhere else in this app, and this is a control the
- * brief calls rarely used, so it is a native `<input type="datetime-local">`
- * styled like the rest (D12) rather than a component of its own. It works on
- * mobile browsers, and a time typed into it round-trips through the CLIENT's
- * timezone into a UTC instant — the server only ever compares instants.
+ * The card's scheduled start, one component for the create dialog, card modal and
+ * column card, with every string from `boardScheduleCopy`. A native datetime-local
+ * input converts through the client's timezone; the server only compares instants.
  */
 import { useState } from "react";
 
@@ -66,6 +55,7 @@ export function BoardCardSchedulePopover({
   // passes — and that is the window this label has to be honest about. The
   // board pill next to it does the same (`BoardCardItem`); a `Date.now()` per
   // render costs nothing and starts nothing ticking.
+  // oxlint-disable-next-line react/purity -- the trigger samples the clock on each render so a passed moment never reads as upcoming.
   const triggerNowMs = Date.now();
   // Empty when nothing is scheduled, deliberately: see `scheduleInputValue`.
   // A pre-filled field plus commit-on-complete would make the first spinner
@@ -91,7 +81,7 @@ export function BoardCardSchedulePopover({
       <PopoverTrigger
         aria-label={scheduledStartAt === null ? copy.emptyTip : copy.title}
         className={cn(
-          // Neutral, never coloured (D10). A scheduled card is not running, not
+          // Neutral, never coloured. A scheduled card is not running, not
           // done and not waiting on a human; and it is not amber either,
           // because amber's job is "this will never move until someone acts"
           // and a scheduled card moves on its own.

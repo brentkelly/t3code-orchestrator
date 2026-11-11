@@ -1,11 +1,6 @@
 /**
- * T3o board MCP toolkit — the central server's end of the relay (T3O-63, D3).
- *
- * For every worker with a live connection, holds that worker's relay stream
- * open and answers each board tool call that arrives on it. A call can arrive
- * twice — a stream dropped between the answer and its delivery — so each is
- * answered once per worker and call id: an answer on record is sent again, and a call
- * still running is waited on rather than run a second time. A transient
+ * The central server's end of the board MCP relay. A call can arrive twice (a stream dropped
+ * between answer and delivery), so each is answered once per worker and call id. A transient
  * `board-unreachable` is not recorded, so the same call id can still succeed.
  */
 import type { BoardMcpRelayOutcome, BoardMcpRelayRequest, EnvironmentId } from "@t3tools/contracts";
@@ -95,8 +90,8 @@ export const makeBoardMcpRelayClient = Effect.gen(function* () {
           Effect.flatMap((rpc) => stageCardFilesOnWorker({ rpc, fileSystem, digest, staging })),
         );
 
-  const answer: BoardMcpRelayClientShape["answer"] = (workerId, request) =>
-    Effect.gen(function* () {
+  const answer: BoardMcpRelayClientShape["answer"] = Effect.fn("BoardMcpRelayClient.answer")(
+    function* (workerId, request) {
       // Claimed before the first yield, so a redelivery can never slip in
       // between the store lookup and the claim and run the call a second time.
       // Keyed by worker too: a call id is the worker's own, so another
@@ -140,7 +135,8 @@ export const makeBoardMcpRelayClient = Effect.gen(function* () {
         Effect.forkIn(scope),
       );
       return yield* Deferred.await(done);
-    });
+    },
+  );
 
   yield* runPerOnlineWorker(connections, "MCP relay", (workerId, rpc) =>
     rpc.gateway.subscribeMcpRelay(centralEnvironmentId).pipe(

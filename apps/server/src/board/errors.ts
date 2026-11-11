@@ -1,5 +1,5 @@
 /**
- * Errors the board engine answers a dispatch with (T3O-56).
+ * Errors the board engine answers a dispatch with.
  *
  * Board-owned rather than borrowed from `orchestration/Errors.ts`: the board
  * has its own engine now, and upstream's v1 error module does not survive the
