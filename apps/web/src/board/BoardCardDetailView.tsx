@@ -72,6 +72,7 @@ import {
   ClockIcon,
   EllipsisVerticalIcon,
   ExternalLinkIcon,
+  LinkIcon,
   FileIcon,
   FileTextIcon,
   ArrowUpIcon,
@@ -1661,6 +1662,39 @@ function GroupActionsSection({
   );
 }
 
+/** The outside item the card tracks, such as the GitHub issue a webhook created it
+    from. Neutral: it is a link, not a status. */
+function BoardExternalRefChip({
+  externalRef,
+  onOpen,
+}: {
+  readonly externalRef: NonNullable<BoardCardDetailViewProps["detail"]["card"]["externalRef"]>;
+  readonly onOpen: (url: string) => void;
+}) {
+  const className =
+    "inline-flex h-[18px] max-w-60 shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground";
+  const text = <span className="truncate">{externalRef.id}</span>;
+  return (
+    <BoardHint label={`${externalRef.system}: ${externalRef.id}`}>
+      {externalRef.url === null ? (
+        <span className={className}>
+          <LinkIcon className="size-2.5 shrink-0" />
+          {text}
+        </span>
+      ) : (
+        <button
+          className={cn(className, "hover:bg-accent")}
+          onClick={() => onOpen(externalRef.url!)}
+          type="button"
+        >
+          <LinkIcon className="size-2.5 shrink-0" />
+          {text}
+        </button>
+      )}
+    </BoardHint>
+  );
+}
+
 /** The outline secondary look shared by the action-area buttons; hover is added
     per button because :hover still matches a disabled one. */
 const OUTLINE_ACTION_CLASS =
@@ -2781,6 +2815,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             </span>
           )}
           <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
+          {card.externalRef === null ? null : (
+            <BoardExternalRefChip externalRef={card.externalRef} onOpen={props.onOpenPullRequest} />
+          )}
           {/* On a done card the stage chip IS the completion badge, cut to the
               same block as the label chips beside it: the sheet no
               longer wears a wash, so this and the title's check carry "done".

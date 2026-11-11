@@ -92,6 +92,12 @@ import { readEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
+// T3o: webhook tasks can be board rules (T3O-78).
+import { BoardWebhookActionFields } from "../../board/BoardWebhookActionFields";
+import {
+  boardWebhookActionDraft,
+  parseBoardWebhookActionDraft,
+} from "../../board/boardWebhookActionDraft";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
@@ -813,6 +819,8 @@ function ScheduledTaskRow({
           {task.lastRunStatus !== "never" ? (
             <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
           ) : null}
+          {/* T3o: board rules are labelled (T3O-78). */}
+          {task.boardAction !== undefined ? <Badge variant="outline">Board rule</Badge> : null}
           {task.threadId !== null && scheduledTaskThreadMode(task) !== "new_thread" ? (
             <ScheduledTaskThreadLink environmentId={environmentId} threadId={task.threadId} />
           ) : null}
@@ -1412,6 +1420,10 @@ function ScheduledTaskEditorForm({
     )
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
   const submissionPending = useRef(false);
+  // T3o: the board rule being edited, null for a prompt task (T3O-78).
+  const [boardRule, setBoardRule] = useState(() =>
+    task?.boardAction === undefined ? null : boardWebhookActionDraft(task.boardAction),
+  );
   const editingTaskMissing =
     draft.editingId !== null &&
     tasksQuery.data !== null &&
@@ -1477,6 +1489,17 @@ function ScheduledTaskEditorForm({
     const parsedFilters = parseWebhookFilterDrafts(draft.filters);
     if (draft.scheduleMode === "webhook" && "error" in parsedFilters) {
       reportFailure("Invalid filter", parsedFilters.error);
+      return;
+    }
+    // T3o: a webhook save always sends the rule, so turning it off clears it (T3O-78).
+    const board =
+      draft.scheduleMode !== "webhook"
+        ? {}
+        : boardRule === null
+          ? { boardAction: null }
+          : parseBoardWebhookActionDraft(boardRule);
+    if ("error" in board) {
+      reportFailure("Invalid board rule", board.error);
       return;
     }
     const schedule = scheduleFromDraft(draft);
@@ -1545,6 +1568,7 @@ function ScheduledTaskEditorForm({
         draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
+      ...("action" in board ? { boardAction: board.action } : board),
     };
     // Lock before React renders, and keep successful creates locked until the form closes.
     submissionPending.current = true;
@@ -1873,6 +1897,14 @@ function ScheduledTaskEditorForm({
             draft.enabled ? null : draft.scheduleMode === "webhook" ? (
               <div className="space-y-4">
                 <WebhookEndpointField environmentId={environmentId} task={liveTask} />
+                {/* T3o: run the board instead of a prompt (T3O-78). */}
+                <BoardWebhookActionFields
+                  environmentId={environmentId}
+                  projectId={selectedProjectId}
+                  value={boardRule}
+                  onChange={setBoardRule}
+                  onTaskPatch={(patch) => setDraft((current) => ({ ...current, ...patch }))}
+                />
                 <p className="text-xs text-muted-foreground">
                   {
                     "Each request runs the prompt. Use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}} or {{request}} in the prompt; only what it names reaches the agent."

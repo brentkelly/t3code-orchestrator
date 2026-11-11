@@ -2643,7 +2643,8 @@ export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
  */
 export const BoardActivityActor = Schema.Struct({
   kind: Schema.Literals(["human", "agent", "system"]),
-  /** The resolved human name, frozen at write time. Null for agent/system. */
+  /** The resolved human name, frozen at write time. Null for an agent, and for the
+      system unless a webhook rule names its task (`Webhook: <title>`). */
   name: Schema.NullOr(TrimmedNonEmptyString),
   /** The agent's provider instance, for the client-side name + accent lookup.
       Null for human/system. */
