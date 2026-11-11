@@ -408,6 +408,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
       const taken = yield* decideFail(update("card-other"), board);
       assert.include(String(taken.message), "CARD-3");
       yield* decide(update("card-holder"), board);
+      // An unchanged re-send is no new claim, even beside an older live duplicate.
+      const twin = makeCard({ id: "card-twin", key: "CARD-5", externalRef: ref });
+      yield* decide(update("card-holder"), makeReadModel({ board: seededBoard([holder, twin]) }));
     }),
   );
 

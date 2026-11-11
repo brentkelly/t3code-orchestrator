@@ -295,7 +295,6 @@ function requireLiveStepState(input: {
     : Effect.succeed(state);
 }
 
-/** Move and start-stage-thread name unmet deps the same way: `KEY "title"`. */
 /** Board-wide, so a card that changed project still guards its reference. Archived cards
     do not hold one: restoring a duplicate is the caller's to refuse. */
 function externalRefTakenRefusal(
@@ -315,6 +314,7 @@ function externalRefTakenRefusal(
     : `Card '${holder.key}' already tracks ${ref.system} '${ref.id}'.`;
 }
 
+/** Move and start-stage-thread name unmet deps the same way: `KEY "title"`. */
 function formatUnmetDependencies(board: BoardState, unmet: ReadonlyArray<BoardCardId>): string {
   return unmet
     .map((dependencyId) => {
@@ -2723,7 +2723,13 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       }
 
       const nextLabels = yield* resolveCardUpdateLabels({ board, card, command });
-      if (command.externalRef !== undefined && command.externalRef !== null) {
+      // An unchanged reference re-sent is no new claim, even beside an older duplicate.
+      if (
+        command.externalRef !== undefined &&
+        command.externalRef !== null &&
+        (card.externalRef?.system !== command.externalRef.system ||
+          card.externalRef.id !== command.externalRef.id)
+      ) {
         const refusal = externalRefTakenRefusal(board, command.externalRef, card.id);
         if (refusal !== null) return yield* invariant(command, refusal);
       }
