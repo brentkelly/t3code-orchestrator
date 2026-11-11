@@ -444,11 +444,12 @@ export function spawnPushesBriefImages(role: string | null | undefined): boolean
 
 /** How a brief attachment goes on a turn: an image upstream's providers take
     natively, or a file (PDFs included) whose handling the adapter decides. */
-export function briefAttachmentTurnType(attachment: {
+function briefAttachmentTurnType(attachment: {
   readonly type: BoardCardAttachment["type"];
   readonly mimeType: string;
 }): "image" | "file" {
-  return attachment.type === "image" && isProviderSendTurnSupportedImageMimeType(attachment.mimeType)
+  return attachment.type === "image" &&
+    isProviderSendTurnSupportedImageMimeType(attachment.mimeType)
     ? "image"
     : "file";
 }
