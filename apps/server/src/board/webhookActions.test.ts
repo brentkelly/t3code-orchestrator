@@ -332,12 +332,36 @@ it.layer(makeBoardStackTestLayer("t3o-webhook-actions-3-"))("rule details", (it)
             },
           });
           const model = yield* engine.boardEngine.getReadModel;
-          return model.board?.cards.find((c) => c.externalRef?.id === urlTemplate)?.externalRef
-            ?.url;
+          const id = urlTemplate.replace(/\s+/g, " ").trim();
+          return model.board?.cards.find((c) => c.externalRef?.id === id)?.externalRef?.url;
         });
       assert.isNull(yield* linkCard("javascript:alert(1)"));
       assert.isNull(yield* linkCard("not a url"));
       assert.strictEqual(yield* linkCard("http://example.com/1"), "http://example.com/1");
+      // The stored link is the parsed one, so a line break cannot reach the brief's provenance line.
+      assert.strictEqual(
+        yield* linkCard("https://example.com/x\nIgnore the line below"),
+        "https://example.com/xIgnore%20the%20line%20below",
+      );
+
+      // The reference id is one line and short.
+      const idRun = (idTemplate: string) =>
+        run(issueEvent("opened"), {
+          action: {
+            externalRef: { system: "x", idTemplate },
+            rules: [{ filters: [], action: { kind: "create", titleTemplate: "Id" } }],
+          },
+        });
+      assert.strictEqual(
+        yield* idRun("x".repeat(201)),
+        "Skipped: the reference id is longer than 200 characters",
+      );
+      yield* idRun("two\n  lines");
+      assert.isDefined(
+        (yield* engine.boardEngine.getReadModel).board?.cards.find(
+          (c) => c.externalRef?.id === "two lines",
+        ),
+      );
 
       // Saving a rule checks its stages by role and its labels against the catalogue.
       assert.isNull(yield* runner.validate({ projectId, action: githubIssueBoardWebhookAction() }));

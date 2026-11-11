@@ -68,26 +68,31 @@ export function matchBoardWebhookRule(action: BoardWebhookAction, request: Webho
   );
 }
 
+/** The id is matched exactly and shown in the delivery log, so it is one short line. */
+const BOARD_WEBHOOK_REF_ID_MAX_CHARS = 200;
+
 /** The card's external reference, or the placeholders the request did not fill. */
 function renderBoardWebhookRef(
   template: BoardWebhookAction["externalRef"],
   request: WebhookRequest,
-): BoardCardExternalRef | { readonly missing: ReadonlyArray<string> } {
+): BoardCardExternalRef | { readonly missing: ReadonlyArray<string> } | { readonly tooLong: true } {
   const id = render(template.idTemplate, request);
-  const trimmed = id.prompt.trim();
-  if (id.missing.length > 0 || trimmed === "") {
+  const line = id.prompt.replace(/\s+/g, " ").trim();
+  if (id.missing.length > 0 || line === "") {
     return { missing: id.missing.length > 0 ? id.missing : [template.idTemplate] };
   }
+  if (line.length > BOARD_WEBHOOK_REF_ID_MAX_CHARS) return { tooLong: true };
   const url =
     template.urlTemplate === undefined ? "" : render(template.urlTemplate, request).prompt;
-  return { system: template.system, id: trimmed, url: webLinkOrNull(url.trim()) };
+  return { system: template.system, id: line, url: webLinkOrNull(url.trim()) };
 }
 
-/** The card renders the link as clickable, so a sender-shaped non-web scheme is dropped. */
+/** The card renders the link as clickable, so a sender-shaped non-web scheme is dropped.
+    The parsed href is kept: the parser drops line breaks the raw string could carry into the brief. */
 function webLinkOrNull(url: string): string | null {
   if (!URL.canParse(url)) return null;
-  const { protocol } = new URL(url);
-  return protocol === "http:" || protocol === "https:" ? url : null;
+  const { protocol, href } = new URL(url);
+  return protocol === "http:" || protocol === "https:" ? href : null;
 }
 
 /** Collapsed to one line and capped, so an outside title cannot reshape the card face. */
@@ -351,6 +356,9 @@ export const makeBoardWebhookRunner = Effect.gen(function* () {
     if (rule === null) return "Skipped: no rule matched";
     const ref = renderBoardWebhookRef(input.action.externalRef, input.request);
     if ("missing" in ref) return `Skipped: missing ${ref.missing.join(", ")}`;
+    if ("tooLong" in ref) {
+      return `Skipped: the reference id is longer than ${BOARD_WEBHOOK_REF_ID_MAX_CHARS} characters`;
+    }
     const board = yield* readBoard;
     const actor = boardWebhookActor(input.taskTitle);
     if (rule.action.kind === "create") return yield* create(input, rule.action, ref, board, actor);
