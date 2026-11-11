@@ -183,6 +183,7 @@ import * as Stream from "effect/Stream";
 import { BoardSetupScriptRunner } from "./ports/BoardSetupScriptRunner.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
 import { BoardStepSlots, type BoardConcurrencyLimit, type BoardSlotKey } from "./BoardStepSlots.ts";
 import { BoardEngine } from "./BoardEngine.ts";
@@ -861,30 +862,42 @@ const make = Effect.gen(function* () {
     Effect.catchCause(() => Effect.succeed(DEFAULT_BOARD_SETTINGS)),
   );
 
-  /** What a stage with no model of its own runs on: the board's own default
-      model when the user has set one (t3o-30, D1), and only otherwise the app's
+  /** What a stage with no model of its own runs on (t3o-30, D1; T3O-74): the
+      board's own default model when the user has set one, else the card's
+      project's own default model override, else the project-resolved
       text-generation selection.
    *
    * The board still has no compiled-in pair — a hardcoded one is a pair the user
    * may not have enabled, which is exactly how a conflict-resolution step came
-   * to spawn onto a codex CLI that was not installed. `Settings → Board` now
-   * names the fallback, so an unset stage runs on something the user chose and
-   * can see. The per-stage picker is still the recommended answer; this is what
-   * a never-configured stage lands on. */
-  const fallbackModelSelection = serverSettings.getSettings.pipe(
-    Effect.map((settings) =>
-      resolveBoardDefaultModelSelection(settings.board ?? DEFAULT_BOARD_SETTINGS, {
-        instanceId: settings.textGenerationModelSelection.instanceId,
-        model: settings.textGenerationModelSelection.model,
+   * to spawn onto a codex CLI that was not installed. The environment-wide
+   * new-thread default is deliberately NOT a tier: a user's chat default would
+   * silently move every unset stage onto another, possibly costlier, model.
+   * `resolveProjectSettings` already drops a project default, and swaps a
+   * text-generation pick, whose provider is off for the project. The per-stage
+   * picker is still the recommended answer; this is what a never-configured
+   * stage lands on. */
+  const fallbackModelSelectionFor = (projectId: ProjectId) =>
+    serverSettings.getSettings.pipe(
+      Effect.map((settings) => {
+        const resolved = resolveProjectSettings(settings, projectId);
+        const projectDefault =
+          resolved.sources.defaultModelSelection === "project"
+            ? resolved.settings.defaultModelSelection
+            : null;
+        const selection = projectDefault ?? resolved.settings.textGenerationModelSelection;
+        return resolveBoardDefaultModelSelection(settings.board ?? DEFAULT_BOARD_SETTINGS, {
+          instanceId: selection.instanceId,
+          model: selection.model,
+          ...(selection.options === undefined ? {} : { options: selection.options }),
+        });
       }),
-    ),
-    Effect.catchCause(() =>
-      Effect.succeed({
-        instanceId: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId,
-        model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
-      }),
-    ),
-  );
+      Effect.catchCause(() =>
+        Effect.succeed({
+          instanceId: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId,
+          model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
+        }),
+      ),
+    );
 
   // Progress signal (t3o-17 D2, re-pointed by t3o-18 D16). The reactor — not the
   // pure `recoveryDecision` — resolves whether a step made progress since the
@@ -3162,7 +3175,10 @@ const make = Effect.gen(function* () {
     // continuation below); a re-entry is skipped — its clean human thread must
     // not re-open on every server restart.
     if (bootPass && !firstEntry) return;
-    const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+    const model = resolveBoardStageModelSelection(
+      exec.model,
+      yield* fallbackModelSelectionFor(card.projectId),
+    );
     const cardOverride = cardStageModelOverride(board, card);
     // Ask the stage executor what runs next (D15): the reactor delegates the
     // "what to execute" decision rather than computing it inline. A card
@@ -3799,7 +3815,8 @@ const make = Effect.gen(function* () {
     if (row === undefined) return;
     yield* recordCiStep(card.id, runId, index, { ...row, status: "running", startedAt });
     const model =
-      step.model ?? resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+      step.model ??
+      resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelectionFor(card.projectId));
     const brief = yield* boardQueries
       .boardCardBrief(card.id)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
@@ -4533,7 +4550,10 @@ const make = Effect.gen(function* () {
       card.stage,
       boardProjectStageConfig(board, card.projectId),
     );
-    const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+    const model = resolveBoardStageModelSelection(
+      exec.model,
+      yield* fallbackModelSelectionFor(card.projectId),
+    );
     const plan = stageExecutorFor(stage.role, exec).planNext({
       card,
       config: {
@@ -5412,7 +5432,10 @@ const make = Effect.gen(function* () {
       boardProjectStageConfig(board, card.projectId),
     );
     const completions = boardCardStepCompletions(board, card.id);
-    const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+    const model = resolveBoardStageModelSelection(
+      exec.model,
+      yield* fallbackModelSelectionFor(card.projectId),
+    );
     const cardOverride = cardStageModelOverride(board, card);
     const completedStepIds = completions
       .filter((completion) => completion.outcome === "succeeded")
@@ -5580,7 +5603,10 @@ const make = Effect.gen(function* () {
     // `beginStageRun` applies, and this path needs it for the same reason.
     if (hasLiveStageThread(card, card.stage)) return;
     const completions = boardCardStepCompletions(board, card.id);
-    const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+    const model = resolveBoardStageModelSelection(
+      exec.model,
+      yield* fallbackModelSelectionFor(card.projectId),
+    );
     const cardOverride = cardStageModelOverride(board, card);
     const completedStepIds = completions
       .filter((completion) => completion.outcome === "succeeded")
@@ -8090,7 +8116,8 @@ const make = Effect.gen(function* () {
     // "the model I want this card BUILT on" says nothing about who should
     // write its pull request description.
     const model =
-      submit.model ?? resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+      submit.model ??
+      resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelectionFor(card.projectId));
     const landed = yield* dispatchLanded({
       type: "board.card.select-step",
       commandId: yield* commandId("submit-step"),
