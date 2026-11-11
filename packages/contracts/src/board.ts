@@ -2322,6 +2322,11 @@ const BOARD_STEP_STALLED_REASONS = [
   // runs the step elsewhere or on another provider. Clears when the card is
   // pinned to a worker that has it, its model changes, or the instance appears.
   "provider-not-on-worker",
+  // The step's provider instance is turned off for the card's project,
+  // refused by the server that would spawn it before any thread exists.
+  // Clears when the card's model changes, or on Continue once the provider
+  // is turned back on for the project.
+  "provider-disabled-for-project",
   // The card's worker was removed from the board, or the card
   // was force-moved off a worker it could not reach, while this step ran or
   // was parked there. Its thread was stopped if the worker answered, and its
@@ -4208,7 +4213,7 @@ function boardShortClock(iso: string | null | undefined): string | null {
  * The chip words for a `stalled` step, by reason: the board-waiting readings say
  * when, the rest say a human is needed. Keeps one status rather than adding more.
  */
-function boardStalledWords(
+export function boardStalledWords(
   reason: BoardCardStepStalledReason,
   retryAt: string | null,
   nowMs: number | undefined,
@@ -4249,6 +4254,12 @@ function boardStalledWords(
         label: "Provider missing",
         detail:
           "This step's provider isn't on the card's worker. The step hasn't started. Move the card to a worker that has it, or pick a model the worker offers.",
+      };
+    case "provider-disabled-for-project":
+      return {
+        label: "Provider disabled",
+        detail:
+          "This step's provider is turned off for the card's project. The step hasn't started. Turn it on in the project's settings and press Continue, or change this card's model.",
       };
     case "worker-removed":
       return {
@@ -4309,6 +4320,8 @@ export function boardCardAttention(input: {
     readonly planTotal?: number | undefined;
     readonly planDone?: number | undefined;
     readonly parentCardId?: BoardCardId | undefined;
+    /** The permission wait is a subagent's, for the chip's wording. */
+    readonly awaitingSubagent?: boolean | undefined;
     readonly reviewOutcome?: BoardReviewLoopOutcome | undefined;
     readonly reviewHeldOutcome?: BoardReviewLoopOutcome | undefined;
     readonly reviewRoundComplete?: boolean | undefined;
@@ -4476,7 +4489,11 @@ export function boardCardAttention(input: {
       reason: "permission",
       tone: ATTENTION_TONES.permission,
       label: "Needs permission",
-      detail: "A thread on this card is waiting for you to approve or deny a request",
+      // Upstream's map also rolls up side chats and delegations to other
+      // environments, so the wording does not promise a subagent.
+      detail: card.awaitingSubagent
+        ? "A thread under this card's agent is waiting for you to approve a request"
+        : "A thread on this card is waiting for you to approve or deny a request",
     };
   }
   // Gated on `settling` as well, so the two chips that say the same words wait
@@ -7099,6 +7116,9 @@ export const BoardCardShell = Schema.Struct({
       "Waiting" label. Key-optional, present only when true; derived alongside
       `threadState` by `deriveBoardCardThreadState`. */
   waitingOnBackground: Schema.optionalKey(Schema.Boolean),
+  /** The card waits only on a subagent's approval. Client-derived and key-optional like
+      `waitingOnBackground`; no server producer sets it. */
+  awaitingSubagent: Schema.optionalKey(Schema.Boolean),
   /** The most recently linked live thread, so clients re-derive `threadState` and
       `awaitingInput` from their thread shells: card deltas cannot carry live thread state. */
   activeThreadId: Schema.NullOr(ThreadId),
@@ -7233,6 +7253,10 @@ export interface BoardThreadStateSource {
   readonly hasPendingApprovals: boolean;
   readonly session?: { readonly status: string } | null | undefined;
   readonly backgroundLiveness?: "working" | "monitoring" | null | undefined;
+  /** A subagent under this thread holds a live approval. Set only by
+      the client, from upstream's subagent-request map; the parent's own session
+      does not gate it, since a parent idle on background work has none. */
+  readonly subagentAwaitingApproval?: boolean | undefined;
 }
 
 /**
@@ -7268,17 +7292,31 @@ export function deriveBoardCardThreadState(
       monitor, or subagents. Additive to `threadState`: a card waiting
       on subagents still reads `working`. */
   readonly waitingOnBackground: boolean;
+  /** The card waits only because a subagent awaits approval: no
+      linked thread holds a prompt of its own. */
+  readonly awaitingSubagent: boolean;
 } {
   const live = (Array.isArray(threads) ? threads : [threads]).filter(
     (thread): thread is BoardThreadStateSource => thread !== null && thread !== undefined,
   );
   if (live.length === 0) {
-    return { threadState: "none", awaitingInput: false, waitingOnBackground: false };
+    return {
+      threadState: "none",
+      awaitingInput: false,
+      waitingOnBackground: false,
+      awaitingSubagent: false,
+    };
   }
   const awaitingInput = live.some((thread) => thread.hasPendingUserInput);
   const awaitingPermission = live.some(isThreadAwaitingPermission);
-  if (awaitingInput || awaitingPermission) {
-    return { threadState: "waiting", awaitingInput, waitingOnBackground: false };
+  const subagentAwaiting = live.some((thread) => thread.subagentAwaitingApproval === true);
+  if (awaitingInput || awaitingPermission || subagentAwaiting) {
+    return {
+      threadState: "waiting",
+      awaitingInput,
+      waitingOnBackground: false,
+      awaitingSubagent: subagentAwaiting && !awaitingPermission,
+    };
   }
   const midTurn = live.some((thread) => {
     const sessionStatus = thread.session?.status;
@@ -7292,14 +7330,19 @@ export function deriveBoardCardThreadState(
   );
   const waitingOnBackground = !midTurn && background.length > 0;
   if (midTurn || background.some((thread) => thread.backgroundLiveness === "working")) {
-    return { threadState: "working", awaitingInput, waitingOnBackground };
+    return { threadState: "working", awaitingInput, waitingOnBackground, awaitingSubagent: false };
   }
   // Nothing is running, so a dead thread is the loudest thing left to say.
   // Ranked BELOW `working`, so a card with one errored thread and
   // one live one still reads as working — which is what keeps a review loop's
   // errored earlier phase from darkening a card whose next phase is running.
   const failed = live.some((thread) => thread.session?.status === "error");
-  return { threadState: failed ? "failed" : "stopped", awaitingInput, waitingOnBackground };
+  return {
+    threadState: failed ? "failed" : "stopped",
+    awaitingInput,
+    waitingOnBackground,
+    awaitingSubagent: false,
+  };
 }
 
 /** The card's active thread: the most recently linked live link, by the

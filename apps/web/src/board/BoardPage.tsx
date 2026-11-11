@@ -3,7 +3,6 @@
  * comes from `@t3tools/client-runtime`; this file decides when to dispatch, never
  * what number to store.
  */
-import { boardThreadStateSource } from "@t3tools/shared/boardThreadState";
 import {
   BoardCardId,
   BOARD_SEED_STAGES,
@@ -40,6 +39,7 @@ import {
   applyBoardCardPlacements,
   boardBuildQueue,
   boardRunningStepCount,
+  boardThreadStateSourceWithSubagents,
   isBoardCardPlacementSettled,
   mergeBoardStageColumns,
   planBoardCardReorder,
@@ -65,6 +65,7 @@ import { toastManager } from "../components/ui/toast";
 import { isEditableFocused } from "../lib/editableFocus";
 import { cn } from "../lib/utils";
 import { environmentShell } from "../state/shell";
+import { environmentThreadShells } from "../state/threads";
 import { boardEnvironment, environmentBoard } from "../state/board";
 import { useAtomCommand } from "../state/use-atom-command";
 import { BoardArchivedCardsSheet, refreshBoardArchivedCards } from "./BoardArchivedCardsSheet";
@@ -718,11 +719,15 @@ function useBoardPageModel({
       return next;
     });
   };
+  // A subagent awaiting approval turns its parent's to-do row violet.
+  const subagentRequests = useAtomValue(
+    environmentThreadShells.pendingSubagentRequestsAtom(environmentId),
+  );
   const todoThreadStateOf = (threadId: ThreadId) => {
     const shell = threadShellsById.get(threadId);
     if (shell === undefined) return undefined;
     const { threadState, awaitingInput } = deriveBoardCardThreadState(
-      boardThreadStateSource(shell),
+      boardThreadStateSourceWithSubagents(shell, subagentRequests),
     );
     return {
       awaitingInput,

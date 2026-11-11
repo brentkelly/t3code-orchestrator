@@ -246,6 +246,18 @@ export function boardBackgroundCheckInDueMs(input: {
   return input.sinceMs + (offsets.at(-1) ?? 0) + beyond * BOARD_BACKGROUND_CHECK_IN_INTERVAL_MS;
 }
 
+/** Where a wait resumes after a human's hold: back-dated so the next check-in
+    is one step of the ladder from `nowMs`, not the whole cumulative offset. */
+export function boardBackgroundWaitResumedSinceMs(input: {
+  readonly nowMs: number;
+  readonly checkInsSent: number;
+}): number {
+  if (input.checkInsSent === 0) return input.nowMs;
+  return (
+    input.nowMs - boardBackgroundCheckInDueMs({ sinceMs: 0, checkInsSent: input.checkInsSent - 1 })
+  );
+}
+
 /** Whether a check-in spends the recovery budget. The scheduled ones
     in the first half hour are free; every one after that is charged like a
     recovery, so a background job that never finishes reaches a human at the

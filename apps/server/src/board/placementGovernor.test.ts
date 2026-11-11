@@ -1,9 +1,15 @@
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * The live supervisor placing steps on workers. "Ran on worker W" is the
  * `workerId` the fake gateway's spawn named and the card's thread link records.
  */
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import {
   BOARD_LOCAL_WORKER_ID,
+  BoardCardAttachmentId,
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
   boardCardStepState,
@@ -19,10 +25,13 @@ import {
   type BoardWorkerView,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
+import { layerTest } from "../config.ts";
 import {
   buildingCard,
   cardMoved,
@@ -177,6 +186,59 @@ it.effect("a pinned card's first thread spawns on its worker, which becomes its 
           assert.strictEqual(after.threadLinks[0]?.workerId, W1);
         }),
     );
+  }),
+);
+
+// T3O-74: a worker's gateway sends no attachments, so the central server
+// stages no pending copies for it; its thread reads the files staged there.
+it.effect("a card on a worker stages no attachment copies on the central server", () =>
+  Effect.gen(function* () {
+    const { placement } = yield* makePlacement(workersState([workerView(W1)]));
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-remote-brief-"));
+    const stateDir = NodePath.join(baseDir, "userdata");
+    const folder = NodePath.join(stateDir, "board", "attachments", "card-1");
+    NodeFS.mkdirSync(folder, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(folder, "spec.pdf"), "pdf");
+    const planning: BoardCard = {
+      // Already in Planning: the reactor reads the card off the live model at
+      // admit time, and the harness does not re-project the move.
+      ...makeBoardCard({ id: "card-1", stage: "planning", orderKey: "m", pinnedWorkerId: W1 }),
+      attachments: [
+        {
+          id: BoardCardAttachmentId.make("att-doc"),
+          name: "spec.pdf",
+          type: "file",
+          mimeType: "application/pdf",
+          sizeBytes: 3,
+          addedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    };
+    yield* withGovernor(
+      {
+        board: { cards: [planning], nextCardNumberByProject: {}, workers: registered },
+        settings: settingsWith({
+          building: [codexStep],
+          planning: codexStep,
+          globalMaxConcurrent: 3,
+        }),
+        placement,
+        serverConfig: layerTest(process.cwd(), baseDir).pipe(
+          Layer.provide(NodeServices.layer),
+          Layer.orDie,
+        ),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(cardMoved(planning, "sprint", "planning", 1));
+          const spawn = (yield* h.commands).find((command) => command.type === "thread.spawn");
+          assert.isTrue(spawn?.type === "thread.spawn" && spawn.workerId === W1);
+          assert.deepStrictEqual(spawn?.type === "thread.spawn" ? spawn.attachments : null, []);
+          const pending = NodePath.join(stateDir, "attachments");
+          assert.deepStrictEqual(NodeFS.existsSync(pending) ? NodeFS.readdirSync(pending) : [], []);
+        }),
+    );
+    NodeFS.rmSync(baseDir, { recursive: true, force: true });
   }),
 );
 

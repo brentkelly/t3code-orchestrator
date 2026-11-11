@@ -85,12 +85,16 @@ export const makeInProcessWorker = (
     readonly relayTimeout?: Duration.Input;
     /** Runs before each call the worker's thread engine takes. */
     readonly onThreadCall?: FakeThreadGatewayOptions["onCall"];
+    readonly subagentAwaitingApproval?: FakeThreadGatewayOptions["subagentAwaitingApproval"];
   } = {},
 ) =>
   Effect.gen(function* () {
     const kit = yield* makeFakeWorkerLayer;
     const threads = yield* makeFakeThreadGateway({
       ...(options.onThreadCall === undefined ? {} : { onCall: options.onThreadCall }),
+      ...(options.subagentAwaitingApproval === undefined
+        ? {}
+        : { subagentAwaitingApproval: options.subagentAwaitingApproval }),
       projects: [
         {
           id: WORKER_PROJECT_ID,

@@ -9,6 +9,7 @@ import {
   type BoardCardModelOverrides,
   type BoardCardStageModelOverride,
   type BoardStageId,
+  type ProjectId,
 } from "@t3tools/contracts";
 
 import {
@@ -54,6 +55,7 @@ export function BoardCardModelsPopover({
   overrides,
   onChange,
   stepRunning,
+  projectId,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
@@ -71,6 +73,8 @@ export function BoardCardModelsPopover({
       Deliberately does NOT disable the controls: setting the model for the next
       round while this one runs is the common intent, not a mistake. */
   readonly stepRunning: boolean;
+  /** The card's project (T3O-74): providers turned off for it show disabled. */
+  readonly projectId: ProjectId;
 }) {
   // Resolved here rather than drilled through the detail view, exactly as the
   // review pane's per-round drawer does — this module is lazily loaded, so the
@@ -82,7 +86,11 @@ export function BoardCardModelsPopover({
   const workers = useBoardWorkersState();
   const serverProviders = [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)];
   const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(serverProviders),
+      settings,
+      projectId,
+    ),
   );
   const getModelOptions = (active: ActiveModel): ModelOptionsByInstance =>
     getCustomModelOptionsByInstance(settings, serverProviders, active.instanceId, active.model);
