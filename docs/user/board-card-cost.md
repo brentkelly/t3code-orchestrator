@@ -2,7 +2,7 @@
 
 The board adds up what every agent thread on a card spent — planning, the build, each CI fix and
 every review, triage and adjudicate round — and prices it. Work a thread hands to a
-`delegate_task` child counts toward the same card and step.
+`delegate_task` child, or that child's own delegates, counts toward the same card and step.
 
 ## Where to see it
 
@@ -34,7 +34,7 @@ usage by step.
 
 Providers that do not report token usage (Cursor and Pi, and Grok and other ACP agents for now)
 count as _no usage_, which makes the figure partial. So does work a card did on a worker before
-the board started recording usage.
+the board started recording usage, or on a worker running an older T3o that does not report it.
 
 Each turn is priced when it finishes, so changing a price later does not change what past cards
 cost.

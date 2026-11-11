@@ -4,7 +4,7 @@
  * applies an older todo list over a newer one. A worker never read before starts
  * at its log's head.
  */
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { BOARD_WORKER_USAGE_PROTOCOL, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -17,6 +17,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { makeBoardSqlProjector } from "../projection.ts";
 import type { ThreadSignal, TodoSignal, UsageSignal } from "../ThreadGateway.ts";
 import { BoardUsageRecorder } from "../usage/BoardUsageRecorder.ts";
+import { markWorkerCardsPartial } from "../usage/boardUsageStore.ts";
 import { BoardRelayStore } from "./BoardRelayStore.ts";
 import { fromWireSignal } from "./gatewayWire.ts";
 import { runPerOnlineWorker } from "./perOnlineWorker.ts";
@@ -66,11 +67,23 @@ export const makeWorkerSignalFeed = Effect.gen(function* () {
       cursor = yield* rpc.gateway.todoLogHead;
       yield* store.saveSignalCursor(workerId, cursor);
     }
+    // An older worker sends no usage, so the cards it works on can only be a lower bound.
+    // Re-marked on every batch: a card linked to one of its threads since starts here.
+    const protocol = (yield* connections.current).get(workerId)?.status.protocolVersion ?? 0;
+    const markPartial = Effect.gen(function* () {
+      if (Option.isNone(recorder) || protocol >= BOARD_WORKER_USAGE_PROTOCOL) return;
+      const marked = yield* markWorkerCardsPartial(sql, workerId).pipe(
+        Effect.orElseSucceed(() => []),
+      );
+      for (const cardId of marked) yield* recorder.value.publish(cardId);
+    });
+    yield* markPartial;
     yield* rpc.gateway.subscribeSignals(cursor, Option.isSome(recorder)).pipe(
       Stream.runForEach((batch) =>
         Effect.gen(function* () {
           // A redelivered position (a stream reopened mid-batch) is skipped.
           if (cursor !== null && batch.sequence <= cursor) return;
+          yield* markPartial;
           const batchSignals = batch.signals.map(fromWireSignal);
           const todos = batchSignals.filter(isTodoSignal);
           const usage = Option.isSome(recorder)

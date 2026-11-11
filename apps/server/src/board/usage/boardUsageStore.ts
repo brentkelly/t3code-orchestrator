@@ -231,3 +231,19 @@ export const listLocalLinkedThreadIds = Effect.fn("boardUsageStore.listLocalLink
     return rows.map((row) => row.threadId);
   },
 );
+
+/** Mark partial every card with a live thread on a worker that reports no usage. The
+    cards newly marked, for their `card-usage` delta. */
+export const markWorkerCardsPartial = Effect.fn("boardUsageStore.markWorkerCardsPartial")(
+  function* (sql: SqlClient.SqlClient, workerId: string) {
+    const rows = yield* sql<{ readonly cardId: BoardCardId }>`
+      UPDATE boards.board_cards SET usage_history_partial = 1
+      WHERE usage_history_partial = 0 AND card_id IN (
+        SELECT card_id FROM boards.board_card_thread_links
+        WHERE worker_id = ${workerId} AND tombstoned_at IS NULL
+      )
+      RETURNING card_id AS "cardId"
+    `;
+    return rows.map((row) => row.cardId);
+  },
+);

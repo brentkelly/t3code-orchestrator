@@ -3,6 +3,7 @@
  * feed's cursor in a real board database so a resume reads what was persisted.
  */
 import {
+  BOARD_WORKER_USAGE_PROTOCOL,
   BoardCardId,
   CommandId,
   ProjectId,
@@ -43,6 +44,7 @@ import {
 } from "./distributed.testkit.ts";
 import { CardFilesNotStaged, makeRemoteThreadGateway } from "./RemoteThreadGateway.ts";
 import { WorkerConnections } from "./WorkerConnections.ts";
+import { helloFor } from "./workers.testkit.ts";
 import { makeWorkerSignalFeed } from "./WorkerSignalFeed.ts";
 import { BoardUsagePricing } from "../ports/BoardUsagePricing.ts";
 import {
@@ -88,9 +90,11 @@ const spawnInput = (
 const setup = (
   links: ReadonlyMap<string, BoardWorkerId> = new Map(),
   recorder?: BoardUsageRecorderShape,
+  protocolVersion?: number,
 ) =>
   Effect.gen(function* () {
     const env = yield* makeInProcessWorker();
+    if (protocolVersion !== undefined) env.worker.hello = helloFor(WORKER_ID, protocolVersion);
     const central = yield* makeFakeThreadGateway({
       projects: [
         {
@@ -158,6 +162,20 @@ const centralLayer = BoardRelayStoreLive.pipe(Layer.provideMerge(centralDatabase
 
 /** Each test on a board database of its own: a worker's cursor is durable,
     and one test's must never be the next one's starting point. */
+const testRecorder = makeBoardUsageRecorder.pipe(
+  Effect.provideService(
+    BoardUsagePricing,
+    BoardUsagePricing.of({
+      currentRates: Effect.succeed({
+        table: parseRateTable({
+          "gpt-5-codex": { input_cost_per_token: 1e-6, output_cost_per_token: 1e-6 },
+        }),
+        overrides: new Map(),
+      }),
+    }),
+  ),
+);
+
 const inCentral = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.scoped, Effect.provide(centralLayer));
 
@@ -230,19 +248,7 @@ describe("the remote thread gateway", () => {
       inCentral(
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
-          const recorder = yield* makeBoardUsageRecorder.pipe(
-            Effect.provideService(
-              BoardUsagePricing,
-              BoardUsagePricing.of({
-                currentRates: Effect.succeed({
-                  table: parseRateTable({
-                    "gpt-5-codex": { input_cost_per_token: 1e-6, output_cost_per_token: 1e-6 },
-                  }),
-                  overrides: new Map(),
-                }),
-              }),
-            ),
-          );
+          const recorder = yield* testRecorder;
           const threadId = ThreadId.make("thread-usage");
           const cardId = BoardCardId.make("card-usage");
           yield* sql`
@@ -276,6 +282,28 @@ describe("the remote thread gateway", () => {
           assert.strictEqual(yield* store.signalCursor(WORKER_ID), 2);
         }),
       ),
+  );
+
+  it.effect("a card on a worker too old to report usage reads partial, not understated", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const recorder = yield* testRecorder;
+        const cardId = BoardCardId.make("card-old-worker");
+        yield* sql`
+          INSERT INTO board_cards (card_id, project_id, title, stage, key, created_at, updated_at)
+          VALUES (${cardId}, 'p', 'Old worker', 'building', 'T-1', '2026-01-01', '2026-01-01')`;
+        yield* sql`
+          INSERT INTO board_card_thread_links (thread_id, card_id, role, linked_at, worker_id)
+          VALUES ('thread-old', ${cardId}, 'building', '2026-01-01T00:00:00.000Z', ${WORKER_ID})`;
+        const changes = yield* recorder.subscribeChanges;
+        yield* setup(new Map(), recorder, BOARD_WORKER_USAGE_PROTOCOL - 1);
+        assert.strictEqual(Option.getOrThrow(yield* Stream.runHead(changes)), cardId);
+        const [card] = yield* sql<{ readonly partial: number }>`
+          SELECT usage_history_partial AS partial FROM board_cards WHERE card_id = ${cardId}`;
+        assert.strictEqual(card?.partial, 1);
+      }),
+    ),
   );
 
   it.effect("after a dropped connection, the missed signals arrive once, from the cursor", () =>
