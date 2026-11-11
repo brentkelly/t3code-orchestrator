@@ -49,9 +49,15 @@ export function boardReleasedThreadIds(
   };
   for (const card of board.cards) {
     const state = boardCardStepState(board, card.id);
-    // An archived card, or one whose worktree the board reclaimed, is done with every thread it
-    // holds, whatever its last step row still says.
-    const finished = card.archivedAt !== null || card.worktree?.status === "reclaimed";
+    // An archived card, or one in Done whose worktree the board reclaimed, is done with every
+    // thread it holds, whatever its last step row still says. A reclaimed status outlives a
+    // reopen, so it counts only while the card is still in Done.
+    const stage = boardStageById(board, card.stage);
+    const finished =
+      card.archivedAt !== null ||
+      (card.worktree?.status === "reclaimed" &&
+        stage !== null &&
+        effectiveBoardStageRole(stage) === "done");
     const current =
       finished || state === null || !boardStepBelongsToStage(board, card, state) ? null : state;
     for (const link of card.threadLinks) {

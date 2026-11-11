@@ -394,6 +394,21 @@ describe("boardReleasedThreadIds", () => {
       assert.deepStrictEqual(released(state), ["thread-plan"]);
     });
 
+    // A reopened card keeps `reclaimed` until Building provisions a worktree again.
+    it("is kept on a card reopened from Done with its worktree still reclaimed", () => {
+      const reopened = (status: "running" | "abandoned") =>
+        board({
+          card: card({
+            stage: planning,
+            links: [link("thread-plan", planning)],
+            worktree: { path: null, status: "reclaimed" },
+          }),
+          step: stepState({ stepId: planning, threadId: "thread-plan", status }),
+        });
+      assert.deepStrictEqual(released(reopened("running")), []);
+      assert.deepStrictEqual(released(reopened("abandoned")), []);
+    });
+
     it("is released once the thread completes its step", () => {
       const state = kept({
         stepCompletions: [

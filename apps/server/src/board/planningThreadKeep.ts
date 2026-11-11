@@ -43,10 +43,9 @@ export function keepsPlanningThreadOnExit(
  */
 export function keptPlanningThreadId(
   board: BoardState,
-  card: Pick<BoardCard, "id" | "stage" | "threadLinks" | "worktree">,
+  card: Pick<BoardCard, "id" | "stage" | "threadLinks">,
 ): ThreadId | null {
-  // Its worktree is gone and release has settled it.
-  if (!isPlanStage(board, card.stage) || card.worktree?.status === "reclaimed") return null;
+  if (!isPlanStage(board, card.stage)) return null;
   const link = card.threadLinks.findLast(
     (candidate) => candidate.role === card.stage && isLiveBoardCardThreadLink(candidate),
   );
