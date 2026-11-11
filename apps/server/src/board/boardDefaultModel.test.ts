@@ -149,7 +149,7 @@ it.effect("a fallback that names an API-only text generator fails the step clear
         assert.strictEqual(state?.status, "stalled");
         assert.strictEqual(
           state?.lastError,
-          "No model to run this stage: set a default model in Settings → Board.",
+          "This stage resolves to a text-generation model, which can't run an agent: pick an agent model for the stage, or set a board default model in Settings → Board.",
         );
         assert.isUndefined((yield* commands).find((command) => command.type === "thread.spawn"));
       }),

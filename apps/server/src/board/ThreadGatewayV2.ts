@@ -30,6 +30,7 @@ import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -529,6 +530,7 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
   const projectService = yield* ProjectService.ProjectService;
   const eventSink = yield* EventSink.EventSinkV2;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const crypto = yield* SecureRandom.SecureRandom;
   const path = yield* Path.Path;
   const nowMs = Effect.map(DateTime.now, DateTime.toEpochMillis);
@@ -556,13 +558,21 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
   const restartContinuationPending = (shell: OrchestrationV2ThreadShell) => {
     const runId = shell.latestRunId;
     if (shell.activeRunId !== null || runId === null) return Effect.succeed(false);
-    return projections.getThreadRecords(shell.id, ["runs"], { runIds: [runId] }).pipe(
-      Effect.flatMap((records) => {
-        const run = records.runs.find((candidate) => candidate.id === runId);
-        return run !== undefined && ThreadManagement.isTerminalRunStatus(run.status)
-          ? orchestrator.restartContinuationPending(run)
-          : Effect.succeed(false);
-      }),
+    // Upstream's effect id, keyed by the run alone: the keyed lookup first spares the run read
+    // on every idle thread, where a continuation is rarely pending.
+    return effectOutbox.get(`effect:restart-continuation:${runId}`).pipe(
+      Effect.flatMap((effect) =>
+        Option.isNone(effect)
+          ? Effect.succeed(false)
+          : projections.getThreadRecords(shell.id, ["runs"], { runIds: [runId] }).pipe(
+              Effect.flatMap((records) => {
+                const run = records.runs.find((candidate) => candidate.id === runId);
+                return run !== undefined && ThreadManagement.isTerminalRunStatus(run.status)
+                  ? orchestrator.restartContinuationPending(run)
+                  : Effect.succeed(false);
+              }),
+            ),
+      ),
       Effect.orElseSucceed(() => false),
     );
   };
@@ -594,6 +604,28 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
+  /**
+   * Whether the thread's running provider turn takes a steer in place. The engine resolves a
+   * steer to an interrupt-restart for a provider that can only restart its turn (Cursor, ACP).
+   */
+  const steersActively = (threadId: ThreadId) =>
+    projections.getRunningTurnContext(threadId).pipe(
+      Effect.flatMap(({ providerThread, providerTurn }) => {
+        const sessionId = providerThread?.providerSessionId;
+        if (providerTurn === undefined || sessionId == null) return Effect.succeed(false);
+        return projections
+          .getThreadProviderContext(threadId)
+          .pipe(
+            Effect.map(
+              (context) =>
+                context.providerSessions.find((session) => session.id === sessionId)?.capabilities
+                  .turns.supportsActiveSteering === true,
+            ),
+          );
+      }),
+      Effect.orElseSucceed(() => false),
+    );
+
   const startTurn = Effect.fn("ThreadGatewayV2.startTurn")(function* (input: {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
@@ -612,14 +644,16 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
             text: input.text,
             attachments: input.attachments,
             dispatchMode: { type: "start_immediately" },
-            // `steer`, never `auto`: `auto` may resolve to an interrupt-restart of the agent's turn.
+            // Only where the provider steers in place; `auto` may resolve to an interrupt-restart.
             ...(steer ? { deliveryIntent: "steer" as const } : {}),
             ...BOARD_AUTHOR,
           }),
         ),
       );
-    if (input.delivery !== "steer") return yield* dispatch(input.commandId, false);
-    // A provider that can't steer, or a run not yet started, refuses it: queue it instead.
+    if (input.delivery !== "steer" || !(yield* steersActively(input.threadId))) {
+      return yield* dispatch(input.commandId, false);
+    }
+    // The run can end between the read and the dispatch, and the engine refuses it: queue it.
     yield* dispatch(input.commandId, true).pipe(
       Effect.catchTags({
         ThreadCommandRefusedError: () =>
@@ -989,7 +1023,10 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
 
 /** The gateway onto this server's own threads: what the router and
     the worker side build on. */
-export const LocalThreadGatewayV2Live = Layer.effect(LocalThreadGateway, makeThreadGatewayV2);
+export const LocalThreadGatewayV2Live = Layer.effect(LocalThreadGateway, makeThreadGatewayV2).pipe(
+  // The same layer value the orchestrator's stores use, so one outbox instance serves both.
+  Layer.provide(EffectOutbox.layer),
+);
 
 /** One gateway as both the board's `ThreadGateway` and this server's own,
     for a board with no workers — the test stacks. */

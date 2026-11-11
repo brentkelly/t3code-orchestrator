@@ -13,9 +13,11 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunId,
   ThreadId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
   type OrchestrationV2StoredEvent,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -117,6 +119,69 @@ const head = Effect.flatMap(boardStackEngine, (engine) => engine.latestSequence)
 /** Write what a provider would, through the engine's own sink. */
 const providerWrites = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
   Effect.flatMap(EventSink.EventSinkV2, (sink) => sink.write({ events })).pipe(Effect.orDie);
+
+/** Put the thread's run mid-turn on a provider session with these turn capabilities. */
+const runningTurn = Effect.fn("runningTurn")(function* (
+  threadId: ThreadId,
+  run: OrchestrationV2Run,
+  tag: string,
+  turns: typeof CodexProviderCapabilitiesV2.turns,
+) {
+  const occurredAt = at("2026-01-01T00:00:00.000Z");
+  const providerSessionId = ProviderSessionId.make(`ps-contract-${tag}`);
+  const providerThreadId = ProviderThreadId.make(`pt-contract-${tag}`);
+  const event = (type: string, payload: unknown) =>
+    ({
+      type,
+      id: EventId.make(`evt-contract-${tag}-${type}`),
+      threadId,
+      occurredAt,
+      payload,
+    }) as unknown as OrchestrationV2DomainEvent;
+  yield* providerWrites([
+    event("provider-session.attached", {
+      id: providerSessionId,
+      driver: "codex",
+      providerInstanceId: modelSelection.instanceId,
+      status: "ready",
+      cwd: `/tmp/wt/${tag}`,
+      model: null,
+      capabilities: { ...CodexProviderCapabilitiesV2, turns },
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+      lastError: null,
+    }),
+    event("provider-thread.updated", {
+      id: providerThreadId,
+      driver: "codex",
+      providerInstanceId: modelSelection.instanceId,
+      providerSessionId,
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "active",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+    }),
+    event("run.updated", { ...run, status: "running", providerThreadId }),
+    event("provider-turn.updated", {
+      id: ProviderTurnId.make(`turn-contract-${tag}`),
+      providerThreadId,
+      nodeId: run.rootNodeId,
+      runAttemptId: run.activeAttemptId,
+      nativeTurnRef: null,
+      ordinal: 1,
+      status: "running",
+      startedAt: occurredAt,
+      completedAt: null,
+    }),
+  ]);
+});
 
 /** The tag a failed command failed with, or null when it succeeded. */
 const refusalTag = (exit: Exit.Exit<unknown, { readonly _tag: string }>) =>
@@ -277,6 +342,50 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         assert.deepStrictEqual(withoutAt(signalsOf(yield* loggedSince(before))), [
           { type: "turn-requested", threadId, byBoard: true, at: "" },
         ]);
+      }),
+    );
+
+    // Cursor and ACP can restart a turn but not steer one: the engine answers their steer by
+    // interrupting the agent's turn and starting it over, so the board queues it instead. The
+    // stack holds no live session, so the engine refuses any steer it is sent; a steer the
+    // board did try shows as its `:queued` fallback (T3O-72).
+    it.effect("a steer is tried only on a provider that steers a running turn in place", () =>
+      Effect.gen(function* () {
+        const threads = yield* LocalThreadGateway;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const steerOn = Effect.fn("steerOn")(function* (
+          tag: string,
+          turns: typeof CodexProviderCapabilitiesV2.turns,
+        ) {
+          const threadId = yield* spawn(tag);
+          const { runs } = yield* projections.getThreadRecords(threadId, ["runs"]);
+          yield* runningTurn(threadId, runs[0]!, tag, turns);
+          const commandId = boardCommandId("stop-review");
+          const before = yield* head;
+          yield* threads.send({
+            commandId,
+            threadId,
+            text: "Stop the plan review now.",
+            attachments: [],
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            delivery: "steer",
+          });
+          const logged = yield* loggedSince(before);
+          assert.isNotEmpty(logged);
+          return { commandId, sentAs: new Set(logged.map((entry) => entry.commandId)) };
+        });
+
+        const restartOnly = yield* steerOn("restart-only", {
+          ...CodexProviderCapabilitiesV2.turns,
+          supportsActiveSteering: false,
+          supportsInterrupt: true,
+          supportsSteeringByInterruptRestart: true,
+        });
+        assert.deepStrictEqual([...restartOnly.sentAs], [restartOnly.commandId]);
+
+        const steers = yield* steerOn("steers", CodexProviderCapabilitiesV2.turns);
+        assert.deepStrictEqual([...steers.sentAs], [`${steers.commandId}:queued`]);
       }),
     );
 

@@ -582,12 +582,15 @@ function settledReviewPhase(
   return stage !== null && effectiveBoardStageRole(stage) === "review";
 }
 
-/** Triage and adjudication steps, which never wait on a human. */
 const spawnFailureError = (result: string | null) =>
   result === "no-agent-model"
-    ? { lastError: "No model to run this stage: set a default model in Settings → Board." }
+    ? {
+        lastError:
+          "This stage resolves to a text-generation model, which can't run an agent: pick an agent model for the stage, or set a board default model in Settings → Board.",
+      }
     : {};
 
+/** Triage and adjudication steps, which never wait on a human. */
 const isReviewDecidingStep = (state: Pick<BoardCardStepState, "stepId">): boolean =>
   boardReviewQuestionAnswer(state.stepId) !== null;
 
