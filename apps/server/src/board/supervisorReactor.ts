@@ -8054,13 +8054,14 @@ const make = Effect.gen(function* () {
         });
       }
       if (state.status === "running" && state.threadId !== null && desired) {
+        const reopened = boardCompletionReopened(stepSuccess(board, card.id, state), state);
+        // A reopened step's turn may be running plan-review subagents a steer would stop, and its
+        // note still matters after that turn ends: queue it instead.
         yield* sendTurn({
           threadId: state.threadId,
-          text: boardAutoPlanOffInstruction({
-            reopened: boardCompletionReopened(stepSuccess(board, card.id, state), state),
-          }),
+          text: boardAutoPlanOffInstruction({ reopened }),
           runtimeMode: state.runtimeMode,
-          delivery: "steer",
+          ...(reopened ? {} : { delivery: "steer" as const }),
         });
       }
     }

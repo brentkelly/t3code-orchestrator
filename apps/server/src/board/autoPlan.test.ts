@@ -1465,9 +1465,15 @@ it.effect("turning Auto-plan off while reopened sends the reopened off text", ()
         yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
         yield* setAutomation(h, id, { autoPlan: true }, 3);
         yield* setAutomation(h, id, { autoPlan: false }, 4);
-        assert.lengthOf(
-          sendsOf(yield* h.commands, boardAutoPlanOffInstruction({ reopened: true })),
-          1,
+        const offSends = sendsOf(
+          yield* h.commands,
+          boardAutoPlanOffInstruction({ reopened: true }),
+        );
+        assert.lengthOf(offSends, 1);
+        // Queued, not steered: the reopened turn may be running plan-review subagents.
+        assert.notStrictEqual(
+          offSends[0]?.type === "thread.send" ? offSends[0].delivery : undefined,
+          "steer",
         );
         assert.isTrue(boardCardStepState(yield* h.board, id)?.humanInLoop);
       }),
