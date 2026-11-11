@@ -24,6 +24,8 @@ reads the diff with no history of it, the author answers the findings, and an ad
 the answers, exactly as any other round. Nothing about the branch or the pull request changes — the
 card keeps the pull request it already had, and the new round posts on it.
 
+The round reviews the whole branch, even when the loop had moved on to settling rounds (below).
+
 It buys exactly one round. If that round finds nothing, the loop settles again and the card goes
 back to Ready for merge; if it finds something blocking, the loop carries on to whatever budget the
 card had left. There is no limit on how many times you can ask — each click is one round, which is
@@ -98,3 +100,23 @@ Each review round now reads the code with fresh eyes: the reviewer does not see 
 your unresolved pull request comments and the findings you ruled not issues. A review prompt still
 set to the old default switches to the new one by itself. One you edited is kept as it is, so edit it
 again if it still asks the reviewer to read earlier rounds.
+
+## Settling rounds
+
+Late in a loop, rounds tend to find one small thing each, usually in the code the last fix touched,
+and every fix then needs another round to read it. Settling rounds stop that treadmill.
+
+After round 3, a round with fewer than 2 blocking findings makes the next round a settling round.
+A settling round reviews only the changes made since the previous round's review, and only
+**critical** findings start another round. Improvements are still fixed, and the adjudicator still
+checks every fix, but those fixes do not need a round of their own. The review pane tags these
+rounds **Settling**. When a loop ends this way, the pane says how many fixes the adjudicator verified
+but no reviewer re-read.
+
+The rule is checked again every round. A settling round that finds 2 or more real problems sends the
+next round back to a full review. Findings the adjudicator ruled not issues do not count.
+**Another review round** always runs a full review.
+
+To change when settling starts, or to turn it off, go to **Settings → Pipeline → Code review**. In
+a project's `t3o.json`, the review stage takes `settleAfterRound` (a round number, or `null` for
+off) and `settleBelowFindings` (2 or more).
