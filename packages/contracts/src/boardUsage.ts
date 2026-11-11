@@ -1,7 +1,7 @@
 /**
  * T3o: a card's token usage and cost (T3O-77). Each finished turn is priced once: a user
  * price (`override`) is exact, the LiteLLM table (`listPriced`) is an estimate, and
- * `unpriced` or `noUsage` turns leave the figure a lower bound.
+ * `unpriced`, `noUsage` or provider-`partial` turns leave the figure a lower bound.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -31,6 +31,8 @@ export const BoardCardUsageRow = Schema.Struct({
   turnsListPriced: NonNegativeInt,
   turnsUnpriced: NonNegativeInt,
   turnsNoUsage: NonNegativeInt,
+  /** Priced turns (also counted above) whose provider marked them `partial`. */
+  turnsPartial: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   updatedAt: IsoDateTime,
 });
 export type BoardCardUsageRow = typeof BoardCardUsageRow.Type;
@@ -62,7 +64,7 @@ export const BoardCardUsageSummary = Schema.Struct({
   costKnown: Schema.optionalKey(Schema.Boolean),
   /** At least one turn was priced from the model price table. */
   estimated: Schema.optionalKey(Schema.Boolean),
-  /** Some turn was unpriced or reported no usage, or the card ran on a worker before
+  /** Some turn was unpriced, reported no usage or only partial usage, or the card ran on a worker before
       usage was tracked: the figure is a lower bound. */
   partial: Schema.optionalKey(Schema.Boolean),
   providers: Schema.Array(BoardCardUsageProviderSummary).pipe(
@@ -85,6 +87,7 @@ export type BoardUsageRowTotals = Pick<
   | "turnsListPriced"
   | "turnsUnpriced"
   | "turnsNoUsage"
+  | "turnsPartial"
 >;
 
 const boardUsageRowTokens = (
@@ -131,7 +134,7 @@ export function boardCardUsageSummaryFromRows(
     const tokens = boardUsageRowTokens(row);
     const priced = row.turnsReported + row.turnsOverride + row.turnsListPriced > 0;
     const estimated = row.turnsListPriced > 0;
-    const partial = row.turnsUnpriced + row.turnsNoUsage > 0;
+    const partial = row.turnsUnpriced + row.turnsNoUsage + row.turnsPartial > 0;
     let provider = byProvider.get(row.provider);
     if (provider === undefined) {
       provider = empty();

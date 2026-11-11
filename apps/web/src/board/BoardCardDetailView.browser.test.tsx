@@ -7,10 +7,17 @@
 import { BOARD_SEED_STAGE_IDS, BoardCardId, ThreadId } from "@t3tools/contracts";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
-import { baseProps, detail, localWorker, noop, splitShells } from "./boardCardDetailFixtures";
+import {
+  baseProps,
+  cardId,
+  detail,
+  localWorker,
+  noop,
+  splitShells,
+} from "./boardCardDetailFixtures";
 
 // The real pane mounts a live chat; the pills only need the thread it shows
 // and a way to pick another.
@@ -35,7 +42,8 @@ vi.mock(import("./BoardCardThreadPane"), () => ({
   )) as never,
 }));
 
-const { BoardCardDetailPanel } = await import("./BoardCardDetailView");
+const { BoardCardDetailPanel, BoardCardDetailView } = await import("./BoardCardDetailView");
+const { useBoardUiStore } = await import("./boardUiStore");
 
 const planningThread = ThreadId.make("thread-planning");
 const otherThread = ThreadId.make("thread-other");
@@ -205,5 +213,26 @@ describe("a group's forward move before Building", () => {
     await using screen = await render(<GroupDialog />);
     await expect.element(screen.getByRole("button", { name: "Open board" })).toBeVisible();
     await expect.element(screen.getByRole("button", { name: /^Move to/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("a spend popover's Summary request (T3O-77)", () => {
+  it("is used once: closing with the Close button leaves no request behind", async () => {
+    useBoardUiStore.getState().setDetailSummaryCardId(cardId);
+    const onClose = vi.fn();
+    await using _screen = await render(
+      <BoardCardDetailView
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
+        onClose={onClose}
+        projectName="P"
+      />,
+    );
+    // The sheet portals out of the render container and is still animating in.
+    const close = page.getByRole("button", { name: "Close", exact: true });
+    await expect.element(close).toBeInTheDocument();
+    close.element().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(useBoardUiStore.getState().detailSummaryCardId).toBeNull();
   });
 });

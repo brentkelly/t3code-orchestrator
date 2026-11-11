@@ -106,7 +106,7 @@ interface BoardUiStore extends BoardUiState {
       from leaking into a card opened any other way. Not persisted. */
   detailMaximisedCardId: string | null;
   /** The card a spend popover asked to open on its Summary pane (T3O-77). Not
-      persisted; cleared when that card's detail closes. */
+      persisted; consumed when that card's detail mounts. */
   detailSummaryCardId: string | null;
   setDetailSummaryCardId: (cardId: string | null) => void;
   /** Each board's filter text, keyed by `boardScopeQueryKey`: the

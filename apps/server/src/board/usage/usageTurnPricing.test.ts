@@ -69,6 +69,7 @@ describe("a finished turn's board usage", () => {
       totals: expect.objectContaining({ uncachedInputTokens: 1_000_000 }),
       costUsd: 2,
       source: "listPriced",
+      partial: false,
     });
     expect(priceBoardUsageTurn(rates, "custom-model", usage)).toMatchObject({
       costUsd: 6,
@@ -79,6 +80,18 @@ describe("a finished turn's board usage", () => {
       source: "unpriced",
     });
     expect(priceBoardUsageTurn(rates, null, usage)).toMatchObject({ source: "unpriced" });
+  });
+
+  it("prices a turn the provider marked partial but flags it, so the figure is a lower bound", () => {
+    expect(
+      priceBoardUsageTurn(rates, "custom-model", {
+        usageStatus: "partial",
+        inputTokens: 1_000_000,
+      }),
+    ).toMatchObject({ costUsd: 3, source: "override", partial: true });
+    expect(
+      priceBoardUsageTurn(rates, "custom-model", complete({ inputTokens: 1_000_000 })),
+    ).toMatchObject({ partial: false });
   });
 
   it("prices cache reads and writes at their own rates", () => {

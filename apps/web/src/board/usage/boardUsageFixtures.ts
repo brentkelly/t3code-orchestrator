@@ -17,6 +17,7 @@ export const usageRow = (overrides: Partial<BoardCardUsageRow> = {}): BoardCardU
   turnsListPriced: 0,
   turnsUnpriced: 0,
   turnsNoUsage: 0,
+  turnsPartial: 0,
   updatedAt: "2026-01-01T00:00:00.000Z",
   ...overrides,
 });

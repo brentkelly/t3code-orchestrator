@@ -1049,11 +1049,12 @@ it.layer(makeTestLayer("t3o-card-meta-usage-"))("usage, snapshot vs delta", (it)
           INSERT INTO boards.board_card_usage (
             card_id, step_id, thread_id, provider, model, uncached_input, cached_input,
             cache_creation, output, reasoning, cost_micro_usd, turns_reported, turns_override,
-            turns_list_priced, turns_unpriced, turns_no_usage, updated_at
+            turns_list_priced, turns_unpriced, turns_no_usage, turns_partial, updated_at
           ) VALUES (
             ${cardId}, ${stepId}, ${threadId}, ${provider}, ${model}, 1000, 200, 30, 400, 50,
             ${micro}, 0, ${micro > 0 && listed === 0 ? 1 : 0}, ${listed},
-            ${micro === 0 && empty === 1 ? 1 : 0}, ${empty === 2 ? 1 : 0}, ${createdAt}
+            ${micro === 0 && empty === 1 ? 1 : 0}, ${empty === 2 ? 1 : 0},
+            ${provider === "opencode" ? 1 : 0}, ${createdAt}
           )`;
       }
       const delta = yield* queries.boardCardUsageSummary(cardId);

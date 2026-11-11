@@ -302,6 +302,7 @@ describe("BoardCardShell payload discipline", () => {
         turnsListPriced: 1,
         turnsUnpriced: 1,
         turnsNoUsage: 0,
+        turnsPartial: 0,
       })),
       true,
     );

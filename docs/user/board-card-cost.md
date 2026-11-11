@@ -19,8 +19,8 @@ every review, triage and adjudicate round — and prices it. Work a thread hands
 - **The List view** has sortable **Tokens** and **Cost** columns, a cost filter (over the
   threshold, or cards with partial data) and a total for what is listed.
 
-Agents can read the same figures: `board_get_card` and `board_get_card_context` return a card's
-usage by step.
+Agents can read the same figures: `board_get_card` returns a card's usage by step, and
+`board_get_card_context` returns its total.
 
 ## Reading the figure
 

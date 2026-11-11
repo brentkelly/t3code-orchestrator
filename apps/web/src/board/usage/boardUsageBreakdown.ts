@@ -230,6 +230,14 @@ export function deriveBoardUsageBreakdown(input: {
         },
       ];
     }
+    if (line.row.turnsPartial > 0) {
+      return [
+        {
+          stepId: line.stepId,
+          text: `${line.model} (${line.provider}) reported only part of its usage for ${line.row.turnsPartial === 1 ? "a turn" : `${line.row.turnsPartial} turns`}, such as a stopped one. Usage may be higher.`,
+        },
+      ];
+    }
     return [];
   });
   if (input.historyPartial) {

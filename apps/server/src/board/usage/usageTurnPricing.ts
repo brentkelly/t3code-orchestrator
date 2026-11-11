@@ -15,6 +15,9 @@ export interface BoardUsageTurnPrice {
   readonly totals: UsageTokenTotals;
   readonly costUsd: number;
   readonly source: BoardUsageTurnSource;
+  /** The provider marked the turn `partial` (stopped, failed, a billed field missing):
+      its counts are real but may be short, so the figure is a lower bound. */
+  readonly partial: boolean;
 }
 
 export interface BoardUsageRates {
@@ -63,19 +66,20 @@ export function priceBoardUsageTurn(
   usage: BoardGatewayTurnUsage | null,
 ): BoardUsageTurnPrice {
   const totals = boardUsageTurnTotals(usage);
-  if (totals === null) return { totals: ZERO, costUsd: 0, source: "noUsage" };
-  if (model === null) return { totals, costUsd: 0, source: "unpriced" };
+  if (totals === null) return { totals: ZERO, costUsd: 0, source: "noUsage", partial: false };
+  const partial = usage?.usageStatus === "partial";
+  if (model === null) return { totals, costUsd: 0, source: "unpriced", partial };
   const priced = priceUsage(
     rates.table,
     { model, totals, speed: "standard", reportedCostUsd: null },
     rates.overrides,
   );
-  if (priced.costSource === "unpriced") return { totals, costUsd: 0, source: "unpriced" };
+  if (priced.costSource === "unpriced") return { totals, costUsd: 0, source: "unpriced", partial };
   const source: BoardUsageTurnSource =
     priced.costSource === "providerReported"
       ? "reported"
       : rates.overrides.has(model.trim())
         ? "override"
         : "listPriced";
-  return { totals, costUsd: priced.costUsd, source };
+  return { totals, costUsd: priced.costUsd, source, partial };
 }

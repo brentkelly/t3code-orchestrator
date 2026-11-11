@@ -2954,6 +2954,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           />
           <BoardHint label="Close">
             <button
+              aria-label="Close"
               className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
               onClick={props.onClose}
               type="button"
@@ -3365,15 +3366,16 @@ export function BoardCardDetailView(props: BoardCardDetailViewProps) {
   const [paneChoice, setPaneChoice] = useState<BoardCardPane | null>(
     summaryRequested ? "summary" : null,
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- consumes the one-shot store request at mount, so no close path or card step can leave it behind
+  useEffect(() => {
+    if (summaryRequested) setDetailSummaryCardId(null);
+  }, [summaryRequested, setDetailSummaryCardId]);
   const wide = boardCardDetailIsWide(props.stages, props.detail.card.stage, paneChoice);
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open) {
-          if (summaryRequested) setDetailSummaryCardId(null);
-          props.onClose();
-        }
+        if (!open) props.onClose();
       }}
     >
       <BoardCardDetailPopup

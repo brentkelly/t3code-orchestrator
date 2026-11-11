@@ -45,7 +45,7 @@ export function formatBoardUsd(costUsd: number): string {
 /** `1.24M`, `12.4k`, `812`. */
 export function formatBoardTokens(tokens: number | null): string {
   if (tokens === null) return BOARD_USAGE_UNKNOWN;
-  if (tokens >= 1e6) return `${(tokens / 1e6).toFixed(2)}M`;
+  if (tokens >= 999_950) return `${(tokens / 1e6).toFixed(2)}M`;
   if (tokens >= 1e3) return `${(tokens / 1e3).toFixed(1)}k`;
   return String(tokens);
 }

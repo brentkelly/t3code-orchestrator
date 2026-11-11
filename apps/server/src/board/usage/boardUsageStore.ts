@@ -30,6 +30,7 @@ interface TotalsDbRow {
   readonly turnsListPriced: number;
   readonly turnsUnpriced: number;
   readonly turnsNoUsage: number;
+  readonly turnsPartial: number;
 }
 
 const toTotals = (row: TotalsDbRow): BoardUsageRowTotals => ({
@@ -44,6 +45,7 @@ const toTotals = (row: TotalsDbRow): BoardUsageRowTotals => ({
   turnsListPriced: row.turnsListPriced,
   turnsUnpriced: row.turnsUnpriced,
   turnsNoUsage: row.turnsNoUsage,
+  turnsPartial: row.turnsPartial,
 });
 
 /** Where a thread's usage lands: its own link, or the nearest link up the chain of
@@ -53,7 +55,8 @@ export interface BoardUsageTarget {
   readonly stepId: string;
 }
 
-export const findUsageTarget = Effect.fn("boardUsageStore.findUsageTarget")(function* (
+// Untraced: runs for every finished turn of every thread, under BoardUsageRecorder.price.
+export const findUsageTarget = Effect.fnUntraced(function* (
   sql: SqlClient.SqlClient,
   threadId: ThreadId,
   delegationChain: ReadonlyArray<ThreadId>,
@@ -144,7 +147,7 @@ export const storeUsageTurn = Effect.fn("boardUsageStore.storeUsageTurn")(functi
       card_id, step_id, thread_id, provider, model,
       uncached_input, cached_input, cache_creation, output, reasoning, cost_micro_usd,
       turns_reported, turns_override, turns_list_priced, turns_unpriced, turns_no_usage,
-      updated_at
+      turns_partial, updated_at
     ) VALUES (
       ${input.target.cardId}, ${input.target.stepId}, ${input.threadId}, ${input.provider},
       ${model},
@@ -152,7 +155,7 @@ export const storeUsageTurn = Effect.fn("boardUsageStore.storeUsageTurn")(functi
       ${price.totals.cacheCreationTokens}, ${price.totals.outputTokens},
       ${price.totals.reasoningTokens}, ${Math.round(price.costUsd * MICRO)},
       ${one("reported")}, ${one("override")}, ${one("listPriced")}, ${one("unpriced")},
-      ${one("noUsage")}, ${input.at}
+      ${one("noUsage")}, ${price.partial ? 1 : 0}, ${input.at}
     )
     ON CONFLICT (card_id, step_id, thread_id, provider, model) DO UPDATE SET
       uncached_input = uncached_input + excluded.uncached_input,
@@ -166,6 +169,7 @@ export const storeUsageTurn = Effect.fn("boardUsageStore.storeUsageTurn")(functi
       turns_list_priced = turns_list_priced + excluded.turns_list_priced,
       turns_unpriced = turns_unpriced + excluded.turns_unpriced,
       turns_no_usage = turns_no_usage + excluded.turns_no_usage,
+      turns_partial = turns_partial + excluded.turns_partial,
       updated_at = excluded.updated_at
   `;
   return true;
@@ -192,7 +196,8 @@ export const listCardUsageRows = Effect.fn("boardUsageStore.listCardUsageRows")(
       cost_micro_usd AS "costMicroUsd",
       turns_reported AS "turnsReported", turns_override AS "turnsOverride",
       turns_list_priced AS "turnsListPriced", turns_unpriced AS "turnsUnpriced",
-      turns_no_usage AS "turnsNoUsage", updated_at AS "updatedAt"
+      turns_no_usage AS "turnsNoUsage", turns_partial AS "turnsPartial",
+      updated_at AS "updatedAt"
     FROM boards.board_card_usage
     WHERE card_id = ${cardId}
     ORDER BY updated_at, step_id, thread_id, provider, model
@@ -241,7 +246,8 @@ export const allCardUsageSummaries = Effect.fn("boardUsageStore.allCardUsageSumm
       SUM(usage.cost_micro_usd) AS "costMicroUsd",
       SUM(usage.turns_reported) AS "turnsReported", SUM(usage.turns_override) AS "turnsOverride",
       SUM(usage.turns_list_priced) AS "turnsListPriced",
-      SUM(usage.turns_unpriced) AS "turnsUnpriced", SUM(usage.turns_no_usage) AS "turnsNoUsage"
+      SUM(usage.turns_unpriced) AS "turnsUnpriced", SUM(usage.turns_no_usage) AS "turnsNoUsage",
+      SUM(usage.turns_partial) AS "turnsPartial"
     FROM boards.board_card_usage AS usage
     INNER JOIN boards.board_cards AS cards
       ON cards.card_id = usage.card_id AND cards.archived_at IS NULL

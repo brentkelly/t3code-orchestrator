@@ -21,6 +21,7 @@ const row = (overrides: Partial<BoardUsageRowTotals> = {}): BoardUsageRowTotals 
   turnsListPriced: 0,
   turnsUnpriced: 0,
   turnsNoUsage: 0,
+  turnsPartial: 0,
   ...overrides,
 });
 
@@ -77,6 +78,14 @@ describe("a card's usage summary", () => {
     );
     expect(summary?.costKnown).toBeUndefined();
     expect(summary?.partial).toBe(true);
+  });
+
+  it("is a lower bound when a priced turn reported only partial usage", () => {
+    expect(boardCardUsageSummaryFromRows([row({ turnsPartial: 1 })], false)).toMatchObject({
+      costKnown: true,
+      partial: true,
+      providers: [{ provider: "claudeAgent", partial: true }],
+    });
   });
 
   it("caps the providers it carries, folding the cheapest into one", () => {

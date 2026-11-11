@@ -124,7 +124,11 @@ const writeTurn = (
   threadId: ThreadId,
   turnId: string,
   status: "running" | "completed",
-  usage: { readonly input: number; readonly output: number } | null,
+  usage: {
+    readonly input: number;
+    readonly output: number;
+    readonly usageStatus?: "complete" | "partial";
+  } | null,
 ) =>
   Effect.gen(function* () {
     const sink = yield* EventSink.EventSinkV2;
@@ -151,7 +155,7 @@ const writeTurn = (
                 : {
                     turnTokenUsage: {
                       usageScope: "main_agent",
-                      usageStatus: "complete",
+                      usageStatus: usage.usageStatus ?? "complete",
                       inputTokens: usage.input,
                       outputTokens: usage.output,
                       hasSubagents: false,
@@ -170,6 +174,29 @@ const usageRows = (cardId: BoardCardId) =>
   );
 
 it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage recorder", (it) => {
+  it.effect("marks a card partial when a priced turn reported only part of its usage", () =>
+    Effect.gen(function* () {
+      const { cardId, threadId } = yield* seedLinkedThread("partial");
+      yield* withRecorder(
+        Effect.gen(function* () {
+          yield* writeTurn(threadId, "turn-partial", "completed", {
+            input: 1_000_000,
+            output: 0,
+            usageStatus: "partial",
+          });
+          yield* (yield* BoardThreadTail).drain;
+        }),
+      );
+      const rows = yield* usageRows(cardId);
+      assert.deepStrictEqual(
+        rows.map((row) => [row.costUsd, row.turnsListPriced, row.turnsPartial]),
+        [[1, 1, 1]],
+      );
+      const summary = yield* (yield* BoardQueries).boardCardUsageSummary(cardId);
+      assert.deepInclude(summary, { costKnown: true, estimated: true, partial: true });
+    }),
+  );
+
   it.effect("records a finished turn once, against its thread's card and step", () =>
     Effect.gen(function* () {
       const { cardId, threadId } = yield* seedLinkedThread("once");
@@ -200,6 +227,7 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
         costUsd: 2,
         turnsListPriced: 1,
         turnsNoUsage: 0,
+        turnsPartial: 0,
       });
       const summary = yield* (yield* BoardQueries).boardCardUsageSummary(cardId);
       assert.deepStrictEqual(summary, {
