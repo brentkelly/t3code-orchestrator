@@ -147,8 +147,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
         inset="1.5"
         padding="none"
       >
-        {/* Clipped to the radius a padding-less popover viewport clips its content to. */}
-        <div className="flex min-w-0 flex-col gap-1.25 overflow-clip rounded-board-inner-lg">
+        <div className="flex min-w-0 flex-col gap-1.25">
           <BoardInput
             autoFocus
             className="h-[30px]"

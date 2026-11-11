@@ -30,20 +30,36 @@ const BOARD_BUTTON_LOOKS = {
 
 type BoardButtonLook = keyof typeof BOARD_BUTTON_LOOKS;
 
-/** Takes Button's merged className and settles the board look over it, as Button settles a
-    className passed to it. */
+/** Settles the board look over Button's variant classes, then the caller's className over
+    both, the order Button itself gives a className. */
 function BoardButtonElement({
   className,
   look,
+  callerClassName,
   ...props
-}: ComponentProps<"button"> & { readonly look: BoardButtonLook }) {
-  return <button className={cn(className, BOARD_BUTTON_LOOKS[look])} type="button" {...props} />;
+}: ComponentProps<"button"> & {
+  readonly look: BoardButtonLook;
+  readonly callerClassName: string | undefined;
+}) {
+  return (
+    <button
+      className={cn(className, BOARD_BUTTON_LOOKS[look], callerClassName)}
+      type="button"
+      {...props}
+    />
+  );
 }
 
 /** Upstream's Button wearing one of the board's looks. */
 export function BoardButton({
   look,
+  className,
   ...props
-}: Omit<ComponentProps<typeof Button>, "render"> & { readonly look: BoardButtonLook }) {
-  return <Button {...props} render={<BoardButtonElement look={look} />} />;
+}: Omit<ComponentProps<typeof Button>, "render" | "className"> & {
+  readonly look: BoardButtonLook;
+  readonly className?: string;
+}) {
+  return (
+    <Button {...props} render={<BoardButtonElement callerClassName={className} look={look} />} />
+  );
 }

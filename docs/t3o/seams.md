@@ -671,8 +671,9 @@ the board onto the new design is `T3O-67`.
   `apps/server/src/board/**` does not match). Upstream-owned files keep every rule: the dozen long
   `T3o:` comments there were cut to four lines. Fork code is fully on upstream's rules as of `T3O-67`, with board-only
   tokens in `apps/web/src/board/board-theme.css`.
-  `apps/web/src/board/ui/` copies class strings from upstream's dialog, input, textarea,
-  combobox and popover primitives; a sync that restyles those carries the change there.
+  `apps/web/src/board/ui/upstreamClasses.ts` copies class strings from upstream's dialog,
+  input, textarea, combobox, kbd and popover primitives; its test fails when a sync restyles
+  one, and the fix is to carry the change into that file.
 - **Upstream test cull.** Upstream deleted thousands of low-signal tests, including several the
   fork had marked (`Sqlite.test.ts`'s estimate, `t3ProjectFile.test.ts`, the MCP worktree
   `registration.test.ts`, desktop identity tests). Fork-owned tests in those files were kept; the
