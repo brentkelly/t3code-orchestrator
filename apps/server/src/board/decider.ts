@@ -5037,11 +5037,16 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         return yield* invariant(command, `Card '${card.key}' is already being auto-planned.`);
       }
       const finishedStep = boardCardStepState(board, card.id);
-      // A step still reopened from an earlier toggle re-arms its handover.
+      // A step still reopened, by an earlier toggle or a late plan review, re-arms its handover.
       const stillReopened =
         finishedStep !== null &&
         finishedStep.status === "running" &&
-        finishedStep.reopenedAt !== undefined;
+        boardCompletionReopened(
+          boardCardStepCompletions(board, card.id).find(
+            (entry) => entry.stepId === finishedStep.stepId && entry.outcome === "succeeded",
+          ),
+          finishedStep,
+        );
       if (
         command.reopenFinished === true &&
         (finishedStep === null ||
