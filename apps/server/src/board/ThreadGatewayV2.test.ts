@@ -185,9 +185,12 @@ describe("makeSignalReader", () => {
 
   // An idle `/compact` the server runs on a quiet thread is not the agent's turn, so its end
   // must not read as a step ending without its report (T3O-72).
-  it("raises no turn end for an idle compaction run", () => {
+  it("raises no turn end for an idle compaction run, even to a reader that missed its start", () => {
     const read = makeSignalReader();
-    const compaction = run("starting", null, { id: RunId.make("run-compact") });
+    const compaction = run("starting", null, {
+      id: RunId.make("run-compact"),
+      userMessageId: MessageId.make("idle-compact:thread-1:run-0"),
+    });
     assert.deepStrictEqual(
       read(stored("run.created", compaction, "server:idle-compact:thread-1:run-0")),
       [],
@@ -200,6 +203,11 @@ describe("makeSignalReader", () => {
     }
     // The thread's next real run still ends as usual.
     assert.lengthOf(read(stored("run.updated", run("completed"))), 1);
+    // After a restart the reader starts past the run's creation.
+    assert.deepStrictEqual(
+      makeSignalReader()(stored("run.updated", { ...compaction, status: "completed" })),
+      [],
+    );
   });
 
   it("reads a run that failed before it started as a turn that never began", () => {
