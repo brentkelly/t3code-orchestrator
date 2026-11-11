@@ -295,6 +295,10 @@
       "types": "./src/composerContextReferences.ts",
       "import": "./src/composerContextReferences.ts"
     },
+    "./t3oCardContext": {
+      "types": "./src/t3oCardContext.ts",
+      "import": "./src/t3oCardContext.ts"
+    },
     "./composerContextLegacy": {
       "types": "./src/composerContextLegacy.ts",
       "import": "./src/composerContextLegacy.ts"
