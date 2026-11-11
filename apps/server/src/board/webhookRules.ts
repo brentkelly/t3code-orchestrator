@@ -42,7 +42,7 @@ export interface BoardWebhookRunner {
   readonly validate: (input: {
     readonly projectId: ProjectId;
     readonly action: BoardWebhookAction;
-  }) => Effect.Effect<string | null>;
+  }) => Effect.Effect<string | null, BoardWebhookRuleError>;
 }
 
 let registeredRunner: BoardWebhookRunner | null = null;
@@ -146,10 +146,9 @@ export const resolveUpsertBoardAction = Effect.fn("BoardWebhookRules.resolveUpse
     return yield* fail("A board rule cannot coalesce deliveries. Remove the coalesce key.");
   }
   if (registeredRunner === null) return yield* fail(NOT_RUNNING);
-  const refusal = yield* registeredRunner.validate({
-    projectId: input.projectId,
-    action: boardAction,
-  });
+  const refusal = yield* registeredRunner
+    .validate({ projectId: input.projectId, action: boardAction })
+    .pipe(Effect.mapError((error) => fail(error.message)));
   if (refusal !== null) return yield* fail(refusal);
   return { boardAction, prompt: BOARD_RULE_PROMPT };
 });

@@ -300,14 +300,17 @@ function Field({
   hint,
   htmlFor,
   children,
+  hidden,
 }: {
   label: string;
   hint?: string;
   htmlFor?: string;
   children: ReactNode;
+  // T3o: lets a board rule hide the prompt field (T3O-78).
+  hidden?: boolean;
 }) {
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1.5" hidden={hidden}>
       <Label className="flex items-baseline justify-between" htmlFor={htmlFor}>
         <span>{label}</span>
         {hint ? (
@@ -1794,7 +1797,12 @@ function ScheduledTaskEditorForm({
             </Field>
           ) : null}
 
-          <Field label="Prompt" htmlFor="scheduled-task-prompt">
+          <Field
+            label="Prompt"
+            htmlFor="scheduled-task-prompt"
+            // T3o: a board rule runs no prompt (T3O-78).
+            hidden={draft.scheduleMode === "webhook" && boardRule !== null}
+          >
             <Textarea
               id="scheduled-task-prompt"
               className="max-h-64 overflow-y-auto"
@@ -1904,8 +1912,10 @@ function ScheduledTaskEditorForm({
                   value={boardRule}
                   onChange={setBoardRule}
                   onTaskPatch={(patch) => setDraft((current) => ({ ...current, ...patch }))}
+                  prompt={draft.prompt}
                 />
-                <p className="text-xs text-muted-foreground">
+                {/* T3o: a board rule runs no prompt (T3O-78). */}
+                <p className="text-xs text-muted-foreground" hidden={boardRule !== null}>
                   {
                     "Each request runs the prompt. Use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}} or {{request}} in the prompt; only what it names reaches the agent."
                   }

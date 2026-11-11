@@ -74,13 +74,17 @@ export function BoardWebhookActionFields({
   value,
   onChange,
   onTaskPatch,
+  prompt,
 }: {
   readonly environmentId: EnvironmentId;
   readonly projectId: string;
   readonly value: BoardWebhookActionDraft | null;
   readonly onChange: (value: BoardWebhookActionDraft | null) => void;
   readonly onTaskPatch: (patch: BoardRuleTaskPatch) => void;
+  /** The task's prompt, kept while a rule is on so switching back restores it. */
+  readonly prompt: string;
 }) {
+  const [promptBeforeRule, setPromptBeforeRule] = useState("");
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -97,10 +101,11 @@ export function BoardWebhookActionFields({
                 urlTemplate: "",
                 rules: [emptyBoardRuleDraft()],
               });
+              setPromptBeforeRule(prompt);
               onTaskPatch({ prompt: BOARD_RULE_PROMPT });
             } else if (next === "prompt" && value !== null) {
               onChange(null);
-              onTaskPatch({ prompt: "" });
+              onTaskPatch({ prompt: promptBeforeRule });
             }
           }}
         >

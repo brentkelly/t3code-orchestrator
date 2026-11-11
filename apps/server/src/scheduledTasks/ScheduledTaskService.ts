@@ -989,43 +989,43 @@ export const layer = Layer.effect(
             ? null
             : BoardWebhookRules.runBoardRuleDelivery(sql, active, webhook);
         // Capture defects and interrupts too so dispatch failures still reach markCompleted.
-        const result =
-          boardRule !== null
-            ? yield* Effect.exit(boardRule)
-            : active.threadId === null
-              ? yield* Effect.exit(
-                  threadLaunch
-                    .launch({
-                      commandId,
-                      projectId: active.projectId,
-                      title: active.title,
-                      modelSelection: active.modelSelection,
-                      runtimeMode: active.runtimeMode,
-                      interactionMode: active.interactionMode,
-                      workspaceStrategy: active.workspaceStrategy,
-                      initialMessage: {
-                        messageId,
-                        scheduledTaskId: active.id,
-                        text: prompt,
-                        attachments: [],
-                      },
-                      createdBy: active.createdBy,
-                      creationSource: active.creationSource,
-                    })
-                    .pipe(
-                      Effect.map((launched) => launched.threadId),
-                      Effect.tap((threadId) =>
-                        threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
-                      ),
+        // T3o: built, not run, so a board rule can take its place (T3O-78).
+        const threadRun =
+          active.threadId === null
+            ? Effect.exit(
+                threadLaunch
+                  .launch({
+                    commandId,
+                    projectId: active.projectId,
+                    title: active.title,
+                    modelSelection: active.modelSelection,
+                    runtimeMode: active.runtimeMode,
+                    interactionMode: active.interactionMode,
+                    workspaceStrategy: active.workspaceStrategy,
+                    initialMessage: {
+                      messageId,
+                      scheduledTaskId: active.id,
+                      text: prompt,
+                      attachments: [],
+                    },
+                    createdBy: active.createdBy,
+                    creationSource: active.creationSource,
+                  })
+                  .pipe(
+                    Effect.map((launched) => launched.threadId),
+                    Effect.tap((threadId) =>
+                      threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
                     ),
-                )
-              : yield* Effect.exit(
-                  // The stored selection only seeds fresh threads. A bound run
-                  // follows the thread's current provider, so it passes none.
-                  sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
-                    Effect.as(ThreadId.make(active.threadId)),
                   ),
-                );
+              )
+            : Effect.exit(
+                // The stored selection only seeds fresh threads. A bound run
+                // follows the thread's current provider, so it passes none.
+                sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
+                  Effect.as(ThreadId.make(active.threadId)),
+                ),
+              );
+        const result = boardRule !== null ? yield* Effect.exit(boardRule) : yield* threadRun;
 
         const runSucceeded = result._tag === "Success";
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
@@ -1459,23 +1459,21 @@ export const layer = Layer.effect(
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
       };
-      // T3o: the board rule is saved in the same transaction (T3O-78).
-      yield* sql
-        .withTransaction(
-          saveTask(
-            task,
-            input.requireExisting === true,
-            scheduleUnchanged ? existingTask.schedule : null,
-            webhook,
-          ).pipe(Effect.andThen(BoardWebhookRules.saveBoardAction(sql, id, board.boardAction))),
-        )
-        .pipe(
-          Effect.mapError((cause) =>
-            isScheduledTaskError(cause)
-              ? cause
-              : taskError("Could not save schedule task.", { taskId: id, cause }),
-          ),
-        );
+      yield* saveTask(
+        task,
+        input.requireExisting === true,
+        scheduleUnchanged ? existingTask.schedule : null,
+        webhook,
+      ).pipe(
+        // T3o: the board rule is saved in the same transaction (T3O-78).
+        Effect.andThen(BoardWebhookRules.saveBoardAction(sql, id, board.boardAction)),
+        (save) => sql.withTransaction(save),
+        Effect.mapError((cause) =>
+          isScheduledTaskError(cause)
+            ? cause
+            : taskError("Could not save schedule task.", { taskId: id, cause }),
+        ),
+      );
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
     });
