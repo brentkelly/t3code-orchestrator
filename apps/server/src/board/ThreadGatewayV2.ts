@@ -599,7 +599,7 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly text: string;
     readonly attachments: ReadonlyArray<ChatAttachment>;
-    readonly delivery?: "queue" | "steer";
+    readonly delivery?: "queue" | "steer" | undefined;
   }) {
     const dispatch = (commandId: CommandId, steer: boolean) =>
       freshMessageId.pipe(

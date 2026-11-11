@@ -41,6 +41,14 @@ const ALLOWED_UPSTREAM_SQL = new Map([
     "moves pre-t3o-26 board tables and the board ledger out of upstream's file",
   ],
   [NodePath.join("board", "migrations"), "one-time copies of legacy board rows out of main"],
+  [
+    NodePath.join("board", "boardCardThreadFilter.ts"),
+    "read by upstream's thread reads to tell card threads apart; it never writes a thread",
+  ],
+  [
+    NodePath.join("board", "upstreamGuards.ts"),
+    "read by upstream's settle and storage sweeps to spare card threads and worktrees (T3O-72)",
+  ],
 ]);
 
 const isProductionSource = (file: string) =>

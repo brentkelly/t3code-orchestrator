@@ -231,7 +231,7 @@ function reconcileCommandObjects(input: {
     });
 
     const settingsStub = {
-      getSettings: Effect.succeed({ board: undefined }),
+      getSettings: Effect.succeed({ board: undefined, textGenerators: {} }),
     } as unknown as ServerSettingsService["Service"];
 
     const gitStub = {

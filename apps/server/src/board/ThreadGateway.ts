@@ -280,7 +280,7 @@ export interface ThreadSendInput {
   readonly interactionMode: ProviderInteractionMode;
   /** `steer` joins the thread's running turn, falling back to a queued turn when the provider
       can't take it; absent or `queue` waits for the running turn to end. */
-  readonly delivery?: "queue" | "steer";
+  readonly delivery?: "queue" | "steer" | undefined;
 }
 
 export interface ThreadTargetInput {
