@@ -17,6 +17,7 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2Run,
   type OrchestrationV2StoredEvent,
 } from "@t3tools/contracts";
@@ -125,7 +126,7 @@ const runningTurn = Effect.fn("runningTurn")(function* (
   threadId: ThreadId,
   run: OrchestrationV2Run,
   tag: string,
-  turns: typeof CodexProviderCapabilitiesV2.turns,
+  turns: OrchestrationV2ProviderCapabilities["turns"],
 ) {
   const occurredAt = at("2026-01-01T00:00:00.000Z");
   const providerSessionId = ProviderSessionId.make(`ps-contract-${tag}`);
@@ -355,7 +356,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         const projections = yield* ProjectionStore.ProjectionStoreV2;
         const steerOn = Effect.fn("steerOn")(function* (
           tag: string,
-          turns: typeof CodexProviderCapabilitiesV2.turns,
+          turns: OrchestrationV2ProviderCapabilities["turns"],
         ) {
           const threadId = yield* spawn(tag);
           const { runs } = yield* projections.getThreadRecords(threadId, ["runs"]);
