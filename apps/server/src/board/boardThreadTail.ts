@@ -107,16 +107,17 @@ const makeBoardThreadTail = Effect.gen(function* () {
     const signal = entry.signal;
     if (signal?.type === "usage-recorded") {
       if (Option.isSome(recorder)) {
-        const priced = yield* recorder.value.price(signal);
-        const cardId = yield* sql
-          .withTransaction(
-            recorder.value.store(priced).pipe(Effect.tap(() => saveCursor(entry.cursor))),
-          )
-          .pipe(
-            Effect.catchCause((cause) =>
-              failed(signal.type, entry.cursor)(cause).pipe(Effect.as(null)),
+        const usage = recorder.value;
+        const cardId = yield* usage.price(signal).pipe(
+          Effect.flatMap((priced) =>
+            sql.withTransaction(
+              usage.store(priced).pipe(Effect.tap(() => saveCursor(entry.cursor))),
             ),
-          );
+          ),
+          Effect.catchCause((cause) =>
+            failed(signal.type, entry.cursor)(cause).pipe(Effect.as(null)),
+          ),
+        );
         if (cardId !== null) yield* recorder.value.publish(cardId);
       }
     } else if (signal !== null) {

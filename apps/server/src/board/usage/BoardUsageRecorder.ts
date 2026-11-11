@@ -32,11 +32,11 @@ export interface PricedUsageSignal {
 }
 
 export interface BoardUsageRecorderShape {
-  /** Price a turn. Run outside any transaction. */
-  readonly price: (signal: UsageSignal) => Effect.Effect<PricedUsageSignal>;
+  /** Price a turn, or null when its thread is no card's. Run outside any transaction. */
+  readonly price: (signal: UsageSignal) => Effect.Effect<PricedUsageSignal | null, SqlError>;
   /** Store a priced turn inside the caller's transaction. The card it landed on, or null
       when the thread is no card's, or the turn was stored before. */
-  readonly store: (priced: PricedUsageSignal) => Effect.Effect<BoardCardId | null, SqlError>;
+  readonly store: (priced: PricedUsageSignal | null) => Effect.Effect<BoardCardId | null, SqlError>;
   /** After the caller commits: tell the board's clients the card's figure moved. */
   readonly publish: (cardId: BoardCardId) => Effect.Effect<void>;
   /** Cards whose usage changed, live. Attached when this effect returns. */
@@ -58,13 +58,19 @@ export const makeBoardUsageRecorder = Effect.gen(function* () {
   const changes = yield* PubSub.unbounded<BoardCardId>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-  // Untraced: once per finished turn of every thread on the server.
+  // Untraced: once per finished turn of every thread on the server, most of them no card's,
+  // so the link is looked up before the rate table is read.
   const price = Effect.fnUntraced(function* (signal: UsageSignal) {
+    if ((yield* findUsageTarget(sql, signal.threadId, signal.delegationChain)) === null) {
+      return null;
+    }
     const rates = yield* pricing.currentRates;
     return { signal, price: priceBoardUsageTurn(rates, signal.model, signal.usage) };
   });
 
-  const storePriced = Effect.fnUntraced(function* ({ signal, price }: PricedUsageSignal) {
+  const storePriced = Effect.fnUntraced(function* (priced: PricedUsageSignal | null) {
+    if (priced === null) return null;
+    const { signal, price } = priced;
     const target = yield* findUsageTarget(sql, signal.threadId, signal.delegationChain);
     if (target === null) return null;
     const fresh = yield* storeUsageTurn(sql, {

@@ -289,8 +289,8 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
             yield* sql.withTransaction(recorder.store(yield* recorder.price(grandchild))),
             cardId,
           );
-          // A thread no card owns is not the board's to count.
-          assert.isNull(yield* sql.withTransaction(recorder.store(yield* recorder.price(stray))));
+          // A thread no card owns is not the board's to count, nor to price.
+          assert.isNull(yield* recorder.price(stray));
         }),
       );
       const rows = yield* usageRows(cardId);
