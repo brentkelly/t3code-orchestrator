@@ -583,7 +583,7 @@ function settledReviewPhase(
 }
 
 /** Triage and adjudication steps, which never wait on a human. */
-const spawnFailureError = (result: null | "no-agent-model") =>
+const spawnFailureError = (result: string | null) =>
   result === "no-agent-model"
     ? { lastError: "No model to run this stage: set a default model in Settings → Board." }
     : {};

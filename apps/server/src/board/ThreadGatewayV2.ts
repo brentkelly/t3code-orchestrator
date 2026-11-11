@@ -31,7 +31,7 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
-import type * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -528,6 +528,7 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
   const projectRows = yield* ProjectStore.ProjectStoreV2;
   const projectService = yield* ProjectService.ProjectService;
   const eventSink = yield* EventSink.EventSinkV2;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
   const crypto = yield* SecureRandom.SecureRandom;
   const path = yield* Path.Path;
   const nowMs = Effect.map(DateTime.now, DateTime.toEpochMillis);
@@ -546,6 +547,25 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
 
   const shellOf = (threadId: ThreadId) =>
     projections.getThreadShell(threadId).pipe(Effect.mapError(readError("threadShell")));
+
+  /**
+   * Whether upstream will continue the thread's latest run, cut by a server restart. The board
+   * then yields: the thread reads alive with a turn pending, as upstream's own thread_wait reads it,
+   * so the board's recovery never drives the same step too. Read only for a thread between runs.
+   */
+  const restartContinuationPending = (shell: OrchestrationV2ThreadShell) => {
+    const runId = shell.latestRunId;
+    if (shell.activeRunId !== null || runId === null) return Effect.succeed(false);
+    return projections.getThreadRecords(shell.id, ["runs"], { runIds: [runId] }).pipe(
+      Effect.flatMap((records) => {
+        const run = records.runs.find((candidate) => candidate.id === runId);
+        return run !== undefined && ThreadManagement.isTerminalRunStatus(run.status)
+          ? orchestrator.restartContinuationPending(run)
+          : Effect.succeed(false);
+      }),
+      Effect.orElseSucceed(() => false),
+    );
+  };
 
   /** A thread the command needs to exist, live. */
   const liveShell = (command: string, threadId: ThreadId) =>
@@ -772,7 +792,8 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
       function* (threadId) {
         const shell = yield* shellOf(threadId);
         if (shell !== null && shell.deletedAt === null) {
-          return boardThreadStateFromShell(shell, yield* nowMs);
+          const state = boardThreadStateFromShell(shell, yield* nowMs);
+          return (yield* restartContinuationPending(shell)) ? { ...state, alive: true } : state;
         }
         const deleted = shell ?? (yield* deletedRecord(threadId));
         return deleted === null ? null : deletedThreadState(threadId, deleted.projectId);
@@ -871,14 +892,24 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
       shellOf(threadId).pipe(Effect.map((shell) => isoOrNull(shell?.updatedAt))),
     // A turn requested but not yet running: the latest run is still being
     // prepared, queued behind another, or waiting for its provider to start.
+    // A restart continuation upstream has yet to start reads the same way, from the cut run's end.
     pendingTurnStartAt: (threadId) =>
       shellOf(threadId).pipe(
-        Effect.map((shell) =>
-          shell !== null &&
-          (shell.status === "preparing" || shell.status === "queued" || shell.status === "starting")
-            ? isoOrNull(shell.latestRunRequestedAt)
-            : null,
-        ),
+        Effect.flatMap((shell) => {
+          if (shell === null) return Effect.succeed(null);
+          if (
+            shell.status === "preparing" ||
+            shell.status === "queued" ||
+            shell.status === "starting"
+          ) {
+            return Effect.succeed(isoOrNull(shell.latestRunRequestedAt));
+          }
+          return restartContinuationPending(shell).pipe(
+            Effect.map((pending) =>
+              pending ? isoOrNull(shell.latestRunCompletedAt ?? shell.latestRunRequestedAt) : null,
+            ),
+          );
+        }),
       ),
 
     projects: () =>

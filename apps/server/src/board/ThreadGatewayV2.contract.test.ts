@@ -24,6 +24,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -278,6 +279,46 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
           threads.interrupt({ commandId: boardCommandId("interrupt-paused"), threadId: idle }),
         );
         assert.strictEqual(refusalTag(exit), "ThreadCommandRefusedError");
+      }),
+    );
+
+    // A run cut by a server restart that upstream will continue is not dead: the board yields
+    // instead of recovering the step on top of the continuation (T3O-72).
+    it.effect("a run upstream will continue after a restart reads alive with a turn pending", () =>
+      Effect.gen(function* () {
+        const threadId = yield* spawn("restart-continued");
+        const threads = yield* LocalThreadGateway;
+        const runId = RunId.make((yield* threads.threadState(threadId))!.activeTurnRef!);
+        yield* threads.interrupt({ commandId: boardCommandId("interrupt-paused"), threadId });
+        assert.isFalse((yield* threads.threadState(threadId))!.alive);
+        assert.isNull(yield* threads.pendingTurnStartAt(threadId));
+
+        const commandId = CommandId.make(`command:restart-prepare:${runId}`);
+        yield* Effect.flatMap(EventSink.EventSinkV2, (sink) =>
+          sink.writeWithEffects({
+            commandId,
+            events: [],
+            effects: [
+              {
+                id: `effect:restart-continuation:${runId}`,
+                commandId,
+                threadId,
+                request: { type: "provider-runtime.continue", sourceRunId: runId },
+              },
+            ],
+          }),
+        ).pipe(Effect.orDie);
+        assert.isTrue((yield* threads.threadState(threadId))!.alive);
+        assert.isNotNull(yield* threads.pendingTurnStartAt(threadId));
+
+        // Upstream declines it: the thread is dead again, so the board's sweep recovers it.
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`
+          UPDATE orchestration_v2_effect_outbox SET status = 'cancelled'
+          WHERE effect_id = ${`effect:restart-continuation:${runId}`}
+        `;
+        assert.isFalse((yield* threads.threadState(threadId))!.alive);
+        assert.isNull(yield* threads.pendingTurnStartAt(threadId));
       }),
     );
 

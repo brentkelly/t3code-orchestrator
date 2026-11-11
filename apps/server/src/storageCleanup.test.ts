@@ -433,7 +433,7 @@ const cleanupFixture = (
       Effect.provideService(SqlClient.SqlClient, ((strings: TemplateStringsArray) =>
         strings.join("").includes("boards.board_cards")
           ? boardWorktreePaths === "unreadable"
-            ? Effect.fail(new Error("board tables unreadable"))
+            ? Effect.fail({ _tag: "BoardTablesUnreadable" } as const)
             : Effect.succeed(boardWorktreePaths.map((path) => ({ path })))
           : Effect.sync(() =>
               openSessionCwd !== null && strings.join("").includes("projection_provider_sessions")
