@@ -92,6 +92,7 @@ function inputs(overrides: Partial<TabIdentityInputs> = {}): TabIdentityInputs {
     boardSettings,
     thread: (environmentId, threadId) => threads[`${environmentId}|${threadId}`] ?? null,
     project: (environmentId, projectId) => projects[`${environmentId}|${projectId}`] ?? null,
+    creating: null,
     ...overrides,
   };
 }
@@ -261,6 +262,18 @@ describe("resolveIdentity", () => {
         title: "A card title that goes on and on well past the sixty charac… · T3O-1204 · mesh-dev",
         icon: t3oTile("1204"),
       },
+    },
+    {
+      name: "the New card dialog names the tab after its title and project",
+      key: card("card-65"),
+      inputs: { creating: { environmentId: central, projectId: t3o, title: " Contour lines " } },
+      expected: { title: "New: Contour lines · mesh-dev", icon: t3oTile(null), pending: false },
+    },
+    {
+      name: "an untitled New card with no project keeps the static icon",
+      key: { kind: "board", projectId: t3o },
+      inputs: { creating: { environmentId: central, projectId: null, title: "  " } },
+      expected: { title: "New card · mesh-dev", icon: defaultIcon },
     },
     {
       name: "trimming never splits an emoji",

@@ -22,6 +22,7 @@ import { environmentProjects } from "../../state/projects";
 import { primaryServerConfigAtom, serverEnvironment } from "../../state/server";
 import { environmentThreadShells } from "../../state/threads";
 import { resolveBoardEnvironment, type BoardEnvironmentCandidate } from "../useBoardEnvironmentId";
+import { tabCreatingCardAtom } from "./creatingCard";
 import {
   buildCardIndex,
   resolveIdentity,
@@ -145,6 +146,7 @@ export function startTabIdentity(router: AppRouter): void {
         get(environmentThreadShells.quietThreadShellAtom(scopeThreadRef(environmentId, threadId))),
       project: (environmentId, projectId) =>
         get(environmentProjects.projectAtom({ environmentId, projectId })),
+      creating: get(tabCreatingCardAtom),
     });
     return { key, identity };
   }).pipe(Atom.withLabel("t3o-tab-identity"));

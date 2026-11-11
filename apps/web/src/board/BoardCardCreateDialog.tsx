@@ -87,6 +87,7 @@ import { BoardInput, BoardTextarea } from "./ui/BoardInput";
 import { BoardButton } from "./ui/BoardButton";
 import { BoardDialogFooter, BoardDialogTitle } from "./ui/BoardDialog";
 import { BoardKbd } from "./ui/BoardKbd";
+import { useTabCreatingCard } from "./tabIdentity/creatingCard";
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
     apply. */
@@ -193,6 +194,7 @@ export function BoardCardCreateDialog({
   const [dependsOn, setDependsOn] = useState<ReadonlyArray<BoardCardId>>([]);
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  useTabCreatingCard(open ? { environmentId, projectId, title } : null);
 
   // Dependencies may cross projects: `dependsOn` stores card ids
   // and the decider has never enforced a same-project rule, so a card that

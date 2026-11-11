@@ -181,6 +181,14 @@ export interface TabIdentityInputs {
   readonly boardSettings: BoardSettings;
   readonly thread: (environmentId: EnvironmentId, threadId: ThreadId) => TabThread | null;
   readonly project: (environmentId: EnvironmentId, projectId: ProjectId) => TabProject | null;
+  /** The open New card dialog, which names the tab over whatever board route is under it. */
+  readonly creating: TabCreatingCard | null;
+}
+
+export interface TabCreatingCard {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId | null;
+  readonly title: string;
 }
 
 export type TabIcon =
@@ -282,6 +290,16 @@ export function resolveIdentity(key: TabRouteKey, inputs: TabIdentityInputs): Ta
       true,
     );
   };
+
+  if (inputs.creating !== null && key.kind !== "guest") {
+    const { environmentId, projectId, title } = inputs.creating;
+    const icon =
+      projectId === null
+        ? ({ kind: "default" } as const)
+        : projectTile(environmentId, projectId, inputs);
+    const named = trimTitle(title);
+    return make(named.length > 0 ? `New: ${named}` : "New card", icon, false);
+  }
 
   switch (key.kind) {
     case "guest":
