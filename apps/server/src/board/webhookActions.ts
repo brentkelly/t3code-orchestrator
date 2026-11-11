@@ -26,6 +26,7 @@ import {
   type BoardWebhookAction,
   type ProjectId,
 } from "@t3tools/contracts";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -133,6 +134,7 @@ export const makeBoardWebhookRunner = Effect.gen(function* () {
   const threads = yield* ThreadGateway;
   const settings = yield* ServerSettings.ServerSettingsService;
   const sql = yield* SqlClient.SqlClient;
+  const crypto = yield* SecureRandom.SecureRandom;
 
   const readBoard = engine.getReadModel.pipe(
     Effect.map((model) => model.board ?? EMPTY_BOARD_STATE),
@@ -161,9 +163,10 @@ export const makeBoardWebhookRunner = Effect.gen(function* () {
     return dispatched(engine.dispatch(command));
   };
 
-  const projectTitle = (projectId: ProjectId) =>
+  /** The rule's project, or null once it has been deleted: tasks outlive their project. */
+  const findProject = (projectId: ProjectId) =>
     threads.projects().pipe(
-      Effect.map((projects) => projects.find((project) => project.id === projectId)?.title ?? ""),
+      Effect.map((projects) => projects.find((project) => project.id === projectId) ?? null),
       Effect.mapError(ruleError),
     );
 
@@ -220,6 +223,8 @@ export const makeBoardWebhookRunner = Effect.gen(function* () {
     if (title.missing.length > 0 || titleLine === "") {
       return `Skipped: missing ${title.missing.length > 0 ? title.missing.join(", ") : "title"}`;
     }
+    const project = yield* findProject(input.projectId);
+    if (project === null) return "Skipped: the rule's project no longer exists";
     const stage = action.stage ?? boardProjectFirstStageId(board, input.projectId);
     if (!boardWebhookStageSpan(board, input.projectId).some((open) => open.stageId === stage)) {
       return `Skipped: webhooks cannot create cards in ${stageLabel(board, stage)}`;
@@ -232,12 +237,14 @@ export const makeBoardWebhookRunner = Effect.gen(function* () {
     const requested = action.labelIds ?? [];
     const labels = requested.filter((labelId) => liveLabels.has(labelId));
     const dropped = requested.filter((labelId) => !liveLabels.has(labelId));
-    const cardId = BoardCardId.make(`webhook:${input.deliveryId}`);
+    const cardId = BoardCardId.make(
+      yield* crypto.uuidV4().pipe(Effect.mapError((cause) => ruleError(cause))),
+    );
     const skipped = yield* dispatched(
       createBoardCard({
         engine,
         actor,
-        projectTitle: yield* projectTitle(input.projectId),
+        projectTitle: project.title,
         create: {
           commandId: CommandId.make(`webhook:${input.deliveryId}:create`),
           cardId,
@@ -259,7 +266,8 @@ export const makeBoardWebhookRunner = Effect.gen(function* () {
       }).pipe(Effect.provideService(ServerSettings.ServerSettingsService, settings)),
     );
     if (skipped !== null) return skipped;
-    const key = (yield* readBoard).cards.find((card) => card.id === cardId)?.key ?? cardId;
+    // By reference, not id: a redelivered create is a duplicate command carrying a fresh id.
+    const key = matchingCards(yield* readBoard, ref).live[0]?.key ?? ref.id;
     return dropped.length === 0
       ? `Created ${key}`
       : `Created ${key} (dropped missing labels: ${dropped.join(", ")})`;
@@ -355,6 +363,7 @@ export const makeBoardWebhookRunner = Effect.gen(function* () {
 
   const validate: BoardWebhookRunner["validate"] = Effect.fn("BoardWebhookActions.validate")(
     function* ({ projectId, action }) {
+      if ((yield* findProject(projectId)) === null) return "The task's project no longer exists.";
       const board = yield* readBoard;
       const span = new Set(boardWebhookStageSpan(board, projectId).map((stage) => stage.stageId));
       const liveLabels = new Set(

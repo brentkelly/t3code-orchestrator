@@ -102,6 +102,11 @@ it.layer(makeBoardStackTestLayer("t3o-webhook-actions-1-"))("the GitHub issue pr
       );
       const created = yield* card;
       assert.strictEqual(created?.stage, "backlog");
+      // A plain UUID: the id names the card's attachments folder.
+      assert.match(
+        created?.id ?? "",
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
       assert.strictEqual(created?.title, "Crash on start");
       assert.deepStrictEqual(created?.externalRef, {
         system: "github-issue",
@@ -341,6 +346,30 @@ it.layer(makeBoardStackTestLayer("t3o-webhook-actions-3-"))("rule details", (it)
           },
         })) ?? "",
         "label",
+      );
+
+      // A task outlives its project: it neither creates under it nor saves against it.
+      const goneProjectId = ProjectId.make("project-gone");
+      assert.strictEqual(
+        yield* runner.run({
+          taskId,
+          taskTitle: "Issues",
+          projectId: goneProjectId,
+          deliveryId: "d-gone",
+          request: issueEvent("opened", { title: "Orphan" }),
+          action: {
+            externalRef: { system: "x", idTemplate: "orphan" },
+            rules: [{ filters: [], action: { kind: "create", titleTemplate: "t" } }],
+          },
+        }),
+        "Skipped: the rule's project no longer exists",
+      );
+      assert.include(
+        (yield* runner.validate({
+          projectId: goneProjectId,
+          action: githubIssueBoardWebhookAction(),
+        })) ?? "",
+        "no longer exists",
       );
     }),
   );
