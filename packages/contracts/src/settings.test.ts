@@ -309,6 +309,18 @@ describe("ClientSettings notifications", () => {
     expect(decodeClientSettings({}).inAppNotificationsEnabled).toBe(false);
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("inAppNotificationsEnabled");
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("notificationMode");
+    // T3o: board card alerts default on but only fire inside the opted-in mode.
+    expect(decodeClientSettings({}).boardNotifications).toEqual({
+      enabled: true,
+      waiting: true,
+      needsHuman: true,
+      readyForMerge: true,
+      blocked: false,
+      muteRoutineThreadAlerts: true,
+    });
+    expect(decodeClientSettings({ boardNotifications: { blocked: true } }).boardNotifications)
+      .toMatchObject({ enabled: true, blocked: true });
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("boardNotifications");
   });
 });
 

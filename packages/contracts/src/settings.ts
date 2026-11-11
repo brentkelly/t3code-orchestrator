@@ -53,6 +53,8 @@ import {
 } from "./providerInstance.ts";
 // T3o: board settings schema (recipe/projects/concurrency/lifecycle); shape lives in board.ts, never at this seam.
 import { BoardSettings, BoardSettingsPatch } from "./board.ts";
+// T3o: per-device board card notification toggles; shape lives in boardNotifications.ts.
+import { BoardNotificationSettings } from "./boardNotifications.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 import {
   CloudSpeechModelId,
@@ -575,6 +577,8 @@ export const ClientSettingsSchema = Schema.Struct({
   boardEnvironmentId: Schema.NullOr(EnvironmentId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  // T3o: which card waits notify on this device (inside notificationMode).
+  boardNotifications: BoardNotificationSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Opt-in TeX typesetting in rendered Markdown. Off keeps math parsing and
   // KaTeX out of the render path entirely.
   mathRenderingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -2068,6 +2072,8 @@ export const ClientSettingsPatch = Schema.Struct({
   wordWrap: Schema.optionalKey(Schema.Boolean),
   // T3o: board server client setting.
   boardEnvironmentId: Schema.optionalKey(Schema.NullOr(EnvironmentId)),
+  // T3o: board card notification toggles, replaced whole.
+  boardNotifications: Schema.optionalKey(BoardNotificationSettings),
   mathRenderingEnabled: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;
