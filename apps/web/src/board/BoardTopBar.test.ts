@@ -27,7 +27,7 @@ describe("board top bar", () => {
 
   it("carries the brand and the mode tabs, plus a slot for the board's controls", () => {
     expect(topBarSource).toContain("<T3Wordmark />");
-    expect(topBarSource).toContain('<BoardModeTabs mode="board" />');
+    expect(topBarSource).toContain("<BoardModeTabs mode={mode} />");
     expect(topBarSource).toContain("{children}");
   });
 
