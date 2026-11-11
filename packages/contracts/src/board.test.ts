@@ -107,6 +107,7 @@ import type {
   BoardCardCiPhase,
   BoardCardWorktree,
 } from "./board.ts";
+import { BOARD_USAGE_SHELL_PROVIDERS_MAX, boardCardUsageSummaryFromRows } from "./boardUsage.ts";
 import { ProjectId, ThreadId } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -286,6 +287,30 @@ describe("BoardCardShell payload discipline", () => {
     );
   });
 
+  it("a card's usage rides the shell bounded, however many providers it ran on (T3O-77)", () => {
+    const base = boardCardShellFromCard(typicalCard(1));
+    const usage = boardCardUsageSummaryFromRows(
+      Array.from({ length: 12 }, (_, index) => ({
+        provider: `provider-with-a-long-driver-name-${String(index)}`,
+        uncachedInputTokens: 123_456_789,
+        cachedInputTokens: 123_456_789,
+        cacheCreationTokens: 123_456_789,
+        outputTokens: 123_456_789,
+        costUsd: 1234.567891,
+        turnsReported: 0,
+        turnsOverride: 0,
+        turnsListPriced: 1,
+        turnsUnpriced: 1,
+        turnsNoUsage: 0,
+        turnsPartial: 0,
+      })),
+      true,
+    );
+    expect(usage?.providers).toHaveLength(BOARD_USAGE_SHELL_PROVIDERS_MAX);
+    const extra = utf8Bytes(encodeShell({ ...base, usage: usage! })) - utf8Bytes(encodeShell(base));
+    expect(extra).toBeLessThanOrEqual(640);
+  });
+
   it("a CI step's progress rides the shell capped, and only while it can show (T3O-60)", () => {
     const progress = {
       message: "m".repeat(500),
@@ -344,7 +369,7 @@ describe("BoardCardShell payload discipline", () => {
     for (const [field, value] of Object.entries(encoded)) {
       // CI carries one bounded object; its own test below holds it
       // to a budget.
-      if (field === "ci" || field === "ciLastOutcome") continue;
+      if (field === "ci" || field === "ciLastOutcome" || field === "usage") continue;
       if (field === "labelIds") {
         expect(Array.isArray(value)).toBe(true);
         const ids = value as unknown[];

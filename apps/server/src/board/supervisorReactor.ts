@@ -10194,6 +10194,7 @@ const make = Effect.gen(function* () {
             );
       case "todos-changed":
       case "thread-deleted":
+      case "usage-recorded":
         return Effect.void;
     }
   };
@@ -10456,7 +10457,11 @@ const make = Effect.gen(function* () {
         if (signal.type === "session-started" && !orphanedThreads.has(String(signal.threadId))) {
           return Effect.void;
         }
-        if (signal.type === "todos-changed" || signal.type === "thread-deleted") {
+        if (
+          signal.type === "todos-changed" ||
+          signal.type === "thread-deleted" ||
+          signal.type === "usage-recorded"
+        ) {
           return Effect.void;
         }
         return worker.enqueue({ source: "thread", signal });

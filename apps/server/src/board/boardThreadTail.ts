@@ -19,7 +19,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { makeBoardEventStore } from "./boardEventStore.ts";
 import { makeBoardSqlProjector } from "./projection.ts";
-import { ThreadGateway, type TodoLogEntry } from "./ThreadGateway.ts";
+import { ThreadGateway, type TodoLogEntry, type TodoSignal } from "./ThreadGateway.ts";
+import { BoardUsageRecorder } from "./usage/BoardUsageRecorder.ts";
 import { WorkerSignalFeed } from "./workers/WorkerSignalFeed.ts";
 
 /** The tail's cursor row in `boards.projection_state`, in the gateway's todo
@@ -46,6 +47,9 @@ const makeBoardThreadTail = Effect.gen(function* () {
   const store = makeBoardEventStore(sql);
   const projector = makeBoardSqlProjector(sql);
   const changes = yield* PubSub.unbounded<ThreadId>();
+  // T3o: finished turns' usage rides the same log (T3O-77). Absent in suites that are
+  // not about usage, which then skip those entries.
+  const recorder = yield* Effect.serviceOption(BoardUsageRecorder);
 
   // Subscribe before reading the head, so nothing committed after the head is
   // read can fall between the catch-up and the live tail.
@@ -81,25 +85,43 @@ const makeBoardThreadTail = Effect.gen(function* () {
     );
   });
 
+  const failed = (signalType: string, cursor: number) => (cause: unknown) =>
+    Effect.logWarning("board thread tail failed to apply a signal", {
+      signalType,
+      cursor,
+      cause,
+    }).pipe(Effect.andThen(pin(cursor - 1)));
+
+  const applyTodo = Effect.fnUntraced(function* (signal: TodoSignal, cursor: number) {
+    const applied = yield* sql
+      .withTransaction(projector.applyTodoSignal(signal).pipe(Effect.andThen(saveCursor(cursor))))
+      .pipe(
+        Effect.as(true),
+        Effect.catchCause((cause) => failed(signal.type, cursor)(cause).pipe(Effect.as(false))),
+      );
+    if (applied) yield* PubSub.publish(changes, signal.threadId);
+  });
+
   const apply = Effect.fnUntraced(function* (entry: TodoLogEntry) {
     if (entry.cursor <= (yield* SubscriptionRef.get(processed))) return;
     const signal = entry.signal;
-    if (signal !== null) {
-      const applied = yield* sql
-        .withTransaction(
-          projector.applyTodoSignal(signal).pipe(Effect.andThen(saveCursor(entry.cursor))),
-        )
-        .pipe(
-          Effect.as(true),
+    if (signal?.type === "usage-recorded") {
+      if (Option.isSome(recorder)) {
+        const usage = recorder.value;
+        const cardId = yield* usage.price(signal).pipe(
+          Effect.flatMap((priced) =>
+            sql.withTransaction(
+              usage.store(priced).pipe(Effect.tap(() => saveCursor(entry.cursor))),
+            ),
+          ),
           Effect.catchCause((cause) =>
-            Effect.logWarning("board thread tail failed to apply a signal", {
-              signalType: signal.type,
-              cursor: entry.cursor,
-              cause,
-            }).pipe(Effect.andThen(pin(entry.cursor - 1)), Effect.as(false)),
+            failed(signal.type, entry.cursor)(cause).pipe(Effect.as(null)),
           ),
         );
-      if (applied) yield* PubSub.publish(changes, signal.threadId);
+        if (cardId !== null) yield* recorder.value.publish(cardId);
+      }
+    } else if (signal !== null) {
+      yield* applyTodo(signal, entry.cursor);
     }
     yield* SubscriptionRef.set(processed, entry.cursor);
   });

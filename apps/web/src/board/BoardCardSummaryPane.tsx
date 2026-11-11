@@ -10,6 +10,8 @@ import { cn } from "../lib/utils";
 import { BoardSectionHeading as SectionHeading } from "./BoardCardFields";
 import { BoardHint } from "./BoardHint";
 import type { BoardCardWorkSummary, BoardCardWorkSummaryTone } from "./boardCardWorkSummary";
+import { BoardCardUsageSection } from "./usage/BoardCardUsageSection";
+import type { BoardUsageBreakdown } from "./usage/boardUsageBreakdown";
 
 const TONE_CLASS: Record<BoardCardWorkSummaryTone, string> = {
   success: "bg-success/14 text-success-foreground",
@@ -126,9 +128,12 @@ export function BoardCardSummaryPane({
   onSelectReview,
   onOpenChild,
   decisionLog,
+  usage,
   buildPending = false,
 }: {
   readonly summary: BoardCardWorkSummary;
+  /** The card's usage, when anything about it is known (T3O-77). */
+  readonly usage?: BoardUsageBreakdown | null | undefined;
   /** The card's decision log section, when it has one. */
   readonly decisionLog?: React.ReactNode;
   /** No build has finished yet: the pane is here for the decision log. */
@@ -217,6 +222,8 @@ export function BoardCardSummaryPane({
             ) : null}
           </div>
         </div>
+
+        {usage == null ? null : <BoardCardUsageSection breakdown={usage} />}
 
         {decisionLog}
 

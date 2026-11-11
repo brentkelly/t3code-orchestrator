@@ -14,8 +14,10 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2InternalCommand,
+  type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2StoredEvent,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -62,6 +64,7 @@ import {
   type ThreadSignalBatch,
   type TodoLogEntry,
   type TodoSignal,
+  type UsageSignal,
 } from "./ThreadGateway.ts";
 
 type ServerCommand = OrchestrationV2Command | OrchestrationV2InternalCommand;
@@ -466,13 +469,25 @@ export const readSignalLog = (
   sink: Pick<EventSink.EventSinkV2["Service"], "stream" | "latestSequence">,
   afterSequence: number | null,
   retrySchedule: Schedule.Schedule<unknown, unknown> = FOLLOW_RETRY,
+  usage?: (stored: OrchestrationV2StoredEvent) => Effect.Effect<UsageSignal | null>,
 ): Stream.Stream<ThreadSignalBatch> =>
   Stream.suspend(() => {
     const read = makeSignalReader();
     const startAfter =
       afterSequence === null ? null : Math.max(0, afterSequence - SIGNAL_READER_WARMUP_EVENTS);
     return followStoredEvents(sink, retrySchedule, startAfter).pipe(
-      Stream.map((stored) => ({ sequence: stored.sequence, signals: read(stored) })),
+      Stream.mapEffect((stored) => {
+        const signals = read(stored);
+        // The warm-up replay only rebuilds the reader, so it looks nothing up.
+        const fresh = afterSequence === null || stored.sequence > afterSequence;
+        if (usage === undefined || !fresh) {
+          return Effect.succeed({ sequence: stored.sequence, signals });
+        }
+        return Effect.map(usage(stored), (signal) => ({
+          sequence: stored.sequence,
+          signals: signal === null ? signals : [...signals, signal],
+        }));
+      }),
       Stream.filter(
         (batch) =>
           batch.signals.length > 0 && (afterSequence === null || batch.sequence > afterSequence),
@@ -480,9 +495,87 @@ export const readSignalLog = (
     );
   });
 
-const toTodoLogEntry = (stored: OrchestrationV2StoredEvent): TodoLogEntry => ({
-  cursor: stored.sequence,
-  signal: todoSignal(stored),
+// ── Usage ──────────────────────────────────────────────────────────────
+
+const FINISHED_TURN_STATUSES = new Set<OrchestrationV2ProviderTurn["status"]>([
+  "completed",
+  "interrupted",
+  "failed",
+  "cancelled",
+]);
+
+/** The provider turn a stored event finished, if any. T3O-77 counts only these. */
+export const finishedProviderTurnOf = (
+  stored: OrchestrationV2StoredEvent,
+): { readonly threadId: ThreadId; readonly turn: OrchestrationV2ProviderTurn } | null => {
+  const event = stored.event;
+  if (event.type !== "provider-turn.updated") return null;
+  if (!FINISHED_TURN_STATUSES.has(event.payload.status)) return null;
+  return { threadId: event.threadId, turn: event.payload };
+};
+
+type UsageRecords = Pick<
+  OrchestrationV2ThreadProjection,
+  "thread" | "providerThreads" | "attempts"
+>;
+
+const delegatedFromOf = (thread: UsageRecords["thread"]): ThreadId | null =>
+  thread.delegatedFrom?.threadId ??
+  (thread.lineage.relationshipToParent === "subagent" ? thread.lineage.parentThreadId : null);
+
+/** How far up a delegation chain the board looks for a card's linked thread. */
+const MAX_DELEGATION_DEPTH = 8;
+
+/**
+ * One finished turn as the board's usage signal, or null for a turn the board never counts.
+ * A native subagent's turn has no attempt of its own (`runAttemptId` null) or runs on a
+ * provider thread other than its attempt's; its spend already rides the root turn's
+ * `otherUsage`. A local command describes its result, not model work.
+ */
+export const usageSignalOf = (
+  records: UsageRecords,
+  turn: OrchestrationV2ProviderTurn,
+): UsageSignal | null => {
+  const usage = turn.turnTokenUsage ?? null;
+  if (usage?.localCommand === true || turn.runAttemptId === null) return null;
+  const attempt = records.attempts.find((candidate) => candidate.id === turn.runAttemptId);
+  if (attempt !== undefined && attempt.providerThreadId !== turn.providerThreadId) return null;
+  const thread = records.thread;
+  const driver = records.providerThreads.find(
+    (candidate) => candidate.id === turn.providerThreadId,
+  )?.driver;
+  // A turn that used several models credits the first: the split is not reported.
+  const model = usage?.models?.[0] ?? turn.model ?? thread.modelSelection.model;
+  const delegatedFrom = delegatedFromOf(thread);
+  return {
+    type: "usage-recorded",
+    threadId: thread.id,
+    providerTurnId: String(turn.id),
+    driver: driver ?? String(thread.modelSelection.instanceId),
+    model: model.trim().length === 0 ? null : model,
+    delegationChain: delegatedFrom === null ? [] : [delegatedFrom],
+    usage,
+  };
+};
+
+/**
+ * The signal with its whole delegation chain, nearest first: a delegate's delegate is
+ * credited to the nearest linked ancestor, and only the board knows which one is linked.
+ */
+export const withDelegationAncestry = Effect.fnUntraced(function* (
+  signal: UsageSignal,
+  readThread: (threadId: ThreadId) => Effect.Effect<UsageRecords["thread"] | null>,
+) {
+  const chain = [...signal.delegationChain];
+  const seen = new Set<string>([String(signal.threadId), ...chain.map(String)]);
+  while (chain.length > 0 && chain.length < MAX_DELEGATION_DEPTH) {
+    const thread = yield* readThread(chain.at(-1)!);
+    const next = thread === null ? null : delegatedFromOf(thread);
+    if (next === null || seen.has(String(next))) break;
+    seen.add(String(next));
+    chain.push(next);
+  }
+  return { ...signal, delegationChain: chain };
 });
 
 // ── Errors ─────────────────────────────────────────────────────────────
@@ -564,6 +657,39 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
   const shellOf = (threadId: ThreadId) =>
     projections.getThreadShell(threadId).pipe(Effect.mapError(readError("threadShell")));
 
+  // T3o: a finished turn's usage, read off the projection the event just updated. A thread
+  // that is gone by then (a catch-up over a deleted one) reports nothing.
+  const usageSignalFor = (
+    stored: OrchestrationV2StoredEvent,
+  ): Effect.Effect<UsageSignal | null> => {
+    const finished = finishedProviderTurnOf(stored);
+    if (finished === null) return Effect.succeed(null);
+    return projections.getThreadRecords(finished.threadId, ["providerThreads", "attempts"]).pipe(
+      Effect.flatMap((records) => {
+        const signal = usageSignalOf(records, finished.turn);
+        return signal === null
+          ? Effect.succeed(null)
+          : withDelegationAncestry(signal, (id) =>
+              projections.getThreadRecords(id, []).pipe(
+                Effect.map((parent) => parent.thread),
+                Effect.option,
+                Effect.map(Option.getOrNull),
+              ),
+            );
+      }),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board thread gateway: a finished turn's usage could not be read", {
+          threadId: finished.threadId,
+          cause,
+        }).pipe(Effect.as(null)),
+      ),
+    );
+  };
+  const toTodoLogEntry = (stored: OrchestrationV2StoredEvent): Effect.Effect<TodoLogEntry> =>
+    Effect.map(usageSignalFor(stored), (usage) => ({
+      cursor: stored.sequence,
+      signal: usage ?? todoSignal(stored),
+    }));
   /**
    * Whether upstream will continue the thread's latest run, cut by a server restart. The board
    * then yields: the thread reads alive with a turn pending, as upstream's own thread_wait reads it,
@@ -1093,7 +1219,38 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
         Stream.flatMap((stored) => Stream.fromIterable(read(stored))),
       );
     }),
-    signalLog: (afterSequence) => readSignalLog(eventSink, afterSequence),
+    signalLog: (afterSequence, options) =>
+      options?.withUsage === true
+        ? readSignalLog(eventSink, afterSequence, FOLLOW_RETRY, usageSignalFor)
+        : readSignalLog(eventSink, afterSequence),
+    usageHistory: Effect.fn("ThreadGatewayV2.usageHistory")(function* (threadIds) {
+      const signals: Array<UsageSignal> = [];
+      const seen = new Set<string>();
+      // A `delegate_task` child is credited along the path it was found under, nearest
+      // first, whatever its own record names.
+      const queue: Array<{ readonly threadId: ThreadId; readonly chain: ReadonlyArray<ThreadId> }> =
+        threadIds.map((threadId) => ({ threadId, chain: [] }));
+      while (queue.length > 0) {
+        const { threadId, chain } = queue.shift()!;
+        if (seen.has(String(threadId))) continue;
+        seen.add(String(threadId));
+        const records = yield* projections
+          .getThreadRecords(threadId, ["providerThreads", "attempts", "providerTurns"])
+          .pipe(Effect.option);
+        if (Option.isNone(records)) continue;
+        for (const turn of records.value.providerTurns) {
+          if (!FINISHED_TURN_STATUSES.has(turn.status)) continue;
+          const signal = usageSignalOf(records.value, turn);
+          if (signal === null) continue;
+          signals.push(chain.length === 0 ? signal : { ...signal, delegationChain: chain });
+        }
+        const children = yield* projections
+          .listAppOwnedChildThreadIds(threadId)
+          .pipe(Effect.orElseSucceed((): ReadonlyArray<ThreadId> => []));
+        for (const child of children) queue.push({ threadId: child, chain: [threadId, ...chain] });
+      }
+      return signals;
+    }),
 
     todoLogHead: eventSink.latestSequence().pipe(Effect.orElseSucceed(() => 0)),
     readTodoLog: (after, upTo) =>
@@ -1102,14 +1259,15 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
         : eventSink.stream({ afterSequence: after }).pipe(
             Stream.takeUntil((stored) => stored.sequence >= upTo),
             Stream.filter((stored) => stored.sequence <= upTo),
-            Stream.map(toTodoLogEntry),
             Stream.mapError(readError("readTodoLog")),
+            Stream.mapEffect(toTodoLogEntry),
           ),
     // Pinned at the head it reads now, so the caller's catch-up ends exactly
     // where this begins; a failed read resubscribes from the last entry.
     subscribeTodoLog: Effect.map(
       eventSink.latestSequence().pipe(Effect.orElseSucceed(() => 0)),
-      (head) => followStoredEvents(eventSink, FOLLOW_RETRY, head).pipe(Stream.map(toTodoLogEntry)),
+      (head) =>
+        followStoredEvents(eventSink, FOLLOW_RETRY, head).pipe(Stream.mapEffect(toTodoLogEntry)),
     ),
   };
   return gateway;

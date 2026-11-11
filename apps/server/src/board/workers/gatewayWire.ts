@@ -44,9 +44,15 @@ import {
   type BoardWorktreeThread,
   type ThreadCommandError,
   type ThreadSignal,
-  type TodoLogEntry,
+  type TodoSignal,
 } from "../ThreadGateway.ts";
 import type { WorkerRpcError } from "./WorkerTransport.ts";
+
+/** A todo-log position as the wire carries it: todo signals only, never usage. */
+export interface WireTodoLogEntry {
+  readonly cursor: number;
+  readonly signal: TodoSignal | null;
+}
 
 /** A gateway call failed: on the wire, or on the worker. */
 export type WorkerGatewayCallError = WorkerRpcError | BoardWorkerGatewayError;
@@ -82,10 +88,11 @@ export interface WorkerGatewayRpcOf<E> {
   readonly project: (projectId: ProjectId) => Effect.Effect<BoardProjectDetail | null, E>;
   readonly subscribeSignals: (
     afterSequence: number | null,
+    withUsage?: boolean,
   ) => Stream.Stream<BoardGatewaySignalBatch, E>;
   readonly todoLogHead: Effect.Effect<number, E>;
-  readonly readTodoLog: (after: number, upTo: number) => Stream.Stream<TodoLogEntry, E>;
-  readonly subscribeTodoLog: Stream.Stream<TodoLogEntry, E>;
+  readonly readTodoLog: (after: number, upTo: number) => Stream.Stream<WireTodoLogEntry, E>;
+  readonly subscribeTodoLog: Stream.Stream<WireTodoLogEntry, E>;
   readonly subscribeMcpRelay: (
     centralEnvironmentId: EnvironmentId,
   ) => Stream.Stream<BoardMcpRelayRequest, E>;

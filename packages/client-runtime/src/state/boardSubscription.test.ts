@@ -10,6 +10,7 @@ import {
   EnvironmentId,
   ThreadId,
   type BoardLabel,
+  type BoardCardShell,
   type BoardShellSnapshot,
   type BoardShellStreamItem,
   type BoardSubscribeBoardInput,
@@ -81,6 +82,20 @@ describe("applyBoardShellStreamItem", () => {
       threads: [{ cardId: BoardCardId.make("card-1"), threadId: ThreadId.make("thread-1") }],
     });
     expect(next?.cardThreads.map((entry) => entry.threadId)).toEqual(["thread-1"]);
+    expect(next?.snapshotSequence).toBe(10);
+  });
+
+  it("always applies card-usage, a fresh read stamped behind the cursor, without moving it", () => {
+    const cardId = BoardCardId.make("card-1");
+    const held = { ...SNAPSHOT, cards: [{ cardId } as BoardCardShell] };
+    const usage = { tokens: 10, costUsd: 0.5, costKnown: true, providers: [] };
+    const next = applyBoardShellStreamItem(held, {
+      kind: "card-usage",
+      sequence: 3,
+      cardId,
+      usage,
+    });
+    expect(next?.cards[0]?.usage).toEqual(usage);
     expect(next?.snapshotSequence).toBe(10);
   });
 

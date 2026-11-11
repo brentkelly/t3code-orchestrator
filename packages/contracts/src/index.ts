@@ -52,6 +52,7 @@ export * from "./threadTitle.ts";
 // T3o: board schema.
 export * from "./board.ts";
 export * from "./boardGroups.ts";
+export * from "./boardUsage.ts";
 export * from "./boardEvent.ts";
 export * from "./boardWorkers.ts";
 export * from "./boardWorkerGateway.ts";

@@ -10,6 +10,8 @@ import {
   BoardCardDecisionInput,
   BOARD_DECISIONS_PER_CALL_MAX,
   BoardCardThreadShell,
+  BoardCardUsageRow,
+  BoardCardUsageSummary,
   BoardCardExternalRef,
   BoardCardPlanReview,
   BoardCardAttachmentId,
@@ -125,6 +127,19 @@ const BoardCardContextAttachment = Schema.Struct({
   path: TrimmedNonEmptyString,
 });
 
+/** What the card's agent threads have cost (T3O-77): the total, and one row per step,
+    thread, provider and model. `estimated` means some turns were priced from the model
+    price table; `partial` means some were unpriced or reported no usage, so the total is
+    a lower bound. A null summary means nothing is known, never $0. */
+const BoardCardToolUsage = Schema.Struct({
+  summary: Schema.NullOr(BoardCardUsageSummary),
+  rows: Schema.Array(BoardCardUsageRow),
+});
+
+/** The context carries the total only: every card agent reads it first, and the rows grow
+    with every step, thread and model. board_get_card has the breakdown. */
+const BoardCardContextUsage = Schema.Struct({ summary: Schema.NullOr(BoardCardUsageSummary) });
+
 /** One ancestor of the card: the group it sits in, then
     that group's group, nearest first. Plans are metadata only — read a body
     with board_get_plan, which accepts an ancestor's plan ids. The brief is cut
@@ -204,6 +219,8 @@ const BoardCardContext = Schema.Struct({
   /** The plan review running on this card's planning step, with its instructions; absent
       when none is running. */
   planReview: Schema.optionalKey(BoardPlanReviewToolResult),
+  // Defaults decode the answer of a central built before T3O-77 (relay).
+  usage: BoardCardContextUsage.pipe(Schema.withDecodingDefault(Effect.succeed({ summary: null }))),
 });
 
 /** A card's pull request as an agent checks it. `linked` is true
@@ -258,6 +275,9 @@ const BoardCardReadResult = Schema.Struct({
   pullRequestHistory: Schema.Array(
     Schema.Struct({ number: PositiveInt, state: BoardCardPullRequestState }),
   ),
+  usage: BoardCardToolUsage.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ summary: null, rows: [] })),
+  ),
 });
 
 const BoardCardListItem = Schema.Struct({
@@ -295,7 +315,7 @@ const NoParameters = Schema.Record(Schema.String, Schema.Never);
 
 const BoardGetCardContextTool = Tool.make("board_get_card_context", {
   description:
-    "Pull everything you need to work on your card: its title, brief, stage, dependency states, the work assigned right now, prior work and its outcomes, proposed plans, its recent activity, and the current todo list of every thread working on it. Activity is truncated to the most recent entries, so treat it as a tail, not the full history; the per-thread todo lists are how you pick up where you (or another thread on this card) left off. Call this first when you start work, and again whenever you need to re-orient. Your card is resolved from your thread; you never pass a card id. Fails if your thread is not linked to a card.",
+    "Pull everything you need to work on your card: its title, brief, stage, dependency states, the work assigned right now, prior work and its outcomes, proposed plans, its recent activity, the current todo list of every thread working on it, and what its threads have cost in total (board_get_card breaks that down by step). Activity is truncated to the most recent entries, so treat it as a tail, not the full history; the per-thread todo lists are how you pick up where you (or another thread on this card) left off. Call this first when you start work, and again whenever you need to re-orient. Your card is resolved from your thread; you never pass a card id. Fails if your thread is not linked to a card.",
   parameters: NoParameters,
   success: BoardCardContext,
   failure: BoardToolFailure,
@@ -355,7 +375,7 @@ const BoardListCardsTool = Tool.make("board_list_cards", {
 
 const BoardGetCardTool = Tool.make("board_get_card", {
   description:
-    "Read any card on the board by key (e.g. 'Z5-39') or id: its title, stage, labels, blocked and archived state, parent card, base branch, brief, dependencies (with keys, titles and whether each is met), its plans with their full bodies, and its pull request (with linked: true when it was linked explicitly) plus the pull requests of earlier rounds. Read-only. Check pullRequest here before finishing work that linked one. Use it before editing another card, so you change what is there rather than writing blind. It returns briefVersion: pass that back as board_update_card's expectedBriefVersion to have your edit rejected if someone changed the brief after you read it. For your own card's assigned work, history and thread to-do lists use board_get_card_context instead.",
+    "Read any card on the board by key (e.g. 'Z5-39') or id: its title, stage, labels, blocked and archived state, parent card, base branch, brief, dependencies (with keys, titles and whether each is met), its plans with their full bodies, its pull request (with linked: true when it was linked explicitly) plus the pull requests of earlier rounds, and its token usage and cost by step. Read-only. Check pullRequest here before finishing work that linked one. Use it before editing another card, so you change what is there rather than writing blind. It returns briefVersion: pass that back as board_update_card's expectedBriefVersion to have your edit rejected if someone changed the brief after you read it. For your own card's assigned work, history and thread to-do lists use board_get_card_context instead.",
   parameters: Schema.Struct({
     /** A card key such as `Z5-39` (case-insensitive) or a card id. */
     card: TrimmedNonEmptyString,

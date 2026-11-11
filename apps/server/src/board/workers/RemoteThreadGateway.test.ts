@@ -3,6 +3,7 @@
  * feed's cursor in a real board database so a resume reads what was persisted.
  */
 import {
+  BOARD_WORKER_USAGE_PROTOCOL,
   BoardCardId,
   CommandId,
   ProjectId,
@@ -43,7 +44,16 @@ import {
 } from "./distributed.testkit.ts";
 import { CardFilesNotStaged, makeRemoteThreadGateway } from "./RemoteThreadGateway.ts";
 import { WorkerConnections } from "./WorkerConnections.ts";
+import { helloFor } from "./workers.testkit.ts";
 import { makeWorkerSignalFeed } from "./WorkerSignalFeed.ts";
+import { BoardUsagePricing } from "../ports/BoardUsagePricing.ts";
+import {
+  BoardUsageRecorder,
+  makeBoardUsageRecorder,
+  type BoardUsageRecorderShape,
+} from "../usage/BoardUsageRecorder.ts";
+import { parseRateTable } from "../../usage/usagePricing.ts";
+import * as SqlClient from "effect/sql/SqlClient";
 
 const CENTRAL_PROJECT_ID = ProjectId.make("project-1");
 const CENTRAL_ROOT = "/home/central/repo";
@@ -80,9 +90,12 @@ const spawnInput = (
 const setup = (
   links: ReadonlyMap<string, BoardWorkerId> = new Map(),
   worker: Parameters<typeof makeInProcessWorker>[0] = {},
+  recorder?: BoardUsageRecorderShape,
+  protocolVersion?: number,
 ) =>
   Effect.gen(function* () {
     const env = yield* makeInProcessWorker(worker);
+    if (protocolVersion !== undefined) env.worker.hello = helloFor(WORKER_ID, protocolVersion);
     const central = yield* makeFakeThreadGateway({
       projects: [
         {
@@ -107,6 +120,9 @@ const setup = (
     yield* waitOnline(env.connections);
     const feed = yield* makeWorkerSignalFeed.pipe(
       Effect.provideService(WorkerConnections, env.connections),
+      recorder === undefined
+        ? (effect) => effect
+        : Effect.provideService(BoardUsageRecorder, recorder),
     );
     const fileSystem = yield* FileSystem.FileSystem;
     const digest = yield* Digest.Digest;
@@ -147,6 +163,20 @@ const centralLayer = BoardRelayStoreLive.pipe(Layer.provideMerge(centralDatabase
 
 /** Each test on a board database of its own: a worker's cursor is durable,
     and one test's must never be the next one's starting point. */
+const testRecorder = makeBoardUsageRecorder.pipe(
+  Effect.provideService(
+    BoardUsagePricing,
+    BoardUsagePricing.of({
+      currentRates: Effect.succeed({
+        table: parseRateTable({
+          "gpt-5-codex": { input_cost_per_token: 1e-6, output_cost_per_token: 1e-6 },
+        }),
+        overrides: new Map(),
+      }),
+    }),
+  ),
+);
+
 const inCentral = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.scoped, Effect.provide(centralLayer));
 
@@ -209,6 +239,70 @@ describe("the remote thread gateway", () => {
         });
         const store = yield* BoardRelayStore;
         assert.strictEqual(yield* store.signalCursor(WORKER_ID), 1);
+      }),
+    ),
+  );
+
+  it.effect(
+    "a worker's finished turn is priced here, beside the cursor, and never reaches the supervisor",
+    () =>
+      inCentral(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const recorder = yield* testRecorder;
+          const threadId = ThreadId.make("thread-usage");
+          const cardId = BoardCardId.make("card-usage");
+          yield* sql`
+          INSERT INTO board_card_thread_links (thread_id, card_id, role, linked_at, worker_id)
+          VALUES (${threadId}, ${cardId}, ${"review@1"}, ${"2026-01-01T00:00:00.000Z"}, ${WORKER_ID})`;
+          const { threads, feed } = yield* setup(new Map(), {}, recorder);
+          const changes = yield* recorder.subscribeChanges;
+          const signals = yield* feed.subscribeSignals;
+          yield* threads.emit({
+            type: "usage-recorded",
+            threadId,
+            providerTurnId: "turn-1",
+            driver: "codex",
+            model: "gpt-5-codex",
+            delegationChain: [],
+            usage: { usageStatus: "complete", inputTokens: 1_000_000, outputTokens: 500_000 },
+          });
+          yield* threads.emit(turnEnded(threadId, "run-1"));
+
+          assert.strictEqual(Option.getOrThrow(yield* Stream.runHead(changes)), cardId);
+          const rows = yield* sql<{ readonly micro: number; readonly step: string }>`
+          SELECT cost_micro_usd AS micro, step_id AS step FROM board_card_usage
+          WHERE card_id = ${cardId}`;
+          assert.deepStrictEqual(rows, [{ micro: 1_500_000, step: "review@1" }]);
+          // The supervisor hears the turn end, and never the usage before it.
+          assert.strictEqual(
+            Option.getOrThrow(yield* Stream.runHead(signals)).signal.type,
+            "turn-ended",
+          );
+          const store = yield* BoardRelayStore;
+          assert.strictEqual(yield* store.signalCursor(WORKER_ID), 2);
+        }),
+      ),
+  );
+
+  it.effect("a card on a worker too old to report usage reads partial, not understated", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const recorder = yield* testRecorder;
+        const cardId = BoardCardId.make("card-old-worker");
+        yield* sql`
+          INSERT INTO board_cards (card_id, project_id, title, stage, key, created_at, updated_at)
+          VALUES (${cardId}, 'p', 'Old worker', 'building', 'T-1', '2026-01-01', '2026-01-01')`;
+        yield* sql`
+          INSERT INTO board_card_thread_links (thread_id, card_id, role, linked_at, worker_id)
+          VALUES ('thread-old', ${cardId}, 'building', '2026-01-01T00:00:00.000Z', ${WORKER_ID})`;
+        const changes = yield* recorder.subscribeChanges;
+        yield* setup(new Map(), {}, recorder, BOARD_WORKER_USAGE_PROTOCOL - 1);
+        assert.strictEqual(Option.getOrThrow(yield* Stream.runHead(changes)), cardId);
+        const [card] = yield* sql<{ readonly partial: number }>`
+          SELECT usage_history_partial AS partial FROM board_cards WHERE card_id = ${cardId}`;
+        assert.strictEqual(card?.partial, 1);
       }),
     ),
   );

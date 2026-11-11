@@ -4,6 +4,8 @@
  * message. Every write dispatches a board command; nothing writes a table directly.
  */
 import {
+  boardCardUsageSummaryFromRows,
+  type BoardCardDetail,
   boardAppendOrderKey,
   boardBuildStepPayloadDefect,
   boardReviewBlockedOutcomeRefusal,
@@ -317,6 +319,22 @@ const requireCallerCard = (
       )
     : Effect.succeed(card);
 };
+
+/** The card's usage total as the read tools report it (T3O-77). */
+const describeUsageSummary = (
+  detail: Pick<BoardCardDetail, "usage" | "usageHistoryPartial"> | null,
+) => ({
+  summary:
+    detail === null
+      ? null
+      : boardCardUsageSummaryFromRows(detail.usage, detail.usageHistoryPartial),
+});
+
+/** The total with its rows, for board_get_card. */
+const describeUsage = (detail: Pick<BoardCardDetail, "usage" | "usageHistoryPartial"> | null) => ({
+  ...describeUsageSummary(detail),
+  rows: detail?.usage ?? [],
+});
 
 /**
  * A card named by a caller acting on a card other than its own. Resolved here so the caller
@@ -956,6 +974,7 @@ export const boardHandlers = {
       sourcePlan: yield* describeSourcePlan(deps, board, card, detail?.brief ?? null),
       decisions: sortBoardCardDecisions(detail?.decisions ?? []).slice(0, CONTEXT_DECISIONS_MAX),
       ...(planReview === null ? {} : { planReview }),
+      usage: describeUsageSummary(detail),
     };
   }),
 
@@ -1155,6 +1174,7 @@ export const boardHandlers = {
         number: entry.number,
         state: entry.state,
       })),
+      usage: describeUsage(detail),
     };
   }),
 

@@ -83,6 +83,8 @@ export function detail(
       | "activity"
       | "plans"
       | "decisions"
+      | "usage"
+      | "usageHistoryPartial"
     >
   >,
 ): BoardCardDetail {
@@ -103,6 +105,8 @@ export function detail(
     stepCompletions: edges?.stepCompletions ?? [],
     decisions: edges?.decisions ?? [],
     ciPasses: [],
+    usage: edges?.usage ?? [],
+    usageHistoryPartial: edges?.usageHistoryPartial ?? false,
   };
 }
 

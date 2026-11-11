@@ -5,6 +5,7 @@
  * a new engine re-runs `ThreadGatewayV2.contract.test.ts`.
  */
 import type {
+  BoardGatewayUsageSignal,
   ChatAttachment,
   CommandId,
   EnvironmentId,
@@ -231,9 +232,17 @@ export type ThreadSignal =
       readonly todos: ReadonlyArray<BoardTodoItem>;
       readonly at: string;
     }
-  | { readonly type: "thread-deleted"; readonly threadId: ThreadId };
+  | { readonly type: "thread-deleted"; readonly threadId: ThreadId }
+  | UsageSignal;
 
 export type TodoSignal = Extract<ThreadSignal, { type: "todos-changed" | "thread-deleted" }>;
+
+/** One finished provider turn's usage (T3O-77), the same shape on the wire. Durable like
+    a todo signal: the board prices and stores it with its cursor in one transaction. */
+export type UsageSignal = BoardGatewayUsageSignal;
+
+/** What the durable log carries: the todo cache's signals and turn usage. */
+export type DurableSignal = TodoSignal | UsageSignal;
 
 /**
  * One position in the thread engine's durable log, with the todo signal it
@@ -242,7 +251,7 @@ export type TodoSignal = Extract<ThreadSignal, { type: "todos-changed" | "thread
  */
 export interface TodoLogEntry {
   readonly cursor: number;
-  readonly signal: TodoSignal | null;
+  readonly signal: DurableSignal | null;
 }
 
 // ── Commands ───────────────────────────────────────────────────────────
@@ -430,7 +439,15 @@ export interface LocalThreadGatewayShape extends ThreadGatewayShape {
       for as long as the subscriber runs — what a central server resumes a
       worker's signals from after a dropped connection. Positions that produce
       no signal are skipped. */
-  readonly signalLog: (afterSequence: number | null) => Stream.Stream<ThreadSignalBatch>;
+  readonly signalLog: (
+    afterSequence: number | null,
+    options?: { readonly withUsage?: boolean },
+  ) => Stream.Stream<ThreadSignalBatch>;
+  /** Every finished provider turn of these threads and their `delegate_task` children,
+      as usage signals: the board's one-time usage backfill (T3O-77). */
+  readonly usageHistory: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<ReadonlyArray<UsageSignal>, ThreadReadError>;
 }
 
 export class LocalThreadGateway extends Context.Service<

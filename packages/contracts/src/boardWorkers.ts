@@ -27,8 +27,12 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 /**
  * Bump when the central server starts relying on a `boardWorker.*` call an older worker
  * lacks. 2 added `boardWorker.git.closePullRequest`, best-effort, so the floor stays at 1.
+ * 3 sends `usage-recorded` signals when asked (`BOARD_WORKER_USAGE_PROTOCOL`).
  */
-export const BOARD_WORKER_PROTOCOL_VERSION = 2;
+export const BOARD_WORKER_PROTOCOL_VERSION = 3;
+
+/** The first protocol whose workers report usage; an older one leaves its cards partial. */
+export const BOARD_WORKER_USAGE_PROTOCOL = 3;
 
 /** The oldest protocol a worker may speak and still be used. */
 export const BOARD_WORKER_PROTOCOL_FLOOR = 1;

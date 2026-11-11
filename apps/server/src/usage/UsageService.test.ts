@@ -3232,4 +3232,77 @@ describe("UsageService", () => {
       );
     }).pipe(Effect.scoped),
   );
+
+  it.live("makes a board caller arriving mid-load wait for the first rate table", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const fetchStarted = yield* Deferred.make<void>();
+      const releaseFetch = yield* Deferred.make<void>();
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-board-rates-race",
+            home,
+            settings,
+            ratesResponse: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(fetchStarted, undefined);
+                yield* Deferred.await(releaseFetch);
+                return Response.json({
+                  "model-a": { input_cost_per_token: 0.000001, output_cost_per_token: 0.000002 },
+                });
+              }),
+          }),
+        ),
+      );
+      const first = yield* Effect.forkChild(service.currentRates);
+      yield* Deferred.await(fetchStarted);
+      const second = yield* service.currentRates.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(releaseFetch, undefined);
+      assert.isTrue((yield* Fiber.join(second)).table.has("model-a"));
+      assert.isTrue((yield* Fiber.join(first)).table.has("model-a"));
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("gives the board the table in hand and refreshes a stale one behind it", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* TestClock.setTime(Date.parse("2026-08-12T00:00:00Z"));
+      const refetchStarted = yield* Deferred.make<void>();
+      const releaseRefetch = yield* Deferred.make<void>();
+      let fetches = 0;
+      const price = (model: string) => ({
+        [model]: { input_cost_per_token: 0.000001, output_cost_per_token: 0.000002 },
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-board-rates",
+            home,
+            settings,
+            ratesResponse: () =>
+              Effect.gen(function* () {
+                fetches += 1;
+                if (fetches === 1) return Response.json(price("model-old"));
+                yield* Deferred.succeed(refetchStarted, undefined);
+                yield* Deferred.await(releaseRefetch);
+                return Response.json(price("model-new"));
+              }),
+          }),
+        ),
+      );
+      assert.isTrue((yield* service.currentRates).table.has("model-old"));
+
+      yield* TestClock.adjust(Duration.hours(25));
+      // Answered from the stale table while the refetch is still held open.
+      assert.isTrue((yield* service.currentRates).table.has("model-old"));
+      yield* Deferred.await(refetchStarted);
+      assert.isTrue((yield* service.currentRates).table.has("model-old"));
+      yield* Deferred.succeed(releaseRefetch, undefined);
+      // The rates lock is held until the background load lands; this one is then fresh.
+      yield* service.refreshRates;
+      assert.isTrue((yield* service.currentRates).table.has("model-new"));
+      assert.strictEqual(fetches, 2);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
 });

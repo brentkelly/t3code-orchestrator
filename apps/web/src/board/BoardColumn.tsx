@@ -131,6 +131,8 @@ export interface BoardColumnProps extends BoardColumnDragProps {
   readonly onOpenSubBoard?: ((card: BoardCardShell) => void) | undefined;
   /** A group card's face, or null for a leaf. */
   readonly groupFor?: ((card: BoardCardShell) => BoardGroupCardVm | null) | undefined;
+  /** T3o: a Done card's cost figure (T3O-77), or null on any other card. */
+  readonly costSlotFor?: ((card: BoardCardShell) => ReactNode) | undefined;
   /** A line under the header, e.g. the Deferred column's rule. */
   readonly hint?: string | undefined;
   /** A control beside the hint, e.g. Deferred's New phase. */
@@ -238,6 +240,7 @@ function ExpandedColumn(props: BoardColumnProps) {
     onCardReorder,
     onOpenSubBoard,
     groupFor,
+    costSlotFor,
     dropRefusal,
     hint,
     headerAction,
@@ -387,6 +390,7 @@ function ExpandedColumn(props: BoardColumnProps) {
                     onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card)
                   }
                   group={groupFor?.(card) ?? null}
+                  costSlot={costSlotFor?.(card) ?? null}
                 />
               </Fragment>
             ))}

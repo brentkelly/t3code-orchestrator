@@ -26,6 +26,7 @@ import { BoardQueries } from "./BoardQueries.ts";
 import { BoardThreadTail } from "./boardThreadTail.ts";
 import type { BoardQueriesShape } from "./projection.ts";
 import { boardShellStreamEvent, type BoardEvent } from "./projector.ts";
+import { BoardUsageRecorder } from "./usage/BoardUsageRecorder.ts";
 import { BoardWorkers } from "./workers/BoardWorkers.ts";
 
 /**
@@ -43,7 +44,9 @@ const BOARD_STREAM_MAX_CHUNK = 512;
     thread's todo list changing (the read-only upstream tail). */
 export type BoardStreamInput =
   | { readonly kind: "board"; readonly event: BoardEvent }
-  | { readonly kind: "todo"; readonly threadId: ThreadId };
+  | { readonly kind: "todo"; readonly threadId: ThreadId }
+  // T3o: a card's usage moved (T3O-77). Like a todo change, it is not in the board log.
+  | { readonly kind: "usage"; readonly cardId: BoardCardId };
 
 /**
  * Board deltas pass through uncollapsed: they omit keys they cannot see, so
@@ -54,7 +57,10 @@ export type BoardStreamInput =
 export const boardStreamWindowDeltas = Effect.fnUntraced(function* (
   inputs: Iterable<BoardStreamInput>,
   deps: {
-    readonly queries: Pick<BoardQueriesShape, "boardCardThreads" | "boardCardIdForThread">;
+    readonly queries: Pick<
+      BoardQueriesShape,
+      "boardCardThreads" | "boardCardIdForThread" | "boardCardUsageSummary"
+    >;
     readonly latestSequence: Effect.Effect<number>;
     /** The worker summary, re-sent after a window that changed the registry.
         Absent in suites that are not about workers. */
@@ -64,10 +70,15 @@ export const boardStreamWindowDeltas = Effect.fnUntraced(function* (
   const deltas: BoardShellStreamEvent[] = [];
   const touchedCards = new Set<BoardCardId>();
   const touchedThreads = new Set<ThreadId>();
+  const touchedUsage = new Set<BoardCardId>();
   let touchedWorkers = false;
   for (const input of inputs) {
     if (input.kind === "todo") {
       touchedThreads.add(input.threadId);
+      continue;
+    }
+    if (input.kind === "usage") {
+      touchedUsage.add(input.cardId);
       continue;
     }
     const delta = boardShellStreamEvent(input.event);
@@ -80,8 +91,11 @@ export const boardStreamWindowDeltas = Effect.fnUntraced(function* (
       touchedWorkers = true;
     }
     // A card's link set changing is what the `card-threads` delta carries. An
-    // unarchived card is back on the board without the thread entries its
-    // archive's `card-removed` dropped.
+    // unarchived card is back on the board without the thread entries and usage
+    // its archive's `card-removed` dropped.
+    if (input.event.type === "board.card-unarchived") {
+      touchedUsage.add(input.event.payload.cardId);
+    }
     if (
       input.event.type === "board.card-thread-linked" ||
       input.event.type === "board.card-thread-unlinked" ||
@@ -107,12 +121,19 @@ export const boardStreamWindowDeltas = Effect.fnUntraced(function* (
       state: yield* deps.workersState,
     });
   }
-  if (touchedCards.size === 0) return deltas;
+  if (touchedCards.size === 0 && touchedUsage.size === 0) return deltas;
   const sequence = yield* deps.latestSequence;
   for (const cardId of touchedCards) {
     const threads = yield* deps.queries.boardCardThreads(cardId).pipe(Effect.option);
     if (Option.isSome(threads)) {
       deltas.push({ kind: "card-threads", sequence, cardId, threads: threads.value });
+    }
+  }
+  // One delta per card per window, however many turns finished in it.
+  for (const cardId of touchedUsage) {
+    const usage = yield* deps.queries.boardCardUsageSummary(cardId).pipe(Effect.option);
+    if (Option.isSome(usage)) {
+      deltas.push({ kind: "card-usage", sequence, cardId, usage: usage.value });
     }
   }
   return deltas as ReadonlyArray<BoardShellStreamEvent>;
@@ -148,6 +169,24 @@ const cardThreadsResync = (
     }),
   );
 
+/** One `card-usage` delta per card with a figure, stamped with the board head: usage
+    that moved while the client was away is not in the replayed log. */
+const cardUsageResync = (
+  queries: Pick<BoardQueriesShape, "boardAllCardUsage">,
+  sequence: number,
+): Effect.Effect<ReadonlyArray<BoardShellStreamItem>, BoardSnapshotError> =>
+  queries.boardAllCardUsage().pipe(
+    Effect.mapError(toSnapshotError("Failed to load the board's card usage.")),
+    Effect.map((byCard) =>
+      Array.from(byCard, ([cardId, usage]): BoardShellStreamItem => ({
+        kind: "card-usage",
+        sequence,
+        cardId,
+        usage,
+      })),
+    ),
+  );
+
 /** One client's board stream. Requires a scope: the todo subscription lives as
     long as the stream does. `maxGap` exists for tests. */
 export const subscribeBoard: (
@@ -166,6 +205,10 @@ export const subscribeBoard: (
   const threadTail = yield* BoardThreadTail;
   const workers = yield* BoardWorkers;
   const todoChanges = yield* threadTail.subscribeTodoChanges;
+  const recorder = yield* Effect.serviceOption(BoardUsageRecorder);
+  const usageChanges = Option.isSome(recorder)
+    ? yield* recorder.value.subscribeChanges
+    : Stream.never;
 
   // The worker summary is runtime state as much as log state, so it
   // rides beside the log's deltas as a whole-state `workers` item, stamped
@@ -194,6 +237,9 @@ export const subscribeBoard: (
         .pipe(Stream.map((event): BoardStreamInput => ({ kind: "board", event }))),
       todoChanges.pipe(Stream.map((threadId): BoardStreamInput => ({ kind: "todo", threadId }))),
     ).pipe(
+      Stream.merge(
+        usageChanges.pipe(Stream.map((cardId): BoardStreamInput => ({ kind: "usage", cardId }))),
+      ),
       Stream.groupedWithin(BOARD_STREAM_MAX_CHUNK, BOARD_STREAM_WINDOW),
       Stream.mapEffect((window) =>
         boardStreamWindowDeltas(window, {
@@ -216,7 +262,10 @@ export const subscribeBoard: (
       // replay alone leaves the client's `card-threads` as they were when it
       // dropped. Re-send every card's link set first; the todo subscription
       // is already attached, so nothing landing after this read is lost.
-      const resync = yield* cardThreadsResync(queries, head);
+      const resync = [
+        ...(yield* cardThreadsResync(queries, head)),
+        ...(yield* cardUsageResync(queries, head)),
+      ];
       // Worker status moved on while the client was away, and none of it is
       // in the log: send the whole summary again. A local-only board has
       // none to send, and a registry emptied meanwhile is in the replayed

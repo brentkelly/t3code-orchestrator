@@ -184,6 +184,7 @@ import {
   resolveBoardStepRecovery,
   type BoardStepRecovery,
 } from "./boardStepRecovery";
+import { deriveBoardUsageBreakdown } from "./usage/boardUsageBreakdown";
 import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
 import { BoardTextarea } from "./ui/BoardInput";
 import { BoardSheetPopup } from "./ui/BoardDialog";
@@ -2705,15 +2706,19 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const hasReview = integrates && (reviewStageId !== null || reviewStarted);
   // An inherit group's Summary is its decision log, which its children's
   // planning inherits as context.
-  const hasSummary = !integrates
-    ? props.detail.decisions.length > 0
-    : boardCardHasSummaryPane({
-        stages: props.stages,
-        stage: card.stage,
-        stepCompletions: props.detail.stepCompletions,
-        card,
-        decisionCount: props.detail.decisions.length,
-      });
+  // T3o: a card's spend lives in its Summary pane at any stage (T3O-77).
+  const hasUsage = props.detail.usage.length > 0 || props.detail.usageHistoryPartial;
+  const hasSummary =
+    hasUsage ||
+    (!integrates
+      ? props.detail.decisions.length > 0
+      : boardCardHasSummaryPane({
+          stages: props.stages,
+          stage: card.stage,
+          stepCompletions: props.detail.stepCompletions,
+          card,
+          decisionCount: props.detail.decisions.length,
+        }));
   // The card-level running/queued signals describe the review loop only while
   // the card sits ON the review stage — anywhere else the live step is some
   // other stage's, and feeding it in would spin the review pill during a
@@ -2770,6 +2775,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const pastBuild =
     buildStage !== null &&
     boardStageIndex(stagesState, card.stage) > boardStageIndex(stagesState, buildStage.stageId);
+  const usageBreakdown =
+    summaryShown && hasUsage
+      ? deriveBoardUsageBreakdown({
+          rows: props.detail.usage,
+          historyPartial: props.detail.usageHistoryPartial,
+          stages: props.stages,
+          runningThreadId:
+            props.threadLinks.find((link) => link.threadState === "working")?.threadId ?? null,
+        })
+      : null;
   const decisionLog = summaryShown
     ? boardDecisionLogView({
         decisions: props.detail.decisions,
@@ -3045,6 +3060,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           />
           <BoardHint label="Close">
             <button
+              aria-label="Close"
               className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
               onClick={props.onClose}
               type="button"
@@ -3124,6 +3140,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onSelectReview={() => setPane("review")}
                 summary={workSummary}
                 buildPending={buildPending}
+                usage={usageBreakdown}
                 decisionLog={
                   decisionLog === null ? null : (
                     <BoardDecisionLog
@@ -3450,7 +3467,16 @@ export function BoardCardDetailView(props: BoardCardDetailViewProps) {
   const cardId = props.detail.card.id;
   const maximised = useBoardUiStore((state) => state.detailMaximisedCardId === cardId);
   const setMaximisedCardId = useBoardUiStore((state) => state.setDetailMaximisedCardId);
-  const [paneChoice, setPaneChoice] = useState<BoardCardPane | null>(null);
+  // A spend popover opens its card straight on the Summary pane's Usage section.
+  const summaryRequested = useBoardUiStore((state) => state.detailSummaryCardId === cardId);
+  const setDetailSummaryCardId = useBoardUiStore((state) => state.setDetailSummaryCardId);
+  const [paneChoice, setPaneChoice] = useState<BoardCardPane | null>(
+    summaryRequested ? "summary" : null,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- consumes the one-shot store request at mount, so no close path or card step can leave it behind
+  useEffect(() => {
+    if (summaryRequested) setDetailSummaryCardId(null);
+  }, [summaryRequested, setDetailSummaryCardId]);
   const wide = boardCardDetailIsWide(props.stages, props.detail.card.stage, paneChoice);
   return (
     <Dialog

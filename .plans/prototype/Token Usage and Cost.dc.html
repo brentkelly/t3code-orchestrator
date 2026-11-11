@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token usage and cost per card</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#fcfcfc; --fg:#27272a; --card:#ffffff; --popover:#ffffff;
+  --muted:#fafafa; --muted-fg:#71717a; --accent:#f4f4f5;
+  --border:#e4e4e7; --input:#d4d4d8;
+  --column-bg:color-mix(in srgb,var(--fg) 4.5%,transparent);
+  --primary:oklch(0.488 0.217 264); --primary-fg:#fff;
+  --info:#3b82f6; --info-fg:#1d4ed8; --attention:#8b5cf6; --attention-fg:#6d28d9; --success:#10b981; --success-fg:#047857;
+  --warning:#f59e0b; --warning-fg:#b45309;
+  --shadow-xs:0 1px 2px rgb(0 0 0 / 5%);
+  --shadow-pop:0 24px 64px -24px rgb(0 0 0 / 35%);
+  --font-sans:"DM Sans",-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+  --font-mono:"SF Mono","SFMono-Regular","JetBrains Mono",Consolas,Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font-sans);background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased}
+a{color:var(--info-fg);text-decoration:none}
+a:hover{text-decoration:underline}
+</style>
+</helmet>
+
+<section style="padding:34px 40px 48px;display:flex;flex-direction:column;gap:34px">
+
+  <!-- Intro + notation -->
+  <div style="display:flex;flex-direction:column;gap:12px;max-width:1120px">
+    <div style="display:flex;align-items:baseline;gap:10px">
+      <span style="font:600 11px var(--font-mono);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:2px 7px">USAGE</span>
+      <h1 style="margin:0;font:600 20px var(--font-sans)">Token usage and cost per card</h1>
+    </div>
+    <p style="margin:0;max-width:760px;font:400 13.5px/1.65 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Every agent thread (planning, build, CI fix, each review / triage / adjudicate round, conflict fix) rolls its usage up to its stage, its card and its group. Cost is written in plain ink: no hue, so it never reads as a status. Green stays done, blue running, violet waiting on you, amber blocked. The number carries its own honesty marks instead.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:2px">
+      <div style="display:flex;align-items:center;gap:9px;height:30px;padding:0 11px;border:1px solid var(--border);border-radius:9px;background:var(--card)">
+        <span style="font:500 12px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">$1.84</span>
+        <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">provider-reported</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:9px;height:30px;padding:0 11px;border:1px solid var(--border);border-radius:9px;background:var(--card)">
+        <span style="font:500 12px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">≈$1.84</span>
+        <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">some of it priced from the model price table</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:9px;height:30px;padding:0 11px;border:1px solid var(--border);border-radius:9px;background:var(--card)">
+        <span style="font:500 12px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">$1.84+</span>
+        <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">partial: some steps unpriced or reported no usage</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:9px;height:30px;padding:0 11px;border:1px solid var(--border);border-radius:9px;background:var(--card)">
+        <span style="font:500 12px var(--font-mono);color:var(--muted-fg)">—</span>
+        <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">nothing known. Never shown as $0</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:9px;height:30px;padding:0 11px;border:1px solid var(--border);border-radius:9px;background:var(--card)">
+        <span style="font:500 12px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">$0.62 <span style="font-family:var(--font-sans);color:var(--muted-fg)">so far</span></span>
+        <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">a step is still running; steps up when a turn finishes</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 1. Card face -->
+  <div style="display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="font:600 11px var(--font-mono);color:var(--info-fg);border:1px solid color-mix(in srgb,var(--info) 40%,transparent);border-radius:6px;padding:2px 7px">1</span>
+      <span style="font:600 15px var(--font-sans)">Card face: cost appears only once the card is Done</span>
+    </div>
+    <p style="margin:0;max-width:820px;font:400 12.5px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Until a card reaches Done its face is exactly as today: no figure, not even on hover. In Done the settled total takes the right end of the existing meta row, so no card grows a line. While work is in flight, cost lives in the card's Summary pane, the List view and the board header.</p>
+    <div style="display:flex;gap:10px;align-items:flex-start;overflow-x:auto;padding-bottom:4px">
+      <sc-for list="{{ faceCols }}" as="col" hint-placeholder-count="4">
+        <div style="width:244px;flex:none;display:flex;flex-direction:column;padding:10px 8px 10px;border-radius:12px;background:var(--column-bg)">
+          <div style="display:flex;align-items:center;gap:6px;padding:2px 4px 10px">
+            <span style="font:600 14px var(--font-sans);letter-spacing:.01em;color:var(--muted-fg)">{{ col.name }}</span>
+            <span style="flex:1"></span>
+            <span style="font:500 11px var(--font-sans);color:var(--muted-fg)">{{ col.count }}</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ col.cards }}" as="c" hint-placeholder-count="2">
+              <article onMouseEnter="{{ c.enter }}" onMouseLeave="{{ faceLeave }}" style="{{ c.style }}">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+                  <span style="font:500 11px var(--font-mono);color:var(--muted-fg)">{{ c.key }}</span>
+                  <sc-if value="{{ c.running }}" hint-placeholder-val="{{ false }}">
+                    <span title="Thread running" style="width:8px;height:8px;flex:none;border-radius:99px;background:var(--info-fg)"></span>
+                  </sc-if>
+                  <sc-if value="{{ c.awaiting }}" hint-placeholder-val="{{ false }}">
+                    <span style="display:inline-flex;align-items:center;gap:3px;font:500 10.5px var(--font-sans);color:var(--attention-fg)">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5"></path><path d="M12 17h.01"></path><circle cx="12" cy="12" r="9"></circle></svg>
+                      Input needed
+                    </span>
+                  </sc-if>
+                </div>
+                <div style="font:500 13px/1.35 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ c.title }}</div>
+                <div style="display:flex;align-items:center;gap:10px;margin-top:9px;min-height:15px;color:var(--muted-fg)">
+                  <span style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans)">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg>
+                    {{ c.threads }}
+                  </span>
+                  <sc-if value="{{ c.hasPr }}" hint-placeholder-val="{{ false }}">
+                    <span style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans);color:var(--info-fg)">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" x2="6" y1="9" y2="21"></line></svg>
+                      {{ c.pr }}
+                    </span>
+                  </sc-if>
+                  <span style="flex:1"></span>
+                  <sc-if value="{{ c.showCost }}" hint-placeholder-val="{{ true }}">
+                    <span title="{{ c.costTip }}" style="{{ c.costStyle }}">{{ c.cost }}<sc-if value="{{ c.soFar }}" hint-placeholder-val="{{ false }}"><span style="font-family:var(--font-sans);font-weight:400;color:var(--muted-fg)"> so far</span></sc-if></span>
+                  </sc-if>
+                </div>
+              </article>
+            </sc-for>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;max-width:1120px">
+      <div style="flex:1;min-width:280px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card)">
+        <div style="font:600 12px var(--font-sans);margin-bottom:5px">Emphasis is weight, not colour</div>
+        <p style="margin:0;font:400 11.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">A Done figure is muted-fg at 500. At or over the board threshold ($5, set in Automation) it turns full ink at 600. Nothing else changes, so the status hues stay the only colour on a card.</p>
+      </div>
+      <div style="flex:1;min-width:280px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card)">
+        <div style="font:600 12px var(--font-sans);margin-bottom:5px">Final, so no live marks</div>
+        <p style="margin:0;font:400 11.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">A Done card has no running steps, so "so far" never reaches the board. Only ≈ and + can appear, and the tooltip says which steps caused them.</p>
+      </div>
+      <div style="flex:1;min-width:280px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card)">
+        <div style="font:600 12px var(--font-sans);margin-bottom:5px">Moved back out of Done</div>
+        <p style="margin:0;font:400 11.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">If a Done card is reopened, the figure leaves its face with it and the total keeps accruing in the detail pane. It returns when the card is Done again.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2 + 5. Card detail: Summary usage section, settled and live -->
+  <div style="display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font:600 11px var(--font-mono);color:var(--info-fg);border:1px solid color-mix(in srgb,var(--info) 40%,transparent);border-radius:6px;padding:2px 7px">2</span>
+      <span style="font:600 15px var(--font-sans)">Card detail: a Usage section in the Summary pane</span>
+    </div>
+    <p style="margin:0;max-width:820px;font:400 12.5px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Sits below the stage timeline, collapsed to its total row by default and remembered per user. Stages expand to their threads, with each round on its own row. Input is the uncached part, and output includes reasoning, which is broken out under it. Click a stage to open or close it, or switch to By model.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:22px;align-items:flex-start">
+      <sc-for list="{{ panes }}" as="p" hint-placeholder-count="2">
+        <div style="display:flex;flex-direction:column;gap:10px;width:600px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font:600 11px var(--font-mono);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:2px 7px">{{ p.tag }}</span>
+            <span style="font:600 13.5px var(--font-sans)">{{ p.caption }}</span>
+          </div>
+          <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:color-mix(in srgb,var(--muted) 55%,var(--card));box-shadow:0 18px 40px -28px rgb(0 0 0 / 45%)">
+            <div style="display:flex;align-items:center;gap:8px;flex:none;height:44px;padding:0 12px 0 14px;border-bottom:1px solid var(--border)">
+              <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Summary</span>
+              <span style="font:500 11px var(--font-mono);color:var(--muted-fg)">{{ p.key }}</span>
+              <span style="flex:1"></span>
+              <span style="{{ p.statusStyle }}">{{ p.status }}</span>
+            </div>
+            <div style="padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--muted-fg);font:400 11.5px var(--font-sans)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+                <span style="font:500 12px var(--font-sans);color:var(--fg)">Stages</span>
+                <span>{{ p.stagesLine }}</span>
+              </div>
+
+              <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden">
+                <div style="display:flex;flex-direction:column;gap:10px;padding:12px 14px 12px">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Usage</span>
+                    <span style="flex:1"></span>
+                    <div style="display:flex;gap:2px;padding:2px;border-radius:8px;background:var(--accent)">
+                      <button type="button" onClick="{{ p.byStage }}" style="{{ p.byStageStyle }}">By stage</button>
+                      <button type="button" onClick="{{ p.byModel }}" style="{{ p.byModelStyle }}">By model</button>
+                    </div>
+                  </div>
+                  <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+                    <span title="{{ p.totalTip }}" style="font:600 22px var(--font-mono);font-variant-numeric:tabular-nums;letter-spacing:-0.02em;color:var(--fg)">{{ p.total }}</span>
+                    <sc-if value="{{ p.running }}" hint-placeholder-val="{{ false }}">
+                      <span style="font:500 12px var(--font-sans);color:var(--muted-fg)">so far</span>
+                    </sc-if>
+                    <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">{{ p.totalSub }}</span>
+                  </div>
+                  <div style="display:flex;gap:2px;height:6px">
+                    <sc-for list="{{ p.segs }}" as="sg" hint-placeholder-count="5">
+                      <span title="{{ sg.tip }}" style="{{ sg.style }}"></span>
+                    </sc-for>
+                  </div>
+                  <div style="display:flex;flex-wrap:wrap;gap:4px 12px">
+                    <sc-for list="{{ p.segs }}" as="sg" hint-placeholder-count="5">
+                      <span style="display:inline-flex;align-items:center;gap:5px;font:400 10.5px var(--font-sans);color:var(--muted-fg)"><span style="{{ sg.keyStyle }}"></span>{{ sg.name }} <span style="font-family:var(--font-mono);color:var(--fg)">{{ sg.cost }}</span></span>
+                    </sc-for>
+                  </div>
+                  <sc-if value="{{ p.hasNote }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;gap:9px;padding:8px 10px;border:1px dashed var(--input);border-radius:9px;background:var(--muted)">
+                      <span style="width:15px;height:15px;flex:none;margin-top:1px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;border:1.4px solid var(--muted-fg);font:700 9px var(--font-sans);color:var(--muted-fg)">?</span>
+                      <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+                        <span style="font:500 11.5px var(--font-sans);color:var(--fg)">{{ p.noteHead }}</span>
+                        <sc-for list="{{ p.noteRows }}" as="nr" hint-placeholder-count="2">
+                          <span style="font:400 11px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty"><span style="font-family:var(--font-mono);color:var(--fg)">{{ nr.step }}</span> · {{ nr.text }}</span>
+                        </sc-for>
+                        <span style="font:400 11px var(--font-sans);color:var(--muted-fg)"><a href="T3 Settings.dc.html" style="font-weight:500">Add a price</a> for unpriced models in Settings › Models.</span>
+                      </div>
+                    </div>
+                  </sc-if>
+                </div>
+
+                <div style="display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1.35fr) 58px 58px 64px 74px;gap:0 8px;align-items:center;padding:6px 14px;border-top:1px solid var(--border);background:var(--muted);font:600 9.5px var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--muted-fg)">
+                  <span>{{ p.firstCol }}</span><span>{{ p.secondCol }}</span><span style="text-align:right">Input</span><span style="text-align:right">Cached</span><span style="text-align:right">Output</span><span style="text-align:right">Cost</span>
+                </div>
+
+                <sc-if value="{{ p.isStage }}" hint-placeholder-val="{{ true }}">
+                  <sc-for list="{{ p.stages }}" as="st" hint-placeholder-count="5">
+                    <div onClick="{{ st.toggle }}" style="display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1.35fr) 58px 58px 64px 74px;gap:0 8px;align-items:center;padding:8px 14px;border-top:1px solid var(--border);cursor:pointer" style-hover="background:var(--accent)">
+                      <span style="display:flex;align-items:center;gap:5px;min-width:0">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="{{ st.caretStyle }}"><path d="m9 18 6-6-6-6"></path></svg>
+                        <span style="font:600 12px var(--font-sans);color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ st.name }}</span>
+                      </span>
+                      <span style="font:400 11px var(--font-sans);color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ st.models }}</span>
+                      <span style="text-align:right;font:500 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ st.inp }}</span>
+                      <span style="text-align:right;font:500 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--muted-fg)">{{ st.cached }}</span>
+                      <span style="text-align:right;font:500 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ st.out }}</span>
+                      <span title="{{ st.costTip }}" style="text-align:right;font:600 11.5px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg);white-space:nowrap">{{ st.cost }}</span>
+                    </div>
+                    <sc-if value="{{ st.open }}" hint-placeholder-val="{{ false }}">
+                      <sc-for list="{{ st.rows }}" as="r" hint-placeholder-count="2">
+                        <div style="display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1.35fr) 58px 58px 64px 74px;gap:0 8px;align-items:start;padding:6px 14px 7px;border-top:1px solid color-mix(in srgb,var(--border) 60%,transparent);background:color-mix(in srgb,var(--fg) 1.5%,transparent)">
+                          <span style="display:flex;align-items:center;gap:6px;padding-left:17px;min-width:0;padding-top:1px">
+                            <sc-if value="{{ r.running }}" hint-placeholder-val="{{ false }}">
+                              <span title="Running" style="width:7px;height:7px;flex:none;border-radius:99px;background:var(--info-fg)"></span>
+                            </sc-if>
+                            <span style="font:500 11.5px var(--font-mono);color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.label }}</span>
+                          </span>
+                          <span style="display:flex;flex-direction:column;gap:1px;min-width:0">
+                            <span style="font:500 11.5px var(--font-sans);color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.model }}</span>
+                            <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.prov }}</span>
+                          </span>
+                          <span style="text-align:right;font:400 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg);padding-top:1px">{{ r.inp }}</span>
+                          <span style="text-align:right;font:400 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--muted-fg);padding-top:1px">{{ r.cached }}</span>
+                          <span style="display:flex;flex-direction:column;align-items:flex-end;gap:1px;padding-top:1px">
+                            <span style="font:400 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ r.out }}</span>
+                            <sc-if value="{{ r.hasReas }}" hint-placeholder-val="{{ false }}">
+                              <span title="Reasoning tokens, included in output" style="font:400 9.5px var(--font-mono);color:var(--muted-fg);white-space:nowrap">{{ r.reas }} rsn</span>
+                            </sc-if>
+                          </span>
+                          <span style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;padding-top:1px">
+                            <span title="{{ r.costTip }}" style="{{ r.costStyle }}">{{ r.cost }}</span>
+                            <sc-if value="{{ r.hasTag }}" hint-placeholder-val="{{ false }}">
+                              <span title="{{ r.costTip }}" style="display:inline-flex;align-items:center;height:15px;padding:0 5px;border:1px solid var(--border);border-radius:4px;background:var(--muted);font:500 9.5px var(--font-sans);letter-spacing:.02em;color:var(--muted-fg);white-space:nowrap">{{ r.tag }}</span>
+                            </sc-if>
+                          </span>
+                        </div>
+                      </sc-for>
+                    </sc-if>
+                  </sc-for>
+                </sc-if>
+
+                <sc-if value="{{ p.isModel }}" hint-placeholder-val="{{ false }}">
+                  <sc-for list="{{ p.models }}" as="r" hint-placeholder-count="4">
+                    <div style="display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1.35fr) 58px 58px 64px 74px;gap:0 8px;align-items:start;padding:8px 14px;border-top:1px solid var(--border)">
+                      <span style="display:flex;flex-direction:column;gap:1px;min-width:0">
+                        <span style="font:600 12px var(--font-sans);color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.model }}</span>
+                        <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">{{ r.prov }}</span>
+                      </span>
+                      <span style="font:400 11px/1.45 var(--font-mono);color:var(--muted-fg);text-wrap:pretty">{{ r.steps }}</span>
+                      <span style="text-align:right;font:500 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ r.inp }}</span>
+                      <span style="text-align:right;font:500 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--muted-fg)">{{ r.cached }}</span>
+                      <span style="text-align:right;font:500 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ r.out }}</span>
+                      <span style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+                        <span title="{{ r.costTip }}" style="{{ r.costStyle }}">{{ r.cost }}</span>
+                        <sc-if value="{{ r.hasTag }}" hint-placeholder-val="{{ false }}">
+                          <span style="display:inline-flex;align-items:center;height:15px;padding:0 5px;border:1px solid var(--border);border-radius:4px;background:var(--muted);font:500 9.5px var(--font-sans);color:var(--muted-fg);white-space:nowrap">{{ r.tag }}</span>
+                        </sc-if>
+                      </span>
+                    </div>
+                  </sc-for>
+                </sc-if>
+
+                <div style="display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1.35fr) 58px 58px 64px 74px;gap:0 8px;align-items:center;padding:8px 14px;border-top:1px solid var(--border);background:var(--muted)">
+                  <span style="font:600 11.5px var(--font-sans);color:var(--fg)">Card total</span>
+                  <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">{{ p.footNote }}</span>
+                  <span style="text-align:right;font:600 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ p.tInp }}</span>
+                  <span style="text-align:right;font:600 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--muted-fg)">{{ p.tCached }}</span>
+                  <span style="text-align:right;font:600 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ p.tOut }}</span>
+                  <span style="text-align:right;font:700 11.5px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg);white-space:nowrap">{{ p.total }}</span>
+                </div>
+              </div>
+              <span style="font:400 10.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ p.sourceLine }}</span>
+            </div>
+          </div>
+          <sc-if value="{{ p.isLive }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border:1px dashed var(--input);border-radius:10px">
+              <span style="font:600 10px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Prototype</span>
+              <button type="button" onClick="{{ liveTurn }}" style="{{ liveBtnStyle }}">Turn finishes</button>
+              <button type="button" onClick="{{ liveFinish }}" style="{{ liveBtnStyle }}">Step finishes</button>
+              <button type="button" onClick="{{ liveReset }}" style="height:24px;padding:0 8px;border:none;border-radius:7px;background:transparent;color:var(--muted-fg);font:500 11px var(--font-sans);cursor:pointer" style-hover="color:var(--fg)">Reset</button>
+              <span style="flex:1"></span>
+              <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ liveStatus }}</span>
+            </div>
+          </sc-if>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- 5. Live rules -->
+  <div style="display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font:600 11px var(--font-mono);color:var(--info-fg);border:1px solid color-mix(in srgb,var(--info) 40%,transparent);border-radius:6px;padding:2px 7px">5</span>
+      <span style="font:600 15px var(--font-sans)">Live state: the figure steps, it never ticks</span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:stretch;max-width:1220px">
+      <sc-for list="{{ liveStates }}" as="ls" hint-placeholder-count="3">
+        <div style="flex:1;min-width:260px;display:flex;flex-direction:column;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card)">
+          <span style="font:600 10px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">{{ ls.when }}</span>
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;background:color-mix(in srgb,var(--fg) 1.5%,transparent)">
+            <sc-if value="{{ ls.running }}" hint-placeholder-val="{{ true }}">
+              <span style="width:7px;height:7px;flex:none;border-radius:99px;background:var(--info-fg)"></span>
+            </sc-if>
+            <span style="font:500 11.5px var(--font-mono);color:var(--fg)">review@2</span>
+            <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ ls.sub }}</span>
+            <span style="flex:1"></span>
+            <span style="font:500 11.5px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ ls.cost }}</span>
+            <sc-if value="{{ ls.running }}" hint-placeholder-val="{{ true }}">
+              <span style="display:inline-flex;align-items:center;height:15px;padding:0 5px;border:1px solid var(--border);border-radius:4px;background:var(--muted);font:500 9.5px var(--font-sans);color:var(--muted-fg)">so far</span>
+            </sc-if>
+          </div>
+          <p style="margin:0;font:400 11.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ls.note }}</p>
+        </div>
+      </sc-for>
+    </div>
+    <p style="margin:0;max-width:820px;font:400 12px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">The server pushes one usage delta per finished turn. The card, stage and group totals re-render once on that event. No counters, spinners or interpolation. "so far" and the static blue step dot are the only in-progress cues, and both drop when the step settles.</p>
+  </div>
+
+  <!-- 3. Group cards -->
+  <div style="display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font:600 11px var(--font-mono);color:var(--info-fg);border:1px solid color-mix(in srgb,var(--info) 40%,transparent);border-radius:6px;padding:2px 7px">3</span>
+      <span style="font:600 15px var(--font-sans)">Group cards: rolled-up total once Done, per-child on click</span>
+    </div>
+    <p style="margin:0;max-width:820px;font:400 12.5px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">A group follows the card rule: no figure on its face until the group itself is Done. While it is in flight, the total sits in its lane header when you drill in (3b). It counts every child, including nested groups, and carries + or ≈ if any child does. Click the figure for per-child totals. Inside the group's board, the same total sits in the lane header next to progress.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:22px;align-items:flex-start">
+      <div style="display:flex;flex-direction:column;gap:10px;width:268px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font:600 11px var(--font-mono);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:2px 7px">3a</span>
+          <span style="font:600 13.5px var(--font-sans)">Group card face, in Done</span>
+        </div>
+        <div style="padding:10px 8px;border-radius:12px;background:var(--column-bg)">
+          <article style="position:relative;padding:10px 11px;border:1px solid var(--border);border-radius:10px;background:var(--card);box-shadow:var(--shadow-xs)">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+              <span style="font:500 11px var(--font-mono);color:var(--muted-fg)">T3O-60</span>
+              <span style="display:inline-flex;align-items:center;height:16px;padding:0 5px;border:1px solid var(--border);border-radius:5px;background:var(--muted);font:500 9.5px var(--font-sans);letter-spacing:.04em;text-transform:uppercase;color:var(--muted-fg)">Group</span>
+              <span style="flex:1"></span>
+            </div>
+            <div style="font:500 13px/1.35 var(--font-sans);color:var(--fg);text-wrap:pretty">Usage and cost roll-up</div>
+            <div style="display:flex;flex-direction:column;gap:7px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border)">
+              <div style="display:flex;gap:3px">
+                <sc-for list="{{ groupPips }}" as="gp" hint-placeholder-count="6">
+                  <span title="{{ gp.tip }}" style="{{ gp.style }}"></span>
+                </sc-for>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                <span style="font:500 10.5px var(--font-mono);color:var(--fg);flex:none">6/6 done</span>
+                <span style="flex:1"></span>
+                <button type="button" style="display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;flex:none;border:1px solid var(--border);border-radius:6px;background:var(--muted);color:var(--muted-fg);font:500 10.5px var(--font-sans);cursor:pointer">
+                  Board
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+                </button>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:9px;color:var(--muted-fg)">
+              <span style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans)">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg>
+                23
+              </span>
+              <span style="flex:1"></span>
+              <button type="button" onClick="{{ toggleGroup }}" title="Per-child totals" style="{{ groupBtnStyle }}" style-hover="background:var(--accent);color:var(--fg)">{{ groupTotal }}</button>
+            </div>
+            <sc-if value="{{ groupOpen }}" hint-placeholder-val="{{ false }}">
+              <div style="position:absolute;top:calc(100% - 6px);left:-4px;z-index:5;width:384px;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:var(--shadow-pop);overflow:hidden">
+                <div style="display:flex;align-items:baseline;gap:8px;padding:11px 12px 8px">
+                  <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Spend by child</span>
+                  <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">6 cards</span>
+                  <span style="flex:1"></span>
+                  <span style="font:600 12.5px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ groupTotal }}</span>
+                </div>
+                <sc-for list="{{ groupKids }}" as="k" hint-placeholder-count="6">
+                  <div style="display:grid;grid-template-columns:52px minmax(0,1fr) 72px 66px;gap:8px;align-items:center;padding:6px 12px;border-top:1px solid color-mix(in srgb,var(--border) 70%,transparent)">
+                    <span style="font:500 10.5px var(--font-mono);color:var(--muted-fg)">{{ k.key }}</span>
+                    <span style="display:flex;flex-direction:column;gap:3px;min-width:0">
+                      <span style="font:500 11.5px var(--font-sans);color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ k.title }}</span>
+                      <span style="height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 6%,transparent);overflow:hidden"><span style="{{ k.barStyle }}"></span></span>
+                    </span>
+                    <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ k.stage }}</span>
+                    <span title="{{ k.tip }}" style="text-align:right;font:500 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg);white-space:nowrap">{{ k.cost }}</span>
+                  </div>
+                </sc-for>
+                <div style="padding:8px 12px 10px;border-top:1px solid var(--border);font:400 10.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">T3O-64 has an unpriced step, so the total is a lower bound. Click a row to open that card's Usage section.</div>
+              </div>
+            </sc-if>
+          </article>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px;width:760px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font:600 11px var(--font-mono);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:2px 7px">3b</span>
+          <span style="font:600 13.5px var(--font-sans)">Drilled into the group: lane header, any stage</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border:1px solid var(--border);border-radius:12px;background:var(--bg)">
+          <button type="button" style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px 0 7px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 11.5px var(--font-sans);box-shadow:var(--shadow-xs)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+            T3 Code
+          </button>
+          <span style="color:var(--border)">/</span>
+          <span style="font:500 11px var(--font-mono);color:var(--muted-fg)">T3O-60</span>
+          <span style="font:600 13.5px var(--font-sans);color:var(--fg);white-space:nowrap">Usage and cost roll-up</span>
+          <span style="font:500 11.5px var(--font-sans);color:var(--muted-fg);white-space:nowrap">4 of 6 done</span>
+          <span style="font:500 11px var(--font-mono);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:1px 6px;background:var(--muted);white-space:nowrap">t3o/usage</span>
+          <span style="width:1px;height:14px;background:var(--border)"></span>
+          <button type="button" onClick="{{ toggleGroup }}" title="Per-child totals" style="display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--muted-fg);font:500 11.5px var(--font-sans);cursor:pointer;white-space:nowrap" style-hover="background:var(--accent);border-color:var(--border);color:var(--fg)">
+            <span style="font:600 11.5px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ groupTotal }}</span>
+            spent
+          </button>
+        </div>
+        <p style="margin:0;font:400 11.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Shown at every stage, here mid-flight, so in-progress spend is one click from the board without touching the card face. Same per-child popover as 3a. Nested groups show as one row with their own roll-up and a chevron that drills one level down. The list stays flat, never a tree.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Board level -->
+  <div style="display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font:600 11px var(--font-mono);color:var(--info-fg);border:1px solid color-mix(in srgb,var(--info) 40%,transparent);border-radius:6px;padding:2px 7px">4</span>
+      <span style="font:600 15px var(--font-sans)">Board level: a header total, and a Cost column in List</span>
+    </div>
+    <p style="margin:0;max-width:820px;font:400 12.5px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">The total follows the filter: it sums the cards currently in view, so typing in "Filter tasks" changes it. The popover breaks it down by column and provider. That's all there is. No charts, no date range. Spend over time belongs on the Usage page behind the sidebar's usage icon.</p>
+
+    <div style="display:flex;flex-direction:column;gap:10px;max-width:1060px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font:600 11px var(--font-mono);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:2px 7px">4a</span>
+        <span style="font:600 13.5px var(--font-sans)">Header chip and its popover</span>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:12px;background:var(--bg);padding-bottom:6px">
+        <header style="display:flex;align-items:center;gap:12px;height:52px;padding:0 14px">
+          <div style="display:flex;align-items:baseline;gap:5px;flex:none;font-size:15px;letter-spacing:-0.01em">
+            <span style="font-weight:700;color:var(--fg)">T3</span><span style="font-weight:500;color:var(--muted-fg)">Code</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:3px;padding:2px;border-radius:10px;background:var(--accent);flex:none">
+            <span style="display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:8px;background:var(--card);box-shadow:var(--shadow-xs);font:500 12px var(--font-sans);color:var(--fg)">Board</span>
+            <span style="display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:8px;font:500 12px var(--font-sans);color:var(--muted-fg)">List</span>
+            <span style="display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:8px;font:500 12px var(--font-sans);color:var(--muted-fg)">Threads</span>
+          </div>
+          <div style="flex:1"></div>
+          <div style="position:relative;flex:none">
+            <button type="button" onClick="{{ toggleBoardPop }}" title="Spend across cards in view" style="{{ boardChipStyle }}" style-hover="background:var(--accent)">
+              <span style="font:600 12px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ board.total }}</span>
+              <span style="font:400 12px var(--font-sans);color:var(--muted-fg)">in view</span>
+            </button>
+            <sc-if value="{{ boardPop }}" hint-placeholder-val="{{ false }}">
+              <div style="position:absolute;top:30px;right:0;z-index:10;width:336px;padding:12px 13px 12px;border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:var(--shadow-pop);display:flex;flex-direction:column;gap:10px">
+                <div style="display:flex;align-items:baseline;gap:8px">
+                  <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Spend in view</span>
+                  <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ board.cards }}</span>
+                  <span style="flex:1"></span>
+                  <span style="font:600 12.5px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ board.total }}</span>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:6px;padding-top:9px;border-top:1px solid var(--border)">
+                  <span style="font:600 10px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">By column</span>
+                  <sc-for list="{{ board.cols }}" as="bc" hint-placeholder-count="5">
+                    <div style="display:grid;grid-template-columns:112px minmax(0,1fr) 62px;gap:8px;align-items:center">
+                      <span style="font:400 11.5px var(--font-sans);color:var(--fg)">{{ bc.name }}</span>
+                      <span style="height:4px;border-radius:2px;background:color-mix(in srgb,var(--fg) 6%,transparent);overflow:hidden"><span style="{{ bc.barStyle }}"></span></span>
+                      <span style="text-align:right;font:500 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ bc.cost }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:6px;padding-top:9px;border-top:1px solid var(--border)">
+                  <span style="font:600 10px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">By provider</span>
+                  <sc-for list="{{ board.provs }}" as="bp" hint-placeholder-count="4">
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <span style="font:400 11.5px var(--font-sans);color:var(--fg)">{{ bp.name }}</span>
+                      <span style="font:400 10.5px var(--font-mono);color:var(--muted-fg)">{{ bp.tok }}</span>
+                      <span style="flex:1"></span>
+                      <span style="font:500 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ bp.cost }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="font:400 11px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">3 cards have unpriced steps or no usage reported, so the total is a lower bound.</div>
+              </div>
+            </sc-if>
+          </div>
+          <div style="display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 7px;border:1px solid var(--input);border-radius:8px;background:var(--popover);box-shadow:var(--shadow-xs)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+            <span style="font:500 12px var(--font-sans);color:var(--muted-fg);width:104px">Filter tasks</span>
+          </div>
+          <span style="display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 7px;border:1px solid var(--primary);border-radius:8px;background:var(--primary);color:var(--primary-fg);font:500 12px var(--font-sans);box-shadow:var(--shadow-xs)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+            New task
+          </span>
+        </header>
+        <div style="height:{{ boardPad }}"></div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:10px;max-width:1060px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font:600 11px var(--font-mono);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:2px 7px">4b</span>
+        <span style="font:600 13.5px var(--font-sans)">List view: Tokens and Cost columns, sortable, with a quick filter</span>
+      </div>
+      <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;background:var(--bg);overflow:hidden">
+        <div style="display:flex;align-items:center;gap:8px;min-height:46px;padding:8px 16px;flex-wrap:wrap">
+          <span style="font:600 13.5px var(--font-sans);color:var(--fg)">T3 Code</span>
+          <span style="font:400 12px var(--font-sans);color:var(--muted-fg)">{{ list.countLabel }}</span>
+          <div style="display:flex;gap:2px;padding:2px;margin-left:6px;border-radius:8px;background:var(--accent)">
+            <sc-for list="{{ list.filters }}" as="f" hint-placeholder-count="3">
+              <button type="button" onClick="{{ f.pick }}" style="{{ f.style }}">{{ f.label }}</button>
+            </sc-for>
+          </div>
+          <span style="flex:1"></span>
+          <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">Sorted by {{ list.sortLabel }}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:70px minmax(0,1fr) 120px 170px 82px 92px;gap:0 12px;align-items:center;padding:7px 16px;border-top:1px solid var(--border);background:var(--muted);font:600 10px var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--muted-fg)">
+          <span>Key</span><span>Title</span><span>Stage</span><span>Models</span>
+          <button type="button" onClick="{{ list.sortTok }}" style="{{ list.tokHeadStyle }}">Tokens {{ list.tokArrow }}</button>
+          <button type="button" onClick="{{ list.sortCost }}" style="{{ list.costHeadStyle }}">Cost {{ list.costArrow }}</button>
+        </div>
+        <sc-for list="{{ list.rows }}" as="r" hint-placeholder-count="8">
+          <div style="display:grid;grid-template-columns:70px minmax(0,1fr) 120px 170px 82px 92px;gap:0 12px;align-items:center;height:38px;padding:0 16px;border-top:1px solid var(--border);background:var(--card)">
+            <span style="font:500 11px var(--font-mono);color:var(--muted-fg)">{{ r.key }}</span>
+            <span style="display:flex;align-items:center;gap:7px;min-width:0">
+              <sc-if value="{{ r.running }}" hint-placeholder-val="{{ false }}"><span style="width:7px;height:7px;flex:none;border-radius:99px;background:var(--info-fg)"></span></sc-if>
+              <span style="font:500 12.5px var(--font-sans);color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.title }}</span>
+            </span>
+            <span style="font:400 12px var(--font-sans);color:var(--muted-fg)">{{ r.stage }}</span>
+            <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.models }}</span>
+            <span style="text-align:right;font:400 11.5px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--muted-fg)">{{ r.tok }}</span>
+            <span title="{{ r.tip }}" style="{{ r.costStyle }}">{{ r.cost }}</span>
+          </div>
+        </sc-for>
+        <div style="display:grid;grid-template-columns:70px minmax(0,1fr) 120px 170px 82px 92px;gap:0 12px;align-items:center;height:36px;padding:0 16px;border-top:1px solid var(--border);background:var(--muted)">
+          <span></span><span style="font:600 11.5px var(--font-sans);color:var(--fg)">Total in view</span><span></span><span></span>
+          <span style="text-align:right;font:600 11.5px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ list.tok }}</span>
+          <span style="text-align:right;font:700 12px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ list.total }}</span>
+        </div>
+      </div>
+      <p style="margin:0;font:400 11.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Sorting puts cards with no known cost ("—") last in both directions. "Partial data" lists every card whose figure carries + so the price table can be fixed at the source. Running cards sort by their current figure.</p>
+    </div>
+  </div>
+
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1320,"height":1200}}'>
+class Component extends DCLogic {
+  state = {
+    hover: null,
+    open: { a: { Planning: false, Build: false, CI: true, "Code review": true, "Conflict fix": false }, b: { "Code review": true } },
+    view: { a: "stage", b: "stage" },
+    turns: 0,
+    liveDone: false,
+    groupOpen: false,
+    boardPop: false,
+    sortKey: "cost",
+    sortDir: -1,
+    listFilter: "all",
+  };
+
+  k(n) {
+    if (n == null) return "—";
+    if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+    if (n >= 1e4) return (n / 1e3).toFixed(1) + "k";
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+    return String(n);
+  }
+
+  tot(steps) {
+    const t = { cost: 0, known: 0, est: false, miss: 0, run: false, i: 0, c: 0, o: 0, r: 0, any: false };
+    steps.forEach((s) => {
+      if (s.i != null) { t.i += s.i - s.c; t.c += s.c; t.o += s.o; t.r += s.r || 0; t.any = true; }
+      if (s.cost != null) { t.cost += s.cost; t.known++; }
+      if (s.src === "est") t.est = true;
+      if (s.src === "none" || s.src === "unp") t.miss++;
+      if (s.run) t.run = true;
+    });
+    return t;
+  }
+
+  money(t) {
+    if (!t.known) return "—";
+    return (t.est ? "≈" : "") + "$" + t.cost.toFixed(2) + (t.miss ? "+" : "");
+  }
+
+  srcTip(s) {
+    if (s.src === "none") return "The provider reported no token usage for this thread. Not counted; not $0.";
+    if (s.src === "unp") return "Tokens reported, but this model has no price in the table. Not counted in the total.";
+    if (s.src === "est") return "Priced from the model price table (provider reported tokens only).";
+    return "Cost reported by the provider.";
+  }
+
+  stepsA() {
+    return [
+      { st: "Planning", label: "planning", model: "Opus 4.8", prov: "Anthropic", i: 182400, c: 141200, o: 9800, r: 6200, cost: 0.71, src: "rep" },
+      { st: "Build", label: "build", model: "Sonnet 4.8", prov: "Anthropic", i: 1240000, c: 1018000, o: 48200, r: 21400, cost: 1.38, src: "rep" },
+      { st: "CI", label: "ci-fix@1", model: "GPT-5.2 Codex", prov: "OpenAI", i: 210300, c: 160100, o: 7400, r: 5100, cost: 0.19, src: "est" },
+      { st: "CI", label: "ci-fix@2", model: "Kimi K3", prov: "OpenRouter", i: 64200, c: 0, o: 3100, r: 0, cost: null, src: "unp" },
+      { st: "Code review", label: "review@1", model: "Opus 4.8", prov: "Anthropic", i: 96200, c: 12100, o: 6100, r: 3900, cost: 0.52, src: "rep" },
+      { st: "Code review", label: "triage@1", model: "Sonnet 4.8", prov: "Anthropic", i: 58400, c: 40300, o: 3200, r: 1400, cost: 0.11, src: "rep" },
+      { st: "Code review", label: "adjudicate@1", model: "Qwen3 Coder 32B", prov: "Ollama · local", i: null, c: null, o: null, r: null, cost: null, src: "none" },
+      { st: "Code review", label: "review@2", model: "Gemini 3 Pro", prov: "Google", i: 88100, c: 0, o: 4900, r: 2600, cost: 0.27, src: "est" },
+      { st: "Code review", label: "triage@2", model: "Sonnet 4.8", prov: "Anthropic", i: 31200, c: 22400, o: 1900, r: 700, cost: 0.06, src: "rep" },
+      { st: "Conflict fix", label: "conflict-fix", model: "Sonnet 4.8", prov: "Anthropic", i: 44000, c: 30500, o: 2200, r: 900, cost: 0.07, src: "rep" },
+    ];
+  }
+
+  stepsB() {
+    const n = this.state.turns;
+    const done = this.state.liveDone;
+    return [
+      { st: "Planning", label: "planning", model: "Opus 4.8", prov: "Anthropic", i: 120300, c: 88000, o: 7100, r: 4400, cost: 0.49, src: "rep" },
+      { st: "Build", label: "build", model: "Sonnet 4.8", prov: "Anthropic", i: 860000, c: 702000, o: 31800, r: 12900, cost: 0.94, src: "rep" },
+      { st: "Code review", label: "review@1", model: "Opus 4.8", prov: "Anthropic", i: 74000, c: 9800, o: 5300, r: 3100, cost: 0.43, src: "rep" },
+      { st: "Code review", label: "triage@1", model: "Sonnet 4.8", prov: "Anthropic", i: 40100, c: 27600, o: 2400, r: 900, cost: 0.08, src: "rep" },
+      { st: "Code review", label: "review@2", model: "Opus 4.8", prov: "Anthropic", i: 41200 + n * 9800, c: 18400 + n * 8600, o: 1900 + n * 700, r: 1100 + n * 420, cost: +(0.19 + n * 0.06).toFixed(2), src: "rep", run: !done },
+    ];
+  }
+
+  segBtn(on) {
+    return "display:inline-flex;align-items:center;height:22px;padding:0 9px;border:1px solid " + (on ? "var(--input)" : "transparent") +
+      ";border-radius:7px;background:" + (on ? "var(--card)" : "transparent") + ";color:" + (on ? "var(--fg)" : "var(--muted-fg)") +
+      ";font:500 11.5px var(--font-sans);cursor:pointer;white-space:nowrap;box-shadow:" + (on ? "var(--shadow-xs)" : "none");
+  }
+
+  pane(id, steps, meta) {
+    const STAGES = ["Planning", "Build", "CI", "Code review", "Conflict fix"];
+    const SHADES = [64, 48, 36, 26, 18];
+    const T = this.tot(steps);
+    const open = this.state.open[id] || {};
+    const view = this.state.view[id];
+    const used = STAGES.filter((s) => steps.some((x) => x.st === s));
+    const segs = [];
+    used.forEach((s, idx) => {
+      const t = this.tot(steps.filter((x) => x.st === s));
+      if (!t.known) return;
+      const shade = "color-mix(in srgb,var(--fg) " + SHADES[idx] + "%,transparent)";
+      segs.push({
+        name: s, cost: this.money(t), tip: s + " · " + this.money(t),
+        style: "flex:" + Math.max(t.cost, 0.02) + " 1 0;min-width:3px;border-radius:2px;background:" + shade,
+        keyStyle: "width:8px;height:8px;border-radius:2px;flex:none;background:" + shade,
+      });
+    });
+    if (T.miss) {
+      segs.push({
+        name: "Unknown", cost: T.miss + (T.miss === 1 ? " step" : " steps"), tip: "Steps with no price or no usage. Their size is unknown.",
+        style: "flex:0 0 22px;border-radius:2px;border:1px dashed var(--input);background:transparent",
+        keyStyle: "width:8px;height:8px;border-radius:2px;flex:none;border:1px dashed var(--muted-fg)",
+      });
+    }
+    const row = (s) => {
+      const hasCost = s.cost != null;
+      const tag = s.src === "est" ? "est." : s.src === "unp" ? "unpriced" : s.src === "none" ? "no usage" : s.run ? "so far" : "";
+      return {
+        label: s.label, model: s.model, prov: s.prov, running: !!s.run,
+        inp: s.i == null ? "—" : this.k(s.i - s.c), cached: s.c == null ? "—" : this.k(s.c), out: s.o == null ? "—" : this.k(s.o),
+        hasReas: !!s.r, reas: this.k(s.r),
+        cost: hasCost ? (s.src === "est" ? "≈" : "") + "$" + s.cost.toFixed(2) : "—",
+        costTip: this.srcTip(s),
+        costStyle: "font:500 11px var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;color:" + (hasCost ? "var(--fg)" : "var(--muted-fg)"),
+        hasTag: !!tag, tag,
+      };
+    };
+    const stages = used.map((s) => {
+      const ss = steps.filter((x) => x.st === s);
+      const t = this.tot(ss);
+      const isOpen = !!open[s];
+      const models = Array.from(new Set(ss.map((x) => x.model)));
+      return {
+        name: s,
+        models: ss.length > 1 ? ss.length + " threads · " + models.length + (models.length === 1 ? " model" : " models") : ss[0].model,
+        inp: this.k(t.i), cached: this.k(t.c), out: this.k(t.o),
+        cost: this.money(t) + (t.run ? "*" : ""),
+        costTip: t.run ? "Includes a running step. Grows as turns finish." : (t.miss ? "Some steps unpriced or reported no usage." : ""),
+        open: isOpen,
+        caretStyle: "flex:none;transition:transform .12s ease;transform:rotate(" + (isOpen ? 90 : 0) + "deg)",
+        rows: ss.map(row),
+        toggle: () => this.setState({ open: { ...this.state.open, [id]: { ...open, [s]: !isOpen } } }),
+      };
+    });
+    const byModel = {};
+    steps.forEach((s) => {
+      const m = byModel[s.model] || (byModel[s.model] = { model: s.model, prov: s.prov, steps: [] });
+      m.steps.push(s);
+    });
+    const models = Object.values(byModel).map((m) => {
+      const t = this.tot(m.steps);
+      const none = m.steps.every((x) => x.src === "none");
+      const unp = m.steps.every((x) => x.src === "unp");
+      return {
+        model: m.model, prov: m.prov, steps: m.steps.map((x) => x.label).join(" "),
+        inp: t.any ? this.k(t.i) : "—", cached: t.any ? this.k(t.c) : "—", out: t.any ? this.k(t.o) : "—",
+        cost: this.money(t), _c: t.cost,
+        costTip: none ? "No usage reported" : unp ? "No price for this model" : "",
+        costStyle: "font:500 11px var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;color:" + (t.known ? "var(--fg)" : "var(--muted-fg)"),
+        hasTag: none || unp || t.est, tag: none ? "no usage" : unp ? "unpriced" : "est.",
+      };
+    }).sort((a, b) => b._c - a._c);
+    const provs = new Set(steps.map((s) => s.prov));
+    const noteRows = steps.filter((s) => s.src === "none" || s.src === "unp").map((s) => ({
+      step: s.label,
+      text: s.src === "none" ? s.model + " (" + s.prov + ") reported no tokens. Usage unknown." : s.model + " via " + s.prov + " has no price in the table. " + this.k(s.i + s.o) + " tokens not costed.",
+    }));
+    const totalTokens = T.i + T.c + T.o;
+    return {
+      ...meta,
+      running: T.run,
+      total: this.money(T),
+      totalTip: T.miss ? "Lower bound: excludes steps with no price or no usage." : T.est ? "Includes estimates from the price table." : "All provider-reported.",
+      totalSub: this.k(totalTokens) + " tokens · " + steps.length + " threads · " + provs.size + (provs.size === 1 ? " provider" : " providers"),
+      segs,
+      hasNote: noteRows.length > 0,
+      noteHead: "Partial total: " + noteRows.length + (noteRows.length === 1 ? " step isn't" : " steps aren't") + " in " + this.money(T),
+      noteRows,
+      isStage: view === "stage", isModel: view === "model",
+      firstCol: view === "stage" ? "Stage · step" : "Model",
+      secondCol: view === "stage" ? "Model" : "Threads",
+      byStage: () => this.setState({ view: { ...this.state.view, [id]: "stage" } }),
+      byModel: () => this.setState({ view: { ...this.state.view, [id]: "model" } }),
+      byStageStyle: this.segBtn(view === "stage").replace("height:22px", "height:20px").replace("11.5px", "11px"),
+      byModelStyle: this.segBtn(view === "model").replace("height:22px", "height:20px").replace("11.5px", "11px"),
+      stages, models,
+      tInp: this.k(T.i), tCached: this.k(T.c), tOut: this.k(T.o),
+      footNote: T.r ? this.k(T.r) + " reasoning in output" : "",
+    };
+  }
+
+  renderVals() {
+    const S = this.state;
+    const faceData = [
+      { name: "Building", cards: [
+        { key: "T3O-70", title: "Retry provider auth on 401 instead of failing the thread", cost: 0.84, running: true, threads: 2 },
+        { key: "T3O-71", title: "Split settings into tabs", cost: 6.4, awaiting: true, threads: 3, partial: true },
+      ] },
+      { name: "Code review", cards: [
+        { key: "T3O-57", title: "Persist draft cards across project moves", cost: 2.13, running: true, threads: 6, pr: "#412" },
+        { key: "T3O-68", title: "Debounce column drag re-sort", cost: 1.12, threads: 4, pr: "#409" },
+      ] },
+      { name: "Ready for merge", cards: [
+        { key: "T3O-49", title: "Stream CI check runs into the stage timeline", cost: 3.31, est: true, partial: true, threads: 10, pr: "#398" },
+        { key: "T3O-64", title: "Cost column in list view", cost: 2.05, partial: true, threads: 5, pr: "#415" },
+      ] },
+      { name: "Done", cards: [
+        { key: "T3O-55", title: "Rework the stage timeline layout", cost: 7.48, threads: 11, pr: "#388" },
+        { key: "T3O-61", title: "Roll up thread usage onto cards", cost: 3.12, threads: 6, pr: "#401" },
+        { key: "T3O-62", title: "Model price table and source flags", cost: 1.96, est: true, threads: 4, pr: "#403" },
+        { key: "T3O-58", title: "Keyboard shortcuts for column moves", cost: 0.92, partial: true, threads: 3, pr: "#391" },
+        { key: "T3O-59", title: "Archive cards in bulk", cost: null, threads: 3, pr: "#395", local: true },
+      ] },
+    ];
+    const faceCols = faceData.map((col) => ({
+      name: col.name,
+      count: col.cards.length,
+      cards: col.cards.map((c) => {
+        const hov = S.hover === c.key;
+        const over = c.cost != null && c.cost >= 5;
+        const show = col.name === "Done";
+        const label = c.cost == null ? "no usage" : (c.est ? "≈" : "") + "$" + c.cost.toFixed(2) + (c.partial ? "+" : "");
+        const tip = c.cost == null ? "No usage reported (Ollama · local). Open the card for details."
+          : (c.running ? "Running: grows as each turn finishes. " : "") + (c.partial ? "Partial: some steps unpriced or reported no usage. " : "") + (c.est ? "Partly priced from the model price table. " : "") + "Open the card for the breakdown.";
+        return {
+          ...c, hasPr: !!c.pr, running: !!c.running, awaiting: !!c.awaiting,
+          showCost: show, cost: label, costTip: tip,
+          soFar: false,
+          costStyle: "font:" + (over ? "600" : "500") + " 10.5px var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;color:" + (over ? "var(--fg)" : "var(--muted-fg)"),
+          style: "padding:10px 11px;border:1px solid " + (hov ? "color-mix(in srgb,var(--fg) 18%,transparent)" : "var(--border)") + ";border-radius:10px;background:var(--card);cursor:pointer;box-shadow:" + (hov ? "0 4px 14px -8px rgb(0 0 0 / 35%)" : "var(--shadow-xs)"),
+          enter: () => this.setState({ hover: c.key }),
+        };
+      }),
+    }));
+
+    const panes = [
+      this.pane("a", this.stepsA(), {
+        tag: "2a", caption: "Settled card, partial data", key: "T3O-49", isLive: false,
+        status: "Ready for merge",
+        statusStyle: "display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:6px;border:1px solid var(--border);background:var(--muted);font:500 11px var(--font-sans);color:var(--fg)",
+        stagesLine: "Planning · Build · CI ×2 · Review ×2 rounds · Conflict fix",
+        sourceLine: "≈ priced from the model price table (Settings › Models › Prices, updated 4 Nov). Everything else is provider-reported. Cached input is billed at each model's cache rate.",
+      }),
+      this.pane("b", this.stepsB(), {
+        tag: "2b", caption: "Live: review round 2 still running", key: "T3O-57", isLive: true,
+        status: S.liveDone ? "Review settled" : "Review · round 2",
+        statusStyle: S.liveDone
+          ? "display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:6px;border:1px solid var(--border);background:var(--muted);font:500 11px var(--font-sans);color:var(--fg)"
+          : "display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 8px 0 7px;border-radius:6px;background:color-mix(in srgb,var(--info) 12%,transparent);font:500 11px var(--font-sans);color:var(--info-fg)",
+        stagesLine: "Planning · Build · Review ×2 rounds",
+        sourceLine: S.liveDone
+          ? "All provider-reported. The step settled, so the figure is final."
+          : "All provider-reported. * stage includes a running step. The figure updates once per finished turn (turn " + (4 + S.turns) + " is in progress).",
+      }),
+    ];
+
+    const liveStates = [
+      { when: "Turn 6 in progress", running: true, sub: "turn 6 · Opus 4.8", cost: "$0.31", note: "Shows what the finished turns cost. Nothing moves while the model is writing." },
+      { when: "Turn 6 finishes", running: true, sub: "turn 7 · Opus 4.8", cost: "$0.37", note: "One delta arrives and the row, the stage, the card and the group re-render once. No count-up animation." },
+      { when: "Step settles", running: false, sub: "7 turns · Opus 4.8", cost: "$0.43", note: "The dot and \"so far\" drop. If the provider later sends a final reconciled cost, it replaces the sum without notice." },
+    ];
+
+    const kids = [
+      { key: "T3O-61", title: "Roll up thread usage onto cards", stage: "Done", cost: 3.12, st: "done" },
+      { key: "T3O-62", title: "Model price table and source flags", stage: "Done", cost: 1.96, est: true, st: "done" },
+      { key: "T3O-63", title: "Usage section in card Summary", stage: "Done", cost: 4.71, st: "done" },
+      { key: "T3O-64", title: "Cost column in list view", stage: "Done", cost: 2.05, miss: true, st: "done" },
+      { key: "T3O-65", title: "Board header spend chip", stage: "Done", cost: 0.58, st: "done" },
+      { key: "T3O-66", title: "Group roll-up and per-child totals", stage: "Done", cost: 1.34, st: "done" },
+    ];
+    const gT = kids.reduce((a, k) => a + (k.cost || 0), 0);
+    const gEst = kids.some((k) => k.est), gMiss = kids.some((k) => k.miss || k.run);
+    const groupTotal = (gEst ? "≈" : "") + "$" + gT.toFixed(2) + (gMiss ? "+" : "");
+    const maxK = Math.max(...kids.map((k) => k.cost || 0));
+    const pipColor = { done: "var(--success)", run: "var(--info)", wait: "var(--attention)", ready: "color-mix(in srgb,var(--fg) 34%,transparent)", todo: "color-mix(in srgb,var(--fg) 12%,transparent)" };
+    const groupPips = kids.map((k) => ({ tip: k.key + " · " + k.stage, style: "flex:1;height:4px;border-radius:2px;background:" + pipColor[k.st] }));
+    const groupKids = kids.slice().sort((a, b) => (b.cost == null ? -1 : b.cost) - (a.cost == null ? -1 : a.cost)).map((k) => ({
+      key: k.key, title: k.title, stage: k.stage,
+      cost: k.cost == null ? "—" : (k.est ? "≈" : "") + "$" + k.cost.toFixed(2) + (k.miss ? "+" : "") + (k.run ? "*" : ""),
+      tip: k.cost == null ? "Not started" : k.run ? "Running, so far" : k.miss ? "Partial" : "",
+      barStyle: "display:block;height:100%;border-radius:2px;background:color-mix(in srgb,var(--fg) 40%,transparent);width:" + Math.round(((k.cost || 0) / maxK) * 100) + "%",
+    }));
+
+    const listAll = [
+      { key: "T3O-71", title: "Split settings into tabs", stage: "Building", models: "Opus 4.8 · Sonnet 4.8", tok: 2410000, cost: 6.4, partial: true },
+      { key: "T3O-63", title: "Usage section in card Summary", stage: "Code review", models: "Opus 4.8 · Sonnet 4.8", tok: 1980000, cost: 4.48, running: true },
+      { key: "T3O-49", title: "Stream CI check runs into the stage timeline", stage: "Ready for merge", models: "Opus · Sonnet · Codex · +3", tok: 2140000, cost: 3.31, est: true, partial: true },
+      { key: "T3O-61", title: "Roll up thread usage onto cards", stage: "Done", models: "Opus 4.8 · Sonnet 4.8", tok: 1720000, cost: 3.12 },
+      { key: "T3O-57", title: "Persist draft cards across project moves", stage: "Code review", models: "Opus 4.8 · Sonnet 4.8", tok: 1290000, cost: 2.13, running: true },
+      { key: "T3O-64", title: "Cost column in list view", stage: "Ready for merge", models: "Sonnet 4.8 · Kimi K3", tok: 1060000, cost: 2.05, partial: true },
+      { key: "T3O-62", title: "Model price table and source flags", stage: "Done", models: "Gemini 3 Pro · Sonnet 4.8", tok: 940000, cost: 1.96, est: true },
+      { key: "T3O-68", title: "Debounce column drag re-sort", stage: "Code review", models: "Sonnet 4.8", tok: 610000, cost: 1.12 },
+      { key: "T3O-70", title: "Retry provider auth on 401", stage: "Building", models: "Sonnet 4.8", tok: 402000, cost: 0.84, running: true },
+      { key: "T3O-59", title: "Archive cards in bulk", stage: "Done", models: "Qwen3 Coder 32B (local)", tok: null, cost: null },
+    ];
+    let rows = listAll.filter((r) => S.listFilter === "all" ? true : S.listFilter === "over" ? (r.cost || 0) >= 5 : (r.partial || r.cost == null));
+    const key = S.sortKey === "tok" ? "tok" : "cost";
+    rows = rows.slice().sort((a, b) => {
+      if (a[key] == null) return 1;
+      if (b[key] == null) return -1;
+      return (a[key] - b[key]) * S.sortDir;
+    });
+    const lT = this.tot(rows.map((r) => ({ cost: r.cost, i: r.tok == null ? null : r.tok, c: 0, o: 0, src: r.est ? "est" : (r.partial || r.cost == null) ? "unp" : "rep" })));
+    const headStyle = (on) => "display:inline-flex;align-items:center;justify-content:flex-end;gap:3px;width:100%;padding:0;border:none;background:transparent;font:600 10px var(--font-sans);letter-spacing:.06em;text-transform:uppercase;cursor:pointer;color:" + (on ? "var(--fg)" : "var(--muted-fg)");
+    const arrow = (on) => on ? (S.sortDir < 0 ? "↓" : "↑") : "";
+    const sortBy = (k2) => () => this.setState(S.sortKey === k2 ? { sortDir: -S.sortDir } : { sortKey: k2, sortDir: -1 });
+    const FILTERS = [{ id: "all", label: "All" }, { id: "over", label: "Over $5" }, { id: "partial", label: "Partial data" }];
+    const list = {
+      countLabel: rows.length + " tasks",
+      filters: FILTERS.map((f) => ({ label: f.label, style: this.segBtn(S.listFilter === f.id).replace("height:22px", "height:20px").replace("11.5px", "11px"), pick: () => this.setState({ listFilter: f.id }) })),
+      sortLabel: (key === "tok" ? "tokens" : "cost") + (S.sortDir < 0 ? ", high to low" : ", low to high"),
+      sortTok: sortBy("tok"), sortCost: sortBy("cost"),
+      tokHeadStyle: headStyle(key === "tok"), costHeadStyle: headStyle(key === "cost"),
+      tokArrow: arrow(key === "tok"), costArrow: arrow(key === "cost"),
+      rows: rows.map((r) => ({
+        ...r, running: !!r.running, tok: this.k(r.tok),
+        cost: r.cost == null ? "—" : (r.est ? "≈" : "") + "$" + r.cost.toFixed(2) + (r.partial ? "+" : ""),
+        tip: r.cost == null ? "No usage reported" : r.running ? "So far: a step is running" : r.partial ? "Partial: unpriced steps" : "",
+        costStyle: "text-align:right;font:" + ((r.cost || 0) >= 5 ? "600" : "500") + " 12px var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;color:" + (r.cost == null ? "var(--muted-fg)" : "var(--fg)"),
+      })),
+      tok: this.k(lT.i),
+      total: this.money(lT),
+    };
+
+    const bCols = [["Building", 7.24], ["Code review", 7.91], ["Ready for merge", 5.36], ["Done", 5.08], ["Planning", 0.41]];
+    const bMax = Math.max(...bCols.map((c) => c[1]));
+    const board = {
+      total: "≈$26.00+",
+      cards: "14 cards",
+      cols: bCols.map(([name, c]) => ({ name, cost: "$" + c.toFixed(2), barStyle: "display:block;height:100%;border-radius:2px;background:color-mix(in srgb,var(--fg) 40%,transparent);width:" + Math.round((c / bMax) * 100) + "%" })),
+      provs: [
+        { name: "Anthropic", tok: "10.4M tok", cost: "$22.71" },
+        { name: "OpenAI", tok: "1.1M tok", cost: "≈$1.02" },
+        { name: "Google", tok: "0.9M tok", cost: "≈$2.27" },
+        { name: "OpenRouter", tok: "0.2M tok", cost: "unpriced" },
+        { name: "Ollama · local", tok: "no usage", cost: "—" },
+      ],
+    };
+
+    return {
+      faceCols,
+      faceLeave: () => this.setState({ hover: null }),
+      panes,
+      liveTurn: () => this.setState({ turns: S.liveDone ? S.turns : S.turns + 1 }),
+      liveFinish: () => this.setState({ liveDone: true, turns: S.turns + 1 }),
+      liveReset: () => this.setState({ liveDone: false, turns: 0 }),
+      liveStatus: S.liveDone ? "Settled after " + (4 + S.turns) + " turns" : "Turn " + (4 + S.turns) + " in progress · " + S.turns + " finished since load",
+      liveBtnStyle: "height:24px;padding:0 9px;border:1px solid var(--input);border-radius:7px;background:var(--card);color:var(--fg);font:500 11px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)",
+      liveStates,
+      groupPips, groupKids, groupTotal,
+      groupOpen: S.groupOpen,
+      toggleGroup: () => this.setState({ groupOpen: !S.groupOpen }),
+      groupBtnStyle: "display:inline-flex;align-items:center;height:18px;padding:0 5px;margin-right:-5px;border:1px solid " + (S.groupOpen ? "var(--input)" : "transparent") + ";border-radius:5px;background:" + (S.groupOpen ? "var(--accent)" : "transparent") + ";font:600 10.5px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg);cursor:pointer",
+      board,
+      boardPop: S.boardPop,
+      boardPad: S.boardPop ? "330px" : "0px",
+      toggleBoardPop: () => this.setState({ boardPop: !S.boardPop }),
+      boardChipStyle: "display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border:1px solid var(--input);border-radius:8px;background:" + (S.boardPop ? "var(--accent)" : "var(--popover)") + ";cursor:pointer;box-shadow:var(--shadow-xs)",
+      list,
+    };
+  }
+}
+</script>
+</body>
+</html>

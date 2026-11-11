@@ -12,6 +12,7 @@ import {
   DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
   DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
   DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES,
+  DEFAULT_BOARD_COST_EMPHASIS_USD,
   DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
   DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
@@ -418,7 +419,10 @@ export const settingsWith = (input: {
     autoArchiveDone: input.autoArchiveDone ?? DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
     autoArchiveAfterDays: input.autoArchiveAfterDays ?? DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
   },
-  display: { autoCollapseEmptyStages: DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES },
+  display: {
+    autoCollapseEmptyStages: DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES,
+    costEmphasisUsd: DEFAULT_BOARD_COST_EMPHASIS_USD,
+  },
 });
 
 export type Harness = {

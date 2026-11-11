@@ -144,8 +144,16 @@ export class UsageService extends Context.Service<
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
     readonly refreshRates: Effect.Effect<UsagePricing>;
+    // T3o: the board prices each finished turn with these (T3O-77).
+    readonly currentRates: Effect.Effect<BoardUsageRateTables>;
   }
 >()("t3/usage/UsageService") {}
+
+// T3o: the rate table and the user's price overrides, for the board's per-card cost.
+export interface BoardUsageRateTables {
+  readonly table: RateTable;
+  readonly overrides: RateTable;
+}
 
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -938,7 +946,32 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary, refreshRates, awaitPersisted } as const;
+  // T3o: only the first call waits, to load the table. A stale or missing one is then
+  // refreshed in the background, so a slow fetch never holds up the board's turn tail.
+  // Shared, so a caller arriving mid-load waits for it instead of pricing against no table.
+  const firstBoardRatesLoad = yield* Effect.cached(ensureRates(false));
+  let boardRatesRefreshing = false;
+  const currentRates = Effect.gen(function* () {
+    yield* firstBoardRatesLoad;
+    const now = yield* Clock.currentTimeMillis;
+    if (
+      !boardRatesRefreshing &&
+      (ratesFetchedAtMs === null || now - ratesFetchedAtMs >= RATES_TTL_MS)
+    ) {
+      boardRatesRefreshing = true;
+      const done = Effect.sync(() => (boardRatesRefreshing = false));
+      yield* Effect.forkDetach(ensureRates(false).pipe(Effect.ensuring(done)));
+    }
+    const settings = yield* settingsService.getSettings.pipe(Effect.option);
+    return {
+      table: rates,
+      overrides: createOverrideRateTable(
+        Option.match(settings, { onNone: () => ({}), onSome: (s) => s.usagePriceOverrides }),
+      ),
+    };
+  }).pipe(Effect.withSpan("UsageService.currentRates"));
+
+  return { readSummary, refreshRates, currentRates, awaitPersisted } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

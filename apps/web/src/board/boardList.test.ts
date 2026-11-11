@@ -26,6 +26,7 @@ import {
   boardListRowWindow,
   boardListRows,
   boardListStageCounts,
+  boardListUsageTotal,
   boardListVisibleSelection,
   buildBoardListTree,
   planBoardListMove,
@@ -436,5 +437,98 @@ describe("boardListRowWindow", () => {
       start: 0,
       end: 5,
     });
+  });
+});
+
+describe("the List's cost columns (T3O-77)", () => {
+  const usage = (costUsd: number, extra: Partial<NonNullable<BoardCardShell["usage"]>> = {}) => ({
+    tokens: Math.round(costUsd * 1000),
+    costUsd,
+    costKnown: true,
+    providers: [],
+    ...extra,
+  });
+  const shells = [
+    shell("cheap", "done", { usage: usage(0.5) }),
+    shell("none", "done"),
+    shell("dear", "done", { usage: usage(7, { estimated: true }) }),
+    shell("unpriced", "done", {
+      usage: { tokens: 9000, costUsd: 0, partial: true, providers: [] },
+    }),
+    shell("g", "building", { group: group() }),
+    shell("g-a", "done", { parent: "g", usage: usage(2, { partial: true }) }),
+    shell("g-b", "done", { parent: "g", usage: usage(4) }),
+  ];
+
+  it("sorts by cost either way, with no known cost last both times", () => {
+    const rows = (direction: 1 | -1) =>
+      ids(
+        boardListRows({
+          tree: treeOf(shells),
+          collapsed: new Set(["g"]),
+          filter: NO_FILTER,
+          sort: { key: "cost", direction },
+        }),
+      );
+    // A collapsed group sorts by everything under it.
+    expect(rows(-1)).toEqual(["dear", "g", "cheap", "none", "unpriced"]);
+    expect(rows(1)).toEqual(["cheap", "g", "dear", "none", "unpriced"]);
+  });
+
+  it("sorts by tokens, where an unpriced card still has a count", () => {
+    expect(
+      ids(
+        boardListRows({
+          tree: treeOf(shells),
+          collapsed: new Set(["g"]),
+          filter: NO_FILTER,
+          sort: { key: "tokens", direction: -1 },
+        }),
+      ),
+    ).toEqual(["unpriced", "dear", "g", "cheap", "none"]);
+  });
+
+  it("filters to cards over the threshold, or to cards whose figure is a lower bound", () => {
+    const over = boardListRows({
+      tree: treeOf(shells),
+      collapsed: new Set(),
+      filter: { ...NO_FILTER, usage: { kind: "over", thresholdUsd: 5 } },
+    });
+    // The group is over $5 in total, so it matches; its children, under $5 each, are not rows.
+    expect(ids(over.filter((row) => !row.context))).toEqual(["g", "dear"]);
+    const partial = boardListRows({
+      tree: treeOf(shells),
+      collapsed: new Set(),
+      filter: { ...NO_FILTER, usage: { kind: "partial" } },
+    });
+    expect(ids(partial.filter((row) => !row.context))).toEqual(["g", "g-a", "unpriced"]);
+  });
+
+  it("totals what is on screen, a collapsed group once and an expanded one by its rows", () => {
+    const total = (collapsed: ReadonlySet<string>) =>
+      boardListUsageTotal(boardListRows({ tree: treeOf(shells), collapsed, filter: NO_FILTER }));
+    expect(total(new Set(["g"]))).toMatchObject({ costUsd: 13.5, estimated: true, partial: true });
+    expect(total(new Set())).toMatchObject({ costUsd: 13.5 });
+  });
+
+  it("shows, totals and sorts a filtered group by its roll-up when none of its children are rows", () => {
+    const rows = boardListRows({
+      tree: treeOf(shells),
+      collapsed: new Set(),
+      filter: { ...NO_FILTER, usage: { kind: "over", thresholdUsd: 5 } },
+      sort: { key: "cost", direction: 1 },
+    });
+    expect(ids(rows)).toEqual(["g", "dear"]);
+    expect(rows[0]).toMatchObject({ expanded: true, usage: { costUsd: 6 } });
+    expect(boardListUsageTotal(rows)).toMatchObject({ costUsd: 13 });
+    // An expanded group with child rows shows only its own threads, and sorts by that.
+    const unfiltered = boardListRows({
+      tree: treeOf(shells),
+      collapsed: new Set(),
+      filter: NO_FILTER,
+      sort: { key: "cost", direction: -1 },
+    });
+    expect(unfiltered.find((row) => row.card.key === "G")?.usage).toBeNull();
+    expect(ids(unfiltered).slice(0, 2)).toEqual(["dear", "cheap"]);
   });
 });

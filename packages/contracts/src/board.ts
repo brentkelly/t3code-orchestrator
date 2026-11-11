@@ -11,6 +11,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Rpc from "effect/rpc/Rpc";
 
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import { BoardCardUsageRow, BoardCardUsageSummary } from "./boardUsage.ts";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -7258,6 +7259,10 @@ export const BoardCardShell = Schema.Struct({
       Present only on an `advanced` loop. */
   reviewAdvancedRound: Schema.optionalKey(PositiveInt),
   reviewUnreviewedFixes: Schema.optionalKey(NonNegativeInt),
+  /** The card's token usage and cost (T3O-77), absent when nothing is known. Not on the
+      card aggregate: the snapshot and `card-usage` are authoritative, card-carrying
+      deltas omit the key and the client keeps its last value. */
+  usage: Schema.optionalKey(BoardCardUsageSummary),
 });
 export type BoardCardShell = typeof BoardCardShell.Type;
 
@@ -7574,6 +7579,9 @@ export function makeBoardCardShell(input: {
       producer that cannot see the step-completion ledger omits the key rather
       than asserting counts it does not have. */
   readonly reviewSummary?: BoardCardReviewSummary | null | undefined;
+  /** The card's usage summary. Only the snapshot has it; every other producer omits it,
+      which the client reads as preserve-last-known. */
+  readonly usage?: BoardCardUsageSummary | null | undefined;
   /** Every LIVE-linked thread's shell — the badge aggregates
       across all of them. A single thread is still accepted (delta producers and
       tests pass one, or none). */
@@ -7694,6 +7702,7 @@ export function makeBoardCardShell(input: {
                 reviewUnreviewedFixes: input.reviewSummary.unreviewedFixes,
               }),
         }),
+    ...(input.usage == null ? {} : { usage: input.usage }),
     // planTotal / planDone (post-MVP sub-boards) and stepLabel: key-optional
     // and deliberately absent until their producing specs land.
   };
@@ -7856,6 +7865,19 @@ export const BoardCardPlansShellEvent = Schema.Struct({
   planCount: NonNegativeInt,
 });
 export type BoardCardPlansShellEvent = typeof BoardCardPlansShellEvent.Type;
+
+/**
+ * A card's usage summary after a provider turn finished on one of its threads (T3O-77).
+ * Usage is not in the board log, so like `card-threads` this is a fresh read stamped
+ * with the board head and applied unguarded. Null clears the figure.
+ */
+export const BoardCardUsageShellEvent = Schema.Struct({
+  kind: Schema.Literal("card-usage"),
+  sequence: NonNegativeInt,
+  cardId: BoardCardId,
+  usage: Schema.NullOr(BoardCardUsageSummary),
+});
+export type BoardCardUsageShellEvent = typeof BoardCardUsageShellEvent.Type;
 
 /**
  * Review-summary delta after a review phase completes. Its own delta because the summary
@@ -8169,6 +8191,7 @@ const BOARD_SHELL_STREAM_EVENTS = [
   BoardCardPlansShellEvent,
   BoardCardReviewShellEvent,
   BoardCardThreadsShellEvent,
+  BoardCardUsageShellEvent,
   BoardLabelUpsertedShellEvent,
   BoardStageUpsertedShellEvent,
   BoardStageRemovedShellEvent,
@@ -9207,6 +9230,11 @@ export const BoardCardDetail = Schema.Struct({
   stepError: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** The card's usage rows, one per step, thread, provider and model (T3O-77). Decodes
+      to `[]` on older payloads. */
+  usage: Schema.Array(BoardCardUsageRow).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** The card ran on a worker before usage was tracked, so its rows are a lower bound. */
+  usageHistoryPartial: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** The card's decision log, oldest first. Decodes to `[]` on
       legacy detail payloads. */
   decisions: Schema.Array(BoardCardDecision).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
@@ -9627,11 +9655,18 @@ export type BoardLifecycleSettings = typeof BoardLifecycleSettings.Type;
 
 /** Board display preferences. Shared by every client of this board. */
 export const DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES = false;
+/** A Done card's cost at or above this many dollars is drawn in full ink (T3O-77). */
+export const DEFAULT_BOARD_COST_EMPHASIS_USD = 5;
+
+export const BoardCostEmphasisUsd = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
 
 export const BoardDisplaySettings = Schema.Struct({
   /** Fold every stage with no cards in scope to a rail; it reopens on arrival. */
   autoCollapseEmptyStages: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES)),
+  ),
+  costEmphasisUsd: BoardCostEmphasisUsd.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_COST_EMPHASIS_USD)),
   ),
 });
 export type BoardDisplaySettings = typeof BoardDisplaySettings.Type;
@@ -12050,7 +12085,10 @@ export const BoardSettings = Schema.Struct({
   ),
   display: BoardDisplaySettings.pipe(
     Schema.withDecodingDefault(
-      Effect.succeed({ autoCollapseEmptyStages: DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES }),
+      Effect.succeed({
+        autoCollapseEmptyStages: DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES,
+        costEmphasisUsd: DEFAULT_BOARD_COST_EMPHASIS_USD,
+      }),
     ),
   ),
 });
@@ -12091,6 +12129,7 @@ export type BoardLifecycleSettingsPatch = typeof BoardLifecycleSettingsPatch.Typ
 
 export const BoardDisplaySettingsPatch = Schema.Struct({
   autoCollapseEmptyStages: Schema.optionalKey(Schema.Boolean),
+  costEmphasisUsd: Schema.optionalKey(BoardCostEmphasisUsd),
 });
 export type BoardDisplaySettingsPatch = typeof BoardDisplaySettingsPatch.Type;
 

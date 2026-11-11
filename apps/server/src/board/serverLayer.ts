@@ -5,6 +5,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { layer as BoardPullRequestGatewayLive } from "./BoardPullRequestGateway.ts";
 import { BoardStepSlotsLive } from "./BoardStepSlots.ts";
@@ -19,6 +20,8 @@ import { BoardWebhookActionsLive } from "./webhookActions.ts";
 import { BoardSetupScriptRunnerLive } from "./ports/BoardSetupScriptRunner.live.ts";
 import { BoardTerminalsLive } from "./ports/BoardTerminals.live.ts";
 import { BoardGitStatusLive } from "./ports/BoardGitStatus.live.ts";
+import { BoardUsagePricingLive } from "./ports/BoardUsagePricing.live.ts";
+import { BoardUsageRecorder, BoardUsageRecorderLive } from "./usage/BoardUsageRecorder.ts";
 import { BoardRelayStoreLive } from "./workers/BoardRelayStore.ts";
 import { BoardCardMoverLive } from "./workers/BoardCardMove.ts";
 import { BoardPlacementLive } from "./workers/BoardPlacement.ts";
@@ -49,6 +52,8 @@ const BoardThreadsLive = ThreadGatewayRouterLive.pipe(
   Layer.provideMerge(McpRelayHostLive),
   Layer.provideMerge(BoardRelayStoreLive),
   Layer.provideMerge(WorkerConnectionsServerLive),
+  // Prices each finished turn for the card it ran on, local or relayed (T3O-77).
+  Layer.provideMerge(BoardUsageRecorderLive.pipe(Layer.provide(BoardUsagePricingLive))),
   Layer.provideMerge(LocalThreadGatewayV2Live),
 );
 
@@ -86,4 +91,11 @@ export const BoardServerLive = BoardMcpRelayClientLive.pipe(
     so the boot reconcile reads a dead step as dead. */
 export const startBoardSupervisor = Effect.flatMap(SupervisorReactor, (supervisor) =>
   supervisor.start(),
+).pipe(
+  // The one-time usage backfill (T3O-77) runs beside the board, never ahead of it.
+  Effect.andThen(
+    Effect.flatMap(Effect.serviceOption(BoardUsageRecorder), (recorder) =>
+      Option.isSome(recorder) ? Effect.forkDetach(recorder.value.backfill) : Effect.void,
+    ),
+  ),
 );
