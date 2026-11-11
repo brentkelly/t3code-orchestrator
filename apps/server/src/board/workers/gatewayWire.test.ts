@@ -67,7 +67,7 @@ it.effect("a finished turn's usage crosses the wire with the counts the board pr
         providerTurnId: "turn-1",
         driver: "codex",
         model: "gpt-5-codex",
-        delegatedFromThreadId: null,
+        delegationChain: [],
         usage,
       }),
     );
@@ -78,7 +78,7 @@ it.effect("a finished turn's usage crosses the wire with the counts the board pr
       providerTurnId: "turn-1",
       driver: "codex",
       model: "gpt-5-codex",
-      delegatedFromThreadId: null,
+      delegationChain: [],
       usage: {
         usageStatus: "complete",
         inputTokens: 1200,

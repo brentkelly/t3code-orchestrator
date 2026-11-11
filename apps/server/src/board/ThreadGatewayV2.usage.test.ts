@@ -19,7 +19,12 @@ import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
-import { finishedProviderTurnOf, readSignalLog, usageSignalOf } from "./ThreadGatewayV2.ts";
+import {
+  finishedProviderTurnOf,
+  readSignalLog,
+  usageSignalOf,
+  withDelegationAncestry,
+} from "./ThreadGatewayV2.ts";
 
 const threadId = ThreadId.make("thread-1");
 const t0 = DateTime.makeUnsafe("2026-10-20T00:00:00.000Z");
@@ -71,7 +76,7 @@ describe("usage signals", () => {
       providerTurnId: "provider-turn-1",
       driver: "claudeAgent",
       model: "claude-opus-first",
-      delegatedFromThreadId: null,
+      delegationChain: [],
       usage: (turn() as { readonly turnTokenUsage: unknown }).turnTokenUsage as never,
     });
   });
@@ -116,7 +121,7 @@ describe("usage signals", () => {
       usageSignalOf(
         records({ delegatedFrom: { environmentId: "env", threadId: parent, title: "Parent" } }),
         turn(),
-      )?.delegatedFromThreadId,
+      )?.delegationChain[0],
       parent,
     );
     assert.strictEqual(
@@ -129,9 +134,33 @@ describe("usage signals", () => {
           },
         }),
         turn(),
-      )?.delegatedFromThreadId,
+      )?.delegationChain[0],
       parent,
     );
+  });
+
+  it.effect("follows a delegate's delegate up to the root, stopping at a cycle", () => {
+    const child = ThreadId.make("thread-child");
+    const root = ThreadId.make("thread-root");
+    const delegated = (from: ThreadId) =>
+      ({
+        ...records({ delegatedFrom: { environmentId: "env", threadId: from, title: "x" } }).thread,
+      }) as never;
+    // threadId -> child -> root, and root claims threadId: a cycle the walk must not follow.
+    const parents = new Map([
+      [String(child), delegated(root)],
+      [String(root), delegated(threadId)],
+    ]);
+    const signal = usageSignalOf(
+      records({ delegatedFrom: { environmentId: "env", threadId: child, title: "Child" } }),
+      turn(),
+    )!;
+    return Effect.gen(function* () {
+      const walked = yield* withDelegationAncestry(signal, (id) =>
+        Effect.succeed(parents.get(String(id)) ?? null),
+      );
+      assert.deepStrictEqual(walked.delegationChain, [child, root]);
+    });
   });
 
   it("counts a provider turn only once it has finished", () => {

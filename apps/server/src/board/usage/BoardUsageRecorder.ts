@@ -65,7 +65,7 @@ export const makeBoardUsageRecorder = Effect.gen(function* () {
   });
 
   const storePriced = Effect.fnUntraced(function* ({ signal, price }: PricedUsageSignal) {
-    const target = yield* findUsageTarget(sql, signal.threadId, signal.delegatedFromThreadId);
+    const target = yield* findUsageTarget(sql, signal.threadId, signal.delegationChain);
     if (target === null) return null;
     const fresh = yield* storeUsageTurn(sql, {
       target,

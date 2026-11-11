@@ -46,8 +46,8 @@ const toTotals = (row: TotalsDbRow): BoardUsageRowTotals => ({
   turnsNoUsage: row.turnsNoUsage,
 });
 
-/** Where a thread's usage lands: its own link, or the link of the thread it was
-    delegated from. A human's unlink (a tombstone) stops it counting. */
+/** Where a thread's usage lands: its own link, or the nearest link up the chain of
+    threads it was delegated from. A human's unlink (a tombstone) stops it counting. */
 export interface BoardUsageTarget {
   readonly cardId: BoardCardId;
   readonly stepId: string;
@@ -56,17 +56,16 @@ export interface BoardUsageTarget {
 export const findUsageTarget = Effect.fn("boardUsageStore.findUsageTarget")(function* (
   sql: SqlClient.SqlClient,
   threadId: ThreadId,
-  delegatedFromThreadId: ThreadId | null,
+  delegationChain: ReadonlyArray<ThreadId>,
 ) {
-  const lookup = (id: ThreadId) => sql<{ readonly cardId: BoardCardId; readonly stepId: string }>`
-    SELECT card_id AS "cardId", role AS "stepId" FROM boards.board_card_thread_links
-    WHERE thread_id = ${id} AND tombstoned_at IS NULL
-  `;
-  const [own] = yield* lookup(threadId);
-  if (own !== undefined) return own as BoardUsageTarget;
-  if (delegatedFromThreadId === null) return null;
-  const [parent] = yield* lookup(delegatedFromThreadId);
-  return (parent ?? null) as BoardUsageTarget | null;
+  for (const id of [threadId, ...delegationChain]) {
+    const [link] = yield* sql<{ readonly cardId: BoardCardId; readonly stepId: string }>`
+      SELECT card_id AS "cardId", role AS "stepId" FROM boards.board_card_thread_links
+      WHERE thread_id = ${id} AND tombstoned_at IS NULL
+    `;
+    if (link !== undefined) return link as BoardUsageTarget;
+  }
+  return null;
 });
 
 /**

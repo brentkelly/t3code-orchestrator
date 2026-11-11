@@ -140,9 +140,9 @@ export const BoardGatewayUsageSignal = Schema.Struct({
   /** The provider driver, as the worker's provider thread names it. */
   driver: TrimmedNonEmptyString,
   model: Schema.NullOr(TrimmedNonEmptyString),
-  /** The thread a `delegate_task` child was launched from, so the board can credit the
-      child's spend to its parent's card. */
-  delegatedFromThreadId: Schema.NullOr(ThreadId),
+  /** The threads a `delegate_task` child descends from, nearest first, so the board can
+      credit its spend to the nearest one linked to a card. */
+  delegationChain: Schema.Array(ThreadId),
   /** Null when the provider reported no usage for the turn. */
   usage: Schema.NullOr(BoardGatewayTurnUsage),
 });

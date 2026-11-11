@@ -257,7 +257,7 @@ describe("the remote thread gateway", () => {
             providerTurnId: "turn-1",
             driver: "codex",
             model: "gpt-5-codex",
-            delegatedFromThreadId: null,
+            delegationChain: [],
             usage: { usageStatus: "complete", inputTokens: 1_000_000, outputTokens: 500_000 },
           });
           yield* threads.emit(turnEnded(threadId, "run-1"));

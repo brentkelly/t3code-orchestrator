@@ -237,13 +237,20 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
         providerTurnId: "turn-child",
         driver: "claudeAgent",
         model: "custom-model",
-        delegatedFromThreadId: threadId,
+        delegationChain: [threadId],
         usage: { usageStatus: "complete", inputTokens: 1_000_000, outputTokens: 0 },
+      };
+      // A delegate's delegate: its nearest parent is the unlinked child.
+      const grandchild: UsageSignal = {
+        ...signal,
+        threadId: ThreadId.make("thread-delegate-grandchild"),
+        providerTurnId: "turn-grandchild",
+        delegationChain: [child, threadId],
       };
       const stray: UsageSignal = {
         ...signal,
         threadId: ThreadId.make("thread-nobody"),
-        delegatedFromThreadId: null,
+        delegationChain: [],
       };
       yield* withRecorder(
         Effect.gen(function* () {
@@ -253,6 +260,10 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
           assert.strictEqual(landed, cardId);
           // Stored once: a replay of the same turn lands nowhere.
           assert.isNull(yield* sql.withTransaction(recorder.store(yield* recorder.price(signal))));
+          assert.strictEqual(
+            yield* sql.withTransaction(recorder.store(yield* recorder.price(grandchild))),
+            cardId,
+          );
           // A thread no card owns is not the board's to count.
           assert.isNull(yield* sql.withTransaction(recorder.store(yield* recorder.price(stray))));
         }),
@@ -260,7 +271,10 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
       const rows = yield* usageRows(cardId);
       assert.deepStrictEqual(
         rows.map((row) => [row.stepId, row.threadId, row.provider, row.costUsd, row.turnsOverride]),
-        [["review@2", child, "claudeAgent", 2, 1]],
+        [
+          ["review@2", child, "claudeAgent", 2, 1],
+          ["review@2", ThreadId.make("thread-delegate-grandchild"), "claudeAgent", 2, 1],
+        ],
       );
       assert.isUndefined((yield* (yield* BoardQueries).boardCardUsageSummary(cardId))?.estimated);
     }),

@@ -500,6 +500,13 @@ type UsageRecords = Pick<
   "thread" | "providerThreads" | "attempts"
 >;
 
+const delegatedFromOf = (thread: UsageRecords["thread"]): ThreadId | null =>
+  thread.delegatedFrom?.threadId ??
+  (thread.lineage.relationshipToParent === "subagent" ? thread.lineage.parentThreadId : null);
+
+/** How far up a delegation chain the board looks for a card's linked thread. */
+const MAX_DELEGATION_DEPTH = 8;
+
 /**
  * One finished turn as the board's usage signal, or null for a turn the board never counts.
  * A native subagent's turn has no attempt of its own (`runAttemptId` null) or runs on a
@@ -520,19 +527,37 @@ export const usageSignalOf = (
   )?.driver;
   // A turn that used several models credits the first: the split is not reported.
   const model = usage?.models?.[0] ?? turn.model ?? thread.modelSelection.model;
-  const delegatedFrom =
-    thread.delegatedFrom?.threadId ??
-    (thread.lineage.relationshipToParent === "subagent" ? thread.lineage.parentThreadId : null);
+  const delegatedFrom = delegatedFromOf(thread);
   return {
     type: "usage-recorded",
     threadId: thread.id,
     providerTurnId: String(turn.id),
     driver: driver ?? String(thread.modelSelection.instanceId),
     model: model.trim().length === 0 ? null : model,
-    delegatedFromThreadId: delegatedFrom ?? null,
+    delegationChain: delegatedFrom === null ? [] : [delegatedFrom],
     usage,
   };
 };
+
+/**
+ * The signal with its whole delegation chain, nearest first: a delegate's delegate is
+ * credited to the nearest linked ancestor, and only the board knows which one is linked.
+ */
+export const withDelegationAncestry = Effect.fnUntraced(function* (
+  signal: UsageSignal,
+  readThread: (threadId: ThreadId) => Effect.Effect<UsageRecords["thread"] | null>,
+) {
+  const chain = [...signal.delegationChain];
+  const seen = new Set<string>([String(signal.threadId), ...chain.map(String)]);
+  while (chain.length > 0 && chain.length < MAX_DELEGATION_DEPTH) {
+    const thread = yield* readThread(chain.at(-1)!);
+    const next = thread === null ? null : delegatedFromOf(thread);
+    if (next === null || seen.has(String(next))) break;
+    seen.add(String(next));
+    chain.push(next);
+  }
+  return { ...signal, delegationChain: chain };
+});
 
 // ── Errors ─────────────────────────────────────────────────────────────
 
@@ -604,7 +629,18 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
     const finished = finishedProviderTurnOf(stored);
     if (finished === null) return Effect.succeed(null);
     return projections.getThreadRecords(finished.threadId, ["providerThreads", "attempts"]).pipe(
-      Effect.map((records) => usageSignalOf(records, finished.turn)),
+      Effect.flatMap((records) => {
+        const signal = usageSignalOf(records, finished.turn);
+        return signal === null
+          ? Effect.succeed(null)
+          : withDelegationAncestry(signal, (id) =>
+              projections.getThreadRecords(id, []).pipe(
+                Effect.map((parent) => parent.thread),
+                Effect.option,
+                Effect.map(Option.getOrNull),
+              ),
+            );
+      }),
       Effect.catchCause((cause) =>
         Effect.logWarning("board thread gateway: a finished turn's usage could not be read", {
           threadId: finished.threadId,
@@ -997,12 +1033,12 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
     usageHistory: Effect.fn("ThreadGatewayV2.usageHistory")(function* (threadIds) {
       const signals: Array<UsageSignal> = [];
       const seen = new Set<string>();
-      // A `delegate_task` child is credited to the thread it was found under, whatever its
-      // own record names.
-      const queue: Array<{ readonly threadId: ThreadId; readonly parent: ThreadId | null }> =
-        threadIds.map((threadId) => ({ threadId, parent: null }));
+      // A `delegate_task` child is credited along the path it was found under, nearest
+      // first, whatever its own record names.
+      const queue: Array<{ readonly threadId: ThreadId; readonly chain: ReadonlyArray<ThreadId> }> =
+        threadIds.map((threadId) => ({ threadId, chain: [] }));
       while (queue.length > 0) {
-        const { threadId, parent } = queue.shift()!;
+        const { threadId, chain } = queue.shift()!;
         if (seen.has(String(threadId))) continue;
         seen.add(String(threadId));
         const records = yield* projections
@@ -1013,16 +1049,12 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
           if (!FINISHED_TURN_STATUSES.has(turn.status)) continue;
           const signal = usageSignalOf(records.value, turn);
           if (signal === null) continue;
-          signals.push(
-            parent === null || signal.delegatedFromThreadId !== null
-              ? signal
-              : { ...signal, delegatedFromThreadId: parent },
-          );
+          signals.push(chain.length === 0 ? signal : { ...signal, delegationChain: chain });
         }
         const children = yield* projections
           .listAppOwnedChildThreadIds(threadId)
           .pipe(Effect.orElseSucceed((): ReadonlyArray<ThreadId> => []));
-        for (const child of children) queue.push({ threadId: child, parent: threadId });
+        for (const child of children) queue.push({ threadId: child, chain: [threadId, ...chain] });
       }
       return signals;
     }),
