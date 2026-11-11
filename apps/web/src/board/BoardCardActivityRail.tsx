@@ -88,8 +88,9 @@ function ActorName({
       </span>
     );
   }
-  // The supervisor reactor and every other internally-dispatched command.
-  return <span className="font-medium text-muted-foreground">System</span>;
+  // The supervisor reactor and every other internally-dispatched command; a webhook
+  // rule names its task.
+  return <span className="font-medium text-muted-foreground">{actor.name ?? "System"}</span>;
 }
 
 function ActivityIcon({

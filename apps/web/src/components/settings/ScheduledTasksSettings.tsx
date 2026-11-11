@@ -92,6 +92,13 @@ import { readEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
+// T3o: webhook tasks can be board rules (T3O-78).
+import { BoardWebhookActionFields } from "../../board/BoardWebhookActionFields";
+import { BOARD_RULE_PROMPT } from "@t3tools/contracts";
+import {
+  boardWebhookActionDraft,
+  parseBoardWebhookActionDraft,
+} from "../../board/boardWebhookActionDraft";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
@@ -294,14 +301,17 @@ function Field({
   hint,
   htmlFor,
   children,
+  hidden,
 }: {
   label: string;
   hint?: string;
   htmlFor?: string;
   children: ReactNode;
+  // T3o: lets a board rule hide the prompt field (T3O-78).
+  hidden?: boolean;
 }) {
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1.5" hidden={hidden}>
       <Label className="flex items-baseline justify-between" htmlFor={htmlFor}>
         <span>{label}</span>
         {hint ? (
@@ -813,6 +823,8 @@ function ScheduledTaskRow({
           {task.lastRunStatus !== "never" ? (
             <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
           ) : null}
+          {/* T3o: board rules are labelled (T3O-78). */}
+          {task.boardAction !== undefined ? <Badge variant="outline">Board rule</Badge> : null}
           {task.threadId !== null && scheduledTaskThreadMode(task) !== "new_thread" ? (
             <ScheduledTaskThreadLink environmentId={environmentId} threadId={task.threadId} />
           ) : null}
@@ -1412,6 +1424,10 @@ function ScheduledTaskEditorForm({
     )
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
   const submissionPending = useRef(false);
+  // T3o: the board rule being edited, null for a prompt task (T3O-78).
+  const [boardRule, setBoardRule] = useState(() =>
+    task?.boardAction === undefined ? null : boardWebhookActionDraft(task.boardAction),
+  );
   const editingTaskMissing =
     draft.editingId !== null &&
     tasksQuery.data !== null &&
@@ -1477,6 +1493,17 @@ function ScheduledTaskEditorForm({
     const parsedFilters = parseWebhookFilterDrafts(draft.filters);
     if (draft.scheduleMode === "webhook" && "error" in parsedFilters) {
       reportFailure("Invalid filter", parsedFilters.error);
+      return;
+    }
+    // T3o: a webhook save always sends the rule, so turning it off clears it (T3O-78).
+    const board =
+      draft.scheduleMode !== "webhook"
+        ? {}
+        : boardRule === null
+          ? { boardAction: null }
+          : parseBoardWebhookActionDraft(boardRule);
+    if ("error" in board) {
+      reportFailure("Invalid board rule", board.error);
       return;
     }
     const schedule = scheduleFromDraft(draft);
@@ -1545,6 +1572,7 @@ function ScheduledTaskEditorForm({
         draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
+      ...("action" in board ? { boardAction: board.action } : board),
     };
     // Lock before React renders, and keep successful creates locked until the form closes.
     submissionPending.current = true;
@@ -1770,7 +1798,12 @@ function ScheduledTaskEditorForm({
             </Field>
           ) : null}
 
-          <Field label="Prompt" htmlFor="scheduled-task-prompt">
+          <Field
+            label="Prompt"
+            htmlFor="scheduled-task-prompt"
+            // T3o: a board rule runs no prompt (T3O-78).
+            hidden={draft.scheduleMode === "webhook" && boardRule !== null}
+          >
             <Textarea
               id="scheduled-task-prompt"
               className="max-h-64 overflow-y-auto"
@@ -1822,7 +1855,9 @@ function ScheduledTaskEditorForm({
                     mode === "once" ||
                     mode === "interval" ||
                     mode === "webhook"
-                  )
+                  ) {
+                    // T3o: only a webhook runs a board rule, so leaving it drops the rule's sentinel prompt (T3O-78).
+                    if (mode !== "webhook") setBoardRule(null);
                     setDraft((current) => {
                       const suggested =
                         mode === "once" && !current.runAt
@@ -1841,9 +1876,13 @@ function ScheduledTaskEditorForm({
                         prompt:
                           mode === "webhook" && !current.prompt.trim()
                             ? DEFAULT_WEBHOOK_PROMPT
-                            : current.prompt,
+                            : // T3o: see above (T3O-78).
+                              current.prompt === BOARD_RULE_PROMPT
+                              ? ""
+                              : current.prompt,
                       };
                     });
+                  }
                 }}
               >
                 <Toggle value="fixed">At a time</Toggle>
@@ -1873,7 +1912,17 @@ function ScheduledTaskEditorForm({
             draft.enabled ? null : draft.scheduleMode === "webhook" ? (
               <div className="space-y-4">
                 <WebhookEndpointField environmentId={environmentId} task={liveTask} />
-                <p className="text-xs text-muted-foreground">
+                {/* T3o: run the board instead of a prompt (T3O-78). */}
+                <BoardWebhookActionFields
+                  environmentId={environmentId}
+                  projectId={selectedProjectId}
+                  value={boardRule}
+                  onChange={setBoardRule}
+                  onTaskPatch={(patch) => setDraft((current) => ({ ...current, ...patch }))}
+                  prompt={draft.prompt}
+                />
+                {/* T3o: a board rule runs no prompt (T3O-78). */}
+                <p className="text-xs text-muted-foreground" hidden={boardRule !== null}>
                   {
                     "Each request runs the prompt. Use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}} or {{request}} in the prompt; only what it names reaches the agent."
                   }

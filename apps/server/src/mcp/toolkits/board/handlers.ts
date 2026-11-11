@@ -4,7 +4,6 @@
  * message. Every write dispatches a board command; nothing writes a table directly.
  */
 import {
-  assignBoardKeyPrefix,
   boardAppendOrderKey,
   boardBuildStepPayloadDefect,
   boardReviewBlockedOutcomeRefusal,
@@ -92,6 +91,7 @@ import * as ServerConfig from "../../../config.ts";
 import { boardCardAttachmentManifest } from "../../../board/attachments.ts";
 import { boardAgentActor, stampBoardActivityActor } from "../../../board/activityActors.ts";
 import { boardBriefVersion } from "../../../board/briefEdits.ts";
+import { createBoardCard, resolveBoardCardKeyPrefix } from "../../../board/createCard.ts";
 import { isKeptStepThread, keptPlanningStepId } from "../../../board/planningThreadKeep.ts";
 import {
   boardCompletionReopenedByPlanReview,
@@ -208,39 +208,9 @@ const boardToolDeps = Effect.gen(function* () {
 const readBoardState = (deps: BoardToolDeps): Effect.Effect<BoardState> =>
   deps.boardEngine.getReadModel.pipe(Effect.map((model) => model.board ?? EMPTY_BOARD_STATE));
 
-/**
- * The key prefix a new card should carry. A project with no stored prefix is assigned one and it
- * is PERSISTED, so agent- and human-created cards share one key namespace across renames. An
- * unknown project passes an empty name, which yields the compiled-in default.
- */
-const resolveCardKeyPrefix = Effect.fn("BoardToolkit.resolveCardKeyPrefix")(function* (
-  projectId: ProjectId,
-  projectTitle: string,
-): Effect.fn.Return<string, BoardToolError, ServerSettings.ServerSettingsService> {
-  const settings = yield* ServerSettings.ServerSettingsService;
-  const current = yield* settings.getSettings.pipe(Effect.mapError(internalError));
-  const { prefix, assigned } = assignBoardKeyPrefix({
-    board: current.board,
-    projectId,
-    projectTitle,
-  });
-  if (assigned) {
-    yield* settings
-      .updateSettings({
-        board: {
-          projects: {
-            ...current.board.projects,
-            [projectId]: {
-              keyPrefix: prefix,
-              hidden: current.board.projects[projectId]?.hidden ?? false,
-            },
-          },
-        },
-      })
-      .pipe(Effect.mapError(internalError));
-  }
-  return prefix;
-});
+/** The shared key-prefix resolution, as a tool error. */
+const resolveCardKeyPrefix = (projectId: ProjectId, projectTitle: string) =>
+  resolveBoardCardKeyPrefix(projectId, projectTitle).pipe(Effect.mapError(internalError));
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -1274,28 +1244,36 @@ export const boardHandlers = {
     // natively, so the card lands whole — no follow-up update whose
     // rejection or a mid-write crash could strand a half-built card while
     // the tool reports an error (inviting a retry that mints a duplicate).
-    const create: BoardCardCreateCommand = {
-      type: "board.card.create",
-      commandId: yield* mintCommandId,
-      cardId,
-      projectId,
-      title: input.title,
-      ...(input.brief === undefined ? {} : { brief: input.brief }),
-      ...(dependsOn.length > 0 ? { dependsOn } : {}),
-      labels,
-      // No default here: the decider picks it, and it alone sees whether
-      // the parent group has started.
-      ...(input.stage === undefined ? {} : { stage: input.stage }),
-      ...(parent === undefined ? {} : { parentCardId: parent.id }),
-      // No `orderKey`: the decider places the card at the bottom of the
-      // stage's column, which is the only place that can see the
-      // whole board — this tool's read model is filtered to one project.
-      keyPrefix: yield* resolveCardKeyPrefix(projectId, projectTitle),
-      ...(input.mergeStrategy === undefined ? {} : { mergeStrategy: input.mergeStrategy }),
-      createdAt: yield* nowIso,
-    };
-    // Stamps the agent actor via the deps-aware dispatch.
-    yield* dispatch(deps, create);
+    yield* createBoardCard({
+      engine: deps.boardEngine,
+      actor: boardAgentActor({
+        providerInstanceId: deps.scope.thread.providerInstanceId,
+        threadId: deps.scope.thread.threadId,
+      }),
+      projectTitle,
+      create: {
+        commandId: yield* mintCommandId,
+        cardId,
+        projectId,
+        title: input.title,
+        ...(input.brief === undefined ? {} : { brief: input.brief }),
+        ...(dependsOn.length > 0 ? { dependsOn } : {}),
+        labels,
+        // No default here: the decider picks it, and it alone sees whether
+        // the parent group has started.
+        ...(input.stage === undefined ? {} : { stage: input.stage }),
+        ...(parent === undefined ? {} : { parentCardId: parent.id }),
+        // No `orderKey`: the decider places the card at the bottom of the
+        // stage's column, which is the only place that can see the
+        // whole board — this tool's read model is filtered to one project.
+        ...(input.mergeStrategy === undefined ? {} : { mergeStrategy: input.mergeStrategy }),
+        createdAt: yield* nowIso,
+      },
+    }).pipe(
+      Effect.mapError((error) =>
+        error._tag === "ServerSettingsError" ? internalError(error) : dispatchError(error),
+      ),
+    );
     // Read back the allocated key.
     const after = yield* readBoardState(deps);
     const created = after.cards.find((card) => card.id === cardId);

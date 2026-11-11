@@ -250,7 +250,7 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     group: payload.group ?? null,
     threadLinks: [],
     attachments: [],
-    externalRef: null,
+    externalRef: payload.externalRef ?? null,
     // No overrides at birth, split children included: that is what makes a
     // child resolve its parent's model overrides.
     humanInLoop: null,

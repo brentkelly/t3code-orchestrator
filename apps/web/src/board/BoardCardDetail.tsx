@@ -1453,6 +1453,11 @@ export function BoardCardDetail({
           setFeedback(error instanceof Error ? error.message : "Unable to open the pull request.");
         });
       }}
+      onOpenLink={(url) => {
+        void openLink(url).catch((error: unknown) => {
+          setFeedback(error instanceof Error ? error.message : "Unable to open the link.");
+        });
+      }}
       onMoveStage={(toStage) => {
         if (
           boardMoveLeavesPlanningUnwritten({

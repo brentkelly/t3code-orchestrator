@@ -72,6 +72,7 @@ import {
   ClockIcon,
   EllipsisVerticalIcon,
   ExternalLinkIcon,
+  LinkIcon,
   FileIcon,
   FileTextIcon,
   ArrowUpIcon,
@@ -586,6 +587,8 @@ export interface BoardCardDetailViewProps {
       it — clicking through is a moment the user is about to learn whether the
       card's link is stale, so it may as well not be. */
   readonly onOpenPullRequest: (url: string) => void;
+  /** Open any other outside link, such as the item the card's external reference names. */
+  readonly onOpenLink?: ((url: string) => void) | undefined;
   /** The card's merge-conflict story, or null when its merge is not
       held: the banner's words, and the one thing that disables Merge. Resolved
       by the container, which holds both the shell flag and the pull request's
@@ -1658,6 +1661,42 @@ function GroupActionsSection({
         <p className="text-board-11-5/normal text-pretty text-muted-foreground">{group.note}</p>
       </div>
     </div>
+  );
+}
+
+/** The outside item the card tracks, such as the GitHub issue a webhook created it
+    from. Neutral: it is a link, not a status. */
+function BoardExternalRefChip({
+  externalRef,
+  onOpen,
+}: {
+  readonly externalRef: NonNullable<BoardCardDetailViewProps["detail"]["card"]["externalRef"]>;
+  readonly onOpen: ((url: string) => void) | undefined;
+}) {
+  const className =
+    "inline-flex h-[18px] max-w-60 shrink-0 items-center gap-1 rounded-md bg-muted px-1.75 text-board-11 font-medium text-muted-foreground";
+  const text = <span className="truncate">{externalRef.id}</span>;
+  return (
+    <BoardHint label={`${externalRef.system}: ${externalRef.id}`}>
+      {/* Only web links open: the reference can come from an outside party. */}
+      {externalRef.url === null ||
+      onOpen === undefined ||
+      !/^https?:\/\//i.test(externalRef.url) ? (
+        <span className={className}>
+          <LinkIcon className="size-2.5 shrink-0" />
+          {text}
+        </span>
+      ) : (
+        <button
+          className={cn(className, "hover:bg-accent")}
+          onClick={() => onOpen(externalRef.url!)}
+          type="button"
+        >
+          <LinkIcon className="size-2.5 shrink-0" />
+          {text}
+        </button>
+      )}
+    </BoardHint>
   );
 }
 
@@ -2781,6 +2820,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             </span>
           )}
           <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
+          {card.externalRef === null ? null : (
+            <BoardExternalRefChip externalRef={card.externalRef} onOpen={props.onOpenLink} />
+          )}
           {/* On a done card the stage chip IS the completion badge, cut to the
               same block as the label chips beside it: the sheet no
               longer wears a wash, so this and the title's check carry "done".
