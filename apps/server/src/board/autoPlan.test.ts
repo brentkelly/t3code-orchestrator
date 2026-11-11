@@ -1118,7 +1118,7 @@ it.effect("a pending question is answered with the prompt at once, and not sent 
   );
 });
 
-it.effect("a question raised later on the reopened step is answered, not parked", () => {
+it.effect("a question before the reopened prompt is answered; a second one parks", () => {
   const card = planningCard("later", { autoBuildSetting: true });
   return withGovernor(
     {
@@ -1140,6 +1140,11 @@ it.effect("a question raised later on the reopened step is answered, not parked"
         const after = yield* h.board;
         assert.strictEqual(boardCardStepState(after, id)?.status, "running");
         assert.strictEqual(cardOf(after.cards, "later")?.autoPlan?.endedAt, null);
+
+        // The prompt is out: asking again waits on a human instead of looping unattended.
+        yield* h.pumpRuntime(userInputRequested(ThreadId.make(threadId)));
+        assert.lengthOf(answersOf(yield* h.commands, reopenedText(true)), 1);
+        assert.strictEqual(boardCardStepState(yield* h.board, id)?.status, "awaiting-input");
       }),
   );
 });

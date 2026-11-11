@@ -7495,14 +7495,15 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A question on a step Auto-plan reopened is answered with the Auto-plan prompt instead of
-   * parking it, which would end the run. False when it is not such a step or no answer landed.
+   * A question on a step Auto-plan reopened, asked before its prompt went out, is answered with
+   * that prompt instead of parking. Once delivered, a later question parks like any Auto-plan
+   * question, so an agent that keeps asking cannot loop on unattended turns.
    */
   const answerReopenedQuestion = Effect.fn("board-supervisor-answerReopenedQuestion")(function* (
     card: BoardCard,
     state: BoardCardStepState,
   ) {
-    if (state.reopenedAt === undefined || state.threadId === null) return false;
+    if (state.threadId === null || !reopenedPromptPending(state)) return false;
     const board = yield* readBoard;
     const current = board.cards.find((candidate) => candidate.id === card.id);
     if (current === undefined || !reopenedForAutoPlan(board, current, state)) return false;
@@ -7520,7 +7521,7 @@ const make = Effect.gen(function* () {
         ),
         Effect.orElseSucceed(() => false),
       );
-    if (answered && reopenedPromptPending(state)) yield* recordReopenedDelivery(state);
+    if (answered) yield* recordReopenedDelivery(state);
     return answered;
   });
 
