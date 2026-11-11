@@ -330,6 +330,20 @@ describe("createBoardCardNotificationGate", () => {
     expect(run(gate, [observe(answered, { workers: workers("offline") })]).cleared).toEqual([
       "card-1",
     ]);
+    // A wait the worker notice outranks from below the attention chip rides the blip too.
+    const blockedOn = { ...SETTINGS, blocked: true };
+    const blocked = shell("building", { blocked: true, queued: true, workerId });
+    expect(
+      run(gate, [observe(blocked, { workers: workers("online") })], T0, blockedOn),
+    ).toMatchObject({
+      fired: ["blocked:blocked:building"],
+    });
+    expect(
+      run(gate, [observe(blocked, { workers: workers("offline") })], T0, blockedOn),
+    ).toMatchObject({ fired: [], cleared: [] });
+    expect(
+      run(gate, [observe(blocked, { workers: workers("online") })], T0, blockedOn).fired,
+    ).toEqual([]);
   });
 
   it("fires only one of No PR and Ready for merge per merge-stage visit", () => {

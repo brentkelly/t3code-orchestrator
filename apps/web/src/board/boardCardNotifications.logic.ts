@@ -128,6 +128,7 @@ function boardCardNotificationVerdict(
     readonly threadIdleSince: string | null;
     readonly now: number;
   },
+  withoutQuietNotices = false,
 ): BoardCardNotificationVerdict {
   const { card, now } = input;
   if (input.projectHidden || card.archivedAt != null) return verdict(null);
@@ -156,6 +157,7 @@ function boardCardNotificationVerdict(
     stageGone: null,
     workers: input.workers,
     now,
+    withoutQuietNotices,
   });
   const { own, notice } = face;
   const ownReview =
@@ -166,11 +168,6 @@ function boardCardNotificationVerdict(
   if (ownReview !== null && (notice === null || notice.kind === "blocked")) {
     return verdict(ownReview);
   }
-  const attentionReason = (): BoardCardNotificationReason | null => {
-    if (attention === null) return null;
-    const category = attentionCategory(attention.reason, card.stalledReason);
-    return category === null ? null : reasonOf(category, attention.reason, card.stage);
-  };
   if (notice !== null) {
     switch (notice.kind) {
       case "attention": {
@@ -192,7 +189,7 @@ function boardCardNotificationVerdict(
       case "conflicts":
         // The board is on it, or the card's own panel says what to do. A wait they
         // outrank is still there, so the gate neither clears nor re-raises it.
-        return { shown: null, masked: ownReview ?? attentionReason() };
+        return { shown: null, masked: boardCardNotificationVerdict(input, true).shown };
       default:
         return verdict(null);
     }

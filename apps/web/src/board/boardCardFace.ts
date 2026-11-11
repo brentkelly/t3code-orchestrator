@@ -37,7 +37,10 @@ export function boardCardFace(input: {
   readonly stageGone: string | null | undefined;
   readonly workers: BoardWorkersState;
   readonly now: number;
+  /** Drop the worker, move and conflicts notices to see the wait they outrank. */
+  readonly withoutQuietNotices?: boolean;
 }): BoardCardFace {
+  const quiet = input.isGroup || input.withoutQuietNotices === true;
   const { card, summary, isGroup } = input;
   // A parent with no problem of its own inherits its worst child's tone: it
   // cannot advance while a child is stuck. A muted Done card or a group takes
@@ -82,7 +85,7 @@ export function boardCardFace(input: {
   // gate; its children's states are in its stats.
   const notice = boardCardNotice({
     attention: isGroup ? null : chip,
-    conflictFix: isGroup ? null : conflictFix,
+    conflictFix: quiet ? null : conflictFix,
     autoMergeHold: isGroup ? null : autoMergeHold,
     // T3o: a Done card is asking for nothing, whatever a stale prop says.
     noPullRequestAtMerge: !isGroup && input.noPullRequest && !summary.muted,
@@ -90,8 +93,8 @@ export function boardCardFace(input: {
     dependencyCount: card.dependencyCount,
     worktreeKeptReason: isGroup ? null : input.worktreeKeptReason,
     stageGone: isGroup ? null : input.stageGone,
-    workerMove: isGroup ? null : boardCardMoveNotice(card, input.workers),
-    workerTrouble: isGroup ? null : boardCardWorkerTrouble(card, input.workers),
+    workerMove: quiet ? null : boardCardMoveNotice(card, input.workers),
+    workerTrouble: quiet ? null : boardCardWorkerTrouble(card, input.workers),
     providerMissing: !isGroup && card.stalled && card.stalledReason === "provider-not-on-worker",
   });
   return { own, tone: flag?.tone ?? null, notice };
