@@ -91,6 +91,8 @@ function detail(
     stepCompletions: edges?.stepCompletions ?? [],
     decisions: [],
     ciPasses: [],
+    usage: [],
+    usageHistoryPartial: false,
   };
 }
 

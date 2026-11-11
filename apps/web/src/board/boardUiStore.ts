@@ -91,6 +91,9 @@ interface BoardUiState {
       Persisted: a user who quieted that corner expects it to
       stay quiet across reloads. */
   utilityMenuCollapsed: boolean;
+  /** The card Summary pane's Usage section is open (T3O-77). Persisted: collapsed or
+      open is the user's preference across cards and reloads. */
+  usageSectionOpen: boolean;
 }
 
 interface BoardUiStore extends BoardUiState {
@@ -115,6 +118,7 @@ interface BoardUiStore extends BoardUiState {
   recordModeLocation: (mode: WorkspaceMode, href: string) => void;
   setColumnCollapsed: (stageKey: string, collapsed: boolean) => void;
   setUtilityMenuCollapsed: (collapsed: boolean) => void;
+  setUsageSectionOpen: (open: boolean) => void;
   setSidebarHostsModeTabs: (hosting: boolean) => void;
   setDetailMaximisedCardId: (cardId: string | null) => void;
 }
@@ -135,6 +139,7 @@ export function migratePersistedBoardUiState(persistedState: unknown): BoardUiSt
     lastLocationByMode: {},
     collapsedByStage: {},
     utilityMenuCollapsed: false,
+    usageSectionOpen: false,
   };
   if (!persistedState || typeof persistedState !== "object") {
     return fallback;
@@ -166,6 +171,7 @@ export function migratePersistedBoardUiState(persistedState: unknown): BoardUiSt
     collapsedByStage,
     // An older persisted blob has no such field; the menu opens.
     utilityMenuCollapsed: candidate.utilityMenuCollapsed === true,
+    usageSectionOpen: candidate.usageSectionOpen === true,
   };
 }
 
@@ -176,6 +182,7 @@ export const useBoardUiStore = create<BoardUiStore>()(
       lastLocationByMode: {},
       collapsedByStage: {},
       utilityMenuCollapsed: false,
+      usageSectionOpen: false,
       sidebarHostsModeTabs: false,
       detailMaximisedCardId: null,
       queryByBoard: {},
@@ -216,6 +223,8 @@ export const useBoardUiStore = create<BoardUiStore>()(
         set((state) =>
           state.utilityMenuCollapsed === collapsed ? state : { utilityMenuCollapsed: collapsed },
         ),
+      setUsageSectionOpen: (open) =>
+        set((state) => (state.usageSectionOpen === open ? state : { usageSectionOpen: open })),
       setSidebarHostsModeTabs: (hosting) =>
         set((state) =>
           state.sidebarHostsModeTabs === hosting ? state : { sidebarHostsModeTabs: hosting },
@@ -244,6 +253,7 @@ export const useBoardUiStore = create<BoardUiStore>()(
         lastLocationByMode: state.lastLocationByMode,
         collapsedByStage: state.collapsedByStage,
         utilityMenuCollapsed: state.utilityMenuCollapsed,
+        usageSectionOpen: state.usageSectionOpen,
       }),
     },
   ),
