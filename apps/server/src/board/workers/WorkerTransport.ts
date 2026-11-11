@@ -338,9 +338,12 @@ const makeLiveGatewayRpc = (
     projects: call({ _tag: "projects" }),
     project: (projectId) => call({ _tag: "project", projectId }),
     todoLogHead: call({ _tag: "todoLogHead" }),
-    subscribeSignals: (afterSequence) =>
+    subscribeSignals: (afterSequence, withUsage) =>
       wireStream(
-        client[M.subscribeSignals]({ afterSequence }),
+        client[M.subscribeSignals]({
+          afterSequence,
+          ...(withUsage === true ? { withUsage } : {}),
+        }),
         "The worker's signal stream ended.",
       ),
     readTodoLog: (after, upTo) =>

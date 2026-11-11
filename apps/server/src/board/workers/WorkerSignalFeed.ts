@@ -8,13 +8,15 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { makeBoardSqlProjector } from "../projection.ts";
-import type { ThreadSignal, TodoSignal } from "../ThreadGateway.ts";
+import type { ThreadSignal, TodoSignal, UsageSignal } from "../ThreadGateway.ts";
+import { BoardUsageRecorder } from "../usage/BoardUsageRecorder.ts";
 import { BoardRelayStore } from "./BoardRelayStore.ts";
 import { fromWireSignal } from "./gatewayWire.ts";
 import { runPerOnlineWorker } from "./perOnlineWorker.ts";
@@ -43,6 +45,9 @@ export class WorkerSignalFeed extends Context.Service<WorkerSignalFeed, WorkerSi
 const isTodoSignal = (signal: ThreadSignal): signal is TodoSignal =>
   signal.type === "todos-changed" || signal.type === "thread-deleted";
 
+const isUsageSignal = (signal: ThreadSignal): signal is UsageSignal =>
+  signal.type === "usage-recorded";
+
 export const makeWorkerSignalFeed = Effect.gen(function* () {
   const connections = yield* WorkerConnections;
   const store = yield* BoardRelayStore;
@@ -50,6 +55,9 @@ export const makeWorkerSignalFeed = Effect.gen(function* () {
   const projector = makeBoardSqlProjector(sql);
   const signals = yield* PubSub.unbounded<WorkerThreadSignal>();
   const todoChanges = yield* PubSub.unbounded<ThreadId>();
+  // T3o: a worker's finished turns, priced here (T3O-77). Absent in suites that are not
+  // about usage, which then neither ask for nor store it.
+  const recorder = yield* Effect.serviceOption(BoardUsageRecorder);
 
   // Untraced: it lasts as long as the worker's signal stream.
   const follow = Effect.fnUntraced(function* (workerId: EnvironmentId, rpc: WorkerRpc) {
@@ -58,22 +66,37 @@ export const makeWorkerSignalFeed = Effect.gen(function* () {
       cursor = yield* rpc.gateway.todoLogHead;
       yield* store.saveSignalCursor(workerId, cursor);
     }
-    yield* rpc.gateway.subscribeSignals(cursor).pipe(
+    yield* rpc.gateway.subscribeSignals(cursor, Option.isSome(recorder)).pipe(
       Stream.runForEach((batch) =>
         Effect.gen(function* () {
           // A redelivered position (a stream reopened mid-batch) is skipped.
           if (cursor !== null && batch.sequence <= cursor) return;
           const batchSignals = batch.signals.map(fromWireSignal);
           const todos = batchSignals.filter(isTodoSignal);
-          yield* sql.withTransaction(
+          const usage = Option.isSome(recorder)
+            ? yield* Effect.forEach(batchSignals.filter(isUsageSignal), recorder.value.price)
+            : [];
+          const storeUsage = Option.isSome(recorder)
+            ? Effect.forEach(usage, recorder.value.store)
+            : Effect.succeed([]);
+          const usageCards = yield* sql.withTransaction(
             Effect.forEach(todos, (signal) => projector.applyTodoSignal(signal), {
               discard: true,
-            }).pipe(Effect.andThen(store.saveSignalCursor(workerId, batch.sequence))),
+            }).pipe(
+              Effect.andThen(storeUsage),
+              Effect.tap(() => store.saveSignalCursor(workerId, batch.sequence)),
+            ),
           );
           cursor = batch.sequence;
           for (const signal of todos) yield* PubSub.publish(todoChanges, signal.threadId);
+          if (Option.isSome(recorder)) {
+            for (const cardId of new Set(usageCards)) {
+              if (cardId !== null) yield* recorder.value.publish(cardId);
+            }
+          }
+          // Usage is the board's bookkeeping, never something the supervisor acts on.
           for (const signal of batchSignals) {
-            yield* PubSub.publish(signals, { workerId, signal });
+            if (!isUsageSignal(signal)) yield* PubSub.publish(signals, { workerId, signal });
           }
         }),
       ),

@@ -31,6 +31,7 @@ import {
   BoardCardId,
   BoardCardThreadLink,
   BoardCardThreadShell,
+  type BoardCardUsageSummary,
   boardThreadTodoSummary,
   boardRunLabel,
   BoardLabel,
@@ -94,6 +95,12 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../persistence/Errors.ts";
 import { boardActivityActorFor } from "./activityActors.ts";
 import type { TodoSignal } from "./ThreadGateway.ts";
+import {
+  allCardUsageSummaries,
+  cardUsageHistoryPartial,
+  cardUsageSummary,
+  listCardUsageRows,
+} from "./usage/boardUsageStore.ts";
 import { makeBoardEventStore } from "./boardEventStore.ts";
 import {
   boardCardFromCreatedPayload,
@@ -2552,6 +2559,10 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
   });
 
   return {
+    // T3o: the usage summaries and rows (T3O-77) live in their own store.
+    listBoardCardUsageSummaries: () => allCardUsageSummaries(sql),
+    listBoardCardUsageRows: (cardId: BoardCardId) => listCardUsageRows(sql, cardId),
+    findBoardCardUsageHistoryPartial: (cardId: BoardCardId) => cardUsageHistoryPartial(sql, cardId),
     upsertBoardCardRow,
     listBoardCardRows,
     listBoardCardThreadLinkRows,
@@ -3914,9 +3925,10 @@ function boardShellCards(
     // `queued` when its live step is holding for a slot. One row per card,
     // so a small map keyed by card id.
     queries.listBoardCardStepStateRows(),
+    queries.listBoardCardUsageSummaries(),
   ]).pipe(
     Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shell:query")),
-    Effect.map(([cardRows, linkRows, cardLabelRows, stepStateRows]) => {
+    Effect.map(([cardRows, linkRows, cardLabelRows, stepStateRows, usageByCard]) => {
       const linksByCard = new Map<BoardCardId, BoardCardThreadLink[]>();
       for (const row of linkRows) {
         const links = linksByCard.get(row.cardId) ?? [];
@@ -4042,6 +4054,7 @@ function boardShellCards(
           ...stallByCard.get(row.cardId),
           stepConflictFix: conflictFixByCard.has(row.cardId),
           stepChecksFix: checksFixByCard.has(row.cardId),
+          usage: usageByCard.get(row.cardId) ?? null,
         });
       });
     }),
@@ -4275,6 +4288,8 @@ function makeBoardCardDetailLoader(
       queries.listBoardCardDecisionRowsForCard(cardId),
       queries.listBoardCardGroupDependencyRefRows(cardId),
       queries.listBoardCiPassRowsForCard(cardId),
+      queries.listBoardCardUsageRows(cardId),
+      queries.findBoardCardUsageHistoryPartial(cardId),
     ]).pipe(
       Effect.map(
         ([
@@ -4293,6 +4308,8 @@ function makeBoardCardDetailLoader(
           decisionRows,
           groupDependencyRows,
           ciPassRows,
+          usageRows,
+          usageHistoryPartial,
         ]) => {
           if (Option.isNone(cardRow)) return null;
           const links = sortBoardCardThreadLinks(
@@ -4365,6 +4382,8 @@ function makeBoardCardDetailLoader(
                   };
             })(),
             decisions: decisionRows,
+            usage: usageRows,
+            usageHistoryPartial,
             // Filled below for a sub-board child; a top-level card has no
             // parent to inherit from and keeps the null.
             parentModelOverrides: null,
@@ -4479,6 +4498,15 @@ export interface BoardQueriesShape {
     ReadonlyArray<BoardCardThreadShell>,
     ProjectionRepositoryError
   >;
+  /** One card's usage summary, for the `card-usage` delta (T3O-77). */
+  readonly boardCardUsageSummary: (
+    cardId: BoardCardId,
+  ) => Effect.Effect<BoardCardUsageSummary | null, ProjectionRepositoryError>;
+  /** Every live card's usage summary, for a resume's resync. */
+  readonly boardAllCardUsage: () => Effect.Effect<
+    ReadonlyMap<BoardCardId, BoardCardUsageSummary>,
+    ProjectionRepositoryError
+  >;
   /** The card a live-linked thread belongs to, or null — how a thread-shaped
       shell refetch finds the card whose `card-threads` delta it must emit. */
   readonly boardCardIdForThread: (
@@ -4564,6 +4592,14 @@ export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
         Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardThreads:query")),
       ),
     boardAllCardThreads: () => boardShellCardThreads(queries),
+    boardCardUsageSummary: (cardId) =>
+      cardUsageSummary(sql, cardId).pipe(
+        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardUsage:query")),
+      ),
+    boardAllCardUsage: () =>
+      queries
+        .listBoardCardUsageSummaries()
+        .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.allCardUsage:query"))),
     boardCardIdForThread: (threadId) =>
       queries
         .findBoardCardIdForLiveThread(threadId)

@@ -374,6 +374,7 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
           ),
         ),
 
+      usageHistory: () => Effect.succeed([]),
       todoLogHead: Ref.get(todoLog).pipe(Effect.map((log) => log.length)),
       readTodoLog: (after, upTo) =>
         Stream.unwrap(

@@ -29,13 +29,14 @@ import * as Base64 from "effect/encoding/Base64";
 
 import * as ServerConfig from "../../config.ts";
 import { boardCardAttachmentsDir, resolveBoardCardAttachmentPath } from "../attachments.ts";
-import { LocalThreadGateway } from "../ThreadGateway.ts";
+import { LocalThreadGateway, type TodoLogEntry } from "../ThreadGateway.ts";
 import { BoardRelayStore } from "./BoardRelayStore.ts";
 import {
   toWireReadError,
   toWireSignal,
   wireCommand,
   wireRead,
+  type WireTodoLogEntry,
   type WorkerGatewayRpcOf,
 } from "./gatewayWire.ts";
 import { McpRelayHost, type McpRelayRefused } from "./McpRelayHost.ts";
@@ -44,6 +45,11 @@ import { toWireCiDone } from "../ci/remoteCiRunner.ts";
 import { isSafeBoardCiLogTarget, readBoardCiLogFile } from "../ci/ciLog.ts";
 
 type CallerBound = "spawn" | "subscribeMcpRelay" | "mcpRelayRespond";
+
+const withoutUsage = (entry: TodoLogEntry): WireTodoLogEntry =>
+  entry.signal?.type === "usage-recorded"
+    ? { cursor: entry.cursor, signal: null }
+    : { cursor: entry.cursor, signal: entry.signal };
 
 /** The host fails only with the worker's own error: there is no wire
     between it and the gateway it serves. The calls that speak for a board
@@ -214,17 +220,22 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     pendingTurnStartAt: (threadId) => wireRead(local.pendingTurnStartAt(threadId)),
     projects: wireRead(local.projects()),
     project: (projectId) => wireRead(local.project(projectId)),
-    subscribeSignals: (afterSequence) =>
-      local.signalLog(afterSequence).pipe(
+    subscribeSignals: (afterSequence, withUsage) =>
+      local.signalLog(afterSequence, { withUsage: withUsage === true }).pipe(
         Stream.map((batch) => ({
           sequence: batch.sequence,
           signals: batch.signals.map(toWireSignal),
         })),
       ),
     todoLogHead: local.todoLogHead,
+    // T3o: usage rides only the signal stream a central asks it of, so the todo log's
+    // wire entries keep the todo signals an older central decodes.
     readTodoLog: (after, upTo) =>
-      local.readTodoLog(after, upTo).pipe(Stream.mapError(toWireReadError)),
-    subscribeTodoLog: Stream.unwrap(local.subscribeTodoLog),
+      local.readTodoLog(after, upTo).pipe(
+        Stream.map(withoutUsage),
+        Stream.mapError(toWireReadError),
+      ),
+    subscribeTodoLog: Stream.unwrap(local.subscribeTodoLog).pipe(Stream.map(withoutUsage)),
     subscribeMcpRelay: (central, caller) =>
       relay.subscribe(central, caller).pipe(Stream.mapError(refused("subscribeMcpRelay"))),
     mcpRelayRespond: (response, caller) =>

@@ -45,6 +45,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
@@ -77,6 +78,7 @@ import type { SupervisorReactorShape } from "./supervisorReactor.ts";
 import { BoardCardMover, type BoardCardMoverShape } from "./workers/BoardCardMove.ts";
 import { readBoardCiLog, type BoardCiLogDeps } from "./ci/ciLog.ts";
 import { WorkerConnections } from "./workers/WorkerConnections.ts";
+import { BoardUsageRecorder } from "./usage/BoardUsageRecorder.ts";
 import { BoardWorkers } from "./workers/BoardWorkers.ts";
 import { workerGatewayRpcHandlers } from "./workers/workerGatewayRpc.ts";
 import { boardWorkerRpcHandlers } from "./workers/workerRpc.ts";
@@ -124,9 +126,15 @@ export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
   const projectActorName = boardProjectActorName({ threads, workspaces });
   // The subscription's services, provided here so the handler's stream needs
   // only the RPC scope.
-  const subscriptionContext = yield* Effect.context<
+  const baseSubscriptionContext = yield* Effect.context<
     BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
   >();
+  // T3o: usage changes (T3O-77) reach the board stream and an open card. Optional, so
+  // board-only harnesses need no recorder.
+  const usageRecorder = yield* Effect.serviceOption(BoardUsageRecorder);
+  const subscriptionContext = Option.isSome(usageRecorder)
+    ? Context.add(baseSubscriptionContext, BoardUsageRecorder, usageRecorder.value)
+    : baseSubscriptionContext;
   const workerConnections = yield* Effect.serviceOption(WorkerConnections);
   return {
     ...makeBoardRpcHandlers(deps, {
@@ -144,6 +152,9 @@ export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
       projectConfig: yield* makeBoardProjectConfigService,
       mover: yield* BoardCardMover,
       subscriptionContext,
+      usageChanges: Option.isSome(usageRecorder)
+        ? usageRecorder.value.subscribeChanges
+        : Effect.succeed(Stream.never),
       // Optional so board-only harnesses need no source control stack; ws.ts always has one.
       projectTokenStatus: boardProjectTokenStatus(
         threads,
@@ -174,6 +185,8 @@ function makeBoardRpcHandlers(
     readonly subscriptionContext: Context.Context<
       BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
     >;
+    /** Cards whose usage changed, so an open card re-reads its Usage section. */
+    readonly usageChanges: Effect.Effect<Stream.Stream<BoardCardId>, never, Scope.Scope>;
   },
 ) {
   const { boardEngine, boardQueries } = services;
@@ -632,6 +645,15 @@ function makeBoardRpcHandlers(
               // Wake on ANY board event: the detail embeds dependencies and dependents
               // whose stage and archive state change under events on other cards' ids.
               boardEngine.liveBoardEvents.pipe(
+                Stream.runForEach(() => Queue.offer(liveBuffer, undefined)),
+              ),
+              { startImmediately: true },
+            );
+            // A finished turn on this card moves its usage rows, which no board event says.
+            const usageChanges = yield* services.usageChanges;
+            yield* Effect.forkScoped(
+              usageChanges.pipe(
+                Stream.filter((cardId) => cardId === input.cardId),
                 Stream.runForEach(() => Queue.offer(liveBuffer, undefined)),
               ),
               { startImmediately: true },

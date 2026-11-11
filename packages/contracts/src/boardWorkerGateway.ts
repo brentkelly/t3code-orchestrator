@@ -111,6 +111,43 @@ export const BoardGatewayTodoSignal = Schema.Union([
   Schema.Struct({ type: Schema.Literal("thread-deleted"), threadId: ThreadId }),
 ]);
 
+/**
+ * The counts of a provider turn's `TurnTokenUsage` the board prices, flat: the full union
+ * nested here pushes the server's RPC group past the checker's instantiation depth.
+ */
+export const BoardGatewayTurnUsage = Schema.Struct({
+  usageStatus: Schema.Literals(["complete", "partial", "unavailable"]),
+  inputTokens: Schema.optional(NonNegativeInt),
+  cachedInputTokens: Schema.optional(NonNegativeInt),
+  cacheCreationTokens: Schema.optional(NonNegativeInt),
+  outputTokens: Schema.optional(NonNegativeInt),
+  reasoningTokens: Schema.optional(NonNegativeInt),
+  otherUsage: Schema.optional(
+    Schema.Struct({ inputTokens: NonNegativeInt, outputTokens: NonNegativeInt }),
+  ),
+});
+export type BoardGatewayTurnUsage = typeof BoardGatewayTurnUsage.Type;
+
+/**
+ * One finished provider turn's usage, for the central board to price (T3O-77). Sent only
+ * to a central that asked for it (`withUsage`), so an older central never sees a member
+ * its union cannot decode.
+ */
+export const BoardGatewayUsageSignal = Schema.Struct({
+  type: Schema.Literal("usage-recorded"),
+  threadId: ThreadId,
+  providerTurnId: TrimmedNonEmptyString,
+  /** The provider driver, as the worker's provider thread names it. */
+  driver: TrimmedNonEmptyString,
+  model: Schema.NullOr(TrimmedNonEmptyString),
+  /** The thread a `delegate_task` child was launched from, so the board can credit the
+      child's spend to its parent's card. */
+  delegatedFromThreadId: Schema.NullOr(ThreadId),
+  /** Null when the provider reported no usage for the turn. */
+  usage: Schema.NullOr(BoardGatewayTurnUsage),
+});
+export type BoardGatewayUsageSignal = typeof BoardGatewayUsageSignal.Type;
+
 export const BoardGatewaySignal = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("turn-ended"),
@@ -144,6 +181,7 @@ export const BoardGatewaySignal = Schema.Union([
   }),
   Schema.Struct({ type: Schema.Literal("session-started"), threadId: ThreadId }),
   ...BoardGatewayTodoSignal.members,
+  BoardGatewayUsageSignal,
 ]);
 export type BoardGatewaySignal = typeof BoardGatewaySignal.Type;
 
@@ -491,7 +529,12 @@ export const BOARD_WORKER_GATEWAY_RPCS = [
   Rpc.make(M.call, { payload: BoardGatewayCall, success: Schema.Unknown, error: failure }),
   Rpc.make(M.subscribeSignals, {
     /** Null starts at the log's head: only what happens from now on. */
-    payload: Schema.Struct({ afterSequence: Schema.NullOr(NonNegativeInt) }),
+    payload: Schema.Struct({
+      afterSequence: Schema.NullOr(NonNegativeInt),
+      /** Include `usage-recorded` signals. An older central never sends it, and an
+          older worker ignores it and sends none. */
+      withUsage: Schema.optionalKey(Schema.Boolean),
+    }),
     success: BoardGatewaySignalBatch,
     error: failure,
     stream: true,

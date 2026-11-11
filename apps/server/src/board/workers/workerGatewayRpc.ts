@@ -129,8 +129,8 @@ export const workerGatewayRpcHandlers = (currentSession: AuthenticatedSession) =
     ),
     [M.subscribeSignals]: stream(
       M.subscribeSignals,
-      (host, input: { readonly afterSequence: number | null }) =>
-        host.subscribeSignals(input.afterSequence),
+      (host, input: { readonly afterSequence: number | null; readonly withUsage?: boolean }) =>
+        host.subscribeSignals(input.afterSequence, input.withUsage),
     ),
     [M.readTodoLog]: stream(
       M.readTodoLog,
