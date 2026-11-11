@@ -65,3 +65,14 @@ A card's threads share the card's worktree, so a project action marked to run wh
 working there. Closing that thread's own stop-on-settle terminals still happens. The action runs
 once instead, when the card gives its worktree back, just before any remove scripts (see
 [When a card gives its worktree back](board-worktree-cleanup.md)).
+
+## The card's pull request on its threads
+
+Once a card has a pull request, its threads from **Code review** onwards show it too: every review
+round, CI fix and merge-stage thread gets the PR badge, turns up when you search by PR, and settles
+when the PR merges. Planning and build threads, and threads you added to the card yourself, are
+left alone. Replacing or unlinking the card's pull request does the same to those threads, and a
+pull request you remove from one thread stays removed until the card's own pull request changes
+again. A later round's pull request goes on that round's threads, and earlier rounds normally keep
+theirs. A round that ended without a pull request is the exception: its threads also get the next
+round's.

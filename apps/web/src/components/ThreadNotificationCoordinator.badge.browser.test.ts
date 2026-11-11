@@ -76,6 +76,7 @@ vi.mock(import("../threadNotifications"), async (original) => ({
 }));
 
 import { startThreadNotifications } from "./ThreadNotificationCoordinator";
+import { setBoardMutedRoutineThreads } from "../board/boardThreadAlertMute";
 
 let registry: AtomRegistry.AtomRegistry;
 const shellAtom = Atom.family((_id: string) => Atom.make<unknown>(null));
@@ -252,6 +253,22 @@ it("presents completion notifications and sound as soon as the shell completes",
   );
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
+});
+
+// T3o: the board mutes a card thread's routine completion; its questions still alert.
+it("skips completions for card threads the board mutes", async () => {
+  await using app = setup();
+  setBoardMutedRoutineThreads(new Set(["thread"]));
+  using _unmute = { [Symbol.dispose]: () => setBoardMutedRoutineThreads(null) };
+  app.start();
+  state.shells.set(
+    "one",
+    shell({
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
+    }),
+  );
+  state.shells.set("one", shell({ hasPendingUserInput: true }));
+  expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Input needed"]);
 });
 
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(

@@ -4,12 +4,10 @@
  */
 import {
   BOARD_SEED_STAGE_IDS,
-  boardCardChildAttentionLabel,
   boardSplitProposedNote,
   boardCardChildRunningLabel,
   isBoardCardWorking,
   boardCardWorkingLabel,
-  isBoardReviewLoopHeld,
 } from "@t3tools/contracts";
 import type {
   BoardCardAttention,
@@ -46,11 +44,10 @@ import {
   type BoardTodoThreadState,
 } from "./boardCardProgressBlock";
 import { BoardCardCiFace } from "./BoardCardCiFace";
-import { boardConflictFix } from "./boardConflictFix";
-import { boardAutoMergePill } from "./boardAutoMergeHold";
 import { boardCardAutoBuildChip } from "./boardCardAutomation";
 import { boardCardScheduleLabel } from "./boardCardScheduleLabel";
-import { boardCardNotice, boardCardProviderStalled, type BoardCardNotice } from "./boardCardNotice";
+import { boardCardFace } from "./boardCardFace";
+import type { BoardCardNotice } from "./boardCardNotice";
 import { boardCardMeta, boardCardSummary } from "./boardCardSummary";
 import { BoardLabelChips } from "./BoardLabelChips";
 import {
@@ -64,11 +61,7 @@ import {
 } from "./BoardCardSummaryRow";
 import { projectAccent } from "./projectAccent";
 import { useBoardWorkersState } from "./workers/BoardWorkersContext";
-import {
-  boardCardMoveNotice,
-  boardCardWorkerChip,
-  boardCardWorkerTrouble,
-} from "./workers/cardWorker";
+import { boardCardWorkerChip } from "./workers/cardWorker";
 import { BoardHint } from "./BoardHint";
 import type { BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardGroupCardVm, BoardGroupChildState } from "./boardGroups";
@@ -445,72 +438,26 @@ export function BoardCardContent({
       : childRunning !== undefined && childRunning > 0
         ? boardCardChildRunningLabel(childRunning)
         : null;
-  // A parent with no problem of its own inherits its worst child's tone: it
-  // cannot advance while a child is stuck. A muted Done card or a group takes
-  // no tone.
-  const own = summary.muted || isGroup ? null : (attention ?? null);
-  const inherited = summary.muted || isGroup || own !== null ? null : (childAttention ?? null);
-  const flag = own ?? inherited;
-  const tone = flag?.tone ?? null;
-  // A held review loop's round row already says why, so skip the chip — keyed
-  // on the row actually rendering, since it is stage-conditional.
-  const roundRowExplainsIt = summary.items.some(
-    (item) =>
-      item.kind === "round" && item.outcome !== undefined && isBoardReviewLoopHeld(item.outcome),
-  );
-  const chip =
-    flag === null ||
-    (own !== null &&
-      (own.reason === "review-held" || own.reason === "review-stuck") &&
-      roundRowExplainsIt)
-      ? null
-      : {
-          reason: flag.reason,
-          tone: flag.tone,
-          label: inherited === null ? flag.label : boardCardChildAttentionLabel(inherited),
-          tooltip: inherited === null ? flag.detail : `A child of this card: ${inherited.detail}`,
-        };
+  // oxlint-disable-next-line react/purity -- the face samples the clock whenever the card re-renders on a board push.
+  const faceNow = Date.now();
+  const { own, tone, notice } = boardCardFace({
+    card,
+    summary,
+    attention: attention ?? null,
+    childAttention: childAttention ?? null,
+    isGroup,
+    noPullRequest: noPullRequest === true,
+    worktreeKeptReason,
+    stageGone,
+    workers,
+    now: faceNow,
+  });
+  const autoMergeHeld = !summary.muted && card.autoMergeHeldSince != null;
   // A split parent wears the stack: the card reads as the top
   // sheet of a pile. Purely visual now — the drill-in affordance is the plan
   // row's chip — so it keys off `planTotal` alone and the drag ghost / archive
   // sheet keep the pile.
   const wearsStack = isGroup || (card.planTotal !== undefined && card.planTotal > 0);
-  // "This card's merge is held by conflicts" — a server fact off the
-  // step row, not a guess at a running merge-stage step. A Done card is muted
-  // and asking for nothing, so it never wears the pill; the flag is already
-  // false by then, and the guard just says so out loud.
-  const conflictFix = summary.muted
-    ? null
-    : boardConflictFix({
-        live: card.stepConflictFix,
-        checks: card.stepChecksFix,
-        queued: card.queued,
-      });
-  // "This card's merge was refused and the board is retrying".
-  const autoMergeHold = boardAutoMergePill({
-    heldSince: card.autoMergeHeldSince,
-    gaveUp: card.autoMergeGaveUp,
-    done: summary.muted,
-    // oxlint-disable-next-line react/purity -- the pill samples the clock whenever the card re-renders on a board push.
-    nowMs: Date.now(),
-  });
-  // ONE notice for the whole header. A group keeps only its own dependency
-  // gate; its children's states are in its stats.
-  const notice = boardCardNotice({
-    attention: isGroup ? null : chip,
-    conflictFix: isGroup ? null : conflictFix,
-    autoMergeHold: isGroup ? null : autoMergeHold,
-    // T3o: a Done card is asking for nothing, and the page's predicate
-    // already says so — the guard here just refuses to trust a stale prop.
-    noPullRequestAtMerge: !isGroup && noPullRequest === true && !summary.muted,
-    blocked: card.blocked,
-    dependencyCount: card.dependencyCount,
-    worktreeKeptReason: isGroup ? null : worktreeKeptReason,
-    stageGone: isGroup ? null : stageGone,
-    workerMove: isGroup ? null : boardCardMoveNotice(card, workers),
-    workerTrouble: isGroup ? null : boardCardWorkerTrouble(card, workers),
-    providerMissing: !isGroup && boardCardProviderStalled(card),
-  });
   // The card's scheduled start. Null on a done card and on
   // one whose time has already passed — the server clears the field within a
   // tick, and a pill for a moment that has gone is a stale label.
@@ -656,7 +603,7 @@ export function BoardCardContent({
             whose slot went to a pending question is still held, and "merges
             itself as soon as the forge accepts it" is not true of it. */}
         {(autoMergeArmed ?? card.autoMergeSetting === true) &&
-        autoMergeHold === null &&
+        !autoMergeHeld &&
         !summary.muted &&
         atMergeStage ? (
           // Armed and quiet, merge stage only. Counts the board-wide arm exactly as

@@ -6,6 +6,20 @@
 import type { SettingsSearchItem } from "../components/settings/settingsSearch";
 
 export const BOARD_SETTINGS_SEARCH_ITEMS = [
+  // Card alerts sit under Notifications, beside the mode they follow.
+  {
+    id: "board-card-notifications",
+    title: "Board card notifications",
+    to: "/settings/general",
+    searchTerms: ["notification alert card needs human input approval blocked ready for merge"],
+  },
+  {
+    id: "board-mute-routine-thread-alerts",
+    title: "Mute routine card-thread alerts",
+    to: "/settings/general",
+    targetId: "board-card-notifications",
+    searchTerms: ["notification thread completed usage limit card"],
+  },
   // Which server's board this device shows.
   {
     id: "board-server",

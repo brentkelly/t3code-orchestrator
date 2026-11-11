@@ -72,7 +72,8 @@ import Migration058 from "./058_BoardStagesProjectOwned.ts";
 import Migration059 from "./059_BoardProjectStageConfigs.ts";
 import Migration060 from "./060_BoardCi.ts";
 import Migration061 from "./061_BoardStageDefaults.ts";
-import Migration062 from "./062_ScheduledTaskBoardActions.ts";
+import Migration062 from "./062_BoardThreadLinkRound.ts";
+import Migration063 from "./063_ScheduledTaskBoardActions.ts";
 
 /** Ledger table for the board migration lineage, independent of upstream. */
 export const BOARD_MIGRATION_TABLE = "t3o_sql_migrations";
@@ -155,7 +156,8 @@ export const BOARD_MIGRATIONS = [
   [59, "BoardProjectStageConfigs", Migration059],
   [60, "BoardCi", Migration060],
   [61, "BoardStageDefaults", Migration061],
-  [62, "ScheduledTaskBoardActions", Migration062],
+  [62, "BoardThreadLinkRound", Migration062],
+  [63, "ScheduledTaskBoardActions", Migration063],
 ] as const;
 
 const boardLoader = Migrator.fromRecord(

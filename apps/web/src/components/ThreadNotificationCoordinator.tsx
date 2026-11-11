@@ -17,6 +17,8 @@ import {
   ShieldQuestionIcon,
 } from "lucide-react";
 
+// T3o: board card-thread routine alert mute.
+import { isBoardRoutineThreadAlertMuted } from "../board/boardThreadAlertMute";
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
@@ -123,6 +125,8 @@ export function startThreadNotifications(
         .has(threadKey({ environmentId, threadId: thread.id }))
     )
       return;
+    // T3o: the board mutes routine alerts for its card threads; see board/boardThreadAlertMute.ts.
+    if (isBoardRoutineThreadAlertMuted(thread.id, kind, status)) return;
     const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
     const active = (router.state.matches.at(-1)?.params ?? {}) as {
       environmentId?: string;

@@ -8,7 +8,10 @@ import * as Effect from "effect/Effect";
 
 import {
   BOARD_SEED_STAGE_IDS,
+  EnvironmentId,
+  ThreadId,
   type BoardCard,
+  type BoardCardThreadLink,
   type BoardCardPullRequest,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
@@ -23,6 +26,7 @@ import {
   type HarnessCommand,
 } from "./supervisorHarness.testkit.ts";
 import type { BoardMergeState } from "./boardMergeState.ts";
+import type { HarnessEvent } from "./supervisorHarness.testkit.ts";
 
 /** Stack layer 2 — a pull request on a branch that is not the card's own. */
 const layerPr: VcsStatusChangeRequest = {
@@ -461,4 +465,110 @@ describe("the run prompt names a linked pull request", () => {
         }),
     );
   });
+});
+
+describe("the card's pull request on its threads (T3O-75)", () => {
+  const threadLink = (
+    threadId: string,
+    role: string,
+    extra: Partial<BoardCardThreadLink> = {},
+  ): BoardCardThreadLink => ({
+    threadId: ThreadId.make(threadId),
+    role,
+    linkedAt: "2026-01-01T00:00:00.000Z",
+    tombstonedAt: null,
+    round: 0,
+    ...extra,
+  });
+  const cardWithThreads = (): BoardCard => ({
+    ...reviewCard(),
+    threadLinks: [
+      threadLink("t-planning", "planning"),
+      threadLink("t-build", "building"),
+      threadLink("t-review", "review@1", { workerId: EnvironmentId.make("worker-a") }),
+      threadLink("t-triage", "triage@1", { retiredAt: "2026-01-01T00:01:00.000Z" }),
+      threadLink("t-adopted", "linked"),
+    ],
+  });
+  const prCalls = (commands: ReadonlyArray<HarnessCommand>) =>
+    commands.flatMap((command) =>
+      command.type === "thread.pull-request.link" || command.type === "thread.pull-request.unlink"
+        ? [
+            `${command.type === "thread.pull-request.link" ? "link" : "unlink"} ${command.threadId} ${command.host}/${command.repository}#${command.number}`,
+          ]
+        : [],
+    );
+  /** The engine double does not feed decided events back; the live engine does. */
+  const deliverLatest = (h: Parameters<Parameters<typeof withGovernor>[1]>[0]) =>
+    Effect.gen(function* () {
+      const latest = (yield* h.decided).at(-1)!;
+      yield* h.pumpDomain(latest as HarnessEvent);
+    });
+
+  it.effect("links the card's PR on its review threads, and unlinks it when cleared", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [cardWithThreads()] },
+        settings: settings(),
+        pullRequestByNumber: layerPr,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.linkPullRequest(reviewCard().id, { url: layerPr.url });
+          yield* deliverLatest(h);
+          assert.deepEqual(prCalls(yield* h.commands), [
+            "link t-review github.com/acme/repo#75",
+            "link t-triage github.com/acme/repo#75",
+          ]);
+          const link = (yield* h.commands).find(
+            (command) => command.type === "thread.pull-request.link",
+          );
+          const recordedEvent = (yield* h.decided).at(-1)!;
+          assert.equal(
+            link?.type === "thread.pull-request.link" ? link.commandId : undefined,
+            "eventId" in recordedEvent
+              ? `server:board-pr-link:t-review:${recordedEvent.eventId}`
+              : "no event id",
+          );
+
+          yield* h.reactor.linkPullRequest(reviewCard().id, null);
+          yield* deliverLatest(h);
+          assert.deepEqual(prCalls(yield* h.commands).slice(2), [
+            "unlink t-review github.com/acme/repo#75",
+            "unlink t-triage github.com/acme/repo#75",
+          ]);
+        }),
+    ),
+  );
+
+  it.effect("a review thread spawned after the PR exists gets it", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [cardWithThreads()] },
+        settings: settings(),
+        pullRequestByNumber: layerPr,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.linkPullRequest(reviewCard().id, { url: layerPr.url });
+          const card = (yield* h.board).cards[0]!;
+          const withNewThread: BoardCard = {
+            ...card,
+            threadLinks: [...card.threadLinks, threadLink("t-review-2", "review@2")],
+          };
+          yield* h.pumpDomain({
+            eventId: "event-thread-linked",
+            type: "board.card-thread-linked",
+            sequence: 50,
+            payload: {
+              cardId: card.id,
+              threadId: ThreadId.make("t-review-2"),
+              role: "review@2",
+              card: withNewThread,
+            },
+          } as unknown as HarnessEvent);
+          assert.deepEqual(prCalls(yield* h.commands), ["link t-review-2 github.com/acme/repo#75"]);
+        }),
+    ),
+  );
 });

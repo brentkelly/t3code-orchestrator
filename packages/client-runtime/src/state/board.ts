@@ -218,6 +218,20 @@ function liveCardThreadIds(
   return card.activeThreadId === null ? [] : [card.activeThreadId];
 }
 
+/** `liveCardThreadIds` for many cards: indexes the links once instead of per card. */
+export function indexLiveCardThreadIds(
+  cardThreads: ReadonlyArray<BoardCardThreadShell> | undefined,
+): (card: BoardCardShell) => ReadonlyArray<ThreadId> {
+  const linkedByCard = new Map<string, Array<ThreadId>>();
+  for (const entry of cardThreads ?? []) {
+    const linked = linkedByCard.get(entry.cardId);
+    if (linked === undefined) linkedByCard.set(entry.cardId, [entry.threadId]);
+    else linked.push(entry.threadId);
+  }
+  return (card) =>
+    linkedByCard.get(card.cardId) ?? (card.activeThreadId === null ? [] : [card.activeThreadId]);
+}
+
 /** Aggregated across every live-linked thread, matching the server's snapshot enrichment
     exactly, or the badge flickers between a snapshot and the next delta. Returns the same
     card reference when nothing changed. */

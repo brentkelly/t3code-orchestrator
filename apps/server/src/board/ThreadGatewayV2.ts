@@ -792,6 +792,26 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
     }),
     stopSession: (input) =>
       run({ type: "thread.stop", commandId: input.commandId, threadId: input.threadId }),
+    linkPullRequest: (input) =>
+      run({
+        type: "thread.pull-request.link",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        host: input.host,
+        repository: input.repository,
+        number: input.number,
+        url: input.url,
+        source: "agent",
+      }),
+    unlinkPullRequest: (input) =>
+      run({
+        type: "thread.pull-request.unlink",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        host: input.host,
+        repository: input.repository,
+        number: input.number,
+      }),
     // The automatic settle re-reads candidacy itself and stamps the read time
     // as `snapshotAt`: the engine refuses the command when the thread changed
     // after it, so a thread that moved between the check and the dispatch is
