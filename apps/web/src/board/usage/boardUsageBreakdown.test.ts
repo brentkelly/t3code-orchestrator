@@ -83,6 +83,20 @@ describe("a card's usage breakdown", () => {
     expect(breakdown.models[0]?.steps).toEqual(["review@1", "building"]);
   });
 
+  it("notes every cause that leaves one row partial", () => {
+    const mixed = deriveBoardUsageBreakdown({
+      rows: [usageRow({ turnsOverride: 0, turnsNoUsage: 1, turnsUnpriced: 1, turnsPartial: 1 })],
+      historyPartial: false,
+      stages: STAGES,
+      runningThreadId: null,
+    });
+    expect(mixed.missing.map((entry) => entry.text)).toEqual([
+      expect.stringContaining("reported no tokens"),
+      expect.stringContaining("has no price"),
+      expect.stringContaining("reported only part of its usage"),
+    ]);
+  });
+
   it("says when worker history predates tracking", () => {
     const history = deriveBoardUsageBreakdown({
       rows: [],

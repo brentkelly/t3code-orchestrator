@@ -24,13 +24,13 @@ Agents can read the same figures: `board_get_card` returns a card's usage by ste
 
 ## Reading the figure
 
-| Figure   | Means                                                                      |
-| -------- | -------------------------------------------------------------------------- |
-| `$1.84`  | Exact: every priced turn used a price you set.                             |
-| `≈$1.84` | At least part of it is priced from the public model price table.           |
-| `$1.84+` | A lower bound: some turns had no price, or the provider reported no usage. |
-| `—`      | Nothing is known yet. It is never shown as `$0`.                           |
-| `so far` | A step is still running. The figure moves once each time a turn finishes.  |
+| Figure   | Means                                                                                         |
+| -------- | --------------------------------------------------------------------------------------------- |
+| `$1.84`  | Exact: every priced turn used a price you set.                                                |
+| `≈$1.84` | At least part of it is priced from the public model price table.                              |
+| `$1.84+` | A lower bound: some turns had no price, or the provider reported no usage or only part of it. |
+| `—`      | Nothing is known yet. It is never shown as `$0`.                                              |
+| `so far` | A step is still running. The figure moves once each time a turn finishes.                     |
 
 Providers that do not report token usage (Cursor and Pi, and Grok and other ACP agents for now)
 count as _no usage_, which makes the figure partial. So does work a card did on a worker before

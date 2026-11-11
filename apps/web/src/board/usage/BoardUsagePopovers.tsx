@@ -113,7 +113,7 @@ export function BoardUsageChip({ inView }: { readonly inView: BoardUsageInView }
           {inView.partialCount > 0 ? (
             <p className="text-[11px]/[1.5] text-pretty text-muted-foreground">
               {inView.partialCount} {inView.partialCount === 1 ? "card has" : "cards have"} unpriced
-              steps or no usage reported, so the total is a lower bound.
+              steps or missing usage, so the total is a lower bound.
             </p>
           ) : null}
         </div>
@@ -254,7 +254,7 @@ export function BoardGroupUsageButton({
             )}
           >
             {partialKeys.length > 0
-              ? `${partialKeys.join(", ")} ${partialKeys.length === 1 ? "has" : "have"} unpriced or unreported steps, so the total is a lower bound. `
+              ? `${partialKeys.join(", ")} ${partialKeys.length === 1 ? "has" : "have"} unpriced steps or missing usage, so the total is a lower bound. `
               : ""}
             {onOpenCard === undefined ? "" : "Click a row to open that card's usage."}
           </div>

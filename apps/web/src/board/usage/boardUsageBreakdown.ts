@@ -213,32 +213,28 @@ export function deriveBoardUsageBreakdown(input: {
     .sort((a, b) => b.summary.costUsd - a.summary.costUsd || b.summary.tokens - a.summary.tokens);
 
   const missing = lines.flatMap((line): ReadonlyArray<BoardUsageMissing> => {
+    const turns = (count: number) => (count === 1 ? "a turn" : `${count} turns`);
+    const notes: Array<BoardUsageMissing> = [];
     if (line.row.turnsNoUsage > 0) {
-      return [
-        {
-          stepId: line.stepId,
-          text: `${line.model} (${line.provider}) reported no tokens for ${line.row.turnsNoUsage === 1 ? "a turn" : `${line.row.turnsNoUsage} turns`}. Usage unknown.`,
-        },
-      ];
+      notes.push({
+        stepId: line.stepId,
+        text: `${line.model} (${line.provider}) reported no tokens for ${turns(line.row.turnsNoUsage)}. Usage unknown.`,
+      });
     }
     if (line.row.turnsUnpriced > 0) {
       const tokens = line.input + line.cached + line.output;
-      return [
-        {
-          stepId: line.stepId,
-          text: `${line.model} via ${line.provider} has no price. ${tokens.toLocaleString()} tokens not costed.`,
-        },
-      ];
+      notes.push({
+        stepId: line.stepId,
+        text: `${line.model} via ${line.provider} has no price. ${tokens.toLocaleString()} tokens not costed.`,
+      });
     }
     if (line.row.turnsPartial > 0) {
-      return [
-        {
-          stepId: line.stepId,
-          text: `${line.model} (${line.provider}) reported only part of its usage for ${line.row.turnsPartial === 1 ? "a turn" : `${line.row.turnsPartial} turns`}, such as a stopped one. Usage may be higher.`,
-        },
-      ];
+      notes.push({
+        stepId: line.stepId,
+        text: `${line.model} (${line.provider}) reported only part of its usage for ${turns(line.row.turnsPartial)}, such as a stopped one. Usage may be higher.`,
+      });
     }
-    return [];
+    return notes;
   });
   if (input.historyPartial) {
     missing.push({

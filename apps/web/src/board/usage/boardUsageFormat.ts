@@ -86,7 +86,7 @@ export function formatBoardUsageCost(
   const partial = usage.partial === true;
   const notes = [
     partial
-      ? `Partial: some steps were unpriced or reported no usage${listSteps(options.steps?.partial)}, so this is a lower bound.`
+      ? `Partial: some steps were unpriced or reported only part or none of their usage${listSteps(options.steps?.partial)}, so this is a lower bound.`
       : "",
     estimated
       ? `Partly priced from the model price table${listSteps(options.steps?.estimated)}.`
