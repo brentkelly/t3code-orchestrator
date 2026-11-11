@@ -42,6 +42,12 @@ const snapshot = {
       title: "A card title that goes on and on well past the sixty character limit for tabs",
       projectId: t3o,
     },
+    {
+      cardId: "card-emoji",
+      key: "T3O-7",
+      title: `${"a".repeat(58)}\u{1F680} launch and then some more words`,
+      projectId: t3o,
+    },
   ],
   cardThreads: [
     { cardId: "card-65", threadId: ThreadId.make("thread-local") },
@@ -255,6 +261,11 @@ describe("resolveIdentity", () => {
         title: "A card title that goes on and on well past the sixty charac… · T3O-1204 · mesh-dev",
         icon: t3oTile("1204"),
       },
+    },
+    {
+      name: "trimming never splits an emoji",
+      key: card("card-emoji"),
+      expected: { title: `${"a".repeat(58)}\u{1F680}… · T3O-7 · mesh-dev`, icon: t3oTile("7") },
     },
   ])("$name", ({ key, inputs: overrides, expected }) => {
     const identity = resolveIdentity(key, inputs(overrides));

@@ -201,8 +201,13 @@ export interface TabIdentity {
 }
 
 function trimTitle(title: string): string {
-  const trimmed = title.trim();
-  return trimmed.length > TITLE_MAX ? `${trimmed.slice(0, TITLE_MAX - 1).trimEnd()}…` : trimmed;
+  const points = Array.from(title.trim());
+  return points.length > TITLE_MAX
+    ? `${points
+        .slice(0, TITLE_MAX - 1)
+        .join("")
+        .trimEnd()}…`
+    : points.join("");
 }
 
 function splitCardKey(key: string): { readonly prefix: string; readonly number: string | null } {

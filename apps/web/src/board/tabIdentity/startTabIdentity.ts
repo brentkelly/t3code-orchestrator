@@ -49,6 +49,17 @@ function currentRouteKey(router: AppRouter): TabRouteKey {
 }
 
 export function startTabIdentity(router: AppRouter): void {
+  // Electron pins the window title and has no favicon, so skip the board subscription there.
+  if (isElectron) {
+    appAtomRegistry.subscribe(
+      primaryServerConfigAtom,
+      (config) => {
+        document.title = tabFallbackName(config?.environment.serverVersion ?? null);
+      },
+      { immediate: true },
+    );
+    return;
+  }
   const locationKeyAtom = Atom.make<TabRouteKey>(currentRouteKey(router)).pipe(
     Atom.keepAlive,
     Atom.withLabel("t3o-tab-identity-location"),
@@ -138,7 +149,7 @@ export function startTabIdentity(router: AppRouter): void {
     return { key, identity };
   }).pipe(Atom.withLabel("t3o-tab-identity"));
 
-  const favicon = isElectron ? null : startFavicon();
+  const favicon = startFavicon();
   let lastApplied: { key: TabRouteKey; pending: boolean } | null = null;
   const apply = ({ key, identity }: { key: TabRouteKey; identity: TabIdentity | null }) => {
     if (identity === null || shouldHold(identity, key, lastApplied)) return;
