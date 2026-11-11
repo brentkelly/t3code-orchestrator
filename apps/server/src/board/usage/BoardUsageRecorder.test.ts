@@ -303,6 +303,19 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
       yield* sql`DELETE FROM boards.projection_state WHERE projector = ${BOARD_USAGE_BACKFILL_MARKER}`;
       yield* withRecorder(Effect.flatMap(BoardUsageRecorder, (recorder) => recorder.backfill));
       assert.deepStrictEqual(yield* usageRows(cardId), once);
+
+      // A deleted card takes its usage with it.
+      yield* (yield* boardStackEngine).dispatch({
+        type: "board.card.delete",
+        commandId: CommandId.make("cmd-delete-backfill"),
+        cardId,
+        createdAt: t0,
+      });
+      const [left] = yield* sql<{ readonly rows: number; readonly keys: number }>`
+        SELECT
+          (SELECT COUNT(*) FROM boards.board_card_usage WHERE card_id = ${cardId}) AS rows,
+          (SELECT COUNT(*) FROM boards.board_usage_ingested WHERE thread_id = ${threadId}) AS keys`;
+      assert.deepStrictEqual(left, { rows: 0, keys: 0 });
     }),
   );
 });

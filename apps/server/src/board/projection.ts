@@ -2436,6 +2436,16 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // Its turns' ingestion keys go first, while the usage rows still name its threads.
+  const deleteBoardCardUsageForCard = (cardId: BoardCardId) =>
+    Effect.all([
+      sql`
+        DELETE FROM board_usage_ingested
+        WHERE thread_id IN (SELECT thread_id FROM board_card_usage WHERE card_id = ${cardId})
+      `,
+      sql`DELETE FROM board_card_usage WHERE card_id = ${cardId}`,
+    ]).pipe(Effect.asVoid);
+
   const deleteBoardCardDecisionsForCard = SqlSchema.void({
     Request: BoardCardId,
     execute: (cardId) => sql`
@@ -2634,6 +2644,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     settleBoardCiPassRow,
     listBoardCiPassRowsForCard,
     deleteBoardCiPassesForCard,
+    deleteBoardCardUsageForCard,
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
     listBoardPlanRows,
@@ -2684,6 +2695,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
       yield* queries.deleteBoardPlansForCard(card.id);
       yield* queries.deleteBoardCardDecisionsForCard(card.id);
       yield* queries.deleteBoardCiPassesForCard(card.id);
+      yield* queries.deleteBoardCardUsageForCard(card.id);
     },
     Effect.mapError(toPersistenceSqlError("BoardCardsProjection.purge:query")),
   );
