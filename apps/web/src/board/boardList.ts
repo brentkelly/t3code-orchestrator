@@ -142,19 +142,22 @@ export interface BoardListSort {
   readonly direction: 1 | -1;
 }
 
-/** The value a card sorts by, or null for a card with no known figure. */
-function sortValue(card: BoardCardShell, sort: BoardListSort, shells: Shells): number | null {
-  const usage = boardCardUsageInScope(shells, card);
+/** The value a figure sorts by, or null for no known figure. */
+function sortValue(usage: BoardCardUsageSummary | null, sort: BoardListSort): number | null {
   if (usage === null) return null;
   if (sort.key === "tokens") return usage.tokens;
   return usage.costKnown === true ? usage.costUsd : null;
 }
 
-/** Siblings by tokens or cost. A card with no known figure sorts last in both
-    directions; ties keep the outline's order. */
-function sortBoardListSiblings(cards: Shells, sort: BoardListSort, shells: Shells): Shells {
+/** Siblings by tokens or cost of the figure each row shows. A card with no known
+    figure sorts last in both directions; ties keep the outline's order. */
+function sortBoardListSiblings(
+  cards: Shells,
+  sort: BoardListSort,
+  figure: (card: BoardCardShell) => BoardCardUsageSummary | null,
+): Shells {
   const values = new Map(
-    cards.map((card) => [card.cardId, sortValue(card, sort, shells)] as const),
+    cards.map((card) => [card.cardId, sortValue(figure(card), sort)] as const),
   );
   return cards.toSorted((left, right) => {
     const a = values.get(left.cardId) ?? null;
@@ -164,20 +167,12 @@ function sortBoardListSiblings(cards: Shells, sort: BoardListSort, shells: Shell
   });
 }
 
-/** What the rows on screen cost together. A collapsed group stands for everything
-    under it; an expanded one counts only its own threads, since its children are rows
-    of their own. Rows shown only for context are not counted. */
+/** What the rows on screen cost together. Rows shown only for context are not
+    counted. */
 export function boardListUsageTotal(
   rows: ReadonlyArray<BoardListRow>,
-  shells: Shells,
 ): BoardCardUsageSummary | null {
-  return sumBoardCardUsageSummaries(
-    rows
-      .filter((row) => !row.context)
-      .map((row) =>
-        row.isGroup && !row.expanded ? boardCardUsageInScope(shells, row.card) : row.card.usage,
-      ),
-  );
+  return sumBoardCardUsageSummaries(rows.filter((row) => !row.context).map((row) => row.usage));
 }
 
 export interface BoardListRow {
@@ -189,6 +184,10 @@ export interface BoardListRow {
   /** Shown only for what is under it (a filter's ancestor, or another
       project's group): dimmed. */
   readonly context: boolean;
+  /** The figure the row shows. A group whose children are not rows (collapsed,
+      or none kept by the filter) stands for everything under it; otherwise its
+      children carry their own figures and the group shows only its own threads. */
+  readonly usage: BoardCardUsageSummary | null;
 }
 
 /**
@@ -218,17 +217,23 @@ export function boardListRows(input: {
     keepMemo.set(id, kept);
     return kept;
   };
+  const isExpanded = (card: BoardCardShell, isGroup: boolean) =>
+    isGroup && (filtering || !collapsed.has(String(card.cardId)));
+  const figure = (card: BoardCardShell): BoardCardUsageSummary | null => {
+    const isGroup = isBoardGroupShell(tree.shells, card);
+    const childRows =
+      isExpanded(card, isGroup) && (tree.children.get(String(card.cardId)) ?? []).some(keep);
+    return isGroup && !childRows ? boardCardUsageInScope(tree.shells, card) : (card.usage ?? null);
+  };
   const rows: Array<BoardListRow> = [];
   const walk = (parentId: string, depth: number) => {
     const siblings = tree.children.get(parentId) ?? [];
-    for (const card of sort === null
-      ? siblings
-      : sortBoardListSiblings(siblings, sort, tree.shells)) {
+    for (const card of sort === null ? siblings : sortBoardListSiblings(siblings, sort, figure)) {
       if (!keep(card)) continue;
       const id = String(card.cardId);
       const kids = tree.children.get(id) ?? [];
       const isGroup = isBoardGroupShell(tree.shells, card);
-      const expanded = isGroup && (filtering || !collapsed.has(id));
+      const expanded = isExpanded(card, isGroup);
       rows.push({
         card,
         depth,
@@ -236,6 +241,7 @@ export function boardListRows(input: {
         expanded,
         childCount: kids.length,
         context: !tree.inScope.has(id) || (filtering && !matchesFilter(card, filter, tree.shells)),
+        usage: figure(card),
       });
       if (expanded) walk(id, depth + 1);
     }

@@ -494,7 +494,7 @@ describe("the List's cost columns (T3O-77)", () => {
       collapsed: new Set(),
       filter: { ...NO_FILTER, usage: { kind: "over", thresholdUsd: 5 } },
     });
-    // The group is over $5 in total, so it matches; its children stay as context.
+    // The group is over $5 in total, so it matches; its children, under $5 each, are not rows.
     expect(ids(over.filter((row) => !row.context))).toEqual(["g", "dear"]);
     const partial = boardListRows({
       tree: treeOf(shells),
@@ -506,11 +506,29 @@ describe("the List's cost columns (T3O-77)", () => {
 
   it("totals what is on screen, a collapsed group once and an expanded one by its rows", () => {
     const total = (collapsed: ReadonlySet<string>) =>
-      boardListUsageTotal(
-        boardListRows({ tree: treeOf(shells), collapsed, filter: NO_FILTER }),
-        shells,
-      );
+      boardListUsageTotal(boardListRows({ tree: treeOf(shells), collapsed, filter: NO_FILTER }));
     expect(total(new Set(["g"]))).toMatchObject({ costUsd: 13.5, estimated: true, partial: true });
     expect(total(new Set())).toMatchObject({ costUsd: 13.5 });
+  });
+
+  it("shows, totals and sorts a filtered group by its roll-up when none of its children are rows", () => {
+    const rows = boardListRows({
+      tree: treeOf(shells),
+      collapsed: new Set(),
+      filter: { ...NO_FILTER, usage: { kind: "over", thresholdUsd: 5 } },
+      sort: { key: "cost", direction: 1 },
+    });
+    expect(ids(rows)).toEqual(["g", "dear"]);
+    expect(rows[0]).toMatchObject({ expanded: true, usage: { costUsd: 6 } });
+    expect(boardListUsageTotal(rows)).toMatchObject({ costUsd: 13 });
+    // An expanded group with child rows shows only its own threads, and sorts by that.
+    const unfiltered = boardListRows({
+      tree: treeOf(shells),
+      collapsed: new Set(),
+      filter: NO_FILTER,
+      sort: { key: "cost", direction: -1 },
+    });
+    expect(unfiltered.find((row) => row.card.key === "G")?.usage).toBeNull();
+    expect(ids(unfiltered).slice(0, 2)).toEqual(["dear", "cheap"]);
   });
 });

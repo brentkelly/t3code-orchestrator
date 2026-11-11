@@ -98,7 +98,6 @@ import {
   formatBoardUsd,
   isBoardUsageEmphasized,
 } from "./usage/boardUsageFormat";
-import { boardCardUsageInScope } from "./usage/boardUsageViews";
 import { BOARD_DEFERRED_STAGE } from "./boardScope";
 import { boardStageLabel } from "./boardStages";
 import { boardToast } from "./boardToast";
@@ -187,7 +186,7 @@ function useBoardListRows(props: BoardListViewProps) {
   };
   const rows = boardListRows({ tree, collapsed, filter, sort });
   const visibleIds = rows.map((row) => String(row.card.cardId));
-  const usageTotal = boardListUsageTotal(rows, tree.shells);
+  const usageTotal = boardListUsageTotal(rows);
   return {
     collapsed,
     setCollapsed,
@@ -803,11 +802,7 @@ export function BoardListView(props: BoardListViewProps) {
                     : boardStageLabel(stageDefinitions, row.card.stage)
                 }
                 stats={row.isGroup ? boardGroupStats(statsInput, id) : null}
-                usage={
-                  row.isGroup && !row.expanded
-                    ? boardCardUsageInScope(tree.shells, row.card)
-                    : (row.card.usage ?? null)
-                }
+                usage={row.usage}
                 costEmphasisUsd={props.costEmphasisUsd}
                 target={row.isGroup ? boardGroupTargetLabel(shells, row.card) : null}
                 targetOwn={row.isGroup && boardShellGroup(shells, row.card)?.target === "own"}
