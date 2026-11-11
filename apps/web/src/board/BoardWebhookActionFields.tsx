@@ -26,7 +26,13 @@ import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../components/ui/select";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { Textarea } from "../components/ui/textarea";
 import { Toggle, ToggleGroup } from "../components/ui/toggle-group";
 import type { DraftState } from "../components/settings/scheduledTasksSettings.logic";
@@ -276,7 +282,9 @@ function BoardRuleEditor({
               <Select
                 value={rule.stage === "" ? FIRST_STAGE : rule.stage}
                 onValueChange={(stage) =>
-                  updateRule(rule.id, { stage: stage === FIRST_STAGE || stage === null ? "" : stage })
+                  updateRule(rule.id, {
+                    stage: stage === FIRST_STAGE || stage === null ? "" : stage,
+                  })
                 }
               >
                 <SelectTrigger size="sm" aria-label={`Rule ${index + 1} stage`}>

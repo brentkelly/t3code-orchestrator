@@ -54,7 +54,7 @@ export function emptyBoardRuleDraft(kind: BoardRuleKind = "create"): BoardRuleDr
   };
 }
 
-export function formatWebhookFilterLines(filters: ReadonlyArray<ScheduledTaskWebhookFilter>) {
+function formatWebhookFilterLines(filters: ReadonlyArray<ScheduledTaskWebhookFilter>) {
   return filters
     .map((filter) =>
       filter.op === "exists"

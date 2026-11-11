@@ -1,5 +1,5 @@
 import { githubIssueBoardWebhookAction } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardWebhookActionDraft,
@@ -39,7 +39,9 @@ describe("board rule drafts", () => {
     ).toEqual({
       action: {
         externalRef: { system: "github-issue", idTemplate: "{{body.issue.number}}" },
-        rules: [{ filters: [{ path: "body.label.name", op: "exists" }], action: { kind: "archive" } }],
+        rules: [
+          { filters: [{ path: "body.label.name", op: "exists" }], action: { kind: "archive" } },
+        ],
       },
     });
   });

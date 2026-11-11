@@ -96,7 +96,10 @@ it.layer(makeBoardStackTestLayer("t3o-webhook-actions-1-"))("the GitHub issue pr
     Effect.gen(function* () {
       const { engine, run, card } = yield* setup;
 
-      assert.strictEqual(yield* run(issueEvent("opened"), { deliveryId: "d-open" }), "Created HOO-1");
+      assert.strictEqual(
+        yield* run(issueEvent("opened"), { deliveryId: "d-open" }),
+        "Created HOO-1",
+      );
       const created = yield* card;
       assert.strictEqual(created?.stage, "backlog");
       assert.strictEqual(created?.title, "Crash on start");
@@ -226,7 +229,10 @@ it.layer(makeBoardStackTestLayer("t3o-webhook-actions-4-"))("restore", (it) => {
         keyPrefix: "OTH",
         createdAt,
       });
-      assert.strictEqual(yield* run(event("reopened"), { action }), "Skipped: OTH-1 already exists");
+      assert.strictEqual(
+        yield* run(event("reopened"), { action }),
+        "Skipped: OTH-1 already exists",
+      );
     }),
   );
 });
@@ -289,16 +295,25 @@ it.layer(makeBoardStackTestLayer("t3o-webhook-actions-3-"))("rule details", (it)
       // Missing placeholders skip rather than fail.
       const noTitle = issueEvent("opened");
       assert.strictEqual(
-        yield* run(
-          { ...noTitle, bodyText: noTitle.bodyText.replace('"number":7', '"number":8').replace('"title":"Crash on start",', "") },
-        ),
+        yield* run({
+          ...noTitle,
+          bodyText: noTitle.bodyText
+            .replace('"number":7', '"number":8')
+            .replace('"title":"Crash on start",', ""),
+        }),
         "Skipped: missing body.issue.title",
       );
       assert.strictEqual(yield* run({ ...noTitle, bodyText: "{}" }), "Skipped: no rule matched");
       assert.strictEqual(
-        yield* run({ ...noTitle, bodyText: "{}" }, {
-          action: { ...move("planning"), externalRef: { system: "x", idTemplate: "{{body.id}}" } },
-        }),
+        yield* run(
+          { ...noTitle, bodyText: "{}" },
+          {
+            action: {
+              ...move("planning"),
+              externalRef: { system: "x", idTemplate: "{{body.id}}" },
+            },
+          },
+        ),
         "Skipped: missing body.id",
       );
 

@@ -4,7 +4,6 @@
  * message. Every write dispatches a board command; nothing writes a table directly.
  */
 import {
-  assignBoardKeyPrefix,
   boardAppendOrderKey,
   boardBuildStepPayloadDefect,
   boardReviewBlockedOutcomeRefusal,

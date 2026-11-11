@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { ProjectId } from "./baseSchemas.ts";
 import { EMPTY_BOARD_STATE, withBoardProjectConfigVersion, type BoardState } from "./board.ts";

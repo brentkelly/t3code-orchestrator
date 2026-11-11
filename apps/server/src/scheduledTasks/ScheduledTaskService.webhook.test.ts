@@ -2219,7 +2219,10 @@ const boardRuleSchedule = {
 };
 const signedBoardRequest = (task: Parameters<typeof requestFor>[0]) =>
   requestFor(task, {
-    headers: { "content-type": "application/json", "x-hub-signature-256": githubSignature("s3cret") },
+    headers: {
+      "content-type": "application/json",
+      "x-hub-signature-256": githubSignature("s3cret"),
+    },
   });
 
 const withBoardRunner = <A, E, R>(

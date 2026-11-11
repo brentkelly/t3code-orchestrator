@@ -137,7 +137,8 @@ export const resolveUpsertBoardAction = Effect.fn("BoardWebhookRules.resolveUpse
     }
     return { boardAction, prompt: input.prompt };
   }
-  if (context.schedule.type !== "webhook") return yield* fail("Board rules need a webhook trigger.");
+  if (context.schedule.type !== "webhook")
+    return yield* fail("Board rules need a webhook trigger.");
   if (!context.hasSecret) {
     return yield* fail("A board rule needs a signature check with a signing secret.");
   }
@@ -145,7 +146,10 @@ export const resolveUpsertBoardAction = Effect.fn("BoardWebhookRules.resolveUpse
     return yield* fail("A board rule cannot coalesce deliveries. Remove the coalesce key.");
   }
   if (registeredRunner === null) return yield* fail(NOT_RUNNING);
-  const refusal = yield* registeredRunner.validate({ projectId: input.projectId, action: boardAction });
+  const refusal = yield* registeredRunner.validate({
+    projectId: input.projectId,
+    action: boardAction,
+  });
   if (refusal !== null) return yield* fail(refusal);
   return { boardAction, prompt: BOARD_RULE_PROMPT };
 });

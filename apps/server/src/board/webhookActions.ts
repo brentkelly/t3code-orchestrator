@@ -1,9 +1,7 @@
 /**
- * Webhook board rules (T3O-78): a delivery creates, moves or archives the card its
- * external reference names, without an agent turn. Every deterministic non-action is a
- * `Skipped: …` result, because a failure frees the replay key and a redelivery would run
- * it again. Cards are matched across the whole board, so one that changed project is
- * still found; move and archive judge stages by the matched card's own project.
+ * Webhook board rules (T3O-78). Every deterministic non-action is a `Skipped: …` success:
+ * a failure frees the replay key, so a redelivery would run it again. Cards match across
+ * the whole board; move and archive judge stages by the matched card's own project.
  */
 import {
   BOARD_WEBHOOK_BRIEF_MAX_CHARS,
@@ -55,7 +53,7 @@ const ruleError = (cause: { readonly message: string }) =>
   new BoardWebhookRuleError({ message: cause.message });
 
 /** The actor every command of a rule carries, so the card's activity names the task. */
-export const boardWebhookActor = (taskTitle: string): BoardActivityActor => ({
+const boardWebhookActor = (taskTitle: string): BoardActivityActor => ({
   kind: "system",
   name: `Webhook: ${taskTitle}`,
   providerInstanceId: null,
@@ -64,11 +62,13 @@ export const boardWebhookActor = (taskTitle: string): BoardActivityActor => ({
 
 /** The first rule the request passes, or null. */
 export function matchBoardWebhookRule(action: BoardWebhookAction, request: WebhookRequest) {
-  return action.rules.find((rule) => findFailedWebhookFilter(rule.filters, request) === null) ?? null;
+  return (
+    action.rules.find((rule) => findFailedWebhookFilter(rule.filters, request) === null) ?? null
+  );
 }
 
 /** The card's external reference, or the placeholders the request did not fill. */
-export function renderBoardWebhookRef(
+function renderBoardWebhookRef(
   template: BoardWebhookAction["externalRef"],
   request: WebhookRequest,
 ): BoardCardExternalRef | { readonly missing: ReadonlyArray<string> } {
@@ -77,12 +77,13 @@ export function renderBoardWebhookRef(
   if (id.missing.length > 0 || trimmed === "") {
     return { missing: id.missing.length > 0 ? id.missing : [template.idTemplate] };
   }
-  const url = template.urlTemplate === undefined ? "" : render(template.urlTemplate, request).prompt;
+  const url =
+    template.urlTemplate === undefined ? "" : render(template.urlTemplate, request).prompt;
   return { system: template.system, id: trimmed, url: url.trim() === "" ? null : url.trim() };
 }
 
 /** Collapsed to one line and capped, so an outside title cannot reshape the card face. */
-export function webhookCardTitle(rendered: string): string {
+function webhookCardTitle(rendered: string): string {
   const line = rendered.replace(/\s+/g, " ").trim();
   return line.length <= BOARD_WEBHOOK_TITLE_MAX_CHARS
     ? line
@@ -91,7 +92,7 @@ export function webhookCardTitle(rendered: string): string {
 
 /** Always opens with where the text came from, so an agent planning the card treats it
     as data from an outside party, not instructions from the user. */
-export function webhookCardBrief(input: {
+function webhookCardBrief(input: {
   readonly taskTitle: string;
   readonly url: string | null;
   readonly rendered: string;
@@ -139,7 +140,12 @@ export const makeBoardWebhookRunner = Effect.gen(function* () {
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
   /** A decider refusal is deterministic, so it is a skip; anything else fails. */
-  const dispatched = <A>(effect: Effect.Effect<A, BoardDispatchError | { readonly _tag: "ServerSettingsError"; readonly message: string }>) =>
+  const dispatched = <A>(
+    effect: Effect.Effect<
+      A,
+      BoardDispatchError | { readonly _tag: "ServerSettingsError"; readonly message: string }
+    >,
+  ) =>
     effect.pipe(
       Effect.as(null as string | null),
       Effect.catch((error) =>
@@ -270,7 +276,8 @@ export const makeBoardWebhookRunner = Effect.gen(function* () {
     const from = span.findIndex((stage) => stage.stageId === card.stage);
     const to = span.findIndex((stage) => stage.stageId === toStage);
     if (to < 0) return `Skipped: webhooks cannot move cards to ${stageLabel(board, toStage)}`;
-    if (from < 0 || from >= to) return `Skipped: ${card.key} is in ${stageLabel(board, card.stage)}`;
+    if (from < 0 || from >= to)
+      return `Skipped: ${card.key} is in ${stageLabel(board, card.stage)}`;
     const skipped = yield* dispatch(
       {
         type: "board.card.move",
@@ -278,7 +285,11 @@ export const makeBoardWebhookRunner = Effect.gen(function* () {
         cardId: card.id,
         toStage,
         orderKey: boardAppendOrderKey(
-          boardColumnOrderKeys({ cards: board.cards, stage: toStage, parentCardId: card.parentCardId }),
+          boardColumnOrderKeys({
+            cards: board.cards,
+            stage: toStage,
+            parentCardId: card.parentCardId,
+          }),
         ),
         override: true,
         createdAt: yield* nowIso,
