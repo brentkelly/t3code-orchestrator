@@ -87,3 +87,11 @@ follows along too, so closing the card leaves you looking at the one you were ju
 
 Going back closes the card and returns you to the board, however many cards you stepped through to
 get there.
+
+## Telling tabs apart
+
+Each browser tab names what it has open and which server it is connected to, such as
+`Tab identity · T3O-65 · mesh-dev`. Its icon is a tile in the project's board colour carrying the
+card ID, so tabs from different servers and projects can be told apart at a glance. Pages that are
+not about one card or project keep the standard T3 Code icon. While a thread has unread activity
+its badge replaces the icon, and the tile returns once you have caught up.

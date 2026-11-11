@@ -126,7 +126,7 @@ export interface TabCardIndex {
   readonly cardIdByThread: ReadonlyMap<string, string>;
 }
 
-export function cardThreadKey(environmentId: EnvironmentId, threadId: ThreadId): string {
+function cardThreadKey(environmentId: EnvironmentId, threadId: ThreadId): string {
   return `${environmentId}\u0000${threadId}`;
 }
 
@@ -157,7 +157,10 @@ export function buildCardIndex(
   }
   const cardIdByThread = new Map<string, string>();
   for (const link of snapshot.cardThreads) {
-    cardIdByThread.set(cardThreadKey(link.workerId ?? boardEnvironmentId, link.threadId), link.cardId);
+    cardIdByThread.set(
+      cardThreadKey(link.workerId ?? boardEnvironmentId, link.threadId),
+      link.cardId,
+    );
   }
   return { cards, cardIdByThread };
 }

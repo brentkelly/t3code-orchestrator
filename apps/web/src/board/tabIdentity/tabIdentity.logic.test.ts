@@ -66,7 +66,10 @@ const threads: Record<string, TabThread> = {
   [`${central}|thread-local`]: { title: "Build T3O-65", projectId: t3o },
   [`${worker}|thread-remote`]: { title: "Build on worker", projectId: workerProject },
   [`${central}|thread-plain`]: { title: "Just chatting", projectId: t3o },
-  [`${otherEnv}|thread-local`]: { title: "Same id elsewhere", projectId: ProjectId.make("project-unset") },
+  [`${otherEnv}|thread-local`]: {
+    title: "Same id elsewhere",
+    projectId: ProjectId.make("project-unset"),
+  },
 };
 
 const boardSettings: BoardSettings = {
@@ -122,7 +125,11 @@ describe("resolveIdentity", () => {
     },
     {
       name: "a card open inside a sub-board",
-      key: { kind: "card", cardId: "card-65", scope: { kind: "subBoard", parentCardId: "card-60" } },
+      key: {
+        kind: "card",
+        cardId: "card-65",
+        scope: { kind: "subBoard", parentCardId: "card-60" },
+      },
       expected: { title: "Tab identity · T3O-65 · mesh-dev", icon: t3oTile("65") },
     },
     {
@@ -184,7 +191,11 @@ describe("resolveIdentity", () => {
     },
     {
       name: "a draft uses the fallback name and its project's prefix",
-      key: { kind: "draft", draftId: "draft-1", project: { environmentId: central, projectId: t3o } },
+      key: {
+        kind: "draft",
+        draftId: "draft-1",
+        project: { environmentId: central, projectId: t3o },
+      },
       expected: { title: "T3 Code (Beta) · mesh-dev", icon: t3oTile(null) },
     },
     {
@@ -286,56 +297,58 @@ describe("routeKey", () => {
   });
   const noDraft = () => null;
 
-  it.each<{ readonly name: string; readonly matches: TabRouteMatch[]; readonly expected: unknown }>([
-    {
-      name: "/board with a card",
-      matches: [match("__root__"), match("/board", {}, { card: "card-65", project: "p" })],
-      expected: { kind: "card", cardId: "card-65", scope: { kind: "board", projectId: "p" } },
-    },
-    {
-      name: "/list behaves like /board",
-      matches: [match("__root__"), match("/list", {}, { card: "card-65" })],
-      expected: { kind: "card", cardId: "card-65", scope: { kind: "board", projectId: null } },
-    },
-    {
-      name: "a sub-board child card",
-      matches: [match("/board_/$parentCardId", { parentCardId: "card-60" }, { card: "card-65" })],
-      expected: {
-        kind: "card",
-        cardId: "card-65",
-        scope: { kind: "subBoard", parentCardId: "card-60" },
+  it.each<{ readonly name: string; readonly matches: TabRouteMatch[]; readonly expected: unknown }>(
+    [
+      {
+        name: "/board with a card",
+        matches: [match("__root__"), match("/board", {}, { card: "card-65", project: "p" })],
+        expected: { kind: "card", cardId: "card-65", scope: { kind: "board", projectId: "p" } },
       },
-    },
-    {
-      name: "a sub-board",
-      matches: [match("/board_/$parentCardId", { parentCardId: "card-60" })],
-      expected: { kind: "subBoard", parentCardId: "card-60" },
-    },
-    {
-      name: "the board",
-      matches: [match("/board")],
-      expected: { kind: "board", projectId: null },
-    },
-    {
-      name: "a thread",
-      matches: [
-        match("__root__"),
-        match("/_chat"),
-        match("/_chat/$environmentId/$threadId", { environmentId: "e", threadId: "t" }),
-      ],
-      expected: { kind: "thread", environmentId: "e", threadId: "t" },
-    },
-    {
-      name: "a guest page",
-      matches: [match("__root__"), match("/guest")],
-      expected: { kind: "guest" },
-    },
-    {
-      name: "settings",
-      matches: [match("__root__"), match("/_chat"), match("/_chat/settings/general")],
-      expected: { kind: "other" },
-    },
-  ])("$name", ({ matches, expected }) => {
+      {
+        name: "/list behaves like /board",
+        matches: [match("__root__"), match("/list", {}, { card: "card-65" })],
+        expected: { kind: "card", cardId: "card-65", scope: { kind: "board", projectId: null } },
+      },
+      {
+        name: "a sub-board child card",
+        matches: [match("/board_/$parentCardId", { parentCardId: "card-60" }, { card: "card-65" })],
+        expected: {
+          kind: "card",
+          cardId: "card-65",
+          scope: { kind: "subBoard", parentCardId: "card-60" },
+        },
+      },
+      {
+        name: "a sub-board",
+        matches: [match("/board_/$parentCardId", { parentCardId: "card-60" })],
+        expected: { kind: "subBoard", parentCardId: "card-60" },
+      },
+      {
+        name: "the board",
+        matches: [match("/board")],
+        expected: { kind: "board", projectId: null },
+      },
+      {
+        name: "a thread",
+        matches: [
+          match("__root__"),
+          match("/_chat"),
+          match("/_chat/$environmentId/$threadId", { environmentId: "e", threadId: "t" }),
+        ],
+        expected: { kind: "thread", environmentId: "e", threadId: "t" },
+      },
+      {
+        name: "a guest page",
+        matches: [match("__root__"), match("/guest")],
+        expected: { kind: "guest" },
+      },
+      {
+        name: "settings",
+        matches: [match("__root__"), match("/_chat"), match("/_chat/settings/general")],
+        expected: { kind: "other" },
+      },
+    ],
+  )("$name", ({ matches, expected }) => {
     expect(routeKey(matches, noDraft)).toEqual(expected);
   });
 
