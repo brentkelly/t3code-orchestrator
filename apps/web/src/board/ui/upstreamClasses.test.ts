@@ -1,6 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import * as mirrors from "./upstreamClasses";
 
@@ -88,14 +89,18 @@ function upstreamStringLiterals(file: string): ReadonlyArray<ReadonlyArray<strin
 }
 
 describe("board/ui upstream class mirrors", () => {
-  it.each(Object.entries(MIRRORS))("%s matches upstream's source", (name, { file, match }) => {
-    const expected = toUpstreamClasses(mirrors[name as keyof typeof mirrors]);
-    const literals = upstreamStringLiterals(file);
-    const found = literals.some((literal) =>
-      match === "exact"
-        ? literal.join(" ") === expected.join(" ")
-        : expected.every((className) => literal.includes(className)),
-    );
-    expect(found, `${name}: ${expected.join(" ")}`).toBe(true);
-  });
+  it.each(Object.keys(MIRRORS) as Array<keyof typeof mirrors>)(
+    "%s matches upstream's source",
+    (name) => {
+      const { file, match } = MIRRORS[name];
+      const expected = toUpstreamClasses(mirrors[name]);
+      const literals = upstreamStringLiterals(file);
+      const found = literals.some((literal) =>
+        match === "exact"
+          ? literal.join(" ") === expected.join(" ")
+          : expected.every((className) => literal.includes(className)),
+      );
+      expect(found, `${name}: ${expected.join(" ")}`).toBe(true);
+    },
+  );
 });

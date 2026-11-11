@@ -57,7 +57,7 @@ export function BoardButton({
   ...props
 }: Omit<ComponentProps<typeof Button>, "render" | "className"> & {
   readonly look: BoardButtonLook;
-  readonly className?: string;
+  readonly className?: string | undefined;
 }) {
   return (
     <Button {...props} render={<BoardButtonElement callerClassName={className} look={look} />} />
