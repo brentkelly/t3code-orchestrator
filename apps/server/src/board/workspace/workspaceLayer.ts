@@ -12,6 +12,7 @@ import {
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -19,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import { BoardEngine } from "../BoardEngine.ts";
 import { BoardPullRequestGateway } from "../BoardPullRequestGateway.ts";
@@ -203,6 +205,8 @@ export const localBoardWorkspaceDeps = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+  // Absent in the supervisor harness, where every project defers to t3.json.
+  const serverSettings = yield* Effect.serviceOption(ServerSettingsService);
   const worktreeRoots = Option.match(serverConfig, {
     onNone: () => Effect.succeed([] as ReadonlyArray<string>),
     onSome: (config) => {
@@ -225,6 +229,17 @@ export const localBoardWorkspaceDeps = Effect.gen(function* () {
         Effect.catchCause(() => Effect.succeed(null)),
       ),
     worktreeRoots,
+    worktreeSubmodules: (projectId: ProjectId) =>
+      Option.match(serverSettings, {
+        onNone: () => Effect.succeed(null),
+        onSome: (settings) =>
+          settings.getSettings.pipe(
+            Effect.map(
+              (current) => resolveProjectSettings(current, projectId).settings.worktreeSubmodules,
+            ),
+            Effect.catchCause(() => Effect.succeed(null)),
+          ),
+      }),
   } satisfies LocalBoardWorkspaceDeps;
 });
 

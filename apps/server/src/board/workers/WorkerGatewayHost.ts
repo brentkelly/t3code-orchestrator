@@ -212,6 +212,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     latestAssistantMessage: (threadId) => wireRead(local.latestAssistantMessage(threadId)),
     lastSignalAt: (threadId) => wireRead(local.lastSignalAt(threadId)),
     pendingTurnStartAt: (threadId) => wireRead(local.pendingTurnStartAt(threadId)),
+    subagentAwaitingApproval: (threadId) => wireRead(local.subagentAwaitingApproval(threadId)),
     projects: wireRead(local.projects()),
     project: (projectId) => wireRead(local.project(projectId)),
     subscribeSignals: (afterSequence) =>

@@ -257,6 +257,62 @@ it.effect("T3O-16: a thread waiting on a permission prompt is never swept", () =
   ),
 );
 
+// A delegate_task child blocked on a permission prompt: the parent sits
+// mid-turn inside a waiting delegation, emits nothing, and cannot answer it.
+it.effect("a step whose subagent awaits approval is never swept, and the hold trails it", () => {
+  const held = new Set([String(threadId)]);
+  return withGovernor(
+    {
+      board: boardWithStep(runningStep({ startedAt: OVERDUE, updatedAt: OVERDUE })),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+      subagentsAwaitingApproval: held,
+    },
+    ({ reactor, board }) =>
+      Effect.gen(function* () {
+        yield* reactor.sweep;
+        yield* TestClock.adjust("50 seconds");
+        yield* reactor.sweep;
+        assert.strictEqual(attemptOf(yield* board), 1); // not nudged
+        // Answered late in the window: the stamp from the last sweep is a life sign.
+        held.delete(String(threadId));
+        yield* TestClock.adjust("20 seconds");
+        yield* reactor.sweep;
+        assert.strictEqual(attemptOf(yield* board), 1);
+        // A window after the answer with no other life sign, it is swept again.
+        yield* TestClock.adjust("2 minutes");
+        yield* reactor.sweep;
+        assert.strictEqual(attemptOf(yield* board), 2);
+      }),
+  );
+});
+
+// A child's answer names the child's thread, so only the sweep can stamp
+// the step's: it must see the hold before the step is overdue.
+it.effect("a subagent approval answered before the step is overdue still shields it", () => {
+  const held = new Set([String(threadId)]);
+  return withGovernor(
+    {
+      board: boardWithStep(runningStep({ startedAt: FRESH, updatedAt: FRESH })),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+      subagentsAwaitingApproval: held,
+    },
+    ({ reactor, board }) =>
+      Effect.gen(function* () {
+        yield* TestClock.adjust("30 seconds");
+        yield* reactor.sweep;
+        held.delete(String(threadId));
+        yield* TestClock.adjust("40 seconds");
+        yield* reactor.sweep;
+        assert.strictEqual(attemptOf(yield* board), 1);
+        yield* TestClock.adjust("30 seconds");
+        yield* reactor.sweep;
+        assert.strictEqual(attemptOf(yield* board), 2);
+      }),
+  );
+});
+
 // Approval is a life sign. A prompt that outlives the output-signal
 // ceiling leaves every other life sign stale, so without this the first sweep
 // after the human approves would nudge the agent seconds into real work.

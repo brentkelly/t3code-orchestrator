@@ -77,9 +77,12 @@ const spawnInput = (
 
 /** The central server: its own threads, the in-process worker, the feed and
     the router over all of them. */
-const setup = (links: ReadonlyMap<string, BoardWorkerId> = new Map()) =>
+const setup = (
+  links: ReadonlyMap<string, BoardWorkerId> = new Map(),
+  worker: Parameters<typeof makeInProcessWorker>[0] = {},
+) =>
   Effect.gen(function* () {
-    const env = yield* makeInProcessWorker();
+    const env = yield* makeInProcessWorker(worker);
     const central = yield* makeFakeThreadGateway({
       projects: [
         {
@@ -269,6 +272,30 @@ describe("the remote thread gateway", () => {
           (error.cause as { readonly _tag?: string } | undefined)?._tag,
           "WorkerUnavailable",
         );
+      }),
+    ),
+  );
+
+  it.effect("asks the worker whether a subagent awaits approval, and reads silence as no", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const held = ThreadId.make("thread-held");
+        const free = ThreadId.make("thread-free");
+        const { router, kit, worker, connections } = yield* setup(
+          new Map<string, BoardWorkerId>([
+            [held, WORKER_ID],
+            [free, WORKER_ID],
+          ]),
+          { subagentAwaitingApproval: (threadId) => threadId === held },
+        );
+        assert.isTrue(yield* router.subagentAwaitingApproval(held));
+        assert.isFalse(yield* router.subagentAwaitingApproval(free));
+
+        // A worker that cannot answer must not hold a step forever.
+        worker.mode = "unreachable";
+        yield* kit.fake.drop(worker);
+        yield* waitOffline(connections);
+        assert.isFalse(yield* router.subagentAwaitingApproval(held));
       }),
     ),
   );

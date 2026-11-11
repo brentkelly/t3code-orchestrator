@@ -156,6 +156,57 @@ it.effect("a build-mode spawn failure gives the slot back, so the next card stil
   ),
 );
 
+// A provider turned off for the card's project is refused where the
+// thread would spawn. The step stalls amber, spends no recovery budget, and a
+// model edit restarts the stage on the new model.
+it.effect("a spawn on a provider disabled for the project stalls without spending budget", () =>
+  withGovernor(
+    {
+      board: { cards: [buildingCard("card-a", "a")], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+      providerDisabled: ["codex"],
+    },
+    ({ slots, pumpDomain, board, decided, reactor }) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("card-a");
+        yield* pumpDomain(movedToBuilding(buildingCard("card-a", "a"), 1));
+        const stalled = boardCardStepState(yield* board, id);
+        assert.strictEqual(stalled?.status, "stalled");
+        assert.strictEqual(stalled?.stalledReason, "provider-disabled-for-project");
+        assert.include(stalled?.lastError ?? "", "codex");
+        assert.isNull(stalled?.threadId ?? null);
+        assert.strictEqual(stalled?.stageEntryRecoveries, 0, "no recovery budget spent");
+        assert.strictEqual(yield* slots.heldTotal, 0, "the acquired slot came back");
+
+        // A human picks a model on a provider the project has on.
+        const before = (yield* board).cards.find((candidate) => candidate.id === id)!;
+        const edited = {
+          ...before,
+          modelOverrides: {
+            [BOARD_SEED_STAGE_IDS.building]: {
+              instanceId: ProviderInstanceId.make("claude"),
+              model: "claude-sonnet",
+            },
+          },
+        };
+        yield* pumpDomain({
+          type: "board.card-updated",
+          sequence: 2,
+          payload: { cardId: id, card: edited, modelOverridesEdited: true },
+        } as unknown as HarnessEvent);
+        yield* reactor.drain;
+        const requested = (yield* decided).find(
+          (event) => event.type === "board.card-stage-thread-requested",
+        );
+        assert.isDefined(requested, "the model edit restarts the stage");
+        yield* pumpDomain(requested!);
+        const restarted = boardCardStepState(yield* board, id);
+        assert.strictEqual(restarted?.status, "running");
+        assert.strictEqual(restarted?.providerInstanceId, ProviderInstanceId.make("claude"));
+      }),
+  ),
+);
+
 // The gh pin used to run only while provisioning a worktree, so a card
 // whose worktree was already ready never got it. Every build-mode spawn pins.
 it.effect("a build spawn into an already-ready worktree pins gh's default repository", () =>

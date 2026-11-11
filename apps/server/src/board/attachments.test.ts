@@ -22,9 +22,12 @@ import {
   deleteBoardCardAttachmentFile,
   removeBoardCardAttachmentsDir,
   resolveBoardCardAttachmentPath,
+  pendingBriefAttachment,
   sanitizeBoardAttachmentName,
-  spawnPushesBriefImages,
-  stageBoardCardImagesAsPending,
+  selectBriefAttachmentsForTurn,
+  spawnPushesBriefAttachments,
+  discardStagedBriefAttachments,
+  stageBriefAttachmentsAsPending,
 } from "./attachments.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -318,14 +321,102 @@ describe("claim, manifest, delete", () => {
 
 describe("the one push (K4)", () => {
   it("reaches the build and planning spawns only", () => {
-    expect(spawnPushesBriefImages("build")).toBe(true);
-    expect(spawnPushesBriefImages("plan")).toBe(true);
+    expect(spawnPushesBriefAttachments("build")).toBe(true);
+    expect(spawnPushesBriefAttachments("plan")).toBe(true);
     for (const role of ["review", "merge", "done", "backlog", "sprint", "ready", null]) {
-      expect(spawnPushesBriefImages(role)).toBe(false);
+      expect(spawnPushesBriefAttachments(role)).toBe(false);
     }
   });
 
-  it.effect("stages the card's images as fresh pending uploads and skips files", () =>
+  it("selects, in brief order, what fits one turn under upstream's caps", () => {
+    const MiB = 1024 * 1024;
+    const png = (name: string, sizeBytes: number) => ({
+      name,
+      type: "image" as const,
+      mimeType: "image/png",
+      sizeBytes,
+    });
+    const file = (name: string, sizeBytes: number, mimeType = "application/pdf") => ({
+      name,
+      type: "file" as const,
+      mimeType,
+      sizeBytes,
+    });
+    const cases: ReadonlyArray<{
+      readonly label: string;
+      readonly input: ReadonlyArray<ReturnType<typeof png> | ReturnType<typeof file>>;
+      readonly expected: ReadonlyArray<string>;
+    }> = [
+      {
+        label: "every type, in brief order",
+        input: [file("spec.pdf", 10), png("bug.png", 10), file("notes.txt", 5, "text/plain")],
+        expected: ["spec.pdf", "bug.png", "notes.txt"],
+      },
+      { label: "an empty file", input: [file("empty.txt", 0)], expected: [] },
+      {
+        label: "an image over the image cap",
+        input: [png("huge.png", 10 * MiB + 1), png("ok.png", 10 * MiB)],
+        expected: ["ok.png"],
+      },
+      {
+        label: "a file over the file cap",
+        input: [file("huge.pdf", 50 * MiB + 1), file("ok.pdf", 50 * MiB)],
+        expected: ["ok.pdf"],
+      },
+      {
+        // Upstream's 80 MiB image total counts image-mime files too.
+        label: "images past the image total, later smaller ones still fit",
+        input: [
+          ...Array.from({ length: 8 }, (_, index) => png(`${index}.png`, 10 * MiB)),
+          png("over.png", 1),
+          file("image-mime.png", 1, "image/png"),
+          file("spec.pdf", 1),
+        ],
+        expected: [...Array.from({ length: 8 }, (_, index) => `${index}.png`), "spec.pdf"],
+      },
+      {
+        label: "past the per-turn file count",
+        input: Array.from({ length: 101 }, (_, index) => file(`${index}.txt`, 1, "text/plain")),
+        expected: Array.from({ length: 100 }, (_, index) => `${index}.txt`),
+      },
+      {
+        // An unsupported image goes as a file, under the file cap.
+        label: "an unsupported image mime sent as a file",
+        input: [{ ...png("scan.bmp", 20 * MiB), mimeType: "image/bmp" }],
+        expected: ["scan.bmp"],
+      },
+    ];
+    for (const { label, input, expected } of cases) {
+      assert.deepStrictEqual(
+        selectBriefAttachmentsForTurn(input).map((attachment) => attachment.name),
+        expected,
+        label,
+      );
+    }
+  });
+
+  it("names a pending file the way upstream's claim resolves it", () => {
+    const svg = pendingBriefAttachment({
+      type: "image",
+      name: "diagram",
+      mimeType: "image/svg+xml",
+      sizeBytes: 3,
+    });
+    assert.strictEqual(svg.attachment.type, "file");
+    assert.strictEqual(svg.attachment.name, "diagram.svg");
+    assert.match(String(svg.attachment.id), /^pending-[0-9a-f-]+-svg$/);
+    assert.strictEqual(svg.fileName, `${svg.attachment.id}.svg`);
+    const bmp = pendingBriefAttachment({
+      type: "image",
+      name: "scan.bmp",
+      mimeType: "image/bmp",
+      sizeBytes: 3,
+    });
+    assert.strictEqual(bmp.attachment.type, "file");
+    assert.strictEqual(bmp.fileName, `${bmp.attachment.id}.bmp`);
+  });
+
+  it.effect("stages every attachment type as fresh pending uploads", () =>
     Effect.gen(function* () {
       const root = tempRoot();
       const stateDir = NodePath.join(root, "userdata");
@@ -349,20 +440,29 @@ describe("the one push (K4)", () => {
         type: "file" as const,
         mimeType: "application/pdf",
       };
-      const staged = yield* stageBoardCardImagesAsPending({
+      const staged = yield* stageBriefAttachmentsAsPending({
         stateDir,
         attachmentsDir,
         card: card([file, image]),
       });
-      assert.strictEqual(staged.length, 1);
-      const [only] = staged;
-      assert.strictEqual(only?.type, "image");
-      assert.strictEqual(only?.name, "bug.png");
-      assert.match(String(only?.id), /^pending-/);
+      assert.strictEqual(staged.length, 2);
+      const [pdf, png] = staged;
+      assert.strictEqual(pdf?.type, "file");
+      assert.strictEqual(pdf?.name, "spec.pdf");
+      assert.match(String(pdf?.id), /^pending-[0-9a-f-]+-pdf$/);
       assert.strictEqual(
-        NodeFS.readFileSync(NodePath.join(attachmentsDir, `${only?.id}.png`), "utf8"),
+        NodeFS.readFileSync(NodePath.join(attachmentsDir, `${pdf?.id}.pdf`), "utf8"),
+        "pdf",
+      );
+      assert.strictEqual(png?.type, "image");
+      assert.strictEqual(png?.name, "bug.png");
+      assert.match(String(png?.id), /^pending-[0-9a-f-]+$/);
+      assert.strictEqual(
+        NodeFS.readFileSync(NodePath.join(attachmentsDir, `${png?.id}.png`), "utf8"),
         "png",
       );
+      yield* discardStagedBriefAttachments({ attachmentsDir, attachments: staged });
+      assert.deepStrictEqual(NodeFS.readdirSync(attachmentsDir), []);
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
   );

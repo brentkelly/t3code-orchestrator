@@ -10,10 +10,13 @@ import {
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentShell } from "./shell";
+import { environmentThreadShells } from "./threads";
 
 export const environmentBoard = createEnvironmentBoardStateAtoms(connectionAtomRuntime);
 
 export const boardEnvironment = createBoardEnvironmentAtoms(connectionAtomRuntime, {
   shellStateValueAtom: environmentShell.stateValueAtom,
   boardSnapshotValueAtom: environmentBoard.snapshotValueAtom,
+  // T3o: a subagent awaiting approval turns its card violet.
+  pendingSubagentRequestsAtom: environmentThreadShells.pendingSubagentRequestsAtom,
 });

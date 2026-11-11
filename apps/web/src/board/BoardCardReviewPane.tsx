@@ -13,6 +13,7 @@ import {
   type BoardReviewRoundOverride,
   type RuntimeMode,
   type BoardStepCompletion,
+  type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
 import { ChevronDownIcon, ChevronLeftIcon, MessageSquareIcon } from "lucide-react";
@@ -904,17 +905,24 @@ function PlannedRoundSettings({
   model,
   phaseRuntimeMode,
   onChange,
+  projectId,
 }: {
   readonly round: number;
   readonly previousRound: number;
   readonly model: BoardReviewRoundOverride | null;
   readonly phaseRuntimeMode: RuntimeMode;
   readonly onChange: (model: BoardReviewRoundOverride | null) => void;
+  readonly projectId: ProjectId | null;
 }) {
   const settings = useBoardSettings();
   const serverProviders = useBoardServerProviders();
+  // T3O-74: a provider turned off for the card's project shows disabled.
   const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(serverProviders),
+      settings,
+      projectId,
+    ),
   );
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
@@ -964,6 +972,7 @@ function PlannedRoundSettings({
 }
 
 export function BoardCardReviewPane({
+  projectId,
   completions,
   maxRounds,
   live,
@@ -982,6 +991,8 @@ export function BoardCardReviewPane({
   onBackToThread,
   onOpenThread,
 }: {
+  /** The card's project, for which providers its round pickers offer (T3O-74). */
+  readonly projectId?: ProjectId | undefined;
   readonly completions: ReadonlyArray<BoardStepCompletion>;
   /** The EFFECTIVE round budget — the card's override when it has one, else the
       review stage's `rounds`. Resolved by the caller, which is the only layer
@@ -1198,6 +1209,7 @@ export function BoardCardReviewPane({
               onChange={(model) => onSetRoundModel?.(plannedRound, model)}
               phaseRuntimeMode={phaseRuntimeMode ?? "auto"}
               previousRound={plannedRound - 1}
+              projectId={projectId ?? null}
               round={plannedRound}
             />
           )}

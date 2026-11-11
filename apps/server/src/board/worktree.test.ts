@@ -13,8 +13,9 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Predicate from "effect/Predicate";
 import type * as Scope from "effect/Scope";
 
-import { GitCommandError } from "@t3tools/contracts";
+import { GitCommandError, ProjectId, type ProjectSettingsOverrides } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import {
   assertSingleBoardWorktreeWriter,
@@ -30,6 +31,9 @@ import {
   resolveBoardCardBaseRef,
 } from "./worktree.ts";
 import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
+import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
+import { ThreadGateway } from "./ThreadGateway.ts";
+import { localBoardWorkspaceDeps } from "./workspace/workspaceLayer.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-board-worktree-test-",
@@ -564,6 +568,58 @@ const configValue = (cwd: string, args: ReadonlyArray<string>) =>
     });
     return result.stdout.trim();
   });
+
+// T3O-74: the project's `worktreeSubmodules` setting reaches git's worktree
+// add, as GitManager passes it; null leaves the checkout's t3.json in charge.
+it.effect("passes the project's submodules setting to the worktree add, and only when set", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      const seen: Array<GitVcsDriver.CreateWorktreeOptions | undefined> = [];
+      const spied = Effect.map(GitVcsDriver.GitVcsDriver, (driver) => ({
+        ...driver,
+        createWorktree: (
+          input: Parameters<typeof driver.createWorktree>[0],
+          options?: GitVcsDriver.CreateWorktreeOptions,
+        ) => {
+          seen.push(options);
+          return driver.createWorktree(input, options);
+        },
+      }));
+      const provision = (branch: string, submodules: "none" | null) =>
+        provisionBoardCardWorktree({
+          projectCwd: cwd,
+          branch,
+          baseRefName: initialBranch,
+          submodules,
+        }).pipe(Effect.provideServiceEffect(GitVcsDriver.GitVcsDriver, spied));
+
+      yield* provision("board/card-1", "none");
+      yield* provision("board/card-2", null);
+      assert.deepStrictEqual(seen, [{ submodules: "none" }, undefined]);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("resolves the submodules setting from the project's own override", () =>
+  Effect.gen(function* () {
+    const overridden = ProjectId.make("project-submodules-off");
+    const overrides: Record<ProjectId, ProjectSettingsOverrides> = {};
+    overrides[overridden] = { worktreeSubmodules: "none" };
+    const deps = yield* localBoardWorkspaceDeps.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ projectSettingsOverrides: overrides }),
+          Layer.mock(ThreadGateway)({}),
+          Layer.mock(BoardPullRequestGateway)({}),
+        ),
+      ),
+    );
+    assert.strictEqual(yield* deps.worktreeSubmodules!(overridden), "none");
+    assert.isNull(yield* deps.worktreeSubmodules!(ProjectId.make("project-plain")));
+  }).pipe(Effect.provide(TestLayer)),
+);
 
 it.effect("pins gh to origin in a fork's board worktree, and only there", () =>
   Effect.scoped(
