@@ -26,7 +26,7 @@ import * as Duration from "effect/Duration";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
-import { ThreadCommandRefusedError } from "./ThreadGateway.ts";
+import { ThreadCommandRefusedError, UNKNOWN_THREAD_STATE } from "./ThreadGateway.ts";
 import type { BoardThreadState } from "./ThreadGateway.ts";
 import { aliveThread, fakeThreadState } from "./threadGateway.testkit.ts";
 
@@ -1263,6 +1263,45 @@ it.effect("a finished thread keeps the setting, gets no prompt, and the plan wai
         );
         assert.deepStrictEqual(autoPlanNotes(issued), [
           "Auto-plan is on, but planning had already finished, so nothing was sent. The plan waits for your approval.",
+        ]);
+      }),
+  );
+});
+
+it.effect("an unreachable planning thread is left alone, not read as finished", () => {
+  const card = planningCard("away", { autoBuildSetting: true });
+  let unreachable = false;
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("away", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+      gateway: (local) => ({
+        ...local,
+        threadState: (id) =>
+          unreachable ? Effect.succeed(UNKNOWN_THREAD_STATE) : local.threadState(id),
+      }),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("away");
+        yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
+        unreachable = true;
+        const before = (yield* h.commands).length;
+        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        const after = yield* h.board;
+        assert.strictEqual(boardCardStepState(after, id)?.status, "succeeded");
+        assert.isTrue(cardOf(after.cards, "away")?.autoPlanSetting);
+        const issued = (yield* h.commands).slice(before);
+        assert.isFalse(
+          issued.some(
+            (command) =>
+              command.type === "thread.send" ||
+              command.type === "thread.interrupt" ||
+              command.type === "board.card.mark-auto-plan",
+          ),
+        );
+        assert.deepStrictEqual(autoPlanNotes(issued), [
+          "Auto-plan is on, but the planning thread could not be reached, so nothing was changed. Turn Auto-plan off and on again once its machine is back.",
         ]);
       }),
   );

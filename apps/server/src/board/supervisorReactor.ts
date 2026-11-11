@@ -7546,10 +7546,22 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const state = boardCardStepState(board, card.id);
     const threadId = state?.threadId ?? null;
-    const shell =
+    const read =
       threadId === null
-        ? undefined
-        : yield* liveThread(threadId).pipe(Effect.orElseSucceed(() => undefined));
+        ? { reached: true as const, shell: undefined }
+        : yield* liveThread(threadId).pipe(
+            Effect.map((shell) => ({ reached: true as const, shell })),
+            Effect.orElseSucceed(() => ({ reached: false as const, shell: undefined })),
+          );
+    // Unreachable is not finished: deciding either way could restart or interrupt a live thread.
+    if (!read.reached) {
+      yield* autoPlanNote(
+        card.id,
+        "Auto-plan is on, but the planning thread could not be reached, so nothing was changed. Turn Auto-plan off and on again once its machine is back.",
+      );
+      return null;
+    }
+    const shell = read.shell;
     const requestedTurn =
       threadId === null || shell === undefined
         ? null
