@@ -204,9 +204,9 @@ import { resolveCardPullRequestTarget } from "./cardPullRequestTarget.ts";
 import {
   removeBoardCardAttachmentsDir,
   resolveBoardCardAttachmentPath,
-  spawnPushesBriefImages,
+  spawnPushesBriefAttachments,
   discardStagedBriefAttachments,
-  stageBoardCardImagesAsPending,
+  stageBriefAttachmentsAsPending,
 } from "./attachments.ts";
 import { BoardPlacement, boardPlacementGate } from "./workers/BoardPlacement.ts";
 import { WorkerRpcError } from "./workers/WorkerTransport.ts";
@@ -1696,10 +1696,11 @@ const make = Effect.gen(function* () {
     Option.match(serverConfig, {
       onNone: () => Effect.succeed([] as ReadonlyArray<ChatAttachment>),
       onSome: (config) =>
-        card.attachments.length === 0 || !spawnPushesBriefImages(boardSeedStageRole(card.stage))
+        card.attachments.length === 0 ||
+        !spawnPushesBriefAttachments(boardSeedStageRole(card.stage))
           ? Effect.succeed([] as ReadonlyArray<ChatAttachment>)
           : withFileServices(
-              stageBoardCardImagesAsPending({
+              stageBriefAttachmentsAsPending({
                 stateDir: config.stateDir,
                 attachmentsDir: config.attachmentsDir,
                 card,

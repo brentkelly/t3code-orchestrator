@@ -9,7 +9,7 @@
  * owns the CLAIM: copy the pending file under the original (sanitised,
  * de-duplicated) filename and hand back the record the decider stores.
  *
- * The one push (K4) is also here: `stageBoardCardImagesAsPending` copies a
+ * The one push (K4) is also here: `stageBriefAttachmentsAsPending` copies a
  * card's attachments back out as fresh pending uploads so the supervisor can pass
  * them as ordinary `ChatAttachment`s on a spawn turn — the gateway
  * claims them into thread scope through upstream's intake, and the board
@@ -439,7 +439,7 @@ export function boardCardAttachmentManifest(input: {
  * diff and pull the files by path when they need them (K3) — pushing the same
  * bytes into every round is what K4 rejected.
  */
-export function spawnPushesBriefImages(role: string | null | undefined): boolean {
+export function spawnPushesBriefAttachments(role: string | null | undefined): boolean {
   return role === "build" || role === "plan";
 }
 
@@ -540,7 +540,7 @@ export function pendingBriefAttachment(attachment: {
  * upstream's per-turn caps; the rest stay reachable by path. A copy that fails
  * is skipped, not fatal — the manifest still covers it.
  */
-export const stageBoardCardImagesAsPending = Effect.fn("board-attachments-stage-images")(
+export const stageBriefAttachmentsAsPending = Effect.fn("board-attachments-stage-brief")(
   function* (input: {
     readonly stateDir: string;
     readonly attachmentsDir: string;

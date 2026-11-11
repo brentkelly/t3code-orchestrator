@@ -25,9 +25,9 @@ import {
   pendingBriefAttachment,
   sanitizeBoardAttachmentName,
   selectBriefAttachmentsForTurn,
-  spawnPushesBriefImages,
+  spawnPushesBriefAttachments,
   discardStagedBriefAttachments,
-  stageBoardCardImagesAsPending,
+  stageBriefAttachmentsAsPending,
 } from "./attachments.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -320,10 +320,10 @@ describe("claim, manifest, delete", () => {
 
 describe("the one push (K4)", () => {
   it("reaches the build and planning spawns only", () => {
-    expect(spawnPushesBriefImages("build")).toBe(true);
-    expect(spawnPushesBriefImages("plan")).toBe(true);
+    expect(spawnPushesBriefAttachments("build")).toBe(true);
+    expect(spawnPushesBriefAttachments("plan")).toBe(true);
     for (const role of ["review", "merge", "done", "backlog", "sprint", "ready", null]) {
-      expect(spawnPushesBriefImages(role)).toBe(false);
+      expect(spawnPushesBriefAttachments(role)).toBe(false);
     }
   });
 
@@ -439,7 +439,7 @@ describe("the one push (K4)", () => {
         type: "file" as const,
         mimeType: "application/pdf",
       };
-      const staged = yield* stageBoardCardImagesAsPending({
+      const staged = yield* stageBriefAttachmentsAsPending({
         stateDir,
         attachmentsDir,
         card: card([file, image]),

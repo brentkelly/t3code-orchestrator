@@ -737,6 +737,7 @@ export function BoardPipelineSection() {
     () => [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)],
     [ownProviders, workers],
   );
+  // Stages serve every project, so they follow machine settings; a project-off pick stalls per card.
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
   );
