@@ -47,6 +47,8 @@ import type { ComposerCommandItem } from "./ComposerCommandMenu";
 import { matchComposerModelItems } from "./composerModelMentions";
 import type { ModelEsque } from "./providerIconUtils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
+// T3o: `@` also lists board cards.
+import { useBoardCardMentionItems } from "~/board/mentions/boardCardMentionState";
 import {
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
@@ -129,6 +131,13 @@ export function useComposerMenuItems({
     ...identity,
     machine: environmentMachines.get(identity.environmentId) ?? ("server" as const),
   }));
+  // T3o: board cards lead `@` matches; the board is read only while the menu is open.
+  const cardItems = useBoardCardMentionItems({
+    active: isPathTrigger,
+    query: pathTriggerQuery,
+    environmentId,
+    activeThreadId,
+  });
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: isPathTrigger ? gitCwd : null,
@@ -197,6 +206,7 @@ export function useComposerMenuItems({
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
       return [
+        ...cardItems,
         ...matchComposerThreadItems({
           shells: environmentThreadShells,
           environmentId,

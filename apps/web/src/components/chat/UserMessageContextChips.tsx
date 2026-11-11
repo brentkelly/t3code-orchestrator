@@ -60,6 +60,8 @@ import {
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
 import { TimelineRowCtx } from "./timelineRowContext";
+// T3o: board card mentions are record-less tokens drawn by a T3o chip.
+import { t3oRecordlessChip } from "~/board/mentions/BoardCardMentionChip";
 import { userMessageFileLabel } from "./TimelineUserMessageRow.logic";
 
 function UserMessageMentionChip(props: {
@@ -505,7 +507,11 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         ),
     },
   ],
-  fallback: (_kind, _record, context) => <UnavailableUserMessageContextChip {...context} />,
+  fallback: (_kind, _record, context) =>
+    // T3o: a card mention has no record; the T3o chip draws it.
+    t3oRecordlessChip({ ...context.reference, copyMarkdown: context.copyMarkdown }) ?? (
+      <UnavailableUserMessageContextChip {...context} />
+    ),
 });
 
 export function UserMessageContextReferenceChip(props: {
