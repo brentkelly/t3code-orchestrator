@@ -669,6 +669,33 @@ describe("board shell reducer", () => {
     expect(stranger.cards).toEqual(held.cards);
   });
 
+  it("card-usage replaces the card's figure, and a card upsert keeps the one it could not see", () => {
+    const usage = { tokens: 1200, costUsd: 1.84, costKnown: true, providers: [] };
+    const held = snapshot({ cards: [cardShell("card-1")] });
+    const recorded = applyBoardShellStreamEvent(held, {
+      kind: "card-usage",
+      sequence: 2,
+      cardId: BoardCardId.make("card-1"),
+      usage,
+    });
+    expect(recorded.cards?.[0]?.usage).toEqual(usage);
+
+    const dragged = applyBoardShellStreamEvent(recorded, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: cardShell("card-1", { orderKey: "z" }),
+    });
+    expect(dragged.cards?.[0]?.usage).toEqual(usage);
+
+    const cleared = applyBoardShellStreamEvent(dragged, {
+      kind: "card-usage",
+      sequence: 4,
+      cardId: BoardCardId.make("card-1"),
+      usage: null,
+    });
+    expect(cleared.cards?.[0]).not.toHaveProperty("usage");
+  });
+
   it("card-review applies the whole review slice, and clears it as a whole", () => {
     const held = snapshot({ cards: [cardShell("card-1")] });
     const summary = {

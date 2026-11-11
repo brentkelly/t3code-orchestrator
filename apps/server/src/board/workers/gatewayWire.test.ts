@@ -46,3 +46,47 @@ it.effect("a turn end from a previous worker still decodes on this central", () 
     });
   }),
 );
+
+it.effect("a finished turn's usage crosses the wire with the counts the board prices", () =>
+  Effect.gen(function* () {
+    const usage = {
+      usageScope: "main_agent",
+      usageStatus: "complete",
+      inputTokens: 1200,
+      cachedInputTokens: 800,
+      outputTokens: 90,
+      reasoningTokens: 30,
+      hasSubagents: true,
+      models: ["gpt-5-codex"],
+      otherUsage: { inputTokens: 10, outputTokens: 2 },
+    } as const;
+    const encoded = yield* encodeSignal(
+      toWireSignal({
+        type: "usage-recorded",
+        threadId,
+        providerTurnId: "turn-1",
+        driver: "codex",
+        model: "gpt-5-codex",
+        delegatedFromThreadId: null,
+        usage,
+      }),
+    );
+    const decoded = fromWireSignal(yield* decodeSignal(encoded));
+    assert.deepStrictEqual(decoded, {
+      type: "usage-recorded",
+      threadId,
+      providerTurnId: "turn-1",
+      driver: "codex",
+      model: "gpt-5-codex",
+      delegatedFromThreadId: null,
+      usage: {
+        usageStatus: "complete",
+        inputTokens: 1200,
+        cachedInputTokens: 800,
+        outputTokens: 90,
+        reasoningTokens: 30,
+        otherUsage: { inputTokens: 10, outputTokens: 2 },
+      },
+    });
+  }),
+);

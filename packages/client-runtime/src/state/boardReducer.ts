@@ -52,6 +52,8 @@ function preserveAbsentShellFields(
   if (existing === undefined) return next;
   const briefHasImage = next.briefHasImage ?? existing.briefHasImage;
   const planCount = next.planCount ?? existing.planCount;
+  // Usage rides only the snapshot and `card-usage` (T3O-77).
+  const usage = next.usage ?? existing.usage;
   // The review slice rides or rests as a whole: `reviewOutcome` present means
   // the producer saw the ledger, so every key it holds is authoritative.
   const carryReview = next.reviewOutcome === undefined && existing.reviewOutcome !== undefined;
@@ -66,6 +68,7 @@ function preserveAbsentShellFields(
   if (
     briefHasImage === next.briefHasImage &&
     planCount === next.planCount &&
+    usage === next.usage &&
     !carryReview &&
     !carryStall &&
     !carryQueuedBy
@@ -89,6 +92,7 @@ function preserveAbsentShellFields(
     ...next,
     ...(briefHasImage === undefined ? {} : { briefHasImage }),
     ...(planCount === undefined ? {} : { planCount }),
+    ...(usage === undefined ? {} : { usage }),
     ...(carryQueuedBy ? { queuedBy: existing.queuedBy } : {}),
     ...carried,
   };
@@ -105,7 +109,9 @@ export function applyBoardShellStreamItem(
 ): BoardShellSnapshot | null {
   if (item.kind === "snapshot") return item.snapshot;
   if (snapshot === null) return null;
-  if (item.kind === "card-threads") return applyBoardShellStreamEvent(snapshot, item);
+  if (item.kind === "card-threads" || item.kind === "card-usage") {
+    return applyBoardShellStreamEvent(snapshot, item);
+  }
   // The worker summary carries runtime status the board log never
   // sees, so its sequence is only the board head: a fresh read, unguarded.
   if (item.kind === "workers") return applyBoardShellStreamEvent(snapshot, item);
@@ -260,6 +266,18 @@ export function applyBoardShellStreamEvent(
           ? { ...card, planCount: event.planCount }
           : card,
       );
+      return { ...snapshot, cards: nextCards };
+    }
+    case "card-usage": {
+      // A fresh read of the card's figure, like `card-threads`; null clears it.
+      const nextCards = Arr.map(cards, (card) => {
+        if (card.cardId !== event.cardId) return card;
+        if (event.usage === null) {
+          const { usage: _cleared, ...rest } = card;
+          return rest;
+        }
+        return { ...card, usage: event.usage };
+      });
       return { ...snapshot, cards: nextCards };
     }
     case "card-review": {

@@ -12,6 +12,7 @@ import {
   DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
   DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
   DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES,
+  DEFAULT_BOARD_COST_EMPHASIS_USD,
   DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
   DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_SUBMIT_PROMPT,
@@ -76,7 +77,18 @@ describe("board settings defaults", () => {
     expect(decodeSettings({ display: {} }).display.autoCollapseEmptyStages).toBe(false);
     const on = decodeSettings({ display: { autoCollapseEmptyStages: true } });
     expect(on.display.autoCollapseEmptyStages).toBe(true);
-    expect(decodeSettings(encodeSettings(on)).display).toEqual({ autoCollapseEmptyStages: true });
+    expect(decodeSettings(encodeSettings(on)).display).toEqual({
+      autoCollapseEmptyStages: true,
+      costEmphasisUsd: DEFAULT_BOARD_COST_EMPHASIS_USD,
+    });
+  });
+
+  it("ships the cost emphasis at $5, keeps a set one, and refuses a negative one (T3O-77)", () => {
+    expect(DEFAULT_BOARD_COST_EMPHASIS_USD).toBe(5);
+    expect(decodeSettings({ display: { autoCollapseEmptyStages: true } }).display.costEmphasisUsd).toBe(5);
+    const set = decodeSettings({ display: { costEmphasisUsd: 12.5 } });
+    expect(decodeSettings(encodeSettings(set)).display.costEmphasisUsd).toBe(12.5);
+    expect(() => decodeSettings({ display: { costEmphasisUsd: -1 } })).toThrow();
   });
 
   it("ships auto-archive off with a seven-day window (T3O-77)", () => {

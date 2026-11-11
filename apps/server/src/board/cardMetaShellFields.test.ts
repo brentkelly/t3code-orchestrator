@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { BoardEngine } from "./BoardEngine.ts";
 import { BoardQueries } from "./BoardQueries.ts";
@@ -1022,3 +1023,54 @@ it.layer(makeTestLayer("t3o-card-worker-shell-"))(
     );
   },
 );
+
+it.layer(makeTestLayer("t3o-card-meta-usage-"))("usage, snapshot vs delta", (it) => {
+  it.effect("sums a card's usage the same in SQL for the snapshot as in JS for the delta", () =>
+    Effect.gen(function* () {
+      yield* seedCard();
+      const sql = yield* SqlClient.SqlClient;
+      const queries = yield* BoardQueries;
+      assert.isUndefined((yield* shellCard)?.usage, "a card with no usage has no figure");
+      assert.isNull(yield* queries.boardCardUsageSummary(cardId));
+
+      // Several steps, threads, providers and models, with every cost source, and
+      // costs that drift when summed as floats.
+      const rows: ReadonlyArray<readonly [string, string, string, string, number, number, number]> = [
+        ["building", "thread-a", "claudeAgent", "claude-opus", 100_100, 0, 0],
+        ["review@1", "thread-b", "claudeAgent", "claude-opus", 100_200, 1, 0],
+        ["review@1", "thread-c", "codex", "gpt-5-codex", 300_000, 0, 0],
+        ["review@2", "thread-d", "cursor", "", 0, 0, 2],
+        ["ci-fix@1.1", "thread-e", "grok", "grok-4", 0, 0, 1],
+        ["merge", "thread-f", "opencode", "kimi", 7, 0, 0],
+      ];
+      for (const [stepId, threadId, provider, model, micro, listed, empty] of rows) {
+        yield* sql`
+          INSERT INTO boards.board_card_usage (
+            card_id, step_id, thread_id, provider, model, uncached_input, cached_input,
+            cache_creation, output, reasoning, cost_micro_usd, turns_reported, turns_override,
+            turns_list_priced, turns_unpriced, turns_no_usage, updated_at
+          ) VALUES (
+            ${cardId}, ${stepId}, ${threadId}, ${provider}, ${model}, 1000, 200, 30, 400, 50,
+            ${micro}, 0, ${micro > 0 && listed === 0 ? 1 : 0}, ${listed},
+            ${micro === 0 && empty === 1 ? 1 : 0}, ${empty === 2 ? 1 : 0}, ${createdAt}
+          )`;
+      }
+      const delta = yield* queries.boardCardUsageSummary(cardId);
+      assert.deepStrictEqual((yield* shellCard)?.usage, delta ?? undefined);
+      assert.deepInclude(delta, {
+        tokens: 6 * 1630,
+        costUsd: 0.500307,
+        costKnown: true,
+        estimated: true,
+        partial: true,
+      });
+
+      // A card that ran on a worker before usage was tracked reads partial in both.
+      yield* sql`UPDATE boards.board_cards SET usage_history_partial = 1 WHERE card_id = ${cardId}`;
+      yield* sql`DELETE FROM boards.board_card_usage WHERE card_id = ${cardId}`;
+      const historyOnly = yield* queries.boardCardUsageSummary(cardId);
+      assert.deepStrictEqual(historyOnly, { tokens: 0, costUsd: 0, partial: true, providers: [] });
+      assert.deepStrictEqual((yield* shellCard)?.usage, historyOnly);
+    }),
+  );
+});
