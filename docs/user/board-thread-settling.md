@@ -57,3 +57,11 @@ agent. If anything is missed, the board re-checks every half minute and again wh
 This is separate from the inactivity and merged-pull-request settling in **Settings** →
 **General**, which applies to every thread on the machine. Those rules still run; the board just
 does not wait for them.
+
+## Settle scripts
+
+A card's threads share the card's worktree, so a project action marked to run when a thread settles
+(`runOnSettle`) does not run for card threads: it would clean up under the stage still working
+there. Closing that thread's own stop-on-settle terminals still happens. To tidy a card's worktree,
+mark the action **Run before the worktree is removed** instead (see
+[When a card gives its worktree back](board-worktree-cleanup.md)).

@@ -36,6 +36,10 @@ back.
 If you delete a finished card's worktree folder yourself, the board notices on its next check and
 tidies git's record of it. The branch and its commits stay.
 
+Automatic worktree cleanup (**Settings → Worktrees → Cleanup**) leaves card worktrees alone, whatever their
+inactivity or merge state. The board removes a card's worktree itself, as described here; once it
+has, those rules apply to that folder again.
+
 ## Clearing a kept worktree
 
 Open the card. Its banner names the reason and the worktree's folder, and offers two actions:
