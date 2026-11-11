@@ -342,9 +342,15 @@ function buildBundle() {
   if (!values["no-build"]) {
     // A file rather than an env var: vp runs tasks in a clean env, and a file the web
     // config reads is a tracked task input. `vp pack` cleans dist, so it is copied in after.
-    // Removed after the build so later dev servers and plain builds don't embed a stale release.
+    // Removed on any exit, Ctrl-C included, so later dev servers and plain builds don't
+    // embed a stale release.
     const stamp = computeStamp(repoRoot);
     const webStamp = NodePath.join(repoRoot, "apps/web/.t3o-release.json");
+    const removeWebStamp = () => NodeFS.rmSync(webStamp, { force: true });
+    process.once("exit", removeWebStamp);
+    for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+      process.once(signal, () => process.exit(130));
+    }
     writeStamp(webStamp, stamp);
     console.log(`[t3o-service] Building T3o ${stamp.version} (vp run --filter t3 build)...`);
     const vp = NodePath.join(repoRoot, "node_modules/.bin/vp");
@@ -352,7 +358,8 @@ function buildBundle() {
       cwd: repoRoot,
       allowFailure: true,
     });
-    NodeFS.rmSync(webStamp, { force: true });
+    removeWebStamp();
+    process.off("exit", removeWebStamp);
     if (status !== 0) fail(`${vp} run --filter t3 build exited ${status}`);
     writeStamp(NodePath.join(distDir, STAMP_FILE), stamp);
     assertBundleCarries(stamp.commit);
@@ -449,7 +456,7 @@ function installShimsOrThrow() {
   if (advice !== null) console.log(`\n${advice}\n`);
 }
 
-/** `activating` and a pending auto-restart still hold the tree, so only these two are safe. */
+/** Empty output (no systemd) counts as stopped; `activating` covers a pending auto-restart. */
 const isRunning = () => unitIsRunning(capture("systemctl", ["is-active", unitName]));
 
 if (command === "sync") {
