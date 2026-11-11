@@ -172,6 +172,9 @@ export const toWireCommandError = (error: ThreadCommandError): BoardWorkerGatewa
     operation: error.command,
     threadId: error.threadId,
     detail: error.detail,
+    ...(error._tag === "ThreadCommandRefusedError" && error.reason !== undefined
+      ? { reason: error.reason }
+      : {}),
   });
 
 export const toWireReadError = (error: ThreadReadError): BoardWorkerGatewayError =>
@@ -192,7 +195,12 @@ export const fromWireCommandError =
   (command: string, threadId: ThreadId) =>
   (error: WorkerGatewayCallError): ThreadCommandError =>
     error._tag === "BoardWorkerGatewayError" && error.kind === "refused"
-      ? new ThreadCommandRefusedError({ command, threadId, detail: error.detail })
+      ? new ThreadCommandRefusedError({
+          command,
+          threadId,
+          detail: error.detail,
+          ...(error.reason === undefined ? {} : { reason: error.reason }),
+        })
       : new ThreadCommandFailedError({
           command,
           threadId,

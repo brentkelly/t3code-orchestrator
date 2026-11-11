@@ -42,6 +42,9 @@ export class ThreadCommandRefusedError extends Schema.TaggedError<ThreadCommandR
     command: Schema.String,
     threadId: Schema.String,
     detail: Schema.String,
+    /** Why, when the board acts on it: the step's provider is turned off for
+        the thread's project (T3O-74). Absent for every other refusal. */
+    reason: Schema.optional(Schema.Literal("provider-disabled")),
   },
 ) {
   override get message(): string {

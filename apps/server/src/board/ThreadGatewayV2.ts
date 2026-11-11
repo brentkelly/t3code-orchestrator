@@ -33,17 +33,22 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
+import * as ServerConfig from "../config.ts";
+import * as AttachmentClaims from "../orchestration-v2/AttachmentClaims.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import type * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { isAutoSettlementCandidate } from "../orchestration-v2/ThreadSettlementService.ts";
+import * as ThreadMessageIntake from "../orchestration-v2/ThreadMessageIntake.ts";
 import { limitRecoveryCommand } from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import {
   ThreadCommandFailedError,
@@ -67,7 +72,8 @@ import {
 type ServerCommand = OrchestrationV2Command | OrchestrationV2InternalCommand;
 type DispatchError =
   | Orchestrator.OrchestratorV2Error
-  | ThreadManagement.ThreadManagementProviderInstanceDisabledError;
+  | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+  | AttachmentClaims.AttachmentClaimError;
 
 /** The message the board's own turns carry as their author. The board stands
     in for the human who set the card up, exactly as v2's own usage-limit
@@ -528,7 +534,14 @@ const isRefusal = (error: DispatchError): boolean =>
 
 export const commandError = (command: string, threadId: ThreadId) => (error: DispatchError) =>
   isRefusal(error)
-    ? new ThreadCommandRefusedError({ command, threadId, detail: describe(error) })
+    ? new ThreadCommandRefusedError({
+        command,
+        threadId,
+        detail: describe(error),
+        ...(error._tag === "ThreadManagementProviderInstanceDisabledError"
+          ? { reason: "provider-disabled" as const }
+          : {}),
+      })
     : new ThreadCommandFailedError({ command, threadId, detail: describe(error), cause: error });
 
 const readError = (operation: string) => (cause: unknown) =>
@@ -544,6 +557,15 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const crypto = yield* Crypto.Crypto;
   const path = yield* Path.Path;
+  // What upstream's message intake needs to claim a turn's pending uploads
+  // into thread scope (and extract a PDF's text sidecar), captured so the
+  // gateway's own shape stays free of requirements.
+  const intakeServices = yield* Effect.context<
+    | ThreadManagement.ThreadManagementService
+    | ServerConfig.ServerConfig
+    | DocumentText.DocumentText
+    | FileSystem.FileSystem
+  >();
   const nowMs = Effect.map(DateTime.now, DateTime.toEpochMillis);
   const freshMessageId = crypto.randomUUIDv4().pipe(
     Effect.map((uuid) => MessageId.make(`msg-${uuid}`)),
@@ -595,7 +617,9 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
     readonly attachments: ReadonlyArray<ChatAttachment>;
   }) =>
     Effect.gen(function* () {
-      yield* run({
+      // Through the intake, as a client's send goes: it claims the turn's
+      // pending uploads and releases them if the dispatch is not accepted.
+      yield* ThreadMessageIntake.dispatchCommand({
         type: "message.dispatch",
         commandId: input.commandId,
         threadId: input.threadId,
@@ -604,7 +628,10 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
         attachments: input.attachments,
         dispatchMode: { type: "start_immediately" },
         ...BOARD_AUTHOR,
-      });
+      }).pipe(
+        Effect.provideContext(intakeServices),
+        Effect.mapError(commandError("message.dispatch", input.threadId)),
+      );
     });
 
   const gateway: LocalThreadGatewayShape = {
@@ -635,6 +662,15 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
             `project ${input.projectId} does not exist`,
           );
         }
+        // Refused before anything is created, by this server's own settings,
+        // so a provider turned off for the project never flashes a thread.
+        yield* threads
+          .assertProviderInstanceEnabled({
+            commandId: input.commandId,
+            projectId: input.projectId,
+            instanceId: input.modelSelection.instanceId,
+          })
+          .pipe(Effect.mapError(commandError("thread.create", input.threadId)));
         const inWorktree = input.branch !== null;
         yield* run({
           type: "thread.create",

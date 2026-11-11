@@ -239,6 +239,9 @@ export class BoardWorkerGatewayError extends Schema.TaggedError<BoardWorkerGatew
     operation: Schema.String,
     threadId: Schema.NullOr(Schema.String),
     detail: Schema.String,
+    /** A refusal's reason the supervisor acts on (T3O-74). Optional, so a peer
+        on either side of the change reads the other as a plain refusal. */
+    reason: Schema.optional(Schema.Literal("provider-disabled")),
   },
 ) {}
 

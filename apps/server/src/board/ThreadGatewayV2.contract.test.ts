@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * The thread gateway's contract, run against `ThreadGatewayV2` on the real
  * orchestration-v2 stack (T3O-58, T3O-59).
@@ -12,7 +13,11 @@
  * what a provider would write (a plan, an assistant message) is written to the
  * engine's own event sink, which projects it exactly as a provider's would.
  */
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import {
+  ChatAttachmentId,
   CommandId,
   EventId,
   MessageId,
@@ -35,6 +40,9 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import { createPendingAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
+import { ServerConfig } from "../config.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -225,6 +233,109 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         assert.isNull(yield* threads.threadState(threadId));
         assert.strictEqual((yield* threads.threadRecords([threadId])).size, 0);
       }),
+    );
+
+    it.effect("a spawn claims its pending attachments into the thread (T3O-74)", () =>
+      Effect.gen(function* () {
+        yield* ensureProject;
+        const config = yield* ServerConfig;
+        const threads = yield* LocalThreadGateway;
+        const threadId = ThreadId.make("thread-contract-attachments");
+        const pendingId = createPendingAttachmentId(".pdf");
+        const pendingPath = NodePath.join(config.attachmentsDir, `${pendingId}.pdf`);
+        NodeFS.mkdirSync(config.attachmentsDir, { recursive: true });
+        NodeFS.writeFileSync(pendingPath, "%PDF-1.4");
+        // The upload's extracted text, as upstream's upload leaves it.
+        NodeFS.writeFileSync(`${pendingPath}.txt`, "the spec");
+        const before = yield* head;
+        yield* threads.spawn({
+          commandId: boardCommandId("spawn-thread"),
+          threadId,
+          projectId,
+          title: "Attachments",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: workspaceRoot,
+          text: "Read the spec.",
+          attachments: [
+            {
+              type: "file",
+              id: ChatAttachmentId.make(pendingId),
+              name: "spec.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 8,
+            },
+          ],
+        });
+        const sent = (yield* loggedSince(before)).flatMap(({ event }) =>
+          event.type === "message.updated" ? event.payload.attachments : [],
+        );
+        assert.strictEqual(sent.length, 1);
+        const [claimed] = sent;
+        assert.notMatch(String(claimed?.id), /^pending-/);
+        const claimedPath = resolveAttachmentPath({
+          attachmentsDir: config.attachmentsDir,
+          attachment: claimed!,
+        });
+        assert.isNotNull(claimedPath);
+        assert.isTrue(NodeFS.existsSync(claimedPath!));
+        assert.strictEqual(NodeFS.readFileSync(`${claimedPath}.txt`, "utf8"), "the spec");
+      }),
+    );
+
+    it.effect(
+      "a spawn on a provider turned off for the project is refused with its reason and creates nothing (T3O-74)",
+      () =>
+        Effect.gen(function* () {
+          const engine = yield* boardStackEngine;
+          const offProjectId = ProjectId.make("project-contract-provider-off");
+          yield* engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make("cmd-contract-project-provider-off"),
+            projectId: offProjectId,
+            title: "Provider off",
+            workspaceRoot: "/tmp/project-contract-provider-off",
+          });
+          const settings = yield* ServerSettingsService;
+          yield* settings
+            .updateSettings({
+              projectSettingsOverrides: {
+                [offProjectId]: { providerInstances: { codex: { enabled: false } } },
+              },
+            })
+            .pipe(Effect.orDie);
+          const threads = yield* LocalThreadGateway;
+          const threadId = ThreadId.make("thread-contract-provider-off");
+          const before = yield* head;
+          const exit = yield* Effect.exit(
+            threads.spawn({
+              commandId: boardCommandId("spawn-thread"),
+              threadId,
+              projectId: offProjectId,
+              title: "Provider off",
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: "/tmp/project-contract-provider-off",
+              text: "Do the work.",
+              attachments: [],
+            }),
+          );
+          const error = Exit.isFailure(exit)
+            ? Option.getOrNull(Cause.findErrorOption(exit.cause))
+            : null;
+          assert.strictEqual(error?._tag, "ThreadCommandRefusedError");
+          assert.strictEqual(
+            error?._tag === "ThreadCommandRefusedError" ? error.reason : null,
+            "provider-disabled",
+          );
+          // Refused before thread.create: nothing was ever logged for it.
+          assert.isNull(yield* threads.threadState(threadId));
+          assert.deepStrictEqual(yield* loggedSince(before), []);
+        }),
     );
 
     it.effect("a turn sent to a thread that does not exist is refused", () =>
