@@ -10167,9 +10167,9 @@ const make = Effect.gen(function* () {
       // `lastNudgeAt ?? startedAt`.
       // Checked last, so only overdue steps pay.
       if (yield* supersededByPendingTurn(state)) continue;
-      // A thread on a permission prompt, its own or a subagent's, is waiting on a human and emits
-      // nothing; nudging it would replace "Needs permission" with a stall. Read last, so only
-      // overdue steps pay.
+      // A thread on its own permission prompt is waiting on a human; nudging it would replace
+      // "Needs permission" with a stall. Read last, so only overdue steps pay. The subagent half
+      // repeats this sweep's earlier read on purpose: it closes the gap if a child just asked.
       if (state.threadId !== null && (yield* threadAwaitingHuman(state.threadId))) {
         permissionHeldAt.set(String(state.threadId), now);
         continue;
