@@ -30,6 +30,7 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2DomainEvent,
+  type ProjectSettingsOverrides,
   type OrchestrationV2StoredEvent,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -299,13 +300,11 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
             workspaceRoot: "/tmp/project-contract-provider-off",
           });
           const settings = yield* ServerSettingsService;
-          yield* settings
-            .updateSettings({
-              projectSettingsOverrides: {
-                [offProjectId]: { providerInstances: { codex: { enabled: false } } },
-              },
-            })
-            .pipe(Effect.orDie);
+          const projectSettingsOverrides: Record<ProjectId, ProjectSettingsOverrides> = {};
+          projectSettingsOverrides[offProjectId] = {
+            providerInstances: { [modelSelection.instanceId]: { enabled: false } },
+          };
+          yield* settings.updateSettings({ projectSettingsOverrides }).pipe(Effect.orDie);
           const threads = yield* LocalThreadGateway;
           const threadId = ThreadId.make("thread-contract-provider-off");
           const before = yield* head;

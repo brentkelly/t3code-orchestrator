@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
  * The one push (t3o-32, K4): a plan-mode or build-mode spawn carries the
- * brief's images natively on its first turn, staged as fresh pending uploads;
- * non-image files never ride a turn (they are pulled by path instead).
+ * brief's attachments on its first turn, staged as fresh pending uploads —
+ * images natively, everything else as files (T3O-74).
  */
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -99,15 +99,22 @@ it.effect("a planning spawn carries the brief's images as pending uploads", () =
           );
           if (spawn?.type !== "thread.spawn") return;
           const attachments = spawn.attachments;
-          assert.strictEqual(attachments.length, 1, "images only, files stay on disk");
-          const [only] = attachments;
-          assert.strictEqual(only?.type, "image");
-          assert.strictEqual(only?.name, "bug.png");
-          assert.match(String(only?.id), /^pending-/);
-          // The staged copy is a real pending upload in upstream's directory,
-          // so the Normalizer will claim it into thread scope untouched.
+          assert.deepStrictEqual(
+            attachments.map((attachment) => [attachment.type, attachment.name]),
+            [
+              ["file", "spec.pdf"],
+              ["image", "bug.png"],
+            ],
+          );
+          const [pdf, png] = attachments;
+          assert.match(String(png?.id), /^pending-/);
+          // The staged copies are real pending uploads in upstream's directory,
+          // so the gateway's intake claims them into thread scope.
           assert.isTrue(
-            NodeFS.existsSync(NodePath.join(storage.stateDir, "attachments", `${only?.id}.png`)),
+            NodeFS.existsSync(NodePath.join(storage.stateDir, "attachments", `${png?.id}.png`)),
+          );
+          assert.isTrue(
+            NodeFS.existsSync(NodePath.join(storage.stateDir, "attachments", `${pdf?.id}.pdf`)),
           );
         }),
     );
@@ -115,7 +122,7 @@ it.effect("a planning spawn carries the brief's images as pending uploads", () =
   }),
 );
 
-it.effect("a card with only non-image files spawns with no attachments", () =>
+it.effect("a card with only non-image files spawns with them as files", () =>
   Effect.gen(function* () {
     const storage = seedStorage(["spec.pdf"]);
     yield* withGovernor(
@@ -134,7 +141,10 @@ it.effect("a card with only non-image files spawns with no attachments", () =>
           const spawn = (yield* commands).find((command) => command.type === "thread.spawn");
           assert.isDefined(spawn);
           if (spawn?.type !== "thread.spawn") return;
-          assert.deepStrictEqual(spawn.attachments, []);
+          assert.deepStrictEqual(
+            spawn.attachments.map((attachment) => [attachment.type, attachment.name]),
+            [["file", "spec.pdf"]],
+          );
         }),
     );
     NodeFS.rmSync(storage.baseDir, { recursive: true, force: true });

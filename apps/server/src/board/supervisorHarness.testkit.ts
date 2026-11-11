@@ -544,6 +544,9 @@ export function withGovernor(
     /** Reject every `thread.create`, so a test can drive the spawn-failure path
         (a thread the engine refuses to create) without a provider double. */
     readonly rejectThreadCreate?: boolean;
+    /** Provider instances turned off for every project (T3O-74): a spawn on
+        one is refused with the provider-disabled reason. */
+    readonly providerDisabled?: ReadonlyArray<string>;
     /** The card detail's CI pass rows can't be read (T3O-57). */
     readonly ciPassesUnreadable?: boolean;
     /** What a branch pull-request lookup answers. `undefined` (the default) is
@@ -763,6 +766,7 @@ export function withGovernor(
       })),
       ...(input.initialShells === undefined ? {} : { threads: input.initialShells }),
       ...(input.rejectThreadCreate === true ? { rejectSpawn: true } : {}),
+      ...(input.providerDisabled === undefined ? {} : { providerDisabled: input.providerDisabled }),
       onCall: recordCommand,
       latestAssistantMessage: (threadId) => {
         const text = threadMessages.get(String(threadId));

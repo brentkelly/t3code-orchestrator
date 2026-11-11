@@ -190,6 +190,7 @@ import type { BoardDispatchError } from "./errors.ts";
 import { BoardQueries } from "./BoardQueries.ts";
 import {
   ThreadCommandFailedError,
+  ThreadCommandRefusedError,
   ThreadGateway,
   ThreadReadError,
   UNKNOWN_THREAD_STATE,
@@ -350,6 +351,7 @@ type BoardCardReclaimAttempt =
 type CiHoldOptions = { readonly machine?: boolean; readonly headline?: BoardCiHeadline };
 
 const isThreadCommandFailed = Schema.is(ThreadCommandFailedError);
+const isThreadCommandRefused = Schema.is(ThreadCommandRefusedError);
 
 /**
  * What a failed spawn left behind (T3O-66, D22), read off the remote
@@ -359,6 +361,9 @@ const isThreadCommandFailed = Schema.is(ThreadCommandFailedError);
  *   before the spawn call was sent (staging the card's files). No thread is
  *   left (the gateway deletes one whose first turn never started).
  * - `worker-offline`: the worker couldn't be reached, so nothing was sent.
+ * - `provider-disabled`: refused because the step's provider is turned off
+ *   for the card's project on the server that spawns (T3O-74). Nothing was
+ *   created.
  * - `unknown`: any `WorkerRpcError` on the spawn call itself. The connection
  *   went mid-call, or the worker died partway through (a defect, which the
  *   transport marks `unsupported`; an online worker is past the protocol
@@ -367,6 +372,9 @@ const isThreadCommandFailed = Schema.is(ThreadCommandFailedError);
  */
 const spawnFailureLeft = (cause: Cause.Cause<unknown>) => {
   const error = Cause.findErrorOption(cause).pipe(Option.getOrUndefined);
+  if (isThreadCommandRefused(error) && error.reason === "provider-disabled") {
+    return "provider-disabled" as const;
+  }
   const reason = isThreadCommandFailed(error) ? error.cause : undefined;
   if (Predicate.isTagged(reason, "WorkerUnavailable")) return "worker-offline" as const;
   if (reason instanceof WorkerRpcError) return "unknown" as const;
@@ -1815,8 +1823,6 @@ const make = Effect.gen(function* () {
     /** Whether to run the worktree setup script — build only. */
     readonly runSetup: boolean;
     readonly text: string;
-    /** The brief's images on a build/plan spawn (t3o-32, K4); `[]` elsewhere. */
-    readonly attachments: ReadonlyArray<ChatAttachment>;
   }) {
     const { card, step } = input;
     const threadId = yield* freshThreadId;
@@ -1875,7 +1881,10 @@ const make = Effect.gen(function* () {
         branch: input.branch,
         worktreePath: input.worktreePath,
         text: input.text,
-        attachments: input.attachments,
+        // The brief's attachments on a build/plan spawn (t3o-32, K4). A worker
+        // gets none: its gateway sends no attachments, so central copies would
+        // only be orphaned; its thread reads the files staged there instead.
+        attachments: remoteWorker === null ? yield* stageSpawnAttachments(card) : [],
         ...(remoteWorker === null
           ? {}
           : { workerId: remoteWorker, stageAttachments: stagedBriefFiles(card) }),
@@ -1894,6 +1903,7 @@ const make = Effect.gen(function* () {
       );
     if (spawned === "none") return null;
     if (spawned === "worker-offline") return "worker-offline" as const;
+    if (spawned === "provider-disabled") return "provider-disabled" as const;
     yield* dispatch({
       type: "board.card.link-thread",
       commandId: yield* commandId("link-thread"),
@@ -1930,7 +1940,15 @@ const make = Effect.gen(function* () {
    * stalled step, so the human has a way back.
    */
   const escalateSpawnFailure = Effect.fn("board-supervisor-escalateSpawnFailure")(
-    function* (input: { readonly card: BoardCard; readonly state: BoardCardStepState }) {
+    function* (input: {
+      readonly card: BoardCard;
+      readonly state: BoardCardStepState;
+      /** Why, when the stall should say so rather than read as a failure. */
+      readonly stalledReason?: BoardCardStepStalledReason;
+      readonly lastError?: string;
+      /** False for a stall the agent never ran into, so no budget is spent. */
+      readonly chargeBudget?: boolean;
+    }) {
       yield* Effect.logWarning("board supervisor: could not spawn a thread for the step", {
         cardId: input.card.id,
         stepId: input.state.stepId,
@@ -1946,6 +1964,9 @@ const make = Effect.gen(function* () {
         threadId: null,
         escalateToHuman: true,
         progressed: false,
+        ...(input.stalledReason === undefined ? {} : { stalledReason: input.stalledReason }),
+        ...(input.lastError === undefined ? {} : { lastError: input.lastError }),
+        ...(input.chargeBudget === undefined ? {} : { chargeBudget: input.chargeBudget }),
         createdAt: yield* nowIso,
       });
       // Escalation releases the step's slot exactly as the recovery escalation
@@ -1955,6 +1976,18 @@ const make = Effect.gen(function* () {
       yield* releaseSlot(input.state);
     },
   );
+
+  /** A spawn refused because the step's provider is turned off for the card's
+      project (T3O-74): amber like Provider missing, and no budget spent — the
+      agent never ran. A model edit restarts the stage; Continue retries. */
+  const stallProviderDisabled = (card: BoardCard, state: BoardCardStepState) =>
+    escalateSpawnFailure({
+      card,
+      state,
+      stalledReason: "provider-disabled-for-project",
+      lastError: `The step's provider instance '${state.providerInstanceId}' is turned off for this card's project.`,
+      chargeBudget: false,
+    });
 
   // Whether a step's thread is gone (deleted or never present) — recovery must
   // respawn rather than nudge a thread that no longer exists.
@@ -2496,10 +2529,8 @@ const make = Effect.gen(function* () {
         return;
       }
       if (resumed === "admitted") return;
-      const spawnAttachments = yield* stageSpawnAttachments(card);
       const threadId = yield* spawnStepThread({
         card,
-        attachments: spawnAttachments,
         step: {
           stepId: state.stepId,
           stepLabel: state.stepLabel,
@@ -2528,6 +2559,11 @@ const make = Effect.gen(function* () {
         // sent nothing: the step waits for it, as the gate would have held it.
         yield* slots.release(slotKey);
         yield* holdQueued(state, "worker-offline");
+        return;
+      }
+      if (threadId === "provider-disabled") {
+        yield* slots.release(slotKey);
+        yield* stallProviderDisabled(card, state);
         return;
       }
       // Observe the admit dispatch (the generic `dispatch` helper swallows
@@ -2610,10 +2646,8 @@ const make = Effect.gen(function* () {
       yield* escalateSpawnFailure({ card, state });
       return;
     }
-    const spawnAttachments = yield* stageSpawnAttachments(card);
     const threadId = yield* spawnStepThread({
       card,
-      attachments: spawnAttachments,
       step: {
         stepId: state.stepId,
         stepLabel: state.stepLabel,
@@ -2637,6 +2671,10 @@ const make = Effect.gen(function* () {
     }
     if (threadId === "worker-offline") {
       yield* holdQueued(state, "worker-offline");
+      return;
+    }
+    if (threadId === "provider-disabled") {
+      yield* stallProviderDisabled(card, state);
       return;
     }
     yield* dispatch({
@@ -9901,7 +9939,8 @@ const make = Effect.gen(function* () {
     if (
       event.payload.modelOverridesEdited === true &&
       state.status === "stalled" &&
-      state.stalledReason === "provider-not-on-worker"
+      (state.stalledReason === "provider-not-on-worker" ||
+        state.stalledReason === "provider-disabled-for-project")
     ) {
       yield* dispatchOptional({
         type: "board.card.start-stage-thread",

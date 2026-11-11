@@ -2810,6 +2810,11 @@ export const BOARD_STEP_STALLED_REASONS = [
   // runs the step elsewhere or on another provider. Clears when the card is
   // pinned to a worker that has it, its model changes, or the instance appears.
   "provider-not-on-worker",
+  // The step's provider instance is turned off for the card's project
+  // (T3O-74), refused by the server that would spawn it before any thread
+  // exists. Clears when the card's model changes, or on Continue once the
+  // provider is turned back on for the project.
+  "provider-disabled-for-project",
   // The card's worker was removed from the board (T3O-66, D22), or the card
   // was force-moved off a worker it could not reach, while this step ran or
   // was parked there. Its thread was stopped if the worker answered, and its
@@ -5122,6 +5127,12 @@ function boardStalledWords(
         label: "Provider missing",
         detail:
           "This step's provider isn't on the card's worker. The step hasn't started. Move the card to a worker that has it, or pick a model the worker offers.",
+      };
+    case "provider-disabled-for-project":
+      return {
+        label: "Provider disabled",
+        detail:
+          "This step's provider is turned off for the card's project. The step hasn't started. Turn it on in the project's settings and press Continue, or change this card's model.",
       };
     case "worker-removed":
       return {
