@@ -636,14 +636,15 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
       // was committed: the turn goes again without its attachments, which
       // the brief's manifest still names by path.
       yield* dispatch(input.attachments).pipe(
-        Effect.catchTag("AttachmentClaimError", (error) =>
-          input.attachments.length === 0
-            ? Effect.fail(error)
-            : Effect.logWarning("board gateway: attachments failed to claim, sent without them", {
-                threadId: input.threadId,
-                detail: error.message,
-              }).pipe(Effect.andThen(dispatch([]))),
-        ),
+        Effect.catchTags({
+          AttachmentClaimError: (error) =>
+            input.attachments.length === 0
+              ? Effect.fail(error)
+              : Effect.logWarning("board gateway: attachments failed to claim, sent without them", {
+                  threadId: input.threadId,
+                  detail: error.message,
+                }).pipe(Effect.andThen(dispatch([]))),
+        }),
         Effect.mapError(commandError("message.dispatch", input.threadId)),
       );
     });
