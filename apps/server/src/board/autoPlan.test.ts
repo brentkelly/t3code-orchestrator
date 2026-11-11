@@ -1170,7 +1170,8 @@ it.effect("a reopen during a background wait gets its prompt after the check-ins
         const checkedIn = yield* h.commands;
         assert.isTrue(
           checkedIn.some(
-            (command) => command.type === "thread.send" && command.text.includes("scheduled check-in"),
+            (command) =>
+              command.type === "thread.send" && command.text.includes("scheduled check-in"),
           ),
         );
         assert.lengthOf(sendsOf(checkedIn, reopenedText(false)), 0);
@@ -1243,38 +1244,41 @@ it.effect("turning Auto-plan off while reopened sends the reopened off text", ()
   );
 });
 
-it.effect("turning Auto-plan on again while still reopened waits for the turn, no interrupt", () => {
-  const card = planningCard("again", { autoBuildSetting: true });
-  return withGovernor(
-    {
-      board: { cards: [card], plans: [plan("again", "one", 0)], nextCardNumberByProject: {} },
-      settings,
-    },
-    (h) =>
-      Effect.gen(function* () {
-        const id = BoardCardId.make("again");
-        const threadId = yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
-        yield* setAutomation(h, id, { autoPlan: true }, 3);
-        yield* setAutomation(h, id, { autoPlan: false }, 4);
-        yield* setAutomation(h, id, { autoPlan: true }, 5);
-        const commands = yield* h.commands;
-        assert.isFalse(commands.some((command) => command.type === "thread.interrupt"));
-        assert.lengthOf(sendsOf(commands, reopenedText(true)), 0);
-        const state = boardCardStepState(yield* h.board, id)!;
-        assert.strictEqual(state.status, "running");
-        assert.isFalse(state.humanInLoop);
+it.effect(
+  "turning Auto-plan on again while still reopened waits for the turn, no interrupt",
+  () => {
+    const card = planningCard("again", { autoBuildSetting: true });
+    return withGovernor(
+      {
+        board: { cards: [card], plans: [plan("again", "one", 0)], nextCardNumberByProject: {} },
+        settings,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const id = BoardCardId.make("again");
+          const threadId = yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
+          yield* setAutomation(h, id, { autoPlan: true }, 3);
+          yield* setAutomation(h, id, { autoPlan: false }, 4);
+          yield* setAutomation(h, id, { autoPlan: true }, 5);
+          const commands = yield* h.commands;
+          assert.isFalse(commands.some((command) => command.type === "thread.interrupt"));
+          assert.lengthOf(sendsOf(commands, reopenedText(true)), 0);
+          const state = boardCardStepState(yield* h.board, id)!;
+          assert.strictEqual(state.status, "running");
+          assert.isFalse(state.humanInLoop);
 
-        yield* Ref.update(
-          h.shells,
-          (shells) => new Map([...shells, [threadId, fakeThreadState(threadId)]]),
-        );
-        yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-live"));
-        assert.lengthOf(sendsOf(yield* h.commands, reopenedText(true)), 1);
-        yield* h.pumpDomain(completedAgain(id, 6));
-        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.building);
-      }),
-  );
-});
+          yield* Ref.update(
+            h.shells,
+            (shells) => new Map([...shells, [threadId, fakeThreadState(threadId)]]),
+          );
+          yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-live"));
+          assert.lengthOf(sendsOf(yield* h.commands, reopenedText(true)), 1);
+          yield* h.pumpDomain(completedAgain(id, 6));
+          assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.building);
+        }),
+    );
+  },
+);
 
 it.effect("a group turning Auto-plan on never reopens a child's finished planning", () => {
   const group = planningCard("grp", { group: { ...autoPlanGroup, autoPlan: false } });
