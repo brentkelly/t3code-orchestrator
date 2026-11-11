@@ -102,3 +102,22 @@ describe("playNotificationSound", () => {
     expect(audio.started).toBe(1);
   });
 });
+
+// T3o: the board's card alerts and upstream's thread alerts add up to one badge.
+describe("setBoardNotificationBadge", () => {
+  it("draws the sum of thread and card alerts", async () => {
+    const setNotificationBadge = vi.fn(async () => undefined);
+    vi.stubGlobal("window", {
+      desktopBridge: { getClientPlatform: () => "darwin", setNotificationBadge },
+    });
+    const notifications = await import("./threadNotifications");
+    notifications.setNotificationBadge(2);
+    notifications.setBoardNotificationBadge(3);
+    notifications.setNotificationBadge(0);
+    expect(setNotificationBadge.mock.calls.map(([badge]) => badge)).toEqual([
+      { count: 2, image: null },
+      { count: 5, image: null },
+      { count: 3, image: null },
+    ]);
+  });
+});
