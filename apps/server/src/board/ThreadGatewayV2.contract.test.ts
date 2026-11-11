@@ -286,6 +286,46 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
       }),
     );
 
+    it.effect("a spawn whose attachments fail to claim still starts, without them (T3O-74)", () =>
+      Effect.gen(function* () {
+        yield* ensureProject;
+        const threads = yield* LocalThreadGateway;
+        const threadId = ThreadId.make("thread-contract-attachments-swept");
+        const before = yield* head;
+        // A pending id whose file is gone, as the pending sweep leaves it.
+        yield* threads.spawn({
+          commandId: boardCommandId("spawn-thread"),
+          threadId,
+          projectId,
+          title: "Swept attachment",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: workspaceRoot,
+          text: "Read the spec.",
+          attachments: [
+            {
+              type: "file",
+              id: ChatAttachmentId.make(createPendingAttachmentId(".pdf")),
+              name: "spec.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 8,
+            },
+          ],
+        });
+        const messages = (yield* loggedSince(before)).flatMap(({ event }) =>
+          event.type === "message.updated" ? [event.payload] : [],
+        );
+        assert.isAbove(messages.length, 0);
+        assert.deepStrictEqual(
+          messages.flatMap((message) => message.attachments),
+          [],
+        );
+        assert.isNotNull(yield* threads.threadState(threadId));
+      }),
+    );
+
     it.effect(
       "a spawn on a provider turned off for the project is refused with its reason and creates nothing (T3O-74)",
       () =>

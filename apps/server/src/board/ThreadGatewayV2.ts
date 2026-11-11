@@ -619,17 +619,31 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
     Effect.gen(function* () {
       // Through the intake, as a client's send goes: it claims the turn's
       // pending uploads and releases them if the dispatch is not accepted.
-      yield* ThreadMessageIntake.dispatchCommand({
-        type: "message.dispatch",
-        commandId: input.commandId,
-        threadId: input.threadId,
-        messageId: yield* freshMessageId,
-        text: input.text,
-        attachments: input.attachments,
-        dispatchMode: { type: "start_immediately" },
-        ...BOARD_AUTHOR,
-      }).pipe(
-        Effect.provideContext(intakeServices),
+      const dispatch = (attachments: ReadonlyArray<ChatAttachment>) =>
+        Effect.flatMap(freshMessageId, (messageId) =>
+          ThreadMessageIntake.dispatchCommand({
+            type: "message.dispatch",
+            commandId: input.commandId,
+            threadId: input.threadId,
+            messageId,
+            text: input.text,
+            attachments,
+            dispatchMode: { type: "start_immediately" },
+            ...BOARD_AUTHOR,
+          }),
+        ).pipe(Effect.provideContext(intakeServices));
+      // The claim is all-or-nothing and runs before the dispatch, so nothing
+      // was committed: the turn goes again without its attachments, which
+      // the brief's manifest still names by path.
+      yield* dispatch(input.attachments).pipe(
+        Effect.catchTag("AttachmentClaimError", (error) =>
+          input.attachments.length === 0
+            ? Effect.fail(error)
+            : Effect.logWarning("board gateway: attachments failed to claim, sent without them", {
+                threadId: input.threadId,
+                detail: error.message,
+              }).pipe(Effect.andThen(dispatch([]))),
+        ),
         Effect.mapError(commandError("message.dispatch", input.threadId)),
       );
     });
