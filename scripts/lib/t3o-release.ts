@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - run by the plain-Node release and update scripts.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - run by the plain-Node release and update scripts.
 /**
  * T3o: release tags, the build stamp, and the update decision, shared by
  * `scripts/t3o-service.mjs`, `scripts/t3o-update.mjs` and `scripts/t3o-release.mjs`.

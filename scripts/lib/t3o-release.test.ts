@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off - fixed timestamps for the plain-Node stamp.
 import { describe, expect, it } from "vite-plus/test";
 
 import {
