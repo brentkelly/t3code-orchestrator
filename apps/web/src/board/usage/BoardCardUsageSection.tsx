@@ -287,8 +287,8 @@ export function BoardCardUsageSection({ breakdown }: { readonly breakdown: Board
                       <span className="size-2 shrink-0 rounded-[2px] border border-dashed border-muted-foreground" />
                       Unknown{" "}
                       <span className="font-mono text-foreground">
-                        {breakdown.missing.length}{" "}
-                        {breakdown.missing.length === 1 ? "step" : "steps"}
+                        {breakdown.partialSteps.length}{" "}
+                        {breakdown.partialSteps.length === 1 ? "step" : "steps"}
                       </span>
                     </span>
                   ) : null}
@@ -305,8 +305,8 @@ export function BoardCardUsageSection({ breakdown }: { readonly breakdown: Board
                 </span>
                 <div className="flex min-w-0 flex-col gap-[3px]">
                   <span className="text-[11.5px] font-medium text-foreground">
-                    Partial total: {breakdown.missing.length}{" "}
-                    {breakdown.missing.length === 1 ? "step isn't" : "steps aren't"} in{" "}
+                    Partial total: {breakdown.partialSteps.length}{" "}
+                    {breakdown.partialSteps.length === 1 ? "step isn't" : "steps aren't"} in{" "}
                     {figure.text}
                   </span>
                   {breakdown.missing.map((entry) => (

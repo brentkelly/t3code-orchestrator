@@ -64,4 +64,16 @@ describe("BoardCardUsageSection", () => {
       ),
     ).toEqual(["claude-sonnet", "gpt-5-codex"]);
   });
+
+  it("counts a step with several causes once", async () => {
+    useBoardUiStore.setState({ usageSectionOpen: true });
+    const breakdown = deriveBoardUsageBreakdown({
+      rows: [usageRow({ turnsOverride: 0, turnsNoUsage: 1, turnsUnpriced: 1, turnsPartial: 1 })],
+      historyPartial: false,
+      stages: [{ stageId: "building", label: "Building" }],
+      runningThreadId: null,
+    });
+    await using screen = await render(<BoardCardUsageSection breakdown={breakdown} />);
+    await expect.element(screen.getByText(/Partial total: 1 step isn't in/)).toBeVisible();
+  });
 });
