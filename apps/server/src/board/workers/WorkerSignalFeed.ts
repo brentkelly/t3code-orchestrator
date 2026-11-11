@@ -52,10 +52,7 @@ export const makeWorkerSignalFeed = Effect.gen(function* () {
   const todoChanges = yield* PubSub.unbounded<ThreadId>();
 
   // Untraced: it lasts as long as the worker's signal stream.
-  const follow = Effect.fnUntraced(function* (
-    workerId: EnvironmentId,
-    rpc: WorkerRpc,
-  ) {
+  const follow = Effect.fnUntraced(function* (workerId: EnvironmentId, rpc: WorkerRpc) {
     let cursor = yield* store.signalCursor(workerId);
     if (cursor === null) {
       cursor = yield* rpc.gateway.todoLogHead;
