@@ -108,7 +108,7 @@ export function WorkersSection(props: {
         {workers.failed ? (
           <div className="flex items-center justify-between gap-3 py-2">
             <div className="flex flex-col">
-              <span className="text-[13.5px] font-medium">Couldn't load workers</span>
+              <span className="text-board-13-5 font-medium">Couldn't load workers</span>
               <span className="text-xs text-muted-foreground">
                 The board server didn't answer. Your workers and cards are unchanged.
               </span>
@@ -118,7 +118,7 @@ export function WorkersSection(props: {
             </Button>
           </div>
         ) : (
-          <div className="flex items-center gap-2 py-2 text-[13px] text-muted-foreground">
+          <div className="flex items-center gap-2 py-2 text-board-13 text-muted-foreground">
             <Spinner className="size-3.5" /> Checking…
           </div>
         )}
@@ -138,7 +138,7 @@ export function WorkersSection(props: {
     <>
       <div className="mx-3 flex flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xs sm:mx-4">
         {localOnly ? null : (
-          <div className="grid grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_80px_minmax(0,1fr)_88px] gap-3 border-b border-border px-4 py-2 text-[11.5px] font-medium text-muted-foreground max-md:hidden">
+          <div className="grid grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_80px_minmax(0,1fr)_88px] gap-3 border-b border-border px-4 py-2 text-board-11-5 font-medium text-muted-foreground max-md:hidden">
             <span>Worker</span>
             <span>Status</span>
             <span>T3o</span>
@@ -189,7 +189,7 @@ export function WorkersSection(props: {
         {localOnly ? (
           <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3">
             <div className="flex flex-col">
-              <span className="text-[13px] font-medium">No other workers</span>
+              <span className="text-board-13 font-medium">No other workers</span>
               <span className="max-w-md text-xs text-muted-foreground">
                 To run cards on another machine, connect to it in Settings → Environments, then use
                 it as a worker here.
@@ -213,7 +213,7 @@ export function WorkersSection(props: {
       {localOnly ? null : (
         <div className="mx-3 mt-2 flex items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-3 shadow-xs sm:mx-4">
           <div className="flex min-w-0 flex-col">
-            <span className="text-[13.5px] text-foreground">Default worker</span>
+            <span className="text-board-13-5 text-foreground">Default worker</span>
             <span className="max-w-md text-xs text-muted-foreground">
               Where unpinned cards run. Changing it only affects cards that don't have a worktree
               yet; cards already working stay where they are.
@@ -273,12 +273,12 @@ function WorkerRow(props: {
   return (
     <div className="grid grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_80px_minmax(0,1fr)_88px] items-center gap-3 border-b border-border px-4 py-2.5 last:border-b-0 max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-y-1">
       <div className="flex min-w-0 flex-col">
-        <span className="flex items-center gap-2 text-[13px] font-medium">
+        <span className="flex items-center gap-2 text-board-13 font-medium">
           <span className="truncate">{props.name}</span>
           {props.isDefault ? <Badge variant="outline">Default</Badge> : null}
         </span>
         {props.url === null ? null : (
-          <span className="truncate font-mono text-[11.5px] text-muted-foreground">
+          <span className="truncate font-mono text-board-11-5 text-muted-foreground">
             {props.url}
           </span>
         )}
@@ -288,15 +288,15 @@ function WorkerRow(props: {
           <Badge variant={TONE_BADGE[props.status.tone]}>{props.status.label}</Badge>
         </BoardHint>
         {props.status.detail === null ? null : (
-          <span className="truncate text-[11.5px] text-muted-foreground">
+          <span className="truncate text-board-11-5 text-muted-foreground">
             {props.status.detail}
           </span>
         )}
       </div>
-      <span className="font-mono text-[11.5px] text-muted-foreground max-md:hidden">
+      <span className="font-mono text-board-11-5 text-muted-foreground max-md:hidden">
         {props.version ?? "Unknown"}
       </span>
-      <span className="text-[12px] text-muted-foreground max-md:hidden">{props.lastSeen}</span>
+      <span className="text-board-12 text-muted-foreground max-md:hidden">{props.lastSeen}</span>
       <div className="flex justify-end">{props.actions}</div>
     </div>
   );
@@ -414,7 +414,7 @@ function RemoveWorkerDialog(props: {
                   : `${affected} ${affected === 1 ? "card is" : "cards are"} assigned to ${name}.`}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <div className="flex flex-col gap-3 px-6 pb-4 text-[13px]">
+        <div className="flex flex-col gap-3 px-6 pb-4 text-board-13">
           {current === undefined ? <Spinner className="size-4" /> : null}
           {current?.result != null && current.result.toDefault.length > 0 ? (
             <RemovePreviewGroup
@@ -467,17 +467,17 @@ function RemovePreviewGroup(props: {
   return (
     <div className="flex flex-col gap-1.5 rounded-lg border border-border p-2.5">
       <span>
-        <span className="text-[12.5px] font-semibold">{props.title}</span>
-        <span className="text-[12px] text-muted-foreground"> · {props.subtitle}</span>
+        <span className="text-board-12-5 font-semibold">{props.title}</span>
+        <span className="text-board-12 text-muted-foreground"> · {props.subtitle}</span>
       </span>
       <ul className="flex flex-col gap-1">
         {props.cards.map((card) => (
-          <li className="flex min-w-0 items-center gap-2 text-[12.5px]" key={card.cardId}>
-            <span className="shrink-0 font-mono text-[11.5px] text-muted-foreground">
+          <li className="flex min-w-0 items-center gap-2 text-board-12-5" key={card.cardId}>
+            <span className="shrink-0 font-mono text-board-11-5 text-muted-foreground">
               {card.key}
             </span>
             <span className="min-w-0 flex-1 truncate">{card.title}</span>
-            <span className="shrink-0 text-[11.5px] text-muted-foreground">{card.detail}</span>
+            <span className="shrink-0 text-board-11-5 text-muted-foreground">{card.detail}</span>
           </li>
         ))}
       </ul>

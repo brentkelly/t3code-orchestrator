@@ -27,7 +27,6 @@ import {
 import { environmentShell } from "../../state/shell";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import {
   normalizeKeyPrefixInput,
@@ -51,6 +50,8 @@ import {
   useBoardSettings,
   useUpdateBoardSettings,
 } from "../../board/useBoardEnvironmentId";
+import { BoardInput } from "../../board/ui/BoardInput";
+import { BoardButton } from "../../board/ui/BoardButton";
 
 /** The provider instances the server reports, built-in drivers included, plus
     any configured custom instances — the concurrency rows offer these. Free text
@@ -126,7 +127,7 @@ function ProjectsSection({
   const anchor = searchableSetting("board-projects");
   return (
     <SettingsSection id="board-projects" title={anchor.title} variant="plain">
-      <p className="mb-2 max-w-xl px-3 text-[13px] leading-[1.55] text-muted-foreground/80 sm:px-4">
+      <p className="mb-2 max-w-xl px-3 text-board-13 leading-board-1-55 text-muted-foreground/80 sm:px-4">
         The prefix for each project's card keys (e.g. T3 → T3-42). Cards take their colour from the
         project's icon; the gear opens the project's settings to change it. The flow icon opens its
         pipeline and CI. The eye hides a project and its cards from the board without touching them.
@@ -182,24 +183,25 @@ function ProjectRows({
             />
             <span
               className={cn(
-                "min-w-0 truncate text-[13.5px] font-medium",
+                "min-w-0 truncate text-board-13-5 font-medium",
                 hidden ? "text-muted-foreground" : "text-foreground",
               )}
             >
               {project.title}
             </span>
             {hidden ? (
-              <span className="shrink-0 rounded-full border border-border px-1.75 py-px text-[11px] font-medium text-muted-foreground">
+              <span className="shrink-0 rounded-full border border-border px-1.75 py-px text-board-11 font-medium text-muted-foreground">
                 Hidden
               </span>
             ) : null}
             <span className="min-w-2 flex-1" />
-            <Input
+            <BoardInput
               key={`${project.id}:${entry?.keyPrefix ?? ""}`}
               defaultValue={entry?.keyPrefix ?? ""}
               placeholder={DEFAULT_BOARD_KEY_PREFIX}
               aria-label={`Card key prefix for ${project.title}`}
-              className="h-7.5 w-24 font-mono text-[13px] uppercase"
+              className="h-7.5 w-24"
+              look="key-prefix"
               onBlur={(event) => {
                 const next = normalizeKeyPrefixInput(event.target.value);
                 if (next !== (entry?.keyPrefix ?? null))
@@ -223,10 +225,10 @@ function ProjectRows({
               >
                 <WorkflowIcon />
               </Button>
-              <Button
+              <BoardButton
                 variant="ghost"
                 size="icon-sm"
-                className={cn("text-muted-foreground", hidden && "border border-border")}
+                look={hidden ? "muted-pressed" : "muted"}
                 title={hidden ? "Show on the board" : "Hide from the board"}
                 aria-label={
                   hidden
@@ -237,7 +239,7 @@ function ProjectRows({
                 onClick={() => setProject(project.id, { hidden: !hidden })}
               >
                 {hidden ? <EyeOffIcon /> : <EyeIcon />}
-              </Button>
+              </BoardButton>
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -307,7 +309,7 @@ function ConcurrencySection({
           const current = board.concurrency.perInstance[ProviderInstanceId.make(id)];
           return (
             <div key={id} className="flex items-center justify-between gap-4 py-1.5">
-              <span className="min-w-0 flex-1 truncate text-[13.5px] text-foreground">{id}</span>
+              <span className="min-w-0 flex-1 truncate text-board-13-5 text-foreground">{id}</span>
               <NumberStepper
                 nullable
                 value={current ?? null}

@@ -629,6 +629,91 @@ describe("review phase envelope", () => {
   });
 });
 
+describe("settling round prompts (T3O-64)", () => {
+  const settling = { kind: "settling" as const, sinceSha: "abc1234def5678" };
+  const phases = ["review", "triage", "adjudicate"] as const;
+  const promptOf = (phase: (typeof phases)[number]) =>
+    phase === "review"
+      ? DEFAULT_BOARD_REVIEW_PHASE_PROMPT
+      : phase === "triage"
+        ? DEFAULT_BOARD_TRIAGE_PHASE_PROMPT
+        : DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT;
+
+  it("scopes a settling review to the delta, with its fallback, scope field and critical bar", () => {
+    const prompt = composeBoardReviewPhasePrompt({
+      phase: "review",
+      round: 4,
+      rounds: 5,
+      prompt: "Custom intent only.",
+      mode: settling,
+    });
+    expect(prompt).toContain("round 4 of up to 5 · settling round (changes since abc1234)");
+    expect(prompt).toContain("git diff abc1234def5678..HEAD");
+    expect(prompt).toContain("is not an ancestor of HEAD");
+    expect(prompt).toContain("review the whole branch instead");
+    expect(prompt).toContain('scope: "delta"');
+    expect(prompt).toContain('scope: "branch"');
+    expect(prompt).toContain("only `critical` findings force another round");
+    // The block survives a rewritten editable prompt, and still says nothing of earlier rounds.
+    expect(prompt).toContain("Custom intent only.");
+    expect(prompt).not.toContain("board_get_card_context");
+    // The delta limits the reviewer's own search, never CI, must-fix or human-comment findings.
+    expect(prompt).toContain(
+      "a CI failure, a finding this prompt marks must-fix, and an unresolved human comment on the pull request are still reported wherever their code is",
+    );
+    const ciSendBack = composeBoardReviewPhasePrompt({
+      phase: "review",
+      round: 4,
+      rounds: 5,
+      prompt: "Custom intent only.",
+      ciFinding: { stepName: "test", finding: "unit tests failed" },
+      mode: settling,
+    });
+    expect(ciSendBack.indexOf("report it as a critical finding")).toBeGreaterThan(-1);
+    expect(ciSendBack.indexOf("a CI failure")).toBeGreaterThan(
+      ciSendBack.indexOf("raise no findings about code outside that scope"),
+    );
+  });
+
+  it("tells triage and the adjudicators only criticals force a round", () => {
+    const triage = composeBoardReviewPhasePrompt({
+      phase: "triage",
+      round: 4,
+      rounds: 5,
+      prompt: DEFAULT_BOARD_TRIAGE_PHASE_PROMPT,
+      mode: settling,
+    });
+    expect(triage).toContain("every finding is still fixed or rejected");
+    const adjudicate = composeBoardReviewPhasePrompt({
+      phase: "adjudicate",
+      round: 4,
+      rounds: 5,
+      prompt: DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT,
+      mode: settling,
+    });
+    expect(adjudicate).toContain("`anotherRound` is recorded but has no effect");
+    const readjudicate = composeBoardReviewFollowUpPrompt({
+      phase: "readjudicate",
+      round: 4,
+      rounds: 5,
+      prompt: DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT,
+      findings: [],
+      mode: settling,
+    });
+    expect(readjudicate).toContain("round 4 of up to 5 · settling round (changes since abc1234)");
+    expect(readjudicate).toContain("binding for every finding");
+  });
+
+  it("leaves full-round prompts byte-identical", () => {
+    for (const phase of phases) {
+      const base = { phase, round: 4, rounds: 5, prompt: promptOf(phase) };
+      expect(composeBoardReviewPhasePrompt({ ...base, mode: { kind: "full" } })).toBe(
+        composeBoardReviewPhasePrompt(base),
+      );
+    }
+  });
+});
+
 describe("draft pull request lines (T3O-12)", () => {
   const compose = (phase: "review" | "triage" | "adjudicate", draftPullRequests?: boolean) =>
     composeBoardReviewPhasePrompt({

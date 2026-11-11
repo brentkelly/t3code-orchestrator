@@ -9,8 +9,9 @@ import { ServerOffIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
-import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
+import { Popover, PopoverTrigger } from "../../components/ui/popover";
 import { boardWorkersAttention } from "./cardWorker";
+import { BoardPopoverPopup } from "../ui/BoardPopoverPopup";
 
 export function BoardWorkersAttentionPill(props: {
   readonly cards: ReadonlyArray<BoardCardShell>;
@@ -26,29 +27,35 @@ export function BoardWorkersAttentionPill(props: {
     <Popover onOpenChange={setOpen} open={open}>
       <PopoverTrigger
         aria-label={attention.label}
-        className="inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-md bg-warning/12 px-2 text-[12px] font-medium text-warning-foreground transition-colors hover:bg-warning/20"
+
         type="button"
+        render={
+          <button
+            className="inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-md bg-warning/12 px-2 text-board-12 font-medium text-warning-foreground transition-colors hover:bg-warning/20"
+            type="button"
+          />
+        }
       >
         <ServerOffIcon className="size-3.5 shrink-0" />
         {attention.label}
       </PopoverTrigger>
-      <PopoverPopup align="end" className="w-[318px] p-3">
-        <span className="text-[12.5px] font-semibold text-foreground">Workers</span>
+      <BoardPopoverPopup align="end" className="w-[318px]" inset="3">
+        <span className="text-board-12-5 font-semibold text-foreground">Workers</span>
         {attention.rows.map((row) => (
           <div className="mt-2 flex flex-col gap-1 border-t border-border pt-2" key={row.workerId}>
             <div className="flex items-center gap-2">
-              <span className="text-[12.5px] font-medium text-foreground">{row.label}</span>
+              <span className="text-board-12-5 font-medium text-foreground">{row.label}</span>
               <span className="flex-1" />
-              <span className="text-[11.5px] text-warning-foreground">{row.status}</span>
+              <span className="text-board-11-5 text-warning-foreground">{row.status}</span>
             </div>
-            <span className="text-[11.5px] text-muted-foreground">
+            <span className="text-board-11-5 text-muted-foreground">
               {row.pausedCards.length === 0
                 ? "No cards are paused."
                 : `${row.pausedCards.length} ${row.pausedCards.length === 1 ? "card" : "cards"} paused. They carry on ${row.resumesWhen}.`}
             </span>
             {row.pausedCards.map((card) => (
               <button
-                className="flex min-w-0 items-center gap-2 rounded px-1 py-0.5 text-left text-[12px] hover:bg-muted"
+                className="flex min-w-0 items-center gap-2 rounded px-1 py-0.5 text-left text-board-12 hover:bg-muted"
                 key={card.cardId}
                 onClick={() => {
                   setOpen(false);
@@ -56,7 +63,7 @@ export function BoardWorkersAttentionPill(props: {
                 }}
                 type="button"
               >
-                <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                <span className="shrink-0 font-mono text-board-11 text-muted-foreground">
                   {card.key}
                 </span>
                 <span className="min-w-0 truncate">{card.title}</span>
@@ -76,7 +83,7 @@ export function BoardWorkersAttentionPill(props: {
             Open Workers settings
           </Button>
         </div>
-      </PopoverPopup>
+      </BoardPopoverPopup>
     </Popover>
   );
 }

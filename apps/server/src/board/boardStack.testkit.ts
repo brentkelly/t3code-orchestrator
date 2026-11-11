@@ -41,6 +41,7 @@ import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -110,6 +111,8 @@ const orchestrationStack = (prefix: string) =>
     Layer.provideMerge(CommandReceiptStore.layer),
     Layer.provideMerge(layerDatabase),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
+    // The gateway claims a turn's attachments, PDFs' text included.
+    Layer.provideMerge(DocumentText.layer),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 

@@ -66,6 +66,11 @@ import {
   boardReviewRoundsStarted,
   boardReviewStuckState,
   boardReviewCarryFromStuck,
+  boardReviewRoundForcingCount,
+  boardReviewRoundModeOf,
+  BoardReviewPayload,
+  parseBoardStepPayloadJson,
+  type BoardStepCompletion,
   type BoardReviewCarry,
   type BoardRequestReviewRoundInput,
   boardRunLabel,
@@ -150,6 +155,7 @@ import {
   deriveBoardGroupStage,
   isBoardCardPlanned,
   type BoardCiFixIssue,
+  textGeneratorForSelection,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -170,6 +176,7 @@ import * as Stream from "effect/Stream";
 import { BoardSetupScriptRunner } from "./ports/BoardSetupScriptRunner.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
 import { BoardStepSlots, type BoardConcurrencyLimit, type BoardSlotKey } from "./BoardStepSlots.ts";
 import { BoardEngine } from "./BoardEngine.ts";
@@ -177,6 +184,7 @@ import type { BoardDispatchError } from "./errors.ts";
 import { BoardQueries } from "./BoardQueries.ts";
 import {
   ThreadCommandFailedError,
+  ThreadCommandRefusedError,
   ThreadGateway,
   ThreadReadError,
   UNKNOWN_THREAD_STATE,
@@ -189,8 +197,9 @@ import { resolveCardPullRequestTarget } from "./cardPullRequestTarget.ts";
 import {
   removeBoardCardAttachmentsDir,
   resolveBoardCardAttachmentPath,
-  spawnPushesBriefImages,
-  stageBoardCardImagesAsPending,
+  spawnPushesBriefAttachments,
+  discardStagedBriefAttachments,
+  stageBriefAttachmentsAsPending,
 } from "./attachments.ts";
 import { BoardPlacement, boardPlacementGate } from "./workers/BoardPlacement.ts";
 import {
@@ -204,6 +213,7 @@ import {
   BOARD_STEP_USAGE_LIMIT_RESUME_NUDGE,
   boardBackgroundCheckInCharged,
   boardBackgroundCheckInDueMs,
+  boardBackgroundWaitResumedSinceMs,
   boardBackgroundCheckInNudge,
   boardOfflineCreditMs,
   boardRecoveryNudge,
@@ -249,6 +259,8 @@ import { BoardWorkspaces, type BoardCardWorkspace } from "./workspace/BoardWorks
 import { planReviewInstructions, runningPlanReviewStep } from "./planReview.ts";
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
+
+const decodeReviewPayload = Schema.decodeUnknownOption(BoardReviewPayload);
 
 /** What a Merge click did, for the RPC to turn into a toast. */
 export type BoardMergeAttemptResult =
@@ -335,14 +347,18 @@ type BoardCardReclaimAttempt =
 type CiHoldOptions = { readonly machine?: boolean; readonly headline?: BoardCiHeadline };
 
 const isThreadCommandFailed = Schema.is(ThreadCommandFailedError);
+const isThreadCommandRefused = Schema.is(ThreadCommandRefusedError);
 
 /**
- * What a failed spawn left behind, read off the remote gateway's cause: `none` (no thread
- * exists), `worker-offline` (nothing was sent), or `unknown` (a `WorkerRpcError` on the spawn
- * call itself: the worker may have created the thread, so it must not be read as none).
+ * What a failed spawn left behind: `none` (no thread), `worker-offline` (nothing was sent),
+ * `provider-disabled` (the provider is off for the card's project; nothing created), or
+ * `unknown` (a `WorkerRpcError` on the spawn call: the worker may have created the thread).
  */
 const spawnFailureLeft = (cause: Cause.Cause<unknown>) => {
   const error = Cause.findErrorOption(cause).pipe(Option.getOrUndefined);
+  if (isThreadCommandRefused(error) && error.reason === "provider-disabled") {
+    return "provider-disabled" as const;
+  }
   const reason = isThreadCommandFailed(error) ? error.cause : undefined;
   if (Predicate.isTagged(reason, "WorkerUnavailable")) return "worker-offline" as const;
   if (Predicate.isTagged(reason, "WorkerRpcError")) return "unknown" as const;
@@ -581,6 +597,14 @@ function settledReviewPhase(
   return stage !== null && effectiveBoardStageRole(stage) === "review";
 }
 
+const spawnFailureError = (result: string | null) =>
+  result === "no-agent-model"
+    ? {
+        lastError:
+          "This stage resolves to a text-generation model, which can't run an agent: pick an agent model for the stage, or set a board default model in Settings → Board.",
+      }
+    : {};
+
 /** Triage and adjudication steps, which never wait on a human. */
 const isReviewDecidingStep = (state: Pick<BoardCardStepState, "stepId">): boolean =>
   boardReviewQuestionAnswer(state.stepId) !== null;
@@ -760,23 +784,32 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * What a stage with no model of its own runs on: the board's default model when set, else the
-   * app's text-generation selection. No compiled-in pair: it may name a provider not installed.
+   * A stage with no model runs on the board's default, else the project's default override, else
+   * the project-resolved text-generation selection. No compiled-in pair (it may not be installed),
+   * and not the environment-wide chat default, which would move every unset stage onto it.
    */
-  const fallbackModelSelection = serverSettings.getSettings.pipe(
-    Effect.map((settings) =>
-      resolveBoardDefaultModelSelection(settings.board ?? DEFAULT_BOARD_SETTINGS, {
-        instanceId: settings.textGenerationModelSelection.instanceId,
-        model: settings.textGenerationModelSelection.model,
+  const fallbackModelSelectionFor = (projectId: ProjectId) =>
+    serverSettings.getSettings.pipe(
+      Effect.map((settings) => {
+        const resolved = resolveProjectSettings(settings, projectId);
+        const projectDefault =
+          resolved.sources.defaultModelSelection === "project"
+            ? resolved.settings.defaultModelSelection
+            : null;
+        const selection = projectDefault ?? resolved.settings.textGenerationModelSelection;
+        return resolveBoardDefaultModelSelection(settings.board ?? DEFAULT_BOARD_SETTINGS, {
+          instanceId: selection.instanceId,
+          model: selection.model,
+          ...(selection.options === undefined ? {} : { options: selection.options }),
+        });
       }),
-    ),
-    Effect.catchCause(() =>
-      Effect.succeed({
-        instanceId: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId,
-        model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
-      }),
-    ),
-  );
+      Effect.catchCause(() =>
+        Effect.succeed({
+          instanceId: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId,
+          model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
+        }),
+      ),
+    );
 
   // Threads spawned for a step whose admit was then rejected. An interrupt fired right after
   // spawn races provider session startup and no-ops, so `session.started` for an orphan
@@ -1065,6 +1098,8 @@ const make = Effect.gen(function* () {
      * forces full-access" invariant true at every dispatch.
      */
     readonly runtimeMode: BoardCardStepState["runtimeMode"];
+    /** `steer` for an instruction that is moot once the running turn ends. */
+    readonly delivery?: "steer";
   }) {
     yield* logged(
       "thread.send",
@@ -1075,6 +1110,7 @@ const make = Effect.gen(function* () {
         attachments: [],
         runtimeMode: input.runtimeMode,
         interactionMode: "default",
+        ...(input.delivery === undefined ? {} : { delivery: input.delivery }),
       }),
     );
   });
@@ -1423,10 +1459,11 @@ const make = Effect.gen(function* () {
     Option.match(serverConfig, {
       onNone: () => Effect.succeed([] as ReadonlyArray<ChatAttachment>),
       onSome: (config) =>
-        card.attachments.length === 0 || !spawnPushesBriefImages(boardSeedStageRole(card.stage))
+        card.attachments.length === 0 ||
+        !spawnPushesBriefAttachments(boardSeedStageRole(card.stage))
           ? Effect.succeed([] as ReadonlyArray<ChatAttachment>)
           : withFileServices(
-              stageBoardCardImagesAsPending({
+              stageBriefAttachmentsAsPending({
                 stateDir: config.stateDir,
                 attachmentsDir: config.attachmentsDir,
                 card,
@@ -1438,6 +1475,17 @@ const make = Effect.gen(function* () {
                   cause: Cause.pretty(cause),
                 }).pipe(Effect.as([] as ReadonlyArray<ChatAttachment>)),
               ),
+            ),
+    });
+
+  const discardSpawnAttachments = (attachments: ReadonlyArray<ChatAttachment>) =>
+    Option.match(serverConfig, {
+      onNone: () => Effect.void,
+      onSome: (config) =>
+        attachments.length === 0
+          ? Effect.void
+          : withFileServices(
+              discardStagedBriefAttachments({ attachmentsDir: config.attachmentsDir, attachments }),
             ),
     });
 
@@ -1561,8 +1609,6 @@ const make = Effect.gen(function* () {
     /** Whether to run the worktree setup script — build only. */
     readonly runSetup: boolean;
     readonly text: string;
-    /** The brief's images on a build/plan spawn (K4); `[]` elsewhere. */
-    readonly attachments: ReadonlyArray<ChatAttachment>;
   }) {
     const { card, step } = input;
     const threadId = yield* freshThreadId;
@@ -1585,6 +1631,17 @@ const make = Effect.gen(function* () {
       });
     }
     const remoteWorker = workerId === BOARD_LOCAL_WORKER_ID ? null : workerId;
+    // An API-only text generator can't run an agent. Only this server's settings are known here,
+    // so a worker's own instances are left to the worker.
+    if (remoteWorker === null) {
+      const settings = yield* serverSettings.getSettings.pipe(Effect.orElseSucceed(() => null));
+      if (
+        settings !== null &&
+        textGeneratorForSelection(settings, step.providerInstanceId) !== undefined
+      ) {
+        return "no-agent-model" as const;
+      }
+    }
     // T3o: pin the agent's gh to origin on every build-mode spawn,
     // not only at provisioning, so a worktree that predates the pin gets it
     // before its next agent runs. Idempotent and never fails the spawn.
@@ -1597,6 +1654,7 @@ const make = Effect.gen(function* () {
     // A refused spawn leaves no thread. An unreachable worker was sent nothing, so the step waits.
     // A mid-call drop may have created the thread: it is linked and run as spawned, so the worker's
     // reconcile watches or recovers it, never a second agent in the worktree.
+    const attachments = remoteWorker === null ? yield* stageSpawnAttachments(card) : [];
     const spawned = yield* threads
       .spawn({
         commandId: yield* commandId("spawn-thread"),
@@ -1613,7 +1671,10 @@ const make = Effect.gen(function* () {
         branch: input.branch,
         worktreePath: input.worktreePath,
         text: input.text,
-        attachments: input.attachments,
+        // The brief's attachments on a build/plan spawn (t3o-32, K4). A worker
+        // gets none: its gateway sends no attachments, so central copies would
+        // only be orphaned; its thread reads the files staged there instead.
+        attachments,
         ...(remoteWorker === null
           ? {}
           : { workerId: remoteWorker, stageAttachments: stagedBriefFiles(card) }),
@@ -1629,9 +1690,12 @@ const make = Effect.gen(function* () {
                 cause: Cause.pretty(cause),
               }).pipe(Effect.as(spawnFailureLeft(cause))),
         ),
+        // The gateway claimed its own copies, or the spawn never got that far.
+        Effect.ensuring(discardSpawnAttachments(attachments)),
       );
     if (spawned === "none") return null;
     if (spawned === "worker-offline") return "worker-offline" as const;
+    if (spawned === "provider-disabled") return "provider-disabled" as const;
     yield* dispatch({
       type: "board.card.link-thread",
       commandId: yield* commandId("link-thread"),
@@ -1661,7 +1725,15 @@ const make = Effect.gen(function* () {
    * step would block every later kickoff, while a stalled one shows and can be restarted.
    */
   const escalateSpawnFailure = Effect.fn("board-supervisor-escalateSpawnFailure")(
-    function* (input: { readonly card: BoardCard; readonly state: BoardCardStepState }) {
+    function* (input: {
+      readonly card: BoardCard;
+      readonly state: BoardCardStepState;
+      /** Why, when the stall should say so rather than read as a failure. */
+      readonly stalledReason?: BoardCardStepStalledReason;
+      readonly lastError?: string;
+      /** False for a stall the agent never ran into, so no budget is spent. */
+      readonly chargeBudget?: boolean;
+    }) {
       yield* Effect.logWarning("board supervisor: could not spawn a thread for the step", {
         cardId: input.card.id,
         stepId: input.state.stepId,
@@ -1677,6 +1749,9 @@ const make = Effect.gen(function* () {
         threadId: null,
         escalateToHuman: true,
         progressed: false,
+        ...(input.stalledReason === undefined ? {} : { stalledReason: input.stalledReason }),
+        ...(input.lastError === undefined ? {} : { lastError: input.lastError }),
+        ...(input.chargeBudget === undefined ? {} : { chargeBudget: input.chargeBudget }),
         createdAt: yield* nowIso,
       });
       // Escalation releases the step's slot exactly as the recovery escalation
@@ -1686,6 +1761,18 @@ const make = Effect.gen(function* () {
       yield* releaseSlot(input.state);
     },
   );
+
+  /** A spawn refused because the step's provider is turned off for the card's
+      project (T3O-74): amber like Provider missing, and no budget spent — the
+      agent never ran. A model edit restarts the stage; Continue retries. */
+  const stallProviderDisabled = (card: BoardCard, state: BoardCardStepState) =>
+    escalateSpawnFailure({
+      card,
+      state,
+      stalledReason: "provider-disabled-for-project",
+      lastError: `The step's provider instance '${state.providerInstanceId}' is turned off for this card's project.`,
+      chargeBudget: false,
+    });
 
   // Whether a step's thread is gone (deleted or never present) — recovery must
   // respawn rather than nudge a thread that no longer exists.
@@ -1762,6 +1849,7 @@ const make = Effect.gen(function* () {
       threadId: state.threadId,
       text: BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
       runtimeMode: state.runtimeMode,
+      delivery: "steer",
     });
   });
 
@@ -2172,10 +2260,8 @@ const make = Effect.gen(function* () {
         return;
       }
       if (resumed === "admitted") return;
-      const spawnAttachments = yield* stageSpawnAttachments(card);
       const threadId = yield* spawnStepThread({
         card,
-        attachments: spawnAttachments,
         step: {
           stepId: state.stepId,
           stepLabel: state.stepLabel,
@@ -2191,12 +2277,12 @@ const make = Effect.gen(function* () {
         runSetup: true,
         text: yield* stepPromptFor(card, state),
       });
-      if (threadId === null) {
+      if (threadId === null || threadId === "no-agent-model") {
         // No thread was created, so release the slot this candidate just acquired
         // (the persisted `slotHeld` is still false — admit-step never ran — so
         // `releaseSlot` would decline it) and escalate rather than admit.
         yield* slots.release(slotKey);
-        yield* escalateSpawnFailure({ card, state });
+        yield* escalateSpawnFailure({ card, state, ...spawnFailureError(threadId) });
         return;
       }
       if (threadId === "worker-offline") {
@@ -2204,6 +2290,11 @@ const make = Effect.gen(function* () {
         // sent nothing: the step waits for it, as the gate would have held it.
         yield* slots.release(slotKey);
         yield* holdQueued(state, "worker-offline");
+        return;
+      }
+      if (threadId === "provider-disabled") {
+        yield* slots.release(slotKey);
+        yield* stallProviderDisabled(card, state);
         return;
       }
       // If admit-step does not land, `slotHeld` stays false and nothing would release the slot:
@@ -2276,10 +2367,8 @@ const make = Effect.gen(function* () {
       yield* escalateSpawnFailure({ card, state });
       return;
     }
-    const spawnAttachments = yield* stageSpawnAttachments(card);
     const threadId = yield* spawnStepThread({
       card,
-      attachments: spawnAttachments,
       step: {
         stepId: state.stepId,
         stepLabel: state.stepLabel,
@@ -2297,12 +2386,16 @@ const make = Effect.gen(function* () {
     });
     // A plan step holds no slot, so a failed spawn leaks no capacity — but it
     // must still not be admitted against a thread that was never created.
-    if (threadId === null) {
-      yield* escalateSpawnFailure({ card, state });
+    if (threadId === null || threadId === "no-agent-model") {
+      yield* escalateSpawnFailure({ card, state, ...spawnFailureError(threadId) });
       return;
     }
     if (threadId === "worker-offline") {
       yield* holdQueued(state, "worker-offline");
+      return;
+    }
+    if (threadId === "provider-disabled") {
+      yield* stallProviderDisabled(card, state);
       return;
     }
     yield* dispatch({
@@ -2524,6 +2617,58 @@ const make = Effect.gen(function* () {
     return boardCardStepState(board, card.id)?.baseTipAtRoundStart ?? null;
   });
 
+  // The `select-step` fields that record a new settling review round, empty for any other plan.
+  // A plan that starts a review round also logs its mode, so settling defaults can be tuned
+  // from real loops.
+  const reviewRoundModeFields = Effect.fn("board-supervisor-reviewRoundModeFields")(function* (
+    card: BoardCard,
+    plan: Extract<BoardStagePlan, { readonly kind: "run" }>,
+  ) {
+    if (!plan.recordBaseTip) return {};
+    const mode =
+      plan.reviewRoundMode?.mode ?? boardReviewRoundModeOf(card.reviewOverrides, plan.round);
+    const board = yield* readBoard;
+    yield* Effect.logInfo("board: review round starting", {
+      cardId: card.id,
+      round: plan.round,
+      mode: mode.kind,
+      sinceSha: mode.kind === "settling" ? mode.sinceSha : null,
+      previousForcingFindings:
+        plan.round > 1
+          ? boardReviewRoundForcingCount({
+              round: plan.round - 1,
+              completions: boardCardStepCompletions(board, card.id),
+              overrides: card.reviewOverrides,
+            })
+          : null,
+    });
+    return plan.reviewRoundMode === undefined ? {} : { reviewRoundMode: plan.reviewRoundMode };
+  });
+
+  // What a finished review read, beside the mode its round was started in.
+  const logReviewScope = Effect.fn("board-supervisor-logReviewScope")(function* (
+    card: BoardCard,
+    stepId: string,
+    completions: ReadonlyArray<BoardStepCompletion>,
+  ) {
+    const parsed = parseReviewStepId(stepId);
+    if (parsed?.phase !== "review") return;
+    const completion = completions.find(
+      (recorded) => recorded.stepId === stepId && recorded.outcome === "succeeded",
+    );
+    if (completion === undefined) return;
+    const review = Option.getOrNull(
+      decodeReviewPayload(parseBoardStepPayloadJson(completion.payload)),
+    );
+    yield* Effect.logInfo("board: review round reviewed", {
+      cardId: card.id,
+      round: parsed.round,
+      mode: boardReviewRoundModeOf(card.reviewOverrides, parsed.round).kind,
+      scope: review?.scope ?? null,
+      findings: review?.findings.length ?? null,
+    });
+  });
+
   // Resolves the stage's execution config, freezes it onto the run row and spawns. Auto-kickoff
   // acts only on auto-executing stages; on-demand always starts. A re-entry opens a clean
   // human-in-the-loop thread with no prompt; a stage with a live thread is skipped.
@@ -2660,7 +2805,10 @@ const make = Effect.gen(function* () {
     // continuation below); a re-entry is skipped — its clean human thread must
     // not re-open on every server restart.
     if (bootPass && !firstEntry) return;
-    const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+    const model = resolveBoardStageModelSelection(
+      exec.model,
+      yield* fallbackModelSelectionFor(card.projectId),
+    );
     const cardOverride = cardStageModelOverride(board, card);
     // The stage executor decides what runs next. At entry a simple stage yields its single
     // seeded step; `complete`/`escalate` are not reached here.
@@ -2761,6 +2909,8 @@ const make = Effect.gen(function* () {
       // Measured fresh when this plan starts a review round, carried forward
       // otherwise.
       baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
+      // A re-entry injects no prompt, so it starts no settling round.
+      ...(firstEntry ? yield* reviewRoundModeFields(card, plan) : {}),
       createdAt: yield* nowIso,
     });
     if (kept !== null) {
@@ -3250,7 +3400,8 @@ const make = Effect.gen(function* () {
     if (row === undefined) return;
     yield* recordCiStep(card.id, runId, index, { ...row, status: "running", startedAt });
     const model =
-      step.model ?? resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+      step.model ??
+      resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelectionFor(card.projectId));
     const brief = yield* boardQueries
       .boardCardBrief(card.id)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
@@ -3978,7 +4129,10 @@ const make = Effect.gen(function* () {
       card.stage,
       boardProjectStageConfig(board, card.projectId),
     );
-    const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+    const model = resolveBoardStageModelSelection(
+      exec.model,
+      yield* fallbackModelSelectionFor(card.projectId),
+    );
     const plan = stageExecutorFor(stage.role, exec).planNext({
       card,
       config: {
@@ -4774,7 +4928,11 @@ const make = Effect.gen(function* () {
       boardProjectStageConfig(board, card.projectId),
     );
     const completions = boardCardStepCompletions(board, card.id);
-    const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+    yield* logReviewScope(card, state.stepId, completions);
+    const model = resolveBoardStageModelSelection(
+      exec.model,
+      yield* fallbackModelSelectionFor(card.projectId),
+    );
     const cardOverride = cardStageModelOverride(board, card);
     const completedStepIds = completions
       .filter((completion) => completion.outcome === "succeeded")
@@ -4836,6 +4994,7 @@ const make = Effect.gen(function* () {
           // Measured fresh when this plan starts a review round, carried
           // forward otherwise.
           baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
+          ...(yield* reviewRoundModeFields(card, plan)),
           createdAt: yield* nowIso,
         });
         if (exec.mode === "build") yield* provisionPlacedBuildStep(card.id);
@@ -4904,7 +5063,10 @@ const make = Effect.gen(function* () {
     // `beginStageRun` applies, and this path needs it for the same reason.
     if (hasLiveStageThread(card, card.stage)) return;
     const completions = boardCardStepCompletions(board, card.id);
-    const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+    const model = resolveBoardStageModelSelection(
+      exec.model,
+      yield* fallbackModelSelectionFor(card.projectId),
+    );
     const cardOverride = cardStageModelOverride(board, card);
     const completedStepIds = completions
       .filter((completion) => completion.outcome === "succeeded")
@@ -4959,6 +5121,7 @@ const make = Effect.gen(function* () {
       // Measured fresh when this plan starts a review round, carried forward
       // otherwise.
       baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
+      ...(yield* reviewRoundModeFields(card, plan)),
       createdAt: yield* nowIso,
     });
     if (exec.mode === "build") yield* provisionPlacedBuildStep(card.id);
@@ -6905,7 +7068,8 @@ const make = Effect.gen(function* () {
     // The step's own model, else the stage's. The card's per-stage override is not applied: this is
     // machinery, and the model a card is built on says nothing about who writes its description.
     const model =
-      submit.model ?? resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+      submit.model ??
+      resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelectionFor(card.projectId));
     const landed = yield* dispatchLanded({
       type: "board.card.select-step",
       commandId: yield* commandId("submit-step"),
@@ -6947,6 +7111,8 @@ const make = Effect.gen(function* () {
     readonly reason: string;
     readonly stuckRound?: number;
     readonly carry?: BoardReviewCarry;
+    /** Only a plain "Another review round": the requested round reviews the whole branch. */
+    readonly forceFullRound?: boolean;
   }) {
     return yield* dispatchLanded({
       type: "board.card.set-review-carry",
@@ -6956,6 +7122,7 @@ const make = Effect.gen(function* () {
       clearStopAfterRound: true,
       ...(input.stuckRound === undefined ? {} : { stuckWaivedThrough: input.stuckRound }),
       ...(input.carry === undefined ? {} : { carry: { round: input.round, entry: input.carry } }),
+      ...(input.forceFullRound === true ? { forceFullRound: true as const } : {}),
       createdAt: yield* nowIso,
     });
   });
@@ -7015,7 +7182,7 @@ const make = Effect.gen(function* () {
       round,
       reason: "request-review-round",
       ...(carry === undefined || stuck === null
-        ? {}
+        ? { forceFullRound: true }
         : {
             stuckRound: stuck.round,
             carry: boardReviewCarryFromStuck({
@@ -7619,6 +7786,7 @@ const make = Effect.gen(function* () {
           threadId: state.threadId,
           text: BOARD_AUTO_PLAN_OFF_INSTRUCTION,
           runtimeMode: state.runtimeMode,
+          delivery: "steer",
         });
       }
     }
@@ -8390,7 +8558,8 @@ const make = Effect.gen(function* () {
     if (
       event.payload.modelOverridesEdited === true &&
       state.status === "stalled" &&
-      state.stalledReason === "provider-not-on-worker"
+      (state.stalledReason === "provider-not-on-worker" ||
+        state.stalledReason === "provider-disabled-for-project")
     ) {
       yield* dispatchOptional({
         type: "board.card.start-stage-thread",
@@ -9663,6 +9832,8 @@ const make = Effect.gen(function* () {
       readonly checkInsSent: number;
       readonly checkInOutstanding: boolean;
       readonly progressed: boolean;
+      /** A subagent's approval held the due check-in. */
+      readonly heldForHuman?: boolean;
     }
   >();
   const beginBackgroundWait = (threadId: ThreadId, now: string, progressed = false) =>
@@ -9691,6 +9862,25 @@ const make = Effect.gen(function* () {
       (wait.progressed || (yield* committedSince(found.state, found.card, wait.since)));
     beginBackgroundWait(threadId, yield* nowIso, progressed);
   });
+  /** Best-effort: a failed read is "not waiting", the behaviour before this check existed. */
+  const subagentAwaitingApproval = (threadId: ThreadId) =>
+    threads.subagentAwaitingApproval(threadId).pipe(Effect.catchCause(() => Effect.succeed(false)));
+  /** The thread's own permission prompt, a question only a human can answer (a `request_secret`
+      waits inside a live run with no question signal to park the step) or, read only when it has
+      neither, a subagent's approval. Review-deciding questions are the board's own to answer. */
+  const threadAwaitingHuman = (state: Pick<BoardCardStepState, "stepId">, threadId: ThreadId) =>
+    liveThread(threadId).pipe(
+      Effect.flatMap((shell) =>
+        shell === undefined
+          ? Effect.succeed(false)
+          : shell.awaitingPermission ||
+              (shell.awaitingUserInput &&
+                shell.sessionStatus !== "error" &&
+                !isReviewDecidingStep(state))
+            ? Effect.succeed(true)
+            : subagentAwaitingApproval(threadId),
+      ),
+    );
   /** The thread's shell when it is between turns, needs no human and has
       background work — the same reading the card's "Waiting" label makes. */
   const threadWaitingOnBackground = (threadId: ThreadId) =>
@@ -9735,6 +9925,28 @@ const make = Effect.gen(function* () {
     // schedule through its own turn end instead.
     if (yield* committedSince(state, card, wait.since)) {
       beginBackgroundWait(state.threadId, input.now, true);
+      return true;
+    }
+    // A subagent waits on a human's approval: the agent cannot answer
+    // it, so no check-in, charge or escalation while it holds. Once answered,
+    // the wait resumes one ladder step from now, keeping its place. Read
+    // ahead of the due gate, or a hold answered between check-ins goes unseen.
+    if (yield* subagentAwaitingApproval(state.threadId)) {
+      if (wait.heldForHuman !== true) backgroundWaits.set(key, { ...wait, heldForHuman: true });
+      permissionHeldAt.set(key, input.now);
+      return true;
+    }
+    if (wait.heldForHuman === true) {
+      const resumedSinceMs = boardBackgroundWaitResumedSinceMs({
+        nowMs: input.nowMs,
+        checkInsSent: wait.checkInsSent,
+      });
+      backgroundWaits.set(key, {
+        since: DateTime.formatIso(DateTime.makeUnsafe(resumedSinceMs)),
+        checkInsSent: wait.checkInsSent,
+        checkInOutstanding: false,
+        progressed: wait.progressed,
+      });
       return true;
     }
     const sinceMs = Date.parse(wait.since);
@@ -9793,8 +10005,6 @@ const make = Effect.gen(function* () {
     });
     return true;
   });
-  const threadAwaitingPermission = (threadId: ThreadId) =>
-    liveThread(threadId).pipe(Effect.map((shell) => shell?.awaitingPermission ?? false));
   const stampPermissionAnswered = (threadId: ThreadId) =>
     nowIso.pipe(Effect.map((now) => void permissionHeldAt.set(String(threadId), now)));
 
@@ -10002,11 +10212,15 @@ const make = Effect.gen(function* () {
       const heldAt =
         state.threadId === null ? undefined : permissionHeldAt.get(String(state.threadId));
       if (state.threadId !== null && heldAt !== undefined) {
-        if (yield* threadAwaitingPermission(state.threadId)) {
+        if (yield* threadAwaitingHuman(state, state.threadId)) {
           permissionHeldAt.set(String(state.threadId), now);
         } else if (nowMs - Date.parse(heldAt) > state.timeoutMs) {
           permissionHeldAt.delete(String(state.threadId));
         }
+      } else if (state.threadId !== null && (yield* subagentAwaitingApproval(state.threadId))) {
+        // A child's answer names the child's thread and never stamps the
+        // step's, so the hold is read every sweep, not only once overdue.
+        permissionHeldAt.set(String(state.threadId), now);
       }
       const todo = yield* threadTodoState(state.threadId);
       const lastSignalAt = outputSignalShieldsStep({
@@ -10049,9 +10263,11 @@ const make = Effect.gen(function* () {
       // `lastNudgeAt ?? startedAt`.
       // Checked last, so only overdue steps pay.
       if (yield* supersededByPendingTurn(state)) continue;
-      // A thread on a permission prompt is waiting on a human and emits nothing; nudging it would
-      // replace "Needs permission" with a stall. Read last, so only overdue steps pay.
-      if (state.threadId !== null && (yield* threadAwaitingPermission(state.threadId))) {
+      // A thread on a permission prompt or a secret request is waiting on a human and emits
+      // nothing; nudging it would replace the violet wait with a stall. Read last, so only overdue
+      // steps pay. The subagent half repeats this sweep's earlier read on purpose: it closes the
+      // gap if a child just asked.
+      if (state.threadId !== null && (yield* threadAwaitingHuman(state, state.threadId))) {
         permissionHeldAt.set(String(state.threadId), now);
         continue;
       }

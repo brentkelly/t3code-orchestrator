@@ -33,18 +33,18 @@ export function BoardSplitGate(props: {
       className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-attention/50 bg-card shadow-xs"
     >
       <div className="flex items-center gap-2 px-3 pt-2.5 pb-2">
-        <span className="text-[13px] font-semibold text-foreground">Proposed split</span>
-        <span className="truncate text-[12px] text-muted-foreground">
+        <span className="text-board-13 font-semibold text-foreground">Proposed split</span>
+        <span className="truncate text-board-12 text-muted-foreground">
           {view.count} · {view.mix}
         </span>
         <span className="flex-1" />
-        <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-attention-foreground">
+        <span className="inline-flex shrink-0 items-center gap-1 text-board-11 font-medium text-attention-foreground">
           <CircleAlertIcon className="size-3" />
           Needs your approval
         </span>
       </div>
       {props.splitRationale === null ? null : (
-        <p className="border-t border-border px-3 py-2 text-[12px] text-muted-foreground">
+        <p className="border-t border-border px-3 py-2 text-board-12 text-muted-foreground">
           <span className="font-medium text-foreground">Why split: </span>
           {props.splitRationale}
         </p>
@@ -55,32 +55,32 @@ export function BoardSplitGate(props: {
             className="flex items-center gap-2.5 border-t border-border px-3 py-2"
             key={row.planId}
           >
-            <span className="w-5 shrink-0 font-mono text-[11px] text-muted-foreground">
+            <span className="w-5 shrink-0 font-mono text-board-11 text-muted-foreground">
               {row.number}
             </span>
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="truncate text-[12.5px] font-medium text-foreground">
+              <span className="truncate text-board-12-5 font-medium text-foreground">
                 {row.title}
               </span>
               {row.after === null ? null : (
-                <span className="text-[11px] text-muted-foreground">{row.after}</span>
+                <span className="text-board-11 text-muted-foreground">{row.after}</span>
               )}
             </span>
             {row.planned ? (
               <BoardHint label="Comes with an approved plan">
-                <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-input bg-card px-1.5 text-[11px] font-medium text-foreground">
+                <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-input bg-card px-1.5 text-board-11 font-medium text-foreground">
                   <FileCheckIcon className="size-3" />
                   Planned
                 </span>
               </BoardHint>
             ) : (
               <BoardHint label="Comes with a brief only">
-                <span className="inline-flex h-5 shrink-0 items-center rounded-md border border-dashed border-input px-1.5 text-[11px] font-medium text-muted-foreground">
+                <span className="inline-flex h-5 shrink-0 items-center rounded-md border border-dashed border-input px-1.5 text-board-11 font-medium text-muted-foreground">
                   Needs planning
                 </span>
               </BoardHint>
             )}
-            <span className="w-16 shrink-0 text-right text-[11px] font-medium text-muted-foreground">
+            <span className="w-16 shrink-0 text-right text-board-11 font-medium text-muted-foreground">
               {row.lands}
             </span>
           </li>
@@ -95,17 +95,19 @@ export function BoardSplitGate(props: {
             size="sm"
           />
           <span className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-[12px] font-medium text-foreground">Auto-build</span>
-            <span className="text-[11.5px]/[1.45] text-pretty text-muted-foreground">
+            <span className="text-board-12 font-medium text-foreground">Auto-build</span>
+            <span className="text-board-11-5 leading-board-1-45 text-pretty text-muted-foreground">
               {view.autoBuildNote}
             </span>
           </span>
         </label>
         <div className="flex min-w-0 flex-col gap-1.5">
           <div className="flex min-w-0 items-baseline gap-2">
-            <span className="shrink-0 text-[12px] font-medium text-foreground">Merge target</span>
+            <span className="shrink-0 text-board-12 font-medium text-foreground">Merge target</span>
             <span className="flex-1" />
-            <span className="truncate font-mono text-[11px] text-foreground">{view.resolved}</span>
+            <span className="truncate font-mono text-board-11 text-foreground">
+              {view.resolved}
+            </span>
           </div>
           <ToggleGroup
             aria-label="Merge target"
@@ -124,7 +126,7 @@ export function BoardSplitGate(props: {
         </div>
       </div>
       <div className="flex items-center gap-2 border-t border-border px-3 py-2.5">
-        <span className="min-w-0 flex-1 text-[11.5px]/[1.45] text-pretty text-muted-foreground">
+        <span className="min-w-0 flex-1 text-board-11-5 leading-board-1-45 text-pretty text-muted-foreground">
           {view.foot}
         </span>
         {view.edited ? (

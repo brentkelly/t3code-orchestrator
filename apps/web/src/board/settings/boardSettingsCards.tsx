@@ -32,7 +32,7 @@ export function BoardSettingsCardRow(props: {
   return (
     <div className="flex items-center justify-between gap-4 py-1.5">
       <div className="flex min-w-0 flex-col">
-        <span className="text-[13.5px] text-foreground">{props.label}</span>
+        <span className="text-board-13-5 text-foreground">{props.label}</span>
         {props.description ? (
           <span className="max-w-md text-xs text-muted-foreground">{props.description}</span>
         ) : null}

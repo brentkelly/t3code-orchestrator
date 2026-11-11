@@ -53,6 +53,7 @@ const HUMAN_STALLS: ReadonlySet<BoardCardStepStalledReason> = new Set([
   "gave-up",
   "no-worktree",
   "provider-not-on-worker",
+  "provider-disabled-for-project",
   "worker-removed",
 ]);
 

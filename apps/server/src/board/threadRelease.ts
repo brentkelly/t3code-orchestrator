@@ -49,12 +49,17 @@ export function boardReleasedThreadIds(
   };
   for (const card of board.cards) {
     const state = boardCardStepState(board, card.id);
-    // An archived card is done with every thread it holds, whatever its last
-    // step row still says.
+    // An archived card, or one in Done whose worktree the board reclaimed, is done with every
+    // thread it holds, whatever its last step row still says. A reclaimed status outlives a
+    // reopen, so it counts only while the card is still in Done.
+    const stage = boardStageById(board, card.stage);
+    const finished =
+      card.archivedAt !== null ||
+      (card.worktree?.status === "reclaimed" &&
+        stage !== null &&
+        effectiveBoardStageRole(stage) === "done");
     const current =
-      card.archivedAt !== null || state === null || !boardStepBelongsToStage(board, card, state)
-        ? null
-        : state;
+      finished || state === null || !boardStepBelongsToStage(board, card, state) ? null : state;
     for (const link of card.threadLinks) {
       if (link.tombstonedAt !== null) continue;
       // The board retired it: finished, whatever its role says.
@@ -66,8 +71,7 @@ export function boardReleasedThreadIds(
         continue;
       // A planning interview the card left unfinished is still a
       // conversation, whatever column the card is in.
-      if (card.archivedAt === null && isUnfinishedKeptInterview(board, card, link.threadId))
-        continue;
+      if (!finished && isUnfinishedKeptInterview(board, card, link.threadId)) continue;
       add(link.threadId);
     }
   }

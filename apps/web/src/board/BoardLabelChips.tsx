@@ -12,7 +12,7 @@ const VISIBLE_CHIPS = 2;
 
 /** The prototype's card chip: small, uppercase, letter-spaced. */
 const CHIP_CLASS =
-  "inline-flex h-4 max-w-24 shrink-0 items-center truncate rounded-[5px] px-1.5 text-[10px] font-medium tracking-[0.03em] uppercase";
+  "inline-flex h-4 max-w-24 shrink-0 items-center truncate rounded-board-5 px-1.5 text-board-10 font-medium tracking-board-3 uppercase";
 
 export function BoardLabelChips({
   labelIds,

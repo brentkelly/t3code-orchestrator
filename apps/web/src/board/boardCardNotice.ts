@@ -1,14 +1,32 @@
 /**
  * Ranks a card's candidate notices into its one header slot, most specific
- * first: worker trouble, a question, conflicts, auto-merge hold, no PR at merge,
- * the attention chip, the dependency gate, a kept worktree. Not a tone ranking.
+ * first: worker trouble (a provider stall included), a question, conflicts,
+ * auto-merge hold, no PR at merge, the attention chip, the dependency gate, a
+ * kept worktree. Not a tone ranking.
  */
 import { BOARD_ATTENTION_SETTLE_MS } from "@t3tools/contracts";
-import type { BoardCardAttentionReason, BoardCardAttentionTone } from "@t3tools/contracts";
+import type {
+  BoardCardAttentionReason,
+  BoardCardAttentionTone,
+  BoardCardStepStalledReason,
+} from "@t3tools/contracts";
 
 import type { BoardAutoMergePill } from "./boardAutoMergeHold";
 import type { BoardConflictFixInfo } from "./boardConflictFix";
 import type { BoardCardMoveNotice, BoardCardWorkerTrouble } from "./workers/cardWorker";
+
+/** Whether the card's step stalled on its provider before it started: not on
+    the card's worker (T3O-65), or turned off for its project (T3O-74). */
+export function boardCardProviderStalled(card: {
+  readonly stalled: boolean;
+  readonly stalledReason?: BoardCardStepStalledReason | null | undefined;
+}): boolean {
+  return (
+    card.stalled &&
+    (card.stalledReason === "provider-not-on-worker" ||
+      card.stalledReason === "provider-disabled-for-project")
+  );
+}
 
 /** The attention chip as the card renders it — `boardCardAttention`'s answer
     after the card has resolved a parent's inherited child attention into the
@@ -61,8 +79,8 @@ export function boardCardNotice(input: {
   readonly workerMove?: BoardCardMoveNotice | null | undefined;
   /** Worker removed or Worker offline (`boardCardWorkerTrouble`). */
   readonly workerTrouble?: BoardCardWorkerTrouble | null | undefined;
-  /** The attention chip is the step's Provider missing stall, which
-      ranks with the worker notices rather than among the generic chips. */
+  /** The attention chip is a provider stall (`boardCardProviderStalled`),
+      which ranks with the worker notices rather than among the generic chips. */
   readonly providerMissing?: boolean | undefined;
 }): BoardCardNotice | null {
   const attention = input.attention;

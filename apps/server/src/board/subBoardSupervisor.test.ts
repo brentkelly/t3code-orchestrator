@@ -1178,6 +1178,7 @@ it.effect("PIPELINE 3: a child's converged review auto-merges it through to Done
               runThroughRound: null,
               carriedFindings: {},
               stuckWaivedThrough: null,
+              roundModes: {},
             },
           },
         ],

@@ -14,16 +14,16 @@ import { useBoardUiStore } from "./boardUiStore";
  * + 40px pill + 6px. Unchanged when the menu collapses, so columns never reflow
  * under the cursor.
  */
-export const BOARD_UTILITY_MENU_RESERVED_SPACE = "pb-[60px]";
+export const BOARD_UTILITY_MENU_RESERVED_SPACE = "pb-15";
 
-const CORNER = "fixed bottom-3.5 left-3.5 z-40 flex items-center rounded-xl border p-[3px]";
+const CORNER = "fixed bottom-3.5 left-3.5 z-40 flex items-center rounded-xl border p-0.75";
 const GLASS = cn(
   "border-border/70 bg-popover/62 backdrop-blur-(--glass-blur) backdrop-saturate-(--glass-saturation)",
-  "shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
+  "shadow-board-menu dark:shadow-board-menu-dark",
 );
 
 const TOGGLE =
-  "inline-flex h-[30px] shrink-0 cursor-pointer items-center justify-center rounded-[9px] text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none [&_svg]:size-4";
+  "inline-flex h-[30px] shrink-0 cursor-pointer items-center justify-center rounded-board-9 text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none [&_svg]:size-4";
 
 export function BoardUtilityMenu() {
   const collapsed = useBoardUiStore((state) => state.utilityMenuCollapsed);

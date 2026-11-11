@@ -95,7 +95,7 @@ function isBoardDialogConfirmable(
 
 function KeyPill({ cardKey }: { readonly cardKey: string }) {
   return (
-    <span className="shrink-0 rounded bg-muted px-1.5 text-[10.5px] font-semibold text-muted-foreground">
+    <span className="shrink-0 rounded bg-muted px-1.5 text-board-10-5 font-semibold text-muted-foreground">
       {cardKey}
     </span>
   );
@@ -149,7 +149,7 @@ export function BoardDialogShell(props: BoardDialogShellProps) {
                   >
                     <span
                       className={cn(
-                        "mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full border-[1.5px]",
+                        "mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full border-board-spinner",
                         picked
                           ? option.danger === true
                             ? "border-destructive"
@@ -169,7 +169,7 @@ export function BoardDialogShell(props: BoardDialogShellProps) {
                     <span className="flex min-w-0 flex-col gap-0.5">
                       <span
                         className={cn(
-                          "text-[13px] font-medium",
+                          "text-board-13 font-medium",
                           option.danger === true && picked
                             ? "text-destructive-foreground"
                             : "text-foreground",
@@ -177,7 +177,7 @@ export function BoardDialogShell(props: BoardDialogShellProps) {
                       >
                         {option.label}
                       </span>
-                      <span className="text-[12px] text-muted-foreground">
+                      <span className="text-board-12 text-muted-foreground">
                         {option.description}
                       </span>
                     </span>
@@ -187,7 +187,7 @@ export function BoardDialogShell(props: BoardDialogShellProps) {
             </div>
           )}
           {props.titleInput === undefined ? null : (
-            <label className="flex flex-col gap-1 text-[12px] font-medium text-muted-foreground">
+            <label className="flex flex-col gap-1 text-board-12 font-medium text-muted-foreground">
               {props.titleInput.label}
               <Input
                 autoFocus
@@ -201,7 +201,7 @@ export function BoardDialogShell(props: BoardDialogShellProps) {
             <ul className="flex flex-col gap-1.5">
               {props.checks.items.map((check) => (
                 <li key={check.id}>
-                  <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-border bg-muted/50 px-2.5 py-[7px]">
+                  <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-border bg-muted/50 px-2.5 py-1.75">
                     <input
                       checked={check.checked}
                       className="size-3.5 shrink-0 accent-primary"
@@ -209,7 +209,7 @@ export function BoardDialogShell(props: BoardDialogShellProps) {
                       type="checkbox"
                     />
                     <KeyPill cardKey={check.cardKey} />
-                    <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
+                    <span className="min-w-0 flex-1 truncate text-board-13 text-foreground">
                       {check.title}
                     </span>
                   </label>
@@ -221,15 +221,15 @@ export function BoardDialogShell(props: BoardDialogShellProps) {
             <ul className="flex flex-col gap-1.5">
               {props.items.map((item) => (
                 <li
-                  className="flex items-center gap-2.5 rounded-lg border border-border bg-muted/50 px-2.5 py-[7px]"
+                  className="flex items-center gap-2.5 rounded-lg border border-border bg-muted/50 px-2.5 py-1.75"
                   key={item.id}
                 >
                   <KeyPill cardKey={item.cardKey} />
-                  <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
+                  <span className="min-w-0 flex-1 truncate text-board-13 text-foreground">
                     {item.title}
                   </span>
                   {item.note === undefined ? null : (
-                    <span className="shrink-0 text-[11.5px] text-muted-foreground">
+                    <span className="shrink-0 text-board-11-5 text-muted-foreground">
                       {item.note}
                     </span>
                   )}
@@ -239,10 +239,10 @@ export function BoardDialogShell(props: BoardDialogShellProps) {
           )}
           {props.losses === undefined ? null : (
             <div className="rounded-lg border border-destructive/35 bg-destructive/5 px-3 py-2.5">
-              <div className="pb-1 text-[12px] font-semibold text-destructive-foreground">
+              <div className="pb-1 text-board-12 font-semibold text-destructive-foreground">
                 {props.losses.title}
               </div>
-              <ul className="flex list-disc flex-col gap-0.5 pl-4 text-[12.5px] text-foreground">
+              <ul className="flex list-disc flex-col gap-0.5 pl-4 text-board-12-5 text-foreground">
                 {props.losses.items.map((item, index) => (
                   // oxlint-disable-next-line react/no-array-index-key -- the losses are a fixed, ordered list built per render
                   <li key={index}>{item}</li>
@@ -251,10 +251,10 @@ export function BoardDialogShell(props: BoardDialogShellProps) {
             </div>
           )}
           {props.afterNote === undefined ? null : (
-            <p className="text-[12px] text-muted-foreground">{props.afterNote}</p>
+            <p className="text-board-12 text-muted-foreground">{props.afterNote}</p>
           )}
           {props.typedKey === undefined ? null : (
-            <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
+            <label className="flex flex-col gap-1 text-board-12 text-muted-foreground">
               <span>
                 Type <span className="font-semibold text-foreground">{props.typedKey.key}</span> to
                 confirm

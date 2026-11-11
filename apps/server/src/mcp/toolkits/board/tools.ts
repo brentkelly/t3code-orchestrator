@@ -37,7 +37,9 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Path from "effect/Path";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
+import * as Context from "effect/Context";
+import * as Fiber from "effect/Fiber";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -756,29 +758,41 @@ const BoardSetAutomationTool = Tool.make("board_set_automation", {
   dependencies,
 }).annotate(Tool.Title, "Set a board card's automation");
 
+/**
+ * `McpSchema.EnabledWhen` for every board tool: each acts for the calling thread's card, so an MCP
+ * client that is not a thread (an app connected over OAuth) is not shown them. Handlers still
+ * refuse such a caller.
+ */
+const shownToThreads = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope =
+    fiber && Context.getOrUndefined(fiber.context, McpInvocationContext.McpInvocationContext);
+  return scope?.thread !== undefined;
+};
+
 export const BoardToolkit = Toolkit.make(
-  BoardGetCardContextTool,
-  BoardCompleteStepTool,
-  BoardGetCardTool,
-  BoardListProjectsTool,
-  BoardListCardsTool,
-  BoardCreateCardTool,
-  BoardMoveCardTool,
-  BoardUpdateCardTool,
-  BoardArchiveCardTool,
-  BoardUnarchiveCardTool,
-  BoardDeleteCardTool,
-  BoardIndentCardsTool,
-  BoardOutdentCardsTool,
-  BoardGroupCardsTool,
-  BoardShareParentTool,
-  BoardNewPhaseTool,
-  BoardCancelCardWorkTool,
-  BoardSetGroupSettingsTool,
-  BoardManageLabelsTool,
-  BoardProposePlansTool,
-  BoardGetPlanTool,
-  BoardWritePlanTool,
-  BoardRecordDecisionsTool,
-  BoardSetAutomationTool,
+  BoardGetCardContextTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardCompleteStepTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardGetCardTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardListProjectsTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardListCardsTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardCreateCardTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardMoveCardTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardUpdateCardTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardArchiveCardTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardUnarchiveCardTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardDeleteCardTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardIndentCardsTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardOutdentCardsTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardGroupCardsTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardShareParentTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardNewPhaseTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardCancelCardWorkTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardSetGroupSettingsTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardManageLabelsTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardProposePlansTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardGetPlanTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardWritePlanTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardRecordDecisionsTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardSetAutomationTool.annotate(McpSchema.EnabledWhen, shownToThreads),
 );

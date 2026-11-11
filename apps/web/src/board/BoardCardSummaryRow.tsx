@@ -50,15 +50,15 @@ function RoundBar({
 }) {
   const total = Math.max(max ?? current, current, 1);
   return (
-    <span className="flex items-center gap-[3px]">
+    <span className="flex items-center gap-0.75">
       {/* Indexed rather than mapped over data: a segment IS its position, the
           same shape `BoardTodoPips` and `BoardCardPlansRow` use. */}
       {Array.from({ length: total }, (_, index) => (
         <span
           className={cn(
-            "h-[3px] min-w-[2px] flex-1 rounded-[2px]",
+            "h-[3px] min-w-[2px] flex-1 rounded-xs",
             held
-              ? "bg-amber-500/55"
+              ? "bg-warning/55"
               : index < current - 1
                 ? "bg-foreground/30"
                 : index === current - 1
@@ -112,7 +112,7 @@ export function BoardCardReviewBlock({
       {rounds === null && step === undefined && !held ? null : (
         <div className="flex items-center gap-2">
           {rounds === null ? null : (
-            <span className="text-[10.5px] font-medium text-foreground">{rounds}</span>
+            <span className="text-board-10-5 font-medium text-foreground">{rounds}</span>
           )}
           <span className="flex-1" />
           {/* One chip slot, and the held flag owns it: "the loop stopped without
@@ -121,8 +121,8 @@ export function BoardCardReviewBlock({
             <span
               className={
                 round?.outcome === "stuck"
-                  ? "inline-flex shrink-0 items-center rounded bg-attention/16 px-1.5 text-[10px] font-medium uppercase tracking-wide text-attention-foreground"
-                  : "inline-flex shrink-0 items-center rounded bg-amber-500/18 px-1.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300"
+                  ? "inline-flex shrink-0 items-center rounded bg-attention/16 px-1.5 text-board-10 font-medium uppercase tracking-wide text-attention-foreground"
+                  : "inline-flex shrink-0 items-center rounded bg-warning/18 px-1.5 text-board-10 font-medium uppercase tracking-wide text-board-amber-text"
               }
             >
               {round?.outcome === undefined
@@ -130,7 +130,7 @@ export function BoardCardReviewBlock({
                 : boardReviewHeldLabel(round.outcome)}
             </span>
           ) : step === undefined ? null : (
-            <span className="inline-flex shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            <span className="inline-flex shrink-0 items-center rounded bg-muted px-1.5 text-board-10 font-medium uppercase tracking-wide text-muted-foreground">
               {step.label}
             </span>
           )}
@@ -190,7 +190,7 @@ export function BoardCardReviewBlock({
 
 /** The small bordered chip that opens a card's plans or a group's sub-board. */
 export const BOARD_CHIP_CLASS =
-  "inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 text-[10.5px] font-medium whitespace-nowrap text-muted-foreground";
+  "inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 text-board-10-5 font-medium whitespace-nowrap text-muted-foreground";
 
 /**
  * The split parent's plan bar: one segment per child plan plus the drill-in chip.
@@ -223,11 +223,11 @@ export function BoardCardPlansRow({
   return (
     <BoardHint label={`${done} of ${total} plans done`}>
       <div aria-label={`${done} of ${total} plans done`} className="flex items-center gap-2">
-        <span className="flex min-w-0 flex-1 items-center gap-[3px]">
+        <span className="flex min-w-0 flex-1 items-center gap-0.75">
           {Array.from(chars, (status, index) => (
             <span
               className={cn(
-                "h-[3px] min-w-[2px] flex-1 rounded-[2px]",
+                "h-[3px] min-w-[2px] flex-1 rounded-xs",
                 status === BOARD_THREAD_TODO_STATUS_DONE
                   ? "bg-success"
                   : status === BOARD_THREAD_TODO_STATUS_IN_PROGRESS
@@ -282,13 +282,13 @@ function SeverityTriple({
     <BoardHint label={`${critical} critical · ${improvement} improvements · ${nitpick} nitpicks`}>
       <span
         aria-label={`${critical} critical · ${improvement} improvements · ${nitpick} nitpicks`}
-        className="inline-flex items-center gap-1 rounded bg-muted px-1.5 text-[10.5px] font-medium tabular-nums"
+        className="inline-flex items-center gap-1 rounded bg-muted px-1.5 text-board-10-5 font-medium tabular-nums"
       >
-        <span className="text-red-600 dark:text-red-400">{critical}</span>
+        <span className="text-board-red-text">{critical}</span>
         <span className="text-muted-foreground">/</span>
-        <span className="text-amber-600 dark:text-amber-400">{improvement}</span>
+        <span className="text-board-amber-icon">{improvement}</span>
         <span className="text-muted-foreground">/</span>
-        <span className="text-sky-600 dark:text-sky-400">{nitpick}</span>
+        <span className="text-board-sky-text">{nitpick}</span>
       </span>
     </BoardHint>
   );
@@ -310,7 +310,7 @@ function IssueTally({
   const text = `${fixed} fixed · ${rejected} rejected · ${open} open · ${disputed} disputed${escalated > 0 ? ` · ${escalated} escalated` : ""}`;
   return (
     <BoardHint label={text}>
-      <span className="text-[10.5px] font-medium text-muted-foreground">{text}</span>
+      <span className="text-board-10-5 font-medium text-muted-foreground">{text}</span>
     </BoardHint>
   );
 }
@@ -319,7 +319,7 @@ function SummaryItem({ item }: { readonly item: BoardCardSummaryItem }) {
   switch (item.kind) {
     case "attachments":
       return (
-        <span className="inline-flex items-center gap-0.5 text-[10.5px] font-medium text-muted-foreground">
+        <span className="inline-flex items-center gap-0.5 text-board-10-5 font-medium text-muted-foreground">
           <PaperclipIcon className="size-3" />
           {item.count}
         </span>
@@ -331,7 +331,7 @@ function SummaryItem({ item }: { readonly item: BoardCardSummaryItem }) {
     case "review-advanced":
       // Neutral: not a pass, and not a call for a human.
       return (
-        <span className="text-[10.5px] font-medium text-muted-foreground">
+        <span className="text-board-10-5 font-medium text-muted-foreground">
           Advanced past stuck round {item.round}
           {item.unreviewedFixes > 0
             ? ` · ${item.unreviewedFixes} ${item.unreviewedFixes === 1 ? "fix" : "fixes"} not re-reviewed`
@@ -388,7 +388,7 @@ function MetaCount({
       <span
         aria-label={title}
         className={cn(
-          "inline-flex items-center gap-1 text-[10.5px] font-medium tabular-nums",
+          "inline-flex items-center gap-1 text-board-10-5 font-medium tabular-nums",
           tint ?? "text-muted-foreground",
         )}
       >
@@ -472,7 +472,7 @@ export function BoardCardMetaRow({
           <span
             aria-label={worker.tooltip}
             className={cn(
-              "inline-flex h-4 max-w-[110px] shrink-0 items-center rounded border px-1.5 text-[10px] font-medium text-muted-foreground",
+              "inline-flex h-4 max-w-[110px] shrink-0 items-center rounded border px-1.5 text-board-10 font-medium text-muted-foreground",
               worker.bound ? "border-border" : "border-dashed border-border",
             )}
           >
@@ -503,7 +503,7 @@ export function BoardTodoPips({
   const label = `${done} of ${total} todos done`;
   return (
     <BoardHint label={label}>
-      <span aria-label={label} className="flex items-center gap-[2px]">
+      <span aria-label={label} className="flex items-center gap-0.5">
         {/* Indexed rather than mapped over the characters: a pip IS its position
           — the row is a positional progress bar and items never reorder within a
           render — which is the same shape `RoundBar` uses. */}
@@ -556,17 +556,17 @@ export function BoardCardTodoStrip({
     <div className="flex flex-col gap-1">
       <BoardTodoPips done={done} statuses={todo.todoStatuses ?? ""} total={total} />
       <div className="flex min-w-0 items-center gap-1.5">
-        <span className="shrink-0 text-[10.5px] font-medium tabular-nums text-muted-foreground">
+        <span className="shrink-0 text-board-10-5 font-medium tabular-nums text-muted-foreground">
           {done}/{total}
         </span>
         {todo.todoCurrent === undefined ? null : (
-          <span className="min-w-0 flex-1 truncate text-[10.5px] text-muted-foreground">
+          <span className="min-w-0 flex-1 truncate text-board-10-5 text-muted-foreground">
             {todo.todoCurrent}
           </span>
         )}
         {elapsed === null ? null : (
           <BoardHint label="Time on the current todo">
-            <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground/70">
+            <span className="shrink-0 text-board-10-5 tabular-nums text-muted-foreground/70">
               {elapsed}
             </span>
           </BoardHint>
@@ -580,7 +580,7 @@ export function BoardCardTodoStrip({
             }
           >
             <button
-              className="-my-0.5 inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="-my-0.5 inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-board-10 font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
               // The chip must NOT open the card: clicking it expands the other
               // threads in place.
               onClick={(event) => {
@@ -617,9 +617,9 @@ export function BoardCardTodoThreadRow({
   const total = todo.todoTotal ?? 0;
   return (
     <div className="flex min-w-0 items-center gap-1.5">
-      <span className="min-w-0 flex-1 truncate text-[10.5px] text-muted-foreground">{title}</span>
+      <span className="min-w-0 flex-1 truncate text-board-10-5 text-muted-foreground">{title}</span>
       {total === 0 ? null : (
-        <span className="shrink-0 text-[10.5px] font-medium tabular-nums text-muted-foreground">
+        <span className="shrink-0 text-board-10-5 font-medium tabular-nums text-muted-foreground">
           {done}/{total}
         </span>
       )}

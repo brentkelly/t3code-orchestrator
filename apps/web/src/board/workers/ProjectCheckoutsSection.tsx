@@ -102,9 +102,9 @@ export function ProjectCheckoutsSection(props: { readonly environmentId: Environ
   return (
     <>
       <div className="mx-3 overflow-x-auto rounded-xl border border-border bg-card shadow-xs sm:mx-4">
-        <table className="w-full border-collapse text-[12.5px]">
+        <table className="w-full border-collapse text-board-12-5">
           <thead>
-            <tr className="border-b border-border text-left text-[11.5px] text-muted-foreground">
+            <tr className="border-b border-border text-left text-board-11-5 text-muted-foreground">
               <th className="px-4 py-2 font-medium">Project</th>
               <th className="px-3 py-2 font-medium">
                 <div className="flex flex-col gap-0.5">
@@ -141,7 +141,7 @@ export function ProjectCheckoutsSection(props: { readonly environmentId: Environ
                 <td className="px-4 py-2.5 align-top">
                   <div className="flex flex-col">
                     <span className="font-medium text-foreground">{project.title}</span>
-                    <span className="font-mono text-[11px] text-muted-foreground">
+                    <span className="font-mono text-board-11 text-muted-foreground">
                       {project.repositoryKey ?? "No git remote"}
                     </span>
                   </div>
@@ -203,7 +203,7 @@ function CellCheckedOut(props: { readonly path: string; readonly lastKnown: bool
       <span className="flex items-center gap-1 text-muted-foreground">
         <CheckIcon className="size-3.5" /> Checked out
       </span>
-      <span className="truncate font-mono text-[11px] text-muted-foreground">
+      <span className="truncate font-mono text-board-11 text-muted-foreground">
         {props.lastKnown ? "Last known · offline" : props.path}
       </span>
     </div>
@@ -228,7 +228,9 @@ function Cell(props: {
           <span className="flex items-center gap-1 text-success-foreground">
             <CheckIcon className="size-3.5" /> Set up just now
           </span>
-          <span className="truncate font-mono text-[11px] text-muted-foreground">{cell.path}</span>
+          <span className="truncate font-mono text-board-11 text-muted-foreground">
+            {cell.path}
+          </span>
         </div>
       );
     case "cloning":
@@ -238,7 +240,7 @@ function Cell(props: {
             <Spinner className="size-3" /> Cloning
             {cell.percent === null ? "" : ` · ${cell.percent}%`}
           </span>
-          <span className="text-[11px] text-muted-foreground">{cloneStageLabel(cell.stage)}</span>
+          <span className="text-board-11 text-muted-foreground">{cloneStageLabel(cell.stage)}</span>
         </div>
       );
     case "failed": {
@@ -251,7 +253,7 @@ function Cell(props: {
       return (
         <div className="flex flex-col gap-1">
           <span className="font-medium text-warning-foreground">Clone failed</span>
-          <span className="text-[11px] text-muted-foreground">{copy.cell}</span>
+          <span className="text-board-11 text-muted-foreground">{copy.cell}</span>
           <div className="flex gap-1">
             <SetUpButton
               environmentId={props.environmentId}
@@ -298,7 +300,7 @@ function Cell(props: {
       return (
         <div className="flex flex-col">
           <span className="text-muted-foreground">Not checked out</span>
-          <span className="text-[11px] text-muted-foreground">Set up when online</span>
+          <span className="text-board-11 text-muted-foreground">Set up when online</span>
         </div>
       );
     case "re-pair-to-check":
@@ -357,9 +359,9 @@ function SetUpButton(props: {
           <PopoverTitle>
             Set up {props.project.title} on {props.worker.label}
           </PopoverTitle>
-          <p className="text-[12.5px] text-muted-foreground">
+          <p className="text-board-12-5 text-muted-foreground">
             Clones{" "}
-            <span className="font-mono text-[11.5px] text-foreground">
+            <span className="font-mono text-board-11-5 text-foreground">
               {props.project.repositoryKey}
             </span>{" "}
             using {props.worker.label}'s git credentials.
@@ -437,7 +439,7 @@ function SetupFailureDialog(props: {
         <DialogPanel>
           <pre
             className={cn(
-              "max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/50 p-3 font-mono text-[11.5px]",
+              "max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/50 p-3 font-mono text-board-11-5",
             )}
           >
             {log}

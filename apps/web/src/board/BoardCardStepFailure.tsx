@@ -25,10 +25,10 @@ export function BoardCardStepFailure(props: {
 }) {
   const tone = props.waiting
     ? {
-        frame: "border-amber-500/30 bg-amber-500/10",
-        icon: "text-amber-600 dark:text-amber-400",
-        heading: "text-amber-700 dark:text-amber-300",
-        body: "text-amber-700/90 dark:text-amber-300/90",
+        frame: "border-warning/30 bg-warning/10",
+        icon: "text-board-amber-icon",
+        heading: "text-board-amber-text",
+        body: "text-board-amber-text/90",
       }
     : {
         frame: "border-destructive/30 bg-destructive/10",
@@ -50,7 +50,7 @@ export function BoardCardStepFailure(props: {
           className={cn("mt-px size-3.5 shrink-0", tone.icon)}
         />
         <div className="flex min-w-0 flex-col gap-1">
-          <span className={cn("text-[12px] font-medium", tone.heading)}>
+          <span className={cn("text-board-12 font-medium", tone.heading)}>
             {boardStageLabelMidSentence(props.stageLabel)}{" "}
             {props.waiting ? "is waiting to resume" : "stopped"}
           </span>
@@ -59,7 +59,10 @@ export function BoardCardStepFailure(props: {
               underneath it. `break-words` because provider errors carry paths and
               commands with no spaces to wrap at. */}
           <span
-            className={cn("whitespace-pre-wrap break-words text-[12px] leading-[1.5]", tone.body)}
+            className={cn(
+              "whitespace-pre-wrap break-words text-board-12 leading-normal",
+              tone.body,
+            )}
           >
             {props.error ??
               (props.waiting

@@ -54,6 +54,8 @@ it.effect("turning a running review off tells the live thread to wrap up", () =>
       assert.strictEqual(after.length, before + 1);
       assert.strictEqual(after.at(-1)?.threadId, state!.threadId);
       assert.strictEqual(after.at(-1)?.text, BOARD_PLAN_REVIEW_STOP_INSTRUCTION);
+      // Moot once the running review turn ends, so it joins that turn (T3O-72).
+      assert.strictEqual(after.at(-1)?.delivery, "steer");
     }),
   ),
 );

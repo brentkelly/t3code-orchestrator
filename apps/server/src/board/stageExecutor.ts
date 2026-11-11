@@ -12,6 +12,7 @@ import type {
   BoardCard,
   BoardCardStageModelOverride,
   BoardModelSelection,
+  BoardReviewRoundMode,
   BoardStageExecution,
   BoardStageRole,
   BoardStepCompletion,
@@ -140,6 +141,12 @@ export type BoardStagePlan =
        * replaced row's tip forward, so a round's later steps keep the tip its review began from.
        */
       readonly recordBaseTip: boolean;
+      /** Set only when this step starts a NEW settling review round: the reactor passes it on
+          select-step, which records it in the card's `roundModes`. */
+      readonly reviewRoundMode?: {
+        readonly round: number;
+        readonly mode: BoardReviewRoundMode;
+      };
     }
   | {
       readonly kind: "complete";

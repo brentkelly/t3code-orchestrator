@@ -13,7 +13,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { boardAutoMergePill } from "./boardAutoMergeHold";
-import { boardCardNotice, type BoardCardNotice } from "./boardCardNotice";
+import { boardCardNotice, boardCardProviderStalled, type BoardCardNotice } from "./boardCardNotice";
 import type { BoardCardSummary } from "./boardCardSummary";
 import { boardConflictFix } from "./boardConflictFix";
 import { boardCardMoveNotice, boardCardWorkerTrouble } from "./workers/cardWorker";
@@ -95,7 +95,7 @@ export function boardCardFace(input: {
     stageGone: isGroup ? null : input.stageGone,
     workerMove: quiet ? null : boardCardMoveNotice(card, input.workers),
     workerTrouble: quiet ? null : boardCardWorkerTrouble(card, input.workers),
-    providerMissing: !isGroup && card.stalled && card.stalledReason === "provider-not-on-worker",
+    providerMissing: !isGroup && boardCardProviderStalled(card),
   });
   return { own, tone: flag?.tone ?? null, notice };
 }

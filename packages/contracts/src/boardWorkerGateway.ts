@@ -192,6 +192,8 @@ export const BoardGatewaySendInput = Schema.Struct({
   attachments: Schema.Array(ChatAttachment),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  /** `steer` joins a running turn instead of queuing behind it. Older workers queue. */
+  delivery: Schema.optional(Schema.Literals(["queue", "steer"])),
 });
 export type BoardGatewaySendInput = typeof BoardGatewaySendInput.Type;
 
@@ -225,6 +227,9 @@ export class BoardWorkerGatewayError extends Schema.TaggedError<BoardWorkerGatew
     operation: Schema.String,
     threadId: Schema.NullOr(Schema.String),
     detail: Schema.String,
+    /** A refusal's reason the supervisor acts on (T3O-74). Optional, so a peer
+        on either side of the change reads the other as a plain refusal. */
+    reason: Schema.optional(Schema.Literal("provider-disabled")),
   },
 ) {}
 
@@ -312,6 +317,7 @@ export const BoardGatewayCall = Schema.Union([
   Schema.TaggedStruct("latestAssistantMessage", { threadId: ThreadId }),
   Schema.TaggedStruct("lastSignalAt", { threadId: ThreadId }),
   Schema.TaggedStruct("pendingTurnStartAt", { threadId: ThreadId }),
+  Schema.TaggedStruct("subagentAwaitingApproval", { threadId: ThreadId }),
   Schema.TaggedStruct("projects", {}),
   Schema.TaggedStruct("project", { projectId: ProjectId }),
   Schema.TaggedStruct("todoLogHead", {}),
@@ -336,6 +342,7 @@ export const BOARD_GATEWAY_CALL_RESULTS = {
   latestAssistantMessage: Schema.NullOr(BoardGatewayAssistantMessage),
   lastSignalAt: Schema.NullOr(Schema.String),
   pendingTurnStartAt: Schema.NullOr(Schema.String),
+  subagentAwaitingApproval: Schema.Boolean,
   projects: Schema.Array(BoardGatewayProject),
   project: Schema.NullOr(BoardGatewayProjectDetail),
   todoLogHead: NonNegativeInt,

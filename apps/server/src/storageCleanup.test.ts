@@ -25,6 +25,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "./config.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import { CENTRAL_OWNER_MARKER } from "./board/workspace/LocalBoardWorkspace.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as Settings from "./serverSettings.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
@@ -343,6 +344,7 @@ const cleanupFixture = (
     let threads = [shell({ branch: "feature", worktreePath: worktree })];
     let deletedThreads: OrchestrationV2ThreadShell[] = [];
     let storedWorktreePaths: string[] = [worktree];
+    let boardWorktreePaths: string[] | "unreadable" = [];
     let projectRoots = [repo];
     let editBeforeRemoval = false;
     let openSessionCwd: string | null = null;
@@ -430,38 +432,43 @@ const cleanupFixture = (
         streamDomainEvents: Stream.suspend(() => events),
       } as unknown as Orchestrator.OrchestratorV2["Service"]),
       Effect.provideService(SqlClient.SqlClient, ((strings: TemplateStringsArray) =>
-        Effect.sync(() =>
-          openSessionCwd !== null && strings.join("").includes("projection_provider_sessions")
-            ? [
-                {
-                  payload_json: JSON.stringify({
-                    id: "session-1",
-                    driver: "codex",
-                    providerInstanceId: "codex",
-                    status: "ready",
-                    cwd: openSessionCwd,
-                    model: null,
-                    capabilities: CodexProviderCapabilitiesV2,
-                    createdAt: "2026-06-01T12:00:00.000Z",
-                    updatedAt: "2026-06-01T12:00:00.000Z",
-                    lastError: null,
-                  }),
-                },
-              ]
-            : outboxStatus !== null && strings.join("").includes("orchestration_v2_effect_outbox")
-              ? [{ status: outboxStatus }]
-              : strings.join("").includes("deleted_at IS NOT NULL")
-                ? deletedThreads.map((thread) => ({
-                    payload_json: JSON.stringify(thread),
-                    workspaceRoot: repo,
-                  }))
-                : strings.join("").includes('AS "worktreePath"')
-                  ? [
-                      ...threads.flatMap((thread) => thread.worktreePath ?? []),
-                      ...storedWorktreePaths,
-                    ].map((worktreePath) => ({ worktreePath }))
-                  : [],
-        )) as unknown as SqlClient.SqlClient),
+        strings.join("").includes("boards.board_cards")
+          ? boardWorktreePaths === "unreadable"
+            ? Effect.fail({ _tag: "BoardTablesUnreadable" } as const)
+            : Effect.succeed(boardWorktreePaths.map((path) => ({ path })))
+          : Effect.sync(() =>
+              openSessionCwd !== null && strings.join("").includes("projection_provider_sessions")
+                ? [
+                    {
+                      payload_json: JSON.stringify({
+                        id: "session-1",
+                        driver: "codex",
+                        providerInstanceId: "codex",
+                        status: "ready",
+                        cwd: openSessionCwd,
+                        model: null,
+                        capabilities: CodexProviderCapabilitiesV2,
+                        createdAt: "2026-06-01T12:00:00.000Z",
+                        updatedAt: "2026-06-01T12:00:00.000Z",
+                        lastError: null,
+                      }),
+                    },
+                  ]
+                : outboxStatus !== null &&
+                    strings.join("").includes("orchestration_v2_effect_outbox")
+                  ? [{ status: outboxStatus }]
+                  : strings.join("").includes("deleted_at IS NOT NULL")
+                    ? deletedThreads.map((thread) => ({
+                        payload_json: JSON.stringify(thread),
+                        workspaceRoot: repo,
+                      }))
+                    : strings.join("").includes('AS "worktreePath"')
+                      ? [
+                          ...threads.flatMap((thread) => thread.worktreePath ?? []),
+                          ...storedWorktreePaths,
+                        ].map((worktreePath) => ({ worktreePath }))
+                      : [],
+            )) as unknown as SqlClient.SqlClient),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
       } as unknown as GitManager.GitManager["Service"]),
@@ -531,6 +538,9 @@ const cleanupFixture = (
       },
       setStoredWorktreePaths: (paths: string[]) => {
         storedWorktreePaths = paths;
+      },
+      setBoardWorktreePaths: (paths: string[] | "unreadable") => {
+        boardWorktreePaths = paths;
       },
       setProjectRoots: (roots: string[]) => {
         projectRoots = roots;
@@ -2300,6 +2310,36 @@ describe("storage cleanup reports and local file policies", () => {
           outcome: "kept",
           reason: "Thread activity or shared worktree changed since check",
           bytes: null,
+        });
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+      }),
+    ),
+  );
+  it.live.each([
+    "a board card records it",
+    "the board cannot be read",
+    "a central board provisioned it here",
+  ] as const)("keeps an inactive worktree when %s", (scenario) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setBoardWorktreePaths(
+          scenario === "a board card records it"
+            ? [fixture.worktree]
+            : scenario === "the board cannot be read"
+              ? "unreadable"
+              : [],
+        );
+        if (scenario === "a central board provisioned it here") {
+          // A worker's card worktree: nothing in its database names it once its threads go.
+          const dotGit = yield* fixture.fs.readFileString(`${fixture.worktree}/.git`);
+          const gitDir = dotGit.replace(/^gitdir:\s*/, "").trim();
+          yield* fixture.fs.writeFileString(`${gitDir}/${CENTRAL_OWNER_MARKER}`, "central\n");
+        }
+        const report = yield* fixture.service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "A board card uses it",
         });
         expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
       }),

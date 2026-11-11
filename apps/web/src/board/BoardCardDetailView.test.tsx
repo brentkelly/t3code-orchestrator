@@ -1372,6 +1372,24 @@ describe("initialBoardCardThreadId", () => {
     ).toBe("thread-plan-2");
   });
 
+  it("opens the thread whose subagent awaits approval, while it is live", () => {
+    const review = ThreadId.make("thread-review");
+    const plan = ThreadId.make("thread-plan");
+    expect(
+      initialBoardCardThreadId(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.building, links, plan),
+    ).toBe("thread-plan");
+    expect(
+      initialBoardCardThreadId(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.planning, links, review),
+    ).toBe("thread-review");
+    const tombstoned = [
+      link("thread-plan", BOARD_SEED_STAGE_IDS.planning, "2026-01-01T00:00:00.000Z", NOW),
+      ...links.slice(1),
+    ];
+    expect(
+      initialBoardCardThreadId(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.building, tombstoned, plan),
+    ).toBe("thread-build");
+  });
+
   it("ignores a later stage's thread, and a past review pass's, after a move back", () => {
     expect(initialBoardCardThreadId(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.planning, links)).toBe(
       "thread-plan",
@@ -1415,8 +1433,8 @@ describe("BoardCardDetailPanel done marks", () => {
     expect(doneChip).toContain("text-success-foreground");
     // The label chips' own shape: 16px tall, 5px radius, 10px uppercase.
     expect(doneChip).toContain("h-4");
-    expect(doneChip).toContain("rounded-[5px]");
-    expect(doneChip).toContain("text-[10px]");
+    expect(doneChip).toContain("rounded-board-5");
+    expect(doneChip).toContain("text-board-10");
     expect(doneChip).toContain("uppercase");
   });
 

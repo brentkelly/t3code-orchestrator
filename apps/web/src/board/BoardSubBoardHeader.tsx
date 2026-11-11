@@ -76,7 +76,7 @@ export function BoardSubBoardHeader({
     <div className="flex min-w-0 items-center gap-2.5">
       <span
         className={cn(
-          "inline-flex h-4 shrink-0 items-center rounded px-1.5 text-[10px] font-semibold tracking-wide",
+          "inline-flex h-4 shrink-0 items-center rounded px-1.5 text-board-10 font-semibold tracking-wide",
           accent.pill,
         )}
       >
@@ -84,14 +84,14 @@ export function BoardSubBoardHeader({
       </span>
       <BoardHint label={`Open ${parentShell.key} on the board`}>
         <button
-          className="min-w-0 truncate text-left text-[13px] font-semibold text-foreground hover:underline"
+          className="min-w-0 truncate text-left text-board-13 font-semibold text-foreground hover:underline"
           onClick={onOpenParentCard}
           type="button"
         >
           {parentShell.title}
         </button>
       </BoardHint>
-      <span className="shrink-0 text-[12px] text-muted-foreground tabular-nums">
+      <span className="shrink-0 text-board-12 text-muted-foreground tabular-nums">
         {stats.done}/{stats.active.length} done
         {stats.deferred > 0 ? ` · ${stats.deferred} deferred` : ""}
       </span>
@@ -102,19 +102,19 @@ export function BoardSubBoardHeader({
             : `Cards here merge into ${target}`
         }
       >
-        <span className="inline-flex min-w-0 shrink items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+        <span className="inline-flex min-w-0 shrink items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-board-11 font-medium text-muted-foreground">
           <GitBranchIcon className="size-3 shrink-0" />
           <span className="truncate">→ {target}</span>
         </span>
       </BoardHint>
       {autoBuild.length === 0 ? null : (
-        <span className="shrink-0 text-[11.5px] text-muted-foreground">{autoBuild}</span>
+        <span className="shrink-0 text-board-11-5 text-muted-foreground">{autoBuild}</span>
       )}
       {pullRequest !== null && pullRequest.state === "open" ? (
         <BoardHint
           label={`${parentShell.key}'s integration pull request is open: ${pullRequest.url}`}
         >
-          <span className="inline-flex shrink-0 items-center gap-1 rounded bg-info/12 px-1.5 py-0.5 text-[11px] font-medium text-info-foreground">
+          <span className="inline-flex shrink-0 items-center gap-1 rounded bg-info/12 px-1.5 py-0.5 text-board-11 font-medium text-info-foreground">
             <PullRequestGlyph.pullRequest className="size-3" />
             PR #{pullRequest.number}
           </span>

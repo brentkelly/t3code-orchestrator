@@ -108,6 +108,11 @@ describe("boardCardNotificationReason", () => {
       "needsHuman:stalled:building",
     ],
     [
+      "a step whose provider is disabled for the project",
+      shell("building", { stalled: true, stalledReason: "provider-disabled-for-project" }),
+      "needsHuman:stalled:building",
+    ],
+    [
       "a usage-limit stall",
       shell("building", { stalled: true, stalledReason: "usage-limit" }),
       null,
