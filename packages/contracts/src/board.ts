@@ -2423,6 +2423,13 @@ export const BoardCardStepState = Schema.Struct({
   planReviewStartedAt: Schema.optionalKey(IsoDateTime),
   /** The round count that review runs to, locked when it started. */
   planReviewRounds: Schema.optionalKey(BoardPlanReviewRounds),
+  /** When turning Auto-plan on reopened this succeeded plan step, so the
+      agent's next completion supersedes the pinned one. Never written as null;
+      a stage entry builds a fresh row without it. */
+  reopenedAt: Schema.optionalKey(IsoDateTime),
+  /** When the reopened step's Auto-plan prompt went out. Undelivered while
+      absent or older than `reopenedAt`; never written as null. */
+  reopenedPromptAt: Schema.optionalKey(IsoDateTime),
   // ── Frozen execution config ────────────────────────────────────
   // Resolved from the stage's settings ONCE at stage entry and stamped here,
   // so editing settings mid-flight cannot corrupt a running card. The reactor
@@ -3714,8 +3721,6 @@ export function resolveBoardCardAutomation(input: {
   readonly lookup: (id: string) => BoardAutomationNode | undefined;
   readonly card: BoardAutomationNode;
   readonly boardWideAutoMerge: boolean;
-  /** The card's planning run for this stay in Planning has finished. */
-  readonly planningFinished?: boolean | undefined;
 }): BoardResolvedAutomation {
   const { card } = input;
   const parentId = card.parentCardId ?? null;
@@ -3746,10 +3751,9 @@ export function resolveBoardCardAutomation(input: {
   };
 
   const pastPlanning = facts.plan >= 0 && facts.index > facts.plan;
-  const planLock =
-    pastPlanning || (facts.index === facts.plan && input.planningFinished === true)
-      ? "Planning is finished."
-      : null;
+  // In Planning Auto-plan stays switchable even once the step succeeded, so a
+  // still-working thread can be handed over (T3O-80).
+  const planLock = pastPlanning ? "Planning is finished." : null;
   const buildLock =
     facts.build >= 0 && facts.index >= 0 && facts.index >= facts.build
       ? facts.index === facts.build
@@ -3783,7 +3787,7 @@ export function resolveBoardCardAutomation(input: {
 }
 
 /** Whether the card's planning run for its current stay in Planning finished:
-    its plan-role step succeeded. Locks Auto-plan on. */
+    its plan-role step succeeded. */
 export function boardCardPlanningFinished(
   board: BoardState,
   card: Pick<BoardCard, "id" | "stage">,
@@ -3806,7 +3810,6 @@ export function resolveBoardCardAutomationIn(input: {
     lookup: (id) => cards.find((candidate) => String(candidate.id) === id),
     card: input.card,
     boardWideAutoMerge: input.boardWideAutoMerge,
-    planningFinished: boardCardPlanningFinished(input.board, input.card),
   });
 }
 
@@ -5953,6 +5956,9 @@ export const BoardCardMarkAutoPlanCommand = Schema.Struct({
   type: Schema.Literal("board.card.mark-auto-plan"),
   commandId: CommandId,
   cardId: BoardCardId,
+  /** Also reopen the card's succeeded plan step, so the agent still working in
+      it finishes again under Auto-plan. */
+  reopenFinished: Schema.optionalKey(Schema.Literal(true)),
   createdAt: IsoDateTime,
 });
 export type BoardCardMarkAutoPlanCommand = typeof BoardCardMarkAutoPlanCommand.Type;
@@ -6191,6 +6197,8 @@ export const BoardCardCheckInStepCommand = Schema.Struct({
   stepId: TrimmedNonEmptyString,
   charged: Schema.Boolean,
   progressed: Schema.Boolean,
+  /** This check-in delivered a reopened step's Auto-plan prompt. */
+  reopenedPrompt: Schema.optionalKey(Schema.Literal(true)),
   createdAt: IsoDateTime,
 });
 export type BoardCardCheckInStepCommand = typeof BoardCardCheckInStepCommand.Type;

@@ -38,8 +38,12 @@ instruction. Turning it off mid-run tells the agent you are back.
   tab opens with the log expanded, so you can check them while the build runs.
 - If the agent splits the card and Auto-build is on, the split is approved with the card's
   automation settings and the new group starts.
-- A switch locks once its stage has passed: Auto-plan once planning is finished, Auto-build once the
-  card is building. A locked switch that is on can still be turned off.
+- A switch locks once its stage has passed: Auto-plan once the card leaves Planning, Auto-build once
+  the card is building. A locked switch that is on can still be turned off.
+- Auto-plan can still be turned on after the agent marked planning finished, for example while it
+  runs a plan review you asked for. If its thread is still working, the agent is handed over when
+  its current turn ends, and when it finishes again the plan is approved (and built, with Auto-build
+  on). If the thread has already finished, nothing is sent and the plan waits for your approval.
 - Dragging a card back out of Building turns its Auto-build off, and back into Planning its
   Auto-plan off, so a card you pulled back waits for you. Turn them on again to resume.
 - Stopping the planning agent, or answering its question yourself, turns Auto-plan off. If the run

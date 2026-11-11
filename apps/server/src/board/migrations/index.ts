@@ -77,6 +77,7 @@ import Migration063 from "./063_ScheduledTaskBoardActions.ts";
 import Migration064 from "./064_BoardCardUsage.ts";
 import Migration065 from "./065_BoardUsageNoUsageKey.ts";
 import Migration066 from "./066_BoardUsageTurnsPartial.ts";
+import Migration067 from "./067_BoardStepReopenedAt.ts";
 
 /** Ledger table for the board migration lineage, independent of upstream. */
 export const BOARD_MIGRATION_TABLE = "t3o_sql_migrations";
@@ -164,6 +165,7 @@ export const BOARD_MIGRATIONS = [
   [64, "BoardCardUsage", Migration064],
   [65, "BoardUsageNoUsageKey", Migration065],
   [66, "BoardUsageTurnsPartial", Migration066],
+  [67, "BoardStepReopenedAt", Migration067],
 ] as const;
 
 const boardLoader = Migrator.fromRecord(

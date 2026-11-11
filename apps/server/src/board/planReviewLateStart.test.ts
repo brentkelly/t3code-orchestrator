@@ -15,9 +15,14 @@ import {
   type BoardCard,
   type BoardCardStepState,
   type BoardPlan,
+  type BoardState,
+  ThreadId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
+
+import { fakeThreadState } from "./threadGateway.testkit.ts";
 
 import {
   NOW,
@@ -27,6 +32,7 @@ import {
   makeBoardCard,
   settingsWith,
   stepCompleted,
+  turnCompleted,
   turnInterruptRequested,
   withGovernor,
   type HarnessCommand,
@@ -69,13 +75,14 @@ const reviewStarted = (
   state: BoardCardStepState,
   sequence: number,
   turnedOnLate: boolean,
+  startedAt: string = NOW,
 ): HarnessEvent =>
   ({
     type: "board.plan-review-started",
     sequence,
     payload: {
       cardId: state.cardId,
-      state: { ...state, planReviewStartedAt: NOW, planReviewRounds: 2 },
+      state: { ...state, planReviewStartedAt: startedAt, planReviewRounds: 2 },
       ...(turnedOnLate ? { turnedOnLate: true } : {}),
     },
   }) as unknown as HarnessEvent;
@@ -221,6 +228,69 @@ it.effect("a reopened review can still be turned off", () =>
       assert.strictEqual(after.at(-1)?.text, BOARD_PLAN_REVIEW_STOP_INSTRUCTION);
     }),
   ),
+);
+
+/** After the first finish (`NOW`), so the review's start supersedes that completion. */
+const AFTER_FINISH = "2026-01-01T00:05:00.000Z";
+
+/** A finished planning step that a late plan review reopened, its thread now idle. */
+const reopenedByLateReview = (
+  h: Parameters<Parameters<typeof withGovernor>[1]>[0],
+  id: BoardCardId,
+) =>
+  Effect.gen(function* () {
+    const planning = String(BOARD_SEED_STAGE_IDS.planning);
+    yield* h.pumpDomain(cardMoved(planningCard(String(id)), "sprint", "planning", 1));
+    yield* h.pumpDomain(stepCompleted(id, "succeeded", 2, planning));
+    const settled = boardCardStepState(yield* h.board, id)!;
+    yield* h.pumpDomain(reviewStarted({ ...settled, status: "running" }, 3, true, AFTER_FINISH));
+    const threadId = settled.threadId!;
+    yield* Ref.update(
+      h.shells,
+      (shells) => new Map([...shells, [threadId, fakeThreadState(threadId)]]),
+    );
+    return threadId;
+  });
+
+it.effect(
+  "a reopened review whose turn ends without finishing is supervised, not left running",
+  () =>
+    withGovernor(fixture("review-turn"), (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("review-turn");
+        const threadId = yield* reopenedByLateReview(h, id);
+
+        yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-review"));
+
+        // A human-in-the-loop planning run that stopped waits on the human.
+        assert.strictEqual(boardCardStepState(yield* h.board, id)?.status, "awaiting-input");
+      }),
+    ),
+);
+
+it.effect("boot reconcile does not settle a reopened review as already succeeded", () =>
+  Effect.gen(function* () {
+    let seeded: { board: BoardState; threadId: string } | undefined;
+    yield* withGovernor(fixture("review-boot"), (h) =>
+      Effect.gen(function* () {
+        const threadId = yield* reopenedByLateReview(h, BoardCardId.make("review-boot"));
+        seeded = { board: yield* h.board, threadId };
+      }),
+    );
+    const { board, threadId } = seeded!;
+    yield* withGovernor(
+      { board, settings, initialShells: new Map([[threadId, fakeThreadState(threadId)]]) },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          // Parked for the human, not settled `succeeded` on the superseded completion.
+          assert.strictEqual(
+            boardCardStepState(yield* h.board, BoardCardId.make("review-boot"))?.status,
+            "awaiting-input",
+          );
+        }),
+    );
+  }),
 );
 
 const roundsChanged = (state: BoardCardStepState, rounds: number, sequence: number) =>

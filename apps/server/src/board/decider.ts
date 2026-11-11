@@ -146,7 +146,7 @@ import {
 } from "./briefEdits.ts";
 import { decideBoardCiRecord } from "./ci/ciRecord.ts";
 import { isKeptStepThread } from "./planningThreadKeep.ts";
-import { boardCompletionReopenedByPlanReview } from "./planReview.ts";
+import { boardCompletionReopened } from "./planReview.ts";
 import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
 
 export type { BoardCommand };
@@ -686,13 +686,22 @@ function latePlanReviewStep(
     (state.status !== "succeeded" || card.stage !== planStage.stageId)
   )
     return null;
+  // Planning steps hold no slot, so a reopened one takes none.
+  return reopenedPlanStep(state, at, state.status === "paused" && state.mode === "build");
+}
+
+/** A settled or paused plan step put back to running on its own thread. */
+function reopenedPlanStep(
+  state: BoardCardStepState,
+  at: string,
+  slotHeld = false,
+): BoardCardStepState {
   return {
     ...state,
     status: "running",
     stallCount: 0,
     lastError: null,
-    // Planning steps hold no slot, so a reopened one takes none.
-    slotHeld: state.status === "paused" && state.mode === "build",
+    slotHeld,
     stalledReason: "gave-up",
     retryAt: null,
     lastNudgeAt: at,
@@ -3961,7 +3970,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         (existing !== undefined && existing.outcome !== "succeeded" && recordable) ||
         (command.outcome === "succeeded" &&
           liveMatch &&
-          boardCompletionReopenedByPlanReview(existing, current));
+          boardCompletionReopened(existing, current));
       // A `succeeded` record with an unreadable payload is not pinned: pinning it
       // deadlocks the review loop. A valid completion may replace it whether or not the
       // step is live again; a `failed` replacement is how the pane's reopen clears it.
@@ -5027,12 +5036,34 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (isBoardCardAutoPlanPending(card)) {
         return yield* invariant(command, `Card '${card.key}' is already being auto-planned.`);
       }
+      const finishedStep = boardCardStepState(board, card.id);
+      // A step still reopened, by an earlier toggle or a late plan review, re-arms its handover.
+      const stillReopened =
+        finishedStep !== null &&
+        finishedStep.status === "running" &&
+        boardCompletionReopened(
+          boardCardStepCompletions(board, card.id).find(
+            (entry) => entry.stepId === finishedStep.stepId && entry.outcome === "succeeded",
+          ),
+          finishedStep,
+        );
+      if (
+        command.reopenFinished === true &&
+        (finishedStep === null ||
+          finishedStep.stepId !== planStage.stageId ||
+          (finishedStep.status !== "succeeded" && !stillReopened))
+      ) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' has no finished planning step to reopen.`,
+        );
+      }
       const nextCard: BoardCard = {
         ...card,
         autoPlan: { requestedAt: command.createdAt, endedAt: null },
         updatedAt: command.createdAt,
       };
-      return {
+      const marked: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: card.id,
           occurredAt: command.createdAt,
@@ -5041,6 +5072,26 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         type: "board.card-updated",
         payload: { cardId: card.id, card: nextCard, autoPlanMarked: true },
       };
+      if (command.reopenFinished !== true || finishedStep === null) return marked;
+      // The agent that marked planning done is still working: its next
+      // completion supersedes the pinned one (`boardCompletionReopened`).
+      const reopened: PlannedBoardEvent = {
+        ...(yield* makeBoardEventBase({
+          cardId: card.id,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-recovered",
+        payload: {
+          cardId: card.id,
+          state: {
+            ...(stillReopened ? finishedStep : reopenedPlanStep(finishedStep, command.createdAt)),
+            reopenedAt: command.createdAt,
+            updatedAt: command.createdAt,
+          },
+        },
+      };
+      return [marked, reopened];
     }
 
     case "board.card.end-auto-plan": {
@@ -5791,6 +5842,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ? current.stageEntryRecoveries + 1
           : current.stageEntryRecoveries,
         lastNudgeAt: command.createdAt,
+        ...(command.reopenedPrompt === true ? { reopenedPromptAt: command.createdAt } : {}),
         updatedAt: command.createdAt,
       };
       return {

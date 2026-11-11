@@ -45,17 +45,34 @@ export const BOARD_ENVELOPE_DECISION_LOG =
 export const BOARD_AUTO_PLAN_INSTRUCTION =
   "Auto-plan: stop interviewing and do not ask any more questions. Decide every remaining question yourself, record each decision with board_record_decisions (flag any you are unsure of as unclear), propose the plan with board_propose_plans, then call board_complete_step.";
 
+/** Appended when turning Auto-plan on reopened a planning step the agent had
+    already marked finished, so its next completion is the real finish. */
+const BOARD_AUTO_PLAN_REOPENED_NOTE =
+  "Planning had been marked finished and has been reopened. When your current work, including any plan review, is done, call board_complete_step again.";
+
+const reopenedSuffix = (options: { readonly reopened?: boolean } | undefined) =>
+  options?.reopened === true ? ` ${BOARD_AUTO_PLAN_REOPENED_NOTE}` : "";
+
 /** The full auto-plan instruction: with Auto-build on the plan is approved and
     built without a human; without it the plan waits for the user's approval. */
-export function boardAutoPlanInstruction(autoBuild: boolean): string {
-  return autoBuild
+export function boardAutoPlanInstruction(
+  autoBuild: boolean,
+  options?: { readonly reopened?: boolean },
+): string {
+  const base = autoBuild
     ? `${BOARD_AUTO_PLAN_INSTRUCTION} Auto-build is on: the plan you propose is approved and built automatically, unclear decisions included, so make each call the way you would defend it in review.`
     : `${BOARD_AUTO_PLAN_INSTRUCTION} Your plan will be presented to the user for approval, so make each call the way you would defend it in review.`;
+  return `${base}${reopenedSuffix(options)}`;
 }
 
 /** Sent into a planning thread when Auto-plan is turned off mid-run. */
 export const BOARD_AUTO_PLAN_OFF_INSTRUCTION =
   "The user is back: Auto-plan is off. You may ask questions again, and it is fine to end a turn waiting on an answer. Your plan will be presented to the user for approval.";
+
+/** The off instruction, with the reopened note when the step is still reopened. */
+export function boardAutoPlanOffInstruction(options?: { readonly reopened?: boolean }): string {
+  return `${BOARD_AUTO_PLAN_OFF_INSTRUCTION}${reopenedSuffix(options)}`;
+}
 
 /** The `plan` role's deliverable, role-keyed so a rewritten Planning prompt cannot break it.
     It says what a second plan means here, not in the default prompt, so a customised prompt

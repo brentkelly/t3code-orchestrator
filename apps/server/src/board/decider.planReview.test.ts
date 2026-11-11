@@ -635,3 +635,126 @@ it.effect("the reopened review's completion replaces the pinned one, then pins a
     assert.strictEqual(failed.payload.completion.completedAt, earlier.completedAt);
   }),
 );
+
+// ── Auto-plan reopening a finished planning step (T3O-80) ─────────────
+
+const markReopen = (): BoardCommand => ({
+  type: "board.card.mark-auto-plan",
+  commandId: CommandId.make("cmd-mark-reopen"),
+  cardId,
+  reopenFinished: true,
+  createdAt: LATER,
+});
+
+it.effect("Auto-plan can be turned on after planning succeeded, while still in Planning", () =>
+  Effect.gen(function* () {
+    const events = yield* decide(
+      {
+        type: "board.card.set-automation",
+        commandId: CommandId.make("cmd-automation"),
+        cardId,
+        autoPlan: true,
+        createdAt: LATER,
+      },
+      readModel({
+        state: stepState({ status: "succeeded" }),
+        completions: [succeededCompletion],
+      }),
+    );
+    const updated = events.find((event) => event.type === "board.card-updated");
+    assert.ok(updated?.type === "board.card-updated");
+    assert.strictEqual(updated.payload.card.autoPlanSetting, true);
+  }),
+);
+
+it.effect("reopenFinished marks the run and reopens the succeeded step, stamped", () =>
+  Effect.gen(function* () {
+    const events = yield* decide(
+      markReopen(),
+      readModel({
+        state: stepState({ status: "succeeded", stallCount: 2, lastError: "old" }),
+        completions: [succeededCompletion],
+      }),
+    );
+    assert.deepStrictEqual(types(events), ["board.card-updated", "board.card-step-recovered"]);
+    const [marked, reopened] = events;
+    assert.ok(marked?.type === "board.card-updated");
+    assert.strictEqual(marked.payload.autoPlanMarked, true);
+    assert.deepStrictEqual(marked.payload.card.autoPlan, { requestedAt: LATER, endedAt: null });
+    assert.ok(reopened?.type === "board.card-step-recovered");
+    assert.deepInclude(reopened.payload.state, {
+      status: "running",
+      stallCount: 0,
+      lastError: null,
+      slotHeld: false,
+      retryAt: null,
+      reopenedAt: LATER,
+      lastNudgeAt: LATER,
+      threadId,
+    });
+  }),
+);
+
+it.effect("reopenFinished refuses a step that is not succeeded, or a card out of Planning", () =>
+  Effect.gen(function* () {
+    const running = yield* decideFail(markReopen(), readModel({ state: stepState() }));
+    assert.include(running.message, "no finished planning step");
+    const gone = yield* decideFail(markReopen(), readModel({ state: null }));
+    assert.include(gone.message, "no finished planning step");
+    const ready = yield* decideFail(
+      markReopen(),
+      readModel({
+        card: makeCard({ stage: BoardStageId.make("ready") }),
+        state: stepState({ status: "succeeded" }),
+      }),
+    );
+    assert.include(ready.message, "not in planning");
+    const already = yield* decideFail(
+      markReopen(),
+      readModel({
+        card: makeCard({ autoPlan: { requestedAt: NOW, endedAt: null } }),
+        state: stepState({ status: "succeeded" }),
+      }),
+    );
+    assert.include(already.message, "already being auto-planned");
+    const split = yield* decideFail(
+      markReopen(),
+      readModel({
+        card: makeCard({ splitRationale: "Two parts that review separately." }),
+        plans: [plan, { ...plan, planId: boardPlanId(cardId, "second"), ordinal: 1 }],
+        state: stepState({ status: "succeeded" }),
+      }),
+    );
+    assert.include(split.message, "proposed split");
+  }),
+);
+
+it.effect("after an Auto-plan reopen the next completion supersedes; without one it re-emits", () =>
+  Effect.gen(function* () {
+    const reopened = stepState({ reopenedAt: NOW, lastNudgeAt: NOW });
+    const earlier = { ...succeededCompletion, completedAt: "2025-12-31T00:00:00.000Z" };
+    const superseding = (yield* decide(
+      complete({}),
+      readModel({ state: reopened, completions: [earlier] }),
+    ))[0]!;
+    assert.ok(superseding.type === "board.card-step-completed");
+    assert.strictEqual(superseding.payload.completion.completedAt, LATER);
+
+    // A completion newer than the stamp is pinned: the stale stamp no longer counts.
+    const pinned = (yield* decide(
+      complete({}),
+      readModel({ state: reopened, completions: [{ ...earlier, completedAt: LATER }] }),
+    ))[0]!;
+    assert.ok(pinned.type === "board.card-step-completed");
+    assert.strictEqual(pinned.payload.completion.summary, earlier.summary);
+    assert.strictEqual(pinned.payload.completion.completedAt, LATER);
+
+    // No reopen: the pinned success re-emits.
+    const replay = (yield* decide(
+      complete({}),
+      readModel({ state: stepState(), completions: [earlier] }),
+    ))[0]!;
+    assert.ok(replay.type === "board.card-step-completed");
+    assert.strictEqual(replay.payload.completion.completedAt, earlier.completedAt);
+  }),
+);

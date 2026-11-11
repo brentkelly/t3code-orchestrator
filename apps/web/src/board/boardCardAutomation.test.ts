@@ -167,6 +167,20 @@ describe("a leaf's rows", () => {
     expect(plan.note).toBe("Planning is finished.");
   });
 
+  it("keeps Auto-plan switchable after planning finished in Planning, noting it", () => {
+    const planning = shell("c-1", "planning");
+    const plan = boardCardAutomationRows({
+      resolved: resolve([planning], planning),
+      inPlanning: true,
+      planningFinished: true,
+    })[0]!;
+    expect(plan).toMatchObject({
+      note: "Planning is finished.",
+      locked: false,
+      switchDisabled: false,
+    });
+  });
+
   it("tags an own value under a group as overriding it", () => {
     const g = shell("g-1", "planning", { group: group({ autoPlan: true }) });
     const ready = child("c-1", "backlog", { autoPlanSetting: false });
