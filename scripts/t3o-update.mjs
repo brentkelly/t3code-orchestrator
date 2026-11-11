@@ -199,11 +199,6 @@ if (porcelainIsDirty(porcelain)) {
     `this clone has local changes; commit or stash them first:\n${changedPaths(porcelain).join("\n")}`,
   );
 }
-if (porcelain !== "") {
-  log("Resetting pnpm-lock.yaml, which `pnpm install` rewrote.");
-  git(["checkout", "--", "pnpm-lock.yaml"]);
-}
-
 const warnings = [
   `Updating ${unitName}: ${runningLabel} → ${targetTag}`,
   `  data: ${settings.home}   app: ${settings.appDir}   listen: ${settings.host}:${settings.port}`,
@@ -229,6 +224,10 @@ if (!values.yes) {
 }
 
 // 7. Switch.
+if (porcelain !== "") {
+  log("Resetting pnpm-lock.yaml, which `pnpm install` rewrote.");
+  git(["checkout", "--", "pnpm-lock.yaml"]);
+}
 const previousBranch = git(["symbolic-ref", "--short", "-q", "HEAD"], { allowFailure: true });
 const previousTag = git(["describe", "--tags", "--exact-match", "--match", "t3o[0-9]*", "HEAD"], {
   allowFailure: true,

@@ -28,10 +28,12 @@ there would make upstream's UI flag board workers on different releases as out o
 ## The build stamp
 
 `install-t3o-service` writes `{ tag, version, base, commit, describe, dirty, builtAt }` to
-`apps/web/.t3o-release.json` (gitignored) before building, which the web build reads into
+`apps/web/.t3o-release.json` (gitignored) for the length of the build, which the web build reads into
 `import.meta.env.T3O_RELEASE`, and to `dist/t3o-release.json` after it. The second is how `t3o-update`
-and the release gate know what a service is running. A build after a tag shows as
-`0.1.8.1+3.gabc1234`; a build with no T3o tag behind it as `dev (abc1234)`.
+and the release gate know what a service is running; a `--no-build` sync of a dist built some other way
+has none, and reads as unknown. A build after a tag shows as `0.1.8.1+3.gabc1234` with no T3 Code
+version, since an upstream sync may have landed since the tag; a build with no T3o tag behind it shows
+as `dev (abc1234)`.
 
 ## Cutting a release
 

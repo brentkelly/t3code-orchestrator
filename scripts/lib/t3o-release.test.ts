@@ -98,12 +98,15 @@ describe("build stamp", () => {
     expect(buildStamp({ describe: "t3o0.1.8.2-1-gabc1234", commit, porcelain: "", now })).toEqual({
       tag: "t3o0.1.8.2",
       version: "0.1.8.2+1.gabc1234",
-      base: "0.1.8",
+      base: null,
       commit,
       describe: "t3o0.1.8.2-1-gabc1234",
       dirty: false,
       builtAt: "2026-11-11T00:00:00.000Z",
     });
+    expect(
+      buildStamp({ describe: "t3o0.1.8.2-0-gabc1234", commit, porcelain: "", now }),
+    ).toMatchObject({ version: "0.1.8.2", base: "0.1.8" });
     expect(buildStamp({ describe: null, commit, porcelain: " M a.ts", now })).toMatchObject({
       tag: null,
       base: null,

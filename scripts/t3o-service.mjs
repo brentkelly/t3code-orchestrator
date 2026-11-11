@@ -341,17 +341,24 @@ function buildBundle() {
   if (!values["no-build"]) {
     // A file rather than an env var: vp runs tasks in a clean env, and a file the web
     // config reads is a tracked task input. `vp pack` cleans dist, so it is copied in after.
+    // Removed after the build so later dev servers and plain builds don't embed a stale release.
     const stamp = computeStamp(repoRoot);
-    writeStamp(NodePath.join(repoRoot, "apps/web/.t3o-release.json"), stamp);
+    const webStamp = NodePath.join(repoRoot, "apps/web/.t3o-release.json");
+    writeStamp(webStamp, stamp);
     console.log(`[t3o-service] Building T3o ${stamp.version} (vp run --filter t3 build)...`);
-    run(NodePath.join(repoRoot, "node_modules/.bin/vp"), ["run", "--filter", "t3", "build"], {
+    const vp = NodePath.join(repoRoot, "node_modules/.bin/vp");
+    const status = run(vp, ["run", "--filter", "t3", "build"], {
       cwd: repoRoot,
+      allowFailure: true,
     });
+    NodeFS.rmSync(webStamp, { force: true });
+    if (status !== 0) fail(`${vp} run --filter t3 build exited ${status}`);
     writeStamp(NodePath.join(distDir, STAMP_FILE), stamp);
     assertBundleCarries(stamp.commit);
   }
 
-  for (const asset of ["bin.mjs", "t3oGitCredential.mjs", "client/index.html", STAMP_FILE]) {
+  // No STAMP_FILE: a dist built outside this script has none, and readers treat it as unknown.
+  for (const asset of ["bin.mjs", "t3oGitCredential.mjs", "client/index.html"]) {
     if (!NodeFS.existsSync(NodePath.join(distDir, asset))) {
       fail(`missing build asset apps/server/dist/${asset}. Drop --no-build and try again.`);
     }

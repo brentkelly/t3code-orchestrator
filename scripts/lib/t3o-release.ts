@@ -130,7 +130,8 @@ export function buildStamp(input: {
 }): ReleaseStamp {
   const parsed = parseDescribe(input.describe);
   const tag = parsed?.tag ?? null;
-  const parsedTag = tag ? parseT3oTag(tag) : null;
+  // A tag's base goes stale once an upstream sync lands after it, so only an exact release names one.
+  const parsedTag = tag && parsed?.ahead === 0 ? parseT3oTag(tag) : null;
   return {
     tag,
     version: displayVersion(input.describe, input.commit),
