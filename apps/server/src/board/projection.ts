@@ -504,7 +504,7 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULL before migration 054 and on every step with no plan review started.
   planReviewStartedAt: Schema.NullOr(IsoDateTime),
   planReviewRounds: Schema.NullOr(Schema.Int),
-  // NULL before migration 062 and on every step Auto-plan never reopened.
+  // NULL before migration 067 and on every step Auto-plan never reopened.
   reopenedAt: Schema.NullOr(IsoDateTime),
   humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
