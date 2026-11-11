@@ -134,7 +134,7 @@ export function cardThreadPullRequestActions(
   const before = keyOf(previous);
   const after = transition === "linked" ? keyOf(card.pullRequest) : null;
   const actions: Array<CardThreadPullRequestAction> = [];
-  if (before !== null && !(after !== null && sameKey(before, after))) {
+  if (before !== null) {
     for (const link of links) {
       actions.push({ kind: "unlink", threadId: link.threadId, pullRequest: before });
     }
@@ -146,11 +146,6 @@ export function cardThreadPullRequestActions(
   }
   return { actions, unparsed };
 }
-
-const sameKey = (left: ThreadPullRequestKey, right: ThreadPullRequestKey) =>
-  left.host.toLowerCase() === right.host.toLowerCase() &&
-  left.repository.toLowerCase() === right.repository.toLowerCase() &&
-  left.number === right.number;
 
 /** Stable per thread and board event: a redelivered event is the engine's
     no-op, so a link a human removed is not put back until the card's PR

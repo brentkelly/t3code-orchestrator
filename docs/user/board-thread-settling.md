@@ -73,5 +73,6 @@ round, CI fix and merge-stage thread gets the PR badge, turns up when you search
 when the PR merges. Planning and build threads, and threads you added to the card yourself, are
 left alone. Replacing or unlinking the card's pull request does the same to those threads, and a
 pull request you remove from one thread stays removed until the card's own pull request changes
-again. A later round's pull request goes only on
-that round's threads; earlier rounds keep theirs.
+again. A later round's pull request goes on that round's threads, and earlier rounds normally keep
+theirs. A round that ended without a pull request is the exception: its threads also get the next
+round's.

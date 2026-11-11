@@ -159,8 +159,6 @@ export interface FakeThreadGatewayOptions {
   readonly lastSignalAt?: (threadId: ThreadId) => string | null;
   readonly pendingTurnStartAt?: (threadId: ThreadId) => string | null;
   readonly subagentAwaitingApproval?: (threadId: ThreadId) => boolean;
-  /** Refuse every pull request link and unlink, as an engine that cannot take them. */
-  readonly refusePullRequestLinks?: boolean;
 }
 
 interface FakeRecord extends BoardThreadRecord {
@@ -238,9 +236,6 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
       change: (keys: ReadonlyArray<string>, key: string) => ReadonlyArray<string>,
     ) =>
       Effect.gen(function* () {
-        if (options.refusePullRequestLinks === true) {
-          return yield* refuse("pull-request", input.threadId, "Pull request links are refused.");
-        }
         if (handledCommandIds.has(String(input.commandId))) return;
         handledCommandIds.add(String(input.commandId));
         yield* Ref.update(pullRequestLinks, (current) =>
