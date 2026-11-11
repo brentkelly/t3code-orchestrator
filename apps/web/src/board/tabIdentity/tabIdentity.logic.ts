@@ -307,8 +307,9 @@ export function resolveIdentity(key: TabRouteKey, inputs: TabIdentityInputs): Ta
       if (card !== null && boardEnv !== null) {
         return make(`${title} · ${card.key}`, cardTile(card, inputs, boardEnv), true);
       }
+      // While the snapshot loads the thread may still be a card's: no prefix-only tile yet.
       const icon =
-        thread === null
+        thread === null || pending
           ? ({ kind: "default" } as const)
           : projectTile(key.environmentId, thread.projectId, inputs);
       return make(title, icon, true);

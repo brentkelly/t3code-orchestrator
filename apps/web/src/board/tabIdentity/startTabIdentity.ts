@@ -184,7 +184,13 @@ function startFavicon(): { set: (icon: TabIcon) => void } | null {
     }
     // The static icon stays until the tile font is ready.
     if (renderer === null) return;
-    const url = renderer.renderFaviconTile(wanted);
+    let url: string | null;
+    try {
+      url = renderer.renderFaviconTile(wanted);
+    } catch {
+      // Older engines lack canvas APIs the tile uses (roundRect); keep the current icon.
+      return;
+    }
     if (url === null) return;
     link.type = "image/png";
     link.href = url;

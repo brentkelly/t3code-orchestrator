@@ -188,7 +188,7 @@ describe("resolveIdentity", () => {
       name: "a thread before the snapshot shows no card yet, pending",
       key: thread(central, "thread-local"),
       inputs: { cardIndex: null },
-      expected: { title: "Build T3O-65 · mesh-dev", icon: t3oTile(null), pending: true },
+      expected: { title: "Build T3O-65 · mesh-dev", icon: defaultIcon, pending: true },
     },
     {
       name: "a thread not loaded yet uses the fallback name",
