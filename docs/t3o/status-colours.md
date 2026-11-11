@@ -27,7 +27,7 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   dot, a satisfied dependency edge, a review round that closed clean. A working state in green was
   the single biggest source of misreading on the board, because a card mid-build looked finished.
 - **Every running indicator is blue.** Spinners take a blue track and head —
-  `border-[color-mix(in_srgb,var(--info)_25%,transparent)] border-t-info-foreground` — rather than
+  `border-board-spinner-track border-t-info-foreground` — rather than
   the neutral grey they used to wear. Running pills are `bg-info/12 text-info-foreground`, not the
   neutral `bg-accent`.
 - **Every "waiting on you" state is violet.** Input-needed and Needs-permission chips (a thread
@@ -36,6 +36,11 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   run, the composer drawer that holds an agent's question, the sidebar's Input row, mobile's
   Awaiting Input pill.
   These were blue before, which read as "still working" — the opposite of what they mean.
+  A subagent's permission prompt counts too (T3O-73): a card thread whose `delegate_task` child
+  waits on an approval reads "Needs permission", by upstream's own subagent-request rule, because
+  the parent agent cannot answer it. A child's question does not: the parent agent answers those.
+  Two limits: a card on a worker does not turn violet (only its supervisor hold sees the child), and
+  the client also flags side chats and cross-environment delegations, which that hold does not.
 - **Blocked is amber, never blue.** It matches the card modal's blocked callout, which already used
   it.
 - **A held merge is amber, and the pill does not spin.** A card whose merge hit conflicts is blocked

@@ -47,13 +47,13 @@ export function BoardCardPlanPane({
     <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pl-3.5 pr-3">
         <SectionHeading>Implementation plan</SectionHeading>
-        <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground">
+        <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted-foreground/14 px-1.75 text-board-11 font-medium text-foreground">
           {cardKey}
         </span>
         <span className="flex-1" />
         {onReviewSplit === undefined ? null : (
           <button
-            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-[7px] border border-input bg-popover px-2.5 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent"
+            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-board-7 border border-input bg-popover px-2.5 text-board-11-5 font-medium text-foreground shadow-xs hover:bg-accent"
             onClick={onReviewSplit}
             type="button"
           >
@@ -62,7 +62,7 @@ export function BoardCardPlanPane({
           </button>
         )}
         <button
-          className="inline-flex h-6 shrink-0 items-center gap-1 rounded-[7px] border border-input bg-popover pl-1.5 pr-2.5 text-[11.5px] font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
+          className="inline-flex h-6 shrink-0 items-center gap-1 rounded-board-7 border border-input bg-popover pl-1.5 pr-2.5 text-board-11-5 font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
           onClick={onBackToThread}
           type="button"
         >
@@ -76,7 +76,7 @@ export function BoardCardPlanPane({
           return (
             <div key={plan.planId} className="mb-6 last:mb-0">
               {single && child === undefined ? null : (
-                <h3 className="mb-2 flex items-center gap-2 text-[13.5px] font-semibold text-foreground">
+                <h3 className="mb-2 flex items-center gap-2 text-board-13-5 font-semibold text-foreground">
                   {plan.title}
                   {child === undefined ? null : (
                     // Struck through when archived so the pairing survives without
@@ -86,7 +86,7 @@ export function BoardCardPlanPane({
                     >
                       <button
                         className={
-                          "inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground disabled:pointer-events-none" +
+                          "inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-1.75 text-board-11 font-medium text-foreground disabled:pointer-events-none" +
                           (child.archivedAt === null ? "" : " line-through opacity-60") +
                           (onOpenChild === undefined ? "" : " hover:bg-muted-foreground/25")
                         }

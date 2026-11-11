@@ -19,6 +19,7 @@ import {
   type OrchestrationV2ThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
+import { subagentAwaitsApproval } from "@t3tools/shared/agentAwareness";
 import { boardThreadSessionStatus, boardThreadStateSource } from "@t3tools/shared/boardThreadState";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -26,10 +27,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
+import * as ServerConfig from "../config.ts";
+import * as AttachmentClaims from "../orchestration-v2/AttachmentClaims.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -37,7 +41,9 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { isAutoSettlementCandidate } from "../orchestration-v2/ThreadSettlementService.ts";
+import * as ThreadMessageIntake from "../orchestration-v2/ThreadMessageIntake.ts";
 import { limitRecoveryCommand } from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import {
   ThreadCommandFailedError,
@@ -61,7 +67,8 @@ import {
 type ServerCommand = OrchestrationV2Command | OrchestrationV2InternalCommand;
 type DispatchError =
   | Orchestrator.OrchestratorV2Error
-  | ThreadManagement.ThreadManagementProviderInstanceDisabledError;
+  | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+  | AttachmentClaims.AttachmentClaimError;
 
 /** The message the board's own turns carry as their author. The board stands
     in for the human who set the card up, exactly as v2's own usage-limit
@@ -507,7 +514,14 @@ const isRefusal = (error: DispatchError): boolean =>
 
 export const commandError = (command: string, threadId: ThreadId) => (error: DispatchError) =>
   isRefusal(error)
-    ? new ThreadCommandRefusedError({ command, threadId, detail: describe(error) })
+    ? new ThreadCommandRefusedError({
+        command,
+        threadId,
+        detail: describe(error),
+        ...(error._tag === "ThreadManagementProviderInstanceDisabledError"
+          ? { reason: "provider-disabled" as const }
+          : {}),
+      })
     : new ThreadCommandFailedError({ command, threadId, detail: describe(error), cause: error });
 
 const readError = (operation: string) => (cause: unknown) =>
@@ -524,6 +538,15 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const crypto = yield* SecureRandom.SecureRandom;
   const path = yield* Path.Path;
+  // What upstream's message intake needs to claim a turn's pending uploads
+  // into thread scope (and extract a PDF's text sidecar), captured so the
+  // gateway's own shape stays free of requirements.
+  const intakeServices = yield* Effect.context<
+    | ThreadManagement.ThreadManagementService
+    | ServerConfig.ServerConfig
+    | DocumentText.DocumentText
+    | FileSystem.FileSystem
+  >();
   const nowMs = Effect.map(DateTime.now, DateTime.toEpochMillis);
   const freshMessageId = crypto.uuidV4().pipe(
     Effect.map((uuid) => MessageId.make(`msg-${uuid}`)),
@@ -621,31 +644,50 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
     readonly attachments: ReadonlyArray<ChatAttachment>;
     readonly delivery?: "queue" | "steer" | undefined;
   }) {
-    const dispatch = (commandId: CommandId, steer: boolean) =>
-      freshMessageId.pipe(
-        Effect.flatMap((messageId) =>
-          run({
-            type: "message.dispatch",
-            commandId,
-            threadId: input.threadId,
-            messageId,
-            text: input.text,
-            attachments: input.attachments,
-            dispatchMode: { type: "start_immediately" },
-            // Only where the provider steers in place; `auto` may resolve to an interrupt-restart.
-            ...(steer ? { deliveryIntent: "steer" as const } : {}),
-            ...BOARD_AUTHOR,
-          }),
-        ),
+    // Through the intake, as a client's send goes: it claims the turn's
+    // pending uploads and releases them if the dispatch is not accepted.
+    const dispatch = (
+      commandId: CommandId,
+      steer: boolean,
+      attachments: ReadonlyArray<ChatAttachment>,
+    ) =>
+      Effect.flatMap(freshMessageId, (messageId) =>
+        ThreadMessageIntake.dispatchCommand({
+          type: "message.dispatch",
+          commandId,
+          threadId: input.threadId,
+          messageId,
+          text: input.text,
+          attachments,
+          dispatchMode: { type: "start_immediately" },
+          // Only where the provider steers in place; `auto` may resolve to an interrupt-restart.
+          ...(steer ? { deliveryIntent: "steer" as const } : {}),
+          ...BOARD_AUTHOR,
+        }),
+      ).pipe(Effect.provideContext(intakeServices));
+    // The claim is all-or-nothing and runs before the dispatch, so nothing
+    // was committed: the turn goes again without its attachments, which
+    // the brief's manifest still names by path.
+    const send = (commandId: CommandId, steer: boolean) =>
+      dispatch(commandId, steer, input.attachments).pipe(
+        Effect.catchTags({
+          AttachmentClaimError: (error) =>
+            input.attachments.length === 0
+              ? Effect.fail(error)
+              : Effect.logWarning("board gateway: attachments failed to claim, sent without them", {
+                  threadId: input.threadId,
+                  detail: error.message,
+                }).pipe(Effect.andThen(dispatch(commandId, steer, []))),
+        }),
+        Effect.mapError(commandError("message.dispatch", input.threadId)),
       );
     if (input.delivery !== "steer" || !(yield* steersActively(input.threadId))) {
-      return yield* dispatch(input.commandId, false);
+      return yield* send(input.commandId, false);
     }
     // The run can end between the read and the dispatch, and the engine refuses it: queue it.
-    yield* dispatch(input.commandId, true).pipe(
+    yield* send(input.commandId, true).pipe(
       Effect.catchTags({
-        ThreadCommandRefusedError: () =>
-          dispatch(CommandId.make(`${input.commandId}:queued`), false),
+        ThreadCommandRefusedError: () => send(CommandId.make(`${input.commandId}:queued`), false),
       }),
     );
   });
@@ -674,6 +716,15 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
           `project ${input.projectId} does not exist`,
         );
       }
+      // Refused before anything is created, by this server's own settings,
+      // so a provider turned off for the project never flashes a thread.
+      yield* threads
+        .assertProviderInstanceEnabled({
+          commandId: input.commandId,
+          projectId: input.projectId,
+          instanceId: input.modelSelection.instanceId,
+        })
+        .pipe(Effect.mapError(commandError("thread.create", input.threadId)));
       const inWorktree = input.branch !== null;
       yield* run({
         type: "thread.create",
@@ -949,6 +1000,41 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
           );
         }),
       ),
+
+    // Walks down the thread's own app-owned subagent records rather than
+    // scanning lineage JSON, which no index covers; a thread with no live
+    // delegations costs one indexed read. Native subagents ask on their parent.
+    subagentAwaitingApproval: Effect.fn("ThreadGatewayV2.subagentAwaitingApproval")(
+      function* (threadId) {
+        const root = yield* shellOf(threadId);
+        if (root === null || root.deletedAt !== null) return false;
+        const seen = new Set<ThreadId>([threadId]);
+        let parents: ReadonlyArray<ThreadId> = [threadId];
+        while (parents.length > 0) {
+          const children: ThreadId[] = [];
+          for (const parentId of parents) {
+            const { subagents } = yield* projections.getThreadRecords(parentId, ["subagents"], {
+              omitSettledSubagents: true,
+            });
+            for (const task of subagents) {
+              const childId = task.childThreadId;
+              if (task.origin !== "app_owned" || childId === null || seen.has(childId)) continue;
+              seen.add(childId);
+              children.push(childId);
+            }
+          }
+          for (const childId of children) {
+            const child = yield* projections.getThreadShell(childId);
+            if (child !== null && child.deletedAt === null && subagentAwaitsApproval(child)) {
+              return true;
+            }
+          }
+          parents = children;
+        }
+        return false;
+      },
+      Effect.mapError(readError("subagentAwaitingApproval")),
+    ),
 
     projects: () =>
       projectRows.list({ includeDeleted: true }).pipe(

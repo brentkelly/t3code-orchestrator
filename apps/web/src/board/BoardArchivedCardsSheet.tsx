@@ -90,31 +90,31 @@ function ArchivedCardList({
     liveCardKeyById.get(parentCardId) ?? archivedKeyById.get(parentCardId);
 
   if (result.waiting && snapshot === null) {
-    return <p className="text-[13px] text-muted-foreground">Loading…</p>;
+    return <p className="text-board-13 text-muted-foreground">Loading…</p>;
   }
   // A failed read must not read as an empty archive: "nothing was archived"
   // and "we could not find out" are opposite answers to the question the user
   // came here with, and this open-time read is the only one there is.
   if (result._tag === "Failure" && snapshot === null) {
-    return <p className="text-[13px] text-muted-foreground">Could not load the archive.</p>;
+    return <p className="text-board-13 text-muted-foreground">Could not load the archive.</p>;
   }
   if (cards.length === 0) {
-    return <p className="text-[13px] text-muted-foreground">No archived cards.</p>;
+    return <p className="text-board-13 text-muted-foreground">No archived cards.</p>;
   }
   return (
     <>
       <ul className="flex flex-col gap-1.5">
         {cards.map((card) => (
           <li
-            className="flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]"
+            className="flex items-center gap-2.25 rounded-lg border border-border bg-muted px-2.5 py-1.75"
             key={card.cardId}
           >
             <button
-              className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
+              className="flex min-w-0 flex-1 items-center gap-2.25 text-left"
               onClick={() => onSelectCard(card.cardId)}
               type="button"
             >
-              <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
+              <span className="shrink-0 text-board-11 font-medium text-muted-foreground">
                 {card.key}
               </span>
               {(() => {
@@ -127,14 +127,14 @@ function ArchivedCardList({
                   // archive flattens every board into one list, so without
                   // this the child reads as a stray top-level card.
                   <BoardHint label={`Part of ${parentKey}'s sub-board`}>
-                    <span className="inline-flex h-4 shrink-0 items-center rounded bg-muted-foreground/14 px-1.5 text-[10px] font-medium text-muted-foreground">
+                    <span className="inline-flex h-4 shrink-0 items-center rounded bg-muted-foreground/14 px-1.5 text-board-10 font-medium text-muted-foreground">
                       <LayersIcon className="mr-0.5 size-2.5" />
                       {parentKey}
                     </span>
                   </BoardHint>
                 );
               })()}
-              <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
+              <span className="min-w-0 flex-1 truncate text-board-13 text-foreground">
                 {card.title}
               </span>
               {card.worktreeReady === true ? (
@@ -144,17 +144,17 @@ function ArchivedCardList({
                 <BoardHint
                   label={`Worktree kept: ${boardCardWorktreeKeptReason(card.worktreeKeptReason)}`}
                 >
-                  <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-semibold text-warning-foreground">
+                  <span className="inline-flex shrink-0 items-center gap-1 text-board-10-5 font-semibold text-warning-foreground">
                     <HardDriveIcon className="size-3" />
                     Worktree kept
                   </span>
                 </BoardHint>
               ) : null}
-              <span className="shrink-0 text-[11px] text-muted-foreground">
+              <span className="shrink-0 text-board-11 text-muted-foreground">
                 {boardStageLabel(stages, card.stage)}
               </span>
               {card.archivedAt === null ? null : (
-                <span className="shrink-0 text-[11px] text-muted-foreground">
+                <span className="shrink-0 text-board-11 text-muted-foreground">
                   {formatRelativeTimeLabel(card.archivedAt)}
                 </span>
               )}

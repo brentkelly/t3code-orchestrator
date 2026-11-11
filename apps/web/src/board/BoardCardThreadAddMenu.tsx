@@ -7,9 +7,10 @@ import { MessageSquarePlusIcon, PlusIcon, RotateCwIcon, SearchIcon } from "lucid
 import { useState } from "react";
 
 import { Button } from "../components/ui/button";
-import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
+import { Popover, PopoverTrigger } from "../components/ui/popover";
 import { boardStageLabelMidSentence } from "./boardCardThreadMenu";
 import { BoardPickerSearchBody, type BoardPickerOption } from "./BoardSearchAddPicker";
+import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
 
 /** The adopt list's server search: told the query as it is typed. */
 export interface BoardAdoptSearch {
@@ -53,9 +54,9 @@ function MenuRow({
     >
       <span className="mt-px shrink-0 text-muted-foreground">{icon}</span>
       <span className="flex min-w-0 flex-col">
-        <span className="text-[12.5px] text-foreground">{title}</span>
+        <span className="text-board-12-5 text-foreground">{title}</span>
         {hint === undefined ? null : (
-          <span className="text-[11.5px] text-muted-foreground">{hint}</span>
+          <span className="text-board-11-5 text-muted-foreground">{hint}</span>
         )}
       </span>
     </button>
@@ -172,7 +173,7 @@ export function BoardCardThreadAddMenu({
         <PlusIcon />
         {label}
       </PopoverTrigger>
-      <PopoverPopup className="w-64 p-1.5">
+      <BoardPopoverPopup className="w-64" inset="1.5">
         <BoardCardThreadAddMenuBody
           adoptSearch={adoptSearch}
           adoptableThreads={adoptableThreads}
@@ -196,7 +197,7 @@ export function BoardCardThreadAddMenu({
           }}
           stageRestart={stageRestart}
         />
-      </PopoverPopup>
+      </BoardPopoverPopup>
     </Popover>
   );
 }

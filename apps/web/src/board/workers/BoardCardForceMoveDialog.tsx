@@ -175,7 +175,7 @@ export function BoardCardForceMoveDialog(props: {
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
-            <p className="text-[13px]">
+            <p className="text-board-13">
               {phase.answer.backToStage === null ? (
                 <>
                   The card stays in its stage and its branch is forgotten. When it reaches Build,{" "}
@@ -233,9 +233,9 @@ export function BoardCardForceMoveDialog(props: {
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
-          <div className="flex flex-col gap-3 text-[13px]">
+          <div className="flex flex-col gap-3 text-board-13">
             <label className="flex flex-col gap-1">
-              <span className="text-[12px] font-medium text-muted-foreground">Move to</span>
+              <span className="text-board-12 font-medium text-muted-foreground">Move to</span>
               <Select<BoardWorkerId>
                 value={target}
                 onValueChange={(value) => {
@@ -273,11 +273,11 @@ export function BoardCardForceMoveDialog(props: {
             ) : null}
             {ready !== null || noRemote !== null ? (
               <div className="flex flex-col gap-1">
-                <span className="text-[12px] font-medium text-muted-foreground">
+                <span className="text-board-12 font-medium text-muted-foreground">
                   Continues from
                 </span>
                 <div className="flex flex-col gap-0.5 rounded-lg border border-border bg-muted/40 p-2.5">
-                  <span className="font-mono text-[12px]">
+                  <span className="font-mono text-board-12">
                     origin/{ready?.branch ?? noRemote?.branch}
                     {ready?.tip == null ? null : (
                       <span className="text-muted-foreground"> {ready.tip.sha.slice(0, 7)}</span>
@@ -292,7 +292,7 @@ export function BoardCardForceMoveDialog(props: {
                   ) : (
                     <>
                       <span className="truncate">{ready.tip.subject}</span>
-                      <span className="text-[12px] text-muted-foreground">
+                      <span className="text-board-12 text-muted-foreground">
                         Pushed {pushedAt}
                         {ready.tip.author === "" ? "" : ` by ${ready.tip.author}`}
                       </span>

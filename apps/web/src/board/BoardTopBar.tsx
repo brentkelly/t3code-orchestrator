@@ -6,10 +6,10 @@
 import { SearchIcon, XIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { Input } from "../components/ui/input";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isElectron } from "../env";
 import { BoardModeTabs } from "./BoardModeTabs";
+import { BoardInput } from "./ui/BoardInput";
 
 export function BoardTopBar({
   children,
@@ -79,9 +79,10 @@ export function BoardCardFilterField({
   return (
     <div className="flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-input bg-popover px-2 shadow-xs/5 focus-within:border-ring sm:h-6.5 dark:bg-input/32">
       <SearchIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-      <Input
+      <BoardInput
         aria-label="Filter cards"
-        className="inline-flex w-24 min-w-0 sm:w-28 [&_input]:h-6 [&_input]:px-0 [&_input]:leading-6"
+        className="inline-flex w-24 min-w-0 sm:w-28 [&_input]:h-6"
+        look="filter"
         nativeInput
         onChange={(event) => onQueryChange(event.currentTarget.value)}
         onKeyDown={(event) => {

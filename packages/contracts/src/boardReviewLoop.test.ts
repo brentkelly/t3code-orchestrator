@@ -22,12 +22,25 @@ import {
   BoardCard,
   BoardCardId,
   BoardCardReviewSummary,
+  BoardCardReviewOverrides,
+  BoardReviewPayload,
+  BoardStageExecutionReview,
+  boardReviewNextRoundMode,
+  boardReviewRoundForcingCount,
+  boardReviewRoundModeOf,
+  EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
   type BoardReviewFinding,
   type BoardStepCompletion,
 } from "./board.ts";
 import * as Schema from "effect/Schema";
 
 const cardId = BoardCardId.make("card-1");
+const decodeOverrides = Schema.decodeUnknownSync(BoardCardReviewOverrides);
+const decodeReviewStage = Schema.decodeUnknownSync(BoardStageExecutionReview);
+/** A fixture commit id: settling rounds only trust a hex `reviewedSha`. */
+const reviewSha = (round: number) => `c0ffee${round}`;
+
+const decodeReviewPayload = Schema.decodeUnknownSync(BoardReviewPayload);
 
 const completion = (
   stepId: string,
@@ -54,7 +67,7 @@ const finding = (severity: BoardReviewFinding["severity"], id = "f1"): BoardRevi
 });
 
 const review = (round: number, findings: ReadonlyArray<BoardReviewFinding>) =>
-  completion(`review@${round}`, { reviewedSha: `sha-${round}`, findings });
+  completion(`review@${round}`, { reviewedSha: reviewSha(round), findings });
 
 /** A round that ran every phase and left its critical unresolved. */
 const unconverged = (round: number) => [
@@ -193,7 +206,7 @@ describe("boardReviewLoopWalk", () => {
     const doubled = (round: number, findings: ReadonlyArray<BoardReviewFinding>) =>
       completion(
         `review@${round}`,
-        JSON.stringify(JSON.stringify({ reviewedSha: `sha-${round}`, findings })),
+        JSON.stringify(JSON.stringify({ reviewedSha: reviewSha(round), findings })),
       );
     // Exactly the shape the walk gives the same payload encoded once.
     assert.deepStrictEqual(walk([doubled(1, [])], 5), walk([review(1, [])], 5));
@@ -386,7 +399,9 @@ describe("deriveBoardCardReviewSummary", () => {
       completions: [
         completion(
           "review@1",
-          JSON.stringify(JSON.stringify({ reviewedSha: "sha-1", findings: [finding("nitpick")] })),
+          JSON.stringify(
+            JSON.stringify({ reviewedSha: reviewSha(1), findings: [finding("nitpick")] }),
+          ),
         ),
         completion("triage@1", {
           fixedSha: "s1",
@@ -541,6 +556,7 @@ describe("boardReviewRoundsStarted / effectiveBoardReviewRounds", () => {
           runThroughRound: null,
           carriedFindings: {},
           stuckWaivedThrough: null,
+          roundModes: {},
         },
         roundsStarted: 3,
       }),
@@ -561,6 +577,7 @@ describe("boardReviewRoundsStarted / effectiveBoardReviewRounds", () => {
           runThroughRound: null,
           carriedFindings: {},
           stuckWaivedThrough: null,
+          roundModes: {},
         },
         roundsStarted: 0,
       }),
@@ -822,7 +839,7 @@ describe("an unreadable loop is held (T3O-14)", () => {
 });
 
 describe("T3O-51: a ruling binds inside its round", () => {
-  const sha = (round: number) => `sha-${round}`;
+  const sha = (round: number) => reviewSha(round);
   const triage = (
     round: number,
     actions: Record<string, "fixed" | "rejected">,
@@ -1062,7 +1079,7 @@ describe("T3O-51: a ruling binds inside its round", () => {
     it("a blocking fix with no new commit does not count as landed", () => {
       const result = walkWith([
         review(1, [finding("critical", "f1")]),
-        triage(1, { f1: "fixed" }, "sha-1"),
+        triage(1, { f1: "fixed" }, reviewSha(1)),
         adjudicate(1, { f1: "fix-upheld" }, false),
       ]);
       assert.strictEqual(result.status, "converged");
@@ -1196,6 +1213,7 @@ describe("T3O-51: a ruling binds inside its round", () => {
             runThroughRound: 2,
             carriedFindings: carriedFix(2),
             stuckWaivedThrough: 1,
+            roundModes: {},
           },
           roundsStarted: 2,
           completions: [review(2, []), triage(2, { "carried:r1:f1": "fixed" }, "new")],
@@ -1424,7 +1442,7 @@ describe("T3O-51: a ruling binds inside its round", () => {
     it("stuck wins whatever anotherRound says", () => {
       const result = walkWith([
         review(1, [finding("critical", "f1")]),
-        triage(1, { f1: "rejected" }, "sha-1"),
+        triage(1, { f1: "rejected" }, reviewSha(1)),
         adjudicate(1, { f1: "escalated" }, false),
       ]);
       assert.strictEqual(result.status, "stuck");
@@ -1524,7 +1542,7 @@ describe("T3O-51: a ruling binds inside its round", () => {
         anotherRound: true,
       });
       const dispositions = (entries: Record<string, [string, string]>) => ({
-        fixedSha: "sha-1",
+        fixedSha: reviewSha(1),
         dispositions: Object.entries(entries).map(([findingId, [action, note]]) => ({
           findingId,
           action,
@@ -1627,5 +1645,373 @@ describe("T3O-51: a ruling binds inside its round", () => {
     const result = walkWith([...disputedRound(1), completion("retriage@1", { nope: true })]);
     assert.strictEqual(result.status, "unreadable");
     assert.strictEqual(result.unreadableStepId, "retriage@1");
+  });
+});
+
+describe("T3O-64: settling rounds", () => {
+  const SETTLING = { settleAfterRound: 3, settleBelowFindings: 2 } as const;
+  const triage = (round: number, actions: Record<string, "fixed" | "rejected">, fixedSha: string) =>
+    completion(`triage@${round}`, {
+      fixedSha,
+      dispositions: Object.entries(actions).map(([findingId, action]) => ({
+        findingId,
+        action,
+        note: `${action} it`,
+      })),
+    });
+  const ruling = (
+    phase: "adjudicate" | "readjudicate",
+    round: number,
+    verdicts: Record<string, string>,
+    anotherRound: boolean | "absent" = false,
+  ) =>
+    completion(`${phase}@${round}`, {
+      verdicts: Object.entries(verdicts).map(([findingId, verdict]) => ({
+        findingId,
+        verdict,
+        note: `ruled ${verdict}`,
+      })),
+      ...(anotherRound === "absent" ? {} : { anotherRound }),
+    });
+  /** A round whose findings were each fixed past the reviewed SHA and upheld: a full round
+      continues on it, because no review has read the fix. */
+  const fixedRound = (
+    round: number,
+    findings: ReadonlyArray<BoardReviewFinding>,
+  ): BoardStepCompletion[] => [
+    review(round, findings),
+    triage(
+      round,
+      Object.fromEntries(findings.map((f) => [f.id, "fixed" as const])),
+      `fix-${round}`,
+    ),
+    ruling("adjudicate", round, Object.fromEntries(findings.map((f) => [f.id, "fix-upheld"]))),
+  ];
+  const improvements = (round: number, count = 1) =>
+    Array.from({ length: count }, (_, i) => finding("improvement", `r${round}i${i}`));
+  /** Rounds 1–3 each raised and fixed one improvement. */
+  const firstThree = [1, 2, 3].flatMap((round) => fixedRound(round, improvements(round)));
+  const overrides = (
+    roundModes: BoardCardReviewOverrides["roundModes"] = {},
+    rest: Partial<BoardCardReviewOverrides> = {},
+  ): BoardCardReviewOverrides => ({
+    ...EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
+    ...rest,
+    roundModes,
+  });
+  const modeOf = (
+    round: number,
+    completions: ReadonlyArray<BoardStepCompletion>,
+    cardOverrides: BoardCardReviewOverrides | null = null,
+    settings: { settleAfterRound: number | null; settleBelowFindings: number } = SETTLING,
+  ) => boardReviewNextRoundMode({ round, completions, review: settings, overrides: cardOverrides });
+  const settlingSince = (sha: string) => ({ kind: "settling" as const, sinceSha: sha });
+  const walkModes = (
+    completions: ReadonlyArray<BoardStepCompletion>,
+    roundModes: BoardCardReviewOverrides["roundModes"],
+    carriedFindings: Parameters<typeof boardReviewLoopWalk>[0]["carriedFindings"] = {},
+  ) =>
+    boardReviewLoopWalk({
+      completions,
+      maxRounds: 10,
+      stopAfterRound: null,
+      runThroughRound: null,
+      carriedFindings,
+      roundModes,
+    });
+
+  describe("the mode rule", () => {
+    it("keeps the first rounds full, whatever they raised", () => {
+      const twoRounds = [1, 2].flatMap((round) => fixedRound(round, improvements(round)));
+      assert.deepStrictEqual(modeOf(3, twoRounds), { kind: "full" });
+      assert.deepStrictEqual(modeOf(2, fixedRound(1, [])), { kind: "full" });
+    });
+
+    it("settles round 4 after a round 3 with fewer than two forcing findings", () => {
+      assert.deepStrictEqual(modeOf(4, firstThree), settlingSince(reviewSha(3)));
+      // A clean round 3 has none at all.
+      const clean = [...firstThree.slice(0, 6), review(3, [])];
+      assert.deepStrictEqual(modeOf(4, clean), settlingSince(reviewSha(3)));
+    });
+
+    it("keeps round 4 full after a round 3 with two forcing findings", () => {
+      const busy = [...firstThree.slice(0, 6), ...fixedRound(3, improvements(3, 2))];
+      assert.deepStrictEqual(modeOf(4, busy), { kind: "full" });
+      // A higher bar settles the same round.
+      assert.deepStrictEqual(
+        modeOf(4, busy, null, { settleAfterRound: 3, settleBelowFindings: 3 }),
+        settlingSince(reviewSha(3)),
+      );
+    });
+
+    it("does not count a finding ruled rejection-justified, first time or on readjudication", () => {
+      const [a, b] = improvements(3, 2) as [BoardReviewFinding, BoardReviewFinding];
+      const head = firstThree.slice(0, 6);
+      const rejectedOnce = [
+        ...head,
+        review(3, [a, b]),
+        triage(3, { [a.id]: "fixed", [b.id]: "rejected" }, "fix-3"),
+        ruling("adjudicate", 3, { [a.id]: "fix-upheld", [b.id]: "rejection-justified" }),
+      ];
+      assert.deepStrictEqual(modeOf(4, rejectedOnce), settlingSince(reviewSha(3)));
+      const rejectedOnSecondPass = [
+        ...head,
+        review(3, [a, b]),
+        triage(3, { [a.id]: "fixed", [b.id]: "rejected" }, "fix-3"),
+        ruling("adjudicate", 3, { [a.id]: "fix-upheld", [b.id]: "rejection-unjustified" }),
+        completion("retriage@3", {
+          fixedSha: "fix-3",
+          dispositions: [{ findingId: b.id, action: "rejected", note: "still wrong" }],
+        }),
+        ruling("readjudicate", 3, { [b.id]: "rejection-justified" }),
+      ];
+      assert.deepStrictEqual(modeOf(4, rejectedOnSecondPass), settlingSince(reviewSha(3)));
+    });
+
+    it("counts only criticals and carried findings after a settling round", () => {
+      const settledFour = { "4": settlingSince(reviewSha(3)) };
+      const twoImprovements = [...firstThree, ...fixedRound(4, improvements(4, 2))];
+      assert.deepStrictEqual(
+        modeOf(5, twoImprovements, overrides(settledFour)),
+        settlingSince(reviewSha(4)),
+      );
+      // Re-evaluated every round: two criticals send the loop back to full review.
+      const twoCriticals = [
+        ...firstThree,
+        ...fixedRound(4, [finding("critical", "c1"), finding("critical", "c2")]),
+      ];
+      assert.deepStrictEqual(modeOf(5, twoCriticals, overrides(settledFour)), { kind: "full" });
+      // Without the record, round 4 was full, so its two improvements counted.
+      assert.deepStrictEqual(modeOf(5, twoImprovements), { kind: "full" });
+    });
+
+    it("keeps a gate round, a legacy round and an unreadable round full", () => {
+      const synced = [...firstThree, completion("sync@3", { rebasedSha: "rebased" })];
+      assert.deepStrictEqual(modeOf(4, synced), { kind: "full" });
+      const legacy = [
+        ...firstThree.slice(0, 6),
+        review(3, improvements(3)),
+        triage(3, { r3i0: "fixed" }, "fix-3"),
+        ruling("adjudicate", 3, { r3i0: "fix-upheld" }, "absent"),
+      ];
+      assert.deepStrictEqual(modeOf(4, legacy), { kind: "full" });
+      // A model-written ref, not a commit id, would scope the round's diff to nothing.
+      for (const reviewedSha of ["HEAD", "main", "sha-3", "abc12"]) {
+        const notACommit = [
+          ...firstThree.slice(0, 6),
+          completion("review@3", { reviewedSha, findings: [] }),
+        ];
+        assert.deepStrictEqual(modeOf(4, notACommit), { kind: "full" }, reviewedSha);
+      }
+    });
+
+    it("returns a recorded mode unchanged, whatever the settings say now", () => {
+      assert.deepStrictEqual(modeOf(4, firstThree, overrides({ "4": { kind: "full" } })), {
+        kind: "full",
+      });
+      assert.deepStrictEqual(
+        modeOf(4, [], overrides({ "4": settlingSince("abc") }), {
+          settleAfterRound: null,
+          settleBelowFindings: 2,
+        }),
+        settlingSince("abc"),
+      );
+    });
+
+    it("never settles with settling off", () => {
+      assert.deepStrictEqual(
+        modeOf(4, firstThree, null, { settleAfterRound: null, settleBelowFindings: 2 }),
+        { kind: "full" },
+      );
+    });
+
+    it("lets a Fix it round follow the rule like any other", () => {
+      // Round 3 stuck on one critical a human then ordered fixed: one forcing finding.
+      const stuckThree = [
+        ...firstThree.slice(0, 6),
+        review(3, [finding("critical", "c1")]),
+        triage(3, { c1: "rejected" }, reviewSha(3)),
+        ruling("adjudicate", 3, { c1: "escalated" }),
+      ];
+      assert.deepStrictEqual(modeOf(4, stuckThree), settlingSince(reviewSha(3)));
+    });
+
+    it("reads a round with no record as full", () => {
+      assert.deepStrictEqual(boardReviewRoundModeOf(null, 4), { kind: "full" });
+      assert.deepStrictEqual(boardReviewRoundModeOf(overrides({ "3": settlingSince("a") }), 4), {
+        kind: "full",
+      });
+    });
+
+    it("counts a finished round's forcing findings", () => {
+      assert.strictEqual(
+        boardReviewRoundForcingCount({ round: 3, completions: firstThree, overrides: null }),
+        1,
+      );
+      // A later round's review does not hide the count.
+      assert.strictEqual(
+        boardReviewRoundForcingCount({
+          round: 3,
+          completions: [...firstThree, review(4, [])],
+          overrides: null,
+        }),
+        1,
+      );
+    });
+  });
+
+  describe("a settling round's resolution", () => {
+    const settledFour = { "4": settlingSince(reviewSha(3)) };
+
+    it("converges `settled` once only improvements were raised and their fixes upheld", () => {
+      const ledger = [...firstThree, ...fixedRound(4, improvements(4))];
+      const settled = walkModes(ledger, settledFour);
+      assert.strictEqual(settled.status, "converged");
+      assert.strictEqual(settled.convergedBy, "settled");
+      assert.strictEqual(settled.unreviewedFixes, 1);
+      // The same ledger in a full round runs another review on the landed fix.
+      assert.deepStrictEqual(walkModes(ledger, {}).next, { phase: "review", round: 5 });
+    });
+
+    it("still stalls on an improvement the adjudicator keeps overruling", () => {
+      const [i] = improvements(4) as [BoardReviewFinding];
+      const disputed = [
+        ...firstThree,
+        review(4, [i]),
+        triage(4, { [i.id]: "rejected" }, reviewSha(4)),
+        ruling("adjudicate", 4, { [i.id]: "rejection-unjustified" }),
+      ];
+      assert.deepStrictEqual(walkModes(disputed, settledFour).next, {
+        phase: "retriage",
+        round: 4,
+      });
+      const unresolved = [
+        ...disputed,
+        completion("retriage@4", {
+          fixedSha: reviewSha(4),
+          dispositions: [{ findingId: i.id, action: "rejected", note: "no" }],
+        }),
+        ruling("readjudicate", 4, { [i.id]: "rejection-unjustified" }),
+      ];
+      assert.strictEqual(walkModes(unresolved, settledFour).status, "stuck");
+    });
+
+    it("continues when a critical's fix landed", () => {
+      const ledger = [
+        ...firstThree,
+        ...fixedRound(4, [finding("critical", "c1"), ...improvements(4)]),
+      ];
+      assert.deepStrictEqual(walkModes(ledger, settledFour).next, { phase: "review", round: 5 });
+    });
+
+    it("continues when a carried finding's fix landed", () => {
+      const carried = {
+        "4": {
+          ruling: "fix" as const,
+          note: null,
+          findings: [
+            {
+              findingId: "carried:r3:f1",
+              origRound: 3,
+              severity: "improvement" as const,
+              title: "carried thing",
+              file: null,
+              line: null,
+              detail: "",
+              rulingNote: "",
+            },
+          ],
+        },
+      };
+      const ledger = [
+        ...firstThree,
+        review(4, []),
+        triage(4, { "carried:r3:f1": "fixed" }, "fix-4"),
+        ruling("adjudicate", 4, { "carried:r3:f1": "fix-upheld" }),
+      ];
+      assert.deepStrictEqual(walkModes(ledger, settledFour, carried).next, {
+        phase: "review",
+        round: 5,
+      });
+    });
+
+    it("summarises a loop that converged `settled` as converged", () => {
+      const ledger = [...firstThree, ...fixedRound(4, improvements(4))];
+      const summary = deriveBoardCardReviewSummary({
+        completions: ledger,
+        maxRounds: null,
+        stopAfterRound: null,
+        runThroughRound: null,
+        roundModes: settledFour,
+      });
+      assert.strictEqual(summary?.outcome, "converged");
+      assert.strictEqual(
+        deriveBoardCardReviewSummary({
+          completions: ledger,
+          maxRounds: null,
+          stopAfterRound: null,
+          runThroughRound: null,
+        })?.outcome,
+        "running",
+      );
+    });
+
+    it("says `anotherRound` has no effect when a settling adjudication omits it", () => {
+      const ledger = [...firstThree, review(4, improvements(4)), triage(4, { r4i0: "fixed" }, "x")];
+      const payload = JSON.stringify({ verdicts: [{ findingId: "r4i0", verdict: "fix-upheld" }] });
+      const settling = boardReviewCompletionDefect({
+        stepId: "adjudicate@4",
+        payload,
+        completions: ledger,
+        carriedFindings: {},
+        roundModes: settledFour,
+      });
+      assert.include(settling ?? "", "no effect");
+      const full = boardReviewCompletionDefect({
+        stepId: "adjudicate@4",
+        payload,
+        completions: ledger,
+        carriedFindings: {},
+      });
+      assert.notInclude(full ?? "", "no effect");
+    });
+
+    it("refuses a settling review that does not say what it reviewed", () => {
+      const reviewDefect = (payload: unknown, roundModes?: typeof settledFour) =>
+        boardReviewCompletionDefect({
+          stepId: "review@4",
+          payload: JSON.stringify(payload),
+          completions: firstThree,
+          carriedFindings: {},
+          ...(roundModes === undefined ? {} : { roundModes }),
+        });
+      const noScope = { reviewedSha: reviewSha(4), findings: [] };
+      assert.include(reviewDefect(noScope, settledFour) ?? "", "scope");
+      assert.isNull(reviewDefect({ ...noScope, scope: "branch" }, settledFour));
+      assert.isNull(reviewDefect(noScope));
+    });
+  });
+
+  describe("decoding older records", () => {
+    it("decodes old overrides, stage config and review payloads", () => {
+      assert.deepStrictEqual(decodeOverrides({ rounds: 5 }).roundModes, {});
+      const stage = decodeReviewStage({ kind: "review" });
+      assert.strictEqual(stage.settleAfterRound, 3);
+      assert.strictEqual(stage.settleBelowFindings, 2);
+      assert.strictEqual(
+        decodeReviewStage({
+          kind: "review",
+          settleAfterRound: null,
+        }).settleAfterRound,
+        null,
+      );
+      assert.isUndefined(decodeReviewPayload({ reviewedSha: "a", findings: [] }).scope);
+      assert.throws(() =>
+        decodeReviewStage({
+          kind: "review",
+          settleBelowFindings: 1,
+        }),
+      );
+    });
   });
 });

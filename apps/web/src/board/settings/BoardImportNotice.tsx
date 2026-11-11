@@ -76,7 +76,7 @@ export function BoardImportNotices() {
   return (
     <div className="mx-3 flex flex-col gap-1 rounded-xl border border-attention/40 bg-attention/6 px-4 py-3 sm:mx-4">
       {waiting.length > 1 ? (
-        <span className="text-[13px] font-medium text-foreground">
+        <span className="text-board-13 font-medium text-foreground">
           {waiting.length} projects have a t3o.json to import
         </span>
       ) : null}
@@ -124,7 +124,7 @@ function ImportNoticeRow(props: {
     <div className="flex flex-wrap items-center gap-2 py-1">
       <FileJsonIcon className="size-4 text-attention-foreground" />
       <div className="flex min-w-0 flex-col">
-        <span className="text-[13px] text-foreground">
+        <span className="text-board-13 text-foreground">
           {props.title} has a t3o.json. Import its pipeline and CI settings?
         </span>
         <span className="text-xs text-muted-foreground">

@@ -23,7 +23,6 @@ import { useState } from "react";
 import { NumberStepper } from "../../components/settings/BoardPipelineSection";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
-import { Textarea } from "../../components/ui/textarea";
 import { cn } from "../../lib/utils";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -38,6 +37,7 @@ import {
 } from "./boardProjectSettings.logic";
 import { useBoardSettingsContext } from "./BoardSettingsLayout";
 import type { BoardProjectConfigState } from "./useBoardProjectConfig";
+import { BoardTextarea } from "../ui/BoardInput";
 
 const report = (title: string) => (result: { readonly _tag: string }) => {
   if (result._tag !== "Failure") return;
@@ -169,41 +169,41 @@ function StageRow(props: {
         className="flex cursor-pointer items-center gap-2.5 px-4 py-2.5 hover:bg-muted"
         onClick={props.onToggle}
       >
-        <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-accent font-mono text-[11px] font-semibold text-muted-foreground">
+        <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-accent font-mono text-board-11 font-semibold text-muted-foreground">
           {props.index + 1}
         </span>
         <span
           className={cn(
-            "text-[13.5px] text-foreground",
+            "text-board-13-5 text-foreground",
             off && "text-muted-foreground line-through",
           )}
         >
           {stage.label}
         </span>
         {stage.projectId !== null ? (
-          <span className="rounded-md bg-accent px-1.5 py-px text-[11px] text-muted-foreground">
+          <span className="rounded-md bg-accent px-1.5 py-px text-board-11 text-muted-foreground">
             Made for a project
           </span>
         ) : null}
         {overridden > 0 ? (
-          <span className="rounded-md border border-border px-1.5 py-px text-[11px] text-muted-foreground">
+          <span className="rounded-md border border-border px-1.5 py-px text-board-11 text-muted-foreground">
             {overridden} {overridden === 1 ? "override" : "overrides"}
           </span>
         ) : null}
         <span className="flex-1" />
         {state.kind === "always-on" ? (
           <BoardHint label={state.reason}>
-            <span className="inline-flex items-center gap-1 text-[11.5px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1 text-board-11-5 text-muted-foreground">
               <LockIcon className="size-3" /> Always on
             </span>
           </BoardHint>
         ) : isCi ? (
-          <span className="text-[11.5px] text-muted-foreground">
+          <span className="text-board-11-5 text-muted-foreground">
             {state.on ? "On here" : "Off"} · switch on the CI tab
           </span>
         ) : (
           <span className="flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
-            <span className="text-[11.5px] text-muted-foreground">
+            <span className="text-board-11-5 text-muted-foreground">
               {state.switched
                 ? state.on
                   ? "On here"
@@ -224,7 +224,7 @@ function StageRow(props: {
         )}
       </div>
       {props.expanded ? (
-        <div className="flex flex-col gap-1 px-4 pb-3 sm:pl-[52px]">
+        <div className="flex flex-col gap-1 px-4 pb-3 sm:pl-13">
           {state.kind === "always-on" ? (
             <p className="text-xs text-muted-foreground">{state.reason}</p>
           ) : off ? (
@@ -287,10 +287,10 @@ function OverrideRow(props: {
     >
       <div className="flex items-center gap-3">
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="text-[13.5px] text-foreground">{field.label}</span>
+          <span className="text-board-13-5 text-foreground">{field.label}</span>
           <span
             className={cn(
-              "text-[11.5px]",
+              "text-board-11-5",
               overridden ? "font-medium text-primary" : "text-muted-foreground",
             )}
           >
@@ -366,9 +366,10 @@ function PromptOverride(props: {
   const text = draft ?? props.value;
   return (
     <div className="flex flex-col gap-1.5">
-      <Textarea
+      <BoardTextarea
         aria-label="Prompt override"
-        className="min-h-24 font-mono text-xs"
+        className="min-h-24"
+        look="code"
         disabled={!props.canWrite}
         onChange={(event) => setDraft(event.target.value)}
         value={text}

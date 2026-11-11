@@ -4,7 +4,11 @@
  * through the server-internal worktree commands. Reclaim never deletes undurable work.
  */
 import { resolveBoardCardEffectiveBase } from "@t3tools/contracts";
-import type { BoardCard, BoardCardWorktreeReclaimOutcome } from "@t3tools/contracts";
+import type {
+  BoardCard,
+  BoardCardWorktreeReclaimOutcome,
+  WorktreeSubmodules,
+} from "@t3tools/contracts";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -74,6 +78,9 @@ export const provisionBoardCardWorktree = Effect.fn("provisionBoardCardWorktree"
     readonly projectCwd: string;
     readonly branch: string;
     readonly baseRefName: string;
+    /** The project's `worktreeSubmodules` setting (T3O-74); null or absent
+        defers to the checkout's t3.json, then recursive, as upstream does. */
+    readonly submodules?: WorktreeSubmodules | null;
   }) {
     const git = yield* GitVcsDriver.GitVcsDriver;
 
@@ -97,13 +104,16 @@ export const provisionBoardCardWorktree = Effect.fn("provisionBoardCardWorktree"
     // The branch may exist from a partial attempt with no worktree; attach one
     // to it rather than trying (and failing) to re-create it with `-b`.
     const branchExists = (yield* git.listLocalBranchNames(input.projectCwd)).includes(input.branch);
-    const created = yield* git.createWorktree({
-      cwd: input.projectCwd,
-      refName: branchExists ? input.branch : input.baseRefName,
-      ...(branchExists ? {} : { newRefName: input.branch }),
-      baseRefName: input.baseRefName,
-      path: null,
-    });
+    const created = yield* git.createWorktree(
+      {
+        cwd: input.projectCwd,
+        refName: branchExists ? input.branch : input.baseRefName,
+        ...(branchExists ? {} : { newRefName: input.branch }),
+        baseRefName: input.baseRefName,
+        path: null,
+      },
+      input.submodules == null ? undefined : { submodules: input.submodules },
+    );
     yield* pinBoardWorktreeGhDefault(created.worktree.path);
     return {
       path: created.worktree.path,

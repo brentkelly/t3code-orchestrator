@@ -235,7 +235,7 @@ describe("BoardCardContent (D7)", () => {
     // Not just the badge: the fill, the border and the ring all go violet,
     // so "where am I needed" is answerable across a whole column at a glance.
     expect(awaiting).toContain("border-attention/55");
-    expect(awaiting).toContain("color-mix(in_srgb,var(--attention)_7%,var(--card))");
+    expect(awaiting).toContain("bg-board-attention-tint");
     expect(awaiting).not.toContain("border-border");
 
     const calm = renderToStaticMarkup(
@@ -276,7 +276,7 @@ describe("BoardCardContent (D7)", () => {
     );
     // Amber, not red: red is not in the status vocabulary.
     expect(stalled).toContain("Stalled");
-    expect(stalled).toContain("text-amber-700");
+    expect(stalled).toContain("text-board-amber-text");
     expect(stalled).not.toContain("Input needed");
 
     // A healthy question is still the blue awaiting-input treatment, never flagged
@@ -711,7 +711,7 @@ describe("cards that need a human (attention)", () => {
       />,
     );
     expect(html).toContain("Needs a human");
-    expect(html).toContain("border-amber-500/60");
+    expect(html).toContain("border-warning/60");
     expect(html).not.toContain("border-border");
   });
 
@@ -756,7 +756,7 @@ describe("cards that need a human (attention)", () => {
     expect(html).not.toContain("Needs a human");
     // …and the card loses the amber treatment with the chip, rather than
     // sitting tinted with nothing on it saying why.
-    expect(html).not.toContain("border-amber-500/60");
+    expect(html).not.toContain("border-warning/60");
   });
 
   it("ranks the loudest reason when a card qualifies for several", () => {
@@ -810,7 +810,7 @@ describe("cards that need a human (attention)", () => {
     );
     // The child's own amber, carried up unchanged — the colour keeps meaning
     // one thing wherever it appears.
-    expect(html).toContain("border-amber-500/60");
+    expect(html).toContain("border-warning/60");
     expect(html).toContain("1 child needs you");
   });
 
@@ -901,7 +901,7 @@ describe("held review loop chip suppression", () => {
     );
     expect(attentionOf(onReview)?.reason).toBe("review-held");
     expect(reviewHtml).toContain("No convergence");
-    expect(reviewHtml).toContain("border-amber-500/60");
+    expect(reviewHtml).toContain("border-warning/60");
 
     // Off it, the round row is not rendered at all — so the card must NOT be
     // left tinted amber with nothing saying why.
@@ -915,7 +915,7 @@ describe("held review loop chip suppression", () => {
         attention={attentionOf(offReview)}
       />,
     );
-    expect(offHtml).toContain("border-amber-500/60");
+    expect(offHtml).toContain("border-warning/60");
     expect(offHtml).toContain("No convergence");
   });
 

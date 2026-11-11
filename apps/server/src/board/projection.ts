@@ -2864,6 +2864,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         runThroughRound: card.reviewOverrides?.runThroughRound ?? null,
         carriedFindings: card.reviewOverrides?.carriedFindings ?? {},
         stuckWaivedThrough: card.reviewOverrides?.stuckWaivedThrough ?? null,
+        roundModes: card.reviewOverrides?.roundModes ?? {},
       });
       yield* queries.updateBoardCardReviewSummaryRow({ cardId: card.id, reviewSummary: summary });
     },

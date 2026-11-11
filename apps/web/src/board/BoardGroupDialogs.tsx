@@ -374,7 +374,7 @@ export function BoardStartedParentDialog({
               items: [
                 <>
                   The commits on{" "}
-                  <code className="font-mono text-[11.5px]">{boardGroupBranchName(started)}</code>{" "}
+                  <code className="font-mono text-board-11-5">{boardGroupBranchName(started)}</code>{" "}
                   stop being built on. The branch is kept until its worktree is reclaimed, not
                   deleted.
                 </>,

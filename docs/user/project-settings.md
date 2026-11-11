@@ -33,7 +33,12 @@ and one on everywhere can be kept out of another. That project's model pickers f
 and no new turn there can start on a provider it turned off, including queued messages and
 follow-ups from delegated tasks. A turn already running when the switch flips finishes. A delegated
 task's result still lands in its parent thread, which sees it on its next turn. Reset returns the project to the
-machine's setting. Every other provider setting stays per machine.
+machine's setting. Every other provider setting stays per machine. On the board, a step whose model
+uses a provider turned off for the card's project doesn't start, and the card says **Provider
+disabled**. Turn the provider back on and press **Continue**, or pick another model in the card's
+**Models**. The stage model pickers in **Settings → Board** follow the machine's
+setting, because a stage serves every project; a project that turned the chosen provider off
+shows **Provider disabled** on its cards instead.
 
 On mobile, open **Settings** and use the filter in its header to choose connected environments
 and a project. The filter stays available in server-setting pages. With **All projects** selected,

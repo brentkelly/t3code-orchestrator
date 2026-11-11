@@ -83,7 +83,7 @@ function PlanGraphNode({
     <BoardHint label={node.stageLabel === null ? node.title : `${node.title} (${node.stageLabel})`}>
       <button
         className={cn(
-          "absolute flex flex-col justify-center gap-[3px] rounded-[9px] border px-2.5 text-left shadow-xs",
+          "absolute flex flex-col justify-center gap-0.75 rounded-board-9 border px-2.5 text-left shadow-xs",
           node.needsHuman ? "border-attention/55" : "border-border",
           node.tone === "done" ? "bg-foreground/4" : "bg-card",
           node.tone === "gone" && "opacity-60",
@@ -101,12 +101,12 @@ function PlanGraphNode({
       >
         <span className="flex items-center gap-1.5">
           <span className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[node.tone])} />
-          <span className="text-[10.5px] font-semibold text-muted-foreground">#{node.n}</span>
-          <span className="ml-auto truncate text-[10.5px] text-muted-foreground">
+          <span className="text-board-10-5 font-semibold text-muted-foreground">#{node.n}</span>
+          <span className="ml-auto truncate text-board-10-5 text-muted-foreground">
             {node.stageLabel ?? "No card"}
           </span>
         </span>
-        <span className="line-clamp-2 text-[12px]/[1.3] font-medium text-foreground">
+        <span className="line-clamp-2 text-board-12 leading-board-1-3 font-medium text-foreground">
           {node.title}
         </span>
       </button>

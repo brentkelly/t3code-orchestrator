@@ -111,7 +111,7 @@ export function BoardModeTabs({
     <div
       aria-label="Workspace mode"
       className={cn(
-        "flex shrink-0 items-center gap-[3px] rounded-[10px] bg-accent p-0.5",
+        "flex shrink-0 items-center gap-0.75 rounded-board-10 bg-accent p-0.5",
         className,
       )}
       role="group"
@@ -173,7 +173,7 @@ function ModeTab({
         // Explicit 8px: `rounded-lg` maps to --radius (10px) in this theme,
         // which matched the 10px track behind the tabs instead of nesting
         // inside it.
-        "inline-flex h-[26px] cursor-pointer items-center gap-1.5 rounded-[8px] px-2.5 font-medium text-[12.5px] transition-colors [&_svg]:size-3.5 [&_svg]:shrink-0",
+        "inline-flex h-[26px] cursor-pointer items-center gap-1.5 rounded-lg px-2.5 font-medium text-board-12-5 transition-colors [&_svg]:size-3.5 [&_svg]:shrink-0",
         active
           ? "bg-card text-foreground shadow-xs"
           : "bg-transparent text-muted-foreground hover:text-foreground",

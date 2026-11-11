@@ -9,6 +9,7 @@ import {
   type BoardCardModelOverrides,
   type BoardCardStageModelOverride,
   type BoardStageId,
+  type ProjectId,
 } from "@t3tools/contracts";
 
 import {
@@ -18,7 +19,7 @@ import {
   type ModelOptionsByInstance,
 } from "../components/settings/BoardModelRow";
 import { boardModelDisplayName } from "../components/settings/boardModelDisplayName";
-import { Popover, PopoverPopup } from "../components/ui/popover";
+import { Popover } from "../components/ui/popover";
 import { getCustomModelOptionsByInstance } from "../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -29,6 +30,7 @@ import { useBoardWorkersState } from "./workers/BoardWorkersContext";
 import { boardWorkerOnlyProviders } from "./workers/cardWorker";
 import type { BoardCardModelRowSpec } from "./boardCardModelRows";
 import { useBoardServerProviders, useBoardSettings } from "./useBoardEnvironmentId";
+import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
 
 /**
  * A row with no override names what it defers to and where to change it, never
@@ -54,6 +56,7 @@ export function BoardCardModelsPopover({
   overrides,
   onChange,
   stepRunning,
+  projectId,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
@@ -71,6 +74,8 @@ export function BoardCardModelsPopover({
       Deliberately does NOT disable the controls: setting the model for the next
       round while this one runs is the common intent, not a mistake. */
   readonly stepRunning: boolean;
+  /** The card's project (T3O-74): providers turned off for it show disabled. */
+  readonly projectId: ProjectId;
 }) {
   // Resolved here rather than drilled through the detail view, exactly as the
   // review pane's per-round drawer does — this module is lazily loaded, so the
@@ -82,7 +87,11 @@ export function BoardCardModelsPopover({
   const workers = useBoardWorkersState();
   const serverProviders = [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)];
   const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(serverProviders),
+      settings,
+      projectId,
+    ),
   );
   const getModelOptions = (active: ActiveModel): ModelOptionsByInstance =>
     getCustomModelOptionsByInstance(settings, serverProviders, active.instanceId, active.model);
@@ -105,13 +114,15 @@ export function BoardCardModelsPopover({
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       {anchor}
-      <PopoverPopup align="end" className="w-[440px] p-3">
+      <BoardPopoverPopup align="end" className="w-[440px]" inset="3">
         <div className="flex items-center gap-2">
-          <span className="text-[12.5px] font-semibold text-foreground">Models for this card</span>
+          <span className="text-board-12-5 font-semibold text-foreground">
+            Models for this card
+          </span>
           <span className="flex-1" />
           {anySet ? (
             <button
-              className="h-[22px] shrink-0 rounded-md px-[7px] text-[11.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="h-[22px] shrink-0 rounded-md px-1.75 text-board-11-5 font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
               onClick={reset}
               type="button"
             >
@@ -119,7 +130,7 @@ export function BoardCardModelsPopover({
             </button>
           ) : null}
         </div>
-        <p className="mt-1.5 text-[11.5px] leading-[1.5] text-pretty text-muted-foreground">
+        <p className="mt-1.5 text-board-11-5 leading-normal text-pretty text-muted-foreground">
           Overrides the workspace defaults from Settings for this card only.
         </p>
         {rows.map((row) => {
@@ -127,9 +138,9 @@ export function BoardCardModelsPopover({
           const current = override ?? null;
           return (
             <div className="mt-2.5 flex flex-col" key={row.stageId}>
-              <div className="flex items-baseline gap-[7px]">
-                <span className="text-[11.5px] font-medium text-foreground">{row.label}</span>
-                <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+              <div className="flex items-baseline gap-1.75">
+                <span className="text-board-11-5 font-medium text-foreground">{row.label}</span>
+                <span className="min-w-0 truncate text-board-11 text-muted-foreground">
                   {row.note}
                 </span>
               </div>
@@ -183,11 +194,11 @@ export function BoardCardModelsPopover({
           );
         })}
         {stepRunning ? (
-          <p className="mt-2.5 text-[11px] text-muted-foreground">
+          <p className="mt-2.5 text-board-11 text-muted-foreground">
             A step is running. It keeps the model it started with. This applies to the next run.
           </p>
         ) : null}
-      </PopoverPopup>
+      </BoardPopoverPopup>
     </Popover>
   );
 }

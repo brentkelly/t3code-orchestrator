@@ -1,9 +1,14 @@
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * The thread gateway's contract, run against `ThreadGatewayV2` on the real orchestration-v2
  * stack. Signals are checked against the events the engine LOGGED, so upstream event drift fails
  * here. No provider runs; provider output is written to the engine's own event sink.
  */
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import {
+  ChatAttachmentId,
   CommandId,
   EventId,
   MessageId,
@@ -12,13 +17,16 @@ import {
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderDriverKind,
   ProviderThreadId,
   ProviderTurnId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2Run,
+  type ProjectSettingsOverrides,
   type OrchestrationV2StoredEvent,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -30,6 +38,9 @@ import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
+import { createPendingAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
+import { ServerConfig } from "../config.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -198,6 +209,162 @@ const withoutAt = (signals: ReadonlyArray<ThreadSignal>) =>
       : signal,
   );
 
+/**
+ * A thread as its projection holds it: written straight to the store,
+ * since a subagent's lineage and an app-owned task record are only ever written
+ * by a running delegation, which this stack has no provider for.
+ */
+const projectThread = Effect.fn("projectThread")(function* (input: {
+  readonly tag: string;
+  readonly parent?: ThreadId;
+  readonly root?: ThreadId;
+  readonly creationSource?: "mcp" | "provider";
+  /** The run's status; absent means the thread never ran. */
+  readonly run?: "running" | "completed";
+  readonly request?: "permission" | "user_input";
+  /** App-owned tasks this thread delegated, by child thread. */
+  readonly delegates?: ReadonlyArray<{
+    readonly child: ThreadId;
+    readonly status: "running" | "completed";
+    readonly origin?: "app_owned" | "provider_native";
+  }>;
+}) {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const now = at("2026-01-01T00:00:00.000Z");
+  const driver = ProviderDriverKind.make("codex");
+  const providerInstanceId = modelSelection.instanceId;
+  const threadId = ThreadId.make(`thread-subagent-${input.tag}`);
+  const runId = RunId.make(`run-subagent-${input.tag}`);
+  const rootNodeId = NodeId.make(`node-subagent-${input.tag}`);
+  const event = (suffix: string) => EventId.make(`evt-subagent-${input.tag}-${suffix}`);
+  yield* store.apply({
+    id: event("created"),
+    type: "thread.created",
+    threadId,
+    occurredAt: now,
+    payload: {
+      createdBy: "agent",
+      creationSource: input.creationSource ?? "mcp",
+      id: threadId,
+      projectId,
+      title: input.tag,
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: {
+        parentThreadId: input.parent ?? null,
+        relationshipToParent: input.parent === undefined ? null : "subagent",
+        rootThreadId: input.root ?? input.parent ?? threadId,
+      },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+  } as unknown as OrchestrationV2DomainEvent);
+  if (input.run === undefined) return threadId;
+  const run = {
+    id: runId,
+    threadId,
+    ordinal: 1,
+    providerInstanceId,
+    modelSelection,
+    providerThreadId: null,
+    userMessageId: MessageId.make(`msg-subagent-${input.tag}`),
+    rootNodeId,
+    activeAttemptId: null,
+    status: input.run,
+    requestedAt: now,
+    startedAt: now,
+    completedAt: input.run === "running" ? null : now,
+    checkpointId: null,
+    contextHandoffId: null,
+  };
+  yield* store.apply({
+    id: event("run"),
+    type: "run.created",
+    threadId,
+    runId,
+    nodeId: rootNodeId,
+    driver,
+    providerInstanceId,
+    occurredAt: now,
+    payload: run,
+  } as unknown as OrchestrationV2DomainEvent);
+  if (input.request !== undefined) {
+    yield* store.apply({
+      id: event("request"),
+      type: "runtime-request.updated",
+      threadId,
+      nodeId: rootNodeId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: RuntimeRequestId.make(`request-subagent-${input.tag}`),
+        nodeId: rootNodeId,
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: input.request,
+        status: "pending",
+        responseCapability: {
+          type: "live",
+          providerSessionId: ProviderSessionId.make(`ps-subagent-${input.tag}`),
+        },
+        createdAt: now,
+        resolvedAt: null,
+      },
+    } as unknown as OrchestrationV2DomainEvent);
+  }
+  for (const [index, task] of (input.delegates ?? []).entries()) {
+    const id = NodeId.make(`node-subagent-${input.tag}-task-${index}`);
+    yield* store.apply({
+      id: event(`task-${index}`),
+      type: "subagent.updated",
+      threadId,
+      runId,
+      nodeId: id,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id,
+        threadId,
+        runId,
+        parentNodeId: rootNodeId,
+        origin: task.origin ?? "app_owned",
+        createdBy: "agent",
+        driver,
+        providerInstanceId,
+        providerThreadId: null,
+        childThreadId: task.child,
+        nativeTaskRef: null,
+        prompt: "Do the work",
+        title: `task ${index}`,
+        model: null,
+        status: task.status,
+        result: null,
+        startedAt: now,
+        completedAt: task.status === "running" ? null : now,
+        updatedAt: now,
+      },
+    } as unknown as OrchestrationV2DomainEvent);
+  }
+  return threadId;
+});
+
+const childOf = (parentTag: string, childTag: string) => ({
+  parent: ThreadId.make(`thread-subagent-${parentTag}`),
+  child: ThreadId.make(`thread-subagent-${childTag}`),
+});
+
 it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
   "ThreadGatewayV2 contract",
   (it) => {
@@ -283,6 +450,147 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         assert.isNull(yield* threads.threadState(threadId));
         assert.strictEqual((yield* threads.threadRecords([threadId])).size, 0);
       }),
+    );
+
+    it.effect("a spawn claims its pending attachments into the thread (T3O-74)", () =>
+      Effect.gen(function* () {
+        yield* ensureProject;
+        const config = yield* ServerConfig;
+        const threads = yield* LocalThreadGateway;
+        const threadId = ThreadId.make("thread-contract-attachments");
+        const pendingId = createPendingAttachmentId(".pdf");
+        const pendingPath = NodePath.join(config.attachmentsDir, `${pendingId}.pdf`);
+        NodeFS.mkdirSync(config.attachmentsDir, { recursive: true });
+        NodeFS.writeFileSync(pendingPath, "%PDF-1.4");
+        // The upload's extracted text, as upstream's upload leaves it.
+        NodeFS.writeFileSync(`${pendingPath}.txt`, "the spec");
+        const before = yield* head;
+        yield* threads.spawn({
+          commandId: boardCommandId("spawn-thread"),
+          threadId,
+          projectId,
+          title: "Attachments",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: workspaceRoot,
+          text: "Read the spec.",
+          attachments: [
+            {
+              type: "file",
+              id: ChatAttachmentId.make(pendingId),
+              name: "spec.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 8,
+            },
+          ],
+        });
+        const sent = (yield* loggedSince(before)).flatMap(({ event }) =>
+          event.type === "message.updated" ? event.payload.attachments : [],
+        );
+        assert.strictEqual(sent.length, 1);
+        const [claimed] = sent;
+        assert.notMatch(String(claimed?.id), /^pending-/);
+        const claimedPath = resolveAttachmentPath({
+          attachmentsDir: config.attachmentsDir,
+          attachment: claimed!,
+        });
+        assert.isNotNull(claimedPath);
+        assert.isTrue(NodeFS.existsSync(claimedPath!));
+        assert.strictEqual(NodeFS.readFileSync(`${claimedPath}.txt`, "utf8"), "the spec");
+      }),
+    );
+
+    it.effect("a spawn whose attachments fail to claim still starts, without them (T3O-74)", () =>
+      Effect.gen(function* () {
+        yield* ensureProject;
+        const threads = yield* LocalThreadGateway;
+        const threadId = ThreadId.make("thread-contract-attachments-swept");
+        const before = yield* head;
+        // A pending id whose file is gone, as the pending sweep leaves it.
+        yield* threads.spawn({
+          commandId: boardCommandId("spawn-thread"),
+          threadId,
+          projectId,
+          title: "Swept attachment",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: workspaceRoot,
+          text: "Read the spec.",
+          attachments: [
+            {
+              type: "file",
+              id: ChatAttachmentId.make(createPendingAttachmentId(".pdf")),
+              name: "spec.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 8,
+            },
+          ],
+        });
+        const messages = (yield* loggedSince(before)).flatMap(({ event }) =>
+          event.type === "message.updated" ? [event.payload] : [],
+        );
+        assert.isAbove(messages.length, 0);
+        assert.deepStrictEqual(
+          messages.flatMap((message) => message.attachments),
+          [],
+        );
+        assert.isNotNull(yield* threads.threadState(threadId));
+      }),
+    );
+
+    it.effect(
+      "a spawn on a provider turned off for the project is refused with its reason and creates nothing (T3O-74)",
+      () =>
+        Effect.gen(function* () {
+          const engine = yield* boardStackEngine;
+          const offProjectId = ProjectId.make("project-contract-provider-off");
+          yield* engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make("cmd-contract-project-provider-off"),
+            projectId: offProjectId,
+            title: "Provider off",
+            workspaceRoot: "/tmp/project-contract-provider-off",
+          });
+          const settings = yield* ServerSettingsService;
+          const projectSettingsOverrides: Record<ProjectId, ProjectSettingsOverrides> = {};
+          projectSettingsOverrides[offProjectId] = {
+            providerInstances: { [modelSelection.instanceId]: { enabled: false } },
+          };
+          yield* settings.updateSettings({ projectSettingsOverrides }).pipe(Effect.orDie);
+          const threads = yield* LocalThreadGateway;
+          const threadId = ThreadId.make("thread-contract-provider-off");
+          const before = yield* head;
+          const exit = yield* Effect.exit(
+            threads.spawn({
+              commandId: boardCommandId("spawn-thread"),
+              threadId,
+              projectId: offProjectId,
+              title: "Provider off",
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: "/tmp/project-contract-provider-off",
+              text: "Do the work.",
+              attachments: [],
+            }),
+          );
+          const error = Exit.isFailure(exit)
+            ? Option.getOrNull(Cause.findErrorOption(exit.cause))
+            : null;
+          assert.strictEqual(error?._tag, "ThreadCommandRefusedError");
+          assert.strictEqual(
+            error?._tag === "ThreadCommandRefusedError" ? error.reason : null,
+            "provider-disabled",
+          );
+          // Refused before thread.create: nothing was ever logged for it.
+          assert.isNull(yield* threads.threadState(threadId));
+          assert.deepStrictEqual(yield* loggedSince(before), []);
+        }),
     );
 
     it.effect("a turn sent to a thread that does not exist is refused", () =>
@@ -877,6 +1185,106 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         assert.isFalse(
           yield* threads.armLimitRecovery({ commandId: boardCommandId("limit-arm"), threadId }),
         );
+      }),
+    );
+
+    it.effect("a delegated child awaiting approval holds its parent for a human", () =>
+      Effect.gen(function* () {
+        yield* ensureProject;
+        const threads = yield* LocalThreadGateway;
+        const awaiting = (tag: string) =>
+          threads.subagentAwaitingApproval(ThreadId.make(`thread-subagent-${tag}`));
+
+        // An app-owned child on a live run, held on a permission prompt.
+        const yes = childOf("yes", "yes-child");
+        yield* projectThread({
+          tag: "yes-child",
+          parent: yes.parent,
+          run: "running",
+          request: "permission",
+        });
+        yield* projectThread({
+          tag: "yes",
+          run: "completed",
+          delegates: [{ child: yes.child, status: "running" }],
+        });
+        assert.isTrue(yield* awaiting("yes"));
+        // The child itself has no subagent of its own waiting.
+        assert.isFalse(yield* awaiting("yes-child"));
+
+        // A child's question goes to the coordinator, not the human.
+        const asks = childOf("asks", "asks-child");
+        yield* projectThread({
+          tag: "asks-child",
+          parent: asks.parent,
+          run: "running",
+          request: "user_input",
+        });
+        yield* projectThread({
+          tag: "asks",
+          run: "completed",
+          delegates: [{ child: asks.child, status: "running" }],
+        });
+        assert.isFalse(yield* awaiting("asks"));
+
+        // A prompt left behind by a run that ended can never be answered.
+        const dead = childOf("dead", "dead-child");
+        yield* projectThread({
+          tag: "dead-child",
+          parent: dead.parent,
+          run: "completed",
+          request: "permission",
+        });
+        yield* projectThread({
+          tag: "dead",
+          run: "completed",
+          delegates: [{ child: dead.child, status: "running" }],
+        });
+        assert.isFalse(yield* awaiting("dead"));
+
+        // Provider-native subagents ask on their parent, which already reads it.
+        const native = childOf("native", "native-child");
+        yield* projectThread({
+          tag: "native-child",
+          parent: native.parent,
+          creationSource: "provider",
+          run: "running",
+          request: "permission",
+        });
+        yield* projectThread({
+          tag: "native",
+          run: "completed",
+          delegates: [{ child: native.child, status: "running", origin: "provider_native" }],
+        });
+        assert.isFalse(yield* awaiting("native"));
+
+        // A grandchild through a nested delegation holds the root too.
+        const nested = childOf("nested", "nested-child");
+        const grandchild = ThreadId.make("thread-subagent-nested-grandchild");
+        yield* projectThread({
+          tag: "nested-grandchild",
+          parent: nested.child,
+          root: nested.parent,
+          run: "running",
+          request: "permission",
+        });
+        yield* projectThread({
+          tag: "nested-child",
+          parent: nested.parent,
+          run: "running",
+          delegates: [{ child: grandchild, status: "running" }],
+        });
+        yield* projectThread({
+          tag: "nested",
+          run: "completed",
+          delegates: [{ child: nested.child, status: "running" }],
+        });
+        assert.isTrue(yield* awaiting("nested"));
+
+        // A thread that never delegated, and one that does not exist.
+        yield* projectThread({ tag: "alone", run: "running" });
+        assert.isFalse(yield* awaiting("alone"));
+        assert.isFalse(yield* awaiting("missing"));
       }),
     );
 

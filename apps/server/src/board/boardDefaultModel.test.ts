@@ -1,14 +1,16 @@
 /**
- * The model ladder for a step: the stage's own model, then the board's default, then the app's
- * text generation selection.
+ * The model ladder for a step: the stage's own model, then the board's default, then the card's
+ * project's own default model, then the app's text generation selection.
  */
 import {
   BoardCardId,
   BOARD_SEED_STAGE_IDS,
   boardCardStepState,
   DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   ProviderInstanceId,
   type BoardSettings,
+  type ProjectSettingsOverrides,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -16,6 +18,7 @@ import * as Effect from "effect/Effect";
 import {
   buildingCard,
   cardMoved,
+  projectId,
   codexStep,
   makeBoardCard,
   movedToBuilding,
@@ -139,7 +142,7 @@ it.effect("a fallback that names an API-only text generator fails the step clear
     {
       board: { cards: [sprintCard()], nextCardNumberByProject: {} },
       settings: planningWithoutModel(null),
-      appSettings: textGeneratorFallback,
+      serverSettings: textGeneratorFallback,
     },
     ({ pumpDomain, board, commands }) =>
       Effect.gen(function* () {
@@ -164,7 +167,7 @@ it.effect("a build step on a text generator gives its slot back", () =>
         building: [{ ...codexStep, providerInstanceId: TEXT_GENERATOR }],
         globalMaxConcurrent: 1,
       }),
-      appSettings: textGeneratorFallback,
+      serverSettings: textGeneratorFallback,
     },
     ({ slots, pumpDomain, board }) =>
       Effect.gen(function* () {
@@ -172,6 +175,80 @@ it.effect("a build step on a text generator gives its slot back", () =>
 
         assert.strictEqual(stepStatus(yield* board, BoardCardId.make("card-a")), "stalled");
         assert.strictEqual(yield* slots.heldTotal, 0);
+      }),
+  ),
+);
+
+const PROJECT_DEFAULT = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-sonnet-5",
+  options: [{ id: "effort", value: "high" }],
+};
+
+const projectDefaultOverride = (
+  forProject: ProjectId,
+): Record<ProjectId, ProjectSettingsOverrides> => {
+  const overrides: Record<ProjectId, ProjectSettingsOverrides> = {};
+  overrides[forProject] = { defaultModelSelection: PROJECT_DEFAULT };
+  return overrides;
+};
+
+it.effect("with no board default, the card's project default model governs (T3O-74)", () =>
+  withGovernor(
+    {
+      board: { cards: [sprintCard()], nextCardNumberByProject: {} },
+      settings: planningWithoutModel(null),
+      serverSettings: { projectSettingsOverrides: projectDefaultOverride(projectId) },
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToPlanning(1));
+        const state = boardCardStepState(yield* board, cardId);
+        assert.strictEqual(state?.providerInstanceId, PROJECT_DEFAULT.instanceId);
+        assert.strictEqual(state?.model, PROJECT_DEFAULT.model);
+        assert.deepStrictEqual(state?.modelOptions, PROJECT_DEFAULT.options);
+      }),
+  ),
+);
+
+it.effect("the environment's new-thread default and other projects' defaults are not tiers", () =>
+  withGovernor(
+    {
+      board: { cards: [sprintCard()], nextCardNumberByProject: {} },
+      settings: planningWithoutModel(null),
+      serverSettings: {
+        defaultModelSelection: PROJECT_DEFAULT,
+        projectSettingsOverrides: projectDefaultOverride(ProjectId.make("project-other")),
+      },
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToPlanning(1));
+        const state = boardCardStepState(yield* board, cardId);
+        assert.strictEqual(
+          state?.providerInstanceId,
+          DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId,
+        );
+        assert.strictEqual(
+          state?.model,
+          DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
+        );
+      }),
+  ),
+);
+
+it.effect("the board default still outranks the project default", () =>
+  withGovernor(
+    {
+      board: { cards: [sprintCard()], nextCardNumberByProject: {} },
+      settings: planningWithoutModel(BOARD_DEFAULT),
+      serverSettings: { projectSettingsOverrides: projectDefaultOverride(projectId) },
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToPlanning(1));
+        const state = boardCardStepState(yield* board, cardId);
+        assert.strictEqual(state?.model, BOARD_DEFAULT.model);
       }),
   ),
 );

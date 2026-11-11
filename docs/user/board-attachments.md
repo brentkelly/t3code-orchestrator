@@ -25,6 +25,8 @@ files.
 Every thread working on the card can list its attachments, with the path of each file, through the
 card context it already reads, and open any of them on demand. Files added after a thread started
 show up the next time it looks. When the board starts a build or planning thread, the brief's
-images are also shown to the agent on its first message, so a card that is mostly a screenshot
-("fix this") is understood from the start. Review rounds and follow-up turns read the files by path
-rather than receiving them again.
+attachments are also sent with the agent's first message, the same way files you attach in a chat
+are: images are shown to it, and PDFs and other files are passed the way its provider takes them.
+A card that is mostly a screenshot ("fix this") is understood from the start. Anything past the
+per-message limits, and every file for a card running on another worker, is read by path instead.
+Review rounds and follow-up turns read the files by path rather than receiving them again.
