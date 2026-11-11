@@ -59,6 +59,9 @@ const config = (
 const reviewExec = (patch: Partial<BoardStageExecutionReview> = {}): BoardStageExecutionReview =>
   ({ ...DEFAULT_BOARD_REVIEW_STAGE_EXECUTION, ...patch }) as BoardStageExecutionReview;
 
+/** A fixture commit id: settling rounds only trust a hex `reviewedSha`. */
+const reviewSha = (round: number) => `c0ffee${round}`;
+
 const completion = (
   stepId: string,
   payload: unknown,
@@ -118,8 +121,65 @@ const overrides = (patch: Partial<BoardCardReviewOverrides>): BoardCardReviewOve
   runThroughRound: null,
   carriedFindings: {},
   stuckWaivedThrough: null,
+  roundModes: {},
   ...patch,
 });
+
+// ── Fixtures: settling rounds (T3O-64) ──
+
+/** A round whose findings were all fixed past the reviewed SHA and upheld. */
+const fixedRound = (
+  round: number,
+  findings: ReadonlyArray<BoardReviewFinding>,
+): BoardStepCompletion[] =>
+  findings.length === 0
+    ? [completion(`review@${round}`, { reviewedSha: reviewSha(round), findings })]
+    : [
+        completion(`review@${round}`, { reviewedSha: reviewSha(round), findings }),
+        completion(`triage@${round}`, {
+          fixedSha: `fix-${round}`,
+          dispositions: findings.map((f) => ({ findingId: f.id, action: "fixed", note: "" })),
+        }),
+        completion(`adjudicate@${round}`, {
+          verdicts: findings.map((f) => ({ findingId: f.id, verdict: "fix-upheld", note: "" })),
+          anotherRound: false,
+        }),
+      ];
+const improvementsOf = (round: number, count: number) =>
+  Array.from({ length: count }, (_, i) => finding("improvement", `r${round}i${i}`));
+const settlingSince = (sha: string) => ({ kind: "settling" as const, sinceSha: sha });
+const oneImprovementRounds = (through: number) =>
+  Array.from({ length: through }, (_, i) => fixedRound(i + 1, improvementsOf(i + 1, 1))).flat();
+
+const settlingScenarios = [
+  {
+    name: "settling round 4 converges on upheld improvement fixes",
+    completions: oneImprovementRounds(4),
+    rounds: 5,
+    stopAfterRound: null,
+    roundModes: { "4": settlingSince(reviewSha(3)) },
+  },
+  {
+    name: "the same round 4 run full continues",
+    completions: oneImprovementRounds(4),
+    rounds: 5,
+    stopAfterRound: null,
+  },
+  {
+    name: "settling round 4 continues on a landed critical fix",
+    completions: [...oneImprovementRounds(3), ...fixedRound(4, [finding("critical", "c1")])],
+    rounds: 6,
+    stopAfterRound: null,
+    roundModes: { "4": settlingSince(reviewSha(3)) },
+  },
+  {
+    name: "a forced-full round 4 continues",
+    completions: oneImprovementRounds(4),
+    rounds: 5,
+    stopAfterRound: null,
+    roundModes: { "4": { kind: "full" as const } },
+  },
+];
 
 // ── Fixtures: binding adjudication, re-triage and the stuck stop ──
 
@@ -715,8 +775,10 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
       /** The server-written carry fields. */
       readonly carriedFindings?: BoardCardReviewOverrides["carriedFindings"];
       readonly stuckWaivedThrough?: number | null;
+      readonly roundModes?: BoardCardReviewOverrides["roundModes"];
     }> = [
       ...t3o51Scenarios,
+      ...settlingScenarios,
       { name: "nothing run yet", completions: [], rounds: 5, stopAfterRound: null },
       {
         name: "clean round 1",
@@ -862,17 +924,20 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
       const runThroughRound = scenario.runThroughRound ?? null;
       const carriedFindings = scenario.carriedFindings ?? {};
       const stuckWaivedThrough = scenario.stuckWaivedThrough ?? null;
+      const roundModes = scenario.roundModes ?? {};
       const cardOverrides =
         scenario.stopAfterRound === null &&
         runThroughRound === null &&
         stuckWaivedThrough === null &&
-        Object.keys(carriedFindings).length === 0
+        Object.keys(carriedFindings).length === 0 &&
+        Object.keys(roundModes).length === 0
           ? null
           : overrides({
               stopAfterRound: scenario.stopAfterRound,
               runThroughRound,
               carriedFindings,
               stuckWaivedThrough,
+              roundModes,
             });
       const executorPlan = plan(
         scenario.completions,
@@ -897,6 +962,7 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
         runThroughRound,
         carriedFindings,
         stuckWaivedThrough,
+        roundModes,
       });
 
       // converged ⇔ succeeded; every held/halted ending ⇔ blocked; and while
@@ -1457,5 +1523,119 @@ describe("sync-base and the gate round (t3o-24, D2/D3)", () => {
     ]);
     expect(atAdjudicate.kind === "run" && atAdjudicate.stepId).toBe("adjudicate@1");
     expect(atAdjudicate.kind === "run" && atAdjudicate.recordBaseTip).toBe(false);
+  });
+});
+
+describe("settling rounds (T3O-64)", () => {
+  const runOf = (result: BoardStagePlan) => {
+    if (result.kind !== "run") throw new Error(`expected a run, got ${result.kind}`);
+    return result;
+  };
+
+  it("plans a new settling round's review with the record to write and a delta prompt", () => {
+    const review = runOf(plan(oneImprovementRounds(3)));
+    expect(review.stepId).toBe("review@4");
+    expect(review.reviewRoundMode).toEqual({ round: 4, mode: settlingSince(reviewSha(3)) });
+    expect(review.prompt).toContain("git diff c0ffee3..HEAD");
+    // Settling off, or a round already recorded: nothing to record.
+    const off = runOf(plan(oneImprovementRounds(3), reviewExec({ settleAfterRound: null })));
+    expect(off.reviewRoundMode).toBeUndefined();
+    expect(off.prompt).not.toContain("settling round");
+    const recorded = runOf(
+      plan(
+        oneImprovementRounds(3),
+        undefined,
+        overrides({ roundModes: { "4": settlingSince("x") } }),
+      ),
+    );
+    expect(recorded.reviewRoundMode).toBeUndefined();
+    expect(recorded.prompt).toContain("git diff x..HEAD");
+  });
+
+  it("plans a full round's review with nothing to record", () => {
+    const review = runOf(plan(oneImprovementRounds(2)));
+    expect(review.stepId).toBe("review@3");
+    expect(review.reviewRoundMode).toBeUndefined();
+  });
+
+  it("composes a settling round's later phases from the record", () => {
+    const completions = [
+      ...oneImprovementRounds(3),
+      completion("review@4", { reviewedSha: reviewSha(4), findings: improvementsOf(4, 1) }),
+    ];
+    const triage = runOf(
+      plan(completions, undefined, overrides({ roundModes: { "4": settlingSince(reviewSha(3)) } })),
+    );
+    expect(triage.stepId).toBe("triage@4");
+    expect(triage.prompt).toContain("This is a settling round");
+    expect(triage.reviewRoundMode).toBeUndefined();
+    // With no record the round reads full, whatever the rule would say now.
+    expect(runOf(plan(completions)).prompt).not.toContain("settling round");
+  });
+
+  /** Drives the executor like the reactor does, recording each settling round it starts, and
+      answers each round's review from `script`: a logic replay, not reviewer behaviour. */
+  const replay = (script: ReadonlyArray<ReadonlyArray<BoardReviewFinding>>) => {
+    const completions: BoardStepCompletion[] = [];
+    let cardOverrides: BoardCardReviewOverrides | null = null;
+    for (let guard = 0; guard < 100; guard++) {
+      const next = plan(completions, reviewExec({ rounds: script.length }), cardOverrides);
+      if (next.kind !== "run") return { next, completions, overrides: cardOverrides };
+      if (next.reviewRoundMode !== undefined) {
+        const base: BoardCardReviewOverrides = cardOverrides ?? overrides({});
+        cardOverrides = {
+          ...base,
+          roundModes: {
+            ...base.roundModes,
+            [String(next.reviewRoundMode.round)]: next.reviewRoundMode.mode,
+          },
+        };
+      }
+      const parsed = parseReviewStepId(next.stepId);
+      if (parsed === null) throw new Error(`unexpected step ${next.stepId}`);
+      const recorded = fixedRound(parsed.round, script[parsed.round - 1] ?? []);
+      const step = recorded.find((c) => c.stepId === next.stepId);
+      if (step === undefined) throw new Error(`no scripted ${next.stepId}`);
+      completions.push(step);
+    }
+    throw new Error("replay did not end");
+  };
+
+  it("Z5-295 shape: one improvement a round converges at round 4, not the budget", () => {
+    const script = Array.from({ length: 13 }, (_, i) => improvementsOf(i + 1, 1));
+    const result = replay(script);
+    expect(result.next).toEqual({ kind: "complete", outcome: "succeeded" });
+    expect(boardReviewRoundsStarted({ completions: result.completions, liveStepId: null })).toBe(4);
+    expect(result.overrides?.roundModes).toEqual({ "4": settlingSince(reviewSha(3)) });
+  });
+
+  it("Z5-300 shape: a busy round 3 keeps round 4 full, and round 5 settles", () => {
+    const script = [
+      improvementsOf(1, 3),
+      improvementsOf(2, 2),
+      improvementsOf(3, 2),
+      ...Array.from({ length: 6 }, (_, i) => improvementsOf(i + 4, 1)),
+    ];
+    const result = replay(script);
+    expect(result.next).toEqual({ kind: "complete", outcome: "succeeded" });
+    expect(boardReviewRoundsStarted({ completions: result.completions, liveStepId: null })).toBe(5);
+    expect(result.overrides?.roundModes).toEqual({ "5": settlingSince(reviewSha(4)) });
+  });
+
+  it("goes back to full review after a settling round with two criticals", () => {
+    const script = [
+      ...Array.from({ length: 3 }, (_, i) => improvementsOf(i + 1, 1)),
+      [finding("critical", "c1"), finding("critical", "c2")],
+      improvementsOf(5, 1),
+      [],
+    ];
+    const result = replay(script);
+    expect(result.next).toEqual({ kind: "complete", outcome: "succeeded" });
+    // Round 5 ran full, so its one landed improvement fix forced round 6, which settles again.
+    expect(result.overrides?.roundModes).toEqual({
+      "4": settlingSince(reviewSha(3)),
+      "6": settlingSince(reviewSha(5)),
+    });
+    expect(boardReviewRoundsStarted({ completions: result.completions, liveStepId: null })).toBe(6);
   });
 });

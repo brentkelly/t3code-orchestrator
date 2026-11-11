@@ -24,6 +24,8 @@ import {
   DEFAULT_BOARD_REVIEW_PHASES,
   boardDraftPullRequestLine,
   boardReviewPhasePreamble,
+  BOARD_REVIEW_SETTLE_BELOW_FINDINGS_MIN,
+  DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND,
   boardReviewPhaseProtocol,
   reviewStepId,
   reviewStepLabel,
@@ -1848,6 +1850,10 @@ function ReviewStageBody(props: {
     props.updateStage(stage.stageId, patch as Partial<BoardStageExecution>);
   const setPhase = (phaseId: BoardReviewPhaseId, patch: Partial<BoardReviewPhaseExecution>) =>
     set({ phases: { ...exec.phases, [phaseId]: { ...exec.phases[phaseId], ...patch } } });
+  // Off writes null, so the chosen round lives here until the toggle comes back on.
+  const lastSettleAfterRound = useRef(
+    exec.settleAfterRound ?? DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND,
+  );
   // A phase with no model of its own runs on the review STAGE's model, and only
   // if that is unset on the workspace default (`resolvePhaseModel`). Name the
   // nearer one — saying "default" when the stage above actually decides would be
@@ -1885,6 +1891,47 @@ function ReviewStageBody(props: {
               />
             }
           />
+          <ToggleRow
+            label="Settling rounds"
+            hint="After this, each round reviews only the new changes and only critical findings start another round. Another review round always runs a full review."
+            checked={exec.settleAfterRound !== null}
+            ariaLabel="Settling rounds"
+            onChange={(checked) => {
+              if (!checked && exec.settleAfterRound !== null) {
+                lastSettleAfterRound.current = exec.settleAfterRound;
+              }
+              set({ settleAfterRound: checked ? lastSettleAfterRound.current : null });
+            }}
+          />
+          {exec.settleAfterRound === null ? null : (
+            <>
+              <NumberRow
+                label="Settle after round"
+                stepper={
+                  <NumberStepper
+                    value={exec.settleAfterRound}
+                    min={1}
+                    max={20}
+                    ariaLabel="Settle after round"
+                    onChange={(settleAfterRound) => set({ settleAfterRound })}
+                  />
+                }
+              />
+              <NumberRow
+                label="When a round has fewer than this many blocking findings"
+                hint="In a settling round only critical findings count. Findings ruled not issues never count."
+                stepper={
+                  <NumberStepper
+                    value={exec.settleBelowFindings}
+                    min={BOARD_REVIEW_SETTLE_BELOW_FINDINGS_MIN}
+                    max={20}
+                    ariaLabel="Settle below blocking findings"
+                    onChange={(settleBelowFindings) => set({ settleBelowFindings })}
+                  />
+                }
+              />
+            </>
+          )}
           {/* The review loop runs unattended, so there is no human-in-the-loop gate
               to hide this behind; the reactor reads `autoAdvance` for review too. */}
           <ToggleRow

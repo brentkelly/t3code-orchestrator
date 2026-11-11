@@ -205,6 +205,7 @@ describe("per-card model overrides reach the spawn (t3o-29)", () => {
           runThroughRound: null,
           carriedFindings: {},
           stuckWaivedThrough: null,
+          roundModes: {},
         },
         modelOverrides: { [reviewStage]: reviewOverride },
       };

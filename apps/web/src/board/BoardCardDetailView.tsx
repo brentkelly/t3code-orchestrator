@@ -1768,6 +1768,7 @@ function ActionsSection({
             {
               carriedFindings: props.reviewOverrides?.carriedFindings ?? {},
               stuckWaivedThrough: props.reviewOverrides?.stuckWaivedThrough ?? null,
+              roundModes: props.reviewOverrides?.roundModes ?? {},
             },
           )
         : null;

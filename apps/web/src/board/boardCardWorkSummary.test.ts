@@ -362,6 +362,7 @@ describe("deriveBoardCardWorkSummary", () => {
             runThroughRound: null,
             carriedFindings: {},
             stuckWaivedThrough: null,
+            roundModes: {},
           },
         },
         {
@@ -416,6 +417,7 @@ describe("deriveBoardCardWorkSummary", () => {
             runThroughRound: null,
             carriedFindings: {},
             stuckWaivedThrough: null,
+            roundModes: {},
           },
         },
         {
@@ -487,6 +489,7 @@ describe("deriveBoardCardWorkSummary", () => {
       runThroughRound: null,
       carriedFindings: {},
       stuckWaivedThrough: null,
+      roundModes: {},
     };
 
     it("shows Merged over No convergence", () => {

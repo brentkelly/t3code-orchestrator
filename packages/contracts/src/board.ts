@@ -850,6 +850,16 @@ export const BoardReviewCarry = Schema.Struct({
 });
 export type BoardReviewCarry = typeof BoardReviewCarry.Type;
 
+/** How a review round runs. `settling` reviews only the changes since `sinceSha`, and only
+    critical (or human-carried) findings force another round. A round with no record is `full`. */
+export const BoardReviewRoundMode = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("settling"), sinceSha: TrimmedNonEmptyString }),
+  Schema.Struct({ kind: Schema.Literal("full") }),
+]);
+export type BoardReviewRoundMode = typeof BoardReviewRoundMode.Type;
+
+export const BOARD_REVIEW_FULL_ROUND: BoardReviewRoundMode = { kind: "full" };
+
 /**
  * Every field is inert when absent, so an untouched card runs the board's configured loop.
  * On the card because the reactor reads it on every re-plan.
@@ -885,6 +895,12 @@ export const BoardCardReviewOverrides = Schema.Struct({
   stuckWaivedThrough: Schema.NullOr(PositiveInt).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Each round's mode, decided once when its review step is selected so a later settings
+      change never reclassifies a round that ran. SERVER-ONLY and append-only: select-step
+      writes `settling`, "Another review round" writes `full`. A missing key means full. */
+  roundModes: Schema.Record(Schema.String, BoardReviewRoundMode).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
 });
 export type BoardCardReviewOverrides = typeof BoardCardReviewOverrides.Type;
 
@@ -898,6 +914,7 @@ export const EMPTY_BOARD_CARD_REVIEW_OVERRIDES: BoardCardReviewOverrides = {
   runThroughRound: null,
   carriedFindings: {},
   stuckWaivedThrough: null,
+  roundModes: {},
 };
 
 /** True when the overrides say nothing at all, so the card can store `null`
@@ -912,7 +929,8 @@ export function isEmptyBoardCardReviewOverrides(
     overrides.runThroughRound === null &&
     Object.keys(overrides.roundModels).length === 0 &&
     Object.keys(overrides.carriedFindings).length === 0 &&
-    overrides.stuckWaivedThrough === null
+    overrides.stuckWaivedThrough === null &&
+    Object.keys(overrides.roundModes).length === 0
   );
 }
 
@@ -5879,6 +5897,9 @@ export const BoardCardSetReviewCarryCommand = Schema.Struct({
   clearStopAfterRound: Schema.optional(Schema.Literal(true)),
   stuckWaivedThrough: Schema.optional(PositiveInt),
   carry: Schema.optional(Schema.Struct({ round: PositiveInt, entry: BoardReviewCarry })),
+  /** "Another review round": record every round from the lowest without a succeeded review
+      through `runThroughRound` as full, so the requested round reviews the whole branch. */
+  forceFullRound: Schema.optional(Schema.Literal(true)),
   createdAt: IsoDateTime,
 });
 export type BoardCardSetReviewCarryCommand = typeof BoardCardSetReviewCarryCommand.Type;
@@ -5979,6 +6000,11 @@ export const BoardCardSelectStepCommand = Schema.Struct({
       otherwise. Decoding-defaulted for replay of older events. */
   baseTipAtRoundStart: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** A review round this selection starts in settling mode: recorded in `roundModes` in the
+      same decision, so the round's later phases read the mode its prompt was composed in. */
+  reviewRoundMode: Schema.optional(
+    Schema.Struct({ round: PositiveInt, mode: BoardReviewRoundMode }),
   ),
   createdAt: IsoDateTime,
 });
@@ -9640,6 +9666,9 @@ export type BoardReviewFinding = typeof BoardReviewFinding.Type;
 export const BoardReviewPayload = Schema.Struct({
   reviewedSha: TrimmedNonEmptyString,
   findings: Schema.Array(BoardReviewFinding),
+  /** A settling round's answer to what it read: `delta` for the changes since the round's
+      `sinceSha`, `branch` when it fell back to the whole branch. Absent on full rounds. */
+  scope: Schema.optional(Schema.Literals(["delta", "branch"])),
 });
 export type BoardReviewPayload = typeof BoardReviewPayload.Type;
 
@@ -10206,6 +10235,9 @@ export type BoardReviewRoundResolution =
   /** The round passed. `adjudicator` when it passed only because the
       adjudicator ruled nothing new was raised. */
   | { readonly kind: "converge"; readonly by: "clean" | "adjudicator" }
+  /** A settling round's carried and critical findings all stand settled. `unreviewedFixes`
+      counts the fixes it landed past the reviewed SHA, which only the adjudicator verified. */
+  | { readonly kind: "converge"; readonly by: "settled"; readonly unreviewedFixes: number }
   | {
       readonly kind: "stuck";
       readonly findings: ReadonlyArray<BoardReviewStuckFinding>;
@@ -10297,18 +10329,32 @@ function carriedAsRoundFinding(entry: BoardReviewCarriedFinding): BoardReviewRou
   };
 }
 
-/**
- * Review, then triage when there are findings, then adjudicate when any is blocking. An
- * overruled triage binds: one re-triage and one re-adjudicate pass, after which a surviving
- * dispute (or an `escalated` verdict) makes the round stuck. Rounds without `anotherRound`, or
- * already moved past, never get a second pass, so replaying an old ledger plans nothing new.
- */
-export function boardReviewRoundResolution(input: {
+/** A round's records read as far as its phases have run: the one fold the resolution and the
+    settling rule share, so the forcing count can never drift from what the round resolved to. */
+interface BoardReviewRoundVerdicts {
+  readonly kind: "folded";
+  readonly reviewedSha: string;
+  readonly findings: ReadonlyArray<BoardReviewRoundFinding>;
+  /** Carried, critical and improvement findings: the set triage and adjudication rule on. */
+  readonly blocking: ReadonlyArray<BoardReviewRoundFinding>;
+  readonly overruled: ReadonlyArray<BoardReviewRoundFinding>;
+  readonly triage: BoardTriagePayload;
+  readonly retriage: BoardRetriagePayload | null;
+  readonly dispositions: ReadonlyMap<string, BoardReviewDisposition>;
+  readonly redispositions: ReadonlyMap<string, BoardReviewRetriageDisposition>;
+  readonly reverdicts: ReadonlyMap<string, BoardReviewAdjudication>;
+  /** The last adjudication pass's payload: the re-adjudication when one ran. */
+  readonly finalAdjudication: BoardAdjudicatePayload;
+  readonly latestAction: (id: string) => BoardReviewRetriageAction | null;
+  readonly latestVerdict: (id: string) => BoardReviewAdjudication | undefined;
+  readonly latestFixedSha: (id: string) => string;
+}
+
+function boardReviewRoundVerdicts(input: {
   readonly round: number;
-  /** The card's succeeded review-loop completions, keyed by step id. */
   readonly done: ReadonlyMap<string, BoardStepCompletion>;
   readonly carriedFindings: Readonly<Record<string, BoardReviewCarry>>;
-}): BoardReviewRoundResolution {
+}): BoardReviewRoundResolution | BoardReviewRoundVerdicts {
   const { round, done } = input;
   const reviewStep = done.get(reviewStepId("review", round));
   if (reviewStep === undefined) return { kind: "run", phase: "review", findings: [] };
@@ -10440,19 +10486,173 @@ export function boardReviewRoundResolution(input: {
     }
   }
 
-  // Each finding's latest word from each side.
-  const latestAction = (id: string): BoardReviewRetriageAction | null =>
-    redispositions.get(id)?.action ?? dispositions.get(id)?.action ?? null;
-  const latestVerdict = (id: string): BoardReviewAdjudication | undefined =>
-    reverdicts.get(id) ?? verdicts.get(id);
-  const latestFixedSha = (id: string): string =>
-    redispositions.has(id) && retriage !== null ? retriage.fixedSha : triage.fixedSha;
+  const retriagePayload = retriage;
+  return {
+    kind: "folded",
+    reviewedSha: reviewPayload.value.reviewedSha,
+    findings,
+    blocking,
+    overruled,
+    triage,
+    retriage,
+    dispositions,
+    redispositions,
+    reverdicts,
+    finalAdjudication: readjudication ?? adjudication,
+    // Each finding's latest word from each side.
+    latestAction: (id) => redispositions.get(id)?.action ?? dispositions.get(id)?.action ?? null,
+    latestVerdict: (id) => reverdicts.get(id) ?? verdicts.get(id),
+    latestFixedSha: (id) =>
+      redispositions.has(id) && retriagePayload !== null
+        ? retriagePayload.fixedSha
+        : triage.fixedSha,
+  };
+}
+
+/** The findings whose survival forces another round, in the round's mode: every blocking
+    finding in a full round, only carried and critical ones in a settling round. */
+function boardReviewForcingFindings(
+  fold: BoardReviewRoundVerdicts,
+  mode: BoardReviewRoundMode,
+): ReadonlyArray<BoardReviewRoundFinding> {
+  return mode.kind === "full"
+    ? fold.blocking
+    : fold.blocking.filter((finding) => finding.carried || finding.severity === "critical");
+}
+
+/** Whether a finding stands settled: a justified rejection, or an upheld fix that committed
+    nothing past the reviewed SHA, so no review is owed on it. */
+function boardReviewFindingSettled(
+  fold: BoardReviewRoundVerdicts,
+  finding: BoardReviewRoundFinding,
+): boolean {
+  const verdict = fold.latestVerdict(finding.id)?.verdict;
+  if (verdict === "rejection-justified") return fold.latestAction(finding.id) === "rejected";
+  return (
+    verdict === "fix-upheld" &&
+    fold.latestAction(finding.id) === "fixed" &&
+    boardReviewShaMatches(fold.latestFixedSha(finding.id), fold.reviewedSha)
+  );
+}
+
+const BOARD_REVIEW_COMMIT_ID = /^[0-9a-f]{7,40}$/i;
+
+/** A round's recorded mode: its `roundModes` entry, or full when it has none. */
+export function boardReviewRoundModeOf(
+  overrides: Pick<BoardCardReviewOverrides, "roundModes"> | null | undefined,
+  round: number,
+): BoardReviewRoundMode {
+  return overrides?.roundModes?.[String(round)] ?? BOARD_REVIEW_FULL_ROUND;
+}
+
+/**
+ * The mode round `round` runs in: its record when one exists, so a re-plan composes the same
+ * prompt. Otherwise settling once past `settleAfterRound`, outside a gate round, after a round
+ * with fewer than `settleBelowFindings` forcing findings. Only the executor asks this.
+ */
+export function boardReviewNextRoundMode(input: {
+  readonly round: number;
+  readonly completions: ReadonlyArray<BoardStepCompletion>;
+  readonly review: {
+    readonly settleAfterRound: number | null;
+    readonly settleBelowFindings: number;
+  };
+  readonly overrides: BoardCardReviewOverrides | null;
+}): BoardReviewRoundMode {
+  const { round, review, overrides } = input;
+  const recorded = overrides?.roundModes[String(round)];
+  if (recorded !== undefined) return recorded;
+  const previous = round - 1;
+  if (review.settleAfterRound === null || previous < review.settleAfterRound) {
+    return BOARD_REVIEW_FULL_ROUND;
+  }
+  const done = succeededBoardReviewSteps(input.completions);
+  // A gate round reviews the rebased combined diff, and its previous SHA is no longer an ancestor.
+  if (done.has(reviewStepId("sync", previous))) return BOARD_REVIEW_FULL_ROUND;
+  const forcing = boardReviewRoundForcingCount({
+    round: previous,
+    completions: input.completions,
+    overrides,
+  });
+  if (forcing === null) return BOARD_REVIEW_FULL_ROUND;
+  const previousReview = done.get(reviewStepId("review", previous));
+  const reviewedSha =
+    previousReview === undefined
+      ? null
+      : (Option.getOrNull(
+          decodeBoardReviewPayloadOption(parseBoardStepPayloadJson(previousReview.payload)),
+        )?.reviewedSha ?? null);
+  // The SHA is model-written and lands in the next prompt's `git diff`: a ref like `HEAD` would
+  // scope the round to nothing, so anything but a commit id runs full.
+  if (reviewedSha === null || !BOARD_REVIEW_COMMIT_ID.test(reviewedSha)) {
+    return BOARD_REVIEW_FULL_ROUND;
+  }
+  return forcing < review.settleBelowFindings
+    ? { kind: "settling", sinceSha: reviewedSha }
+    : BOARD_REVIEW_FULL_ROUND;
+}
+
+function succeededBoardReviewSteps(
+  completions: ReadonlyArray<BoardStepCompletion>,
+): Map<string, BoardStepCompletion> {
+  const done = new Map<string, BoardStepCompletion>();
+  for (const completion of completions) {
+    if (completion.outcome !== "succeeded") continue;
+    if (parseReviewStepId(completion.stepId) === null) continue;
+    done.set(completion.stepId, completion);
+  }
+  return done;
+}
+
+/**
+ * How many of a finished round's findings forced another round in its recorded mode, less those
+ * whose latest adjudication is rejection-justified: a false positive is not a bug. Read as the
+ * loop stood when the round ended, so a later round's review does not hide it. Null for a legacy
+ * round or one whose records cannot be read, which give no count to trust.
+ */
+export function boardReviewRoundForcingCount(input: {
+  readonly round: number;
+  readonly completions: ReadonlyArray<BoardStepCompletion>;
+  readonly overrides: BoardCardReviewOverrides | null;
+}): number | null {
+  const done = succeededBoardReviewSteps(input.completions);
+  done.delete(reviewStepId("review", input.round + 1));
+  const fold = boardReviewRoundVerdicts({
+    round: input.round,
+    done,
+    carriedFindings: input.overrides?.carriedFindings ?? {},
+  });
+  if (fold.kind === "converge") return 0;
+  if (fold.kind !== "folded") return null;
+  return boardReviewForcingFindings(
+    fold,
+    boardReviewRoundModeOf(input.overrides, input.round),
+  ).filter((finding) => fold.latestVerdict(finding.id)?.verdict !== "rejection-justified").length;
+}
+
+/**
+ * An overruled triage binds: one re-triage and re-adjudicate pass, then a surviving dispute is
+ * stuck. Rounds without `anotherRound`, or moved past, never get a second pass. A settling round
+ * adjudicates the same set but converges once its carried and critical findings are settled.
+ */
+export function boardReviewRoundResolution(input: {
+  readonly round: number;
+  /** The card's succeeded review-loop completions, keyed by step id. */
+  readonly done: ReadonlyMap<string, BoardStepCompletion>;
+  readonly carriedFindings: Readonly<Record<string, BoardReviewCarry>>;
+  /** The card's recorded round modes; a round with none is full. */
+  readonly roundModes?: Readonly<Record<string, BoardReviewRoundMode>>;
+}): BoardReviewRoundResolution {
+  const { round } = input;
+  const fold = boardReviewRoundVerdicts(input);
+  if (fold.kind !== "folded") return fold;
+  const { blocking, findings, latestAction, latestVerdict, reverdicts, redispositions } = fold;
 
   const stuck: BoardReviewStuckFinding[] = [];
   for (const finding of blocking) {
     const action = latestAction(finding.id);
     const verdict = latestVerdict(finding.id)?.verdict ?? null;
-    const isOverruled = overruled.includes(finding);
+    const isOverruled = fold.overruled.includes(finding);
     let isStuck = false;
     if (isOverruled) {
       const redisposition = redispositions.get(finding.id);
@@ -10466,7 +10666,7 @@ export function boardReviewRoundResolution(input: {
     if (finding.carried && !(action === "fixed" && verdict === "fix-upheld")) isStuck = true;
     if (!isStuck) continue;
     const origin = finding.carried ? boardReviewCarriedOrigin(finding.id) : null;
-    const disposition = redispositions.get(finding.id) ?? dispositions.get(finding.id);
+    const disposition = redispositions.get(finding.id) ?? fold.dispositions.get(finding.id);
     const ruling = latestVerdict(finding.id);
     stuck.push({
       findingId: finding.id,
@@ -10488,27 +10688,33 @@ export function boardReviewRoundResolution(input: {
     return { kind: "stuck", findings: stuck, unreviewedFixes: fixedFindings.length };
   }
 
+  const mode = boardReviewRoundModeOf({ roundModes: input.roundModes ?? {} }, round);
+  if (mode.kind === "settling") {
+    const forcing = boardReviewForcingFindings(fold, mode);
+    if (!forcing.every((finding) => boardReviewFindingSettled(fold, finding))) {
+      return { kind: "continue" };
+    }
+    return {
+      kind: "converge",
+      by: "settled",
+      unreviewedFixes: fixedFindings.filter(
+        (finding) => !boardReviewShaMatches(fold.latestFixedSha(finding.id), fold.reviewedSha),
+      ).length,
+    };
+  }
+
   // The adjudicator's early exit: honoured only when the round changed no
   // blocking code and every blocking finding stands settled.
-  const anotherRound = (readjudication ?? adjudication).anotherRound ?? true;
+  const anotherRound = fold.finalAdjudication.anotherRound ?? true;
   if (!anotherRound) {
-    const reviewedSha = reviewPayload.value.reviewedSha;
-    const settled = blocking.every((finding) => {
-      const verdict = latestVerdict(finding.id)?.verdict;
-      if (verdict === "rejection-justified") return latestAction(finding.id) === "rejected";
-      // A fix that commits nothing was already there: nothing new to review.
-      return (
-        verdict === "fix-upheld" &&
-        latestAction(finding.id) === "fixed" &&
-        boardReviewShaMatches(latestFixedSha(finding.id), reviewedSha)
-      );
-    });
+    const settled = blocking.every((finding) => boardReviewFindingSettled(fold, finding));
     // With fixes in play the SHA check is left to `settled`, which pins each
     // blocking fix to the reviewed SHA; with none, triage's SHA must not move.
     const shaCheckPasses =
       fixedFindings.length > 0 ||
-      (boardReviewShaMatches(triage.fixedSha, reviewedSha) &&
-        (retriage === null || boardReviewShaMatches(retriage.fixedSha, reviewedSha)));
+      (boardReviewShaMatches(fold.triage.fixedSha, fold.reviewedSha) &&
+        (fold.retriage === null ||
+          boardReviewShaMatches(fold.retriage.fixedSha, fold.reviewedSha)));
     if (settled && shaCheckPasses) return { kind: "converge", by: "adjudicator" };
   }
   return { kind: "continue" };
@@ -10524,6 +10730,7 @@ export function boardReviewCompletionDefect(input: {
   /** The card's recorded completions. */
   readonly completions: ReadonlyArray<BoardStepCompletion>;
   readonly carriedFindings: Readonly<Record<string, BoardReviewCarry>>;
+  readonly roundModes?: Readonly<Record<string, BoardReviewRoundMode>>;
 }): string | null {
   const parsed = parseReviewStepId(input.stepId);
   if (parsed === null || parsed.phase === "sync") return null;
@@ -10537,9 +10744,14 @@ export function boardReviewCompletionDefect(input: {
       return `Finding ids may not start with '${BOARD_REVIEW_CARRIED_ID_PREFIX}': the board reserves that prefix. Rename those findings and complete the step again.`;
     }
     const duplicate = ids.find((id, index) => ids.indexOf(id) !== index);
-    return duplicate === undefined
-      ? null
-      : `Finding id '${duplicate}' is used more than once. Give every finding its own id and complete the step again.`;
+    if (duplicate !== undefined) {
+      return `Finding id '${duplicate}' is used more than once. Give every finding its own id and complete the step again.`;
+    }
+    const settling =
+      boardReviewRoundModeOf({ roundModes: input.roundModes ?? {} }, round).kind === "settling";
+    return settling && review.scope === undefined
+      ? `This is a settling round: set \`scope\` to "delta" if you reviewed only the changes since the given commit, or "branch" if you fell back to the whole branch, and complete the step again.`
+      : null;
   }
   const done = new Map<string, BoardStepCompletion>();
   for (const completion of input.completions) {
@@ -10570,6 +10782,7 @@ export function boardReviewCompletionDefect(input: {
         round,
         done,
         carriedFindings: input.carriedFindings,
+        ...(input.roundModes === undefined ? {} : { roundModes: input.roundModes }),
       });
       if (resolution.kind !== "run" || resolution.phase !== "retriage") {
         return `Round ${round} has no findings waiting on re-triage. Complete with outcome failed if you were asked to run it.`;
@@ -10596,7 +10809,9 @@ export function boardReviewCompletionDefect(input: {
   const adjudication = Option.getOrNull(decodeBoardAdjudicatePayloadOption(value));
   if (adjudication === null) return null;
   if (adjudication.anotherRound === undefined) {
-    return "The payload must say `anotherRound`: true for another review round, false only if this round raised nothing new beyond points already settled. Complete the step again with it.";
+    return boardReviewRoundModeOf({ roundModes: input.roundModes ?? {} }, round).kind === "settling"
+      ? "The payload must say `anotherRound`. This is a settling round, so the value is recorded but has no effect: only critical findings force another round. Complete the step again with it."
+      : "The payload must say `anotherRound`: true for another review round, false only if this round raised nothing new beyond points already settled. Complete the step again with it.";
   }
   const given = new Set(adjudication.verdicts.map((v) => v.findingId));
   let required: ReadonlyArray<string> = [...carriedIds];
@@ -10606,6 +10821,7 @@ export function boardReviewCompletionDefect(input: {
       round,
       done,
       carriedFindings: input.carriedFindings,
+      ...(input.roundModes === undefined ? {} : { roundModes: input.roundModes }),
     });
     if (resolution.kind !== "run" || resolution.phase !== "readjudicate") {
       return `Round ${round} has no findings waiting on re-adjudication. Complete with outcome failed if you were asked to run it.`;
@@ -10750,10 +10966,11 @@ export interface BoardReviewLoopWalk {
   /** Present only on a `stuck` walk: what the round got stuck on. */
   readonly stuckFindings?: ReadonlyArray<BoardReviewStuckFinding>;
   /** Present on `stuck` and `advanced` walks: how many of the stuck
-      round's fixes no review has read. */
+      round's fixes no review has read. On a walk converged `settled`, the fixes only the
+      adjudicator verified. */
   readonly unreviewedFixes?: number;
-  /** Present only on a `converged` walk that the adjudicator ended. */
-  readonly convergedBy?: "adjudicator";
+  /** Present only on a `converged` walk the adjudicator ended, or a settling round settled. */
+  readonly convergedBy?: "adjudicator" | "settled";
 }
 
 /** Whether a stuck round has been passed by a human. */
@@ -10782,6 +10999,7 @@ export function boardReviewLoopWalk(input: {
   /** The card's server-written carry fields. */
   readonly carriedFindings?: Readonly<Record<string, BoardReviewCarry>>;
   readonly stuckWaivedThrough?: number | null;
+  readonly roundModes?: Readonly<Record<string, BoardReviewRoundMode>>;
 }): BoardReviewLoopWalk {
   const done = new Map<string, BoardStepCompletion>();
   for (const completion of input.completions) {
@@ -10790,6 +11008,7 @@ export function boardReviewLoopWalk(input: {
     done.set(completion.stepId, completion);
   }
   const carriedFindings = input.carriedFindings ?? {};
+  const roundModes = input.roundModes ?? {};
 
   for (let round = 1; ; round++) {
     // A round past the budget still walks when the PREVIOUS round recorded a
@@ -10805,7 +11024,7 @@ export function boardReviewLoopWalk(input: {
         unreadableStepId: null,
       };
     }
-    const resolution = boardReviewRoundResolution({ round, done, carriedFindings });
+    const resolution = boardReviewRoundResolution({ round, done, carriedFindings, roundModes });
     switch (resolution.kind) {
       case "run":
         return {
@@ -10873,6 +11092,9 @@ export function boardReviewLoopWalk(input: {
           currentRound: round,
           unreadableStepId: null,
           ...(resolution.by === "adjudicator" ? { convergedBy: "adjudicator" as const } : {}),
+          ...(resolution.by === "settled"
+            ? { convergedBy: "settled" as const, unreviewedFixes: resolution.unreviewedFixes }
+            : {}),
         };
       }
     }
@@ -10903,6 +11125,7 @@ export function boardReviewStuckState(input: {
     runThroughRound: input.overrides?.runThroughRound ?? null,
     carriedFindings: input.overrides?.carriedFindings ?? {},
     stuckWaivedThrough: input.overrides?.stuckWaivedThrough ?? null,
+    roundModes: input.overrides?.roundModes ?? {},
   });
   if (walk.status !== "stuck") return null;
   return {
@@ -10957,6 +11180,7 @@ export function deriveBoardCardReviewSummary(input: {
   /** The card's server-written carry fields. */
   readonly carriedFindings?: Readonly<Record<string, BoardReviewCarry>>;
   readonly stuckWaivedThrough?: number | null;
+  readonly roundModes?: Readonly<Record<string, BoardReviewRoundMode>>;
 }): BoardCardReviewSummary | null {
   const reviewSteps = input.completions.filter(
     (completion) => parseReviewStepId(completion.stepId) !== null,
@@ -10984,6 +11208,7 @@ export function deriveBoardCardReviewSummary(input: {
     runThroughRound: input.runThroughRound,
     carriedFindings: input.carriedFindings ?? {},
     stuckWaivedThrough: input.stuckWaivedThrough ?? null,
+    roundModes: input.roundModes ?? {},
   });
   // The round the loop is on: a held loop's walk reports a never-started `lastRound + 1`, so
   // clamp to the round actually entered whenever `running` is provisional.
@@ -11348,6 +11573,14 @@ export const BoardStageExecutionSimple = Schema.Struct({
 });
 export type BoardStageExecutionSimple = typeof BoardStageExecutionSimple.Type;
 
+export const DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND = 3;
+const DEFAULT_BOARD_REVIEW_SETTLE_BELOW_FINDINGS = 2;
+/** At least 2: a round with no forcing findings already converges, so 1 could never settle. */
+export const BOARD_REVIEW_SETTLE_BELOW_FINDINGS_MIN = 2;
+export const BoardReviewSettleBelowFindings = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(BOARD_REVIEW_SETTLE_BELOW_FINDINGS_MIN),
+);
+
 /**
  * Carries every simple-member field so the reactor reads stages uniformly, plus `rounds` and
  * the per-phase configs. The executor ignores the top-level `prompt`/`model`, and
@@ -11380,6 +11613,14 @@ export const BoardStageExecutionReview = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY)),
   ),
   rounds: PositiveInt.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_ROUNDS))),
+  /** Rounds after this one may settle (`boardReviewNextRoundMode`); null turns settling off. */
+  settleAfterRound: Schema.NullOr(PositiveInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND)),
+  ),
+  /** A round with fewer forcing findings than this makes the next round settle. */
+  settleBelowFindings: BoardReviewSettleBelowFindings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_SETTLE_BELOW_FINDINGS)),
+  ),
   /** The board marks the pull request ready when the card reaches the merge stage, so full CI
       runs once after review. Global, because a forge without drafts just gets a normal PR. */
   draftPullRequests: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -11912,6 +12153,8 @@ export const BoardStageExecutionPatch = Schema.Struct({
     }),
   ),
   rounds: Schema.optionalKey(PositiveInt),
+  settleAfterRound: Schema.optionalKey(Schema.NullOr(PositiveInt)),
+  settleBelowFindings: Schema.optionalKey(BoardReviewSettleBelowFindings),
   draftPullRequests: Schema.optionalKey(Schema.Boolean),
   phases: Schema.optionalKey(
     Schema.Struct({
@@ -11953,7 +12196,14 @@ export const BOARD_STAGE_EXECUTION_PATCH_KEYS: Readonly<
   Record<BoardStageExecutionKind, ReadonlyArray<keyof BoardStageExecutionPatch>>
 > = {
   simple: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "planReview"],
-  review: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "rounds", "draftPullRequests", "phases"],
+  review: [
+    ...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS,
+    "rounds",
+    "settleAfterRound",
+    "settleBelowFindings",
+    "draftPullRequests",
+    "phases",
+  ],
   merge: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "strategy", "autoMerge", "deleteBranchOnDone"],
   build: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "submit"],
   // `maxRoundTrips` is no longer a key: a stored one is ignored.

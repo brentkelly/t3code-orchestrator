@@ -309,3 +309,44 @@ describe("binding adjudication in the pane (T3O-51)", () => {
     ]);
   });
 });
+
+describe("settling rounds (T3O-64)", () => {
+  it("reads each round's recorded mode and the scope its review recorded", () => {
+    const completions = [
+      completion("review@1", { reviewedSha: "sha-1", findings: [finding("improvement")] }),
+      completion("triage@1", {
+        fixedSha: "fix-1",
+        dispositions: [{ findingId: "f1", action: "fixed", note: "" }],
+      }),
+      completion("adjudicate@1", {
+        verdicts: [{ findingId: "f1", verdict: "fix-upheld", note: "" }],
+        anotherRound: false,
+      }),
+      completion("review@2", {
+        reviewedSha: "sha-2",
+        findings: [finding("improvement", "f2")],
+        scope: "delta",
+      }),
+      completion("triage@2", {
+        fixedSha: "fix-2",
+        dispositions: [{ findingId: "f2", action: "fixed", note: "" }],
+      }),
+      completion("adjudicate@2", {
+        verdicts: [{ findingId: "f2", verdict: "fix-upheld", note: "" }],
+        anotherRound: false,
+      }),
+    ];
+    const loop = deriveBoardReviewLoop(completions, 5, null, null, {
+      carriedFindings: {},
+      stuckWaivedThrough: null,
+      roundModes: { "2": { kind: "settling", sinceSha: "sha-1" } },
+    });
+    expect(loop.rounds.map((round) => [round.mode.kind, round.scope])).toEqual([
+      ["full", null],
+      ["settling", "delta"],
+    ]);
+    expect(loop.status).toBe("converged");
+    expect(loop.convergedBy).toBe("settled");
+    expect(loop.unreviewedFixes).toBe(1);
+  });
+});

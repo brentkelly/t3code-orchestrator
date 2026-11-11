@@ -322,6 +322,18 @@ function roundSummary(round: BoardReviewLoopRound): string {
   return parts.join(" · ");
 }
 
+/** A settling round's tag. It claims a range only when the reviewer recorded what it read. */
+function settlingRoundText(round: BoardReviewLoopRound): string | null {
+  if (round.mode.kind !== "settling") return null;
+  const scope =
+    round.scope === "delta"
+      ? ` · changes since ${round.mode.sinceSha.slice(0, 7)}`
+      : round.scope === "branch"
+        ? " · whole branch reviewed"
+        : "";
+  return `Settling · only critical blocks${scope}`;
+}
+
 function Round({
   round,
   offStage,
@@ -340,6 +352,7 @@ function Round({
   readonly onOpenThread: ((threadId: ThreadId) => void) | undefined;
 }) {
   const badge = roundBadge(round, offStage);
+  const settling = settlingRoundText(round);
   const tally = `${round.severities.critical} / ${round.severities.improvement} / ${round.severities.nitpick}`;
   return (
     <div className="shrink-0 overflow-hidden rounded-xl border border-border bg-card shadow-xs">
@@ -362,6 +375,13 @@ function Round({
         >
           {badge.label}
         </span>
+        {settling === null ? null : (
+          <BoardHint label={settling}>
+            <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border px-[7px] text-[10.5px] font-medium text-muted-foreground">
+              Settling
+            </span>
+          </BoardHint>
+        )}
         {round.findings.length > 0 ? (
           <BoardHint
             label={`${round.severities.critical} critical · ${round.severities.improvement} improvement · ${round.severities.nitpick} nitpick`}
@@ -389,6 +409,11 @@ function Round({
       </button>
       {open ? (
         <div className="flex flex-col">
+          {settling === null ? null : (
+            <div className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+              {settling}
+            </div>
+          )}
           {round.carriedRuling === null ? null : (
             <div className="flex flex-col gap-1 border-t border-border bg-foreground/2 px-3 py-2.5">
               <div className="flex items-center gap-2">
@@ -519,7 +544,9 @@ function statusPill(
         label:
           loop.convergedBy === "adjudicator"
             ? "Loop settled: adjudicator ruled nothing new"
-            : "Loop settled: nothing blocking",
+            : loop.convergedBy === "settled"
+              ? "Loop settled: no critical findings left"
+              : "Loop settled: nothing blocking",
         spinning: false,
         className: "bg-success/14 text-success-foreground",
       };
@@ -579,6 +606,9 @@ function footerNote(
         return `Round ${loop.currentRound} of ${loop.maxRounds} · the loop stopped. Continue it, restart the phase, or move the card on from the card's actions.`;
       return `Round ${loop.currentRound} of ${loop.maxRounds} · the loop stops early once a round closes clean.`;
     case "converged":
+      if (loop.convergedBy === "settled") {
+        return `A settling round left no critical finding open, so the loop is settled. Its other findings were fixed or rejected and checked by the adjudicator${loop.unreviewedFixes > 0 ? ` · ${loop.unreviewedFixes} ${loop.unreviewedFixes === 1 ? "fix" : "fixes"} verified by the adjudicator, not re-reviewed` : ""}.`;
+      }
       return loop.convergedBy === "adjudicator"
         ? "The adjudicator ruled the last round raised nothing new beyond points already settled, and no code changed, so the loop is settled."
         : "A round closed with nothing blocking, so the loop is settled.";
@@ -1055,6 +1085,7 @@ export function BoardCardReviewPane({
     {
       carriedFindings: overrides?.carriedFindings ?? {},
       stuckWaivedThrough: overrides?.stuckWaivedThrough ?? null,
+      roundModes: overrides?.roundModes ?? {},
     },
   );
   const stuck = loop.status === "stuck";

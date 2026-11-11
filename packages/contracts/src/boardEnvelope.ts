@@ -9,6 +9,7 @@ import type {
   BoardReviewFollowUpFinding,
   BoardReviewFollowUpPhase,
   BoardReviewPhaseId,
+  BoardReviewRoundMode,
   BoardStageRole,
 } from "./board.ts";
 import {
@@ -369,9 +370,10 @@ export function boardReviewPhasePreamble(input: {
   readonly phase: BoardReviewPhaseId;
   readonly round: number;
   readonly rounds: number;
+  readonly mode?: BoardReviewRoundMode;
 }): string {
   const { phase, round, rounds } = input;
-  const header = `Code review, ${BOARD_REVIEW_PHASE_LABELS[phase]} phase, round ${round} of up to ${rounds}.`;
+  const header = `Code review, ${BOARD_REVIEW_PHASE_LABELS[phase]} phase, round ${round} of up to ${rounds}${boardReviewSettlingTag(input.mode)}.`;
   // The reviewer is fresh-eyes on every round: only triage and the
   // adjudicator read the history.
   const priorContext =
@@ -379,6 +381,37 @@ export function boardReviewPhasePreamble(input: {
       ? "Call board_get_card_context first and read the `steps` payloads: they carry every prior phase's findings, dispositions and verdicts for this card."
       : "";
   return priorContext.length > 0 ? `${header}\n${priorContext}` : header;
+}
+
+/** The round header's settling suffix, empty for a full round. */
+function boardReviewSettlingTag(mode: BoardReviewRoundMode | undefined): string {
+  return mode?.kind === "settling"
+    ? ` · settling round (changes since ${mode.sinceSha.slice(0, 7)})`
+    : "";
+}
+
+/** What a settling round asks of each phase, compiled in beside the machine contract so a
+    custom phase prompt cannot drop it. Empty for a full round. */
+function boardReviewSettlingBlock(input: {
+  readonly phase: BoardReviewPhaseId | BoardReviewFollowUpPhase;
+  readonly mode: BoardReviewRoundMode | undefined;
+}): string {
+  const { mode } = input;
+  if (mode?.kind !== "settling") return "";
+  switch (input.phase) {
+    case "review":
+      return [
+        `This is a settling round. Review only the changes this branch made since commit \`${mode.sinceSha}\` (\`git diff ${mode.sinceSha}..HEAD\`), including their direct callers and callees. Read other code only as context, and raise no findings about code outside that scope. If \`${mode.sinceSha}\` is missing, is not an ancestor of HEAD, or the range contains merge commits, review the whole branch instead. This scope limits only your own search: a CI failure, a finding this prompt marks must-fix, and an unresolved human comment on the pull request are still reported wherever their code is.`,
+        'Add `scope: "delta"` to your payload, or `scope: "branch"` if you fell back to the whole branch.',
+        "In a settling round only `critical` findings force another round; `improvement` findings are still fixed and verified. Rate honestly: `critical` means it would cause an incident or break existing behaviour, never a hardening idea or a missing test.",
+      ].join(" ");
+    case "triage":
+    case "retriage":
+      return "This is a settling round: only critical findings force another review round, but every finding is still fixed or rejected.";
+    case "adjudicate":
+    case "readjudicate":
+      return "This is a settling round: your adjudication is binding for every finding, and only critical findings force another review round. `anotherRound` is recorded but has no effect.";
+  }
 }
 
 /** The rule that keeps the adjudicator consistent across rounds. */
@@ -500,8 +533,9 @@ export function composeBoardReviewFollowUpPrompt(input: {
   readonly findings: ReadonlyArray<BoardReviewFollowUpFinding>;
   readonly dismissals?: ReadonlyArray<BoardReviewCarriedFinding & { readonly round: number }>;
   readonly draftPullRequests?: boolean;
+  readonly mode?: BoardReviewRoundMode;
 }): string {
-  const header = `Code review, ${BOARD_REVIEW_STEP_PHASE_LABELS[input.phase]} step, round ${input.round} of up to ${input.rounds}.\nCall board_get_card_context first and read the \`steps\` payloads: they carry every prior phase's findings, dispositions and verdicts for this card.`;
+  const header = `Code review, ${BOARD_REVIEW_STEP_PHASE_LABELS[input.phase]} step, round ${input.round} of up to ${input.rounds}${boardReviewSettlingTag(input.mode)}.\nCall board_get_card_context first and read the \`steps\` payloads: they carry every prior phase's findings, dispositions and verdicts for this card.`;
   const listed = input.findings.map((f) => {
     const lines = [boardReviewFindingLine(f.finding)];
     if (f.finding.carried) lines.push("  A human ordered this fixed.");
@@ -544,6 +578,7 @@ export function composeBoardReviewFollowUpPrompt(input: {
     boardReviewDismissalsBlock({ phase: input.phase, dismissals: input.dismissals ?? [] }),
     input.prompt.trim(),
     input.draftPullRequests === true ? BOARD_DRAFT_PULL_REQUEST_KEEP : "",
+    boardReviewSettlingBlock({ phase: input.phase, mode: input.mode }),
     boardReviewFollowUpProtocol(input.phase),
   ]
     .filter((part) => part.trim().length > 0)
@@ -598,6 +633,8 @@ export function composeBoardReviewPhasePrompt(input: {
   readonly carried?: ReadonlyArray<BoardReviewFollowUpFinding>;
   /** Findings a human ruled not issues, at or before this round. */
   readonly dismissals?: ReadonlyArray<BoardReviewCarriedFinding & { readonly round: number }>;
+  /** The round's mode; absent is full. */
+  readonly mode?: BoardReviewRoundMode;
 }): string {
   const ci =
     input.ciFinding == null || input.phase === "adjudicate"
@@ -616,6 +653,7 @@ export function composeBoardReviewPhasePrompt(input: {
       draftPullRequests: input.draftPullRequests === true,
       phase: input.phase,
     }) ?? "",
+    boardReviewSettlingBlock({ phase: input.phase, mode: input.mode }),
     boardReviewPhaseProtocol(input),
   ]
     .filter((part) => part.trim().length > 0)
