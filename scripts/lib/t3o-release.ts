@@ -69,6 +69,23 @@ export function nextT3oTag(base: Triple, existingTags: readonly string[]): strin
   return formatT3oTag({ base, n: highest + 1 });
 }
 
+/** Tag names from `git ls-remote --tags`, with peeled `^{}` entries folded in. */
+export function parseLsRemoteTags(output: string): string[] {
+  const names = new Set<string>();
+  for (const line of output.split("\n")) {
+    const ref = line.split("\t")[1]?.trim();
+    if (ref?.startsWith("refs/tags/"))
+      names.add(ref.slice("refs/tags/".length).replace(/\^\{\}$/, ""));
+  }
+  return [...names];
+}
+
+/** Local T3o tags origin does not have: a release run that tagged but never pushed. */
+export function unpushedT3oTags(local: readonly string[], remote: readonly string[]): string[] {
+  const pushed = new Set(remote.map((tag) => tag.trim()));
+  return local.map((tag) => tag.trim()).filter((tag) => parseT3oTag(tag) && !pushed.has(tag));
+}
+
 /** The newest T3o tag in `tags`, or null. */
 export function latestT3oTag(tags: readonly string[]): string | null {
   let best: { tag: string; parsed: T3oTag } | null = null;
@@ -252,6 +269,12 @@ export function probeHost(host: string): string {
   if (host.includes(":") && !host.startsWith("[")) return `[${host}]`;
   return host;
 }
+
+// No systemd, or one we cannot reach, prints nothing: nothing of ours is running then.
+const RUNNING_STATES = new Set(["active", "activating", "deactivating", "reloading", "refreshing"]);
+
+/** Whether `systemctl is-active` output means the unit may be reading its files. */
+export const unitIsRunning = (state: string) => RUNNING_STATES.has(state.trim());
 
 /** The parent pid from `/proc/<pid>/stat`. The comm field may itself hold spaces or parens. */
 export function parseStatPpid(stat: string): number | null {

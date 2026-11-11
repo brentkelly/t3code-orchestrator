@@ -17,12 +17,14 @@ import {
   formatBase,
   latestT3oTag,
   nextT3oTag,
+  parseLsRemoteTags,
   parseT3oTag,
   parseUnitFile,
   porcelainIsDirty,
   probeHost,
   readStamp,
   selectUpstreamBase,
+  unpushedT3oTags,
 } from "./lib/t3o-release.ts";
 
 const repoRoot = NodeURL.fileURLToPath(new URL("..", import.meta.url));
@@ -116,7 +118,17 @@ if (existingHeadTag !== null) {
 } else {
   const base = selectUpstreamBase(lines(git(["tag", "--merged", "HEAD", "--list", "v*"])));
   if (base === null) fail("no stable upstream vX.Y.Z tag is contained in HEAD.");
-  tag = nextT3oTag(base, lines(git(["tag", "--list", "t3o*"])));
+  const localTags = lines(git(["tag", "--list", "t3o*"]));
+  const orphans = unpushedT3oTags(
+    localTags,
+    parseLsRemoteTags(git(["ls-remote", "--tags", "origin", "refs/tags/t3o*"])),
+  );
+  if (orphans.length > 0) {
+    fail(
+      `local tag(s) ${orphans.join(", ")} are not on origin, so the next number would leave a gap. Push them if they were released, or delete them with \`git tag -d\`.`,
+    );
+  }
+  tag = nextT3oTag(base, localTags);
 }
 const parsed = parseT3oTag(tag);
 const base = formatBase(parsed.base);

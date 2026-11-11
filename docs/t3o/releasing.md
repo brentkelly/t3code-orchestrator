@@ -64,6 +64,9 @@ If the tag was created or pushed but `gh release create` failed, re-run the scri
 carries a T3o tag with no GitHub Release resumes from the push; one that already has a release stops with
 nothing to do.
 
+If `t3o` has moved on since a run that tagged but never pushed, the script stops and names the local
+tag origin lacks. Push it if it was released, or delete it with `git tag -d`, then re-run.
+
 ## When to release
 
 After each upstream sync, and after notable features land. Release from a HEAD that existing users already

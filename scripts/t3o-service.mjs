@@ -21,6 +21,7 @@ import {
   computeStamp,
   probeHost,
   runningInsideUnit,
+  unitIsRunning,
   writeStamp,
 } from "./lib/t3o-release.ts";
 
@@ -449,11 +450,10 @@ function installShimsOrThrow() {
 }
 
 /** `activating` and a pending auto-restart still hold the tree, so only these two are safe. */
-const isStopped = () =>
-  ["inactive", "failed"].includes(capture("systemctl", ["is-active", unitName]));
+const isRunning = () => unitIsRunning(capture("systemctl", ["is-active", unitName]));
 
 if (command === "sync") {
-  if (!isStopped()) {
+  if (isRunning()) {
     fail(
       `${unitName} is running and would be reading these files. Use \`pnpm run install-t3o-service\`, which stops it first.`,
     );
@@ -469,7 +469,7 @@ buildBundle();
 
 // A running service must not be reading the tree while --delete walks it.
 const unitExisted = NodeFS.existsSync(unitPath);
-const wasActive = !isStopped();
+const wasActive = isRunning();
 if (wasActive) {
   console.log(`[t3o-service] Stopping ${unitName} for the sync...`);
   run("sudo", ["systemctl", "stop", unitName]);

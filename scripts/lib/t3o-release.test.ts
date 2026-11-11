@@ -12,6 +12,7 @@ import {
   insideUnit,
   latestT3oTag,
   nextT3oTag,
+  parseLsRemoteTags,
   parseStatPpid,
   parseT3oTag,
   parseUnitFile,
@@ -20,6 +21,8 @@ import {
   relationOf,
   selectUpstreamBase,
   type Relation,
+  unitIsRunning,
+  unpushedT3oTags,
 } from "./t3o-release.ts";
 
 describe("T3o tags", () => {
@@ -63,6 +66,25 @@ describe("T3o tags", () => {
     expect(nextT3oTag([0, 1, 8], tags)).toBe("t3o0.1.8.4");
     expect(nextT3oTag([0, 1, 9], tags)).toBe("t3o0.1.9.1");
     expect(nextT3oTag([0, 1, 8], [])).toBe("t3o0.1.8.1");
+  });
+});
+
+describe("unpushed tags", () => {
+  it("reads tag names from ls-remote, folding peeled entries", () => {
+    const out = [
+      "aaa\trefs/tags/t3o0.1.8.1",
+      "bbb\trefs/tags/t3o0.1.8.1^{}",
+      "ccc\trefs/tags/t3o0.1.8.2",
+      "",
+    ].join("\n");
+    expect(parseLsRemoteTags(out)).toEqual(["t3o0.1.8.1", "t3o0.1.8.2"]);
+  });
+
+  it("names local T3o tags origin lacks, ignoring other tags", () => {
+    expect(
+      unpushedT3oTags(["t3o0.1.8.1", "t3o0.1.8.2", "v0.1.8", "t3o-junk"], ["t3o0.1.8.1"]),
+    ).toEqual(["t3o0.1.8.2"]);
+    expect(unpushedT3oTags(["t3o0.1.8.1"], ["t3o0.1.8.1"])).toEqual([]);
   });
 });
 
@@ -196,6 +218,19 @@ describe("unit file", () => {
 });
 
 describe("service probes", () => {
+  it.each([
+    ["active", true],
+    ["activating", true],
+    ["deactivating", true],
+    ["reloading", true],
+    ["inactive", false],
+    ["failed", false],
+    ["", false],
+    ["unknown", false],
+  ])("treats systemctl is-active %j as running: %s", (state, expected) => {
+    expect(unitIsRunning(state)).toBe(expected);
+  });
+
   it.each([
     ["0.0.0.0", "127.0.0.1"],
     ["::", "[::1]"],
