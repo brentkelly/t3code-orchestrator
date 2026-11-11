@@ -1611,7 +1611,7 @@ export function isBoardCiPassSettledPhase(phase: BoardCardCiPhase): boolean {
     running vetoes "Needs a human"; only running lights the dot, as a queued
     card does nowhere else. A `fixing` round is a fix agent's thread, which the
     thread state covers; its phase outlives a dead agent, so it never counts. */
-function isBoardCardCiActive(card: Pick<BoardCardShell, "ci">): boolean {
+export function isBoardCardCiActive(card: Pick<BoardCardShell, "ci">): boolean {
   return card.ci?.phase === "queued" || isBoardCardCiRunning(card);
 }
 
