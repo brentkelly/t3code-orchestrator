@@ -16,11 +16,14 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import {
+  buildingCard,
   cardMoved,
   projectId,
   codexStep,
   makeBoardCard,
+  movedToBuilding,
   settingsWith,
+  stepStatus,
   withGovernor,
 } from "./supervisorHarness.testkit.ts";
 
@@ -115,6 +118,63 @@ it.effect("a stage that names its own model ignores the board default", () =>
 
         const state = boardCardStepState(yield* board, cardId);
         assert.strictEqual(state?.providerInstanceId, codexStep.providerInstanceId);
+      }),
+  ),
+);
+
+// Since v0.1.8 the app's text-generation selection may name an API-only text generator, which
+// cannot run an agent. The board never guesses another model: the step fails, saying how to fix it.
+const TEXT_GENERATOR = ProviderInstanceId.make("openai-api");
+const textGeneratorFallback = {
+  textGenerationModelSelection: { instanceId: TEXT_GENERATOR, model: "gpt-5-mini" },
+  textGenerators: {
+    [TEXT_GENERATOR]: {
+      kind: "openai",
+      baseUrl: "https://api.example.test",
+      apiKey: "",
+      enabled: true,
+    },
+  },
+} as never;
+
+it.effect("a fallback that names an API-only text generator fails the step clearly", () =>
+  withGovernor(
+    {
+      board: { cards: [sprintCard()], nextCardNumberByProject: {} },
+      settings: planningWithoutModel(null),
+      serverSettings: textGeneratorFallback,
+    },
+    ({ pumpDomain, board, commands }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToPlanning(1));
+
+        const state = boardCardStepState(yield* board, cardId);
+        assert.strictEqual(state?.status, "stalled");
+        assert.strictEqual(
+          state?.lastError,
+          "This stage resolves to a text-generation model, which can't run an agent: pick an agent model for the stage, or set a board default model in Settings → Board.",
+        );
+        assert.isUndefined((yield* commands).find((command) => command.type === "thread.spawn"));
+      }),
+  ),
+);
+
+it.effect("a build step on a text generator gives its slot back", () =>
+  withGovernor(
+    {
+      board: { cards: [buildingCard("card-a", "a")], nextCardNumberByProject: {} },
+      settings: settingsWith({
+        building: [{ ...codexStep, providerInstanceId: TEXT_GENERATOR }],
+        globalMaxConcurrent: 1,
+      }),
+      serverSettings: textGeneratorFallback,
+    },
+    ({ slots, pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(buildingCard("card-a", "a"), 1));
+
+        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("card-a")), "stalled");
+        assert.strictEqual(yield* slots.heldTotal, 0);
       }),
   ),
 );

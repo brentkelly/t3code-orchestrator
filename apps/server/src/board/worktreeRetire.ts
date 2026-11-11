@@ -2,9 +2,9 @@
 // Remove scripts need a detached process group, and the /proc scan needs readlink.
 /**
  * Every removal T3o starts is retired first: stop T3o's processes, then a reclaim with
- * survivors is `blocked` (forced kills them), then `runOnWorktreeRemove` scripts run (a
- * failure is only a `hookWarning`), then git removes it. Containers are invisible to the
- * process check, so stopping them is the scripts' job.
+ * survivors is `blocked` (forced kills them), then `runOnWorktreeRemove` scripts run (a card's
+ * settle script first; a failure is only a `hookWarning`), then git removes it. Containers are
+ * invisible to the process check, so stopping them is the scripts' job.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -14,7 +14,11 @@ import * as NodeReadline from "node:readline";
 
 import { CommandId, GitCommandError, type ProjectScript } from "@t3tools/contracts";
 import { Platform as HostProcessPlatform } from "@t3tools/shared/HostProcess";
-import { projectScriptRuntimeEnv, resolveProjectScripts } from "@t3tools/shared/projectScripts";
+import {
+  projectScriptRuntimeEnv,
+  resolveProjectScripts,
+  settleProjectScript,
+} from "@t3tools/shared/projectScripts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -55,6 +59,11 @@ export interface WorktreeRetireInput {
    * as the stock RPC, opts in.
    */
   readonly skipIfBusy?: boolean | undefined;
+  /**
+   * A card's worktree. Its threads skip `runOnSettle` while they share it, so the settle
+   * script runs here once, before the remove scripts.
+   */
+  readonly cardWorktree?: boolean | undefined;
 }
 
 export type WorktreeRetireResult =
@@ -323,10 +332,15 @@ const hookFailure = (name: string, exit: WorktreeHookExit, timeoutMs: number): s
   }
 };
 
-/** The project's remove scripts, in stored order. */
+/** The project's remove scripts, in stored order, after a card's settle script. */
 const worktreeRemoveScripts = (
   scripts: ReadonlyArray<ProjectScript>,
-): ReadonlyArray<ProjectScript> => scripts.filter((script) => script.runOnWorktreeRemove === true);
+  cardWorktree: boolean,
+): ReadonlyArray<ProjectScript> => {
+  const remove = scripts.filter((script) => script.runOnWorktreeRemove === true);
+  const settle = cardWorktree ? settleProjectScript(scripts) : null;
+  return settle === null || remove.includes(settle) ? remove : [settle, ...remove];
+};
 
 export const makeWorktreeRetirer = Effect.fn("worktreeRetire.makeWorktreeRetirer")(function* (
   options: WorktreeRetirerOptions = {},
@@ -429,7 +443,10 @@ export const makeWorktreeRetirer = Effect.fn("worktreeRetire.makeWorktreeRetirer
       ),
     );
     if (settings === null) return null;
-    const scripts = worktreeRemoveScripts(resolveProjectScripts(settings, project));
+    const scripts = worktreeRemoveScripts(
+      resolveProjectScripts(settings, project),
+      input.cardWorktree === true,
+    );
     if (scripts.length === 0) return null;
     if (input.onScriptsStarting !== undefined) yield* input.onScriptsStarting;
     const env = {

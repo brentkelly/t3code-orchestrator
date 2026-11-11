@@ -192,6 +192,8 @@ export const BoardGatewaySendInput = Schema.Struct({
   attachments: Schema.Array(ChatAttachment),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  /** `steer` joins a running turn instead of queuing behind it. Older workers queue. */
+  delivery: Schema.optional(Schema.Literals(["queue", "steer"])),
 });
 export type BoardGatewaySendInput = typeof BoardGatewaySendInput.Type;
 

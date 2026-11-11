@@ -155,6 +155,7 @@ import {
   deriveBoardGroupStage,
   isBoardCardPlanned,
   type BoardCiFixIssue,
+  textGeneratorForSelection,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -595,6 +596,14 @@ function settledReviewPhase(
   const stage = boardStageById(board, card.stage);
   return stage !== null && effectiveBoardStageRole(stage) === "review";
 }
+
+const spawnFailureError = (result: string | null) =>
+  result === "no-agent-model"
+    ? {
+        lastError:
+          "This stage resolves to a text-generation model, which can't run an agent: pick an agent model for the stage, or set a board default model in Settings → Board.",
+      }
+    : {};
 
 /** Triage and adjudication steps, which never wait on a human. */
 const isReviewDecidingStep = (state: Pick<BoardCardStepState, "stepId">): boolean =>
@@ -1089,6 +1098,8 @@ const make = Effect.gen(function* () {
      * forces full-access" invariant true at every dispatch.
      */
     readonly runtimeMode: BoardCardStepState["runtimeMode"];
+    /** `steer` for an instruction that is moot once the running turn ends. */
+    readonly delivery?: "steer";
   }) {
     yield* logged(
       "thread.send",
@@ -1099,6 +1110,7 @@ const make = Effect.gen(function* () {
         attachments: [],
         runtimeMode: input.runtimeMode,
         interactionMode: "default",
+        ...(input.delivery === undefined ? {} : { delivery: input.delivery }),
       }),
     );
   });
@@ -1619,6 +1631,17 @@ const make = Effect.gen(function* () {
       });
     }
     const remoteWorker = workerId === BOARD_LOCAL_WORKER_ID ? null : workerId;
+    // An API-only text generator can't run an agent. Only this server's settings are known here,
+    // so a worker's own instances are left to the worker.
+    if (remoteWorker === null) {
+      const settings = yield* serverSettings.getSettings.pipe(Effect.orElseSucceed(() => null));
+      if (
+        settings !== null &&
+        textGeneratorForSelection(settings, step.providerInstanceId) !== undefined
+      ) {
+        return "no-agent-model" as const;
+      }
+    }
     // T3o: pin the agent's gh to origin on every build-mode spawn,
     // not only at provisioning, so a worktree that predates the pin gets it
     // before its next agent runs. Idempotent and never fails the spawn.
@@ -1826,6 +1849,7 @@ const make = Effect.gen(function* () {
       threadId: state.threadId,
       text: BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
       runtimeMode: state.runtimeMode,
+      delivery: "steer",
     });
   });
 
@@ -2253,12 +2277,12 @@ const make = Effect.gen(function* () {
         runSetup: true,
         text: yield* stepPromptFor(card, state),
       });
-      if (threadId === null) {
+      if (threadId === null || threadId === "no-agent-model") {
         // No thread was created, so release the slot this candidate just acquired
         // (the persisted `slotHeld` is still false — admit-step never ran — so
         // `releaseSlot` would decline it) and escalate rather than admit.
         yield* slots.release(slotKey);
-        yield* escalateSpawnFailure({ card, state });
+        yield* escalateSpawnFailure({ card, state, ...spawnFailureError(threadId) });
         return;
       }
       if (threadId === "worker-offline") {
@@ -2362,8 +2386,8 @@ const make = Effect.gen(function* () {
     });
     // A plan step holds no slot, so a failed spawn leaks no capacity — but it
     // must still not be admitted against a thread that was never created.
-    if (threadId === null) {
-      yield* escalateSpawnFailure({ card, state });
+    if (threadId === null || threadId === "no-agent-model") {
+      yield* escalateSpawnFailure({ card, state, ...spawnFailureError(threadId) });
       return;
     }
     if (threadId === "worker-offline") {
@@ -7762,6 +7786,7 @@ const make = Effect.gen(function* () {
           threadId: state.threadId,
           text: BOARD_AUTO_PLAN_OFF_INSTRUCTION,
           runtimeMode: state.runtimeMode,
+          delivery: "steer",
         });
       }
     }
@@ -9840,15 +9865,19 @@ const make = Effect.gen(function* () {
   /** Best-effort: a failed read is "not waiting", the behaviour before this check existed. */
   const subagentAwaitingApproval = (threadId: ThreadId) =>
     threads.subagentAwaitingApproval(threadId).pipe(Effect.catchCause(() => Effect.succeed(false)));
-  /** The thread's own permission prompt or, read only when it has
-      none, a subagent's approval: either way a human is the pacing. */
-  const threadAwaitingHuman = (threadId: ThreadId) =>
+  /** The thread's own permission prompt, a question only a human can answer (a `request_secret`
+      waits inside a live run with no question signal to park the step) or, read only when it has
+      neither, a subagent's approval. Review-deciding questions are the board's own to answer. */
+  const threadAwaitingHuman = (state: Pick<BoardCardStepState, "stepId">, threadId: ThreadId) =>
     liveThread(threadId).pipe(
       Effect.flatMap((shell) =>
-        shell?.awaitingPermission === true
-          ? Effect.succeed(true)
-          : shell === undefined
-            ? Effect.succeed(false)
+        shell === undefined
+          ? Effect.succeed(false)
+          : shell.awaitingPermission ||
+              (shell.awaitingUserInput &&
+                shell.sessionStatus !== "error" &&
+                !isReviewDecidingStep(state))
+            ? Effect.succeed(true)
             : subagentAwaitingApproval(threadId),
       ),
     );
@@ -10183,7 +10212,7 @@ const make = Effect.gen(function* () {
       const heldAt =
         state.threadId === null ? undefined : permissionHeldAt.get(String(state.threadId));
       if (state.threadId !== null && heldAt !== undefined) {
-        if (yield* threadAwaitingHuman(state.threadId)) {
+        if (yield* threadAwaitingHuman(state, state.threadId)) {
           permissionHeldAt.set(String(state.threadId), now);
         } else if (nowMs - Date.parse(heldAt) > state.timeoutMs) {
           permissionHeldAt.delete(String(state.threadId));
@@ -10234,10 +10263,11 @@ const make = Effect.gen(function* () {
       // `lastNudgeAt ?? startedAt`.
       // Checked last, so only overdue steps pay.
       if (yield* supersededByPendingTurn(state)) continue;
-      // A thread on its own permission prompt is waiting on a human; nudging it would replace
-      // "Needs permission" with a stall. Read last, so only overdue steps pay. The subagent half
-      // repeats this sweep's earlier read on purpose: it closes the gap if a child just asked.
-      if (state.threadId !== null && (yield* threadAwaitingHuman(state.threadId))) {
+      // A thread on a permission prompt or a secret request is waiting on a human and emits
+      // nothing; nudging it would replace the violet wait with a stall. Read last, so only overdue
+      // steps pay. The subagent half repeats this sweep's earlier read on purpose: it closes the
+      // gap if a child just asked.
+      if (state.threadId !== null && (yield* threadAwaitingHuman(state, state.threadId))) {
         permissionHeldAt.set(String(state.threadId), now);
         continue;
       }

@@ -19,10 +19,13 @@ import {
   ProviderSessionId,
   ProviderDriverKind,
   ProviderThreadId,
+  ProviderTurnId,
   RunId,
   RuntimeRequestId,
   ThreadId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2Run,
   type ProjectSettingsOverrides,
   type OrchestrationV2StoredEvent,
 } from "@t3tools/contracts";
@@ -32,6 +35,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
 import { createPendingAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
@@ -127,6 +131,69 @@ const head = Effect.flatMap(boardStackEngine, (engine) => engine.latestSequence)
 /** Write what a provider would, through the engine's own sink. */
 const providerWrites = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
   Effect.flatMap(EventSink.EventSinkV2, (sink) => sink.write({ events })).pipe(Effect.orDie);
+
+/** Put the thread's run mid-turn on a provider session with these turn capabilities. */
+const runningTurn = Effect.fn("runningTurn")(function* (
+  threadId: ThreadId,
+  run: OrchestrationV2Run,
+  tag: string,
+  turns: OrchestrationV2ProviderCapabilities["turns"],
+) {
+  const occurredAt = at("2026-01-01T00:00:00.000Z");
+  const providerSessionId = ProviderSessionId.make(`ps-contract-${tag}`);
+  const providerThreadId = ProviderThreadId.make(`pt-contract-${tag}`);
+  const event = (type: string, payload: unknown) =>
+    ({
+      type,
+      id: EventId.make(`evt-contract-${tag}-${type}`),
+      threadId,
+      occurredAt,
+      payload,
+    }) as unknown as OrchestrationV2DomainEvent;
+  yield* providerWrites([
+    event("provider-session.attached", {
+      id: providerSessionId,
+      driver: "codex",
+      providerInstanceId: modelSelection.instanceId,
+      status: "ready",
+      cwd: `/tmp/wt/${tag}`,
+      model: null,
+      capabilities: { ...CodexProviderCapabilitiesV2, turns },
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+      lastError: null,
+    }),
+    event("provider-thread.updated", {
+      id: providerThreadId,
+      driver: "codex",
+      providerInstanceId: modelSelection.instanceId,
+      providerSessionId,
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "active",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+    }),
+    event("run.updated", { ...run, status: "running", providerThreadId }),
+    event("provider-turn.updated", {
+      id: ProviderTurnId.make(`turn-contract-${tag}`),
+      providerThreadId,
+      nodeId: run.rootNodeId,
+      runAttemptId: run.activeAttemptId,
+      nativeTurnRef: null,
+      ordinal: 1,
+      status: "running",
+      startedAt: occurredAt,
+      completedAt: null,
+    }),
+  ]);
+});
 
 /** The tag a failed command failed with, or null when it succeeded. */
 const refusalTag = (exit: Exit.Exit<unknown, { readonly _tag: string }>) =>
@@ -565,6 +632,71 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
       }),
     );
 
+    // A steer joins a running provider turn; with none to join (the stack never starts one),
+    // the instruction still lands, queued, rather than failing the send (T3O-72).
+    it.effect("a steer the engine refuses falls back to a queued board turn", () =>
+      Effect.gen(function* () {
+        const threadId = yield* spawn("steered");
+        const threads = yield* LocalThreadGateway;
+        const before = yield* head;
+        yield* threads.send({
+          commandId: boardCommandId("recover-turn"),
+          threadId,
+          text: "Stop the plan review now.",
+          attachments: [],
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          delivery: "steer",
+        });
+        assert.deepStrictEqual(withoutAt(signalsOf(yield* loggedSince(before))), [
+          { type: "turn-requested", threadId, byBoard: true, at: "" },
+        ]);
+      }),
+    );
+
+    // Cursor and ACP only restart a turn, so the board queues their steer. With no live session
+    // the engine refuses every steer, so a tried steer shows as its `:queued` fallback, and an
+    // accepted steer goes untested here (T3O-72).
+    it.effect("a steer is tried only on a provider that steers a running turn in place", () =>
+      Effect.gen(function* () {
+        const threads = yield* LocalThreadGateway;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const steerOn = Effect.fn("steerOn")(function* (
+          tag: string,
+          turns: OrchestrationV2ProviderCapabilities["turns"],
+        ) {
+          const threadId = yield* spawn(tag);
+          const { runs } = yield* projections.getThreadRecords(threadId, ["runs"]);
+          yield* runningTurn(threadId, runs[0]!, tag, turns);
+          const commandId = boardCommandId("stop-review");
+          const before = yield* head;
+          yield* threads.send({
+            commandId,
+            threadId,
+            text: "Stop the plan review now.",
+            attachments: [],
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            delivery: "steer",
+          });
+          const logged = yield* loggedSince(before);
+          assert.isNotEmpty(logged);
+          return { commandId, sentAs: new Set(logged.map((entry) => entry.commandId)) };
+        });
+
+        const restartOnly = yield* steerOn("restart-only", {
+          ...CodexProviderCapabilitiesV2.turns,
+          supportsActiveSteering: false,
+          supportsInterrupt: true,
+          supportsSteeringByInterruptRestart: true,
+        });
+        assert.deepStrictEqual([...restartOnly.sentAs], [restartOnly.commandId]);
+
+        const steers = yield* steerOn("steers", CodexProviderCapabilitiesV2.turns);
+        assert.deepStrictEqual([...steers.sentAs], [`${steers.commandId}:queued`]);
+      }),
+    );
+
     it.effect("an interrupt reaches the engine, and one with no run is refused", () =>
       Effect.gen(function* () {
         const threadId = yield* spawn("interrupted");
@@ -586,6 +718,52 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
           threads.interrupt({ commandId: boardCommandId("interrupt-paused"), threadId: idle }),
         );
         assert.strictEqual(refusalTag(exit), "ThreadCommandRefusedError");
+      }),
+    );
+
+    // A run cut by a server restart that upstream will continue is not dead: the board yields
+    // instead of recovering the step on top of the continuation (T3O-72).
+    it.effect("a run upstream will continue after a restart reads alive with a turn pending", () =>
+      Effect.gen(function* () {
+        const threadId = yield* spawn("restart-continued");
+        const threads = yield* LocalThreadGateway;
+        const runId = RunId.make((yield* threads.threadState(threadId))!.activeTurnRef!);
+        yield* threads.interrupt({ commandId: boardCommandId("interrupt-paused"), threadId });
+        assert.isFalse((yield* threads.threadState(threadId))!.alive);
+        assert.isNull(yield* threads.pendingTurnStartAt(threadId));
+
+        const commandId = CommandId.make(`command:restart-prepare:${runId}`);
+        yield* Effect.flatMap(EventSink.EventSinkV2, (sink) =>
+          sink.writeWithEffects({
+            commandId,
+            events: [],
+            effects: [
+              {
+                id: `effect:restart-continuation:${runId}`,
+                commandId,
+                threadId,
+                request: { type: "provider-runtime.continue", sourceRunId: runId },
+              },
+            ],
+          }),
+        ).pipe(Effect.orDie);
+        assert.isTrue((yield* threads.threadState(threadId))!.alive);
+        assert.isNotNull(yield* threads.pendingTurnStartAt(threadId));
+
+        // Upstream declines it: the thread is dead again, so the board's sweep recovers it.
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`
+          UPDATE orchestration_v2_effect_outbox SET status = 'cancelled'
+          WHERE effect_id = ${`effect:restart-continuation:${runId}`}
+        `;
+        assert.isFalse((yield* threads.threadState(threadId))!.alive);
+        assert.isNull(yield* threads.pendingTurnStartAt(threadId));
+
+        // An unreadable outbox fails closed: the board waits rather than racing a continuation.
+        yield* sql`ALTER TABLE orchestration_v2_effect_outbox RENAME TO outbox_unreadable`;
+        const unreadable = (yield* threads.threadState(threadId))!.alive;
+        yield* sql`ALTER TABLE outbox_unreadable RENAME TO orchestration_v2_effect_outbox`;
+        assert.isTrue(unreadable);
       }),
     );
 

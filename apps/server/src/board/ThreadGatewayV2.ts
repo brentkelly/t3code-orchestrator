@@ -34,8 +34,9 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as AttachmentClaims from "../orchestration-v2/AttachmentClaims.ts";
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
-import type * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -139,6 +140,11 @@ export const boardThreadStateFromShell = (
 };
 
 // ── Signals ────────────────────────────────────────────────────────────
+
+/** `IdleCompactionService`'s message ids: every run carries its message's id, so no memory. */
+const IDLE_COMPACTION_MESSAGE_PREFIX = "idle-compact:";
+const isIdleCompactionRun = (run: { readonly userMessageId: string }) =>
+  run.userMessageId.startsWith(IDLE_COMPACTION_MESSAGE_PREFIX);
 
 /** How a run ended, or null while it is still going. */
 type TurnOutcome = "completed" | "failed" | "interrupted" | "cancelled";
@@ -280,6 +286,8 @@ export const makeSignalReader = () => {
         // after it in the same command) decides who asked, so the run waits for it.
         const run = event.payload;
         noteRunStatus(run);
+        // Idle `/compact` the server ran on a quiet thread: never the agent's turn.
+        if (isIdleCompactionRun(run)) return [];
         if (isBoardMintedCommandId(stored.commandId)) {
           return [
             {
@@ -320,6 +328,10 @@ export const makeSignalReader = () => {
         const run = event.payload;
         const wasQueued = noteRunStatus(run);
         const outcome = turnOutcomeOf(run.status);
+        if (outcome !== null && isIdleCompactionRun(run)) {
+          firstTime(`run:${run.id}`); // so its checkpoint's `completed` stays quiet too
+          return [];
+        }
         if (outcome === null || !firstTime(`run:${run.id}`)) return [];
         // A run cancelled without leaving the queue was never a turn (steered, deleted, or dropped
         // with the thread). A queued run that FAILED to start is a turn that never began, read below.
@@ -523,6 +535,7 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
   const projectRows = yield* ProjectStore.ProjectStoreV2;
   const projectService = yield* ProjectService.ProjectService;
   const eventSink = yield* EventSink.EventSinkV2;
+  const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const crypto = yield* SecureRandom.SecureRandom;
   const path = yield* Path.Path;
   // What upstream's message intake needs to claim a turn's pending uploads
@@ -551,6 +564,30 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
   const shellOf = (threadId: ThreadId) =>
     projections.getThreadShell(threadId).pipe(Effect.mapError(readError("threadShell")));
 
+  /**
+   * Whether upstream will continue the thread's latest run, cut by a server restart. The board
+   * then yields: the thread reads alive with a turn pending, as upstream's own thread_wait reads it,
+   * so the board's recovery never drives the same step too. Read only for a thread between runs.
+   */
+  const restartContinuationPending = (shell: OrchestrationV2ThreadShell) => {
+    const runId = shell.latestRunId;
+    if (shell.activeRunId !== null || runId === null) return Effect.succeed(false);
+    // Upstream's effect id and pending test (Orchestrator's awaitsRestartContinuation): one keyed
+    // read, since a continuation is only ever written for a run the restart cut.
+    return effectOutbox.get(`effect:restart-continuation:${runId}`).pipe(
+      Effect.map(
+        Option.exists((effect) => effect.status === "pending" || effect.status === "running"),
+      ),
+      // Fail closed like the other guards: a pending turn only defers recovery to the next tick.
+      Effect.catch((error) =>
+        Effect.logWarning("restart continuation read failed; treating the turn as pending", {
+          runId,
+          error,
+        }).pipe(Effect.as(true)),
+      ),
+    );
+  };
+
   /** A thread the command needs to exist, live. */
   const liveShell = (command: string, threadId: ThreadId) =>
     Effect.filterOrFail(
@@ -578,41 +615,80 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
+  /**
+   * Whether the thread's running provider turn takes a steer in place. The engine resolves a
+   * steer to an interrupt-restart for a provider that can only restart its turn (Cursor, ACP).
+   */
+  const steersActively = (threadId: ThreadId) =>
+    projections.getRunningTurnContext(threadId).pipe(
+      Effect.flatMap(({ providerThread, providerTurn }) => {
+        const sessionId = providerThread?.providerSessionId;
+        if (providerTurn === undefined || sessionId == null) return Effect.succeed(false);
+        return projections
+          .getThreadProviderContext(threadId)
+          .pipe(
+            Effect.map(
+              (context) =>
+                context.providerSessions.find((session) => session.id === sessionId)?.capabilities
+                  .turns.supportsActiveSteering === true,
+            ),
+          );
+      }),
+      Effect.orElseSucceed(() => false),
+    );
+
   const startTurn = Effect.fn("ThreadGatewayV2.startTurn")(function* (input: {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
     readonly text: string;
     readonly attachments: ReadonlyArray<ChatAttachment>;
+    readonly delivery?: "queue" | "steer" | undefined;
   }) {
     // Through the intake, as a client's send goes: it claims the turn's
     // pending uploads and releases them if the dispatch is not accepted.
-    const dispatch = (attachments: ReadonlyArray<ChatAttachment>) =>
+    const dispatch = (
+      commandId: CommandId,
+      steer: boolean,
+      attachments: ReadonlyArray<ChatAttachment>,
+    ) =>
       Effect.flatMap(freshMessageId, (messageId) =>
         ThreadMessageIntake.dispatchCommand({
           type: "message.dispatch",
-          commandId: input.commandId,
+          commandId,
           threadId: input.threadId,
           messageId,
           text: input.text,
           attachments,
           dispatchMode: { type: "start_immediately" },
+          // Only where the provider steers in place; `auto` may resolve to an interrupt-restart.
+          ...(steer ? { deliveryIntent: "steer" as const } : {}),
           ...BOARD_AUTHOR,
         }),
       ).pipe(Effect.provideContext(intakeServices));
     // The claim is all-or-nothing and runs before the dispatch, so nothing
     // was committed: the turn goes again without its attachments, which
     // the brief's manifest still names by path.
-    yield* dispatch(input.attachments).pipe(
+    const send = (commandId: CommandId, steer: boolean) =>
+      dispatch(commandId, steer, input.attachments).pipe(
+        Effect.catchTags({
+          AttachmentClaimError: (error) =>
+            input.attachments.length === 0
+              ? Effect.fail(error)
+              : Effect.logWarning("board gateway: attachments failed to claim, sent without them", {
+                  threadId: input.threadId,
+                  detail: error.message,
+                }).pipe(Effect.andThen(dispatch(commandId, steer, []))),
+        }),
+        Effect.mapError(commandError("message.dispatch", input.threadId)),
+      );
+    if (input.delivery !== "steer" || !(yield* steersActively(input.threadId))) {
+      return yield* send(input.commandId, false);
+    }
+    // The run can end between the read and the dispatch, and the engine refuses it: queue it.
+    yield* send(input.commandId, true).pipe(
       Effect.catchTags({
-        AttachmentClaimError: (error) =>
-          input.attachments.length === 0
-            ? Effect.fail(error)
-            : Effect.logWarning("board gateway: attachments failed to claim, sent without them", {
-                threadId: input.threadId,
-                detail: error.message,
-              }).pipe(Effect.andThen(dispatch([]))),
+        ThreadCommandRefusedError: () => send(CommandId.make(`${input.commandId}:queued`), false),
       }),
-      Effect.mapError(commandError("message.dispatch", input.threadId)),
     );
   });
 
@@ -805,7 +881,8 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
       function* (threadId) {
         const shell = yield* shellOf(threadId);
         if (shell !== null && shell.deletedAt === null) {
-          return boardThreadStateFromShell(shell, yield* nowMs);
+          const state = boardThreadStateFromShell(shell, yield* nowMs);
+          return (yield* restartContinuationPending(shell)) ? { ...state, alive: true } : state;
         }
         const deleted = shell ?? (yield* deletedRecord(threadId));
         return deleted === null ? null : deletedThreadState(threadId, deleted.projectId);
@@ -904,14 +981,24 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
       shellOf(threadId).pipe(Effect.map((shell) => isoOrNull(shell?.updatedAt))),
     // A turn requested but not yet running: the latest run is still being
     // prepared, queued behind another, or waiting for its provider to start.
+    // A restart continuation upstream has yet to start reads the same way, from the cut run's end.
     pendingTurnStartAt: (threadId) =>
       shellOf(threadId).pipe(
-        Effect.map((shell) =>
-          shell !== null &&
-          (shell.status === "preparing" || shell.status === "queued" || shell.status === "starting")
-            ? isoOrNull(shell.latestRunRequestedAt)
-            : null,
-        ),
+        Effect.flatMap((shell) => {
+          if (shell === null) return Effect.succeed(null);
+          if (
+            shell.status === "preparing" ||
+            shell.status === "queued" ||
+            shell.status === "starting"
+          ) {
+            return Effect.succeed(isoOrNull(shell.latestRunRequestedAt));
+          }
+          return restartContinuationPending(shell).pipe(
+            Effect.map((pending) =>
+              pending ? isoOrNull(shell.latestRunCompletedAt ?? shell.latestRunRequestedAt) : null,
+            ),
+          );
+        }),
       ),
 
     // Walks down the thread's own app-owned subagent records rather than
@@ -1010,7 +1097,10 @@ const makeThreadGatewayV2 = Effect.gen(function* () {
 
 /** The gateway onto this server's own threads: what the router and
     the worker side build on. */
-export const LocalThreadGatewayV2Live = Layer.effect(LocalThreadGateway, makeThreadGatewayV2);
+export const LocalThreadGatewayV2Live = Layer.effect(LocalThreadGateway, makeThreadGatewayV2).pipe(
+  // The same layer value the orchestrator's stores use, so one outbox instance serves both.
+  Layer.provide(EffectOutbox.layer),
+);
 
 /** One gateway as both the board's `ThreadGateway` and this server's own,
     for a board with no workers — the test stacks. */

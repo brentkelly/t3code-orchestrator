@@ -20,7 +20,6 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL,
   ProjectId,
   type RepositoryIdentity,
-  type ServerSettings,
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
@@ -40,6 +39,7 @@ import {
   type BoardCiPass,
   type BoardEvent,
   type BoardConcurrencySettings,
+  type ServerSettings,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 

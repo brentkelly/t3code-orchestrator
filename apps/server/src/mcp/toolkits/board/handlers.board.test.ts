@@ -17,6 +17,8 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import { McpSchema } from "effect/ai";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -252,6 +254,47 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       );
       assert.strictEqual(failure.code, "thread-not-linked");
       assert.include(failure.message, "adopt");
+    }),
+  );
+
+  // An OAuth client ("use T3 Code in another app") is no thread, so it has no card to act for:
+  // a board read or write from it is refused and changes nothing (T3O-72).
+  it.effect("refuses board tools from an MCP client that is not a thread", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const oauthClient = Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        ...scopeFor(linkedThread),
+        thread: undefined,
+        client: { sessionId: "oauth-1", label: "Another app", access: "full-access" },
+      });
+      const asThread = boardHandlers.board_list_cards({}).pipe(withScope(orphanThread));
+      const cardsBefore = (yield* asThread).cards.length;
+      const created = yield* Effect.flip(
+        boardHandlers.board_create_card({ projectId, title: "From outside" }).pipe(oauthClient),
+      );
+      assert.strictEqual(created.code, "rejected");
+      const listed = yield* Effect.flip(boardHandlers.board_list_cards({}).pipe(oauthClient));
+      assert.strictEqual(listed.code, "rejected");
+      assert.strictEqual((yield* asThread).cards.length, cardsBefore);
+    }),
+  );
+
+  it.effect("shows the board tools to a thread and hides them from any other MCP client", () =>
+    Effect.gen(function* () {
+      const shown = (scope: McpInvocationScope) =>
+        Effect.sync(() =>
+          Object.values(BoardToolkit.tools).map((tool) => {
+            const enabled = Context.getOrUndefined(tool.annotations, McpSchema.EnabledWhen);
+            return enabled?.({ protocolVersion: "2025-06-18", capabilities: {} }) ?? true;
+          }),
+        ).pipe(Effect.provideService(McpInvocationContext.McpInvocationContext, scope));
+      assert.isTrue((yield* shown(scopeFor(linkedThread))).every(Boolean));
+      const oauthClient = {
+        ...scopeFor(linkedThread),
+        thread: undefined,
+        client: { sessionId: "oauth-1", label: "Another app", access: "full-access" as const },
+      };
+      assert.isTrue((yield* shown(oauthClient)).every((visible) => !visible));
     }),
   );
 
