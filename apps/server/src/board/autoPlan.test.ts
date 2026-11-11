@@ -1051,6 +1051,47 @@ it.effect(
   },
 );
 
+it.effect("a reopened prompt whose send fails stays pending, so recovery sends it", () => {
+  const card = planningCard("flaky", { autoBuildSetting: true });
+  let failures = 1;
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("flaky", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+      gateway: (local) => ({
+        ...local,
+        send: (input) => {
+          if (input.text !== reopenedText(true) || failures === 0) return local.send(input);
+          failures -= 1;
+          return Effect.fail(
+            new ThreadCommandRefusedError({
+              command: "send",
+              threadId: input.threadId,
+              detail: "The worker dropped the send.",
+            }),
+          );
+        },
+      }),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("flaky");
+        const threadId = yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
+        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* Ref.update(
+          h.shells,
+          (shells) => new Map([...shells, [threadId, fakeThreadState(threadId)]]),
+        );
+
+        // The turn-end handover's send fails; recovery, reached on the same turn end, retries it.
+        yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-one"));
+        assert.strictEqual(failures, 0);
+        assert.lengthOf(sendsOf(yield* h.commands, reopenedText(true)), 1);
+        assert.isString(boardCardStepState(yield* h.board, id)!.reopenedPromptAt);
+      }),
+  );
+});
+
 it.effect("a re-completion in the same turn is approved with nothing sent", () => {
   const card = planningCard("quick", { autoBuildSetting: true });
   return withGovernor(

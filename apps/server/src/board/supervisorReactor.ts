@@ -7483,14 +7483,23 @@ const make = Effect.gen(function* () {
     if (!reopenedPromptPending(live) || !reopenedForAutoPlan(board, current, live)) {
       return false;
     }
-    if (!(yield* recordReopenedDelivery(live))) return false;
-    yield* sendTurn({
-      threadId: live.threadId,
-      text: boardAutoPlanInstruction(automationIn(board, current).autoBuild.value, {
-        reopened: true,
+    // Stamped only once the send lands, so a failed send stays pending for the next turn end or
+    // sweep. The supervisor's single worker means no second delivery can race this one.
+    const sent = yield* optional(
+      "thread.send",
+      threads.send({
+        commandId: yield* commandId("auto-plan-reopened-prompt"),
+        threadId: live.threadId,
+        text: boardAutoPlanInstruction(automationIn(board, current).autoBuild.value, {
+          reopened: true,
+        }),
+        attachments: [],
+        runtimeMode: live.runtimeMode,
+        interactionMode: "default",
       }),
-      runtimeMode: live.runtimeMode,
-    });
+    );
+    if (!sent) return false;
+    yield* recordReopenedDelivery(live);
     return true;
   });
 
