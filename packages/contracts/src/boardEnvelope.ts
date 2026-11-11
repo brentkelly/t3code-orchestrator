@@ -401,7 +401,7 @@ function boardReviewSettlingBlock(input: {
   switch (input.phase) {
     case "review":
       return [
-        `This is a settling round. Review only the changes this branch made since commit \`${mode.sinceSha}\` (\`git diff ${mode.sinceSha}..HEAD\`), including their direct callers and callees. Read other code only as context, and raise no findings about code outside that scope. If \`${mode.sinceSha}\` is missing, is not an ancestor of HEAD, or the range contains merge commits, review the whole branch instead.`,
+        `This is a settling round. Review only the changes this branch made since commit \`${mode.sinceSha}\` (\`git diff ${mode.sinceSha}..HEAD\`), including their direct callers and callees. Read other code only as context, and raise no findings about code outside that scope. If \`${mode.sinceSha}\` is missing, is not an ancestor of HEAD, or the range contains merge commits, review the whole branch instead. This scope limits only your own search: a CI failure, a finding this prompt marks must-fix, and an unresolved human comment on the pull request are still reported wherever their code is.`,
         'Add `scope: "delta"` to your payload, or `scope: "branch"` if you fell back to the whole branch.',
         "In a settling round only `critical` findings force another round; `improvement` findings are still fixed and verified. Rate honestly: `critical` means it would cause an incident or break existing behaviour, never a hardening idea or a missing test.",
       ].join(" ");

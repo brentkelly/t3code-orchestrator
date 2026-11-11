@@ -10492,6 +10492,8 @@ function boardReviewFindingSettled(
   );
 }
 
+const BOARD_REVIEW_COMMIT_ID = /^[0-9a-f]{7,40}$/i;
+
 /** A round's recorded mode: its `roundModes` entry, or full when it has none. */
 export function boardReviewRoundModeOf(
   overrides: Pick<BoardCardReviewOverrides, "roundModes"> | null | undefined,
@@ -10537,7 +10539,11 @@ export function boardReviewNextRoundMode(input: {
       : (Option.getOrNull(
           decodeBoardReviewPayloadOption(parseBoardStepPayloadJson(previousReview.payload)),
         )?.reviewedSha ?? null);
-  if (reviewedSha === null) return BOARD_REVIEW_FULL_ROUND;
+  // The SHA is model-written and lands in the next prompt's `git diff`: a ref like `HEAD` would
+  // scope the round to nothing, so anything but a commit id runs full.
+  if (reviewedSha === null || !BOARD_REVIEW_COMMIT_ID.test(reviewedSha)) {
+    return BOARD_REVIEW_FULL_ROUND;
+  }
   return forcing < review.settleBelowFindings
     ? { kind: "settling", sinceSha: reviewedSha }
     : BOARD_REVIEW_FULL_ROUND;

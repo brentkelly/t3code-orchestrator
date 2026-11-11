@@ -59,6 +59,9 @@ const config = (
 const reviewExec = (patch: Partial<BoardStageExecutionReview> = {}): BoardStageExecutionReview =>
   ({ ...DEFAULT_BOARD_REVIEW_STAGE_EXECUTION, ...patch }) as BoardStageExecutionReview;
 
+/** A fixture commit id: settling rounds only trust a hex `reviewedSha`. */
+const reviewSha = (round: number) => `c0ffee${round}`;
+
 const completion = (
   stepId: string,
   payload: unknown,
@@ -130,9 +133,9 @@ const fixedRound = (
   findings: ReadonlyArray<BoardReviewFinding>,
 ): BoardStepCompletion[] =>
   findings.length === 0
-    ? [completion(`review@${round}`, { reviewedSha: `sha-${round}`, findings })]
+    ? [completion(`review@${round}`, { reviewedSha: reviewSha(round), findings })]
     : [
-        completion(`review@${round}`, { reviewedSha: `sha-${round}`, findings }),
+        completion(`review@${round}`, { reviewedSha: reviewSha(round), findings }),
         completion(`triage@${round}`, {
           fixedSha: `fix-${round}`,
           dispositions: findings.map((f) => ({ findingId: f.id, action: "fixed", note: "" })),
@@ -154,7 +157,7 @@ const settlingScenarios = [
     completions: oneImprovementRounds(4),
     rounds: 5,
     stopAfterRound: null,
-    roundModes: { "4": settlingSince("sha-3") },
+    roundModes: { "4": settlingSince(reviewSha(3)) },
   },
   {
     name: "the same round 4 run full continues",
@@ -167,7 +170,7 @@ const settlingScenarios = [
     completions: [...oneImprovementRounds(3), ...fixedRound(4, [finding("critical", "c1")])],
     rounds: 6,
     stopAfterRound: null,
-    roundModes: { "4": settlingSince("sha-3") },
+    roundModes: { "4": settlingSince(reviewSha(3)) },
   },
   {
     name: "a forced-full round 4 continues",
@@ -1532,8 +1535,8 @@ describe("settling rounds (T3O-64)", () => {
   it("plans a new settling round's review with the record to write and a delta prompt", () => {
     const review = runOf(plan(oneImprovementRounds(3)));
     expect(review.stepId).toBe("review@4");
-    expect(review.reviewRoundMode).toEqual({ round: 4, mode: settlingSince("sha-3") });
-    expect(review.prompt).toContain("git diff sha-3..HEAD");
+    expect(review.reviewRoundMode).toEqual({ round: 4, mode: settlingSince(reviewSha(3)) });
+    expect(review.prompt).toContain("git diff c0ffee3..HEAD");
     // Settling off, or a round already recorded: nothing to record.
     const off = runOf(plan(oneImprovementRounds(3), reviewExec({ settleAfterRound: null })));
     expect(off.reviewRoundMode).toBeUndefined();
@@ -1558,10 +1561,10 @@ describe("settling rounds (T3O-64)", () => {
   it("composes a settling round's later phases from the record", () => {
     const completions = [
       ...oneImprovementRounds(3),
-      completion("review@4", { reviewedSha: "sha-4", findings: improvementsOf(4, 1) }),
+      completion("review@4", { reviewedSha: reviewSha(4), findings: improvementsOf(4, 1) }),
     ];
     const triage = runOf(
-      plan(completions, undefined, overrides({ roundModes: { "4": settlingSince("sha-3") } })),
+      plan(completions, undefined, overrides({ roundModes: { "4": settlingSince(reviewSha(3)) } })),
     );
     expect(triage.stepId).toBe("triage@4");
     expect(triage.prompt).toContain("This is a settling round");
@@ -1603,7 +1606,7 @@ describe("settling rounds (T3O-64)", () => {
     const result = replay(script);
     expect(result.next).toEqual({ kind: "complete", outcome: "succeeded" });
     expect(boardReviewRoundsStarted({ completions: result.completions, liveStepId: null })).toBe(4);
-    expect(result.overrides?.roundModes).toEqual({ "4": settlingSince("sha-3") });
+    expect(result.overrides?.roundModes).toEqual({ "4": settlingSince(reviewSha(3)) });
   });
 
   it("Z5-300 shape: a busy round 3 keeps round 4 full, and round 5 settles", () => {
@@ -1616,7 +1619,7 @@ describe("settling rounds (T3O-64)", () => {
     const result = replay(script);
     expect(result.next).toEqual({ kind: "complete", outcome: "succeeded" });
     expect(boardReviewRoundsStarted({ completions: result.completions, liveStepId: null })).toBe(5);
-    expect(result.overrides?.roundModes).toEqual({ "5": settlingSince("sha-4") });
+    expect(result.overrides?.roundModes).toEqual({ "5": settlingSince(reviewSha(4)) });
   });
 
   it("goes back to full review after a settling round with two criticals", () => {
@@ -1630,8 +1633,8 @@ describe("settling rounds (T3O-64)", () => {
     expect(result.next).toEqual({ kind: "complete", outcome: "succeeded" });
     // Round 5 ran full, so its one landed improvement fix forced round 6, which settles again.
     expect(result.overrides?.roundModes).toEqual({
-      "4": settlingSince("sha-3"),
-      "6": settlingSince("sha-5"),
+      "4": settlingSince(reviewSha(3)),
+      "6": settlingSince(reviewSha(5)),
     });
     expect(boardReviewRoundsStarted({ completions: result.completions, liveStepId: null })).toBe(6);
   });

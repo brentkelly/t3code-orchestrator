@@ -657,6 +657,22 @@ describe("settling round prompts (T3O-64)", () => {
     // The block survives a rewritten editable prompt, and still says nothing of earlier rounds.
     expect(prompt).toContain("Custom intent only.");
     expect(prompt).not.toContain("board_get_card_context");
+    // The delta limits the reviewer's own search, never CI, must-fix or human-comment findings.
+    expect(prompt).toContain(
+      "a CI failure, a finding this prompt marks must-fix, and an unresolved human comment on the pull request are still reported wherever their code is",
+    );
+    const ciSendBack = composeBoardReviewPhasePrompt({
+      phase: "review",
+      round: 4,
+      rounds: 5,
+      prompt: "Custom intent only.",
+      ciFinding: { stepName: "test", finding: "unit tests failed" },
+      mode: settling,
+    });
+    expect(ciSendBack.indexOf("report it as a critical finding")).toBeGreaterThan(-1);
+    expect(ciSendBack.indexOf("a CI failure")).toBeGreaterThan(
+      ciSendBack.indexOf("raise no findings about code outside that scope"),
+    );
   });
 
   it("tells triage and the adjudicators only criticals force a round", () => {
