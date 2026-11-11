@@ -18,7 +18,7 @@ import {
   type ModelOptionsByInstance,
 } from "../components/settings/BoardModelRow";
 import { boardModelDisplayName } from "../components/settings/boardModelDisplayName";
-import { Popover, PopoverPopup } from "../components/ui/popover";
+import { Popover } from "../components/ui/popover";
 import { getCustomModelOptionsByInstance } from "../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -29,6 +29,7 @@ import { useBoardWorkersState } from "./workers/BoardWorkersContext";
 import { boardWorkerOnlyProviders } from "./workers/cardWorker";
 import type { BoardCardModelRowSpec } from "./boardCardModelRows";
 import { useBoardServerProviders, useBoardSettings } from "./useBoardEnvironmentId";
+import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
 
 /**
  * A row with no override names what it defers to and where to change it, never
@@ -105,7 +106,7 @@ export function BoardCardModelsPopover({
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       {anchor}
-      <PopoverPopup align="end" className="w-[440px] p-3">
+      <BoardPopoverPopup align="end" className="w-[440px]" inset="3">
         <div className="flex items-center gap-2">
           <span className="text-board-12-5 font-semibold text-foreground">
             Models for this card
@@ -189,7 +190,7 @@ export function BoardCardModelsPopover({
             A step is running. It keeps the model it started with. This applies to the next run.
           </p>
         ) : null}
-      </PopoverPopup>
+      </BoardPopoverPopup>
     </Popover>
   );
 }

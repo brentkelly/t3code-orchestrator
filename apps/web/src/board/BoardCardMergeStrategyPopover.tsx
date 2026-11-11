@@ -8,9 +8,11 @@ import type { ReactNode } from "react";
 
 import type { BoardMergeStrategy } from "@t3tools/contracts";
 
-import { Popover, PopoverPopup } from "../components/ui/popover";
-import { Radio, RadioGroup } from "../components/ui/radio-group";
+import { Popover } from "../components/ui/popover";
+import { Radio } from "../components/ui/radio-group";
 import type { BoardCardMergeStrategyOption } from "./boardCardMergeStrategy";
+import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
+import { BoardRadioGroup } from "./ui/BoardRadioGroup";
 
 const DEFAULT_VALUE = "default";
 
@@ -33,14 +35,14 @@ export function BoardCardMergeStrategyPopover({
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       {anchor}
-      <PopoverPopup align="end" className="w-[328px] p-3">
+      <BoardPopoverPopup align="end" className="w-[328px]" inset="3">
         <span className="text-board-12-5 font-semibold text-foreground">Merge strategy</span>
         <p className="mt-1 text-board-11-5 leading-normal text-muted-foreground">
           Applies to this card only.
         </p>
-        <RadioGroup
+        <BoardRadioGroup
           aria-label="Merge strategy for this card"
-          className="mt-2.5 gap-0.5"
+          className="mt-2.5"
           onValueChange={(next) => {
             const picked = options.find((option) => (option.value ?? DEFAULT_VALUE) === next);
             if (picked !== undefined && picked.value !== value) onChange(picked.value);
@@ -64,8 +66,8 @@ export function BoardCardMergeStrategyPopover({
               </label>
             );
           })}
-        </RadioGroup>
-      </PopoverPopup>
+        </BoardRadioGroup>
+      </BoardPopoverPopup>
     </Popover>
   );
 }

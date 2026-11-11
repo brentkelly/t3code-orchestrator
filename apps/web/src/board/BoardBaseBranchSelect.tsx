@@ -7,18 +7,13 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { CheckIcon, ChevronDownIcon, GitBranchIcon, SearchIcon } from "lucide-react";
 import { useDeferredValue, useRef, useState } from "react";
 
-import { Button } from "../components/ui/button";
 import {
   Combobox,
   ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxListVirtualized,
   ComboboxPopup,
   ComboboxStatus,
   ComboboxTrigger,
 } from "../components/ui/combobox";
-import { cn } from "../lib/utils";
 import { usePaginatedBranches } from "../state/queries";
 import {
   boardBaseBranchOptions,
@@ -26,6 +21,12 @@ import {
   boardBaseBranchSelectionValue,
   shouldLoadNextBranchPageAfterScroll,
 } from "./boardBaseBranch";
+import { BoardButton } from "./ui/BoardButton";
+import {
+  BoardComboboxCodeItem,
+  BoardComboboxPaddedList,
+  BoardComboboxSearchInput,
+} from "./ui/BoardCombobox";
 
 export function BoardBaseBranchSelect({
   environmentId,
@@ -34,6 +35,7 @@ export function BoardBaseBranchSelect({
   onSelect,
   disabled = false,
   className,
+  inline = false,
   size = "sm",
   align = "start",
 }: {
@@ -49,6 +51,8 @@ export function BoardBaseBranchSelect({
   readonly onSelect: (baseBranch: string | null, localName: string) => void;
   readonly disabled?: boolean;
   readonly className?: string;
+  /** Set into a line of meta text rather than standing as a control. */
+  readonly inline?: boolean;
   readonly size?: "xs" | "sm";
   readonly align?: "start" | "end";
 }) {
@@ -101,9 +105,15 @@ export function BoardBaseBranchSelect({
       value={selectedName ?? ""}
     >
       <ComboboxTrigger
-        render={<Button size={size === "xs" ? "xs" : "sm"} variant="outline" />}
+        render={
+          <BoardButton
+            className={className}
+            look={inline ? "branch-picker-inline" : "branch-picker"}
+            size={size === "xs" ? "xs" : "sm"}
+            variant="outline"
+          />
+        }
         aria-label="Base branch"
-        className={cn("min-w-0 max-w-full justify-start font-mono", className)}
         disabled={disabled || workspaceRoot === null}
       >
         <GitBranchIcon className="size-3 shrink-0 opacity-70" />
@@ -117,13 +127,9 @@ export function BoardBaseBranchSelect({
               aria-hidden="true"
               className="pointer-events-none absolute top-1.5 left-0 size-4 shrink-0 text-muted-foreground/55"
             />
-            <ComboboxInput
-              className="[&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
+            <BoardComboboxSearchInput
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search branches..."
-              showTrigger={false}
-              size="sm"
-              unstyled
               value={query}
             />
           </div>
@@ -137,11 +143,9 @@ export function BoardBaseBranchSelect({
           className="max-h-56 min-h-0 overflow-y-auto overscroll-contain"
           onScroll={maybeFetchNextPage}
         >
-          <ComboboxListVirtualized className="p-1">
+          <BoardComboboxPaddedList>
             {options.map((option) => (
-              <ComboboxItem
-                className="pe-1.5 font-mono"
-                hideIndicator
+              <BoardComboboxCodeItem
                 key={option.localName}
                 onClick={() => {
                   setOpen(false);
@@ -161,9 +165,9 @@ export function BoardBaseBranchSelect({
                     ) : null}
                   </span>
                 </div>
-              </ComboboxItem>
+              </BoardComboboxCodeItem>
             ))}
-          </ComboboxListVirtualized>
+          </BoardComboboxPaddedList>
         </div>
         {branchState.error === null ? null : <ComboboxStatus>{branchState.error}</ComboboxStatus>}
       </ComboboxPopup>

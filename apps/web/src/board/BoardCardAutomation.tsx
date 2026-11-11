@@ -28,7 +28,7 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
-import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
+import { Popover, PopoverTrigger } from "../components/ui/popover";
 import { Switch } from "../components/ui/switch";
 import { Toggle, ToggleGroup } from "../components/ui/toggle-group";
 import { boardEnvironment } from "../state/board";
@@ -48,6 +48,7 @@ import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { boardGroupSettingsVm } from "./boardGroups";
 import { boardHeaderButtonClass } from "./boardHeaderButton";
 import { boardToast } from "./boardToast";
+import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
 
 type AutomationPatch = Partial<Record<BoardAutomationToggle, boolean | null>>;
 
@@ -346,13 +347,13 @@ export function BoardGroupAutomationPopover(props: GroupAutomationProps) {
   return (
     <>
       <Popover>
-        <PopoverTrigger className={boardHeaderButtonClass(false)}>
+        <PopoverTrigger render={<button className={boardHeaderButtonClass(false)} type="button" />}>
           <SlidersHorizontalIcon />
           Automation
         </PopoverTrigger>
-        <PopoverPopup align="end" className="w-[344px] p-3">
+        <BoardPopoverPopup align="end" className="w-[344px]" inset="3">
           <BoardGroupAutomationPanel {...props} requestConfirm={setPending} />
-        </PopoverPopup>
+        </BoardPopoverPopup>
       </Popover>
       <GroupChangeConfirmDialog
         groupKey={props.group.key}

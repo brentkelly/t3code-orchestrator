@@ -40,6 +40,7 @@ import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { mintWorkerPairingToken } from "./boardWorkersState";
 import { addWorkerErrorCopy, looksLikePairingLink, type AddWorkerErrorCopy } from "./workerCopy";
+import { BoardDialogTitle } from "../ui/BoardDialog";
 
 export type AddWorkerMode =
   | { readonly kind: "add" }
@@ -246,12 +247,12 @@ function AddWorkerFlow(props: {
     return (
       <>
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <BoardDialogTitle look="with-icon">
             <CheckIcon className="size-4 text-success-foreground" />
             {props.mode.kind === "repair"
               ? `${worker.label} is re-paired`
               : `${worker.label} is now a worker`}
-          </DialogTitle>
+          </BoardDialogTitle>
         </DialogHeader>
         <DialogPanel>
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-board-13">

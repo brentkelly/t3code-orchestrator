@@ -14,8 +14,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { Input } from "../components/ui/input";
-import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
+import { Popover, PopoverTrigger } from "../components/ui/popover";
 import { cn } from "../lib/utils";
 import {
   boardLabelChipRows,
@@ -26,6 +25,8 @@ import {
 } from "./labelColour";
 import { boardLabelPickerModel } from "./labelPickerModel";
 import { BoardHint } from "./BoardHint";
+import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
+import { BoardInput } from "./ui/BoardInput";
 
 /** The trigger shows at most this many chips; the rest collapse into `+N`, so
     the trigger's height never depends on how many labels a card carries. */
@@ -99,8 +100,13 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
         aria-label={
           selectedNames.length === 0 ? "Add labels" : `Labels: ${selectedNames.join(", ")}`
         }
-        className="flex h-9 w-full min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border border-input bg-background pr-2 pl-2.5 text-foreground shadow-xs/5 transition-colors hover:bg-accent focus-visible:border-ring focus-visible:outline-none sm:h-8 dark:bg-input/32"
         type="button"
+        render={
+          <button
+            className="flex h-9 w-full min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border border-input bg-background pr-2 pl-2.5 text-foreground shadow-xs/5 transition-colors hover:bg-accent focus-visible:border-ring focus-visible:outline-none sm:h-8 dark:bg-input/32"
+            type="button"
+          />
+        }
       >
         <TagIcon className="size-[13px] shrink-0 text-muted-foreground" />
         {selectedNames.length === 0 ? (
@@ -135,11 +141,18 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
 
       {/* `align="end"` pins the popover to the trigger's right edge, which is
           where the field sits in the create dialog's Title/Label row. */}
-      <PopoverPopup align="end" className="w-[280px] max-w-[calc(100vw-80px)] p-1.5" padding="none">
-        <div className="flex min-w-0 flex-col gap-1.25">
-          <Input
+      <BoardPopoverPopup
+        align="end"
+        className="w-[280px] max-w-[calc(100vw-80px)]"
+        inset="1.5"
+        padding="none"
+      >
+        {/* Clipped to the radius a padding-less popover viewport clips its content to. */}
+        <div className="flex min-w-0 flex-col gap-1.25 overflow-clip rounded-board-inner-lg">
+          <BoardInput
             autoFocus
-            className="h-[30px] rounded-lg text-board-12-5"
+            className="h-[30px]"
+            look="label-search"
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -310,7 +323,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
             ) : null}
           </div>
         </div>
-      </PopoverPopup>
+      </BoardPopoverPopup>
     </Popover>
   );
 }

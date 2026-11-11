@@ -8,10 +8,11 @@ import type { BoardWorkerId } from "@t3tools/contracts";
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
 import { useState } from "react";
 
-import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
+import { Popover, PopoverTrigger } from "../../components/ui/popover";
 import { cn } from "../../lib/utils";
 import { BoardHint } from "../BoardHint";
 import type { BoardWorkerChoice } from "./cardWorker";
+import { BoardPopoverPopup } from "../ui/BoardPopoverPopup";
 
 export function BoardWorkerPicker(props: {
   readonly choices: ReadonlyArray<BoardWorkerChoice>;
@@ -36,11 +37,15 @@ export function BoardWorkerPicker(props: {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         aria-label="Worker"
-        className={cn(
-          "inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md border border-input bg-background px-2 text-left text-board-12-5 text-foreground hover:bg-accent",
-          props.className,
-        )}
-        render={<button type="button" />}
+        render={
+          <button
+            className={cn(
+              "inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md border border-input bg-background px-2 text-left text-board-12-5 text-foreground hover:bg-accent",
+              props.className,
+            )}
+            type="button"
+          />
+        }
       >
         <span className="min-w-0 flex-1 truncate">{props.value.label}</span>
         {props.value.pinned ? (
@@ -48,7 +53,12 @@ export function BoardWorkerPicker(props: {
         ) : null}
         <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
       </PopoverTrigger>
-      <PopoverPopup align="start" className="w-72 flex-col p-1" side={props.side ?? "bottom"}>
+      <BoardPopoverPopup
+        align="start"
+        className="w-72 flex-col"
+        inset="1"
+        side={props.side ?? "bottom"}
+      >
         <button
           className="flex flex-col items-start rounded-md px-2 py-1.5 text-left hover:bg-accent"
           onClick={() => pick(null)}
@@ -107,7 +117,7 @@ export function BoardWorkerPicker(props: {
             </BoardHint>
           );
         })}
-      </PopoverPopup>
+      </BoardPopoverPopup>
     </Popover>
   );
 }

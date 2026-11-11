@@ -13,10 +13,11 @@ import {
 import { CheckIcon, ChevronDownIcon, LockIcon } from "lucide-react";
 import { useState } from "react";
 
-import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
+import { Popover, PopoverTrigger } from "../components/ui/popover";
 import { cn } from "../lib/utils";
 import { BoardHint } from "./BoardHint";
 import { projectAccent, projectIconColorOf } from "./projectAccent";
+import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
 
 /** One project as the row needs it: identity, name, icon (for its colour),
     and whether it is on disk here. `workspaceRoot === null` means the project
@@ -161,7 +162,7 @@ export function BoardCardProjectRowValue({
       </BoardHint>
       {/* Upward and left-aligned, per the prototype: the row sits at the bottom
           of the side panel, so a downward menu would open off the panel. */}
-      <PopoverPopup align="start" className="w-50 flex-col p-1" side="top">
+      <BoardPopoverPopup align="start" className="w-50 flex-col" inset="1" side="top">
         <p className="text-wrap px-1.75 pt-1.5 pb-1 text-board-11 leading-board-1-4 text-muted-foreground">
           Moving reissues the task ID and resets the base branch.
         </p>
@@ -188,7 +189,7 @@ export function BoardCardProjectRowValue({
             )}
           </button>
         ))}
-      </PopoverPopup>
+      </BoardPopoverPopup>
     </Popover>
   );
 }

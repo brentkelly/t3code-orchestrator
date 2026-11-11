@@ -99,9 +99,9 @@ import { Fragment, Suspense, lazy, useEffect, useState, type ReactNode } from "r
 import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./BoardCardNavRails";
 import { useBoardUiStore } from "./boardUiStore";
 import { Button } from "../components/ui/button";
-import { Dialog, DialogPopup } from "../components/ui/dialog";
+import { Dialog } from "../components/ui/dialog";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../components/ui/menu";
-import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
+import { Popover, PopoverTrigger } from "../components/ui/popover";
 import {
   boardCardModelOverrideSummary,
   boardCardModelRows,
@@ -112,7 +112,6 @@ import { boardCardMergeStrategyView } from "./boardCardMergeStrategy";
 import { Switch } from "../components/ui/switch";
 import { NumberStepper } from "../components/settings/BoardPipelineSection";
 import { nextBoardCardPlanReview, type BoardCardPlanReviewView } from "./boardCardPlanReview";
-import { Textarea } from "../components/ui/textarea";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
@@ -183,6 +182,9 @@ import {
   resolveBoardStepRecovery,
   type BoardStepRecovery,
 } from "./boardStepRecovery";
+import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
+import { BoardTextarea } from "./ui/BoardInput";
+import { BoardSheetPopup } from "./ui/BoardDialog";
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
     apply inside this pure view. */
@@ -903,9 +905,10 @@ function BriefBody({
             onDetach={onDetachFile}
             state={staged}
           />
-          <Textarea
+          <BoardTextarea
             autoFocus
-            className="min-h-24 text-board-13-5 leading-board-1-6"
+            className="min-h-24"
+            look="brief"
             onBlur={commit}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
@@ -1453,11 +1456,16 @@ function BoardStageSecondaryMenu({
     <Popover onOpenChange={setOpen} open={open}>
       <PopoverTrigger
         aria-label="Other ways to advance"
-        className="-ml-px inline-flex h-[34px] w-7 shrink-0 items-center justify-center rounded-lg rounded-l-none border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent"
+        render={
+          <button
+            className="-ml-px inline-flex h-[34px] w-7 shrink-0 items-center justify-center rounded-lg rounded-l-none border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent"
+            type="button"
+          />
+        }
       >
         <ChevronDownIcon className="size-3.5" />
       </PopoverTrigger>
-      <PopoverPopup align="end" className="w-[262px] p-1.5">
+      <BoardPopoverPopup align="end" className="w-[262px]" inset="1.5">
         <div className="flex flex-col gap-0.5">
           {actions.map((action) => (
             <button
@@ -1479,7 +1487,7 @@ function BoardStageSecondaryMenu({
             </button>
           ))}
         </div>
-      </PopoverPopup>
+      </BoardPopoverPopup>
     </Popover>
   );
 }
@@ -1531,11 +1539,16 @@ function BoardStepRecoveryButton({
       <Popover onOpenChange={setOpen} open={open}>
         <PopoverTrigger
           aria-label="Other ways to recover"
-          className="-ml-px inline-flex h-[34px] w-7 shrink-0 items-center justify-center rounded-lg rounded-l-none border border-primary bg-primary text-primary-foreground shadow-xs hover:bg-primary/90"
+          render={
+            <button
+              className="-ml-px inline-flex h-[34px] w-7 shrink-0 items-center justify-center rounded-lg rounded-l-none border border-primary bg-primary text-primary-foreground shadow-xs hover:bg-primary/90"
+              type="button"
+            />
+          }
         >
           <ChevronDownIcon className="size-3.5" />
         </PopoverTrigger>
-        <PopoverPopup align="end" className="w-[262px] p-1.5">
+        <BoardPopoverPopup align="end" className="w-[262px]" inset="1.5">
           <div className="flex flex-col gap-0.5">
             <BoardHint label={restartDisabledReason ?? undefined}>
               <button
@@ -1578,7 +1591,7 @@ function BoardStepRecoveryButton({
               </BoardHint>
             )}
           </div>
-        </PopoverPopup>
+        </BoardPopoverPopup>
       </Popover>
     </div>
   );
@@ -2250,7 +2263,7 @@ function BoardBaseBranchRow({ props }: { readonly props: BoardCardDetailViewProp
       <BoardBaseBranchSelect
         align="end"
         baseBranch={card.baseBranch}
-        className="h-5 px-1 text-board-11-5 text-foreground"
+        inline
         environmentId={props.environmentId}
         onSelect={(next, localName) => {
           // Compared against the branch the card was CUT from, not the pin it
@@ -2833,8 +2846,13 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           <Menu>
             <MenuTrigger
               aria-label="More actions"
-              className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground data-popup-open:bg-accent data-popup-open:text-foreground"
               title="More actions"
+              render={
+                <button
+                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground data-popup-open:bg-accent data-popup-open:text-foreground"
+                  type="button"
+                />
+              }
             >
               <EllipsisVerticalIcon className="size-[15px]" />
             </MenuTrigger>
@@ -3392,14 +3410,14 @@ export function BoardCardDetailPopup({
   const [sheet, setSheet] = useState<HTMLElement | null>(null);
   useBoardCardNavKeys(sheet, nav);
   return (
-    <DialogPopup
+    <BoardSheetPopup
       aria-labelledby={CARD_TITLE_ID}
       className={cn(
         // `group/sheet` is what the nav rails watch: they reveal on hover of
         // the whole sheet, not of their own invisible band.
-        "group/sheet overflow-hidden p-0",
+        "group/sheet overflow-hidden",
         maximised
-          ? "fixed inset-0 h-screen max-h-none w-screen max-w-none rounded-none border-0"
+          ? null
           : wide
             ? // Under 1000px tall, take all but a 0.5rem sliver: the negative
               // margin reaches into the viewport's 1rem padding. `sm:` spares
@@ -3407,8 +3425,8 @@ export function BoardCardDetailPopup({
               "h-[86vh] max-h-[86vh] w-[min(1220px,100%)] max-w-[1220px] sm:[@media(max-height:999.98px)]:-my-2 sm:[@media(max-height:999.98px)]:h-[calc(100dvh-1rem)] sm:[@media(max-height:999.98px)]:max-h-[calc(100dvh-1rem)]"
             : "max-h-[86vh] w-[min(760px,100%)] max-w-[760px]",
       )}
+      maximised={maximised}
       ref={setSheet}
-      showCloseButton={false}
       {...(cardId === null ? {} : { "data-board-card-detail": cardId })}
     >
       {children}
@@ -3416,6 +3434,6 @@ export function BoardCardDetailPopup({
           stacking that keeps the header's buttons hit-testable over a rail is
           the explicit z-index on each, not source order. */}
       <BoardCardNavRails nav={nav} />
-    </DialogPopup>
+    </BoardSheetPopup>
   );
 }

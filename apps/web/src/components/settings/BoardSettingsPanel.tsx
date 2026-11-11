@@ -27,7 +27,6 @@ import {
 import { environmentShell } from "../../state/shell";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import {
   normalizeKeyPrefixInput,
@@ -51,6 +50,8 @@ import {
   useBoardSettings,
   useUpdateBoardSettings,
 } from "../../board/useBoardEnvironmentId";
+import { BoardInput } from "../../board/ui/BoardInput";
+import { BoardButton } from "../../board/ui/BoardButton";
 
 /** The provider instances the server reports, built-in drivers included, plus
     any configured custom instances — the concurrency rows offer these. Free text
@@ -194,12 +195,13 @@ function ProjectRows({
               </span>
             ) : null}
             <span className="min-w-2 flex-1" />
-            <Input
+            <BoardInput
               key={`${project.id}:${entry?.keyPrefix ?? ""}`}
               defaultValue={entry?.keyPrefix ?? ""}
               placeholder={DEFAULT_BOARD_KEY_PREFIX}
               aria-label={`Card key prefix for ${project.title}`}
-              className="h-7.5 w-24 font-mono text-board-13 uppercase"
+              className="h-7.5 w-24"
+              look="key-prefix"
               onBlur={(event) => {
                 const next = normalizeKeyPrefixInput(event.target.value);
                 if (next !== (entry?.keyPrefix ?? null))
@@ -223,10 +225,10 @@ function ProjectRows({
               >
                 <WorkflowIcon />
               </Button>
-              <Button
+              <BoardButton
                 variant="ghost"
                 size="icon-sm"
-                className={cn("text-muted-foreground", hidden && "border border-border")}
+                look={hidden ? "muted-pressed" : "muted"}
                 title={hidden ? "Show on the board" : "Hide from the board"}
                 aria-label={
                   hidden
@@ -237,7 +239,7 @@ function ProjectRows({
                 onClick={() => setProject(project.id, { hidden: !hidden })}
               >
                 {hidden ? <EyeOffIcon /> : <EyeIcon />}
-              </Button>
+              </BoardButton>
               <Button
                 variant="ghost"
                 size="icon-sm"

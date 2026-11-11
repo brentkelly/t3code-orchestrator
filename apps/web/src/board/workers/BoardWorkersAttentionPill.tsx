@@ -9,8 +9,9 @@ import { ServerOffIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
-import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
+import { Popover, PopoverTrigger } from "../../components/ui/popover";
 import { boardWorkersAttention } from "./cardWorker";
+import { BoardPopoverPopup } from "../ui/BoardPopoverPopup";
 
 export function BoardWorkersAttentionPill(props: {
   readonly cards: ReadonlyArray<BoardCardShell>;
@@ -26,13 +27,19 @@ export function BoardWorkersAttentionPill(props: {
     <Popover onOpenChange={setOpen} open={open}>
       <PopoverTrigger
         aria-label={attention.label}
-        className="inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-md bg-warning/12 px-2 text-board-12 font-medium text-warning-foreground transition-colors hover:bg-warning/20"
+
         type="button"
+        render={
+          <button
+            className="inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-md bg-warning/12 px-2 text-board-12 font-medium text-warning-foreground transition-colors hover:bg-warning/20"
+            type="button"
+          />
+        }
       >
         <ServerOffIcon className="size-3.5 shrink-0" />
         {attention.label}
       </PopoverTrigger>
-      <PopoverPopup align="end" className="w-[318px] p-3">
+      <BoardPopoverPopup align="end" className="w-[318px]" inset="3">
         <span className="text-board-12-5 font-semibold text-foreground">Workers</span>
         {attention.rows.map((row) => (
           <div className="mt-2 flex flex-col gap-1 border-t border-border pt-2" key={row.workerId}>
@@ -76,7 +83,7 @@ export function BoardWorkersAttentionPill(props: {
             Open Workers settings
           </Button>
         </div>
-      </PopoverPopup>
+      </BoardPopoverPopup>
     </Popover>
   );
 }

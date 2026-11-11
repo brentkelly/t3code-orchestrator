@@ -21,7 +21,7 @@ import { ArrowDownIcon, CopyIcon, DownloadIcon } from "lucide-react";
 import { AsyncResult } from "effect/reactivity";
 import { memo, useContext, useEffect, useRef, useState } from "react";
 
-import { Dialog, DialogPopup, DialogTitle } from "../components/ui/dialog";
+import { Dialog, DialogPopup } from "../components/ui/dialog";
 import { toastManager } from "../components/ui/toast";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { observeResize } from "../lib/observeResize";
@@ -34,6 +34,7 @@ import {
   type BoardCiAnsiState,
 } from "./boardCiAnsi";
 import { boardCiLogFileName, boardCiProgressFraction, boardCiProgressLabel } from "./boardCi";
+import { BoardDialogTitle } from "./ui/BoardDialog";
 
 const HEADER_BUTTON_CLASS =
   "inline-flex h-6 shrink-0 items-center gap-1 rounded-board-7 border border-input bg-popover px-2 text-board-11-5 font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground disabled:opacity-60";
@@ -321,15 +322,13 @@ export function BoardCiLogDialogView({
     <Dialog onOpenChange={(open) => (open ? undefined : onClose())} open>
       <DialogPopup
         bottomStickOnMobile={false}
-        className="h-[min(82vh,900px)] max-w-[min(1100px,96vw)] overflow-hidden p-0"
+        className="h-[min(82vh,900px)] max-w-[min(1100px,96vw)] overflow-hidden"
         showCloseButton
       >
         <div className="flex shrink-0 items-center gap-2.5 border-b border-border py-2.5 pr-12 pl-4">
           <span className="shrink-0 font-mono text-board-12 text-muted-foreground">›_</span>
           <div className="flex min-w-0 flex-1 flex-col gap-px">
-            <DialogTitle className="truncate text-board-13 font-semibold">
-              {step?.name ?? "CI step"}
-            </DialogTitle>
+            <BoardDialogTitle look="log">{step?.name ?? "CI step"}</BoardDialogTitle>
             <span className="truncate font-mono text-board-11 text-muted-foreground">
               {step?.command}
             </span>

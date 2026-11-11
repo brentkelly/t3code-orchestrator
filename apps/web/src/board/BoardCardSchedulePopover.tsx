@@ -9,7 +9,7 @@ import { Clock } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
-import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
+import { Popover, PopoverTrigger } from "../components/ui/popover";
 import {
   boardScheduleCopy,
   boardScheduleSetTip,
@@ -19,6 +19,7 @@ import {
   scheduleTriggerLabel,
   type BoardScheduleKind,
 } from "./boardSchedule";
+import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
 
 export function BoardCardSchedulePopover({
   scheduledStartAt,
@@ -80,15 +81,6 @@ export function BoardCardSchedulePopover({
     >
       <PopoverTrigger
         aria-label={scheduledStartAt === null ? copy.emptyTip : copy.title}
-        className={cn(
-          // Neutral, never coloured. A scheduled card is not running, not
-          // done and not waiting on a human; and it is not amber either,
-          // because amber's job is "this will never move until someone acts"
-          // and a scheduled card moves on its own.
-          "inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-md px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50",
-          scheduledStartAt !== null && "bg-muted px-2 text-foreground",
-          className,
-        )}
         disabled={disabled}
         title={
           scheduledStartAt === null
@@ -101,6 +93,20 @@ export function BoardCardSchedulePopover({
               })
         }
         type="button"
+        render={
+          <button
+            className={cn(
+              // Neutral, never coloured. A scheduled card is not running, not
+              // done and not waiting on a human; and it is not amber either,
+              // because amber's job is "this will never move until someone acts"
+              // and a scheduled card moves on its own.
+              "inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-md px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50",
+              scheduledStartAt !== null && "bg-muted px-2 text-foreground",
+              className,
+            )}
+            type="button"
+          />
+        }
       >
         <Clock className="size-3 shrink-0" />
         {scheduledStartAt === null ? null : (
@@ -109,7 +115,7 @@ export function BoardCardSchedulePopover({
           </span>
         )}
       </PopoverTrigger>
-      <PopoverPopup align="start" className="w-[252px] p-2.5">
+      <BoardPopoverPopup align="start" className="w-[252px]" inset="2.5">
         <div className="text-board-11 font-semibold uppercase tracking-board-6 text-muted-foreground">
           {copy.title}
         </div>
@@ -154,7 +160,7 @@ export function BoardCardSchedulePopover({
             {copy.clearLabel}
           </button>
         )}
-      </PopoverPopup>
+      </BoardPopoverPopup>
     </Popover>
   );
 }

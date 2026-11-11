@@ -41,6 +41,10 @@
   --radius-board-7: 7px;
   --radius-board-9: 9px;
   --radius-board-10: 10px;
+  /* One pixel inside upstream's md, lg and 2xl radii: the inner edge of a 1px border. */
+  --radius-board-inner-md: calc(var(--radius) - 3px);
+  --radius-board-inner-lg: calc(var(--radius) - 1px);
+  --radius-board-inner-2xl: calc(var(--radius) + 7px);
 
   --ease-board: ease;
 
@@ -125,6 +129,9 @@
     color-mix(in srgb, var(--primary) 32%, transparent);
   --shadow-board-drop-before: inset 0 2px 0 0 var(--primary);
   --shadow-board-drop-after: inset 0 -2px 0 0 var(--primary);
+  /* A field's top-edge highlight, as upstream's inputs draw it. */
+  --shadow-board-control-top: 0 1px color-mix(in oklab, var(--color-black) 4%, transparent);
+  --shadow-board-control-top-dark: 0 -1px color-mix(in oklab, var(--color-white) 6%, transparent);
 }
 
 :root {

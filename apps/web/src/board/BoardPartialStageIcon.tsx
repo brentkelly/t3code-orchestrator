@@ -7,10 +7,11 @@
 import type { BoardStageId, ProjectIconColor, ProjectId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 
-import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
+import { Popover, PopoverTrigger } from "../components/ui/popover";
 import { cn } from "../lib/utils";
 import type { BoardStageCoverage, BoardStageCoverageEntry } from "./boardProjectPipelines";
 import { projectAccent } from "./projectAccent";
+import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
 
 export function BoardPartialStageIcon(props: {
   readonly stage: BoardStageId;
@@ -22,15 +23,20 @@ export function BoardPartialStageIcon(props: {
     <Popover>
       <PopoverTrigger
         aria-label={props.title}
-        className="ml-1 inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/8"
         title={props.title}
+        render={
+          <button
+            className="ml-1 inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/8"
+            type="button"
+          />
+        }
       >
         <svg aria-hidden className="size-3" viewBox="0 0 12 12">
           <circle cx="6" cy="6" fill="none" r="4.75" stroke="currentColor" strokeWidth="1.5" />
           <path d="M6 1.25 A4.75 4.75 0 0 1 6 10.75 Z" fill="currentColor" />
         </svg>
       </PopoverTrigger>
-      <PopoverPopup align="start" className="w-[280px] p-3">
+      <BoardPopoverPopup align="start" className="w-[280px]" inset="3">
         <div className="flex flex-col gap-2 text-board-12">
           <span className="font-medium text-foreground">{props.title}</span>
           <CoverageList
@@ -51,7 +57,7 @@ export function BoardPartialStageIcon(props: {
             Stage settings ›
           </Link>
         </div>
-      </PopoverPopup>
+      </BoardPopoverPopup>
     </Popover>
   );
 }

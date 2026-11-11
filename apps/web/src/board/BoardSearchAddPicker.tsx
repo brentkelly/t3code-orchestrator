@@ -8,12 +8,13 @@ import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
+import { Popover, PopoverTrigger } from "../components/ui/popover";
 import { cn } from "../lib/utils";
 import { BoardHint } from "./BoardHint";
 import { boardCardMatchesQuery, normaliseBoardCardQuery } from "./boardCardFilter";
 import { projectAccent } from "./projectAccent";
+import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
+import { BoardInput } from "./ui/BoardInput";
 
 export interface BoardPickerOption {
   readonly id: string;
@@ -62,9 +63,10 @@ export function BoardPickerSearchBody({
   const { visible: filtered, hidden } = boardPickerVisibleOptions(options, query);
   return (
     <>
-      <Input
+      <BoardInput
         autoFocus
-        className="h-7 text-sm"
+        className="h-7"
+        look="picker-search"
         onChange={(event) => {
           setQuery(event.target.value);
           onQueryChange?.(event.target.value);
@@ -145,7 +147,7 @@ export function BoardSearchAddPicker({
         <PlusIcon />
         {label}
       </PopoverTrigger>
-      <PopoverPopup className="w-64 p-1.5">
+      <BoardPopoverPopup className="w-64" inset="1.5">
         {/* Remounted per open so the query resets — the body owns its filter state. */}
         <BoardPickerSearchBody
           key={openCount}
@@ -158,7 +160,7 @@ export function BoardSearchAddPicker({
           pending={pending}
           placeholder={placeholder}
         />
-      </PopoverPopup>
+      </BoardPopoverPopup>
     </Popover>
   );
 }

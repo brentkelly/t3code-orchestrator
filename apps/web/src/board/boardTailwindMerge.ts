@@ -36,7 +36,16 @@ export const BOARD_TAILWIND_MERGE_THEME = {
     "board-7",
     "board-9",
   ],
-  radius: ["board-3", "board-5", "board-7", "board-9", "board-10"],
+  radius: [
+    "board-3",
+    "board-5",
+    "board-7",
+    "board-9",
+    "board-10",
+    "board-inner-md",
+    "board-inner-lg",
+    "board-inner-2xl",
+  ],
   shadow: [
     "board-card-hover",
     "board-card-warning",
@@ -57,6 +66,8 @@ export const BOARD_TAILWIND_MERGE_THEME = {
     "board-inset-primary-soft",
     "board-drop-before",
     "board-drop-after",
+    "board-control-top",
+    "board-control-top-dark",
   ],
   ease: ["board"],
 } as const;
@@ -69,7 +80,7 @@ export const BOARD_TAILWIND_MERGE_BORDER_WIDTHS = [
 ] as const;
 
 /** Extends a tailwind-merge config with the board's scales. */
-export function mergeBoardTailwindTheme<C extends Config<string, string>>(config: C): C {
+export function mergeBoardTailwindTheme(config: Config<string, string>): Config<string, string> {
   return mergeConfigs(config, {
     extend: {
       theme: BOARD_TAILWIND_MERGE_THEME,

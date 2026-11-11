@@ -28,9 +28,7 @@ import * as Option from "effect/Option";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../components/ui/button";
-import { Dialog, DialogFooter, DialogPopup, DialogTitle } from "../components/ui/dialog";
-import { Input } from "../components/ui/input";
-import { Kbd } from "../components/ui/kbd";
+import { Dialog, DialogPopup } from "../components/ui/dialog";
 import {
   Select,
   SelectItem,
@@ -38,7 +36,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
-import { Textarea } from "../components/ui/textarea";
 import { cn, randomUUID } from "../lib/utils";
 import { boardEnvironment, environmentBoard } from "../state/board";
 import { BoardHint } from "./BoardHint";
@@ -86,6 +83,10 @@ import { boardStageLabel } from "./boardStages";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { projectAccent, projectIconColorOf } from "./projectAccent";
 import { useBoardSettings, useUpdateBoardSettings } from "./useBoardEnvironmentId";
+import { BoardInput, BoardTextarea } from "./ui/BoardInput";
+import { BoardButton } from "./ui/BoardButton";
+import { BoardDialogFooter, BoardDialogTitle } from "./ui/BoardDialog";
+import { BoardKbd } from "./ui/BoardKbd";
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
     apply. */
@@ -523,7 +524,7 @@ export function BoardCardCreateDialog({
       {/* Nested popups (stage, project, schedule) portal out of this subtree, so
           their own Enter handling is untouched by Mod+Enter here. */}
       <DialogPopup
-        className="max-h-[86vh] w-[min(600px,100%)] max-w-[600px] overflow-hidden p-0"
+        className="max-h-[86vh] w-[min(600px,100%)] max-w-[600px] overflow-hidden"
         onKeyDown={(event) => {
           if (
             !isBoardCardCreateShortcut({
@@ -544,9 +545,9 @@ export function BoardCardCreateDialog({
         {/* Identity row — the card modal's, with the stage the card will land
             in standing where the open card shows the stage it is in. */}
         <div className="flex shrink-0 items-center gap-2.25 px-4 pt-4 pr-11">
-          <DialogTitle className="shrink-0 text-board-17/tight tracking-board-n1">
+          <BoardDialogTitle className="shrink-0" look="create">
             {isChild ? "New child card" : "New card"}
-          </DialogTitle>
+          </BoardDialogTitle>
           {parentShell === null ? null : (
             // The card modal's "Part of" chip, inert here: the dialog sits on
             // the parent's sub-board already.
@@ -752,9 +753,9 @@ export function BoardCardCreateDialog({
           <div className="flex min-w-0 items-start gap-2.5">
             <div className="min-w-0 flex-[1.5]">
               <BoardSectionHeading className="mb-[7px]">Title</BoardSectionHeading>
-              <Input
+              <BoardInput
                 autoFocus
-                className="text-board-13-5"
+                look="title"
                 onChange={(event) => setTitle(event.target.value)}
                 placeholder="What needs building?"
                 value={title}
@@ -811,8 +812,9 @@ export function BoardCardCreateDialog({
                 onDetach={null}
                 state={briefAttachments}
               />
-              <Textarea
-                className="min-h-24 text-board-13-5 leading-board-1-6"
+              <BoardTextarea
+                className="min-h-24"
+                look="brief"
                 onChange={(event) => setBrief(event.target.value)}
                 onPaste={briefAttachments.handlers.onPaste}
                 placeholder="What's the context? Paste screenshots (⌘V) or drop files in here."
@@ -841,7 +843,7 @@ export function BoardCardCreateDialog({
           </div>
         </div>
 
-        <DialogFooter className="shrink-0 px-5">
+        <BoardDialogFooter className="shrink-0">
           {/* Left of Cancel, and a bare clock until a time is set: the brief
               asks for this to be largely hidden, and it is one of the few
               things on a new card that almost nobody sets. */}
@@ -860,14 +862,9 @@ export function BoardCardCreateDialog({
               <span className="text-board-12 text-muted-foreground max-sm:sr-only">
                 Closing keeps this draft
               </span>
-              <Button
-                className="hover:border-destructive hover:text-destructive-foreground"
-                onClick={discardDraft}
-                size="sm"
-                variant="outline"
-              >
+              <BoardButton look="discard" onClick={discardDraft} size="sm" variant="outline">
                 Discard draft
-              </Button>
+              </BoardButton>
             </>
           ) : (
             <Button onClick={() => handleOpenChange(false)} size="sm" variant="ghost">
@@ -885,11 +882,9 @@ export function BoardCardCreateDialog({
           >
             Create card
             {/* Nothing to press on a phone, where this dialog is a sheet. */}
-            <Kbd className="h-4 min-w-0 rounded-sm bg-primary-foreground/20 px-1 font-mono text-board-10 text-primary-foreground max-sm:hidden">
-              {submitShortcutLabel}
-            </Kbd>
+            <BoardKbd className="max-sm:hidden">{submitShortcutLabel}</BoardKbd>
           </Button>
-        </DialogFooter>
+        </BoardDialogFooter>
       </DialogPopup>
     </Dialog>
   );

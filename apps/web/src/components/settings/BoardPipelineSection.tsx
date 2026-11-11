@@ -120,7 +120,6 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
-import { Textarea } from "../ui/textarea";
 import {
   BOARD_STEP_MAX_ATTEMPTS_MAX,
   BOARD_STEP_TIMEOUT_MIN_MINUTES,
@@ -138,6 +137,8 @@ import {
   useBoardSettings,
   useUpdateBoardSettings,
 } from "../../board/useBoardEnvironmentId";
+import { BoardTextarea } from "../../board/ui/BoardInput";
+import { BoardButton } from "../../board/ui/BoardButton";
 
 /** The stand-in card identity for envelope previews: a run interpolates the
     real card, so the preview shows placeholders where values vary per card. */
@@ -374,10 +375,10 @@ function PromptRow(props: {
         {editing ? (
           <>
             {modified ? (
-              <Button
+              <BoardButton
                 size="xs"
                 variant="ghost"
-                className="h-6 gap-1 px-2 text-xs text-muted-foreground"
+                look="inline-action"
                 aria-label={`Reset ${props.label.toLowerCase()} to default`}
                 title="Restore the default prompt"
                 // Suppress the textarea's blur so opening the confirm modal
@@ -387,7 +388,7 @@ function PromptRow(props: {
               >
                 <RotateCcwIcon className="size-3" />
                 Reset
-              </Button>
+              </BoardButton>
             ) : null}
             {/* A label, not a button: clicking anywhere outside the textarea is
                 what ends editing, and a button here would be caught by that
@@ -402,16 +403,16 @@ function PromptRow(props: {
             {modified ? (
               <span className="font-mono text-board-11 text-muted-foreground">Modified</span>
             ) : null}
-            <Button
+            <BoardButton
               size="xs"
               variant="ghost"
-              className="h-6 gap-1 px-2 text-xs text-muted-foreground"
+              look="inline-action"
               aria-label={`Edit ${props.label.toLowerCase()}`}
               onClick={startEditing}
             >
               <PencilIcon className="size-3" />
               Edit
-            </Button>
+            </BoardButton>
           </>
         )}
       </div>
@@ -426,14 +427,15 @@ function PromptRow(props: {
         <SystemEnvelope text={props.preamble} edge="bottom" label="Preamble" />
 
         {editing ? (
-          <Textarea
+          <BoardTextarea
             key={`prompt:${props.id}`}
+            look="prompt"
             unstyled
             value={current}
             aria-label={`${props.label} text`}
             autoFocus
             rows={Math.min(16, Math.max(4, current.split("\n").length + 2))}
-            className="block w-full [&_textarea]:resize-y [&_textarea]:bg-card [&_textarea]:px-3.5 [&_textarea]:py-3 [&_textarea]:text-board-13 [&_textarea]:leading-relaxed [&_textarea]:text-foreground"
+            className="block w-full [&_textarea]:resize-y"
             onChange={(event) => setDraft(event.target.value)}
             // Clicking away IS "done": blur commits the text and closes the
             // editor, so there is nothing left for a Done button to do. A blur
@@ -1201,16 +1203,16 @@ function RemoveStageButton(props: { disabled: boolean; onDelete: () => void }) {
           </Button>
         </>
       ) : (
-        <Button
+        <BoardButton
           size="xs"
           variant="outline"
           disabled={props.disabled}
-          className="gap-1.5 text-destructive-foreground hover:bg-destructive/10"
+          look="danger-outline"
           onClick={() => setConfirming(true)}
         >
           <Trash2Icon className="size-3.5" />
           Remove stage
-        </Button>
+        </BoardButton>
       )}
     </div>
   );

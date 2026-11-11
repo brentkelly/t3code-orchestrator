@@ -23,7 +23,6 @@ import { useState } from "react";
 import { NumberStepper } from "../../components/settings/BoardPipelineSection";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
-import { Textarea } from "../../components/ui/textarea";
 import { cn } from "../../lib/utils";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -38,6 +37,7 @@ import {
 } from "./boardProjectSettings.logic";
 import { useBoardSettingsContext } from "./BoardSettingsLayout";
 import type { BoardProjectConfigState } from "./useBoardProjectConfig";
+import { BoardTextarea } from "../ui/BoardInput";
 
 const report = (title: string) => (result: { readonly _tag: string }) => {
   if (result._tag !== "Failure") return;
@@ -366,9 +366,10 @@ function PromptOverride(props: {
   const text = draft ?? props.value;
   return (
     <div className="flex flex-col gap-1.5">
-      <Textarea
+      <BoardTextarea
         aria-label="Prompt override"
-        className="min-h-24 font-mono text-xs"
+        className="min-h-24"
+        look="code"
         disabled={!props.canWrite}
         onChange={(event) => setDraft(event.target.value)}
         value={text}

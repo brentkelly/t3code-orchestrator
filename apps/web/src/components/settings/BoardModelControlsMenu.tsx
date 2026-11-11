@@ -1,9 +1,8 @@
 import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
-import { type ComponentProps, Fragment, memo, type ReactNode } from "react";
+import { Fragment, memo, type ReactNode } from "react";
 import { ChevronDownIcon, EllipsisIcon } from "lucide-react";
-import { cn } from "~/lib/utils";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
-import { Button } from "../ui/button";
+import type { ButtonVariant } from "../ui/button";
 import {
   Menu,
   MenuPopup,
@@ -12,6 +11,7 @@ import {
   MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
+import { BoardButton } from "../../board/ui/BoardButton";
 
 /**
  * A board model row's settings menu: traits, interaction mode and access level.
@@ -27,8 +27,7 @@ export const BoardModelControlsMenu = memo(function BoardModelControlsMenu(props
   onRuntimeModeChange?: (mode: RuntimeMode) => void;
   /** Trigger contents; the bare ellipsis when omitted. */
   triggerLabel?: ReactNode;
-  triggerVariant?: ComponentProps<typeof Button>["variant"];
-  triggerClassName?: string;
+  triggerVariant?: ButtonVariant;
   ariaLabel?: string;
   align?: "start" | "end";
 }) {
@@ -89,16 +88,10 @@ export const BoardModelControlsMenu = memo(function BoardModelControlsMenu(props
     <Menu>
       <MenuTrigger
         render={
-          <Button
+          <BoardButton
             size="sm"
             variant={props.triggerVariant ?? "ghost"}
-            className={cn(
-              "shrink-0 px-2",
-              props.triggerLabel === undefined
-                ? "text-muted-foreground/70 hover:text-foreground/80"
-                : "gap-1.5",
-              props.triggerClassName,
-            )}
+            look={props.triggerLabel === undefined ? "model-menu-icon" : "model-menu-label"}
             aria-label={props.ariaLabel ?? "Model settings"}
           />
         }

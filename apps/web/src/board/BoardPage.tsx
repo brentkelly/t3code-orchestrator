@@ -212,7 +212,7 @@ function BoardPage({
   // The board server this device nominated, or the primary environment.
   const board = useBoardEnvironment();
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       {/* The corner menu is chrome, not board content: it belongs to every
           branch of this surface, connected or not, root board or sub-board. */}
       <BoardUtilityMenu />

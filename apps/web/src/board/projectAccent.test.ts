@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * The accent palette is hand-written literal Tailwind values, so these tests pin
  * each pill's foreground to the label chips' luminance rule.

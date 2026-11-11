@@ -23,10 +23,11 @@ import { buildTraitsTriggerDisplay } from "@t3tools/client-runtime/model-traits"
 import { getTraitsSectionVisibility, TraitsMenuContent } from "../chat/TraitsPicker";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
-import { Button } from "../ui/button";
 import { BoardModelControlsMenu } from "./BoardModelControlsMenu";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Popover, PopoverTrigger } from "../ui/popover";
 import { useBoardEnvironmentId } from "../../board/useBoardEnvironmentId";
+import { BoardBarePopoverPopup } from "../../board/ui/BoardBarePopoverPopup";
+import { BoardButton } from "../../board/ui/BoardButton";
 
 export type InstanceEntries = ReturnType<typeof sortProviderInstanceEntries>;
 export type ActiveModel = { instanceId: ProviderInstanceId; model: string };
@@ -35,10 +36,6 @@ export type ModelSelection = ActiveModel | null;
 
 /** The stand-in instance a row with nothing picked opens its popup on. */
 const EMPTY_INSTANCE_ID = ProviderInstanceId.make("none");
-
-// Sized like the model button beside it (Button `xs`), so the two read as one row.
-const CONTROLS_TRIGGER_CLASS =
-  "h-7 min-w-0 max-w-56 shrink-0 gap-1 px-1.75 text-sm text-foreground/90 hover:text-foreground sm:h-6 sm:text-xs";
 
 /**
  * The row's one settings control: the chat composer's combined controls menu
@@ -83,7 +80,6 @@ function ModelControlsMenu(props: {
       ariaLabel={props.ariaLabel}
       triggerLabel={<span className="truncate">{labels.join(" · ")}</span>}
       triggerVariant="outline"
-      triggerClassName={CONTROLS_TRIGGER_CLASS}
       align="end"
       traitsMenuContent={
         traits.hasAnyControls ? (
@@ -169,11 +165,11 @@ export function ModelRow(props: {
           <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger
               render={
-                <Button
+                <BoardButton
                   size="xs"
                   variant="outline"
                   aria-label={props.ariaLabel}
-                  className="max-w-56 justify-between gap-1.5"
+                  look="model-picker"
                 />
               }
             >
@@ -200,11 +196,7 @@ export function ModelRow(props: {
               </span>
               <ChevronDownIcon aria-hidden="true" className="size-3.5 shrink-0 opacity-60" />
             </PopoverTrigger>
-            <PopoverPopup
-              align="end"
-              className="border-0 bg-transparent p-0 shadow-none before:hidden [-webkit-backdrop-filter:none]! [--viewport-inline-padding:0] [backdrop-filter:none]!"
-              padding="none"
-            >
+            <BoardBarePopoverPopup align="end">
               <ModelPickerContent
                 environmentId={environmentId}
                 activeInstanceId={active.instanceId}
@@ -221,7 +213,7 @@ export function ModelRow(props: {
                   setOpen(false);
                 }}
               />
-            </PopoverPopup>
+            </BoardBarePopoverPopup>
           </Popover>
           {props.selection !== null && activeEntry !== null ? (
             <ModelControlsMenu
@@ -239,7 +231,6 @@ export function ModelRow(props: {
               ariaLabel={`${props.ariaLabel} settings`}
               triggerLabel={runtimeModeConfig[props.runtimeMode].label}
               triggerVariant="outline"
-              triggerClassName={CONTROLS_TRIGGER_CLASS}
               align="end"
               runtimeMode={props.runtimeMode}
               onRuntimeModeChange={props.onRuntimeModeChange}
