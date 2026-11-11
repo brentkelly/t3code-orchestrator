@@ -94,6 +94,7 @@ import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
 // T3o: webhook tasks can be board rules (T3O-78).
 import { BoardWebhookActionFields } from "../../board/BoardWebhookActionFields";
+import { BOARD_RULE_PROMPT } from "@t3tools/contracts";
 import {
   boardWebhookActionDraft,
   parseBoardWebhookActionDraft,
@@ -1854,7 +1855,9 @@ function ScheduledTaskEditorForm({
                     mode === "once" ||
                     mode === "interval" ||
                     mode === "webhook"
-                  )
+                  ) {
+                    // T3o: only a webhook runs a board rule, so leaving it drops the rule's sentinel prompt (T3O-78).
+                    if (mode !== "webhook") setBoardRule(null);
                     setDraft((current) => {
                       const suggested =
                         mode === "once" && !current.runAt
@@ -1873,9 +1876,13 @@ function ScheduledTaskEditorForm({
                         prompt:
                           mode === "webhook" && !current.prompt.trim()
                             ? DEFAULT_WEBHOOK_PROMPT
-                            : current.prompt,
+                            : // T3o: see above (T3O-78).
+                              current.prompt === BOARD_RULE_PROMPT
+                              ? ""
+                              : current.prompt,
                       };
                     });
+                  }
                 }}
               >
                 <Toggle value="fixed">At a time</Toggle>
