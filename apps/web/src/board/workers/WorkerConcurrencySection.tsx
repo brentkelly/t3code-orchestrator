@@ -80,7 +80,7 @@ export function WorkerConcurrencySection(props: {
       </p>
       <div className="flex items-center justify-between gap-4 py-1.5">
         <div className="flex min-w-0 flex-col">
-          <span className="text-[13.5px] text-foreground">Board limit</span>
+          <span className="text-board-13-5 text-foreground">Board limit</span>
           <span className="text-xs text-muted-foreground">
             Most agents running at once across all workers
           </span>
@@ -99,9 +99,9 @@ export function WorkerConcurrencySection(props: {
       </div>
       <div className="h-px bg-border" />
       <div className="flex items-baseline justify-between gap-2 pt-1">
-        <span className="text-[12px] font-medium text-muted-foreground">Per worker</span>
+        <span className="text-board-12 font-medium text-muted-foreground">Per worker</span>
         {warning === null ? null : (
-          <span className="text-[11.5px] text-warning-foreground">{warning}</span>
+          <span className="text-board-11-5 text-warning-foreground">{warning}</span>
         )}
       </div>
       {blocks.map((block) => (
@@ -152,7 +152,7 @@ function WorkerConcurrencyBlock(props: {
             )}
           </button>
         ) : null}
-        <span className="min-w-0 truncate text-[13.5px] font-medium text-foreground">
+        <span className="min-w-0 truncate text-board-13-5 font-medium text-foreground">
           {block.label}
         </span>
         <Badge variant={TONE_BADGE[status.tone]}>{status.label}</Badge>
@@ -199,7 +199,7 @@ function WorkerConcurrencyBlock(props: {
             const atLimit = workerLimit !== null && cap === workerLimit;
             return (
               <div className="flex items-center justify-between gap-4 py-1 pl-4" key={instanceId}>
-                <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
+                <span className="min-w-0 flex-1 truncate text-board-13 text-foreground">
                   {instanceId}
                 </span>
                 <BoardHint

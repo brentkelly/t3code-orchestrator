@@ -10,7 +10,7 @@ import { cn } from "../lib/utils";
 import type { BoardDecisionLogView } from "./boardDecisionLog";
 
 const ACTION_CLASS =
-  "inline-flex h-7 items-center gap-1.5 rounded-lg border border-input bg-popover px-2.5 text-[12px] font-medium text-foreground shadow-xs hover:bg-accent";
+  "inline-flex h-7 items-center gap-1.5 rounded-lg border border-input bg-popover px-2.5 text-board-12 font-medium text-foreground shadow-xs hover:bg-accent";
 
 export function BoardDecisionLog({
   view,
@@ -40,48 +40,48 @@ export function BoardDecisionLog({
         ) : (
           <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
         )}
-        <span className="text-[12px] font-semibold text-foreground">Decision log</span>
-        <span className="text-[11.5px] text-muted-foreground">{view.count}</span>
+        <span className="text-board-12 font-semibold text-foreground">Decision log</span>
+        <span className="text-board-11-5 text-muted-foreground">{view.count}</span>
         {view.unclear === null ? null : (
-          <span className="text-[11.5px] font-medium text-attention-foreground">
+          <span className="text-board-11-5 font-medium text-attention-foreground">
             {view.unclear}
           </span>
         )}
         {view.unclear !== null && view.important !== null ? (
-          <span className="text-[11.5px] text-muted-foreground">·</span>
+          <span className="text-board-11-5 text-muted-foreground">·</span>
         ) : null}
         {view.important === null ? null : (
-          <span className="text-[11.5px] font-medium text-muted-foreground">{view.important}</span>
+          <span className="text-board-11-5 font-medium text-muted-foreground">
+            {view.important}
+          </span>
         )}
       </button>
       {open ? (
         <>
           {view.autoPlanned ? (
-            <p className="text-[12px]/[1.5] text-pretty text-muted-foreground">
+            <p className="text-board-12/normal text-pretty text-muted-foreground">
               Auto-planned. The plan was approved without you, including any decisions marked
               unclear.
             </p>
           ) : null}
-          <ul className="flex flex-col overflow-hidden rounded-[10px] border border-border">
+          <ul className="flex flex-col overflow-hidden rounded-board-10 border border-border">
             {view.rows.map((row) => (
               <li
                 className={cn(
-                  "flex flex-col gap-[3px] border-t border-border px-3 py-2.5 first:border-t-0",
-                  row.flag === "unclear"
-                    ? "bg-[color-mix(in_srgb,var(--attention)_6%,var(--card))]"
-                    : "bg-card",
+                  "flex flex-col gap-0.75 border-t border-border px-3 py-2.5 first:border-t-0",
+                  row.flag === "unclear" ? "bg-board-attention-tile" : "bg-card",
                 )}
                 data-flag={row.flag}
                 key={row.id}
               >
                 <div className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 text-[11.5px]/[1.45] text-pretty text-muted-foreground">
+                  <span className="min-w-0 flex-1 text-board-11-5 leading-board-1-45 text-pretty text-muted-foreground">
                     {row.question}
                   </span>
                   {row.flag === "normal" ? null : (
                     <span
                       className={cn(
-                        "inline-flex h-[17px] shrink-0 items-center rounded-[5px] px-1.5 text-[10px] font-medium uppercase tracking-[0.03em]",
+                        "inline-flex h-[17px] shrink-0 items-center rounded-board-5 px-1.5 text-board-10 font-medium uppercase tracking-board-3",
                         row.flag === "unclear"
                           ? "bg-attention/16 text-attention-foreground"
                           : "border border-input text-foreground",
@@ -90,14 +90,14 @@ export function BoardDecisionLog({
                       {row.flag === "unclear" ? "Unclear" : "Important"}
                     </span>
                   )}
-                  <span className="shrink-0 text-[10.5px] font-medium text-muted-foreground">
+                  <span className="shrink-0 text-board-10-5 font-medium text-muted-foreground">
                     {row.who}
                   </span>
                 </div>
-                <div className="text-[13px]/[1.5] font-medium text-pretty text-foreground">
+                <div className="text-board-13/normal font-medium text-pretty text-foreground">
                   {row.decision}
                 </div>
-                <div className="text-[12px]/[1.5] text-pretty text-muted-foreground">
+                <div className="text-board-12/normal text-pretty text-muted-foreground">
                   {row.reason}
                 </div>
               </li>

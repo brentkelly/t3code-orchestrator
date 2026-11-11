@@ -685,22 +685,6 @@ export default defineConfig({
           "t3code/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],
         },
       },
-      {
-        // T3o: the board's design-system restyle is pending under T3O-67; these four
-        // shadcn rules stay off for fork-owned web files until it lands.
-        files: [
-          "apps/web/src/board/**",
-          "apps/web/src/components/settings/Board*.{ts,tsx}",
-          "apps/web/src/routes/board*.tsx",
-          "apps/web/src/routes/list*.tsx",
-        ],
-        rules: {
-          "shadcn/no-arbitrary-values": "off",
-          "shadcn/no-restyle": "off",
-          "shadcn/no-raw-colors": "off",
-          "shadcn/require-static-classes": "off",
-        },
-      },
     ],
     options: {
       reportUnusedDisableDirectives: "error",

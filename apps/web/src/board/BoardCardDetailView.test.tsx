@@ -1433,8 +1433,8 @@ describe("BoardCardDetailPanel done marks", () => {
     expect(doneChip).toContain("text-success-foreground");
     // The label chips' own shape: 16px tall, 5px radius, 10px uppercase.
     expect(doneChip).toContain("h-4");
-    expect(doneChip).toContain("rounded-[5px]");
-    expect(doneChip).toContain("text-[10px]");
+    expect(doneChip).toContain("rounded-board-5");
+    expect(doneChip).toContain("text-board-10");
     expect(doneChip).toContain("uppercase");
   });
 

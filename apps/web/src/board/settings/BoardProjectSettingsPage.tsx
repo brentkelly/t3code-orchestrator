@@ -81,7 +81,7 @@ export function BoardProjectSettingsPage(props: {
             <Link
               aria-current={candidate === tab ? "page" : undefined}
               className={cn(
-                "-mb-px inline-flex items-center gap-1.5 border-b-2 px-2.5 py-2 text-[13px] font-medium",
+                "-mb-px inline-flex items-center gap-1.5 border-b-2 px-2.5 py-2 text-board-13 font-medium",
                 candidate === tab
                   ? "border-foreground text-foreground"
                   : "border-transparent text-muted-foreground hover:text-foreground",
@@ -92,7 +92,7 @@ export function BoardProjectSettingsPage(props: {
             >
               {TAB_LABELS[candidate]}
               {count > 0 ? (
-                <span className="rounded-full bg-accent px-1.5 text-[11px] leading-[18px] font-medium text-muted-foreground tabular-nums">
+                <span className="rounded-full bg-accent px-1.5 text-board-11 leading-4.5 font-medium text-muted-foreground tabular-nums">
                   {count}
                 </span>
               ) : null}
@@ -164,7 +164,7 @@ function ProjectHeader(props: {
           {props.title}
         </h2>
         {props.lastChangedBy !== null ? (
-          <span className="pl-[18px] text-xs text-muted-foreground">
+          <span className="pl-4.5 text-xs text-muted-foreground">
             Last changed by {props.lastChangedBy.actor.name ?? props.lastChangedBy.actor.kind} ·{" "}
             {new Date(props.lastChangedBy.at).toLocaleString()}
           </span>
@@ -172,7 +172,7 @@ function ProjectHeader(props: {
       </div>
       <span className="flex-1" />
       <div className="flex flex-col items-end gap-0.5">
-        <span className="text-[13px] text-foreground">
+        <span className="text-board-13 text-foreground">
           {differences === 0
             ? "Follows the global pipeline"
             : `${differences} ${differences === 1 ? "difference" : "differences"} from global`}

@@ -22,7 +22,7 @@ export function BoardSectionHeading({
   return (
     <h3
       className={cn(
-        "text-[11px] font-semibold uppercase tracking-[0.07em] text-muted-foreground",
+        "text-board-11 font-semibold uppercase tracking-board-7 text-muted-foreground",
         className,
       )}
     >
@@ -55,17 +55,17 @@ export function BoardCollapsibleSection({
         onClick={() => setOpen((value) => !value)}
         type="button"
       >
-        <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+        <span className="shrink-0 text-board-11 font-semibold uppercase tracking-board-7 text-muted-foreground">
           {title}
         </span>
         <span className="flex-1" />
         {summary === undefined ? null : (
-          <span className="truncate text-[11px] font-medium text-foreground">{summary}</span>
+          <span className="truncate text-board-11 font-medium text-foreground">{summary}</span>
         )}
         <ChevronDownIcon
           aria-hidden
           className={cn(
-            "size-3 shrink-0 text-muted-foreground transition-transform duration-[120ms]",
+            "size-3 shrink-0 text-muted-foreground transition-transform duration-120",
             open && "rotate-180",
           )}
         />
@@ -140,7 +140,7 @@ export function BoardDependencySection({
             onClick={toggle}
             type="button"
           >
-            <span className="text-[11px] font-medium text-foreground">
+            <span className="text-board-11 font-medium text-foreground">
               {dependencies.length === 0 ? "None" : String(dependencies.length)}
             </span>
             <ChevronDownIcon className={cn("size-3 text-muted-foreground", open && "rotate-180")} />
@@ -148,13 +148,13 @@ export function BoardDependencySection({
         ) : null}
       </div>
       {!open ? null : dependencies.length === 0 ? (
-        <p className="text-[13px] text-muted-foreground">No dependencies.</p>
+        <p className="text-board-13 text-muted-foreground">No dependencies.</p>
       ) : (
         <ul className="flex flex-col gap-1.5">
           {dependencies.map((dependency) => (
             <li
               className={cn(
-                "flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]",
+                "flex items-center gap-2.25 rounded-lg border border-border bg-muted px-2.5 py-1.75",
                 // An archived dependency is inert — it no longer gates this
                 // card — so it recedes rather than reading like live work.
                 dependency.archived && "opacity-60",
@@ -162,15 +162,15 @@ export function BoardDependencySection({
               key={dependency.cardId}
             >
               <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/45" />
-              <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
+              <span className="shrink-0 text-board-11 font-medium text-muted-foreground">
                 {dependency.key}
               </span>
-              <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
+              <span className="min-w-0 flex-1 truncate text-board-13 text-foreground">
                 {dependency.title ?? "Unknown task"}
               </span>
               <span
                 className={cn(
-                  "shrink-0 text-[11px]",
+                  "shrink-0 text-board-11",
                   dependency.known && !dependency.archived && dependency.stage === "done"
                     ? "text-success-foreground"
                     : "text-muted-foreground",

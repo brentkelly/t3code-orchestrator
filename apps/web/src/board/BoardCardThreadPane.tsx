@@ -72,7 +72,7 @@ function BoardCardChat({
   }
   if (presence !== "open") {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-[12.5px] text-muted-foreground">
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-board-12-5 text-muted-foreground">
         {presence === "loading" ? "Loading thread…" : "Couldn't load this thread."}
         {presence === "failed" ? (
           <Button
@@ -116,7 +116,7 @@ function BoardCardMissingChat({
       archived.isLoading || (archivedThreads === undefined && archived.error === null),
   });
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-[12.5px] text-muted-foreground">
+    <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-board-12-5 text-muted-foreground">
       {reason === "checking"
         ? "Loading thread…"
         : reason === "archived"
@@ -253,7 +253,7 @@ export function BoardCardThreadPane({
                   // The tab strip scrolls, so its overflow clips anything drawn
                   // outside a pill's border box — an outer ring shadow loses its
                   // top and bottom edges. The border has to be a real border.
-                  "inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-[12px]",
+                  "inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-board-12",
                   active
                     ? "border-border bg-card font-medium text-foreground"
                     : "border-transparent text-muted-foreground hover:text-foreground",
@@ -323,7 +323,7 @@ export function BoardCardThreadPane({
                       const todo = threadTodos?.get(link.threadId);
                       const total = todo?.todoTotal ?? 0;
                       return total === 0 ? null : (
-                        <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
+                        <span className="shrink-0 text-board-10-5 tabular-nums text-muted-foreground">
                           {todo?.todoDone ?? 0}/{total}
                         </span>
                       );
@@ -353,7 +353,7 @@ export function BoardCardThreadPane({
           <BoardHint label="Show older threads">
             <button
               aria-label="Show older threads"
-              className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+              className="inline-flex size-6 shrink-0 items-center justify-center rounded-board-7 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
               onClick={scrollOlderIntoView}
               type="button"
             >
@@ -364,7 +364,7 @@ export function BoardCardThreadPane({
         <span className="flex-1" />
         <BoardHint label={maximised ? "Exit fullscreen" : "Fullscreen"}>
           <button
-            className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-board-7 border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
             onClick={onToggleMaximised}
             type="button"
           >
@@ -373,7 +373,7 @@ export function BoardCardThreadPane({
         </BoardHint>
         {selected !== null && !selected.tombstoned ? (
           <Link
-            className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-board-7 border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
             params={{ environmentId: selected.worker.environmentId, threadId: selected.threadId }}
             title={
               selected.worker.workerId === BOARD_LOCAL_WORKER_ID
@@ -392,7 +392,7 @@ export function BoardCardThreadPane({
       {queueInfo == null ? null : (
         <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-3 py-2">
           <ClockIcon className="size-3.5 shrink-0 text-muted-foreground" />
-          <p className="min-w-0 flex-1 text-[12px] text-muted-foreground">
+          <p className="min-w-0 flex-1 text-board-12 text-muted-foreground">
             <span className="font-semibold text-foreground">{queueInfo.headline}.</span> No agent
             has picked this up yet.
           </p>
@@ -400,7 +400,7 @@ export function BoardCardThreadPane({
             <BoardHint label="Run this task now, past every agent limit: the board's, its worker's and its provider's.">
               <button
                 className={cn(
-                  "inline-flex h-[24px] shrink-0 items-center gap-[5px] rounded-[7px] border border-input bg-popover px-2 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent",
+                  "inline-flex h-[24px] shrink-0 items-center gap-1.25 rounded-board-7 border border-input bg-popover px-2 text-board-11-5 font-medium text-foreground shadow-xs hover:bg-accent",
                   queueForceStartPending === true && "cursor-wait opacity-60",
                 )}
                 disabled={queueForceStartPending === true}
@@ -418,12 +418,12 @@ export function BoardCardThreadPane({
       {selected === null || selected.tombstoned ? (
         <div className="flex min-h-0 flex-1 flex-col justify-center p-4">
           <div className="flex flex-col gap-2.5 rounded-xl border border-dashed border-border bg-card p-4">
-            <div className="text-[13px] font-medium text-foreground">
+            <div className="text-board-13 font-medium text-foreground">
               {selected?.tombstoned === true
                 ? "This thread was deleted"
                 : `No thread on ${cardKey} yet`}
             </div>
-            <div className="text-[12.5px]/[1.6] text-pretty text-muted-foreground">
+            <div className="text-board-12-5 leading-board-1-6 text-pretty text-muted-foreground">
               {selected?.tombstoned === true
                 ? "The link stays so the card's history reads honestly. Start another thread to keep working."
                 : stageRestart !== null

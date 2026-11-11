@@ -40,7 +40,7 @@ export function BoardLinkPullRequest(props: {
     return (
       <BoardHint label="Attach a pull request the agent didn't record">
         <button
-          className="inline-flex items-center gap-1.5 self-start py-0.5 text-[11.5px] text-muted-foreground hover:text-foreground hover:underline hover:underline-offset-2"
+          className="inline-flex items-center gap-1.5 self-start py-0.5 text-board-11-5 text-muted-foreground hover:text-foreground hover:underline hover:underline-offset-2"
           onClick={() => setOpen(true)}
           type="button"
         >
@@ -51,12 +51,12 @@ export function BoardLinkPullRequest(props: {
     );
   }
   return (
-    <div className="flex flex-col gap-[5px]">
+    <div className="flex flex-col gap-1.25">
       <div className="flex gap-1.5">
         <input
           aria-label="Pull request URL or number"
           autoFocus
-          className="h-[30px] min-w-0 flex-1 rounded-[7px] border border-input bg-background px-[9px] text-[12.5px] text-foreground outline-none focus:border-muted-foreground"
+          className="h-[30px] min-w-0 flex-1 rounded-board-7 border border-input bg-background px-2.25 text-board-12-5 text-foreground outline-none focus:border-muted-foreground"
           disabled={pending}
           onChange={(event) => {
             setDraft(event.target.value);
@@ -78,7 +78,7 @@ export function BoardLinkPullRequest(props: {
         />
         <button
           className={cn(
-            "h-[30px] rounded-[7px] border border-input bg-popover px-2.5 text-[12px] font-medium text-foreground shadow-xs",
+            "h-[30px] rounded-board-7 border border-input bg-popover px-2.5 text-board-12 font-medium text-foreground shadow-xs",
             pending ? "cursor-wait opacity-60" : "hover:bg-accent",
           )}
           disabled={pending}
@@ -89,7 +89,7 @@ export function BoardLinkPullRequest(props: {
         </button>
         <button
           aria-label="Cancel"
-          className="grid size-[30px] place-items-center rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="grid size-[30px] place-items-center rounded-board-7 text-muted-foreground hover:bg-accent hover:text-foreground"
           onClick={close}
           type="button"
         >
@@ -97,7 +97,7 @@ export function BoardLinkPullRequest(props: {
         </button>
       </div>
       {error === null ? null : (
-        <span className="text-[11px] text-destructive-foreground">{error}</span>
+        <span className="text-board-11 text-destructive-foreground">{error}</span>
       )}
     </div>
   );

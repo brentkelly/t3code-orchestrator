@@ -120,7 +120,6 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
-import { Textarea } from "../ui/textarea";
 import {
   BOARD_STEP_MAX_ATTEMPTS_MAX,
   BOARD_STEP_TIMEOUT_MIN_MINUTES,
@@ -138,6 +137,8 @@ import {
   useBoardSettings,
   useUpdateBoardSettings,
 } from "../../board/useBoardEnvironmentId";
+import { BoardTextarea } from "../../board/ui/BoardInput";
+import { BoardButton } from "../../board/ui/BoardButton";
 
 /** The stand-in card identity for envelope previews: a run interpolates the
     real card, so the preview shows placeholders where values vary per card. */
@@ -160,7 +161,7 @@ function ToggleRow(props: {
   return (
     <div className="flex items-center justify-between gap-4 py-2">
       <div className="flex min-w-0 flex-col">
-        <span className="text-[13.5px] text-foreground">{props.label}</span>
+        <span className="text-board-13-5 text-foreground">{props.label}</span>
         {props.hint ? <span className="text-xs text-muted-foreground">{props.hint}</span> : null}
       </div>
       <Switch
@@ -264,7 +265,7 @@ function NumberRow(props: { label: string; hint?: string; stepper: ReactNode }) 
   return (
     <div className="flex items-center justify-between gap-4 py-2">
       <div className="flex min-w-0 flex-col">
-        <span className="text-[13.5px] text-foreground">{props.label}</span>
+        <span className="text-board-13-5 text-foreground">{props.label}</span>
         {props.hint ? <span className="text-xs text-muted-foreground">{props.hint}</span> : null}
       </div>
       {props.stepper}
@@ -279,7 +280,7 @@ function SystemEnvelope(props: { text: string; edge: "top" | "bottom"; label: st
   return (
     <div
       className={cn(
-        "relative bg-muted py-2.5 pr-[74px] pl-3.5 font-mono text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground",
+        "relative bg-muted py-2.5 pr-18.5 pl-3.5 font-mono text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground",
         props.edge === "bottom" ? "border-b border-border" : "border-t border-border",
       )}
       // A named note, not bare text: the visible "System" pill says what the
@@ -289,7 +290,7 @@ function SystemEnvelope(props: { text: string; edge: "top" | "bottom"; label: st
       aria-label={`${props.label} (system)`}
     >
       {props.text}
-      <span className="absolute top-2 right-2.5 rounded-full border border-border bg-card px-1.5 py-px font-sans text-[10.5px] font-medium text-muted-foreground">
+      <span className="absolute top-2 right-2.5 rounded-full border border-border bg-card px-1.5 py-px font-sans text-board-10-5 font-medium text-muted-foreground">
         System
       </span>
     </div>
@@ -369,15 +370,15 @@ function PromptRow(props: {
   return (
     <div className="flex flex-col gap-1.5 py-2">
       <div className="flex items-center gap-2">
-        <span className="text-[13.5px] text-foreground">{props.label}</span>
+        <span className="text-board-13-5 text-foreground">{props.label}</span>
         <span className="flex-1" />
         {editing ? (
           <>
             {modified ? (
-              <Button
+              <BoardButton
                 size="xs"
                 variant="ghost"
-                className="h-6 gap-1 px-2 text-xs text-muted-foreground"
+                look="inline-action"
                 aria-label={`Reset ${props.label.toLowerCase()} to default`}
                 title="Restore the default prompt"
                 // Suppress the textarea's blur so opening the confirm modal
@@ -387,7 +388,7 @@ function PromptRow(props: {
               >
                 <RotateCcwIcon className="size-3" />
                 Reset
-              </Button>
+              </BoardButton>
             ) : null}
             {/* A label, not a button: clicking anywhere outside the textarea is
                 what ends editing, and a button here would be caught by that
@@ -400,18 +401,18 @@ function PromptRow(props: {
         ) : (
           <>
             {modified ? (
-              <span className="font-mono text-[11px] text-muted-foreground">Modified</span>
+              <span className="font-mono text-board-11 text-muted-foreground">Modified</span>
             ) : null}
-            <Button
+            <BoardButton
               size="xs"
               variant="ghost"
-              className="h-6 gap-1 px-2 text-xs text-muted-foreground"
+              look="inline-action"
               aria-label={`Edit ${props.label.toLowerCase()}`}
               onClick={startEditing}
             >
               <PencilIcon className="size-3" />
               Edit
-            </Button>
+            </BoardButton>
           </>
         )}
       </div>
@@ -426,14 +427,15 @@ function PromptRow(props: {
         <SystemEnvelope text={props.preamble} edge="bottom" label="Preamble" />
 
         {editing ? (
-          <Textarea
+          <BoardTextarea
             key={`prompt:${props.id}`}
+            look="prompt"
             unstyled
             value={current}
             aria-label={`${props.label} text`}
             autoFocus
             rows={Math.min(16, Math.max(4, current.split("\n").length + 2))}
-            className="block w-full [&_textarea]:resize-y [&_textarea]:bg-card [&_textarea]:px-3.5 [&_textarea]:py-3 [&_textarea]:text-[13px] [&_textarea]:leading-relaxed [&_textarea]:text-foreground"
+            className="block w-full [&_textarea]:resize-y"
             onChange={(event) => setDraft(event.target.value)}
             // Clicking away IS "done": blur commits the text and closes the
             // editor, so there is nothing left for a Done button to do. A blur
@@ -448,7 +450,7 @@ function PromptRow(props: {
           <BoardHint label="Click to edit">
             <button
               type="button"
-              className="block w-full cursor-text px-3.5 py-3 text-left text-[13px] leading-relaxed whitespace-pre-wrap text-foreground"
+              className="block w-full cursor-text px-3.5 py-3 text-left text-board-13 leading-relaxed whitespace-pre-wrap text-foreground"
               onClick={startEditing}
             >
               {props.value.trim().length > 0 ? (
@@ -478,7 +480,9 @@ function PromptRow(props: {
           </button>
         ) : null}
         <span className="flex-1" />
-        <span className="font-mono text-[11px] text-muted-foreground">{words} words editable</span>
+        <span className="font-mono text-board-11 text-muted-foreground">
+          {words} words editable
+        </span>
       </div>
       {props.missingMessage ? (
         <p className="text-xs text-destructive">{props.missingMessage}</p>
@@ -518,11 +522,11 @@ function PhaseHeader(props: { step?: number; label: string }) {
   return (
     <div className="mt-3 mb-0.5 flex items-center gap-2">
       {props.step === undefined ? null : (
-        <span className="flex size-[18px] shrink-0 items-center justify-center rounded-full border border-border bg-muted font-mono text-[10.5px] font-semibold text-muted-foreground">
+        <span className="flex size-[18px] shrink-0 items-center justify-center rounded-full border border-border bg-muted font-mono text-board-10-5 font-semibold text-muted-foreground">
           {props.step}
         </span>
       )}
-      <span className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-foreground">
+      <span className="text-board-10-5 font-semibold uppercase tracking-board-9 text-foreground">
         {props.label}
       </span>
       <span className="h-px flex-1 bg-border" />
@@ -592,7 +596,7 @@ function StageChip(props: { text: string; tone: "auto" | "quiet" }) {
   return (
     <span
       className={cn(
-        "shrink-0 rounded-full border px-2 py-px text-[11px] font-medium",
+        "shrink-0 rounded-full border px-2 py-px text-board-11 font-medium",
         props.tone === "auto"
           ? "border-transparent bg-primary/10 text-primary"
           : "border-border text-muted-foreground",
@@ -758,7 +762,7 @@ export function BoardPipelineSection() {
 
   return (
     <SettingsSection id="board-pipeline" title={anchor.title} variant="plain">
-      <p className="mb-2 max-w-xl px-3 text-[13px] leading-[1.55] text-muted-foreground/80 sm:px-4">
+      <p className="mb-2 max-w-xl px-3 text-board-13 leading-board-1-55 text-muted-foreground/80 sm:px-4">
         Each stage runs one agent, except code review, which runs a review loop. A card freezes its
         stage config the moment it enters the stage, so edits take effect the next time a card
         enters, never mid-flight.
@@ -799,7 +803,7 @@ export function BoardPipelineSection() {
           runtimeMode="approval-required"
           onRuntimeModeChange={() => {}}
         />
-        <p className="text-xs leading-[1.5] text-muted-foreground/80">
+        <p className="text-xs leading-normal text-muted-foreground/80">
           What a stage below runs on when it names no model of its own. Leave it unset and each
           stage must pick one; a stage that picks one always wins.
         </p>
@@ -848,7 +852,7 @@ export function BoardPipelineSection() {
           <button
             type="button"
             disabled={!crudEnabled}
-            className="flex w-full items-center gap-2 px-5 py-3 text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+            className="flex w-full items-center gap-2 px-5 py-3 text-left text-board-13 font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
             onClick={() => setAddingFor("choose")}
           >
             <PlusIcon className="size-3.5" />
@@ -1001,7 +1005,7 @@ function StageAccordionRow(props: {
         >
           <GripVerticalIcon className="size-3.5" />
         </button>
-        <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-accent font-mono text-[11px] font-semibold text-muted-foreground">
+        <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-accent font-mono text-board-11 font-semibold text-muted-foreground">
           {props.index + 1}
         </span>
         <StageNameField
@@ -1011,7 +1015,7 @@ function StageAccordionRow(props: {
           onRename={props.onRename}
         />
         {role !== null && role !== "done" ? (
-          <span className="shrink-0 rounded-md bg-accent px-1.5 py-px font-mono text-[11px] font-medium text-muted-foreground">
+          <span className="shrink-0 rounded-md bg-accent px-1.5 py-px font-mono text-board-11 font-medium text-muted-foreground">
             {role}
           </span>
         ) : null}
@@ -1036,7 +1040,7 @@ function StageAccordionRow(props: {
       </div>
 
       {expanded ? (
-        <div className="flex flex-col px-4 pb-4 pt-0.5 sm:pl-[52px] sm:pr-5">
+        <div className="flex flex-col px-4 pb-4 pt-0.5 sm:pl-13 sm:pr-5">
           {switchable ? (
             <StageProjectsRow
               coverage={props.coverage}
@@ -1046,7 +1050,7 @@ function StageAccordionRow(props: {
               stage={stage}
             />
           ) : role !== null ? (
-            <p className="pb-2 text-xs leading-[1.5] text-muted-foreground">
+            <p className="pb-2 text-xs leading-normal text-muted-foreground">
               <LockIcon className="mr-1 inline size-3" />
               {BOARD_ROLE_STAGE_NOTE}
             </p>
@@ -1122,7 +1126,7 @@ function StageProjectsRow(props: {
     <div className="flex flex-col gap-2 pb-2">
       <div className="flex items-center justify-between gap-3">
         <div className="flex flex-col">
-          <span className="text-[13.5px] text-foreground">Default for projects</span>
+          <span className="text-board-13-5 text-foreground">Default for projects</span>
           <span className="text-xs text-muted-foreground">
             {props.defaultOn
               ? "Every project runs it unless it switches it off."
@@ -1153,7 +1157,7 @@ function StageProjectsRow(props: {
             {all.map((projectId) => (
               <Link
                 className={cn(
-                  "rounded-md border px-1.5 py-px text-[11.5px]",
+                  "rounded-md border px-1.5 py-px text-board-11-5",
                   included.has(projectId)
                     ? "border-border text-foreground"
                     : "border-dashed border-border text-muted-foreground",
@@ -1200,16 +1204,16 @@ function RemoveStageButton(props: { disabled: boolean; onDelete: () => void }) {
           </Button>
         </>
       ) : (
-        <Button
+        <BoardButton
           size="xs"
           variant="outline"
           disabled={props.disabled}
-          className="gap-1.5 text-destructive-foreground hover:bg-destructive/10"
+          look="danger-outline"
           onClick={() => setConfirming(true)}
         >
           <Trash2Icon className="size-3.5" />
           Remove stage
-        </Button>
+        </BoardButton>
       )}
     </div>
   );
@@ -1224,7 +1228,7 @@ function AddStageChooser(props: {
   const [projectId, setProjectId] = useState<ProjectId | null>(props.projects[0]?.id ?? null);
   return (
     <div className="flex flex-col gap-2 px-5 py-3">
-      <span className="text-[13px] font-medium text-foreground">New stage</span>
+      <span className="text-board-13 font-medium text-foreground">New stage</span>
       <div className="flex flex-wrap items-center gap-2">
         <Button size="xs" variant="outline" onClick={() => props.onAdd(null)}>
           For every project
@@ -1282,7 +1286,7 @@ function CiStageBody(props: {
   const set = (patch: Partial<BoardStageExecutionCi>) => props.updateStage(stage.stageId, patch);
   return (
     <>
-      <p className="pb-1 text-xs leading-[1.5] text-muted-foreground">
+      <p className="pb-1 text-xs leading-normal text-muted-foreground">
         Runs each project&apos;s CI steps in the card&apos;s worktree after code review. When a pass
         fails, a fix agent fixes every reported failure and CI runs again from the top. If the fix
         attempts run out, or the agent can&apos;t fix something, the card stops in CI and waits for
@@ -1290,8 +1294,8 @@ function CiStageBody(props: {
       </p>
       <div className="flex flex-col gap-1.5 py-2">
         <div className="flex items-center gap-2">
-          <span className="text-[13.5px] text-foreground">Steps</span>
-          <span className="rounded-md bg-accent px-1.5 py-px text-[11px] font-medium text-muted-foreground">
+          <span className="text-board-13-5 text-foreground">Steps</span>
+          <span className="rounded-md bg-accent px-1.5 py-px text-board-11 font-medium text-muted-foreground">
             Set per project
           </span>
         </div>
@@ -1316,7 +1320,7 @@ function CiStageBody(props: {
             ))}
           </ul>
         )}
-        <span className="text-xs leading-[1.5] text-muted-foreground/80">
+        <span className="text-xs leading-normal text-muted-foreground/80">
           On for projects with CI steps. CI can&apos;t be removed or renamed; switch it per project.
         </span>
       </div>
@@ -1403,14 +1407,14 @@ function MergeStageBody(props: {
     <>
       <div className="flex items-center justify-between gap-4 py-2">
         <div className="flex min-w-0 flex-col">
-          <span className="text-[13.5px] text-foreground">Merge strategy</span>
+          <span className="text-board-13-5 text-foreground">Merge strategy</span>
           <span className="text-xs text-muted-foreground">
             How the Merge button integrates the card&apos;s pull request.
           </span>
         </div>
         <select
           aria-label="Merge strategy"
-          className="h-8 shrink-0 rounded-md border border-input bg-popover px-2 text-[13px] text-foreground"
+          className="h-8 shrink-0 rounded-md border border-input bg-popover px-2 text-board-13 text-foreground"
           onChange={(event) =>
             set({ strategy: event.target.value as BoardStageExecutionMerge["strategy"] })
           }
@@ -1750,7 +1754,7 @@ function SubmitStepBlock(props: {
   return (
     <>
       <PhaseHeader label="Submit for merge (no review)" />
-      <p className="mb-1 max-w-[62ch] text-[12.5px] leading-[1.55] text-muted-foreground">
+      <p className="mb-1 max-w-[62ch] text-board-12-5 leading-board-1-55 text-muted-foreground">
         The caret beside a finished card&apos;s forward button. One unattended run pushes the branch
         and opens its pull request, writing the title and body from the work, then the card goes
         straight to the merge stage, skipping code review.
@@ -1855,7 +1859,7 @@ function ReviewStageBody(props: {
 
   return (
     <>
-      <p className="mb-1 max-w-[62ch] text-[12.5px] leading-[1.55] text-muted-foreground">
+      <p className="mb-1 max-w-[62ch] text-board-12-5 leading-board-1-55 text-muted-foreground">
         A loop, not a single step: review the worktree, triage the findings, adjudicate the fixes,
         and repeat until a review pass raises no blocking findings or the round cap stops it. Each
         phase runs on its own model.
@@ -1901,13 +1905,13 @@ function ReviewStageBody(props: {
               settings of their own, so they show here and nowhere else. */}
           <div className="flex flex-col gap-1.5 py-2.5">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[13.5px]">Each round</span>
+              <span className="text-board-13-5">Each round</span>
               <span className="flex-1" />
               {BOARD_REVIEW_PHASE_IDS.map((phaseId, index) => (
                 <span key={phaseId} className="flex items-center gap-2">
                   {index === 0 ? null : <span className="text-xs text-muted-foreground">→</span>}
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card py-px pl-[3px] pr-2 text-xs font-medium">
-                    <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-[3px] font-mono text-[9.5px] font-semibold text-muted-foreground">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card py-px pl-0.75 pr-2 text-xs font-medium">
+                    <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-0.75 font-mono text-board-9-5 font-semibold text-muted-foreground">
                       {index + 1}
                     </span>
                     {BOARD_REVIEW_PHASE_LABELS[phaseId]}
@@ -1923,16 +1927,16 @@ function ReviewStageBody(props: {
               ].map((follow) => (
                 <span
                   key={follow.n}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-input py-px pl-[3px] pr-2 text-[11.5px] font-medium text-muted-foreground"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-input py-px pl-0.75 pr-2 text-board-11-5 font-medium text-muted-foreground"
                 >
-                  <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-[3px] font-mono text-[9.5px] font-semibold text-muted-foreground">
+                  <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-0.75 font-mono text-board-9-5 font-semibold text-muted-foreground">
                     {follow.n}
                   </span>
                   {follow.name}
                 </span>
               ))}
             </div>
-            <p className="m-0 max-w-[52ch] self-end text-right text-[11.5px]/[1.5] text-pretty text-muted-foreground">
+            <p className="m-0 max-w-[52ch] self-end text-right text-board-11-5/normal text-pretty text-muted-foreground">
               Only when the adjudicator overrules a finding, inside the same round, and they don't
               use a round. Re-triage and Re-adjudicate reuse the Triage and Adjudicate phase prompts
               and models.

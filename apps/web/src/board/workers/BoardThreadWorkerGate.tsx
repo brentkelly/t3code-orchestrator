@@ -56,13 +56,15 @@ export function BoardThreadWorkerGate({
       <div className="flex flex-col gap-2.5 rounded-xl border border-dashed border-border bg-card p-4">
         <div
           className={cn(
-            "text-[13px] font-medium",
+            "text-board-13 font-medium",
             copy.tone === "attention" ? "text-attention-foreground" : "text-foreground",
           )}
         >
           {copy.title}
         </div>
-        <div className="text-[12.5px]/[1.6] text-pretty text-muted-foreground">{copy.detail}</div>
+        <div className="text-board-12-5 leading-board-1-6 text-pretty text-muted-foreground">
+          {copy.detail}
+        </div>
         {copy.action === null ? null : (
           <div className="pt-0.5">
             <Button onClick={openConnections} size="sm" variant="outline">

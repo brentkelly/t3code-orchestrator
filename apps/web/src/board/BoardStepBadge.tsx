@@ -49,11 +49,11 @@ export function BoardStepBadge({
     >
       <span
         className={cn(
-          "inline-flex size-5 items-center justify-center rounded-full text-[10px] font-semibold",
+          "inline-flex size-5 items-center justify-center rounded-full text-board-10 font-semibold",
           state === "running"
             ? "bg-info text-white"
             : state === "pending"
-              ? "text-muted-foreground/70 shadow-[inset_0_0_0_1px_var(--border)]"
+              ? "text-muted-foreground/70 shadow-board-inset-border"
               : "bg-foreground/8 text-foreground",
         )}
       >
@@ -62,7 +62,7 @@ export function BoardStepBadge({
       {mark === null ? null : (
         <span
           className={cn(
-            "absolute -bottom-[3px] -left-[3px] inline-flex size-[11px] items-center justify-center rounded-full text-white shadow-[0_0_0_1.5px_var(--card)]",
+            "absolute -bottom-[3px] -left-[3px] inline-flex size-[11px] items-center justify-center rounded-full text-white shadow-board-badge-cutout",
             mark.className,
           )}
         >

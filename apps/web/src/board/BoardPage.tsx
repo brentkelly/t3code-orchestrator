@@ -213,7 +213,7 @@ function BoardPage({
   // The board server this device nominated, or the primary environment.
   const board = useBoardEnvironment();
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       {/* The corner menu is chrome, not board content: it belongs to every
           branch of this surface, connected or not, root board or sub-board. */}
       <BoardUtilityMenu />
@@ -1494,7 +1494,7 @@ function EnvironmentBoard({
               </Button>
               <nav
                 aria-label="Group breadcrumb"
-                className="flex min-w-0 shrink items-center gap-1 text-[12px] text-muted-foreground"
+                className="flex min-w-0 shrink items-center gap-1 text-board-12 text-muted-foreground"
               >
                 <button
                   className="shrink-0 hover:text-foreground hover:underline"
@@ -1554,12 +1554,12 @@ function EnvironmentBoard({
                 <div className="flex min-w-0 items-center gap-3 overflow-hidden">
                   {projects.map((project) => (
                     <span
-                      className="inline-flex shrink-0 items-center gap-1.5 text-[11.5px] font-medium text-muted-foreground"
+                      className="inline-flex shrink-0 items-center gap-1.5 text-board-11-5 font-medium text-muted-foreground"
                       key={project.id}
                     >
                       <span
                         className={cn(
-                          "h-[3px] w-[9px] shrink-0 rounded-[2px]",
+                          "h-[3px] w-[9px] shrink-0 rounded-xs",
                           projectAccent(project.id, accentNameFor(project.id)).dot,
                         )}
                       />
@@ -1595,7 +1595,7 @@ function EnvironmentBoard({
           ) : null}
         </div>
         {noQueryMatches ? (
-          <p className="shrink-0 px-3 pb-1 text-[12.5px] text-muted-foreground sm:px-5">
+          <p className="shrink-0 px-3 pb-1 text-board-12-5 text-muted-foreground sm:px-5">
             No cards match “{query.trim()}”.
           </p>
         ) : null}
@@ -1786,7 +1786,7 @@ function EnvironmentBoard({
         <div
           aria-live="polite"
           className={cn(
-            "pointer-events-none fixed top-0 left-0 z-50 max-w-72 rounded-md border border-border bg-popover px-2.5 py-1.5 text-[12px] text-popover-foreground shadow-md",
+            "pointer-events-none fixed top-0 left-0 z-50 max-w-72 rounded-md border border-border bg-popover px-2.5 py-1.5 text-board-12 text-popover-foreground shadow-md",
             dragTip === null && "hidden",
           )}
           ref={dragTipRef}

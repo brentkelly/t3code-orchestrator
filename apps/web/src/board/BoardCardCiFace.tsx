@@ -22,7 +22,7 @@ const SEGMENT_CLASS: Record<BoardStepBadgeState, string> = {
   fixing: "bg-info/45",
   failed: "bg-warning",
   cancelled: "bg-muted-foreground/40",
-  pending: "shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--foreground)_14%,transparent)]",
+  pending: "shadow-board-inset-faint",
 };
 
 const FIX_SEGMENT_CLASS: Record<BoardCiFixSegmentState, string> = {
@@ -53,24 +53,24 @@ function BoardCardCiProgress({ ci }: { readonly ci: BoardCardCi }) {
     <BoardHint label={face.tooltip}>
       <div className="flex flex-col gap-1.5 border-t border-border pt-2" data-board-card-ci="">
         <div className="flex items-center gap-1.5">
-          <span className="text-[10.5px] font-medium text-foreground">CI</span>
+          <span className="text-board-10-5 font-medium text-foreground">CI</span>
           <span className="flex-1" />
           <span
             className={cn(
-              "inline-flex h-4 shrink-0 items-center rounded-[5px] px-1.5 text-[10px] font-medium tracking-[.03em] uppercase",
+              "inline-flex h-4 shrink-0 items-center rounded-board-5 px-1.5 text-board-10 font-medium tracking-board-3 uppercase",
               BOARD_CI_CHIP_CLASS[face.chip.tone],
             )}
           >
             {face.chip.label}
           </span>
         </div>
-        <div className="flex gap-[3px]">
+        <div className="flex gap-0.75">
           {face.segments.map((segment, index) => (
             <span
               // oxlint-disable-next-line react/no-array-index-key -- a segment is its step's position in the pipeline; step names can repeat
               key={`${index}:${segment.name}`}
               aria-label={segment.tooltip}
-              className={cn("h-[5px] flex-1 rounded-[2px]", SEGMENT_CLASS[segment.state])}
+              className={cn("h-[5px] flex-1 rounded-xs", SEGMENT_CLASS[segment.state])}
               data-ci-segment={segment.state}
               role="img"
             />
@@ -79,7 +79,7 @@ function BoardCardCiProgress({ ci }: { readonly ci: BoardCardCi }) {
             <span
               aria-label={FIX_SEGMENT_LABEL[face.fixSegment]}
               className={cn(
-                "ml-[2px] h-[5px] w-3 shrink-0 rounded-[2px]",
+                "ml-[2px] h-[5px] w-3 shrink-0 rounded-xs",
                 FIX_SEGMENT_CLASS[face.fixSegment],
               )}
               data-ci-fix-segment={face.fixSegment}
@@ -87,13 +87,13 @@ function BoardCardCiProgress({ ci }: { readonly ci: BoardCardCi }) {
             />
           )}
         </div>
-        <div className="flex min-w-0 items-center gap-[7px]">
-          <span className="shrink-0 font-mono text-[10.5px] font-medium text-foreground">
+        <div className="flex min-w-0 items-center gap-1.75">
+          <span className="shrink-0 font-mono text-board-10-5 font-medium text-foreground">
             {face.count}
           </span>
           <span
             className={cn(
-              "min-w-0 flex-1 truncate text-[10.5px]",
+              "min-w-0 flex-1 truncate text-board-10-5",
               face.detailTone === "warning" ? "text-warning-foreground" : "text-muted-foreground",
             )}
           >
@@ -120,7 +120,7 @@ export function BoardCardCiFace({
   if (outcome.kind === "skipped") {
     return (
       <BoardHint label={outcome.tooltip}>
-        <div className="flex items-center gap-[5px] text-[10.5px] font-medium text-muted-foreground">
+        <div className="flex items-center gap-1.25 text-board-10-5 font-medium text-muted-foreground">
           <ChevronsRightIcon className="size-[11px] shrink-0" />
           {outcome.label}
         </div>
@@ -129,11 +129,13 @@ export function BoardCardCiFace({
   }
   return (
     <BoardHint label={outcome.tooltip}>
-      <div className="flex items-start gap-[7px] rounded-[7px] bg-warning/8 px-2 py-[7px]">
+      <div className="flex items-start gap-1.75 rounded-board-7 bg-warning/8 px-2 py-1.75">
         <Undo2Icon className="mt-px size-3 shrink-0 text-warning-foreground" />
         <div className="flex min-w-0 flex-col gap-px">
-          <span className="text-[10.5px] font-medium text-foreground">Sent back from CI</span>
-          <span className="text-[10.5px]/[1.4] text-muted-foreground">{outcome.line}</span>
+          <span className="text-board-10-5 font-medium text-foreground">Sent back from CI</span>
+          <span className="text-board-10-5 leading-board-1-4 text-muted-foreground">
+            {outcome.line}
+          </span>
         </div>
       </div>
     </BoardHint>

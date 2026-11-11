@@ -143,7 +143,7 @@ export function BoardImportConfirmDialog(props: {
                         : "Setting"}{" "}
                     · {text.where}
                   </span>
-                  <pre className="overflow-x-auto rounded-md bg-muted p-2 font-mono text-[11px] whitespace-pre-wrap">
+                  <pre className="overflow-x-auto rounded-md bg-muted p-2 font-mono text-board-11 whitespace-pre-wrap">
                     {text.text}
                   </pre>
                 </div>

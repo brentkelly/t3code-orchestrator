@@ -90,7 +90,7 @@ function BoardSettingsReady(props: { readonly environmentId: EnvironmentId }) {
 }
 
 const NAV_LINK =
-  "rounded-md px-2 py-1 text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground";
+  "rounded-md px-2 py-1 text-board-13 text-muted-foreground hover:bg-accent hover:text-foreground";
 const NAV_ACTIVE = "bg-accent font-medium text-foreground";
 
 function BoardSettingsNav(props: {

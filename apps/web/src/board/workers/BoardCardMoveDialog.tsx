@@ -188,7 +188,7 @@ export function BoardCardMoveDialog(props: {
             ? `${card.key} is on ${to}. Its next step runs there.`
             : `You can close this. The card shows “Moving to ${to}” until it's done.`,
         content: (
-          <ul className="flex flex-col gap-1.5 text-[12.5px]">
+          <ul className="flex flex-col gap-1.5 text-board-12-5">
             {moveProgress(
               status,
               phase.fromWorkerId === null
@@ -225,7 +225,7 @@ export function BoardCardMoveDialog(props: {
           title: `Move ${card.key} to ${to}?`,
           description: `Everything on ${answer.branch} is pushed, so the card can continue on ${to}.`,
           content: (
-            <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-[12.5px]">
+            <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-board-12-5">
               {from === null ? null : (
                 <li>
                   The worktree on {from} is retired. Its files stay on disk; T3o stops using them.
@@ -273,7 +273,7 @@ export function BoardCardMoveDialog(props: {
           title: `Can't move ${card.key}: unpushed work`,
           description: `The worktree on ${where} has work that isn't on origin. Moving now would leave it behind. Push it (or ask the agent to), then move.`,
           content: (
-            <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-muted/40 p-2.5 text-[12px]">
+            <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-muted/40 p-2.5 text-board-12">
               <span className="font-medium">
                 {[
                   answer.unpushedCount > 0
@@ -285,12 +285,12 @@ export function BoardCardMoveDialog(props: {
                   .join(" · ")}
               </span>
               {answer.commits.map((commit) => (
-                <span className="truncate font-mono text-[11.5px]" key={commit.sha}>
+                <span className="truncate font-mono text-board-11-5" key={commit.sha}>
                   {commit.sha} {commit.subject}
                 </span>
               ))}
               {files === 0 ? null : (
-                <span className="truncate font-mono text-[11.5px] text-muted-foreground">
+                <span className="truncate font-mono text-board-11-5 text-muted-foreground">
                   {answer.changedPaths.join(" · ")}
                 </span>
               )}
@@ -313,7 +313,7 @@ export function BoardCardMoveDialog(props: {
           title: `Restart ${card.key} from ${answer.baseRefName}?`,
           description: `${answer.branch} isn't on the remote, so there's nothing pushed to continue from.`,
           content: (
-            <p className="text-[13px]">
+            <p className="text-board-13">
               {answer.backToStage === null
                 ? `The card stays in its stage and its branch is forgotten. When it reaches Build, ${to} creates a fresh worktree from ${answer.baseRefName}.`
                 : `${to} creates a fresh worktree from ${answer.baseRefName} and the card goes back to the start of ${answer.backToStage}.`}{" "}
