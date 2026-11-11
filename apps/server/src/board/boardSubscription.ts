@@ -91,8 +91,11 @@ export const boardStreamWindowDeltas = Effect.fnUntraced(function* (
       touchedWorkers = true;
     }
     // A card's link set changing is what the `card-threads` delta carries. An
-    // unarchived card is back on the board without the thread entries its
-    // archive's `card-removed` dropped.
+    // unarchived card is back on the board without the thread entries and usage
+    // its archive's `card-removed` dropped.
+    if (input.event.type === "board.card-unarchived") {
+      touchedUsage.add(input.event.payload.cardId);
+    }
     if (
       input.event.type === "board.card-thread-linked" ||
       input.event.type === "board.card-thread-unlinked" ||

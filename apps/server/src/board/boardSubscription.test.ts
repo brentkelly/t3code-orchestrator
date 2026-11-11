@@ -119,7 +119,7 @@ describe("boardStreamWindowDeltas", () => {
     }),
   );
 
-  it.effect("gives an unarchived card back its thread summaries", () =>
+  it.effect("gives an unarchived card back its thread summaries and usage", () =>
     Effect.gen(function* () {
       const { deltas } = yield* windowDeltas([
         {
@@ -133,7 +133,7 @@ describe("boardStreamWindowDeltas", () => {
       ]);
       assert.deepStrictEqual(
         deltas.map((delta) => delta.kind),
-        ["card-upserted", "card-threads"],
+        ["card-upserted", "card-threads", "card-usage"],
       );
     }),
   );
