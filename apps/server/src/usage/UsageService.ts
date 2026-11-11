@@ -948,14 +948,13 @@ export const make = Effect.gen(function* () {
 
   // T3o: only the first call waits, to load the table. A stale or missing one is then
   // refreshed in the background, so a slow fetch never holds up the board's turn tail.
-  let boardRatesLoaded = false;
+  // Shared, so a caller arriving mid-load waits for it instead of pricing against no table.
+  const firstBoardRatesLoad = yield* Effect.cached(ensureRates(false));
   let boardRatesRefreshing = false;
   const currentRates = Effect.gen(function* () {
+    yield* firstBoardRatesLoad;
     const now = yield* Clock.currentTimeMillis;
-    if (!boardRatesLoaded) {
-      boardRatesLoaded = true;
-      yield* ensureRates(false);
-    } else if (
+    if (
       !boardRatesRefreshing &&
       (ratesFetchedAtMs === null || now - ratesFetchedAtMs >= RATES_TTL_MS)
     ) {

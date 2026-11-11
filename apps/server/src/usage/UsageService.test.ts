@@ -3233,6 +3233,37 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("makes a board caller arriving mid-load wait for the first rate table", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const fetchStarted = yield* Deferred.make<void>();
+      const releaseFetch = yield* Deferred.make<void>();
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-board-rates-race",
+            home,
+            settings,
+            ratesResponse: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(fetchStarted, undefined);
+                yield* Deferred.await(releaseFetch);
+                return Response.json({
+                  "model-a": { input_cost_per_token: 0.000001, output_cost_per_token: 0.000002 },
+                });
+              }),
+          }),
+        ),
+      );
+      const first = yield* Effect.forkChild(service.currentRates);
+      yield* Deferred.await(fetchStarted);
+      const second = yield* service.currentRates.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(releaseFetch, undefined);
+      assert.isTrue((yield* Fiber.join(second)).table.has("model-a"));
+      assert.isTrue((yield* Fiber.join(first)).table.has("model-a"));
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.live("gives the board the table in hand and refreshes a stale one behind it", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
