@@ -58,7 +58,7 @@ function shell(
 const shells = [
   shell("outer", "done", { group: true }),
   shell("a", "done", { parent: "outer", usage: usage(1) }),
-  shell("inner", "done", { parent: "outer", group: true }),
+  shell("inner", "done", { parent: "outer", group: true, usage: usage(2) }),
   shell("b", "done", { parent: "inner", usage: usage(3, { estimated: true }) }),
   shell("c", "done", { parent: "inner", usage: usage(0.5, { partial: true }) }),
   shell("d", "done", { parent: "outer" }),
@@ -68,7 +68,7 @@ const shells = [
 describe("a group's spend", () => {
   it("sums every child, nested groups included, and carries their marks", () => {
     expect(boardGroupUsage(shells, "outer").total).toMatchObject({
-      costUsd: 4.5,
+      costUsd: 6.5,
       costKnown: true,
       estimated: true,
       partial: true,
@@ -78,7 +78,7 @@ describe("a group's spend", () => {
   it("lists its direct children costliest first, a nested group as one row", () => {
     const children = boardGroupUsage(shells, "outer").children;
     expect(children.map((child) => [child.card.key, child.isGroup, child.usage?.costUsd])).toEqual([
-      ["INNER", true, 3.5],
+      ["INNER", true, 5.5],
       ["A", false, 1],
       ["D", false, undefined],
     ]);
@@ -99,12 +99,12 @@ describe("the spend in view", () => {
       ],
       columns: { building: [shells[6]!], done: [shells[0]!] },
     });
-    expect(inView.total).toMatchObject({ costUsd: 6.5, partial: true });
+    expect(inView.total).toMatchObject({ costUsd: 8.5, partial: true });
     expect(inView.cardCount).toBe(2);
     expect(inView.partialCount).toBe(1);
     expect(inView.byColumn.map((column) => [column.label, column.usage.costUsd])).toEqual([
       ["Building", 2],
-      ["Done", 4.5],
+      ["Done", 6.5],
     ]);
   });
 });

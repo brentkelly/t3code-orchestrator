@@ -53,8 +53,7 @@ function groupUsageWithMemo(
     if (!isGroup || visiting.has(childId)) {
       return { card, isGroup, usage: card.usage ?? null };
     }
-    const inner = groupUsageWithMemo(shells, childId, memo, visiting);
-    return { card, isGroup, usage: sumBoardCardUsageSummaries([card.usage, inner.total]) };
+    return { card, isGroup, usage: groupUsageWithMemo(shells, childId, memo, visiting).total };
   });
   const self = shells.find((card) => String(card.cardId) === cardId);
   const usage: BoardGroupUsage = {
