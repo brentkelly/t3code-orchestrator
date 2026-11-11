@@ -105,6 +105,10 @@ interface BoardUiStore extends BoardUiState {
       (which remounts the sheet) can hand it on; naming the card keeps fullscreen
       from leaking into a card opened any other way. Not persisted. */
   detailMaximisedCardId: string | null;
+  /** The card a spend popover asked to open on its Summary pane (T3O-77). Not
+      persisted; cleared when that card's detail closes. */
+  detailSummaryCardId: string | null;
+  setDetailSummaryCardId: (cardId: string | null) => void;
   /** Each board's filter text, keyed by `boardScopeQueryKey`: the
       root board and every sub-board keep their own. Transient — typing state,
       not a preference. */
@@ -185,6 +189,11 @@ export const useBoardUiStore = create<BoardUiStore>()(
       usageSectionOpen: false,
       sidebarHostsModeTabs: false,
       detailMaximisedCardId: null,
+      detailSummaryCardId: null,
+      setDetailSummaryCardId: (cardId) =>
+        set((state) =>
+          state.detailSummaryCardId === cardId ? state : { detailSummaryCardId: cardId },
+        ),
       queryByBoard: {},
       paletteActions: [],
       setPaletteActions: (actions) =>

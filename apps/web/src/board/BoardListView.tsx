@@ -10,6 +10,7 @@ import {
   isBoardDeferredStage,
   type BoardCardAttention,
   type BoardCardShell,
+  type BoardCardUsageSummary,
   type BoardStageId,
   type BoardState,
   type EnvironmentId,
@@ -86,7 +87,16 @@ import {
   type BoardListDropZone,
   type BoardListMoveRequest,
   type BoardListStep,
+  boardListUsageTotal,
+  type BoardListSort,
 } from "./boardList";
+import {
+  formatBoardTokens,
+  formatBoardUsageCost,
+  formatBoardUsd,
+  isBoardUsageEmphasized,
+} from "./usage/boardUsageFormat";
+import { boardCardUsageInScope } from "./usage/boardUsageViews";
 import { BOARD_DEFERRED_STAGE } from "./boardScope";
 import { boardStageLabel } from "./boardStages";
 import { boardToast } from "./boardToast";
@@ -99,7 +109,7 @@ const INDENT_PX = 22;
 /** Below this many rows every row renders; above it, only the window. */
 const VIRTUALISE_FROM = 150;
 const OVERSCAN = 12;
-const GRID_COLUMNS = "grid-cols-[minmax(0,1fr)_124px_168px_130px_150px]";
+const GRID_COLUMNS = "grid-cols-[minmax(0,1fr)_124px_168px_130px_150px_70px_82px]";
 
 const PIP_CLASS: Record<BoardGroupChildState, string> = {
   done: "bg-success",
@@ -137,9 +147,13 @@ export interface BoardListViewProps {
   readonly accentNameFor: (projectId: ProjectId) => ProjectIconColor | null;
   readonly keyPrefixFor: (projectId: ProjectId) => string;
   readonly query: string;
+  /** T3o: the board's cost emphasis threshold, the Over $N quick filter (T3O-77). */
+  readonly costEmphasisUsd: number;
   readonly onOpenCard: (cardId: string) => void;
   readonly onOpenBoard: (cardId: string) => void;
 }
+
+type BoardListUsageFilter = "all" | "over" | "partial";
 
 interface DropTarget {
   readonly id: string;
@@ -151,19 +165,56 @@ function useBoardListRows(props: BoardListViewProps) {
   const { shells, stages, inScope, query } = props;
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [stageFilter, setStageFilter] = useState<ReadonlySet<string>>(() => new Set());
+  const [usageFilter, setUsageFilter] = useState<BoardListUsageFilter>("all");
+  const [sort, setSort] = useState<BoardListSort | null>(null);
   const tree = buildBoardListTree({ shells, stages, inScope });
-  const filter = { query, stages: stageFilter };
-  const rows = boardListRows({ tree, collapsed, filter });
+  const filter = {
+    query,
+    stages: stageFilter,
+    usage:
+      usageFilter === "over"
+        ? { kind: "over" as const, thresholdUsd: props.costEmphasisUsd }
+        : usageFilter === "partial"
+          ? { kind: "partial" as const }
+          : undefined,
+  };
+  const rows = boardListRows({ tree, collapsed, filter, sort });
   const visibleIds = rows.map((row) => String(row.card.cardId));
-  return { collapsed, setCollapsed, stageFilter, setStageFilter, tree, rows, visibleIds };
+  const usageTotal = boardListUsageTotal(rows, tree.shells);
+  return {
+    collapsed,
+    setCollapsed,
+    stageFilter,
+    setStageFilter,
+    usageFilter,
+    setUsageFilter,
+    sort,
+    setSort,
+    tree,
+    rows,
+    visibleIds,
+    usageTotal,
+  };
 }
 
 // The derivations live in their own hook: a value the compiler sees later passed to
 // a call after one of the view's hooks loses its cache, and hook results are frozen.
 function useBoardListModel(props: BoardListViewProps) {
   const { shells, allShells, stages, attentionFor, query } = props;
-  const { collapsed, setCollapsed, stageFilter, setStageFilter, tree, rows, visibleIds } =
-    useBoardListRows(props);
+  const {
+    collapsed,
+    setCollapsed,
+    stageFilter,
+    setStageFilter,
+    usageFilter,
+    setUsageFilter,
+    sort,
+    setSort,
+    tree,
+    rows,
+    visibleIds,
+    usageTotal,
+  } = useBoardListRows(props);
   const [rawSelected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [dragIds, setDragIds] = useState<ReadonlyArray<string> | null>(null);
   // Every action reads only the selected rows still on screen: a filter or a
@@ -171,7 +222,7 @@ function useBoardListModel(props: BoardListViewProps) {
   const selected = boardListVisibleSelection(rawSelected, visibleIds);
   const selection = boardListSelection(tree, selected);
   const selectionIds = selection.map((card) => String(card.cardId));
-  const filtering = query.trim().length > 0 || stageFilter.size > 0;
+  const filtering = query.trim().length > 0 || stageFilter.size > 0 || usageFilter !== "all";
   const indent = boardListIndent(tree, selected, filtering ? new Set(visibleIds) : undefined);
   const outdent = boardListOutdent(tree, selected, allShells);
   const dragBlocked = dragIds === null ? null : boardListDragBlocked(shells, dragIds);
@@ -183,6 +234,11 @@ function useBoardListModel(props: BoardListViewProps) {
     setCollapsed,
     stageFilter,
     setStageFilter,
+    usageFilter,
+    setUsageFilter,
+    sort,
+    setSort,
+    usageTotal,
     dragIds,
     setDragIds,
     tree,
@@ -231,7 +287,21 @@ export function BoardListView(props: BoardListViewProps) {
     outdent,
     dragBlocked,
     statsInput,
+    usageFilter,
+    setUsageFilter,
+    sort,
+    setSort,
+    usageTotal,
   } = useBoardListModel(props);
+  const sortBy = (key: BoardListSort["key"]) =>
+    setSort((current) =>
+      current?.key === key
+        ? { key, direction: current.direction === -1 ? 1 : -1 }
+        : { key, direction: -1 },
+    );
+  const sortArrow = (key: BoardListSort["key"]) =>
+    sort?.key === key ? (sort.direction === -1 ? " ↓" : " ↑") : "";
+  const usageTotalFigure = formatBoardUsageCost(usageTotal);
   const stageDefinitions = stages.stages ?? [];
 
   // ── The one move path ────────────────────────────────────────────────
@@ -606,6 +676,34 @@ export function BoardListView(props: BoardListViewProps) {
                 </MenuItem>
               </MenuPopup>
             </Menu>
+            <div
+              aria-label="Filter by cost"
+              className="flex gap-0.5 rounded-lg bg-accent p-0.5"
+              role="group"
+            >
+              {(
+                [
+                  ["all", "All"],
+                  ["over", `Over ${formatBoardUsd(props.costEmphasisUsd)}`],
+                  ["partial", "Partial data"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  aria-pressed={usageFilter === value}
+                  className={cn(
+                    "inline-flex h-5 items-center whitespace-nowrap rounded-[7px] border px-[9px] text-[11px] font-medium",
+                    usageFilter === value
+                      ? "border-input bg-card text-foreground shadow-xs"
+                      : "border-transparent text-muted-foreground hover:text-foreground",
+                  )}
+                  key={value}
+                  onClick={() => setUsageFilter(value)}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <span className="flex-1 md:hidden" />
             <span className="hidden min-w-0 flex-1 basis-0 items-center justify-end-safe gap-1 overflow-hidden text-[11.5px] whitespace-nowrap text-muted-foreground md:flex">
               <ListKbd>⇧Click</ListKbd> for a range. <ListKbd>Tab</ListKbd> indents,
@@ -629,6 +727,20 @@ export function BoardListView(props: BoardListViewProps) {
         <span>Status</span>
         <span>Progress</span>
         <span>Merges into</span>
+        <button
+          className={cn("text-right", sort?.key === "tokens" && "text-foreground")}
+          onClick={() => sortBy("tokens")}
+          type="button"
+        >
+          Tokens{sortArrow("tokens")}
+        </button>
+        <button
+          className={cn("text-right", sort?.key === "cost" && "text-foreground")}
+          onClick={() => sortBy("cost")}
+          type="button"
+        >
+          Cost{sortArrow("cost")}
+        </button>
       </div>
       <div
         className="min-h-0 flex-1 overflow-auto px-3 pb-16 outline-none sm:px-5"
@@ -688,6 +800,12 @@ export function BoardListView(props: BoardListViewProps) {
                     : boardStageLabel(stageDefinitions, row.card.stage)
                 }
                 stats={row.isGroup ? boardGroupStats(statsInput, id) : null}
+                usage={
+                  row.isGroup && !row.expanded
+                    ? boardCardUsageInScope(tree.shells, row.card)
+                    : (row.card.usage ?? null)
+                }
+                costEmphasisUsd={props.costEmphasisUsd}
                 target={row.isGroup ? boardGroupTargetLabel(shells, row.card) : null}
                 targetOwn={row.isGroup && boardShellGroup(shells, row.card)?.target === "own"}
                 waiting={attention?.tone === "attention"}
@@ -697,6 +815,29 @@ export function BoardListView(props: BoardListViewProps) {
           {end < rows.length ? (
             <div style={{ height: (rows.length - end) * BOARD_LIST_ROW_HEIGHT }} />
           ) : null}
+          {usageTotal === null ? null : (
+            <div
+              className={cn(
+                "grid h-9 items-center gap-x-3 px-2.5 text-[11.5px] font-semibold text-foreground",
+                GRID_COLUMNS,
+              )}
+              data-board-list-usage-total
+            >
+              <span className="pl-[42px]">Total in view</span>
+              <span />
+              <span />
+              <span />
+              <span />
+              <span className="text-right font-mono tabular-nums">
+                {formatBoardTokens(usageTotal.tokens)}
+              </span>
+              <BoardHint label={usageTotalFigure.tooltip}>
+                <span className="text-right font-mono font-bold tabular-nums">
+                  {usageTotalFigure.text}
+                </span>
+              </BoardHint>
+            </div>
+          )}
         </div>
       </div>
       {startedDialog !== null && startedCard !== undefined ? (
@@ -868,6 +1009,9 @@ interface BoardListRowViewProps {
   readonly running: boolean;
   readonly blocked: boolean;
   readonly stats: BoardGroupStats | null;
+  /** A collapsed group's roll-up, or the row's own figure. */
+  readonly usage: BoardCardUsageSummary | null;
+  readonly costEmphasisUsd: number;
   readonly target: string | null;
   readonly targetOwn: boolean;
   readonly accentNameFor: (projectId: ProjectId) => ProjectIconColor | null;
@@ -1086,9 +1230,37 @@ const BoardListRowView = memo(function BoardListRowView(props: BoardListRowViewP
       >
         {props.target === null ? "" : `→ ${props.target}`}
       </div>
+      <span className="text-right font-mono text-[11.5px] tabular-nums text-muted-foreground">
+        {formatBoardTokens(props.usage?.tokens ?? null)}
+      </span>
+      <BoardUsageCell emphasisUsd={props.costEmphasisUsd} usage={props.usage} />
     </div>
   );
 });
+
+function BoardUsageCell({
+  usage,
+  emphasisUsd,
+}: {
+  readonly usage: BoardCardUsageSummary | null;
+  readonly emphasisUsd: number;
+}) {
+  const figure = formatBoardUsageCost(usage);
+  return (
+    <BoardHint label={figure.tooltip}>
+      <span
+        className={cn(
+          "text-right font-mono text-[12px] tabular-nums whitespace-nowrap",
+          figure.known ? "text-foreground" : "text-muted-foreground",
+          isBoardUsageEmphasized(usage, emphasisUsd) ? "font-semibold" : "font-medium",
+        )}
+        data-board-list-cost
+      >
+        {figure.text}
+      </span>
+    </BoardHint>
+  );
+}
 
 /** New group (an empty heading) or Group into new…: a heading where the
     selection sits, then the selection moved under it. Grouping never touches

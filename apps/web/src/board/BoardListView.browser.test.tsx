@@ -105,6 +105,7 @@ async function renderList(
     <>
       <input aria-label="Elsewhere" />
       <BoardListView
+        costEmphasisUsd={5}
         accentNameFor={() => null}
         allShells={allShells}
         attentionFor={attentionFor}

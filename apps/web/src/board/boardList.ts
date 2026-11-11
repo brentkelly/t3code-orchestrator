@@ -7,8 +7,10 @@ import {
   boardGroupRevertStage,
   boardStageIndex,
   isBoardDeferredStage,
+  sumBoardCardUsageSummaries,
   type BoardCardId,
   type BoardCardShell,
+  type BoardCardUsageSummary,
   type BoardStageId,
   type BoardState,
 } from "@t3tools/contracts";
@@ -24,6 +26,7 @@ import {
   isBoardGroupShell,
   isBoardShellStarted,
 } from "./boardGroups";
+import { boardCardUsageInScope } from "./usage/boardUsageViews";
 
 type Shells = ReadonlyArray<BoardCardShell>;
 
@@ -109,16 +112,70 @@ export interface BoardListFilter {
   readonly query: string;
   /** Stage ids; empty means every stage. */
   readonly stages: ReadonlySet<string>;
+  /** T3o: the cost quick filter (T3O-77): cards at or over the board's threshold, or
+      cards whose figure is a lower bound. Absent means every card. */
+  readonly usage?:
+    | { readonly kind: "over"; readonly thresholdUsd: number }
+    | { readonly kind: "partial" }
+    | undefined;
 }
 
 function isBoardListFiltering(filter: BoardListFilter): boolean {
-  return filter.query.trim().length > 0 || filter.stages.size > 0;
+  return filter.query.trim().length > 0 || filter.stages.size > 0 || filter.usage !== undefined;
 }
 
-function matchesFilter(card: BoardCardShell, filter: BoardListFilter): boolean {
+function matchesFilter(card: BoardCardShell, filter: BoardListFilter, shells: Shells): boolean {
   const query = filter.query.trim().toLowerCase();
   if (query.length > 0 && !`${card.title} ${card.key}`.toLowerCase().includes(query)) return false;
-  return filter.stages.size === 0 || filter.stages.has(card.stage);
+  if (filter.stages.size > 0 && !filter.stages.has(card.stage)) return false;
+  if (filter.usage === undefined) return true;
+  const usage = boardCardUsageInScope(shells, card);
+  return filter.usage.kind === "over"
+    ? usage?.costKnown === true && usage.costUsd >= filter.usage.thresholdUsd
+    : usage?.partial === true || (usage !== null && usage.costKnown !== true);
+}
+
+/** T3o: sorting the List by tokens or cost (T3O-77). */
+export interface BoardListSort {
+  readonly key: "tokens" | "cost";
+  /** -1 is high to low. */
+  readonly direction: 1 | -1;
+}
+
+/** The value a card sorts by, or null for a card with no known figure. */
+function sortValue(card: BoardCardShell, sort: BoardListSort, shells: Shells): number | null {
+  const usage = boardCardUsageInScope(shells, card);
+  if (usage === null) return null;
+  if (sort.key === "tokens") return usage.tokens;
+  return usage.costKnown === true ? usage.costUsd : null;
+}
+
+/** Siblings by tokens or cost. A card with no known figure sorts last in both
+    directions; ties keep the outline's order. */
+export function sortBoardListSiblings(cards: Shells, sort: BoardListSort, shells: Shells): Shells {
+  const values = new Map(cards.map((card) => [card.cardId, sortValue(card, sort, shells)] as const));
+  return cards.toSorted((left, right) => {
+    const a = values.get(left.cardId) ?? null;
+    const b = values.get(right.cardId) ?? null;
+    if (a === null || b === null) return a === null ? (b === null ? 0 : 1) : -1;
+    return (a - b) * sort.direction;
+  });
+}
+
+/** What the rows on screen cost together. A collapsed group stands for everything
+    under it; an expanded one counts only its own threads, since its children are rows
+    of their own. Rows shown only for context are not counted. */
+export function boardListUsageTotal(
+  rows: ReadonlyArray<BoardListRow>,
+  shells: Shells,
+): BoardCardUsageSummary | null {
+  return sumBoardCardUsageSummaries(
+    rows
+      .filter((row) => !row.context)
+      .map((row) =>
+        row.isGroup && !row.expanded ? boardCardUsageInScope(shells, row.card) : row.card.usage,
+      ),
+  );
 }
 
 export interface BoardListRow {
@@ -141,8 +198,10 @@ export function boardListRows(input: {
   readonly tree: BoardListTree;
   readonly collapsed: ReadonlySet<string>;
   readonly filter: BoardListFilter;
+  readonly sort?: BoardListSort | null | undefined;
 }): ReadonlyArray<BoardListRow> {
   const { tree, collapsed, filter } = input;
+  const sort = input.sort ?? null;
   const filtering = isBoardListFiltering(filter);
   const keepMemo = new Map<string, boolean>();
   const keep = (card: BoardCardShell): boolean => {
@@ -152,14 +211,15 @@ export function boardListRows(input: {
     if (known !== undefined) return known;
     keepMemo.set(id, false);
     const kept =
-      (tree.inScope.has(id) && matchesFilter(card, filter)) ||
+      (tree.inScope.has(id) && matchesFilter(card, filter, tree.shells)) ||
       (tree.children.get(id) ?? []).some(keep);
     keepMemo.set(id, kept);
     return kept;
   };
   const rows: Array<BoardListRow> = [];
   const walk = (parentId: string, depth: number) => {
-    for (const card of tree.children.get(parentId) ?? []) {
+    const siblings = tree.children.get(parentId) ?? [];
+    for (const card of sort === null ? siblings : sortBoardListSiblings(siblings, sort, tree.shells)) {
       if (!keep(card)) continue;
       const id = String(card.cardId);
       const kids = tree.children.get(id) ?? [];
@@ -171,7 +231,7 @@ export function boardListRows(input: {
         isGroup,
         expanded,
         childCount: kids.length,
-        context: !tree.inScope.has(id) || (filtering && !matchesFilter(card, filter)),
+        context: !tree.inScope.has(id) || (filtering && !matchesFilter(card, filter, tree.shells)),
       });
       if (expanded) walk(id, depth + 1);
     }

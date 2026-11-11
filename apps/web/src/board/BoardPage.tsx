@@ -121,6 +121,9 @@ import { BOARD_UTILITY_MENU_RESERVED_SPACE, BoardUtilityMenu } from "./BoardUtil
 import { BoardSubBoardPlanStrip } from "./BoardSubBoardPlanStrip";
 import { BoardCardFilterField, BoardTopBar } from "./BoardTopBar";
 import { isBoardColumnCollapsed, useBoardUiStore } from "./boardUiStore";
+import { BoardCardCostFigure } from "./usage/BoardUsageFigure";
+import { BoardGroupUsageButton, BoardUsageChip } from "./usage/BoardUsagePopovers";
+import { boardUsageInView } from "./usage/boardUsageViews";
 import { projectAccent, projectIconColorOf } from "./projectAccent";
 import { BoardWorkersContext, useBoardWorkersCardView } from "./workers/BoardWorkersContext";
 import { boardQueueReason } from "./workers/cardWorker";
@@ -1031,6 +1034,34 @@ function EnvironmentBoard({
     groupShells,
   } = useBoardPageModel({ environmentId, scope });
 
+  // T3o: what cards cost (T3O-77): a Done card's face, a group's per-child popover, and
+  // the header chip over the cards in view, following the filter.
+  const doneStageId = boardStageWithRole(stageState, "done")?.stageId ?? null;
+  const costEmphasisUsd = boardSettings.display.costEmphasisUsd;
+  const setDetailSummaryCardId = useBoardUiStore((state) => state.setDetailSummaryCardId);
+  const openCardUsage = (cardId: string) => {
+    setDetailSummaryCardId(cardId);
+    patchSearch((previous) => ({ ...previous, card: cardId }));
+  };
+  const stageLabelOf = (card: BoardCardShell) =>
+    orderedStages.find((stage) => stage.stageId === card.stage)?.label ?? String(card.stage);
+  const costSlotFor = (card: BoardCardShell) =>
+    isBoardGroupShell(groupShells, card) ? (
+      <BoardGroupUsageButton
+        group={card}
+        onOpenCard={openCardUsage}
+        shells={groupShells}
+        stageLabelOf={stageLabelOf}
+      />
+    ) : (
+      <BoardCardCostFigure emphasisUsd={costEmphasisUsd} usage={card.usage} />
+    );
+  const usageInView = boardUsageInView({
+    shells: groupShells,
+    stages: renderedStages,
+    columns: visibleColumns,
+  });
+
   const clearGhost = () => {
     if (ghostRef.current !== null) {
       ghostRef.current.remove();
@@ -1463,6 +1494,7 @@ function EnvironmentBoard({
             onOpenCard={(cardId) => patchSearch((previous) => ({ ...previous, card: cardId }))}
             workers={cardWorkersState}
           />
+          <BoardUsageChip inView={usageInView} />
           <BoardCardFilterField onQueryChange={setQuery} query={query} />
           {canCreate ? (
             <Button onClick={() => openCreate(defaultCreateStageId)} size="xs">
@@ -1526,6 +1558,8 @@ function EnvironmentBoard({
                 stages={stageState}
                 attentionFor={attentionFor}
                 boardWideAutoMerge={boardWideAutoMerge}
+                onOpenCardUsage={openCardUsage}
+                stageLabelOf={stageLabelOf}
               />
             </>
           ) : (
@@ -1698,6 +1732,7 @@ function EnvironmentBoard({
                   key={stage.stageId}
                   label={stage.label}
                   atMergeStage={stage.stageId === mergeStageId}
+                  costSlotFor={stage.stageId === doneStageId ? costSlotFor : undefined}
                   noPullRequestFor={noPullRequestFor}
                   worktreeKeptFor={worktreeKeptFor}
                   autoMergeArmedFor={autoMergeArmedFor}

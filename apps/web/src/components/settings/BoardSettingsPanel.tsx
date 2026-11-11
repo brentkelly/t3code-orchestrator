@@ -381,6 +381,7 @@ function BoardConcurrencySettings(props: {
 
 function DisplaySection({ board, update }: { board: BoardSettings; update: UpdateFn }) {
   const anchor = searchableSetting("board-auto-collapse-empty-stages");
+  const emphasis = searchableSetting("board-cost-emphasis");
   return (
     <SettingsSection id="board-display" title="Display" variant="plain">
       <BoardSettingsCard id="board-auto-collapse-empty-stages">
@@ -394,6 +395,25 @@ function DisplaySection({ board, update }: { board: BoardSettings; update: Updat
                 update({ board: { display: { autoCollapseEmptyStages: Boolean(checked) } } })
               }
               aria-label={anchor.title}
+            />
+          }
+        />
+      </BoardSettingsCard>
+      <BoardSettingsCard id="board-cost-emphasis">
+        <BoardSettingsCardRow
+          label={emphasis.title}
+          description="A Done card that cost at least this many dollars shows its cost in full ink, and the List's Over filter uses the same amount. Applies to everyone using this board."
+          control={
+            <NumberStepper
+              value={Math.max(1, Math.round(board.display.costEmphasisUsd))}
+              min={1}
+              max={10000}
+              ariaLabel={emphasis.title}
+              onChange={(value) => {
+                if (value !== board.display.costEmphasisUsd) {
+                  update({ board: { display: { costEmphasisUsd: value } } });
+                }
+              }}
             />
           }
         />

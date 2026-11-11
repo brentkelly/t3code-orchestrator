@@ -89,9 +89,11 @@ const PIP_CLASS: Record<BoardGroupChildState, string> = {
 function BoardGroupBlock({
   group,
   onOpenSubBoard,
+  costSlot,
 }: {
   readonly group: BoardGroupCardVm;
   readonly onOpenSubBoard?: (() => void) | undefined;
+  readonly costSlot?: ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -146,8 +148,13 @@ function BoardGroupBlock({
           </BoardHint>
         )}
       </div>
-      {group.meta.length === 0 ? null : (
-        <div className="truncate text-[11px] text-muted-foreground">{group.meta}</div>
+      {group.meta.length === 0 && costSlot == null ? null : (
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+            {group.meta}
+          </span>
+          {costSlot}
+        </div>
       )}
     </div>
   );
@@ -358,11 +365,15 @@ export function BoardCardContent({
   worktreeKeptReason,
   stageGone,
   group = null,
+  costSlot = null,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   readonly queueSlot: BoardQueueInfo | undefined;
   readonly selected: boolean;
+  /** T3o: the card's cost (T3O-77), drawn only once the card is Done; null otherwise.
+      At the meta row's right end on a leaf, on the group block's last line on a group. */
+  readonly costSlot?: ReactNode;
   /** The group face, or null for a leaf. A group's own thread,
       review, todo, PR and plan indicators are hidden: its pipeline is paused,
       and its children carry the work. */
@@ -695,7 +706,9 @@ export function BoardCardContent({
           {boardSplitProposedNote(card.planCount ?? 0)}
         </div>
       ) : null}
-      {group === null ? null : <BoardGroupBlock group={group} onOpenSubBoard={onOpenSubBoard} />}
+      {group === null ? null : (
+        <BoardGroupBlock costSlot={costSlot} group={group} onOpenSubBoard={onOpenSubBoard} />
+      )}
       {isGroup ? null : <BoardCardSummaryRow items={summary.items} />}
       {!isGroup && progress.kind === "review" ? (
         // The review ledger is the card's progress block while it sits in code
@@ -745,6 +758,7 @@ export function BoardCardContent({
           stage summary and the todo strip however tall those grow. */}
       {isGroup ? null : (
         <BoardCardMetaRow
+          cost={costSlot}
           meta={boardCardMeta(card, todoThreads.length)}
           worker={boardCardWorkerChip(card, workers)}
         />
@@ -782,12 +796,14 @@ export function DraggableBoardCard({
   worktreeKeptReason,
   stageGone,
   group = null,
+  costSlot = null,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   readonly queueSlot: BoardQueueInfo | undefined;
   readonly selected: boolean;
   readonly dragging: boolean;
+  readonly costSlot?: ReactNode;
   readonly group?: BoardGroupCardVm | null | undefined;
   readonly onSelect: (card: BoardCardShell) => void;
   readonly onDragStart: (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => void;
@@ -866,6 +882,7 @@ export function DraggableBoardCard({
         worktreeKeptReason={worktreeKeptReason}
         stageGone={stageGone}
         group={group}
+        costSlot={costSlot}
       />
     </div>
   );

@@ -22,6 +22,13 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     targetId: "board-display",
     searchTerms: ["fold hide empty columns"],
   },
+  {
+    id: "board-cost-emphasis",
+    title: "Highlight cards costing over",
+    to: "/settings/board",
+    targetId: "board-display",
+    searchTerms: ["cost spend tokens usage threshold price"],
+  },
   { id: "board-projects", title: "Projects", to: "/settings/board" },
   {
     id: "board-key-prefix",

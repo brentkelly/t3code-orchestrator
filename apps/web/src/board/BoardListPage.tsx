@@ -155,6 +155,7 @@ function EnvironmentList({ environmentId }: { readonly environmentId: Environmen
         <BoardCardFilterField onQueryChange={setQuery} query={query} />
       </BoardTopBar>
       <BoardListView
+        costEmphasisUsd={boardSettings.display.costEmphasisUsd}
         accentNameFor={accentNameFor}
         allShells={allShells}
         attentionFor={attentionFor}

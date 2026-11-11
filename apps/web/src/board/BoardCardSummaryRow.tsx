@@ -23,8 +23,9 @@ import {
   PaperclipIcon,
   type LucideIcon,
 } from "lucide-react";
-import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
+import type { ReactNode } from "react";
 
+import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { cn } from "../lib/utils";
 import { BOARD_CARD_REVIEW_ITEM_KINDS } from "./boardCardProgressBlock";
 import { formatRelativeTime } from "../timestampFormat";
@@ -408,13 +409,16 @@ function MetaCount({
 export function BoardCardMetaRow({
   meta,
   worker,
+  cost = null,
 }: {
   readonly meta: BoardCardMeta;
+  /** T3o: a Done card's cost figure, last on the row (T3O-77). */
+  readonly cost?: ReactNode;
   /** The worker chip, at the row's right end; null on a board with
       one worker. */
   readonly worker?: BoardCardWorkerChip | null | undefined;
 }) {
-  if (meta.empty && worker == null) return null;
+  if (meta.empty && worker == null && cost == null) return null;
   return (
     <div className="flex items-center gap-2.5 text-muted-foreground">
       {meta.dependencyCount === 0 ? null : (
@@ -480,6 +484,7 @@ export function BoardCardMetaRow({
           </span>
         </BoardHint>
       )}
+      {cost}
     </div>
   );
 }

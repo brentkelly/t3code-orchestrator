@@ -21,6 +21,7 @@ import { boardEnvironment } from "../state/board";
 import { projectAccent } from "./projectAccent";
 import { BoardHint } from "./BoardHint";
 import { BoardGroupAutomationPopover } from "./BoardCardAutomation";
+import { BoardGroupUsageButton } from "./usage/BoardUsagePopovers";
 import {
   boardGroupAutoBuildLabel,
   boardGroupStats,
@@ -40,6 +41,8 @@ export function BoardSubBoardHeader({
   stages,
   attentionFor,
   boardWideAutoMerge,
+  stageLabelOf,
+  onOpenCardUsage,
 }: {
   readonly environmentId: EnvironmentId;
   readonly parentCardId: BoardCardId;
@@ -61,6 +64,9 @@ export function BoardSubBoardHeader({
   readonly attentionFor: (card: BoardCardShell) => BoardCardAttention | null;
   /** Settings → Board → Pipeline merges every card. */
   readonly boardWideAutoMerge: boolean;
+  /** T3o: for the group's spend popover (T3O-77). */
+  readonly stageLabelOf: (card: BoardCardShell) => string;
+  readonly onOpenCardUsage: (cardId: string) => void;
 }) {
   const detail = useAtomValue(
     boardEnvironment.cardDetailValueAtom({ environmentId, cardId: parentCardId }),
@@ -120,6 +126,20 @@ export function BoardSubBoardHeader({
           </span>
         </BoardHint>
       ) : null}
+      {/* The group's spend at any stage, so in-progress spend is one click away. */}
+      <BoardGroupUsageButton
+        group={parentShell}
+        onOpenCard={onOpenCardUsage}
+        shells={shells}
+        stageLabelOf={stageLabelOf}
+        trigger={(figure) => (
+          <>
+            <span className="h-3.5 w-px bg-border" />
+            <span className="font-mono text-[11.5px] font-semibold text-foreground">{figure}</span>
+            <span className="font-sans text-[11.5px] font-medium text-muted-foreground">spent</span>
+          </>
+        )}
+      />
       <span className="flex-1" />
       {/* The chart is drawn from the group's PLANS, so the toggle
           only exists once there are some. */}

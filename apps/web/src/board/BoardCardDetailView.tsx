@@ -3359,13 +3359,21 @@ export function BoardCardDetailView(props: BoardCardDetailViewProps) {
   const cardId = props.detail.card.id;
   const maximised = useBoardUiStore((state) => state.detailMaximisedCardId === cardId);
   const setMaximisedCardId = useBoardUiStore((state) => state.setDetailMaximisedCardId);
-  const [paneChoice, setPaneChoice] = useState<BoardCardPane | null>(null);
+  // A spend popover opens its card straight on the Summary pane's Usage section.
+  const summaryRequested = useBoardUiStore((state) => state.detailSummaryCardId === cardId);
+  const setDetailSummaryCardId = useBoardUiStore((state) => state.setDetailSummaryCardId);
+  const [paneChoice, setPaneChoice] = useState<BoardCardPane | null>(
+    summaryRequested ? "summary" : null,
+  );
   const wide = boardCardDetailIsWide(props.stages, props.detail.card.stage, paneChoice);
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open) props.onClose();
+        if (!open) {
+          if (summaryRequested) setDetailSummaryCardId(null);
+          props.onClose();
+        }
       }}
     >
       <BoardCardDetailPopup
