@@ -26,6 +26,7 @@ import {
   resolveBoardStageExecution,
   type BoardCardShell,
   type BoardCardThreadShell,
+  type BoardSettings,
   type BoardStageDefinition,
   type BoardStageId,
   type BoardState,
@@ -242,7 +243,129 @@ function BoardPage({
   );
 }
 
-function EnvironmentBoard({
+/**
+ * The board's live columns, through the attention settle. A hook of its own so
+ * its results reach the page frozen: the compiler drops the cache of any value
+ * the page later passes to a call after one of its hooks.
+ */
+function useBoardLiveColumns({
+  environmentId,
+  boardSettings,
+  scopeProjectId,
+  orderedStages,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly boardSettings: BoardSettings;
+  readonly scopeProjectId: ProjectId | null;
+  readonly orderedStages: ReadonlyArray<BoardStageDefinition>;
+}) {
+  const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
+  const cardsByProject = useAtomValue(boardEnvironment.cardsByProjectAtom(environmentId));
+  // Optimistic drop placements: applied over the live shells immediately,
+  // pruned as the server's deltas confirm them, removed on rejection.
+  const [placements, setPlacements] = useState<ReadonlyArray<BoardCardPlacement>>([]);
+
+  // The thread shells, joined from the snapshot the client already holds. Read
+  // by the card todo strips and by the attention settle grace.
+  const threadShellsById = (() => {
+    const shells = Option.getOrNull(shellState.snapshot)?.threads ?? [];
+    return new Map(shells.map((thread) => [thread.id, thread]));
+  })();
+  const threadShellOf = (threadId: ThreadId) => threadShellsById.get(threadId);
+  const liveColumns = (() => {
+    if (scopeProjectId !== null) {
+      if (isBoardProjectHidden(boardSettings, scopeProjectId)) return EMPTY_COLUMNS;
+      return cardsByProject.get(scopeProjectId) ?? EMPTY_COLUMNS;
+    }
+    return mergeBoardStageColumns(
+      [...cardsByProject.entries()]
+        .filter(([projectId]) => !isBoardProjectHidden(boardSettings, projectId))
+        .map(([, columns]) => columns),
+    );
+  })();
+
+  const unsettledPlacements =
+    placements.length === 0
+      ? placements
+      : placements.filter((placement) => !isBoardCardPlacementSettled(liveColumns, placement));
+  if (unsettledPlacements.length !== placements.length) setPlacements(unsettledPlacements);
+  const placedColumns = applyBoardCardPlacements(liveColumns, unsettledPlacements);
+
+  // Plan pips are derived client-side from the children the shell already
+  // carries; the server never produces them.
+  const { columns, parentKeyById, cardKeyById } = (() => {
+    const cards = Object.values(placedColumns).flat();
+    const progress = deriveBoardCardPlanProgress({ cards, stages: orderedStages });
+    const keyById = new Map(cards.map((card) => [String(card.cardId), card.key]));
+    const parents = new Map<string, string>();
+    for (const card of cards) {
+      if (card.parentCardId === undefined) continue;
+      const parentKey = keyById.get(String(card.parentCardId));
+      if (parentKey !== undefined) parents.set(String(card.cardId), parentKey);
+    }
+    if (progress.size === 0) {
+      return { columns: placedColumns, parentKeyById: parents, cardKeyById: keyById };
+    }
+    const decorated = Object.fromEntries(
+      Object.entries(placedColumns).map(([stageId, stageCards]) => [
+        stageId,
+        stageCards.map((card) => {
+          const counts = progress.get(card.cardId);
+          return counts === undefined
+            ? card
+            : {
+                ...card,
+                planTotal: counts.total,
+                planDone: counts.done,
+                planStatuses: counts.statuses,
+              };
+        }),
+      ]),
+    ) as typeof placedColumns;
+    return { columns: decorated, parentKeyById: parents, cardKeyById: keyById };
+  })();
+  // Every live shell, flat: the attention derivations fold over it, and
+  // the sub-board's plan strip resolves this parent's children out of it
+  // (t3o-29, D1). The FULL columns, not the scoped ones: a child is filtered
+  // out of what renders, never out of what the client knows.
+  const allCards = Object.values(columns).flat();
+  // Group rules read across every project, as the server's do: `?project=` and
+  // hidden projects filter what renders, never a group's children.
+  const groupShells = (() => {
+    const seen = new Set(allCards.map((card) => String(card.cardId)));
+    const elsewhere = [...cardsByProject.values()]
+      .flatMap((projectColumns) => Object.values(projectColumns).flat())
+      .filter((card) => !seen.has(String(card.cardId)));
+    return elsewhere.length === 0 ? allCards : [...allCards, ...elsewhere];
+  })();
+  // When each card's thread last went quiet, plus the clock that ticks once
+  // when a grace expires (T3O-29). Both feed `boardCardAttention`, which
+  // withholds the "Needs a human" chips until the card has been still for
+  // `BOARD_ATTENTION_SETTLE_MS`.
+  const { threadIdleSinceByCard, now: attentionNow } = useBoardAttentionSettle({
+    cards: allCards,
+    threadOf: threadShellOf,
+  });
+  return {
+    liveColumns,
+    setPlacements,
+    columns,
+    parentKeyById,
+    cardKeyById,
+    threadShellsById,
+    allCards,
+    groupShells,
+    threadIdleSinceByCard,
+    attentionNow,
+  };
+}
+
+/**
+ * Everything the page derives before its handlers. A hook of its own so the results
+ * reach the page frozen: the compiler drops the cache of a value the page might
+ * still mutate when a hook or an effect runs.
+ */
+function useBoardPageModel({
   environmentId,
   scope,
 }: {
@@ -297,7 +420,6 @@ function EnvironmentBoard({
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const cardsByProject = useAtomValue(boardEnvironment.cardsByProjectAtom(environmentId));
   const labelCatalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
-  const labelsById = indexBoardLabels(labelCatalogue);
   const moveCard = useAtomCommand(boardEnvironment.moveCard);
   const reorderCard = useAtomCommand(boardEnvironment.reorderCard);
 
@@ -308,9 +430,82 @@ function EnvironmentBoard({
   // The user-defined stage list drives column order and labels (D13); falls
   // back to the compiled seeds until the first shell snapshot arrives.
   const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
+
   const orderedStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
   // Each project's delta (T3O-49): which stages its cards use.
   const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
+  // Board settings (t3o-07): the per-project key prefix used when creating a
+  // card. Read once here and threaded down, rather than subscribed per card.
+  const boardSettings = useBoardSettings((settings) => settings.board);
+  // The confirmations a group drag or the Deferred column opens.
+  const [startingGroupId, setStartingGroupId] = useState<string | null>(null);
+  const [phaseGroupId, setPhaseGroupId] = useState<string | null>(null);
+  // The sub-board's dependency chart (t3o-29, D6). Ephemeral: the page
+  // remounts per navigation, and persisted board UI state has already caused
+  // a navigation bug in this codebase (D9).
+  const [subBoardChartOpen, setSubBoardChartOpen] = useState(false);
+  // Stays the same object across a clone's progress ticks, so those don't
+  // rebuild the queue or re-render the columns.
+  const cardWorkersState = useBoardWorkersCardView(environmentId);
+  // The strip's thread title and state are joined from the thread shells the
+  // client already holds; nothing is duplicated onto the wire.
+  const cardThreadsByCard = useAtomValue(boardEnvironment.cardThreadsByCardAtom(environmentId));
+  // Which cards have their extra threads revealed. In-memory and session-scoped
+  // (D9): a collapse preference has near-zero value across reloads, and persisted
+  // board UI state has already caused a navigation bug in this codebase.
+  const [expandedThreadCards, setExpandedThreadCards] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [peekedColumns, setPeekedColumns] = useState<ReadonlySet<string>>(() => new Set());
+  // The top bar's filter box (T3O-16). Local state, not a search param: this is
+  // per-keystroke typing state, and routing every character would re-run route
+  // matching for a filter nobody wants to deep-link or land back on.
+  const queryKey = boardScopeQueryKey(scope);
+  const query = useBoardUiStore((state) => state.queryByBoard[queryKey] ?? "");
+  const setBoardQuery = useBoardUiStore((state) => state.setBoardQuery);
+  // Native HTML5 drag: dnd-kit's sortable transforms broke the virtualised list.
+  const [drag, setDrag] = useState<BoardDrag | null>(null);
+  const [dragOver, setDragOver] = useState<BoardDragOver | null>(null);
+  const [dragOpenedRail, setDragOpenedRail] = useState<BoardStageId | null>(null);
+  const [dragTip, setDragTip] = useState<string | null>(null);
+  // T3o (T3O-19): a drag out of Planning with no plan written waits for the
+  // human to confirm it, exactly as the detail pane's move does. The drop is
+  // held as the card it landed before, not as a column order: the column can
+  // change while the dialog is open, so the order is rebuilt on confirm.
+  const [unplannedDrop, setUnplannedDrop] = useState<{
+    readonly targetStage: BoardStageId;
+    /** The card the drop landed before; null appends to the column. */
+    readonly beforeId: string | null;
+    readonly source: FoundCard;
+  } | null>(null);
+  const snapshotArrived = useAtomValue(environmentBoard.snapshotValueAtom(environmentId)) !== null;
+  const setPaletteActions = useBoardUiStore((state) => state.setPaletteActions);
+  // The stage the create dialog prefills; null means closed.
+  const [createStage, setCreateStage] = useState<BoardStageId | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
+  const deleteCard = useAtomCommand(boardEnvironment.deleteCard);
+
+  // `?project` scopes the ROOT board only — a sub-board's project is implied
+  // by its parent, so the param is ignored there rather than double-filtering.
+  const scopeProjectId =
+    scope.kind === "root" ? ((search.project ?? null) as ProjectId | null) : null;
+  const {
+    liveColumns,
+    setPlacements,
+    columns,
+    parentKeyById,
+    cardKeyById,
+    threadShellsById,
+    allCards,
+    groupShells,
+    threadIdleSinceByCard,
+    attentionNow,
+  } = useBoardLiveColumns({ environmentId, boardSettings, scopeProjectId, orderedStages });
+  const parentKeyFor = (cardId: string) =>
+    scope.kind === "root" ? parentKeyById.get(cardId) : undefined;
+
+  const labelsById = indexBoardLabels(labelCatalogue);
   const stageState = stageStateOf(orderedStages, projectStageConfigs);
   const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
   // The merge-role stage, for the armed-and-quiet `Auto` glyph (T3O-38, D13):
@@ -321,10 +516,6 @@ function EnvironmentBoard({
   /** Collapse state keys on `(scope, stageId)` (D1); the defaults are
       `boardScopeColumnCollapsedByDefault`'s. */
   const collapseKeyOf = (stageId: string) => boardScopeCollapseKey(scope, stageId);
-
-  // Board settings (t3o-07): the per-project key prefix used when creating a
-  // card. Read once here and threaded down, rather than subscribed per card.
-  const boardSettings = useBoardSettings((settings) => settings.board);
 
   // The board-wide arm (T3O-38, D2) — the third arming condition, and the one
   // the card shell cannot carry, since the SQL snapshot producer cannot see
@@ -351,10 +542,6 @@ function EnvironmentBoard({
   const projects = allProjects.filter(
     (project) => !isBoardProjectHidden(boardSettings, project.id),
   );
-  // `?project` scopes the ROOT board only — a sub-board's project is implied
-  // by its parent, so the param is ignored there rather than double-filtering.
-  const scopeProjectId =
-    scope.kind === "root" ? ((search.project ?? null) as ProjectId | null) : null;
   // A stale deep link (project deleted, hidden, or another environment's id)
   // still needs a visible scope so the user can switch back to All projects.
   const scopeIsStale =
@@ -364,92 +551,6 @@ function EnvironmentBoard({
   const scopeIsHidden =
     scopeProjectId !== null && isBoardProjectHidden(boardSettings, scopeProjectId);
 
-  const liveColumns = (() => {
-    if (scopeProjectId !== null) {
-      if (isBoardProjectHidden(boardSettings, scopeProjectId)) return EMPTY_COLUMNS;
-      return cardsByProject.get(scopeProjectId) ?? EMPTY_COLUMNS;
-    }
-    return mergeBoardStageColumns(
-      [...cardsByProject.entries()]
-        .filter(([projectId]) => !isBoardProjectHidden(boardSettings, projectId))
-        .map(([, columns]) => columns),
-    );
-  })();
-
-  // Optimistic drop placements: applied over the live shells immediately,
-  // pruned as the server's deltas confirm them, removed on rejection.
-  const [placements, setPlacements] = useState<ReadonlyArray<BoardCardPlacement>>([]);
-  const unsettledPlacements =
-    placements.length === 0
-      ? placements
-      : placements.filter((placement) => !isBoardCardPlacementSettled(liveColumns, placement));
-  if (unsettledPlacements.length !== placements.length) setPlacements(unsettledPlacements);
-  const placedColumns = applyBoardCardPlacements(liveColumns, unsettledPlacements);
-
-  // Plan pips are derived client-side from the children the shell already
-  // carries; the server never produces them.
-  const { columns, parentKeyById, cardKeyById } = (() => {
-    const cards = Object.values(placedColumns).flat();
-    const progress = deriveBoardCardPlanProgress({ cards, stages: orderedStages });
-    const keyById = new Map(cards.map((card) => [String(card.cardId), card.key]));
-    const parents = new Map<string, string>();
-    for (const card of cards) {
-      if (card.parentCardId === undefined) continue;
-      const parentKey = keyById.get(String(card.parentCardId));
-      if (parentKey !== undefined) parents.set(String(card.cardId), parentKey);
-    }
-    if (progress.size === 0) {
-      return { columns: placedColumns, parentKeyById: parents, cardKeyById: keyById };
-    }
-    const decorated = Object.fromEntries(
-      Object.entries(placedColumns).map(([stageId, stageCards]) => [
-        stageId,
-        stageCards.map((card) => {
-          const counts = progress.get(card.cardId);
-          return counts === undefined
-            ? card
-            : {
-                ...card,
-                planTotal: counts.total,
-                planDone: counts.done,
-                planStatuses: counts.statuses,
-              };
-        }),
-      ]),
-    ) as typeof placedColumns;
-    return { columns: decorated, parentKeyById: parents, cardKeyById: keyById };
-  })();
-  const parentKeyFor = (cardId: string) =>
-    scope.kind === "root" ? parentKeyById.get(cardId) : undefined;
-  // The thread shells, joined here from the snapshot the client already holds.
-  // Read by the card todo strips below and by the attention settle grace next.
-  const threadShellsById = (() => {
-    const shells = Option.getOrNull(shellState.snapshot)?.threads ?? [];
-    return new Map(shells.map((thread) => [thread.id, thread]));
-  })();
-  const threadShellOf = (threadId: ThreadId) => threadShellsById.get(threadId);
-  // Every live shell, flat — the attention derivations below fold over it, and
-  // the sub-board's plan strip resolves this parent's children out of it
-  // (t3o-29, D1). The FULL columns, not the scoped ones: a child is filtered
-  // out of what renders, never out of what the client knows.
-  const allCards = Object.values(columns).flat();
-  // Group rules read across every project, as the server's do: `?project=` and
-  // hidden projects filter what renders, never a group's children.
-  const groupShells = (() => {
-    const seen = new Set(allCards.map((card) => String(card.cardId)));
-    const elsewhere = [...cardsByProject.values()]
-      .flatMap((projectColumns) => Object.values(projectColumns).flat())
-      .filter((card) => !seen.has(String(card.cardId)));
-    return elsewhere.length === 0 ? allCards : [...allCards, ...elsewhere];
-  })();
-  // …and when each card's thread last went quiet, plus the clock that ticks once
-  // when a grace expires (T3O-29). Both feed `boardCardAttention` below, which
-  // withholds the "Needs a human" chips until the card has been still for
-  // `BOARD_ATTENTION_SETTLE_MS`.
-  const { threadIdleSinceByCard, now: attentionNow } = useBoardAttentionSettle({
-    cards: allCards,
-    threadOf: threadShellOf,
-  });
   // "Needs a human", derived client-side from the shell + stage list with no
   // extra payload (t3o-27's split approval is one of its reasons). The card
   // face turns this into a border, a fill tint and one chip.
@@ -571,29 +672,6 @@ function EnvironmentBoard({
     if (up === undefined) openRootBoard(sheet);
     else openSubBoard(up.cardId, sheet);
   };
-  // Alt+Up leaves a sub-board for the level above, wherever focus is on the
-  // board — but not out of an open dialog, the card sheet or a text field.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener for Alt+Up, held while this sub-board is mounted.
-  useEffect(() => {
-    if (scope.kind !== "sub-board") return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.altKey || event.key !== "ArrowUp" || event.defaultPrevented) return;
-      if (isEditableFocused(event.target)) return;
-      if (document.querySelector("[role=dialog],[role=alertdialog]") !== null) return;
-      event.preventDefault();
-      goUpOneLevel();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [goUpOneLevel, scope.kind]);
-  // The confirmations a group drag or the Deferred column opens.
-  const [startingGroupId, setStartingGroupId] = useState<string | null>(null);
-  const [phaseGroupId, setPhaseGroupId] = useState<string | null>(null);
-
-  // The sub-board's dependency chart (t3o-29, D6). Ephemeral: the page
-  // remounts per navigation, and persisted board UI state has already caused
-  // a navigation bug in this codebase (D9).
-  const [subBoardChartOpen, setSubBoardChartOpen] = useState(false);
 
   // Every card in the environment, scoped or not: the build queue is board-wide,
   // and a queue that skipped a hidden project's card would number the rest wrong.
@@ -601,9 +679,6 @@ function EnvironmentBoard({
     Object.values(byStage).flat(),
   );
 
-  // Stays the same object across a clone's progress ticks, so those don't
-  // rebuild the queue or re-render the columns.
-  const cardWorkersState = useBoardWorkersCardView(environmentId);
   const queueSlots = (() => {
     const queue = boardBuildQueue(
       everyCard,
@@ -637,15 +712,6 @@ function EnvironmentBoard({
     return info;
   })();
 
-  // The strip's thread title and state are joined from the thread shells the
-  // client already holds; nothing is duplicated onto the wire.
-  const cardThreadsByCard = useAtomValue(boardEnvironment.cardThreadsByCardAtom(environmentId));
-  // Which cards have their extra threads revealed. In-memory and session-scoped
-  // (D9): a collapse preference has near-zero value across reloads, and persisted
-  // board UI state has already caused a navigation bug in this codebase.
-  const [expandedThreadCards, setExpandedThreadCards] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
   const toggleCardThreads = (cardId: string) => {
     setExpandedThreadCards((current) => {
       const next = new Set(current);
@@ -732,7 +798,6 @@ function EnvironmentBoard({
   // Auto-collapse empty stages (T3O-40). A peek opens an auto-folded column
   // for this mounted board only; it never touches `collapsedByStage`.
   const autoCollapseEmpty = boardSettings.display.autoCollapseEmptyStages;
-  const [peekedColumns, setPeekedColumns] = useState<ReadonlySet<string>>(() => new Set());
   // A peek ends once its column holds cards (or the setting or scope changes),
   // so the column folds again the next time it empties. Adjusted during
   // render, not in an effect, so the stale peek never paints.
@@ -770,12 +835,6 @@ function EnvironmentBoard({
       ]),
     ) as typeof scopedColumns;
   })();
-  // The top bar's filter box (T3O-16). Local state, not a search param: this is
-  // per-keystroke typing state, and routing every character would re-run route
-  // matching for a filter nobody wants to deep-link or land back on.
-  const queryKey = boardScopeQueryKey(scope);
-  const query = useBoardUiStore((state) => state.queryByBoard[queryKey] ?? "");
-  const setBoardQuery = useBoardUiStore((state) => state.setBoardQuery);
   const setQuery = (next: string) => setBoardQuery(queryKey, next);
   const visibleColumns = filterBoardColumnsByQuery(stalledColumns, query);
   // Zero matches is a state the board has to SAY, or eight empty columns read
@@ -785,14 +844,193 @@ function EnvironmentBoard({
     countBoardColumnCards(visibleColumns) === 0 &&
     countBoardColumnCards(stalledColumns) > 0;
 
-  // Native HTML5 drag: dnd-kit's sortable transforms broke the virtualised list.
-  const [drag, setDrag] = useState<BoardDrag | null>(null);
-  const [dragOver, setDragOver] = useState<BoardDragOver | null>(null);
-  const [dragOpenedRail, setDragOpenedRail] = useState<BoardStageId | null>(null);
-  const [dragTip, setDragTip] = useState<string | null>(null);
+  return {
+    search,
+    patchSearch,
+    openSubBoard,
+    openRootBoard,
+    moveCard,
+    reorderCard,
+    collapsedByStage,
+    setColumnCollapsed,
+    setDetailMaximisedCardId,
+    orderedStages,
+    boardSettings,
+    startingGroupId,
+    setStartingGroupId,
+    phaseGroupId,
+    setPhaseGroupId,
+    subBoardChartOpen,
+    setSubBoardChartOpen,
+    cardWorkersState,
+    peekedColumns,
+    query,
+    drag,
+    setDrag,
+    dragOver,
+    setDragOver,
+    dragOpenedRail,
+    setDragOpenedRail,
+    dragTip,
+    setDragTip,
+    unplannedDrop,
+    setUnplannedDrop,
+    snapshotArrived,
+    setPaletteActions,
+    createStage,
+    setCreateStage,
+    archiveOpen,
+    setArchiveOpen,
+    unarchiveCard,
+    deleteCard,
+    scopeProjectId,
+    parentKeyFor,
+    labelsById,
+    stageState,
+    buildStageId,
+    mergeStageId,
+    collapseKeyOf,
+    boardWideAutoMerge,
+    allProjects,
+    accentNameFor,
+    projects,
+    scopeIsStale,
+    scopeIsHidden,
+    attentionFor,
+    noPullRequestFor,
+    worktreeKeptFor,
+    autoMergeArmedFor,
+    autoBuildArmedFor,
+    childAttentionFor,
+    childRunningFor,
+    parentShell,
+    groupFor,
+    parentGroup,
+    defaultCreateStageId,
+    ancestors,
+    goUpOneLevel,
+    everyCard,
+    queueSlots,
+    todosFor,
+    scopedColumns,
+    pipelineView,
+    pipelineProjects,
+    pipelineColumnById,
+    renderedStages,
+    stageGoneFor,
+    autoCollapseEmpty,
+    handleSetCollapsed,
+    showStalledOnly,
+    stalledCount,
+    setQuery,
+    visibleColumns,
+    noQueryMatches,
+    liveColumns,
+    setPlacements,
+    columns,
+    cardKeyById,
+    groupShells,
+  };
+}
+
+function EnvironmentBoard({
+  environmentId,
+  scope,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly scope: BoardScope;
+}) {
   const dragTipRef = useRef<HTMLDivElement | null>(null);
   const ghostRef = useRef<HTMLElement | null>(null);
   const dragRef = useRef<BoardDrag | null>(null);
+  const handledDeepLinkRef = useRef<string | null>(null);
+  const {
+    search,
+    patchSearch,
+    openSubBoard,
+    openRootBoard,
+    moveCard,
+    reorderCard,
+    collapsedByStage,
+    setColumnCollapsed,
+    setDetailMaximisedCardId,
+    orderedStages,
+    boardSettings,
+    startingGroupId,
+    setStartingGroupId,
+    phaseGroupId,
+    setPhaseGroupId,
+    subBoardChartOpen,
+    setSubBoardChartOpen,
+    cardWorkersState,
+    peekedColumns,
+    query,
+    drag,
+    setDrag,
+    dragOver,
+    setDragOver,
+    dragOpenedRail,
+    setDragOpenedRail,
+    dragTip,
+    setDragTip,
+    unplannedDrop,
+    setUnplannedDrop,
+    snapshotArrived,
+    setPaletteActions,
+    createStage,
+    setCreateStage,
+    archiveOpen,
+    setArchiveOpen,
+    unarchiveCard,
+    deleteCard,
+    scopeProjectId,
+    parentKeyFor,
+    labelsById,
+    stageState,
+    buildStageId,
+    mergeStageId,
+    collapseKeyOf,
+    boardWideAutoMerge,
+    allProjects,
+    accentNameFor,
+    projects,
+    scopeIsStale,
+    scopeIsHidden,
+    attentionFor,
+    noPullRequestFor,
+    worktreeKeptFor,
+    autoMergeArmedFor,
+    autoBuildArmedFor,
+    childAttentionFor,
+    childRunningFor,
+    parentShell,
+    groupFor,
+    parentGroup,
+    defaultCreateStageId,
+    ancestors,
+    goUpOneLevel,
+    everyCard,
+    queueSlots,
+    todosFor,
+    scopedColumns,
+    pipelineView,
+    pipelineProjects,
+    pipelineColumnById,
+    renderedStages,
+    stageGoneFor,
+    autoCollapseEmpty,
+    handleSetCollapsed,
+    showStalledOnly,
+    stalledCount,
+    setQuery,
+    visibleColumns,
+    noQueryMatches,
+    liveColumns,
+    setPlacements,
+    columns,
+    cardKeyById,
+    groupShells,
+  } = useBoardPageModel({ environmentId, scope });
 
   const clearGhost = () => {
     if (ghostRef.current !== null) {
@@ -921,16 +1159,6 @@ function EnvironmentBoard({
     });
   };
 
-  // T3o (T3O-19): a drag out of Planning with no plan written waits for the
-  // human to confirm it, exactly as the detail pane's move does. The drop is
-  // held as the card it landed before, not as a column order: the column can
-  // change while the dialog is open, so the order is rebuilt on confirm.
-  const [unplannedDrop, setUnplannedDrop] = useState<{
-    readonly targetStage: BoardStageId;
-    /** The card the drop landed before; null appends to the column. */
-    readonly beforeId: string | null;
-    readonly source: FoundCard;
-  } | null>(null);
   const dispatchDrop = (
     targetStage: BoardStageId,
     orderedIds: ReadonlyArray<string>,
@@ -1126,15 +1354,6 @@ function EnvironmentBoard({
       return rest;
     });
   };
-  // Fullscreen rides the store so it survives a STEP between cards (T3O-37,
-  // D5), and the store names the card it belongs to, so a card that opens any
-  // other way opens windowed whether or not it passed through "no card open"
-  // on the way in. This effect only has to forget the card once the sheet is
-  // gone, so that re-opening that same card later starts windowed too.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the board UI store forgets fullscreen once the URL (which back/forward also edits) drops the card.
-  useEffect(() => {
-    if (selectedCardId === null) setDetailMaximisedCardId(null);
-  }, [selectedCardId, setDetailMaximisedCardId]);
   // Steps through `visibleColumns` in `renderedStages` order, exactly what the
   // board shows, running off one column into the next. A card not in it resolves
   // to index -1 and stepping goes quiet.
@@ -1169,92 +1388,6 @@ function EnvironmentBoard({
       drills into that parent's sub-board. */
   const handleOpenSubBoard = (card: BoardCardShell) => openSubBoard(card.cardId);
 
-  // Opening a card URL selects the card and brings it into view: expand its
-  // column if collapsed, scroll the row into place. The detail pane that
-  // opens from this selection is t3o-06's.
-  const handledDeepLinkRef = useRef<string | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands the column and scrolls the DOM row into view for a card URL.
-  useEffect(() => {
-    const cardId = search.card;
-    if (cardId === undefined || handledDeepLinkRef.current === cardId) return;
-    const found = findBoardCard(columns, cardId);
-    // Out-of-scope cards are the redirect effect's job, not a scroll target.
-    if (found === null || !isBoardCardInScope(found.card, scope)) return;
-    handledDeepLinkRef.current = cardId;
-    const collapseKey = collapseKeyOf(found.stage);
-    if (
-      isBoardColumnCollapsed(
-        collapsedByStage,
-        collapseKey,
-        boardScopeColumnCollapsedByDefault({
-          scope,
-          stageState,
-          stageId: found.stage,
-          renderedIndex: renderedStages.findIndex((stage) => stage.stageId === found.stage),
-          // The card is in it, so it is not empty.
-          cardCount: 1,
-        }),
-      )
-    ) {
-      setColumnCollapsed(collapseKey, false);
-    }
-    // Two frames: the first lets a just-expanded column mount its list.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        document
-          .querySelector(`[data-board-card="${window.CSS.escape(cardId)}"]`)
-          ?.scrollIntoView({ block: "nearest", inline: "nearest" });
-      });
-    });
-  }, [
-    collapseKeyOf,
-    collapsedByStage,
-    columns,
-    handledDeepLinkRef,
-    renderedStages,
-    scope,
-    search.card,
-    setColumnCollapsed,
-    stageState,
-  ]);
-
-  // Cross-scope deep links resolve to the right board (t3o-25, AC4): a child
-  // card's URL opened over the root board — or over the wrong sub-board —
-  // navigates into its parent's sub-board with the sheet selection intact,
-  // and a top-level card's URL opened inside a sub-board goes back up.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- router: redirects a cross-scope card URL to the board that holds the card.
-  useEffect(() => {
-    const cardId = search.card;
-    if (cardId === undefined) return;
-    const found = findBoardCard(columns, cardId);
-    if (found === null || isBoardCardInScope(found.card, scope)) return;
-    const parentId = found.card.parentCardId;
-    if (parentId !== undefined) {
-      openSubBoard(parentId, cardId, { replace: true });
-    } else {
-      openRootBoard(cardId, { replace: true });
-    }
-  }, [columns, openRootBoard, openSubBoard, scope, search.card]);
-
-  // Dead sub-board links resolve UP (t3o-25, D3): a URL naming a card with no
-  // children lands on the root board with that card's sheet open; a card that
-  // does not exist at all lands on the bare root board. Gated on the first
-  // snapshot so an empty pre-connection board is never mistaken for either.
-  const snapshotArrived = useAtomValue(environmentBoard.snapshotValueAtom(environmentId)) !== null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- router: redirects a dead sub-board URL up once the first snapshot arrives.
-  useEffect(() => {
-    if (scope.kind !== "sub-board" || !snapshotArrived) return;
-    const entry = resolveSubBoardEntry(Object.values(liveColumns).flat(), scope.parentCardId);
-    if (entry.kind === "redirect-parent-sheet") {
-      openRootBoard(scope.parentCardId, { replace: true });
-    } else if (entry.kind === "redirect-root") {
-      openRootBoard(undefined, { replace: true });
-    }
-  }, [liveColumns, openRootBoard, scope, snapshotArrived]);
-
-  // The command palette's board actions (T3O-29): published while this board
-  // is mounted, cleared when it goes.
-  const setPaletteActions = useBoardUiStore((state) => state.setPaletteActions);
   const selectedShell =
     selectedCardId === null ? null : (findBoardCard(columns, selectedCardId)?.card ?? null);
   const selectedGroup =
@@ -1263,52 +1396,12 @@ function EnvironmentBoard({
   const selectedGroupKey = selectedGroup?.key ?? null;
   const selectedGroupTitle = selectedGroup?.title ?? null;
   const upKey = ancestors.at(-1)?.key ?? null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- command palette registry entries, held while this board is mounted.
-  useEffect(() => {
-    const actions = [
-      ...(scope.kind === "sub-board"
-        ? [
-            {
-              id: "up",
-              title: "Board: back up one level",
-              description: `To ${upKey ?? "the board"} (Alt+↑)`,
-              run: () => goUpOneLevel(),
-            },
-          ]
-        : []),
-      ...(selectedGroupId === null
-        ? []
-        : [
-            {
-              id: `open:${selectedGroupId}`,
-              title: `Open ${selectedGroupKey}'s board`,
-              description: selectedGroupTitle ?? "",
-              run: () => openSubBoard(selectedGroupId),
-            },
-          ]),
-    ];
-    setPaletteActions(actions);
-    return () => setPaletteActions([]);
-  }, [
-    goUpOneLevel,
-    openSubBoard,
-    scope.kind,
-    selectedGroupId,
-    selectedGroupKey,
-    selectedGroupTitle,
-    setPaletteActions,
-    upKey,
-  ]);
 
-  // The stage the create dialog prefills; null means closed.
-  const [createStage, setCreateStage] = useState<BoardStageId | null>(null);
   const openCreate = (stage: BoardStageId) => setCreateStage(stage);
 
   // ── Archive (t3o-13, D7) ────────────────────────────────────────────
   // Archived cards are off the live shell by design, so they need a place to
   // be seen and restored from — otherwise archiving is a one-way door.
-  const [archiveOpen, setArchiveOpen] = useState(false);
-  const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
   const handleRestoreCard = (cardId: BoardCardId) => {
     void unarchiveCard({ environmentId, input: { cardId } }).then((result) => {
       if (result._tag === "Failure") {
@@ -1327,7 +1420,6 @@ function EnvironmentBoard({
   // Deleting from the archive: the natural place to decide something is never
   // coming back is the list of things that already went away. The sheet owns
   // the confirmation; this only dispatches and re-reads the list.
-  const deleteCard = useAtomCommand(boardEnvironment.deleteCard);
   const handleDeleteCard = (cardId: BoardCardId) => {
     void deleteCard({ environmentId, input: { cardId } }).then((result) => {
       if (result._tag === "Failure") {
@@ -1361,7 +1453,7 @@ function EnvironmentBoard({
 
   const canCreate = addProjects.length > 0;
 
-  return (
+  const view = (
     <BoardWorkersContext.Provider value={cardWorkersState}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <BoardTopBar>
@@ -1753,6 +1845,149 @@ function EnvironmentBoard({
       </div>
     </BoardWorkersContext.Provider>
   );
+
+  // Alt+Up leaves a sub-board for the level above, wherever focus is on the
+  // board — but not out of an open dialog, the card sheet or a text field.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener for Alt+Up, held while this sub-board is mounted.
+  useEffect(() => {
+    if (scope.kind !== "sub-board") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.altKey || event.key !== "ArrowUp" || event.defaultPrevented) return;
+      if (isEditableFocused(event.target)) return;
+      if (document.querySelector("[role=dialog],[role=alertdialog]") !== null) return;
+      event.preventDefault();
+      goUpOneLevel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [goUpOneLevel, scope.kind]);
+  // Fullscreen rides the store so it survives a STEP between cards (T3O-37,
+  // D5), and the store names the card it belongs to, so a card that opens any
+  // other way opens windowed whether or not it passed through "no card open"
+  // on the way in. This effect only has to forget the card once the sheet is
+  // gone, so that re-opening that same card later starts windowed too.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the board UI store forgets fullscreen once the URL (which back/forward also edits) drops the card.
+  useEffect(() => {
+    if (selectedCardId === null) setDetailMaximisedCardId(null);
+  }, [selectedCardId, setDetailMaximisedCardId]);
+  // Opening a card URL selects the card and brings it into view: expand its
+  // column if collapsed, scroll the row into place. The detail pane that
+  // opens from this selection is t3o-06's.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands the column and scrolls the DOM row into view for a card URL.
+  useEffect(() => {
+    const cardId = search.card;
+    if (cardId === undefined || handledDeepLinkRef.current === cardId) return;
+    const found = findBoardCard(columns, cardId);
+    // Out-of-scope cards are the redirect effect's job, not a scroll target.
+    if (found === null || !isBoardCardInScope(found.card, scope)) return;
+    handledDeepLinkRef.current = cardId;
+    const collapseKey = collapseKeyOf(found.stage);
+    if (
+      isBoardColumnCollapsed(
+        collapsedByStage,
+        collapseKey,
+        boardScopeColumnCollapsedByDefault({
+          scope,
+          stageState,
+          stageId: found.stage,
+          renderedIndex: renderedStages.findIndex((stage) => stage.stageId === found.stage),
+          // The card is in it, so it is not empty.
+          cardCount: 1,
+        }),
+      )
+    ) {
+      setColumnCollapsed(collapseKey, false);
+    }
+    // Two frames: the first lets a just-expanded column mount its list.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-board-card="${window.CSS.escape(cardId)}"]`)
+          ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      });
+    });
+  }, [
+    collapseKeyOf,
+    collapsedByStage,
+    columns,
+    handledDeepLinkRef,
+    renderedStages,
+    scope,
+    search.card,
+    setColumnCollapsed,
+    stageState,
+  ]);
+  // Cross-scope deep links resolve to the right board (t3o-25, AC4): a child
+  // card's URL opened over the root board — or over the wrong sub-board —
+  // navigates into its parent's sub-board with the sheet selection intact,
+  // and a top-level card's URL opened inside a sub-board goes back up.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- router: redirects a cross-scope card URL to the board that holds the card.
+  useEffect(() => {
+    const cardId = search.card;
+    if (cardId === undefined) return;
+    const found = findBoardCard(columns, cardId);
+    if (found === null || isBoardCardInScope(found.card, scope)) return;
+    const parentId = found.card.parentCardId;
+    if (parentId !== undefined) {
+      openSubBoard(parentId, cardId, { replace: true });
+    } else {
+      openRootBoard(cardId, { replace: true });
+    }
+  }, [columns, openRootBoard, openSubBoard, scope, search.card]);
+  // Dead sub-board links resolve UP (t3o-25, D3): a URL naming a card with no
+  // children lands on the root board with that card's sheet open; a card that
+  // does not exist at all lands on the bare root board. Gated on the first
+  // snapshot so an empty pre-connection board is never mistaken for either.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- router: redirects a dead sub-board URL up once the first snapshot arrives.
+  useEffect(() => {
+    if (scope.kind !== "sub-board" || !snapshotArrived) return;
+    const entry = resolveSubBoardEntry(Object.values(liveColumns).flat(), scope.parentCardId);
+    if (entry.kind === "redirect-parent-sheet") {
+      openRootBoard(scope.parentCardId, { replace: true });
+    } else if (entry.kind === "redirect-root") {
+      openRootBoard(undefined, { replace: true });
+    }
+  }, [liveColumns, openRootBoard, scope, snapshotArrived]);
+  // The command palette's board actions (T3O-29): published while this board
+  // is mounted, cleared when it goes.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- command palette registry entries, held while this board is mounted.
+  useEffect(() => {
+    const actions = [
+      ...(scope.kind === "sub-board"
+        ? [
+            {
+              id: "up",
+              title: "Board: back up one level",
+              description: `To ${upKey ?? "the board"} (Alt+↑)`,
+              run: () => goUpOneLevel(),
+            },
+          ]
+        : []),
+      ...(selectedGroupId === null
+        ? []
+        : [
+            {
+              id: `open:${selectedGroupId}`,
+              title: `Open ${selectedGroupKey}'s board`,
+              description: selectedGroupTitle ?? "",
+              run: () => openSubBoard(selectedGroupId),
+            },
+          ]),
+    ];
+    setPaletteActions(actions);
+    return () => setPaletteActions([]);
+  }, [
+    goUpOneLevel,
+    openSubBoard,
+    scope.kind,
+    selectedGroupId,
+    selectedGroupKey,
+    selectedGroupTitle,
+    setPaletteActions,
+    upKey,
+  ]);
+
+  return view;
 }
 
 export default BoardPage;

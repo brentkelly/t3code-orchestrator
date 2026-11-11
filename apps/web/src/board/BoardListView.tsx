@@ -199,7 +199,7 @@ function useBoardListModel(props: BoardListViewProps) {
 }
 
 export function BoardListView(props: BoardListViewProps) {
-  const { environmentId, shells, allShells, stages } = props;
+  const { environmentId, shells, allShells, stages, attentionFor } = props;
   const moveCards = useAtomCommand(boardEnvironment.moveCards);
   const archiveCard = useAtomCommand(boardEnvironment.archiveCard);
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
@@ -216,7 +216,6 @@ export function BoardListView(props: BoardListViewProps) {
 
   const {
     setSelected,
-    collapsed,
     setCollapsed,
     stageFilter,
     setStageFilter,
