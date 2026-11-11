@@ -70,7 +70,7 @@ export const findUsageTarget = Effect.fn("boardUsageStore.findUsageTarget")(func
 
 /**
  * Store one priced turn, unless it was stored before. Run inside the caller's
- * transaction, beside its cursor. True when the turn was new.
+ * transaction, beside its cursor. True when the turn was new, or replaced a no-usage count.
  */
 export const storeUsageTurn = Effect.fn("boardUsageStore.storeUsageTurn")(function* (
   sql: SqlClient.SqlClient,
@@ -84,14 +84,60 @@ export const storeUsageTurn = Effect.fn("boardUsageStore.storeUsageTurn")(functi
     readonly at: string;
   },
 ) {
+  const { price } = input;
+  const noUsage = price.source === "noUsage";
+  const model = input.model ?? "";
   const fresh = yield* sql<{ readonly threadId: string }>`
-    INSERT INTO boards.board_usage_ingested (thread_id, provider_turn_id)
-    VALUES (${input.threadId}, ${input.providerTurnId})
+    INSERT INTO boards.board_usage_ingested (
+      thread_id, provider_turn_id,
+      no_usage_card_id, no_usage_step_id, no_usage_provider, no_usage_model
+    ) VALUES (
+      ${input.threadId}, ${input.providerTurnId},
+      ${noUsage ? input.target.cardId : null}, ${noUsage ? input.target.stepId : null},
+      ${noUsage ? input.provider : null}, ${noUsage ? model : null}
+    )
     ON CONFLICT DO NOTHING
     RETURNING thread_id AS "threadId"
   `;
-  if (fresh.length === 0) return false;
-  const { price } = input;
+  if (fresh.length === 0) {
+    // A stopped turn's first finished event can carry no usage and a later one the real
+    // figure: the later one replaces the no-usage count. Anything else is a replay.
+    if (noUsage) return false;
+    const [replaced] = yield* sql<{
+      readonly cardId: string;
+      readonly stepId: string;
+      readonly provider: string;
+      readonly model: string;
+    }>`
+      SELECT no_usage_card_id AS "cardId", no_usage_step_id AS "stepId",
+        no_usage_provider AS "provider", no_usage_model AS "model"
+      FROM boards.board_usage_ingested
+      WHERE thread_id = ${input.threadId} AND provider_turn_id = ${input.providerTurnId}
+        AND no_usage_card_id IS NOT NULL
+    `;
+    if (replaced === undefined) return false;
+    yield* sql`
+      UPDATE boards.board_usage_ingested
+      SET no_usage_card_id = NULL, no_usage_step_id = NULL,
+          no_usage_provider = NULL, no_usage_model = NULL
+      WHERE thread_id = ${input.threadId} AND provider_turn_id = ${input.providerTurnId}
+    `;
+    yield* sql`
+      UPDATE boards.board_card_usage SET turns_no_usage = turns_no_usage - 1
+      WHERE card_id = ${replaced.cardId} AND step_id = ${replaced.stepId}
+        AND thread_id = ${input.threadId} AND provider = ${replaced.provider}
+        AND model = ${replaced.model}
+    `;
+    // The new contribution may land on another row (a model the first event lacked).
+    yield* sql`
+      DELETE FROM boards.board_card_usage
+      WHERE card_id = ${replaced.cardId} AND step_id = ${replaced.stepId}
+        AND thread_id = ${input.threadId} AND provider = ${replaced.provider}
+        AND model = ${replaced.model}
+        AND turns_reported + turns_override + turns_list_priced + turns_unpriced
+          + turns_no_usage = 0
+    `;
+  }
   const one = (source: BoardUsageTurnPrice["source"]) => (price.source === source ? 1 : 0);
   yield* sql`
     INSERT INTO boards.board_card_usage (
@@ -101,7 +147,7 @@ export const storeUsageTurn = Effect.fn("boardUsageStore.storeUsageTurn")(functi
       updated_at
     ) VALUES (
       ${input.target.cardId}, ${input.target.stepId}, ${input.threadId}, ${input.provider},
-      ${input.model ?? ""},
+      ${model},
       ${price.totals.uncachedInputTokens}, ${price.totals.cachedInputTokens},
       ${price.totals.cacheCreationTokens}, ${price.totals.outputTokens},
       ${price.totals.reasoningTokens}, ${Math.round(price.costUsd * MICRO)},

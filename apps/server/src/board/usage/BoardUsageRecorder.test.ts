@@ -227,6 +227,31 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
     }),
   );
 
+  it.effect("replaces a turn's no-usage count when a later finished event carries usage", () =>
+    Effect.gen(function* () {
+      const { cardId, threadId } = yield* seedLinkedThread("stopped");
+      yield* withRecorder(
+        Effect.gen(function* () {
+          // A stop settles the turn from the projection first, with no usage.
+          yield* writeTurn(threadId, "turn-stopped", "completed", null);
+          yield* writeTurn(threadId, "turn-stopped", "completed", { input: 1_000_000, output: 0 });
+          // A replay of either event changes nothing.
+          yield* writeTurn(threadId, "turn-stopped", "completed", null);
+          yield* writeTurn(threadId, "turn-stopped", "completed", { input: 1_000_000, output: 0 });
+          yield* (yield* BoardThreadTail).drain;
+        }),
+      );
+      const rows = yield* usageRows(cardId);
+      assert.deepStrictEqual(
+        rows.map((row) => [row.uncachedInputTokens, row.turnsListPriced, row.turnsNoUsage]),
+        [[1_000_000, 1, 0]],
+      );
+      const summary = yield* (yield* BoardQueries).boardCardUsageSummary(cardId);
+      assert.deepInclude(summary, { tokens: 1_000_000, costUsd: 1 });
+      assert.isUndefined(summary?.partial);
+    }),
+  );
+
   it.effect("credits a delegated child's turn to the card and step it was delegated from", () =>
     Effect.gen(function* () {
       const { cardId, threadId, projectId } = yield* seedLinkedThread("delegate", "review@2");
