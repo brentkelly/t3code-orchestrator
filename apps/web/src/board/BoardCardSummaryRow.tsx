@@ -603,7 +603,7 @@ export function BoardCardTodoStrip({
   );
 }
 
-/** One non-winning thread, revealed only after the chip is clicked (D8: a second
+/** One non-winning thread, revealed only after the chip is clicked (a second
     thread adds no card height until then). Rendered from what is STORED, so a
     finished list still reads `5/5` here even though the strip above hid it. */
 export function BoardCardTodoThreadRow({

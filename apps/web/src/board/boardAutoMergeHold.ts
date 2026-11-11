@@ -51,7 +51,7 @@ export function boardAutoMergePill(input: {
     return {
       label: "Merge needs you",
       // The forge's own reason lives on the full card, which only the modal
-      // subscribes to (D14's byte budget), so the board says where to find it
+      // subscribes to (the board stream's byte budget), so the board says where to find it
       // rather than inventing a summary it does not have.
       tooltip: "Auto-merge stopped. Open the card to see what the forge said.",
       icon: "alert",

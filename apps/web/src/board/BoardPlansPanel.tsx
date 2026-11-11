@@ -134,7 +134,7 @@ function PlanRow({
         onClick={openable ? () => onOpenChild(cardId) : undefined}
         type="button"
       >
-        {/* A done row swaps its stage dot for a filled check (t3o-36), so
+        {/* A done row swaps its stage dot for a filled check, so
             completion reads down the rail without leaning on colour. The
             negative margin keeps the bigger glyph on the dot's baseline, so
             the column of titles beside it does not shift. */}

@@ -161,7 +161,7 @@ function LoadingModal({
       }}
     >
       {/* The empty frame takes the rails too, so stepping never blinks the
-          chevrons out while the next card's subscription opens (T3O-37). */}
+          chevrons out while the next card's subscription opens. */}
       <BoardCardDetailPopup cardId={null} nav={nav} wide={wide}>
         <div className="flex items-center gap-2 px-4 py-16">
           <span className="flex-1 text-center text-sm text-muted-foreground">Loading card…</span>
@@ -235,7 +235,7 @@ export function BoardCardDetail({
   const attachmentLimits = boardAttachmentLimits(
     environment?.serverConfig?.environment.capabilities ?? null,
   );
-  // Restart and blank-thread creation report their own failures (D4: log and
+  // Restart and blank-thread creation report their own failures (log and
   // stop — the menu is its own recovery), so they opt out of the shared toast.
   const startStageThread = useAtomCommand(boardEnvironment.startStageThread, {
     reportFailure: false,

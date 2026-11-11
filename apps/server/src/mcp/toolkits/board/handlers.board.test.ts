@@ -271,7 +271,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       yield* seed();
       const context = yield* boardHandlers.board_get_card_context().pipe(withScope(linkedThread));
       // The link exists, so the thread rides — with no todo fields until it
-      // emits its first `turn.plan.updated` (D14: the cache fills forward).
+      // emits its first `turn.plan.updated` (the cache fills forward).
       assert.deepStrictEqual(
         context.threads.map((entry) => entry.threadId),
         [linkedThread],

@@ -145,8 +145,7 @@ const reclaim = (cardId: string, outcome: "removed" | "blocked", reason?: string
   }) as const satisfies BoardCommand;
 
 /** Every event a command decides. Archive and unarchive decide several —
-    the card's own, plus a `blocked` re-flag per affected dependent (t3o-13,
-    D5) — while every other command decides exactly one. */
+    the card's own, plus a `blocked` re-flag per affected dependent — while every other command decides exactly one. */
 const decideEvents = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
   decideBoardCommandOnModel({ command, readModel }).pipe(Effect.map(boardDecidedEvents));
 
@@ -161,7 +160,7 @@ const decideFail = (command: BoardCommand, readModel: BoardOrchestrationReadMode
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   "board worktree lifecycle decider",
   (it) => {
-    // ── D6: laziness — moving into Building creates no worktree ───────────
+    // ── Laziness — moving into Building creates no worktree ───────────
 
     it.effect("the human move into Building does not itself create a worktree", () =>
       Effect.gen(function* () {

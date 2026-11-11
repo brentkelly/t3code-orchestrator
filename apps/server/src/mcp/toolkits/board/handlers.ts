@@ -119,7 +119,7 @@ const nonEmpty = (value: string | undefined, fallback: string): string =>
   value !== undefined && value.trim().length > 0 ? value : fallback;
 
 // Byte caps on what a completion writes into the event log / read model /
-// every future detail frame (D8 discipline; matched to the contracts file's
+// every future detail frame (matched to the contracts file's
 // bounded-payload stance — label names 64 bytes, shell titles 200).
 const BOARD_STEP_PAYLOAD_MAX_BYTES = 16_384;
 const BOARD_STEP_SUMMARY_MAX_BYTES = 2_048;
@@ -331,7 +331,7 @@ const linkCardPullRequest = Effect.fn("BoardToolkit.linkCardPullRequest")(functi
 });
 
 /** The card the calling thread owns, or an actionable rejection telling the
-    agent how to be adopted (D3: unlinked callers get more than a bare error). */
+    agent how to be adopted (unlinked callers get more than a bare error). */
 const requireCallerCard = (
   board: BoardState,
   scope: McpThreadInvocationScope,

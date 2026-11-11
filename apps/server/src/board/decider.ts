@@ -971,7 +971,7 @@ function reviewSummaryAfter(input: {
 }
 
 /** The override half of `deriveBoardCardReviewSummary`'s input, so every
-    caller passes the T3O-51 carry fields as well as the t3o-22 ones. */
+    caller passes the carry fields as well as the review-loop ones. */
 function reviewSummaryOverrideInputs(overrides: BoardCardReviewOverrides | null) {
   return {
     maxRounds: overrides?.rounds ?? null,
@@ -4194,7 +4194,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Plan '${command.planId}' does not exist on card '${command.cardId}'.`,
         );
       }
-      // One source of truth at any moment (D12 handover): a locked plan lives
+      // One source of truth at any moment: a locked plan lives
       // in .plans/, so the write is refused with a pointer to the file.
       if (plan.locked) {
         return yield* invariant(
@@ -4282,7 +4282,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         );
       }
       // At Building is fine only before a checkout exists: a leaf with a live
-      // worktree has build work a split would strand (D12's started-card rule).
+      // worktree has build work a split would strand (the started-card rule).
       if (boardCardHoldsWorktree(card)) {
         return yield* invariant(
           command,
@@ -5568,7 +5568,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${command.cardId}' has no live step '${command.stepId}' to settle.`,
         );
       }
-      // Idempotency (D4 Release): a step already settled re-emits its recorded
+      // Idempotency: a step already settled re-emits its recorded
       // terminal state, so a raced double settle releases the slot once and
       // never double-transitions. The first outcome wins.
       const state: BoardCardStepState = isBoardTerminalStepStatus(current.status)

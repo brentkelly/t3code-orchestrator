@@ -275,7 +275,7 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     ciLastOutcome: null,
     ciRoundTrips: 0,
     // A card is never born armed: the arm is a human delegating
-    // the D18 build gate on a card they can already see waiting, and there is
+    // the build gate on a card they can already see waiting, and there is
     // no create-command field to set it with. Nor born auto-merging, for the same reason — and
     // with nothing merged, nothing held.
     autoPlanSetting: null,
@@ -379,7 +379,7 @@ function removeStage<M extends BoardReadModel>(
 }
 
 /** Record a project's delta, in project-id order so replay
-    equals rehydration, and any stage rows a T3O-43 payload wrote and dropped. */
+    equals rehydration, and any stage rows a v1 `t3o.json` payload wrote and dropped. */
 function setProjectStageConfig<M extends BoardReadModel>(
   model: M,
   payload: BoardProjectStageConfigSetPayload,
@@ -446,7 +446,7 @@ export function compareBoardPlans(left: BoardPlan, right: BoardPlan): number {
 }
 
 /** Upsert a step completion by (cardId, stepId). Idempotent: a re-emitted
-    completion (D4 retry) replaces the identical row, a no-op. */
+    completion (a retry) replaces the identical row, a no-op. */
 function upsertStepCompletion<M extends BoardReadModel>(
   model: M,
   completion: BoardStepCompletion,
@@ -1202,7 +1202,7 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
 
     case "board.card-step-selected":
       // A fresh stage run (first entry, or a human retry re-queuing a stalled
-      // card through the governor, D4) starts from `pending` — never stalled —
+      // card through the governor) starts from `pending` — never stalled —
       // so clear any lingering stalled badge as the new run begins.
       return Option.some({
         kind: "card-stalled",

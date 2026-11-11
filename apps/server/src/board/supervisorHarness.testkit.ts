@@ -154,7 +154,7 @@ export const idleThreadShell = (
 ): BoardThreadState => idleThread(threadId, instanceId);
 
 /** A board card in an arbitrary stage. `worktree` defaults to null (no worktree
-    before Building, per D6); pass one for a card the "Begin build" gate has
+    before Building); pass one for a card the "Begin build" gate has
     already provisioned. */
 export const makeBoardCard = (input: {
   readonly id: string;
@@ -505,8 +505,7 @@ export function withGovernor(
     readonly latestBranchCommitIso?: string;
     /** Local branches the stubbed repository does NOT have: a
         `rev-parse refs/heads/<ref>` for one answers exit 1 with empty stdout,
-        which is what the reactor's base materialisation really sees (T3O-5,
-        D7). Every other ref stays present, so existing fixtures are untouched. */
+        which is what the reactor's base materialisation really sees. Every other ref stays present, so existing fixtures are untouched. */
     readonly missingBranches?: ReadonlyArray<string>;
     /** Branches that exist only as `refs/remotes/origin/<ref>`. Combined with
         `missingBranches` this is the remote-only base the reactor has to

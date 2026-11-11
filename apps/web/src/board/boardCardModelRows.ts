@@ -73,7 +73,7 @@ export function boardCardModelRows(input: {
     // The parent's override outranks the workspace for a child that has none of
     // its own, so it is what the row must NAME as the inherited value — telling
     // a child it will run the workspace model when it will actually run its
-    // parent's is the exact confusion D5 exists to prevent.
+    // parent's is the exact confusion this row exists to prevent.
     const inherited = input.parentCard?.modelOverrides?.[stage.stageId];
     rows.push({
       stageId: stage.stageId,

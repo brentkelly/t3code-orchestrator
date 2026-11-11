@@ -111,7 +111,7 @@ const BoardCardContextDependency = Schema.Struct({
 });
 
 /** Everything an agent needs to orient on its card without further calls — the
-    pull half of D5. */
+    pull half of the agent's context. */
 /** One brief attachment with the absolute path the agent reads it at: `cat` it, or open an
     image with your file tools. */
 const BoardCardContextAttachment = Schema.Struct({

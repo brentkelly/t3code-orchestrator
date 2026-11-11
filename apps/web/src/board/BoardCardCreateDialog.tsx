@@ -587,7 +587,7 @@ export function BoardCardCreateDialog({
           </Select>
           <span className="flex-1" />
         </div>
-        {/* A card may be created into any stage (D10); warn when the chosen
+        {/* A card may be created into any stage; warn when the chosen
             stage auto-executes, since creating there starts an agent. */}
         {resolveBoardStageExecution(boardSettings, stage, projectExecutionConfig).autoExecute ? (
           <p className="mx-4 mt-2 rounded-md bg-warning/10 px-2.5 py-1.5 text-[12px] text-warning-foreground">
@@ -596,7 +596,7 @@ export function BoardCardCreateDialog({
         ) : null}
 
         <div className="mt-3 flex min-h-0 flex-[0_1_auto] flex-col gap-[18px] overflow-y-auto border-t border-border px-5 pt-4 pb-5">
-          {/* Restored-draft banner (T3O-26). Neutral, never blue: the status
+          {/* Restored-draft banner. Neutral, never blue: the status
               vocabulary reserves `--info` for "running"
               (docs/t3o/status-colours.md), and a draft is not work in
               progress. */}
@@ -745,7 +745,7 @@ export function BoardCardCreateDialog({
               })()
             : null}
 
-          {/* Title and Label share a row (T3O-31). Title comes FIRST and holds
+          {/* Title and Label share a row. Title comes FIRST and holds
               autofocus: the label control used to be the dialog's first text
               box, so a typed title landed in a label search that matched
               nothing and threw the text away. */}

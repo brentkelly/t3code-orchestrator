@@ -1,6 +1,6 @@
 /**
  * T3o board state atoms for the web app, mirroring `state/threads.ts`. The
- * board rides its own subscription per environment (T3O-57); the thread shells
+ * board rides its own subscription per environment; the thread shells
  * still come from the environment shell.
  */
 import {

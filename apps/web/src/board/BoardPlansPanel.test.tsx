@@ -155,7 +155,7 @@ describe("BoardPlansPanel", () => {
     expect(html).toContain(
       "1 of 3 cards done. The final review starts on its own when the last one lands.",
     );
-    // D5: no action. The reactor owns this transition.
+    // No action. The reactor owns this transition.
     expect(html).not.toContain("Start final review");
     expect(html).not.toContain("Waiting on plans");
   });

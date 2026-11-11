@@ -1896,7 +1896,7 @@ function ReviewStageBody(props: {
             ariaLabel="Open pull requests as drafts"
             onChange={(checked) => set({ draftPullRequests: checked })}
           />
-          {/* The loop's shape (T3O-51): the follow-ups are machinery with no
+          {/* The loop's shape: the follow-ups are machinery with no
               settings of their own, so they show here and nowhere else. */}
           <div className="flex flex-col gap-1.5 py-2.5">
             <div className="flex flex-wrap items-center gap-2">

@@ -90,11 +90,11 @@ export function recoveryCeilingCrossed(input: {
   readonly stageEntryRecoveries: number;
   readonly maxRecoveriesPerStageEntry: number;
 }): BoardRecoveryCeiling | null {
-  // D5 first: a stage that has spent more than the ceiling on RECOVERY is a
+  // Stage ceiling first: a stage that has spent more than the ceiling on RECOVERY is a
   // runaway regardless of the per-step ladder — the backstop that stays
   // observable even when no single step wedged.
   if (input.stageEntryRecoveries > input.maxRecoveriesPerStageEntry) return "stage-entry";
-  // D1 per-step ladder: `maxAttempts` consecutive unproductive stalls.
+  // Per-step ladder: `maxAttempts` consecutive unproductive stalls.
   if (input.stallCount >= input.maxAttempts) return "stall-streak";
   return null;
 }
@@ -314,7 +314,7 @@ export function reconcileStepDecision(input: {
     // Recovery gave up here: the step is non-terminal so boot
     // reconciliation must keep re-reading it, but supervision does not drive it
     // — it stops until a human acts. Leave it exactly as it is (no recover, no
-    // slot restore: a stalled step already released its slot, D4).
+    // slot restore: a stalled step already released its slot).
     return { kind: "resume-watch" };
   }
   if (input.status === "paused") {

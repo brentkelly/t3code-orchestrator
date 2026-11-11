@@ -207,7 +207,7 @@ function makeReadModel(input: {
 
 /** Every event a command decides. Archive, unarchive and delete decide
     several — the card's own, plus one per affected dependent (a `blocked`
-    re-flag for archive/unarchive per t3o-13 D5, an edge rewrite for delete) —
+    re-flag for archive/unarchive, an edge rewrite for delete) —
     while every other command decides exactly one. */
 const decideEvents = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
   decideBoardCommandOnModel({ command, readModel }).pipe(Effect.map(boardDecidedEvents));
@@ -2140,7 +2140,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
     }),
   );
 
-  // ── D18: no board-initiated Ready -> Building ────────────────────────
+  // ── No board-initiated Ready -> Building ────────────────────────
 
   it.effect("no command except an explicit board.card.move emits a move into building", () =>
     Effect.gen(function* () {

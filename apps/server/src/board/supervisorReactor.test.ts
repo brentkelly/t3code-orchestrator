@@ -531,7 +531,7 @@ it.effect(
         board: { cards: [card], stepStates: [exhausted], nextCardNumberByProject: {} },
         // no shell → thread gone, but escalation must not respawn/nudge it
       });
-      // D3 gate: the step is parked stalled (its badge is the human-facing
+      // The step is parked stalled (its badge is the human-facing
       // signal; `board.card.request-input` is gone, so the question
       // itself goes to the server log)...
       assert.notInclude(types, "board.card.request-input");

@@ -93,7 +93,7 @@ function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId
   return (
     <>
       <DisplaySection board={board} update={update} />
-      {/* T3O-49: committed t3o.json files waiting to import. */}
+      {/* Committed t3o.json files waiting to import. */}
       <BoardImportNotices />
       <ProjectsSection board={board} environmentId={environmentId} update={update} />
       <BoardPipelineSection />
@@ -103,7 +103,7 @@ function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId
         instanceIds={instanceIds}
         update={update}
       />
-      {/* T3O-62: the board's workers, and which projects each has checked out. */}
+      {/* The board's workers, and which projects each has checked out. */}
       <BoardWorkerSettings environmentId={environmentId} />
       <LifecycleSection board={board} update={update} />
     </>
@@ -207,7 +207,7 @@ function ProjectRows({
               }}
             />
             <div className="flex shrink-0 items-center gap-0.5">
-              {/* T3O-49: the project's pipeline, CI and t3o.json. */}
+              {/* The project's pipeline, CI and t3o.json. */}
               <Button
                 variant="ghost"
                 size="icon-sm"

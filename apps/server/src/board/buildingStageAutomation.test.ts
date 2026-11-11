@@ -60,7 +60,7 @@ it.effect("a project that is not a git repository fails the card visibly, not si
   ),
 );
 
-// ── D18: Building → Code review on build-step success (the one board-driven
+// ── Building → Code review on build-step success (the one board-driven
 //    crossing) ─────────────────────────────────────────────────────────────
 it.effect("D18: a successful build step advances Building → Code review", () =>
   withGovernor(
@@ -87,7 +87,7 @@ it.effect("D18: a successful build step advances Building → Code review", () =
   ),
 );
 
-// ── D18: approving a plan lands a card in Ready and starts NO build ──────────
+// ── Approving a plan lands a card in Ready and starts NO build ──────────
 it.effect("D18: approving a plan (→ Ready) starts no build — Ready is a resting state", () =>
   withGovernor(
     {
@@ -118,7 +118,7 @@ it.effect("D18: approving a plan (→ Ready) starts no build — Ready is a rest
   ),
 );
 
-// ── D18: a card in Ready never auto-advances into Building ───────────────────
+// ── A card in Ready never auto-advances into Building ───────────────────
 it.effect("D18: a Ready card is never swept into Building while other cards build", () =>
   withGovernor(
     {
@@ -150,7 +150,7 @@ it.effect("D18: a Ready card is never swept into Building while other cards buil
   ),
 );
 
-// ── D4: a retried board_complete_step is a no-op, never a double transition ──
+// ── A retried board_complete_step is a no-op, never a double transition ──
 it.effect("D4: a double build-step completion advances once and never double-releases", () =>
   withGovernor(
     {
@@ -176,7 +176,7 @@ it.effect("D4: a double build-step completion advances once and never double-rel
   ),
 );
 
-// ── D11: the governor bounds concurrent builds and runs the queue in order ───
+// ── The governor bounds concurrent builds and runs the queue in order ───
 //    The acceptance gate's "ten cards vs maxConcurrent:2" needs a watched run;
 //    this is its focused unit proof — the bounding and ordering are the same
 //    logic at any N.

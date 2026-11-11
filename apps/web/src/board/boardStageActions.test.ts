@@ -203,7 +203,7 @@ describe("boardStagePrimaryAction", () => {
 
   it("offers NO forward button from the build role or the last stage", () => {
     // Building -> Code review is board-driven (build success), never a click —
-    // a forward button here would be a D18 violation. Done is terminal.
+    // a forward button here would break the build gate. Done is terminal.
     expect(boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.building)).toBeNull();
     expect(boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.done)).toBeNull();
   });

@@ -240,7 +240,7 @@ it.effect("the tick fires a due card with no other event to prompt it, and clear
         const card = (yield* board).cards.find(
           (candidate) => candidate.id === BoardCardId.make("due"),
         );
-        // AC3: the time does not survive its own firing. Without the clear, one
+        // The time does not survive its own firing. Without the clear, one
         // decision made before the build would re-gate Code review and every
         // stage after it.
         assert.isNull(card?.scheduledStartAt ?? null);
@@ -271,7 +271,7 @@ it.effect("the clear lands before the admit", () =>
         const admitted = types.indexOf("board.card.admit-step");
         assert.isAbove(cleared, -1);
         assert.isAbove(admitted, -1);
-        // D4. A crash between the two must leave a cleared-but-unstarted card,
+        // A crash between the two must leave a cleared-but-unstarted card,
         // which the next pass starts — never a started card still carrying a
         // stale time that would re-gate its next stage.
         assert.isBelow(cleared, admitted);
@@ -311,7 +311,7 @@ it.effect("scheduling a running card stops the agent and gives its slot back", (
 
         yield* pumpDomain(cardScheduleUpdated(scheduledCard({ id: "pause" }), FUTURE, 2));
 
-        // D13: the popover says setting a time on a working card stops it, and
+        // The popover says setting a time on a working card stops it, and
         // this is that promise. The thread and worktree are kept, so the resume
         // picks the conversation up rather than starting over.
         const state = boardCardStepState(yield* board, BoardCardId.make("pause"));
@@ -389,7 +389,7 @@ it.effect("clearing a schedule resumes a paused card on the thread it already ha
         ),
       );
 
-      // D6: clearing is the reverse state AND the "start now" button. A card
+      // Clearing is the reverse state AND the "start now" button. A card
       // that could only be released by waiting would be the one-way door
       // AGENTS.md forbids.
       const state = boardCardStepState(yield* board, BoardCardId.make("resume"));

@@ -303,8 +303,7 @@ export function makeBoardEventStore(sql: SqlClient.SqlClient) {
       Effect.mapError(toPersistenceSqlError("BoardEventStore.getReceipt:query")),
     );
 
-  /** Whether `commandId` appended any event on this aggregate. Receipts written
-      before T3O-56's fix (and every one migrated from v1) name the command's
+  /** Whether `commandId` appended any event on this aggregate. Older receipts (and every one migrated from v1) name the command's
       LAST event, which for a multi-card command is a dependent card; this is
       how a replay recognises them as the same command. */
   const commandTouchedAggregate = (

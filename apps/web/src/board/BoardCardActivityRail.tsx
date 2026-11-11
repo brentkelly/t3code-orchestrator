@@ -259,7 +259,7 @@ function StepOutcomeIcon({ outcome }: { readonly outcome: BoardStepOutcome }) {
 }
 
 /** The `card-edited` sentence: each part the edit changed, in one
-    line — "appended to the brief and added dependency T3O-4". */
+    line — "appended to the brief and added dependency ABC-4". */
 function describeCardEdit(payload: BoardCardActivityEntry["payload"]): string {
   const dependencies = (verb: string, keys: ReadonlyArray<string>) =>
     `${verb} ${keys.length === 1 ? "dependency" : "dependencies"} ${keys.join(", ")}`;

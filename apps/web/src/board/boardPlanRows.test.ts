@@ -528,7 +528,7 @@ describe("boardPlanFinalReview", () => {
   });
 
   it("switches to the all-done wording without offering an action", () => {
-    // D5: the reactor owns the transition, so the copy describes it rather
+    // The reactor owns the transition, so the copy describes it rather
     // than putting a second trigger next to it.
     expect(boardPlanFinalReview({ branch: "t3o/TT-9", liveTotal: 3, liveDone: 3 }).note).toBe(
       "All 3 cards done. The final review runs on the integration branch.",

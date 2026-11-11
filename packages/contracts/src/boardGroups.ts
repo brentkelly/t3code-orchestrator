@@ -389,7 +389,7 @@ export function boardShellMergesIntoIntegrationBranch(
 }
 
 /** A card's split recommendation: the stored one, or the fallback for a
-    proposal made before T3O-31 recorded one. */
+    proposal made before recommendations were recorded. */
 export function boardSplitRecommendationOf(
   board: BoardState,
   card: BoardCard,

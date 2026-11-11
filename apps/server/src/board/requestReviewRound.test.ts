@@ -116,7 +116,7 @@ const cardUpdated = (updated: BoardCard, sequence: number): HarnessEvent =>
 const cardOf = (board: { readonly cards: ReadonlyArray<BoardCard> }): BoardCard =>
   board.cards.find((candidate) => candidate.id === cardId)!;
 
-// ── D6: the write-then-move ordering, from Ready for merge ───────────────────
+// ── The write-then-move ordering, from Ready for merge ───────────────────
 
 it.effect("D6: a converged card at merge gets the override written BEFORE it moves", () =>
   withGovernor(
@@ -181,7 +181,7 @@ it.effect("D6: the card arriving back in review runs round 2, and does not bounc
   ),
 );
 
-// ── D6: the converged-in-place case is the same call, minus the move ─────────
+// ── The converged-in-place case is the same call, minus the move ─────────
 
 it.effect("D6: a converged card already in review is not moved, and replans in place", () =>
   withGovernor(
@@ -214,7 +214,7 @@ it.effect("D6: a converged card already in review is not moved, and replans in p
   ),
 );
 
-// ── D7: "Request review" is the same verb with an empty ledger ───────────────
+// ── "Request review" is the same verb with an empty ledger ───────────────
 
 it.effect("D7: a card at merge with no review history is sent to round 1", () =>
   withGovernor(
@@ -238,7 +238,7 @@ it.effect("D7: a card at merge with no review history is sent to round 1", () =>
   ),
 );
 
-// ── D10: the row that says WHY the card walked back ─────────────────────────
+// ── The row that says WHY the card walked back ─────────────────────────
 
 it.effect("D10: the request writes an activity note naming the round", () =>
   withGovernor(
@@ -274,7 +274,7 @@ it.effect("D10: the request writes an activity note naming the round", () =>
   ),
 );
 
-// ── D8/D9: every refusal the button's guards mirror ─────────────────────────
+// ── Every refusal the button's guards mirror ─────────────────────────
 
 it.effect("refuses a card on neither the review nor the merge stage", () =>
   withGovernor(

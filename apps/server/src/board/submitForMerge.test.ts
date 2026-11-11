@@ -105,7 +105,7 @@ const heldBoard = (card: BoardCard = heldBuildCard()) => ({
   nextCardNumberByProject: {},
 });
 
-// ── D1: the click selects a step; it does not move the card ─────────────────
+// ── The click selects a step; it does not move the card ─────────────────
 
 it.effect("D1: submitting a held build card selects one unattended submit step", () =>
   withGovernor(
@@ -173,7 +173,7 @@ it.effect("the submit step falls back to the Build stage's model when it names n
   ),
 );
 
-// ── D5/D6: the settle routes the card past Code review ──────────────────────
+// ── The settle routes the card past Code review ──────────────────────
 
 it.effect("D5: the submit step succeeding moves the card to the merge stage, over review", () =>
   withGovernor(
@@ -245,7 +245,7 @@ it.effect("a REBUILD after a submit still advances one stage, to Code review", (
   ),
 );
 
-// ── D9: on failure the card stays put ───────────────────────────────────────
+// ── On failure the card stays put ───────────────────────────────────────
 
 it.effect("D9: a submit step that fails leaves the card in Building", () =>
   withGovernor(

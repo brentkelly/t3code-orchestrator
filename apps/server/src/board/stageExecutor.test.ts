@@ -111,7 +111,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
   });
 
   it("resolves complete/run from run progress, not from the card's all-time completions", () => {
-    // A prior visit's succeeded completion (D7 re-entry) is the reactor's
+    // A prior visit's succeeded completion (a re-entry) is the reactor's
     // concern, not the executor's: with nothing completed in THIS run the
     // executor still yields the step to run.
     const priorSuccess: BoardStepCompletion = {

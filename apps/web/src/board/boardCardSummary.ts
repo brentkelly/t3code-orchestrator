@@ -63,7 +63,7 @@ export interface BoardCardSummary {
 }
 
 /** Present and non-zero — an absent optional key or a hardcoded `0`/`false`
-    placeholder (t3o-04's not-yet-sourced shell fields) contributes nothing. */
+    placeholder (a not-yet-sourced shell field) contributes nothing. */
 function positive(value: number | undefined): value is number {
   return value !== undefined && value > 0;
 }

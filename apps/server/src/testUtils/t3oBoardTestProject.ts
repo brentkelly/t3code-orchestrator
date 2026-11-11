@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-45): the server's tests as two projects. `src/board` runs
+ * T3o: the server's tests as two projects. `src/board` runs
  * non-isolated: its files share one forked worker and one module graph, so a
  * full board run imports the provider-heavy graph once instead of once per
  * file. Board testkits therefore must not keep module-level state.

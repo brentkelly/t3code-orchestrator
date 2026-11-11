@@ -63,7 +63,7 @@ describe("migration 020: nullable step label + frozen stage label", () => {
       assert.deepStrictEqual(rows[0], {
         card_id: "card-legacy",
         step_id: "building",
-        // D7: history is NOT rewritten. The legacy row keeps the label it
+        // History is NOT rewritten. The legacy row keeps the label it
         // recorded, so it renders exactly as it did before this migration.
         step_label: "Building",
         // New column: null on every pre-existing row.

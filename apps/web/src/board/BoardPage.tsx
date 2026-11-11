@@ -214,8 +214,7 @@ function BoardPage({
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       {/* The corner menu is chrome, not board content: it belongs to every
-          branch of this surface, connected or not, root board or sub-board
-          (T3O-34). */}
+          branch of this surface, connected or not, root board or sub-board. */}
       <BoardUtilityMenu />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
         {/* With no environment the bar carries the brand and the mode tabs
@@ -629,7 +628,7 @@ function useBoardPageModel({
 
   // The parent this sub-board drills into, as a live (decorated) shell — null
   // on the root board, and null again the moment the parent leaves the live
-  // board (the D3 redirect below takes over).
+  // board (the redirect below takes over).
   const parentShell =
     scope.kind === "sub-board" ? (findBoardCard(columns, scope.parentCardId)?.card ?? null) : null;
 
@@ -1457,7 +1456,7 @@ function EnvironmentBoard({
     <BoardWorkersContext.Provider value={cardWorkersState}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <BoardTopBar>
-          {/* T3o (T3O-66): workers that are offline, revoked or incompatible,
+          {/* T3o: workers that are offline, revoked or incompatible,
             and the cards they hold. Renders nothing otherwise. */}
           <BoardWorkersAttentionPill
             cards={everyCard}
@@ -1476,7 +1475,7 @@ function EnvironmentBoard({
         <div className="flex shrink-0 items-center gap-3 px-3 py-2 sm:px-5">
           {scope.kind === "sub-board" ? (
             <>
-              {/* Back goes up one level (T3O-29): to the group above, or the
+              {/* Back goes up one level: to the group above, or the
                   root board from a top-level group. The breadcrumb names every
                   level on the way. */}
               <Button
@@ -1596,7 +1595,7 @@ function EnvironmentBoard({
           </p>
         ) : null}
         {/* The chart and the final-review footer sit between the header row and
-          the columns (t3o-29), the order the prototype's drill-in uses. */}
+          the columns, the order the prototype's drill-in uses. */}
         {scope.kind === "sub-board" ? (
           <BoardSubBoardPlanStrip
             cards={groupShells}
@@ -1778,7 +1777,7 @@ function EnvironmentBoard({
             />
           );
         })()}
-        {/* The refused drop's reason, at the pointer (T3O-29). */}
+        {/* The refused drop's reason, at the pointer. */}
         <div
           aria-live="polite"
           className={cn(

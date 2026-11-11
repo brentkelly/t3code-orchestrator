@@ -157,8 +157,7 @@ const BoardCardDbRow = Schema.Struct({
   pullRequestFloor: BoardCard.fields.pullRequestFloor,
   /** NULL for every row written before migration 025, and for every card that
       has never touched its review-loop settings — the two are deliberately
-      indistinguishable, which is what makes replay equal rehydration (t3o-22,
-      D2). */
+      indistinguishable, which is what makes replay equal rehydration. */
   reviewOverrides: Schema.NullOr(Schema.fromJsonString(BoardCardReviewOverrides)),
   /** NULL for every row written before migration 029, and for every card that
       has never set a per-stage model override — indistinguishable on purpose,
@@ -173,7 +172,7 @@ const BoardCardDbRow = Schema.Struct({
       paragraph the human reads at the Approve split gate. */
   splitRationale: BoardCard.fields.splitRationale,
   /** NULL for every row written before migration 052 and for every card with
-      no split proposed since T3O-31 (D8: replay equals rehydration). */
+      no recommended split (replay equals rehydration). */
   splitRecommendation: Schema.NullOr(Schema.fromJsonString(BoardSplitRecommendation)),
   autoPlan: Schema.NullOr(Schema.fromJsonString(BoardCardAutoPlan)),
   /** NULL for every row written before migration 054 and for every card that
@@ -2958,7 +2957,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.stageDelete:query")));
 
   // Wholesale rewrite of a card's plan rows from the proposal (bodies live
-  // here, D8): idempotent, and structurally incapable of drifting from the
+  // here): idempotent, and structurally incapable of drifting from the
   // read-model plan metadata.
   const replacePlans = Effect.fnUntraced(
     function* (cardId: BoardCardId, plans: ReadonlyArray<BoardPlan & { readonly body: string }>) {
@@ -3649,7 +3648,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         return;
 
       // T3o: the worker registry. No card, so no activity row; what
-      // removal does to the cards on a worker belongs to D22's fallback.
+      // removal does to the cards on a worker belongs to the worker fallback.
       case "board.worker-registered":
         yield* upsertWorker(event.payload.worker);
         return;
@@ -4187,7 +4186,7 @@ function boardShellProjectStageConfigs(
 }
 
 /** A stage row's `defaultForProjects`: absent when the column is NULL, so a
-    row written before T3O-49 rehydrates exactly as its replayed payload. */
+    row written before stage switches rehydrates exactly as its replayed payload. */
 function boardStageRowDefault(row: {
   readonly defaultForProjects: number | null;
 }): Pick<BoardStageDefinition, "defaultForProjects"> {

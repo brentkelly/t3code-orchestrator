@@ -241,7 +241,7 @@ it.effect("restarts a step the supervisor still believes is running, and stops t
       "the superseded turn is interrupted",
     );
     // The old row settles rather than lingering non-terminal: a second live
-    // step for one card is the state D4 exists to forbid.
+    // step for one card is the state the board forbids.
     assert.isDefined(
       outcome.commands.find(
         (command) => command.type === "board.card.settle-step" && command.outcome === "abandoned",

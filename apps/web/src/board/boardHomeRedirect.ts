@@ -67,7 +67,7 @@ export function createColdStartHomeRedirect({
       if (spent) return false;
       // Nothing before authentication is a cold start yet, so the flag stays
       // unspent through the whole unauthenticated phase. `hosted-static` is
-      // never "authenticated", which is also how D3 stays exempt forever.
+      // never "authenticated", which is also how it stays exempt forever.
       if (authStatus !== "authenticated") return false;
       // The first authenticated resolution is the cold start wherever it lands, so
       // it is spent here; otherwise pairing's detour would hand the board the next

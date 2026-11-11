@@ -152,7 +152,7 @@ describe("pickBoardCardTodoThread (D7)", () => {
       })?.threadId,
     ).toBe(thread("a"));
 
-    // A linked thread with no list is not a candidate (D14: the cache fills
+    // A linked thread with no list is not a candidate (the cache fills
     // forward, so this is the common state right after an upgrade).
     expect(
       pickBoardCardTodoThread({

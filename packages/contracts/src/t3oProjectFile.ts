@@ -1,4 +1,4 @@
-// T3o: a project's committed `t3o.json` (T3O-43), never a key in upstream's
+// T3o: a project's committed `t3o.json`, never a key in upstream's
 // `t3.json`. Decoding is forgiving: a bad entry is dropped with a warning and
 // the rest of the file applies, so one typo never resets a whole project.
 import * as Option from "effect/Option";
@@ -30,7 +30,7 @@ import {
   type BoardState,
 } from "./board.ts";
 
-// T3o: since T3O-49 a `t3o.json` is only an import/export format for a
+// T3o: a `t3o.json` is only an import/export format for a
 // project's delta, never read at run time.
 export const T3O_PROJECT_FILE_NAME = "t3o.json";
 const T3O_PROJECT_FILE_VERSION = 2;
@@ -271,7 +271,7 @@ function stageIdList(value: unknown, where: string, warnings: string[]): string[
 /**
  * The delta importing a parsed `t3o.json` (v1 or v2) would set. Never fails:
  * a bad entry becomes a warning. An added stage reuses one with its id (or the
- * T3O-43 `<projectId>:<id>`) and label, else is created off by default.
+ * project-scoped `<projectId>:<id>`) and label, else is created off by default.
  */
 export function resolveT3oProjectFile(input: {
   readonly raw: unknown;
@@ -284,7 +284,7 @@ export function resolveT3oProjectFile(input: {
   const stageSwitches: Record<string, boolean> = {};
   const overrides: Record<string, BoardStageExecutionPatch> = {};
   let steps: BoardCiStep[] = [];
-  // T3O-57: stored only as false; absent is Yes.
+  // Stored only as false; absent is Yes.
   let stopOnFailure = true;
   const result = (createStages: ReadonlyArray<BoardStageDefinition> = []) => ({
     delta: {
@@ -534,7 +534,7 @@ function placeNewStage(
 }
 
 /**
- * A project's delta as a v2 `t3o.json` (T3O-49 export). Stages it switches
+ * A project's delta as a v2 `t3o.json` (export). Stages it switches
  * on that are off by default are written as `stages.add` entries, so the file
  * recreates them on another board.
  */
@@ -560,7 +560,7 @@ export function buildT3oProjectFile(input: {
       continue;
     }
     const before = ordered[index - 1];
-    // A T3O-43 stage's id carries its project as a prefix the file's id
+    // A project-scoped stage's id carries its project as a prefix the file's id
     // pattern refuses; import looks the bare id up under the project.
     const prefix = stage.projectId === null ? null : `${stage.projectId}:`;
     add.push({

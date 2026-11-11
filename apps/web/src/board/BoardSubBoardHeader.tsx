@@ -44,7 +44,7 @@ export function BoardSubBoardHeader({
   readonly environmentId: EnvironmentId;
   readonly parentCardId: BoardCardId;
   /** The parent's decorated live shell; null until the snapshot arrives (or
-      once the parent leaves the board, when the D3 redirect is imminent). */
+      once the parent leaves the board, when the redirect is imminent). */
   readonly parentShell: BoardCardShell | null;
   readonly accentName: ProjectIconColor | null;
   /** The parent's own sheet lives on the ROOT board — clicking the
@@ -121,7 +121,7 @@ export function BoardSubBoardHeader({
         </BoardHint>
       ) : null}
       <span className="flex-1" />
-      {/* The chart is drawn from the group's PLANS (t3o-29, D3), so the toggle
+      {/* The chart is drawn from the group's PLANS, so the toggle
           only exists once there are some. */}
       {(detail?.plans.length ?? 0) > 0 ? (
         <button className={boardHeaderButtonClass(chartOpen)} onClick={onToggleChart} type="button">

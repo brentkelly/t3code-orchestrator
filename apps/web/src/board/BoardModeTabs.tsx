@@ -116,7 +116,7 @@ export function BoardModeTabs({
       )}
       role="group"
     >
-      {/* Board leads (T3O-34): the board is the app's primary mode, and the
+      {/* Board leads: the board is the app's primary mode, and the
           tab order is the clearest place to say so. */}
       <ModeTab
         active={mode === "board"}
@@ -126,7 +126,7 @@ export function BoardModeTabs({
       >
         <Columns3Icon />
       </ModeTab>
-      {/* T3o (T3O-30): the whole card tree as an outline. */}
+      {/* T3o: the whole card tree as an outline. */}
       <ModeTab
         active={mode === "list"}
         href={hrefFor("list")}

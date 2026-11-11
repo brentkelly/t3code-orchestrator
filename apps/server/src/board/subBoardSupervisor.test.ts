@@ -190,7 +190,7 @@ it.effect(
     withGovernor(
       {
         // The child is created straight into the auto-executing build stage — the
-        // worst case for D18 (approving a split must not fan out into N running
+        // worst case for the build gate (approving a split must not fan out into N running
         // agents). handleCardCreated must skip kickoff for a card with a parent.
         board: {
           cards: [parentCard()],
@@ -300,7 +300,7 @@ it.effect("starts every unblocked child when the PARENT arrives at the build sta
         yield* pumpDomain(movedToBuilding(parentCard(), 1));
         const after = yield* board;
         assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), "building");
-        // Blocked siblings stay on the floor: the D11 gate would refuse them
+        // Blocked siblings stay on the floor: the dependency gate would refuse them
         // anyway, so the cascade never asks.
         assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "ready");
         assert.strictEqual(cardStage(after, BoardCardId.make("card-three")), "ready");

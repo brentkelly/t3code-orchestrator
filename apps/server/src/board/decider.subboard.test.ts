@@ -253,7 +253,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         expect(first.payload.title).toBe("Plan p1");
         expect(first.payload.parentCardId).toBe(parentId);
         expect(first.payload.sourcePlanId).toBe(boardPlanId(parentId, "p1"));
-        // The plan BODY arrives by pointer (D8: the decider cannot read bodies).
+        // The plan BODY arrives by pointer (the decider cannot read bodies).
         expect(first.payload.briefFromPlanId).toBe(boardPlanId(parentId, "p1"));
         expect(first.payload.dependsOn).toEqual([]);
         expect(second.payload.dependsOn).toEqual([first.payload.cardId]);
@@ -326,7 +326,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
     it.effect("does not clear the parent's blocked flag — it crosses no build boundary", () =>
       Effect.gen(function* () {
         // Approval no longer crosses into build or re-runs the dependency gate, so the flag is
-        // left exactly as it stands and the D11 gate has its say when the parent actually
+        // left exactly as it stands and the dependency gate has its say when the parent actually
         // enters build.
         const events = yield* decideEvents(
           approve(),
@@ -392,7 +392,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       Effect.gen(function* () {
         // A pending-split card sitting AT the build stage (approve allows that
         // position) retreats to Ready — a backward move above the plan stage,
-        // which AC2 promises stays open.
+        // which stays open.
         const events = yield* decideEvents(
           moveCommand({ cardId: "card-parent", toStage: "ready" }),
           makeReadModel(makeBoard({ parent: { stage: "building" } })),

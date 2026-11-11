@@ -132,7 +132,7 @@ it.effect("Auto-plan alone plans unattended and leaves the plan at the approval 
 
         yield* h.pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
         const after = yield* h.board;
-        // Not approved, and not D8-advanced either: the plan waits for a human.
+        // Not approved, and not auto-advanced either: the plan waits for a human.
         assert.strictEqual(cardStage(after, id), BOARD_SEED_STAGE_IDS.planning);
         assert.strictEqual(cardOf(after.cards, "gated")?.autoPlan?.endedAt, null);
 

@@ -87,7 +87,7 @@ export function planReviewInstructions(input: {
 /**
  * Whether a new `succeeded` completion replaces the pinned one: only
  * when a late plan review reopened the step after that completion was recorded.
- * Everywhere else D4's pin holds. The decider and the MCP reply both read it.
+ * Everywhere else the pin holds. The decider and the MCP reply both read it.
  */
 export function boardCompletionReopenedByPlanReview(
   existing: BoardStepCompletion | undefined,

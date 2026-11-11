@@ -80,8 +80,8 @@ export interface BoardStagePrimaryActionContext {
       not inferred from a running merge-stage step (which a human-started
       conversation also is). */
   readonly conflictFixLive?: boolean;
-  /** Why Merge is disabled while that fix runs ("Fixing CI…" for a CI fix,
-      T3O-12). Defaults to the conflict wording. */
+  /** Why Merge is disabled while that fix runs ("Fixing CI…" for a CI fix).
+      Defaults to the conflict wording. */
   readonly conflictFixReason?: string | null;
   /** Whether the card's step has settled and left it standing. A settled build
       step gets the ordinary forward move, since nothing else will move it. */

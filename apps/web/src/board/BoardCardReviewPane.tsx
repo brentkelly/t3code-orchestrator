@@ -1152,7 +1152,7 @@ export function BoardCardReviewPane({
                 </BoardHint>
               );
             })}
-            {/* A stuck loop takes a ruling, not a budget (T3O-51). */}
+            {/* A stuck loop takes a ruling, not a budget. */}
             {onSetRounds === undefined || stuck ? null : (
               <span className="ml-1 flex shrink-0 items-center">
                 <BoardHint
@@ -1172,7 +1172,7 @@ export function BoardCardReviewPane({
                     −
                   </button>
                 </BoardHint>
-                {/* No ceiling (T3O-39, D4): denying a user a round they are
+                {/* No ceiling: denying a user a round they are
                     deliberately asking for buys nothing, and the board-wide
                     stage setting was never capped either. */}
                 <BoardHint label={`Allow ${loop.maxRounds + 1} rounds`}>

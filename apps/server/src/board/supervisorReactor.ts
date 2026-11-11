@@ -1765,8 +1765,8 @@ const make = Effect.gen(function* () {
     });
   });
 
-  /** A human turned plan review on after the plan was posted (plan review,
-      T3O-39): no tool result will carry the instructions, so send them as a
+  /** A human turned plan review on after the plan was posted:
+      no tool result will carry the instructions, so send them as a
       turn. The decider has already resumed a paused step or reopened a
       finished one, so the state it reads here is running. */
   const handlePlanReviewStartedLate = Effect.fn("board-supervisor-handlePlanReviewStartedLate")(
@@ -4400,7 +4400,7 @@ const make = Effect.gen(function* () {
       // One mover per card: a child with its own Auto-build value is
       // the due check's (own on) or stays put (own off).
       if (child.autoBuildSetting !== null) continue;
-      // The D11 dependency gate would refuse this move anyway; skipping it
+      // The dependency gate would refuse this move anyway; skipping it
       // here keeps the cascade from teaching the rule by refusal.
       const unmet = unmetBoardCardDependencies({
         board,
@@ -8012,7 +8012,7 @@ const make = Effect.gen(function* () {
     // OBSERVED, not fire-and-forget: a refused clear must not be followed by
     // the act. The only way this is refused is the card being archived or gone,
     // and neither should start — while acting anyway would leave the stale time
-    // that D4's ordering exists to prevent.
+    // that this ordering exists to prevent.
     return yield* dispatchOptional({
       type: "board.card.update",
       commandId: yield* commandId("clear-schedule"),
@@ -8043,7 +8043,7 @@ const make = Effect.gen(function* () {
     cardId: BoardCardId,
     /** The board's OWN timed resumes keep the retry budget, so a
         genuinely dead card still climbs its ladder to a human across any number
-        of backoff rungs and quota waits. A human's Resume, and T3O-19's
+        of backoff rungs and quota waits. A human's Resume, and a
         scheduled start, reset it — a person intervening IS progress. */
     options?: { readonly preserveBudget?: boolean },
   ) {

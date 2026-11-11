@@ -637,7 +637,7 @@ it.effect("settle-step releases the slot and is idempotent (a double settle adva
     assert.strictEqual(first.payload.state.slotHeld, false);
 
     // A retried settle over the now-terminal state re-emits the SAME terminal
-    // record — no second release, no double transition (D4 Release idempotency).
+    // record — no second release, no double transition.
     const settled = makeReadModel({
       cards: [card],
       stepStates: [first.payload.state],

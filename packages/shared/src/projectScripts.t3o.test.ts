@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { projectScriptMenuLabel } from "./projectScripts.ts";
 
-// T3O-23: setup and remove scripts are both marked in the menu.
+// Setup and remove scripts are both marked in the menu.
 describe("projectScriptMenuLabel", () => {
   const script = {
     id: "s",

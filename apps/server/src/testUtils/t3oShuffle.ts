@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-45): `T3O_SHUFFLE_SEED=<n>` shuffles test files within each project,
+ * T3o: `T3O_SHUFFLE_SEED=<n>` shuffles test files within each project,
  * to prove the non-isolated board project does not depend on file order.
  */
 // mulberry32, so a failing order replays from its seed.

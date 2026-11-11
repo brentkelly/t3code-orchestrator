@@ -584,7 +584,7 @@ export interface BoardCardDetailViewProps {
       base branch. */
   readonly conflictFix: BoardConflictFixInfo | null;
   /** The shell's `held`, ranked by `boardCardAttention` — the build stage's
-      forward button appears only on it (t3o-06 held-build-forward-button). */
+      forward button appears only on it. */
   readonly stepHeld?: boolean;
   /** Whether a merge kicked off from this card is still in flight — drives the
       Merge button's "Merging…" spinner and disables it so the several-second
@@ -1118,7 +1118,7 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
       {props.onQueueForceStart === undefined && props.onQueueMoveToFront === undefined ? null : (
         <div className="mt-2.5 flex items-center gap-1.5">
           {/* A card waiting for its worker's checkout has no limit to start
-              past (T3O-65): nothing can run until the clone lands. */}
+              past: nothing can run until the clone lands. */}
           {props.onQueueForceStart === undefined || info.waitingForCheckout === true ? null : (
             <BoardHint label="Run this task now, past every agent limit: the board's, its worker's and its provider's.">
               <button
@@ -1286,7 +1286,7 @@ function ThreadsSection(props: BoardCardDetailViewProps) {
                     >
                       {link.title ?? "Deleted thread"}
                     </span>
-                    {/* A permission prompt (T3O-16) needs the human as much as a
+                    {/* A permission prompt needs the human as much as a
                       question does. */}
                     {link.awaitingInput || isBoardCardAwaitingPermission(link) ? (
                       <CircleAlertIcon className="size-3 shrink-0 text-attention-foreground" />
@@ -1666,7 +1666,7 @@ function ViewPullRequestButton({
         <PullRequestGlyph.pullRequest className="size-3.5" />
         <span>View PR</span>
         <span className="text-muted-foreground">{`#${pullRequest.number}`}</span>
-        {/* Neutral (T3O-12): a draft is waiting for the review loop, not on
+        {/* Neutral: a draft is waiting for the review loop, not on
             anyone. The board marks it ready at Ready for merge. */}
         {boardCardPullRequestIsOpenDraft(pullRequest) ? (
           <span className="rounded border border-input px-1 text-[10.5px] text-muted-foreground">
@@ -1995,7 +1995,7 @@ function ActionsSection({
                 <>
                   <ArrowRightIcon className="size-3.5" />
                   {forward.label}
-                  {/* The hold's countdown (T3O-38, D13), and only on Merge:
+                  {/* The hold's countdown, and only on Merge:
                       the button stays LIVE throughout a hold — nothing is
                       running and clicking is the escape hatch — so this says
                       when the board will try next, not that you cannot. */}
@@ -2128,7 +2128,7 @@ function InfoSection({
   const base = props.baseBranch;
   return (
     <div className="border-t border-border p-3.5 text-[11.5px]/[1.7] text-muted-foreground">
-      {/* Project (T3O-33). Editable until the card has been built, because a
+      {/* Project. Editable until the card has been built, because a
           card created in the wrong project was otherwise stuck there — and
           pinned after, because a worktree, a branch and a key on a pull request
           are all already spelled with the old project's name. */}
@@ -2141,7 +2141,7 @@ function InfoSection({
       {/* Beside `Branch ·` (the active thread's branch). A sub-board child
           shows it read-only, naming its parent, rather than hiding it. */}
       <BoardBaseBranchRow props={props} />
-      {/* Worker (T3O-65): where the card runs, and Move. Absent with one worker. */}
+      {/* Worker: where the card runs, and Move. Absent with one worker. */}
       <BoardCardWorkerRow
         card={props.detail.card}
         environmentId={props.environmentId}
@@ -2693,10 +2693,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     <>
       {/* Identity row: key, the card's labels, its stage. `relative z-10` lifts
           it (and the × / ⋯ / fullscreen buttons it carries) above the nav
-          rails' band, which would otherwise sit over them (T3O-37, D8). */}
+          rails' band, which would otherwise sit over them. */}
       <div className="relative z-10 flex shrink-0 items-start gap-[9px] px-4 pt-4">
         {/* The key and its chips wrap onto a second line rather than pushing
-            the tabs and the kebab off a narrow modal (T3O-80). */}
+            the tabs and the kebab off a narrow modal. */}
         <div className="flex min-h-7 min-w-0 flex-1 flex-wrap items-center gap-x-[9px] gap-y-1.5">
           <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">
             {card.key}
@@ -2724,7 +2724,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           )}
           <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
           {/* On a done card the stage chip IS the completion badge, cut to the
-              same block as the label chips beside it (t3o-36): the sheet no
+              same block as the label chips beside it: the sheet no
               longer wears a wash, so this and the title's check carry "done".
               Green means done and only done — docs/t3o/status-colours.md. */}
           <span
@@ -2735,7 +2735,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 : "h-[18px] rounded-md bg-muted-foreground/14 px-[7px] text-[11px] text-foreground",
             )}
           >
-            {/* "Continuous integration" is too long for this row (T3O-44). */}
+            {/* "Continuous integration" is too long for this row. */}
             {card.stage === BOARD_SEED_STAGE_IDS.ci
               ? "CI"
               : boardStageLabel(props.stages, card.stage)}
@@ -2745,7 +2745,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               Archived
             </span>
           ) : null}
-          {/* The card's scheduled start (T3O-19, D14): a bare clock until a time
+          {/* The card's scheduled start: a bare clock until a time
               is set, then the clock plus its label. Hidden on a done-role card
               and on an archived one — neither is going to move again on a timer.
               Beside the stage chip, because what it holds is the stage. */}
@@ -2759,7 +2759,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               stageLabel={boardStageLabel(props.stages, card.stage)}
             />
           )}
-          {/* The resolved Auto-merge, read-only (T3O-38, D13). NAMES THE SOURCE
+          {/* The resolved Auto-merge, read-only. NAMES THE SOURCE
               when it is the board-wide setting, which no card switch can turn
               off. Neutral, like the queue chip below — an armed card is not
               running, not done, and asking nothing of anyone. */}
@@ -2771,7 +2771,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               </span>
             </BoardHint>
           )}
-          {/* Queued for a build slot (t3o-33). Beside the stage badge, because
+          {/* Queued for a build slot. Beside the stage badge, because
               "Building" alone is what made a queued card look mid-build. Neutral,
               not `--attention`: nothing is waiting on the user here — see
               docs/t3o/status-colours.md. */}
@@ -2783,7 +2783,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               </span>
             </BoardHint>
           ) : null}
-          {/* Shown only once this card actually overrides something (t3o-29, D7).
+          {/* Shown only once this card actually overrides something.
               An override changes what the card spends and what authority it runs
               under; that should not be invisible from the card. It costs nothing
               on a card that has not set one. */}
@@ -2799,7 +2799,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               </button>
             </BoardHint>
           ) : null}
-          {/* The card's own merge strategy (T3O-80). Shown whenever the card has
+          {/* The card's own merge strategy. Shown whenever the card has
               one, even one equal to the default, because it pins the card if the
               default moves. Neutral, like the models pill. */}
           {archived ||
@@ -2843,7 +2843,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 to a mono override summary that can run long, and a hard box
                 would crowd it. */}
             <MenuPopup align="end" className="min-w-42">
-              {/* Opening the overrides CLOSES this menu (t3o-29, D7): the popover
+              {/* Opening the overrides CLOSES this menu: the popover
                   contains a model picker that is itself a popover, and selecting
                   from it is an outside-pointerdown on any menu still holding it
                   open. Base UI closes the menu; the row's selection is lost. */}
@@ -2951,10 +2951,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 
       <TitleBody done={done} onSave={props.onSaveTitle} title={card.title} />
 
-      {/* One insertion above the layout split covers both forms (T3O-9). Only
+      {/* One insertion above the layout split covers both forms. Only
           the wide one offers `View thread`: the narrow layout has no thread
           pane to send anyone to. */}
-      {/* The hold banner (T3O-38). Mutually exclusive with the conflict
+      {/* The hold banner. Mutually exclusive with the conflict
           banner above by construction — the server clears the hold when a
           conflict fix starts — and rendered after it so a card that somehow
           carries both leads with the thing that is actually running. */}
@@ -3415,7 +3415,7 @@ export function BoardCardDetailPopup({
       {children}
       {/* Last in the DOM so Tab reaches Close and the composer first; the
           stacking that keeps the header's buttons hit-testable over a rail is
-          the explicit z-index on each, not source order (D8). */}
+          the explicit z-index on each, not source order. */}
       <BoardCardNavRails nav={nav} />
     </DialogPopup>
   );

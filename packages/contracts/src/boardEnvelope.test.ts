@@ -698,7 +698,7 @@ describe("boardRunLabel (t3o-19 AC 11)", () => {
     );
     // The unstepped case: no step to name, so the stage names the run.
     expect(boardRunLabel({ stepLabel: null, stageLabel: "Planning" })).toBe("Planning");
-    // A pre-020 row (D7: history is not rewritten) kept its label and froze no
+    // A pre-020 row (history is not rewritten) kept its label and froze no
     // stage label — it still renders exactly what it always did.
     expect(boardRunLabel({ stepLabel: "Building", stageLabel: null })).toBe("Building");
     expect(boardRunLabel({ stepLabel: null, stageLabel: null })).toBe(null);

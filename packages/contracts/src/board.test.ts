@@ -360,7 +360,7 @@ describe("BoardCardShell payload discipline", () => {
   });
 
   it("costs an unscheduled card nothing and carries a scheduled card's instant (T3O-19, D8)", () => {
-    // D8's whole argument: the shell is under a per-card budget and the
+    // The whole argument: the shell is under a per-card budget and the
     // snapshot grows linearly with card count, so the COMMON card — the one
     // that is not scheduled — must be byte-for-byte what it was before this
     // field existed.

@@ -90,7 +90,7 @@ describe("BoardCardContent (D7)", () => {
         selected={false}
       />,
     );
-    // Backlog is before the D18 gate: a count, not the word "Blocked".
+    // Backlog is before the build gate: a count, not the word "Blocked".
     expect(early).toContain("Depends on 2 cards");
     expect(early).not.toContain("Blocked");
 

@@ -58,7 +58,7 @@ describe("whenLabel", () => {
     expect(whenLabel("tomorrow-ish", NOW_MS)).toBe("");
   });
 
-  // The D11 promise itself: the same instant reads the same at 2:30pm and at
+  // The promise itself: the same instant reads the same at 2:30pm and at
   // 5:00pm on the same day, so nothing has to repaint in between.
   it("does not change as the day wears on", () => {
     const iso = at({ hour: 21 });

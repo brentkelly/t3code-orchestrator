@@ -270,9 +270,9 @@ export const BoardStageDefinition = Schema.Struct({
   orderKey: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
-  /** The project this stage was made for, or null. A label only
-      since T3O-49: which projects use a stage is `defaultForProjects` plus
-      each project's switches. Rows made by a T3O-43 `t3o.json` keep their
+  /** The project this stage was made for, or null. A label only:
+      which projects use a stage is `defaultForProjects` plus
+      each project's switches. Rows made by a v1 `t3o.json` keep their
       `<projectId>:<fileId>` ids. */
   projectId: Schema.NullOr(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Whether a project with no switch of its own uses this stage.
@@ -947,8 +947,8 @@ export const BoardCardPlanReview = Schema.Struct({
 });
 export type BoardCardPlanReview = typeof BoardCardPlanReview.Type;
 
-/** How a plan review ended, as the planning agent reported it (plan review,
-    T3O-39). Not enforced: nulls mean the agent did not say. */
+/** How a plan review ended, as the planning agent reported it.
+    Not enforced: nulls mean the agent did not say. */
 export const BoardPlanReviewFinished = Schema.Struct({
   rounds: BoardPlanReviewRounds,
   roundsRun: Schema.NullOr(NonNegativeInt),
@@ -1760,8 +1760,8 @@ export const BoardCardCi = Schema.Struct({
   /** CI failure round trips this card has made without a human;
       absent is none. */
   roundTrips: Schema.optionalKey(NonNegativeInt),
-  /** Why CI stopped or was held, while `phase` is `stopped` or `held`
-      (T3O-59 widened it to held). The key keeps its old name. */
+  /** Why CI stopped or was held, while `phase` is `stopped` or `held`.
+      The key keeps its old name. */
   stopReason: Schema.optionalKey(TrimmedNonEmptyString),
   /** The project's Stop on failure was No when this pass started:
       every step runs even after one fails. Frozen for the pass. */
@@ -1862,7 +1862,7 @@ export const BoardCiPass = Schema.Struct({
   /** The fix agent that worked on this pass's failure. */
   fixThreadId: Schema.NullOr(ThreadId),
   /** The CI steps this pass froze at its start, and the config version they
-      came from. Null on a pass recorded before T3O-49. */
+      came from. Null on a pass recorded before snapshots existed. */
   snapshot: Schema.NullOr(BoardCiStepList).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   configVersion: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -1985,7 +1985,7 @@ export const BoardCard = Schema.Struct({
       and the server stores it. */
   orderKey: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
-  /** Body kind in `board_card_bodies` when a brief exists (D8: bodies never
+  /** Body kind in `board_card_bodies` when a brief exists (bodies never
       ride the read model); null when the card has no brief. */
   briefRef: Schema.NullOr(TrimmedNonEmptyString),
   dependsOn: Schema.Array(BoardCardId),
@@ -1994,7 +1994,7 @@ export const BoardCard = Schema.Struct({
   parentCardId: Schema.NullOr(BoardCardId),
   /** The plan a sub-board child was materialised from, so the
       parent's plan pane can chip each plan with its card. Null for top-level
-      cards and for pre-t3o-23 rows. */
+      cards and for rows older than sub-boards. */
   sourcePlanId: Schema.NullOr(BoardPlanId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Group settings; null for a leaf. Decodes to null on every
       payload written before migration 051, matching its NULL columns. */
@@ -2048,8 +2048,8 @@ export const BoardCard = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /** The agent's recommended group settings for the split it proposed.
-      Present exactly while `splitRationale` is, on proposals made
-      since T3O-31; absent on older ones, which read the fallback rules
+      Present exactly while `splitRationale` is, on newer
+      proposals; absent on older ones, which read the fallback rules
       (`boardSplitRecommendationOf`). Migration 052's NULL column. */
   splitRecommendation: Schema.optionalKey(BoardSplitRecommendation),
   /** Local branch override, or null to follow the project default resolved LIVE, so cards
@@ -2212,7 +2212,7 @@ export function deriveBoardCardBlocked(input: {
 export const BoardActivityId = TrimmedNonEmptyString.pipe(Schema.brand("BoardActivityId"));
 export type BoardActivityId = typeof BoardActivityId.Type;
 
-/** A step's terminal outcome (D4 completion contract). */
+/** A step's terminal outcome (the completion contract). */
 const BOARD_STEP_OUTCOMES = ["succeeded", "blocked", "failed"] as const;
 export const BoardStepOutcome = Schema.Literals(BOARD_STEP_OUTCOMES);
 export type BoardStepOutcome = typeof BoardStepOutcome.Type;
@@ -2269,7 +2269,7 @@ export function isBoardTerminalStepStatus(status: BoardStepStatus): boolean {
 }
 
 /** The PARKED step statuses: non-terminal, holding no slot, driven by
-    nothing until a human (or, from T3O-19, a schedule) acts. The single reader
+    nothing until a human (or a schedule) acts. The single reader
     the decider's two resume paths share, so "what can be resumed" has one
     definition and a fourth parked status cannot be added to only half of it. */
 const BOARD_PARKED_STEP_STATUSES = ["stalled", "awaiting-input", "paused"] as const;
@@ -2393,7 +2393,7 @@ export const BoardCardStepState = Schema.Struct({
   // Resolved from the stage's settings ONCE at stage entry and stamped here,
   // so editing settings mid-flight cannot corrupt a running card. The reactor
   // reads these fields instead of re-resolving the stage config.
-  /** The resolved step prompt. Empty on a re-entry (D7: a clean conversational
+  /** The resolved step prompt. Empty on a re-entry (a clean conversational
       thread with no prompt injected). */
   prompt: Schema.String,
   /** The resolved provider instance the step runs on. */
@@ -3107,7 +3107,7 @@ function isBoardMergeFixLive(
 }
 
 /** A card's live step state, or null when the card has no step
-    running or settled. One record per card (D4: one step at a time). */
+    running or settled. One record per card (one step at a time). */
 export function boardCardStepState(
   board: BoardState,
   cardId: BoardCardId,
@@ -3263,7 +3263,7 @@ export interface BoardStageView {
 }
 
 /** Whether a stage is on for a project with no switch of its own. Absent on
-    a row written before T3O-49: on for a global stage, off for CI and for a
+    a row written before stage switches: on for a global stage, off for CI and for a
     stage a project's `t3o.json` added. */
 export function boardStageDefaultForProjects(
   stage: Pick<BoardStageDefinition, "stageId" | "projectId" | "defaultForProjects">,
@@ -3416,7 +3416,7 @@ export function boardStageWithRole(
 }
 
 /** The stage after `stageId` in the project's pipeline, or null when it is
-    last or unknown (D8: auto-advance moves to the next stage in order). It
+    last or unknown (auto-advance moves to the next stage in order). It
     never lands on a retired stage, so a stage the project switched off is
     skipped; a null project walks the defaults. */
 export function boardNextStageId(
@@ -4283,7 +4283,7 @@ export function boardCardAttention(input: {
   > & {
     /** Why the step stalled and when it next tries, so one
         status can wear four honest labels. Absent reads as `gave-up`, which is
-        every stalled card written before T3O-22 and every caller that does not
+        every stalled card written before stall reasons and every caller that does not
         hold the fields. */
     readonly stalledReason?: BoardCardStepStalledReason | undefined;
     readonly retryAt?: string | null | undefined;
@@ -5936,13 +5936,13 @@ export const BoardCardSelectStepCommand = Schema.Struct({
   ),
   // ── Frozen execution config resolved on stage entry ────────────
   // The reactor resolves these server-side (the pure decider cannot read
-  // settings, D8) and the decider stamps them onto the step-state row, so
+  // settings) and the decider stamps them onto the step-state row, so
   // editing settings mid-flight cannot corrupt a running card.
   prompt: Schema.String,
   providerInstanceId: ProviderInstanceId,
   model: TrimmedNonEmptyString,
   /** The resolved agent authority for the run. Decoding-defaulted for
-      replay of pre-t3o-21 select-step events, which carry no key. */
+      replay of older select-step events, which carry no key. */
   runtimeMode: RuntimeMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("approval-required" as const)),
   ),
@@ -5959,7 +5959,7 @@ export const BoardCardSelectStepCommand = Schema.Struct({
   priorRecoveries: Schema.optional(NonNegativeInt),
   /** The base-branch tip for the run row: freshly measured when
       the plan starts a review round, carried forward from the replaced row
-      otherwise. Decoding-defaulted for replay of pre-t3o-24 events. */
+      otherwise. Decoding-defaulted for replay of older events. */
   baseTipAtRoundStart: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -5991,7 +5991,7 @@ export const BoardCardAwaitStepInputCommand = Schema.Struct({
   cardId: BoardCardId,
   stepId: TrimmedNonEmptyString,
   /** Why the step is parking. Defaults to `question`, which is what
-      every pre-t3o-34 caller meant. */
+      every older caller meant. */
   reason: BoardCardStepAwaitingReason.pipe(
     Schema.withDecodingDefault(Effect.succeed("question" as const)),
   ),
@@ -6018,7 +6018,7 @@ export const BoardCardRecoverStepCommand = Schema.Struct({
   lastError: Schema.optionalKey(TrimmedNonEmptyString),
   /** Why the step is stalling, when `escalateToHuman` is true.
       Absent means `gave-up` — recovery exhausting its budget, the only reason
-      that existed before T3O-22. */
+      older records carry. */
   stalledReason: Schema.optionalKey(BoardCardStepStalledReason),
   /** When the board will try again. Absent means never, which
       is what `gave-up` is: it waits for a human, and a time on it would be a
@@ -6086,7 +6086,7 @@ export const BoardCardSettleStepCommand = Schema.Struct({
   /** The step's terminal outcome. `succeeded` follows a successful
       `board_complete_step`; `failed` a recovery that gave up on a failing
       step; `abandoned` a preemption or archive that stopped the step. The slot
-      is released at every one of them (D4 Release). */
+      is released at every one of them. */
   outcome: Schema.Literals(["succeeded", "failed", "abandoned"]),
   createdAt: IsoDateTime,
 });
@@ -6170,7 +6170,7 @@ export const BoardCardCreatedPayload = Schema.Struct({
   /** Initial dependencies. Key-optional, resolved through
       `boardCardCreatedDependsOn` — absent (legacy events, deps-free creates)
       means the empty set, matching migration 903's `depends_on DEFAULT '[]'`,
-      so a from-empty replay of a pre-t3o-06 log equals table rehydration. */
+      so a from-empty replay of an older log equals table rehydration. */
   dependsOn: Schema.optionalKey(Schema.Array(BoardCardId)),
   /** Set by split materialisation and by a create carrying the child preset. `sourcePlanId`
       is approve-only. Both absent on every top-level create. */
@@ -6199,8 +6199,8 @@ export const BoardCardCreatedPayload = Schema.Struct({
   briefFromPlanId: Schema.optionalKey(BoardPlanId),
   /** With `briefFromPlanId`: the child takes the plan's body as its brief
       but NOT a copy of the plan row, because the plan was a brief
-      that still needs planning. Absent copies the plan, as every split child
-      before T3O-31 did. */
+      that still needs planning. Absent copies the plan, as older split
+      children did. */
   briefOnly: Schema.optionalKey(Schema.Boolean),
   stage: BoardStageId.pipe(
     Schema.withDecodingDefault(Effect.succeed(BOARD_SEED_STAGE_IDS.backlog)),
@@ -6286,7 +6286,7 @@ export const BoardCardUpdatedPayload = Schema.Struct({
   workCancelled: Schema.optional(Schema.Boolean),
   /** Absent: brief unchanged. Null: brief cleared. String: new body text for
       `board_card_bodies` (the body deliberately never enters the read
-      model — D8). */
+      model). */
   brief: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   card: BoardCard,
   /** Absent means the edit did not touch the schedule. The supervisor needs the TOUCH:
@@ -6470,8 +6470,8 @@ export const BoardCardStepCompletedPayload = Schema.Struct({
   /** This completion REPLACED the settled step's record. The reactor must re-ask the stage
       what runs next, since it otherwise ignores completions on a settled step. */
   repaired: Schema.optionalKey(Schema.Boolean),
-  /** Set when a plan step completes after its plan review started (plan
-      review, T3O-39): the rail's "Plan review finished" row. `roundsRun` and
+  /** Set when a plan step completes after its plan review started:
+      the rail's "Plan review finished" row. `roundsRun` and
       `converged` are what the agent reported, null when it reported nothing. */
   planReviewFinished: Schema.optionalKey(BoardPlanReviewFinished),
 });
@@ -6818,8 +6818,8 @@ export const BoardPlanReviewStartedPayload = Schema.Struct({
 });
 export type BoardPlanReviewStartedPayload = typeof BoardPlanReviewStartedPayload.Type;
 
-/** A human turned plan review off while one was running (plan review,
-    T3O-39). The reactor tells the planning thread to wrap up. `state` is the
+/** A human turned plan review off while one was running.
+    The reactor tells the planning thread to wrap up. `state` is the
     step with the review cleared, so turning it back on starts a fresh one. */
 export const BoardPlanReviewStoppedPayload = Schema.Struct({
   cardId: BoardCardId,
@@ -7094,7 +7094,7 @@ export const BoardCardShell = Schema.Struct({
       Client-derived beside `planTotal`/`planDone`, never on the wire. */
   planStatuses: Schema.optionalKey(Schema.String),
   /** Set on sub-board children so a child's face can wear its
-      "part of <parent key>" chip and t3o-25's drill-in can scope by it. */
+      "part of <parent key>" chip and the sub-board drill-in can scope by it. */
   parentCardId: Schema.optionalKey(BoardCardId),
   /** Group settings, absent on a leaf — which is nearly every card,
       so a leaf's shell stays byte-identical. On the card aggregate, so both
@@ -7830,7 +7830,7 @@ export const BoardStageRemovedShellEvent = Schema.Struct({
 export type BoardStageRemovedShellEvent = typeof BoardStageRemovedShellEvent.Type;
 
 /** A project's stage config changed: its delta as the shell
-    carries it, plus any stage rows a T3O-43 payload wrote and dropped. */
+    carries it, plus any stage rows a v1 `t3o.json` payload wrote and dropped. */
 export const BoardProjectStageConfigShellEvent = Schema.Struct({
   kind: Schema.Literal("project-stage-config"),
   sequence: NonNegativeInt,
@@ -9371,7 +9371,7 @@ export const BOARD_RPCS = [
 
 /**
  * Spread into `RPC_REQUIRED_SCOPES`. Board reads use the same scope class
- * as thread reads (D7 mirrors `subscribeThread`); board RPCs never invent a
+ * as thread reads (mirroring `subscribeThread`); board RPCs never invent a
  * scope tier — an authorization change is a security change and belongs to
  * a security-scoped spec.
  */
@@ -9652,8 +9652,8 @@ export const BoardAdjudicatePayload = Schema.Struct({
 export type BoardAdjudicatePayload = typeof BoardAdjudicatePayload.Type;
 
 /** A re-triage disposition: first-pass triage's two answers.
-    `escalated` is legacy: re-triage could hand a finding to a human before
-    T3O-55; stored records still decode, new completions are refused. */
+    `escalated` is legacy: re-triage could hand a finding to a human
+    once; stored records still decode, new completions are refused. */
 const BOARD_REVIEW_RETRIAGE_ACTIONS = ["fixed", "rejected", "escalated"] as const;
 export const BoardReviewRetriageAction = Schema.Literals(BOARD_REVIEW_RETRIAGE_ACTIONS);
 export type BoardReviewRetriageAction = typeof BoardReviewRetriageAction.Type;
@@ -9750,7 +9750,7 @@ export const DEFAULT_BOARD_REVIEW_ROUNDS = 5;
 export type BoardReviewFindingResolution = "open" | "fixed" | "rejected" | "disputed" | "escalated";
 
 /** Pass the LATEST disposition and verdict (re-triage and re-adjudicate over
-    the first pass, T3O-51). An escalation — the adjudicator's verdict, or a
+    the first pass). An escalation — the adjudicator's verdict, or a
     legacy re-triage action — reads `escalated`. */
 export function boardReviewFindingResolution(
   disposition: { readonly action: BoardReviewRetriageAction } | undefined,
@@ -11528,7 +11528,7 @@ export const DEFAULT_BOARD_CI_FIX_PROMPT =
 export const DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS = 3;
 
 /** CI failure round trips allowed before the card stops for a human.
-    Unused since T3O-57, when CI stopped sending cards back by itself; kept so
+    Unused since CI stopped sending cards back by itself; kept so
     stored settings still decode. */
 const DEFAULT_BOARD_CI_MAX_ROUND_TRIPS = 3;
 export const BoardCiMaxRoundTrips = NonNegativeInt.check(Schema.isLessThanOrEqualTo(10));

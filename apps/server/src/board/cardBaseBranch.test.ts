@@ -299,7 +299,7 @@ describe("retargeting a card whose branch already exists (T3O-5, D10)", () => {
 
   /** The settled last step of a converged review loop. Recorded at "main" it is
       FRESH under the tip-moved rule, which is exactly what isolates the
-      retarget trigger from t3o-24's. */
+      retarget trigger from the tip-moved one. */
   const settledReviewStep = (): BoardCardStepState => ({
     cardId: BoardCardId.make("card-1"),
     stepId: reviewStepId("review", 1),

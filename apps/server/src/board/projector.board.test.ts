@@ -254,7 +254,7 @@ describe("board projector", () => {
       const model = yield* projectBoardEvent(emptyModel(), event);
       const card = model.board?.cards[0];
       assert.isDefined(card);
-      // briefRef is the sentinel kind (D8: the body never enters the read model).
+      // briefRef is the sentinel kind (the body never enters the read model).
       assert.strictEqual(card?.briefRef, "brief");
       assert.deepStrictEqual(card?.dependsOn, [dependencyId]);
       // A creation-stage card is before Ready, so it is never blocked at birth.

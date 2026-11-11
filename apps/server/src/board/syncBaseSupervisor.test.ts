@@ -279,7 +279,7 @@ it.effect("the Merge click on a fresh child merges as before", () =>
   ),
 );
 
-// ── D4: the parent mirror check ────────────────────────────────────────────
+// ── The parent mirror check ────────────────────────────────────────────
 
 /** The parent, advanced past build (its children had all finished) with a
     review-loop step left stalled — the in-flight work the regression must

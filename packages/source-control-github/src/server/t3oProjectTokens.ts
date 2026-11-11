@@ -15,7 +15,7 @@ const decodeViewer = Schema.decodeUnknownOption(
 );
 
 /**
- * T3o (T3O-58): Settings → Source Control's project tokens. For each project, where its
+ * T3o: Settings → Source Control's project tokens. For each project, where its
  * github.com token comes from (a gitenv folder, repo or owner line, else the ambient chain) and
  * whether GitHub accepts it, through the same request path every GitHub call takes, so a refusal
  * also logs the gitenv warning. One `GET /user` per distinct token; never returns a token.

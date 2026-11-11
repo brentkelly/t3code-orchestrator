@@ -165,7 +165,7 @@ export interface BoardCardTodoContext {
   /** A thread's display title, for the expanded rows. */
   readonly titleOf: (threadId: ThreadId) => string;
   /** Whether the non-winning threads are revealed (client-only, session-scoped
-      React state keyed by card id — D9). */
+      React state keyed by card id). */
   readonly expanded: boolean;
   readonly onToggleExpanded: () => void;
 }
@@ -409,8 +409,8 @@ export function BoardCardContent({
       the only place an armed card wears the grey `Auto` glyph. Absent on the
       surfaces that do not resolve it (the drag ghost, the archive sheet). */
   readonly atMergeStage?: boolean | undefined;
-  /** The card's resolved Auto-merge (`boardShellAutoMergeArmedByCard`,
-      T3O-38): its own setting, its nearest group's, or the board-wide one.
+  /** The card's resolved Auto-merge (`boardShellAutoMergeArmedByCard`):
+      its own setting, its nearest group's, or the board-wide one.
       Absent reads the card's own setting alone. */
   readonly autoMergeArmed?: boolean | undefined;
   /** The card waits in the stage before build with Auto-build on,
@@ -546,7 +546,7 @@ export function BoardCardContent({
         // `dark:bg-[#1c1c20]` lifts the card above the column; the stock dark
         // `--card` lands below the column's fill.
         tone === null ? "bg-card hover:border-foreground/18 dark:bg-[#1c1c20]" : TONE_TINT[tone],
-        // Done recedes: finished work is muted and lower-contrast (D15 stage).
+        // Done recedes: finished work is muted and lower-contrast.
         summary.muted && "bg-card/60 opacity-70",
         // EXACTLY one box-shadow branch per card (stylesheet order wins), each
         // with its own resting and hover shadow. `--sheet` tracks the card fill.
@@ -654,7 +654,7 @@ export function BoardCardContent({
             </span>
           </BoardHint>
         ) : null}
-        {/* Keyed on the HOLD, not on which notice won it (T3O-45): a held card
+        {/* Keyed on the HOLD, not on which notice won it: a held card
             whose slot went to a pending question is still held, and "merges
             itself as soon as the forge accepts it" is not true of it. */}
         {(autoMergeArmed ?? card.autoMergeSetting === true) &&
@@ -703,7 +703,7 @@ export function BoardCardContent({
         <BoardCardReviewBlock items={progress.items} />
       ) : null}
       {!isGroup && progress.kind === "subcards"
-        ? // The plan bar with its drill-in chip — the D8 progress
+        ? // The plan bar with its drill-in chip — the progress
           // block a split parent shows. The chip is the sub-board door where the
           // handler is supplied (the live root board); elsewhere it is static.
           (() => {

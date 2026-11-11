@@ -47,7 +47,7 @@ export function BoardSettingsLayout() {
   const resolution = useBoardEnvironment();
   return (
     <SettingsPageContainer>
-      {/* T3O-71: which server's board this device shows, and whether it is reachable. */}
+      {/* Which server's board this device shows, and whether it is reachable. */}
       <BoardServerStatusNotice className="mx-3 sm:mx-4" />
       {resolution.kind === "ready" ? (
         <BoardSettingsReady environmentId={resolution.environmentId} />

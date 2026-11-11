@@ -838,7 +838,7 @@ export function BoardCardCiPane({
               </span>
               <span className="flex-1" />
               <span className="text-[11px] text-muted-foreground tabular-nums">
-                {/* T3O-68: a live round shows its total time; the chip says Running. */}
+                {/* A live round shows its total time; the chip says Running. */}
                 {live && current.finishedAt === null && ci?.phase === "running" ? (
                   <RunningTimer startedAt={current.startedAt} />
                 ) : (

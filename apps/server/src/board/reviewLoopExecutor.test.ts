@@ -1346,7 +1346,7 @@ describe("sync-base and the gate round (t3o-24, D2/D3)", () => {
     const unheld = plan(cleanRound(1), undefined, overrides({ stopAfterRound: 3 }), null, true);
     expect(unheld.kind === "run" && unheld.stepId).toBe("sync@1");
     // A fresh base at the stopped round still converges — the stop never held
-    // a passing loop (D5 unchanged).
+    // a passing loop (unchanged).
     expect(plan(cleanRound(1), undefined, overrides({ stopAfterRound: 1 }))).toEqual({
       kind: "complete",
       outcome: "succeeded",
@@ -1369,7 +1369,7 @@ describe("sync-base and the gate round (t3o-24, D2/D3)", () => {
       null,
       true,
     );
-    // The boundary is the round's END (D2: never write into a live worktree's
+    // The boundary is the round's END (never write into a live worktree's
     // flow mid-phase): the nitpick's triage runs first, sync only at the
     // convergence arm.
     expect(midRound.kind === "run" && midRound.stepId).toBe("triage@1");

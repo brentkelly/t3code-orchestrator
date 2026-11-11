@@ -389,7 +389,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board.card.set-p
         );
         assert.strictEqual(event.type, "board.card-project-changed");
         if (event.type !== "board.card-project-changed") return;
-        // D3: `dependsOn` stores card ids, and the decider has never enforced a
+        // `dependsOn` stores card ids, and the decider has never enforced a
         // same-project rule, so an inherited cross-project edge is legal and the
         // gate handles it. Nothing to rewrite.
         assert.deepStrictEqual([...event.payload.card.dependsOn], ["dep"]);

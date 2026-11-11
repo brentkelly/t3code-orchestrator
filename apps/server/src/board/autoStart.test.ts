@@ -217,7 +217,7 @@ it.effect("fires for a leaf inside a group too — any leaf may be armed (T3O-27
   ),
 );
 
-// ── D5: a move refused for a NON-dependency reason leaves the card armed ──
+// ── A move refused for a NON-dependency reason leaves the card armed ──
 
 it.effect("a card awaiting split approval stays armed, and fires once it is approved", () =>
   Effect.gen(function* () {
@@ -276,7 +276,7 @@ it.effect("a card awaiting split approval stays armed, and fires once it is appr
   }),
 );
 
-// ── D6: the sweep is the self-healing half ───────────────────────────────
+// ── The sweep is the self-healing half ───────────────────────────────
 
 it.effect("the sweep starts a card whose dependency landed while nothing was listening", () =>
   withGovernor(
@@ -365,7 +365,7 @@ it.effect("an unrelated edit on an armed, still-blocked card does nothing", () =
   ),
 );
 
-// ── D10: an arm and a schedule compose without knowing about each other ──
+// ── An arm and a schedule compose without knowing about each other ──
 
 it.effect("an armed AND scheduled card enters Building, then holds its step for the time", () =>
   withGovernor(

@@ -359,7 +359,7 @@ it.layer(makeBoardDomainTestLayer("t3o-board-delete-test-"))("board card delete"
       // A plan on the card being deleted, so the purge has a `board_plans` row
       // to drop — and the `plans` slice, non-empty before the delete, empties
       // to the SAME absent state on replay and on rehydration (both omit an
-      // empty slice). This is the D7 edge a card with no plan cannot exercise.
+      // empty slice). This is the edge a card with no plan cannot exercise.
       yield* engine.dispatch({
         type: "board.plans.propose",
         commandId: CommandId.make("cmd-one-plan"),
