@@ -138,6 +138,8 @@ it.effect("D6: a converged card at merge gets the override written BEFORE it mov
         // The card carries the request AND has landed back in Code review.
         const moved = cardOf(yield* board);
         assert.strictEqual(moved.reviewOverrides?.runThroughRound, 2);
+        // T3O-64: a plain request reviews the whole branch.
+        assert.deepStrictEqual(moved.reviewOverrides?.roundModes, { "2": { kind: "full" } });
         assert.strictEqual(cardStage(yield* board, cardId), String(BOARD_SEED_STAGE_IDS.review));
 
         // The ordering itself, which is the whole reason this is an RPC: the
@@ -504,6 +506,8 @@ it.effect("T3O-51: Fix it waives the stuck round, carries the finding, and runs 
       assert.strictEqual(overrides?.runThroughRound, 2);
       const carried = overrides?.carriedFindings["2"];
       assert.strictEqual(carried?.ruling, "fix");
+      // T3O-64: a ruling round follows the settling rule, so nothing is forced full.
+      assert.deepStrictEqual(overrides?.roundModes, {});
       assert.strictEqual(carried?.note, "do it properly");
       assert.deepStrictEqual(
         carried?.findings.map((f) => [f.findingId, f.origRound, f.rulingNote]),
