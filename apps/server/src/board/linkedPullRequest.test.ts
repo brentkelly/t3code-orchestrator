@@ -493,7 +493,9 @@ describe("the card's pull request on its threads (T3O-75)", () => {
   const prCalls = (commands: ReadonlyArray<HarnessCommand>) =>
     commands.flatMap((command) =>
       command.type === "thread.pull-request.link" || command.type === "thread.pull-request.unlink"
-        ? [`${command.type === "thread.pull-request.link" ? "link" : "unlink"} ${command.threadId} ${command.host}/${command.repository}#${command.number}`]
+        ? [
+            `${command.type === "thread.pull-request.link" ? "link" : "unlink"} ${command.threadId} ${command.host}/${command.repository}#${command.number}`,
+          ]
         : [],
     );
   /** The engine double does not feed decided events back; the live engine does. */

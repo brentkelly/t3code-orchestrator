@@ -858,7 +858,9 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         );
         const key = { host: "github.com", repository: "acme/repo", number: 7 };
         const link = {
-          commandId: CommandId.make("server:board-pr-link:thread-contract-pr-link:github.com/acme/repo#7"),
+          commandId: CommandId.make(
+            "server:board-pr-link:thread-contract-pr-link:github.com/acme/repo#7",
+          ),
           threadId,
           ...key,
           url: "https://github.com/acme/repo/pull/7",
@@ -878,7 +880,11 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
 
         yield* threads.linkPullRequest({ ...link, commandId: boardCommandId("pr-link-new") });
         assert.deepStrictEqual(yield* pullRequests, ["agent github.com/acme/repo#7"]);
-        yield* threads.unlinkPullRequest({ commandId: boardCommandId("pr-unlink"), threadId, ...key });
+        yield* threads.unlinkPullRequest({
+          commandId: boardCommandId("pr-unlink"),
+          threadId,
+          ...key,
+        });
         assert.deepStrictEqual(yield* pullRequests, []);
       }),
     );

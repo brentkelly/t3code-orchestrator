@@ -209,9 +209,7 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
     );
     const calls = yield* Ref.make<ReadonlyArray<ThreadGatewayCall>>([]);
     const settled = yield* Ref.make<ReadonlySet<string>>(new Set());
-    const pullRequestLinks = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<string>>>(
-      new Map(),
-    );
+    const pullRequestLinks = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<string>>>(new Map());
     // Every subscription sees every signal, as `observe`'s contract promises; the
     // unbounded replay stands in for "the subscriber attached before the emit".
     const signals = yield* PubSub.unbounded<ThreadSignal>({ replay: Number.MAX_SAFE_INTEGER });

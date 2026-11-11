@@ -41,7 +41,7 @@ export type CardThreadPullRequestAction =
     };
 
 /** Upstream's key for a card PR, or null when its URL is not a recognised one. */
-export function cardPullRequestKey(pullRequest: BoardCardPullRequest): CardPullRequestKey | null {
+function cardPullRequestKey(pullRequest: BoardCardPullRequest): CardPullRequestKey | null {
   const parsed = sourceControlDefinitions.parseChangeRequestUrl(pullRequest.url)?.link;
   if (parsed === undefined) return null;
   return {
@@ -72,7 +72,7 @@ function linkRoleFromReviewOnwards(board: BoardState, role: string): boolean {
 
 /** A thread link that carries the card's current pull request. Retired links
     still do; tombstoned, adopted and earlier rounds' links never. */
-export function linkCarriesCardPullRequest(
+function linkCarriesCardPullRequest(
   board: BoardState,
   card: Pick<BoardCard, "pullRequestHistory">,
   link: BoardCardThreadLink,
@@ -111,7 +111,9 @@ export function cardThreadPullRequestActions(
     links.filter((link) => linkCarriesCardPullRequest(board, card, link));
 
   if (event.type === "board.card-thread-linked") {
-    const links = carrying(card.threadLinks.filter((link) => link.threadId === event.payload.threadId));
+    const links = carrying(
+      card.threadLinks.filter((link) => link.threadId === event.payload.threadId),
+    );
     if (links.length === 0) return { actions: [], unparsed };
     const current = keyOf(card.pullRequest);
     if (current === null) return { actions: [], unparsed };
@@ -176,10 +178,13 @@ export const syncCardThreadPullRequests = Effect.fn("board.syncCardThreadPullReq
   }) {
     const { actions, unparsed } = cardThreadPullRequestActions(input.board, input.event);
     for (const url of unparsed) {
-      yield* Effect.logWarning("board: card pull request URL not recognised; not linked on threads", {
-        cardId: input.event.payload.cardId,
-        url,
-      });
+      yield* Effect.logWarning(
+        "board: card pull request URL not recognised; not linked on threads",
+        {
+          cardId: input.event.payload.cardId,
+          url,
+        },
+      );
     }
     for (const action of actions) {
       const { host, repository, number, url } = action.pullRequest;
