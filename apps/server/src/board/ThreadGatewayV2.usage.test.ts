@@ -143,9 +143,11 @@ describe("usage signals", () => {
     const child = ThreadId.make("thread-child");
     const root = ThreadId.make("thread-root");
     const delegated = (from: ThreadId) =>
-      ({
-        ...records({ delegatedFrom: { environmentId: "env", threadId: from, title: "x" } }).thread,
-      }) as never;
+      (
+        records({ delegatedFrom: { environmentId: "env", threadId: from, title: "x" } }) as {
+          readonly thread: never;
+        }
+      ).thread;
     // threadId -> child -> root, and root claims threadId: a cycle the walk must not follow.
     const parents = new Map([
       [String(child), delegated(root)],
