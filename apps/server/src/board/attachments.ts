@@ -10,15 +10,17 @@
  * de-duplicated) filename and hand back the record the decider stores.
  *
  * The one push (K4) is also here: `stageBoardCardImagesAsPending` copies a
- * card's images back out as fresh pending uploads so the supervisor can pass
- * them as ordinary `ChatAttachment`s on a spawn turn — upstream's
- * `Normalizer` then claims them into thread scope untouched, and the board
+ * card's attachments back out as fresh pending uploads so the supervisor can pass
+ * them as ordinary `ChatAttachment`s on a spawn turn — the gateway
+ * claims them into thread scope through upstream's intake, and the board
  * copy stays the truth.
  */
 import {
   BOARD_CARD_ATTACHMENTS_MAX,
   BoardCardAttachmentId,
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  getProviderAttachmentLimitError,
+  isProviderSendTurnSupportedImageMimeType,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type BoardCard,
   type BoardCardAttachment,
@@ -30,7 +32,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { isSvgAttachment } from "@t3tools/shared/image";
+
 import {
+  attachmentFileExtension,
   createPendingAttachmentId,
   parseAttachmentUuid,
   parseThreadSegmentFromAttachmentId,
@@ -428,7 +433,7 @@ export function boardCardAttachmentManifest(input: {
 }
 
 /**
- * Which spawns push the brief's images (K4): the two that act on the brief.
+ * Which spawns push the brief's attachments (K4): the two that act on the brief.
  * Review rounds and the sync step are build-mode too, but they run against a
  * diff and pull the files by path when they need them (K3) — pushing the same
  * bytes into every round is what K4 rejected.
@@ -437,11 +442,101 @@ export function spawnPushesBriefImages(role: string | null | undefined): boolean
   return role === "build" || role === "plan";
 }
 
+/** How a brief attachment goes on a turn: an image upstream's providers take
+    natively, or a file (PDFs included) whose handling the adapter decides. */
+export function briefAttachmentTurnType(attachment: {
+  readonly type: BoardCardAttachment["type"];
+  readonly mimeType: string;
+}): "image" | "file" {
+  return attachment.type === "image" && isProviderSendTurnSupportedImageMimeType(attachment.mimeType)
+    ? "image"
+    : "file";
+}
+
 /**
- * The one push (K4): copy the card's images back out as fresh `pending-`
- * uploads and return them as the `ChatAttachment`s a spawn turn carries.
- * Capped at upstream's per-turn limit; the rest stay reachable by path.
- * A copy that fails is skipped, not fatal — the manifest still covers it.
+ * Which brief attachments fit one turn, in brief order, under upstream's
+ * per-turn caps: the per-type byte caps, the file count and the image total.
+ * One that would break a cap, or is empty, is skipped rather than failing the
+ * spawn; it stays reachable by path through the manifest.
+ */
+export function selectBriefAttachmentsForTurn<
+  A extends {
+    readonly type: BoardCardAttachment["type"];
+    readonly mimeType: string;
+    readonly sizeBytes: number;
+  },
+>(attachments: ReadonlyArray<A>): ReadonlyArray<A> {
+  const selected: A[] = [];
+  const asSent: Array<Pick<ChatAttachment, "type" | "mimeType" | "sizeBytes">> = [];
+  for (const attachment of attachments) {
+    if (attachment.sizeBytes <= 0) continue;
+    const type = briefAttachmentTurnType(attachment);
+    const cap =
+      type === "image" ? PROVIDER_SEND_TURN_MAX_IMAGE_BYTES : PROVIDER_SEND_TURN_MAX_FILE_BYTES;
+    if (attachment.sizeBytes > cap) continue;
+    const sent = { type, mimeType: attachment.mimeType, sizeBytes: attachment.sizeBytes };
+    if (getProviderAttachmentLimitError([...asSent, sent]) !== undefined) continue;
+    asSent.push(sent);
+    selected.push(attachment);
+  }
+  return selected;
+}
+
+/** The `ChatAttachment` a staged brief attachment goes out as, and the pending
+    file name upstream's claim will look for. Mirrors upstream's upload mint
+    (`AttachmentUpload.ts`): a file's id carries its extension, and an SVG
+    whose name lacks `.svg` gets it, or the claim resolves another path. */
+export function pendingBriefAttachment(attachment: {
+  readonly type: BoardCardAttachment["type"];
+  readonly name: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+}): { readonly attachment: ChatAttachment; readonly fileName: string } {
+  if (briefAttachmentTurnType(attachment) === "image") {
+    // Images carry no extension in the id (upstream resolves them by probing
+    // the safe image extensions), so the pending file takes the extension the
+    // mime implies — the one `attachmentRelativePath` looks for at claim time.
+    const id = createPendingAttachmentId();
+    const extension = inferImageExtension({
+      mimeType: attachment.mimeType,
+      fileName: attachment.name,
+    });
+    return {
+      // `ChatAttachmentId` is exported as a type only; the brand is asserted
+      // on the id alone so the struct itself is type-checked.
+      attachment: {
+        type: "image",
+        id: id as ChatAttachmentId,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+      },
+      fileName: `${id}${extension}`,
+    };
+  }
+  const name =
+    isSvgAttachment(attachment) && !/\.svg$/i.test(attachment.name)
+      ? `${attachment.name}.svg`
+      : attachment.name;
+  const extension = attachmentFileExtension(name);
+  const id = createPendingAttachmentId(extension);
+  return {
+    attachment: {
+      type: "file",
+      id: id as ChatAttachmentId,
+      name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+    },
+    fileName: `${id}${extension}`,
+  };
+}
+
+/**
+ * The one push (K4): copy the card's attachments back out as fresh `pending-`
+ * uploads and return them as the `ChatAttachment`s a spawn turn carries, within
+ * upstream's per-turn caps; the rest stay reachable by path. A copy that fails
+ * is skipped, not fatal — the manifest still covers it.
  */
 export const stageBoardCardImagesAsPending = Effect.fn("board-attachments-stage-images")(
   function* (input: {
@@ -451,27 +546,19 @@ export const stageBoardCardImagesAsPending = Effect.fn("board-attachments-stage-
   }) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const images = input.card.attachments
-      .filter((attachment) => attachment.type === "image")
-      .slice(0, PROVIDER_SEND_TURN_MAX_ATTACHMENTS);
     const staged: ChatAttachment[] = [];
-    for (const image of images) {
+    for (const attachment of selectBriefAttachmentsForTurn(input.card.attachments)) {
       const source = resolveBoardCardAttachmentPath({
         path,
         stateDir: input.stateDir,
         cardId: input.card.id,
-        name: image.name,
+        name: attachment.name,
       });
       if (source === null) continue;
-      // Images carry no extension in the id (upstream resolves them by
-      // probing the safe image extensions), so the pending file takes the
-      // extension the mime implies — the same one `attachmentRelativePath`
-      // will look for at claim time.
-      const pendingId = createPendingAttachmentId();
-      const extension = inferImageExtension({ mimeType: image.mimeType, fileName: image.name });
+      const pending = pendingBriefAttachment(attachment);
       const target = resolveAttachmentRelativePath({
         attachmentsDir: input.attachmentsDir,
-        relativePath: `${pendingId}${extension}`,
+        relativePath: pending.fileName,
       });
       if (target === null) continue;
       const copied = yield* fileSystem
@@ -481,17 +568,7 @@ export const stageBoardCardImagesAsPending = Effect.fn("board-attachments-stage-
           Effect.as(true),
           Effect.catchCause(() => Effect.succeed(false)),
         );
-      if (!copied) continue;
-      // `ChatAttachmentId` is exported as a type only; the brand is asserted
-      // on the id alone so the struct itself is type-checked as an image.
-      const chatAttachment: ChatAttachment = {
-        type: "image",
-        id: pendingId as ChatAttachmentId,
-        name: image.name,
-        mimeType: image.mimeType,
-        sizeBytes: image.sizeBytes,
-      };
-      staged.push(chatAttachment);
+      if (copied) staged.push(pending.attachment);
     }
     return staged;
   },
