@@ -5086,7 +5086,7 @@ export function boardShortClock(iso: string | null | undefined): string | null {
  * — without inventing a fifth step status that every guard in the reactor and
  * the decider would have to learn.
  */
-function boardStalledWords(
+export function boardStalledWords(
   reason: BoardCardStepStalledReason,
   retryAt: string | null,
   nowMs: number | undefined,

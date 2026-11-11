@@ -78,6 +78,7 @@ import {
   type BoardSplitRecommendation,
   isLiveBoardCardThreadLink,
   type BoardProjectExecutionConfig,
+  boardStalledWords,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Debouncer } from "@tanstack/react-pacer";
@@ -212,6 +213,8 @@ import {
   resolveBoardStepRecovery,
   type BoardStepRecovery,
 } from "./boardStepRecovery";
+
+const providerDisabledWords = boardStalledWords("provider-disabled-for-project", null, undefined);
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
     apply inside this pure view. */
@@ -2302,9 +2305,7 @@ function InfoSection({
           with no workers never renders. */}
       {props.stalledReason === "provider-disabled-for-project" ? (
         <span className="rounded-md bg-warning/10 px-2 py-1.5 text-warning-foreground">
-          Provider disabled. This step's provider is turned off for the card's project, so the step
-          hasn't started. Turn it on in the project's settings and press Continue, or change the
-          stage's model in Models.
+          {providerDisabledWords.label}. {providerDisabledWords.detail}
         </span>
       ) : null}
       <div>Created · {formatRelativeTimeLabel(props.detail.card.createdAt)}</div>

@@ -168,7 +168,10 @@ it.effect("a spawn refused as provider-disabled leaves no staged copies behind",
       ({ pumpDomain }) =>
         Effect.gen(function* () {
           yield* pumpDomain(cardMoved(cardWith("planning", [document]), "sprint", "planning", 1));
-          assert.deepStrictEqual(NodeFS.readdirSync(NodePath.join(storage.stateDir, "attachments")), []);
+          assert.deepStrictEqual(
+            NodeFS.readdirSync(NodePath.join(storage.stateDir, "attachments")),
+            [],
+          );
         }),
     );
     NodeFS.rmSync(storage.baseDir, { recursive: true, force: true });
