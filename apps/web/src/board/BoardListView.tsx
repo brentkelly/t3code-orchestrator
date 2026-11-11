@@ -48,6 +48,8 @@ import {
   MenuCheckboxItem,
   MenuItem,
   MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
   MenuSeparator,
   MenuTrigger,
 } from "../components/ui/menu";
@@ -154,6 +156,11 @@ export interface BoardListViewProps {
 }
 
 type BoardListUsageFilter = "all" | "over" | "partial";
+
+function usageFilterLabel(filter: BoardListUsageFilter, thresholdUsd: number): string {
+  if (filter === "over") return `Over ${formatBoardUsd(thresholdUsd)}`;
+  return filter === "partial" ? "Partial cost data" : "Any cost";
+}
 
 interface DropTarget {
   readonly id: string;
@@ -676,34 +683,30 @@ export function BoardListView(props: BoardListViewProps) {
                 </MenuItem>
               </MenuPopup>
             </Menu>
-            <div
-              aria-label="Filter by cost"
-              className="flex gap-0.5 rounded-lg bg-accent p-0.5"
-              role="group"
-            >
-              {(
-                [
-                  ["all", "All"],
-                  ["over", `Over ${formatBoardUsd(props.costEmphasisUsd)}`],
-                  ["partial", "Partial data"],
-                ] as const
-              ).map(([value, label]) => (
-                <button
-                  aria-pressed={usageFilter === value}
-                  className={cn(
-                    "inline-flex h-5 items-center whitespace-nowrap rounded-[7px] border px-[9px] text-[11px] font-medium",
-                    usageFilter === value
-                      ? "border-input bg-card text-foreground shadow-xs"
-                      : "border-transparent text-muted-foreground hover:text-foreground",
-                  )}
-                  key={value}
-                  onClick={() => setUsageFilter(value)}
-                  type="button"
+            {/* A menu like the stage filter, not a segmented control: the header's
+                height must not change when the selection toolbar replaces it. */}
+            <Menu>
+              <MenuTrigger
+                render={
+                  <Button size="xs" variant={usageFilter === "all" ? "outline" : "secondary"}>
+                    {usageFilterLabel(usageFilter, props.costEmphasisUsd)}
+                    <ChevronDownIcon />
+                  </Button>
+                }
+              />
+              <MenuPopup align="start" className="min-w-44">
+                <MenuRadioGroup
+                  onValueChange={(value) => setUsageFilter(value as BoardListUsageFilter)}
+                  value={usageFilter}
                 >
-                  {label}
-                </button>
-              ))}
-            </div>
+                  {(["all", "over", "partial"] as const).map((value) => (
+                    <MenuRadioItem closeOnClick key={value} value={value}>
+                      {usageFilterLabel(value, props.costEmphasisUsd)}
+                    </MenuRadioItem>
+                  ))}
+                </MenuRadioGroup>
+              </MenuPopup>
+            </Menu>
             <span className="flex-1 md:hidden" />
             <span className="hidden min-w-0 flex-1 basis-0 items-center justify-end-safe gap-1 overflow-hidden text-[11.5px] whitespace-nowrap text-muted-foreground md:flex">
               <ListKbd>⇧Click</ListKbd> for a range. <ListKbd>Tab</ListKbd> indents,
