@@ -152,6 +152,22 @@ function BoardRuleEditor({
     projectId as ProjectId,
   );
   const labels = catalogue.filter((label) => label.deletedAt === null);
+  // A stored id that is no longer offered stays checked, so it can be unchecked and the rule saved.
+  const labelOptions = (rule: BoardRuleDraft) => [
+    ...labels.map((label) => ({ id: label.labelId as string, name: label.name })),
+    ...rule.labelIds
+      .filter((id) => !labels.some((label) => label.labelId === id))
+      .map((id) => ({ id, name: "Deleted label" })),
+  ];
+  const archiveStageOptions = (rule: BoardRuleDraft) => [
+    ...span.map((stage) => ({ id: stage.stageId as string, name: stage.label })),
+    ...rule.archiveStages
+      .filter((id) => !span.some((stage) => stage.stageId === id))
+      .map((id) => ({
+        id,
+        name: `${stageList.find((stage) => stage.stageId === id)?.label ?? id} (closed to webhooks)`,
+      })),
+  ];
   const updateRule = (id: string, patch: Partial<BoardRuleDraft>) =>
     onChange({
       ...value,
@@ -320,39 +336,39 @@ function BoardRuleEditor({
                 None checked: any stage before planning.
               </p>
               <div className="flex flex-wrap gap-3">
-                {span.map((stage) => (
-                  <label key={stage.stageId} className="flex items-center gap-2 text-sm">
+                {archiveStageOptions(rule).map((stage) => (
+                  <label key={stage.id} className="flex items-center gap-2 text-sm">
                     <Checkbox
-                      checked={rule.archiveStages.includes(stage.stageId)}
+                      checked={rule.archiveStages.includes(stage.id)}
                       onCheckedChange={(checked) =>
                         updateRule(rule.id, {
                           archiveStages:
                             checked === true
-                              ? [...rule.archiveStages, stage.stageId]
-                              : rule.archiveStages.filter((other) => other !== stage.stageId),
+                              ? [...rule.archiveStages, stage.id]
+                              : rule.archiveStages.filter((other) => other !== stage.id),
                         })
                       }
                     />
-                    {stage.label}
+                    {stage.name}
                   </label>
                 ))}
               </div>
             </div>
           )}
-          {rule.kind === "create" && labels.length > 0 ? (
+          {rule.kind === "create" && labelOptions(rule).length > 0 ? (
             <div className="space-y-1.5">
               <Label>Labels</Label>
               <div className="flex flex-wrap gap-3">
-                {labels.map((label) => (
-                  <label key={label.labelId} className="flex items-center gap-2 text-sm">
+                {labelOptions(rule).map((label) => (
+                  <label key={label.id} className="flex items-center gap-2 text-sm">
                     <Checkbox
-                      checked={rule.labelIds.includes(label.labelId)}
+                      checked={rule.labelIds.includes(label.id)}
                       onCheckedChange={(checked) =>
                         updateRule(rule.id, {
                           labelIds:
                             checked === true
-                              ? [...rule.labelIds, label.labelId]
-                              : rule.labelIds.filter((other) => other !== label.labelId),
+                              ? [...rule.labelIds, label.id]
+                              : rule.labelIds.filter((other) => other !== label.id),
                         })
                       }
                     />
