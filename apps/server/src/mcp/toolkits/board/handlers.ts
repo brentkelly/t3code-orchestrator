@@ -1082,6 +1082,7 @@ export const boardHandlers = {
         payload,
         completions: boardCardStepCompletions(board, card.id),
         carriedFindings: card.reviewOverrides?.carriedFindings ?? {},
+        roundModes: card.reviewOverrides?.roundModes ?? {},
       });
       if (roundDefect !== null) {
         return yield* new BoardToolError({ code: "invalid-input", message: roundDefect });

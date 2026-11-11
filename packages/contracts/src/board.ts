@@ -10523,30 +10523,15 @@ export function boardReviewNextRoundMode(input: {
   if (review.settleAfterRound === null || previous < review.settleAfterRound) {
     return BOARD_REVIEW_FULL_ROUND;
   }
-  const done = new Map<string, BoardStepCompletion>();
-  for (const completion of input.completions) {
-    if (completion.outcome !== "succeeded") continue;
-    if (parseReviewStepId(completion.stepId) === null) continue;
-    done.set(completion.stepId, completion);
-  }
+  const done = succeededBoardReviewSteps(input.completions);
   // A gate round reviews the rebased combined diff, and its previous SHA is no longer an ancestor.
   if (done.has(reviewStepId("sync", previous))) return BOARD_REVIEW_FULL_ROUND;
-  // The fold reads the previous round as the loop stood before this round began.
-  done.delete(reviewStepId("review", round));
-  const fold = boardReviewRoundVerdicts({
+  const forcing = boardReviewRoundForcingCount({
     round: previous,
-    done,
-    carriedFindings: overrides?.carriedFindings ?? {},
+    completions: input.completions,
+    overrides,
   });
-  let forcing: number;
-  if (fold.kind === "converge") forcing = 0;
-  else if (fold.kind === "folded") {
-    forcing = boardReviewForcingFindings(fold, boardReviewRoundModeOf(overrides, previous)).filter(
-      (finding) => fold.latestVerdict(finding.id)?.verdict !== "rejection-justified",
-    ).length;
-  }
-  // A legacy round, or one whose records cannot be read, gives no count to trust.
-  else return BOARD_REVIEW_FULL_ROUND;
+  if (forcing === null) return BOARD_REVIEW_FULL_ROUND;
   const previousReview = done.get(reviewStepId("review", previous));
   const reviewedSha =
     previousReview === undefined
@@ -10558,6 +10543,43 @@ export function boardReviewNextRoundMode(input: {
   return forcing < review.settleBelowFindings
     ? { kind: "settling", sinceSha: reviewedSha }
     : BOARD_REVIEW_FULL_ROUND;
+}
+
+function succeededBoardReviewSteps(
+  completions: ReadonlyArray<BoardStepCompletion>,
+): Map<string, BoardStepCompletion> {
+  const done = new Map<string, BoardStepCompletion>();
+  for (const completion of completions) {
+    if (completion.outcome !== "succeeded") continue;
+    if (parseReviewStepId(completion.stepId) === null) continue;
+    done.set(completion.stepId, completion);
+  }
+  return done;
+}
+
+/**
+ * How many of a finished round's findings forced another round in its recorded mode, less those
+ * whose latest adjudication is rejection-justified: a false positive is not a bug. Read as the
+ * loop stood when the round ended, so a later round's review does not hide it. Null for a legacy
+ * round or one whose records cannot be read, which give no count to trust.
+ */
+export function boardReviewRoundForcingCount(input: {
+  readonly round: number;
+  readonly completions: ReadonlyArray<BoardStepCompletion>;
+  readonly overrides: BoardCardReviewOverrides | null;
+}): number | null {
+  const done = succeededBoardReviewSteps(input.completions);
+  done.delete(reviewStepId("review", input.round + 1));
+  const fold = boardReviewRoundVerdicts({
+    round: input.round,
+    done,
+    carriedFindings: input.overrides?.carriedFindings ?? {},
+  });
+  if (fold.kind === "converge") return 0;
+  if (fold.kind !== "folded") return null;
+  return boardReviewForcingFindings(fold, boardReviewRoundModeOf(input.overrides, input.round))
+    .filter((finding) => fold.latestVerdict(finding.id)?.verdict !== "rejection-justified")
+    .length;
 }
 
 /**

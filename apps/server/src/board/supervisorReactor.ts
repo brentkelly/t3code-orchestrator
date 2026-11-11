@@ -66,6 +66,11 @@ import {
   boardReviewRoundsStarted,
   boardReviewStuckState,
   boardReviewCarryFromStuck,
+  boardReviewRoundForcingCount,
+  boardReviewRoundModeOf,
+  BoardReviewPayload,
+  parseBoardStepPayloadJson,
+  type BoardStepCompletion,
   type BoardReviewCarry,
   type BoardRequestReviewRoundInput,
   boardRunLabel,
@@ -249,6 +254,8 @@ import { BoardWorkspaces, type BoardCardWorkspace } from "./workspace/BoardWorks
 import { planReviewInstructions, runningPlanReviewStep } from "./planReview.ts";
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
+
+const decodeReviewPayload = Schema.decodeUnknownOption(BoardReviewPayload);
 
 /** What a Merge click did, for the RPC to turn into a toast. */
 export type BoardMergeAttemptResult =
@@ -2524,6 +2531,57 @@ const make = Effect.gen(function* () {
     return boardCardStepState(board, card.id)?.baseTipAtRoundStart ?? null;
   });
 
+  // The `select-step` fields that record a new settling review round, empty for any other plan.
+  // A plan that starts a review round also logs its mode, so settling defaults can be tuned
+  // from real loops.
+  const reviewRoundModeFields = Effect.fn("board-supervisor-reviewRoundModeFields")(function* (
+    card: BoardCard,
+    plan: Extract<BoardStagePlan, { readonly kind: "run" }>,
+  ) {
+    if (!plan.recordBaseTip) return {};
+    const mode = plan.reviewRoundMode?.mode ?? boardReviewRoundModeOf(card.reviewOverrides, plan.round);
+    const board = yield* readBoard;
+    yield* Effect.logInfo("board: review round starting", {
+      cardId: card.id,
+      round: plan.round,
+      mode: mode.kind,
+      sinceSha: mode.kind === "settling" ? mode.sinceSha : null,
+      previousForcingFindings:
+        plan.round > 1
+          ? boardReviewRoundForcingCount({
+              round: plan.round - 1,
+              completions: boardCardStepCompletions(board, card.id),
+              overrides: card.reviewOverrides,
+            })
+          : null,
+    });
+    return plan.reviewRoundMode === undefined ? {} : { reviewRoundMode: plan.reviewRoundMode };
+  });
+
+  // What a finished review read, beside the mode its round was started in.
+  const logReviewScope = Effect.fn("board-supervisor-logReviewScope")(function* (
+    card: BoardCard,
+    stepId: string,
+    completions: ReadonlyArray<BoardStepCompletion>,
+  ) {
+    const parsed = parseReviewStepId(stepId);
+    if (parsed?.phase !== "review") return;
+    const completion = completions.find(
+      (recorded) => recorded.stepId === stepId && recorded.outcome === "succeeded",
+    );
+    if (completion === undefined) return;
+    const review = Option.getOrNull(
+      decodeReviewPayload(parseBoardStepPayloadJson(completion.payload)),
+    );
+    yield* Effect.logInfo("board: review round reviewed", {
+      cardId: card.id,
+      round: parsed.round,
+      mode: boardReviewRoundModeOf(card.reviewOverrides, parsed.round).kind,
+      scope: review?.scope ?? null,
+      findings: review?.findings.length ?? null,
+    });
+  });
+
   // Resolves the stage's execution config, freezes it onto the run row and spawns. Auto-kickoff
   // acts only on auto-executing stages; on-demand always starts. A re-entry opens a clean
   // human-in-the-loop thread with no prompt; a stage with a live thread is skipped.
@@ -2761,6 +2819,8 @@ const make = Effect.gen(function* () {
       // Measured fresh when this plan starts a review round, carried forward
       // otherwise.
       baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
+      // A re-entry injects no prompt, so it starts no settling round.
+      ...(firstEntry ? yield* reviewRoundModeFields(card, plan) : {}),
       createdAt: yield* nowIso,
     });
     if (kept !== null) {
@@ -4774,6 +4834,7 @@ const make = Effect.gen(function* () {
       boardProjectStageConfig(board, card.projectId),
     );
     const completions = boardCardStepCompletions(board, card.id);
+    yield* logReviewScope(card, state.stepId, completions);
     const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
     const cardOverride = cardStageModelOverride(board, card);
     const completedStepIds = completions
@@ -4836,6 +4897,7 @@ const make = Effect.gen(function* () {
           // Measured fresh when this plan starts a review round, carried
           // forward otherwise.
           baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
+          ...(yield* reviewRoundModeFields(card, plan)),
           createdAt: yield* nowIso,
         });
         if (exec.mode === "build") yield* provisionPlacedBuildStep(card.id);
@@ -4959,6 +5021,7 @@ const make = Effect.gen(function* () {
       // Measured fresh when this plan starts a review round, carried forward
       // otherwise.
       baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
+      ...(yield* reviewRoundModeFields(card, plan)),
       createdAt: yield* nowIso,
     });
     if (exec.mode === "build") yield* provisionPlacedBuildStep(card.id);
@@ -6947,6 +7010,8 @@ const make = Effect.gen(function* () {
     readonly reason: string;
     readonly stuckRound?: number;
     readonly carry?: BoardReviewCarry;
+    /** Only a plain "Another review round": the requested round reviews the whole branch. */
+    readonly forceFullRound?: boolean;
   }) {
     return yield* dispatchLanded({
       type: "board.card.set-review-carry",
@@ -6956,6 +7021,7 @@ const make = Effect.gen(function* () {
       clearStopAfterRound: true,
       ...(input.stuckRound === undefined ? {} : { stuckWaivedThrough: input.stuckRound }),
       ...(input.carry === undefined ? {} : { carry: { round: input.round, entry: input.carry } }),
+      ...(input.forceFullRound === true ? { forceFullRound: true as const } : {}),
       createdAt: yield* nowIso,
     });
   });
@@ -7015,7 +7081,7 @@ const make = Effect.gen(function* () {
       round,
       reason: "request-review-round",
       ...(carry === undefined || stuck === null
-        ? {}
+        ? { forceFullRound: true }
         : {
             stuckRound: stuck.round,
             carry: boardReviewCarryFromStuck({
