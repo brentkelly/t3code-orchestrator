@@ -26,7 +26,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-// T3o: card threads share their card's worktree, so they skip settle scripts.
+// T3o: a worktree the board keeps for a card skips settle scripts.
 import { isBoardKeptWorktree } from "../board/upstreamGuards.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -315,7 +315,7 @@ export const make = Effect.gen(function* () {
   const shellClosedThreads = new Set<ThreadId>();
   const terminals = yield* TerminalManager.TerminalManager;
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
-  const sql = yield* SqlClient.SqlClient; // T3o: for the board card-thread check below.
+  const sql = yield* SqlClient.SqlClient; // T3o: for the board kept-worktree check below.
   // Repeated thread.settled retains settledAt; run the action only once per settlement.
   const settleActionRunAt = new Map<ThreadId, number>();
 
