@@ -7426,20 +7426,34 @@ const make = Effect.gen(function* () {
     return existing !== undefined && !boardCompletionReopened(existing, state);
   };
 
+  /** The plan step is still running from an Auto-plan reopen the agent has not finished. */
+  const stillReopenedPlanStep = (board: BoardState, card: BoardCard) => {
+    const state = boardCardStepState(board, card.id);
+    return (
+      state !== null &&
+      state.stepId === card.stage &&
+      state.status === "running" &&
+      boardCompletionReopenedByAutoPlan(stepSuccess(board, card.id, state), state)
+    );
+  };
+
   /** Turning Auto-plan on reopened this step, the run is still pending and the agent has not
       finished again. */
   const reopenedForAutoPlan = (board: BoardState, card: BoardCard, state: BoardCardStepState) =>
     isBoardCardAutoPlanPending(card) &&
     boardCompletionReopenedByAutoPlan(stepSuccess(board, card.id, state), state);
 
-  /** Record that the reopened step's Auto-plan prompt went out: `lastNudgeAt` moves off
-      `reopenedAt`, so it goes out once, and no recovery budget is spent. */
+  /** The reopened step's Auto-plan prompt has not gone out since the latest reopen. Its own
+      stamp, since check-ins and human turns move `lastNudgeAt`. */
+  const reopenedPromptPending = (state: BoardCardStepState) =>
+    state.reopenedAt !== undefined &&
+    (state.reopenedPromptAt === undefined || state.reopenedPromptAt < state.reopenedAt);
+
+  /** Record that the reopened step's Auto-plan prompt went out, so it goes out once. No
+      recovery budget is spent. */
   const recordReopenedDelivery = Effect.fn("board-supervisor-recordReopenedDelivery")(function* (
     state: BoardCardStepState,
   ) {
-    // Strictly after the stamp, so a delivery in the reopen's own millisecond still counts.
-    const now = yield* nowIso;
-    const reopenedMs = state.reopenedAt === undefined ? Number.NaN : Date.parse(state.reopenedAt);
     return yield* dispatchOptional({
       type: "board.card.check-in-step",
       commandId: yield* commandId("auto-plan-reopened-delivered"),
@@ -7447,10 +7461,8 @@ const make = Effect.gen(function* () {
       stepId: state.stepId,
       charged: false,
       progressed: false,
-      createdAt:
-        Number.isNaN(reopenedMs) || Date.parse(now) > reopenedMs
-          ? now
-          : DateTime.formatIso(DateTime.makeUnsafe(reopenedMs + 1)),
+      reopenedPrompt: true,
+      createdAt: yield* nowIso,
     });
   });
 
@@ -7468,7 +7480,7 @@ const make = Effect.gen(function* () {
     const live = boardCardStepState(board, card.id);
     if (current === undefined || live === null || live.threadId === null) return false;
     if (live.stepId !== state.stepId || live.status !== "running") return false;
-    if (live.lastNudgeAt !== live.reopenedAt || !reopenedForAutoPlan(board, current, live)) {
+    if (!reopenedPromptPending(live) || !reopenedForAutoPlan(board, current, live)) {
       return false;
     }
     if (!(yield* recordReopenedDelivery(live))) return false;
@@ -7508,7 +7520,7 @@ const make = Effect.gen(function* () {
         ),
         Effect.orElseSucceed(() => false),
       );
-    if (answered && state.lastNudgeAt === state.reopenedAt) yield* recordReopenedDelivery(state);
+    if (answered && reopenedPromptPending(state)) yield* recordReopenedDelivery(state);
     return answered;
   });
 
@@ -7540,6 +7552,11 @@ const make = Effect.gen(function* () {
         shell.sessionStatus === "starting" ||
         shell.backgroundWork !== null ||
         requestedTurn !== null);
+    if (state !== null && state.status === "running" && (shell === undefined || !active)) {
+      // Reopened earlier and its thread has since stopped: nothing to interrupt.
+      const result = yield* startOrSteerAutoPlan(card);
+      return result.outcome === "refused" ? null : result.outcome;
+    }
     if (threadId === null || shell === undefined || !active) {
       yield* autoPlanNote(
         card.id,
@@ -8019,6 +8036,11 @@ const make = Effect.gen(function* () {
         const finished = boardCardPlanningFinished(board, card);
         // Only the card's own toggle reopens a finished step; a group re-evaluation never does.
         if (changed.autoPlan === true && resolved.autoPlan.value && !pending && finished) {
+          if (boardCardPendingSplit(board, card.id)) return null;
+          return yield* reopenFinishedPlanning(card);
+        }
+        // Still reopened from an earlier toggle: hand over again rather than interrupt the turn.
+        if (resolved.autoPlan.value && !pending && stillReopenedPlanStep(board, card)) {
           if (boardCardPendingSplit(board, card.id)) return null;
           return yield* reopenFinishedPlanning(card);
         }

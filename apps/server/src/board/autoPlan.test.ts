@@ -22,7 +22,9 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 
 import { ThreadCommandRefusedError } from "./ThreadGateway.ts";
 import type { BoardThreadState } from "./ThreadGateway.ts";
@@ -1014,7 +1016,7 @@ it.effect(
           const state = boardCardStepState(reopened, id)!;
           assert.strictEqual(state.status, "running");
           assert.isString(state.reopenedAt);
-          assert.strictEqual(state.lastNudgeAt, state.reopenedAt);
+          assert.isUndefined(state.reopenedPromptAt);
           assert.isFalse(state.humanInLoop);
           assert.strictEqual(cardOf(reopened.cards, "late")?.autoPlan?.endedAt, null);
           // Nothing mid-turn: no send, no answer, no interrupt, and no approval yet.
@@ -1038,7 +1040,7 @@ it.effect(
           assert.lengthOf(sendsOf(yield* h.commands, reopenedText(true)), 1);
           const delivered = boardCardStepState(yield* h.board, id)!;
           assert.strictEqual(delivered.status, "running");
-          assert.notStrictEqual(delivered.lastNudgeAt, delivered.reopenedAt);
+          assert.isString(delivered.reopenedPromptAt);
           assert.strictEqual(delivered.stallCount, 0);
 
           // The agent finishes again: that is the real finish, approved and built.
@@ -1104,7 +1106,7 @@ it.effect("a pending question is answered with the prompt at once, and not sent 
         yield* setAutomation(h, id, { autoPlan: true }, 3);
         assert.lengthOf(answersOf(yield* h.commands, reopenedText(true)), 1);
         const answered = boardCardStepState(yield* h.board, id)!;
-        assert.notStrictEqual(answered.lastNudgeAt, answered.reopenedAt);
+        assert.isString(answered.reopenedPromptAt);
 
         yield* Ref.update(
           h.shells,
@@ -1142,7 +1144,7 @@ it.effect("a question raised later on the reopened step is answered, not parked"
   );
 });
 
-it.effect("a thread between turns but running background work counts as active", () => {
+it.effect("a reopen during a background wait gets its prompt after the check-ins, once", () => {
   const card = planningCard("bg");
   return withGovernor(
     {
@@ -1152,13 +1154,35 @@ it.effect("a thread between turns but running background work counts as active",
     (h) =>
       Effect.gen(function* () {
         const id = BoardCardId.make("bg");
-        yield* finishedPlanning(h, id, card, (thread) =>
+        const threadId = yield* finishedPlanning(h, id, card, (thread) =>
           fakeThreadState(thread, { backgroundWork: "working" }),
         );
         yield* setAutomation(h, id, { autoPlan: true }, 3);
         const state = boardCardStepState(yield* h.board, id)!;
         assert.strictEqual(state.status, "running");
         assert.isString(state.reopenedAt);
+
+        // The turn ends waiting on its subagents and a check-in goes out: the prompt still waits.
+        yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-bg"));
+        yield* TestClock.adjust(Duration.minutes(5));
+        yield* h.reactor.sweep;
+        yield* h.reactor.drain;
+        const checkedIn = yield* h.commands;
+        assert.isTrue(
+          checkedIn.some(
+            (command) => command.type === "thread.send" && command.text.includes("scheduled check-in"),
+          ),
+        );
+        assert.lengthOf(sendsOf(checkedIn, reopenedText(false)), 0);
+
+        // The background work is done: that turn end hands the prompt over, once.
+        yield* Ref.update(
+          h.shells,
+          (shells) => new Map([...shells, [threadId, fakeThreadState(threadId)]]),
+        );
+        yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-done"));
+        yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-after"));
+        assert.lengthOf(sendsOf(yield* h.commands, reopenedText(false)), 1);
       }),
   );
 });
@@ -1215,6 +1239,39 @@ it.effect("turning Auto-plan off while reopened sends the reopened off text", ()
           1,
         );
         assert.isTrue(boardCardStepState(yield* h.board, id)?.humanInLoop);
+      }),
+  );
+});
+
+it.effect("turning Auto-plan on again while still reopened waits for the turn, no interrupt", () => {
+  const card = planningCard("again", { autoBuildSetting: true });
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("again", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("again");
+        const threadId = yield* finishedPlanning(h, id, card, (thread) => aliveThread(thread));
+        yield* setAutomation(h, id, { autoPlan: true }, 3);
+        yield* setAutomation(h, id, { autoPlan: false }, 4);
+        yield* setAutomation(h, id, { autoPlan: true }, 5);
+        const commands = yield* h.commands;
+        assert.isFalse(commands.some((command) => command.type === "thread.interrupt"));
+        assert.lengthOf(sendsOf(commands, reopenedText(true)), 0);
+        const state = boardCardStepState(yield* h.board, id)!;
+        assert.strictEqual(state.status, "running");
+        assert.isFalse(state.humanInLoop);
+
+        yield* Ref.update(
+          h.shells,
+          (shells) => new Map([...shells, [threadId, fakeThreadState(threadId)]]),
+        );
+        yield* h.pumpRuntime(turnCompleted(ThreadId.make(threadId), "turn-live"));
+        assert.lengthOf(sendsOf(yield* h.commands, reopenedText(true)), 1);
+        yield* h.pumpDomain(completedAgain(id, 6));
+        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.building);
       }),
   );
 });

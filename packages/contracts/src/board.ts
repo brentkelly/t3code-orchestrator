@@ -2427,6 +2427,9 @@ export const BoardCardStepState = Schema.Struct({
       agent's next completion supersedes the pinned one. Never written as null;
       a stage entry builds a fresh row without it. */
   reopenedAt: Schema.optionalKey(IsoDateTime),
+  /** When the reopened step's Auto-plan prompt went out. Undelivered while
+      absent or older than `reopenedAt`; never written as null. */
+  reopenedPromptAt: Schema.optionalKey(IsoDateTime),
   // ── Frozen execution config ────────────────────────────────────
   // Resolved from the stage's settings ONCE at stage entry and stamped here,
   // so editing settings mid-flight cannot corrupt a running card. The reactor
@@ -6194,6 +6197,8 @@ export const BoardCardCheckInStepCommand = Schema.Struct({
   stepId: TrimmedNonEmptyString,
   charged: Schema.Boolean,
   progressed: Schema.Boolean,
+  /** This check-in delivered a reopened step's Auto-plan prompt. */
+  reopenedPrompt: Schema.optionalKey(Schema.Literal(true)),
   createdAt: IsoDateTime,
 });
 export type BoardCardCheckInStepCommand = typeof BoardCardCheckInStepCommand.Type;

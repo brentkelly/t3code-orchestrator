@@ -94,16 +94,8 @@ export function boardCompletionReopened(
   existing: BoardStepCompletion | undefined,
   current: BoardCardStepState | null,
 ): boolean {
-  if (
-    existing === undefined ||
-    existing.outcome !== "succeeded" ||
-    current === null ||
-    current.stepId !== existing.stepId ||
-    isBoardTerminalStepStatus(current.status)
-  )
-    return false;
-  const after = (at: string | undefined) => at !== undefined && existing.completedAt < at;
-  return after(current.planReviewStartedAt) || after(current.reopenedAt);
+  const stamps = reopenStampsAfter(existing, current);
+  return stamps.planReview || stamps.autoPlan;
 }
 
 /** Turning Auto-plan on reopened this step and the agent has not finished
@@ -112,10 +104,22 @@ export function boardCompletionReopenedByAutoPlan(
   existing: BoardStepCompletion | undefined,
   current: BoardCardStepState | null,
 ): boolean {
-  return (
-    boardCompletionReopened(existing, current) &&
-    current?.reopenedAt !== undefined &&
-    existing !== undefined &&
-    existing.completedAt < current.reopenedAt
-  );
+  return reopenStampsAfter(existing, current).autoPlan;
+}
+
+/** Which reopen stamps are newer than the pinned success on a live step. */
+function reopenStampsAfter(
+  existing: BoardStepCompletion | undefined,
+  current: BoardCardStepState | null,
+): { readonly planReview: boolean; readonly autoPlan: boolean } {
+  if (
+    existing === undefined ||
+    existing.outcome !== "succeeded" ||
+    current === null ||
+    current.stepId !== existing.stepId ||
+    isBoardTerminalStepStatus(current.status)
+  )
+    return { planReview: false, autoPlan: false };
+  const after = (at: string | undefined) => at !== undefined && existing.completedAt < at;
+  return { planReview: after(current.planReviewStartedAt), autoPlan: after(current.reopenedAt) };
 }

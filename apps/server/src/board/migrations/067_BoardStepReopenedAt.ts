@@ -1,4 +1,5 @@
-// When turning Auto-plan on reopened a finished plan step (T3O-80). Additive and guarded.
+// When turning Auto-plan on reopened a finished plan step, and when its prompt went out (T3O-80).
+// Additive and guarded.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -9,5 +10,8 @@ export default Effect.gen(function* () {
   `;
   if (!stepColumns.some((column) => column.name === "reopened_at")) {
     yield* sql`ALTER TABLE board_card_step_state ADD COLUMN reopened_at TEXT`;
+  }
+  if (!stepColumns.some((column) => column.name === "reopened_prompt_at")) {
+    yield* sql`ALTER TABLE board_card_step_state ADD COLUMN reopened_prompt_at TEXT`;
   }
 });

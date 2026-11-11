@@ -5037,11 +5037,16 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         return yield* invariant(command, `Card '${card.key}' is already being auto-planned.`);
       }
       const finishedStep = boardCardStepState(board, card.id);
+      // A step still reopened from an earlier toggle re-arms its handover.
+      const stillReopened =
+        finishedStep !== null &&
+        finishedStep.status === "running" &&
+        finishedStep.reopenedAt !== undefined;
       if (
         command.reopenFinished === true &&
         (finishedStep === null ||
           finishedStep.stepId !== planStage.stageId ||
-          finishedStep.status !== "succeeded")
+          (finishedStep.status !== "succeeded" && !stillReopened))
       ) {
         return yield* invariant(
           command,
@@ -5075,7 +5080,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         payload: {
           cardId: card.id,
           state: {
-            ...reopenedPlanStep(finishedStep, command.createdAt),
+            ...(stillReopened ? finishedStep : reopenedPlanStep(finishedStep, command.createdAt)),
             reopenedAt: command.createdAt,
             updatedAt: command.createdAt,
           },
@@ -5832,6 +5837,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ? current.stageEntryRecoveries + 1
           : current.stageEntryRecoveries,
         lastNudgeAt: command.createdAt,
+        ...(command.reopenedPrompt === true ? { reopenedPromptAt: command.createdAt } : {}),
         updatedAt: command.createdAt,
       };
       return {

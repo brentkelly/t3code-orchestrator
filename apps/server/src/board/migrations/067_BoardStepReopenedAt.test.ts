@@ -1,5 +1,5 @@
 /**
- * Board migration 067: the step state's `reopened_at` column, NULL on existing rows.
+ * Board migration 067: the step state's `reopened_at` and `reopened_prompt_at` columns, NULL on existing rows.
  */
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -40,10 +40,14 @@ it.effect("adds reopened_at as NULL on a populated database", () =>
     const migration = BOARD_MIGRATIONS.find(([id]) => id === MIGRATION_ID);
     assert.ok(migration, "migration 067 is registered in the lineage");
     yield* migration[2];
-    const steps = yield* sql<{ readonly reopenedAt: string | null }>`
-      SELECT reopened_at AS "reopenedAt" FROM board_card_step_state
+    const steps = yield* sql<{
+      readonly reopenedAt: string | null;
+      readonly reopenedPromptAt: string | null;
+    }>`
+      SELECT reopened_at AS "reopenedAt", reopened_prompt_at AS "reopenedPromptAt"
+      FROM board_card_step_state
     `;
-    assert.deepStrictEqual(steps, [{ reopenedAt: null }]);
+    assert.deepStrictEqual(steps, [{ reopenedAt: null, reopenedPromptAt: null }]);
     // Re-running is a no-op rather than an error.
     yield* migration[2];
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
