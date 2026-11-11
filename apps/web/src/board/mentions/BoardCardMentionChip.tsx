@@ -41,7 +41,7 @@ function cutTitle(title: string): string {
     : title;
 }
 
-function BoardCardMentionChip(props: {
+export function BoardCardMentionChip(props: {
   cardId: BoardCardId;
   label: string;
   copyMarkdown?: string | undefined;
