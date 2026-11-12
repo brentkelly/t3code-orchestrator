@@ -10670,17 +10670,21 @@ function succeededBoardReviewSteps(
 }
 
 /**
- * How many of a finished round's findings forced another round in its recorded mode, less those
- * whose latest adjudication is rejection-justified: a false positive is not a bug. Read as the
- * loop stood when the round ended, so a later round's review does not hide it. Null for a legacy
- * round or one whose records cannot be read, which give no count to trust.
+ * A finished round's surviving forcing findings (not ruled rejection-justified) and whether any
+ * is a critical, read as the loop stood when the round ended so a later review cannot hide them.
+ * Null for a legacy round or one whose records cannot be read.
  */
-export function boardReviewRoundForcingCount(input: {
+export function boardReviewRoundForcingSummary(input: {
   readonly round: number;
   readonly completions: ReadonlyArray<BoardStepCompletion>;
   readonly overrides: BoardCardReviewOverrides | null;
-}): number | null {
-  return boardReviewRoundSurvivingForcing(input)?.length ?? null;
+}): { readonly count: number; readonly critical: boolean } | null {
+  const forcing = boardReviewRoundSurvivingForcing(input);
+  if (forcing === null) return null;
+  return {
+    count: forcing.length,
+    critical: forcing.some((finding) => finding.severity === "critical"),
+  };
 }
 
 function boardReviewRoundSurvivingForcing(input: {
@@ -11690,7 +11694,8 @@ export const BoardStageExecutionReview = Schema.Struct({
   settleAfterRound: Schema.NullOr(PositiveInt).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND)),
   ),
-  /** A round with fewer forcing findings than this makes the next round settle. */
+  /** A round with fewer forcing findings than this, and no surviving critical, makes the next
+      round settle. */
   settleBelowFindings: BoardReviewSettleBelowFindings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_SETTLE_BELOW_FINDINGS)),
   ),

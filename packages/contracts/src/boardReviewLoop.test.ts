@@ -26,7 +26,7 @@ import {
   BoardReviewPayload,
   BoardStageExecutionReview,
   boardReviewNextRoundMode,
-  boardReviewRoundForcingCount,
+  boardReviewRoundForcingSummary,
   boardReviewRoundModeOf,
   EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
   type BoardReviewFinding,
@@ -1876,18 +1876,26 @@ describe("T3O-64: settling rounds", () => {
     });
 
     it("counts a finished round's forcing findings", () => {
-      assert.strictEqual(
-        boardReviewRoundForcingCount({ round: 3, completions: firstThree, overrides: null }),
-        1,
+      assert.deepStrictEqual(
+        boardReviewRoundForcingSummary({ round: 3, completions: firstThree, overrides: null }),
+        { count: 1, critical: false },
       );
       // A later round's review does not hide the count.
-      assert.strictEqual(
-        boardReviewRoundForcingCount({
+      assert.deepStrictEqual(
+        boardReviewRoundForcingSummary({
           round: 3,
           completions: [...firstThree, review(4, [])],
           overrides: null,
         }),
-        1,
+        { count: 1, critical: false },
+      );
+      const fixedCritical = [
+        ...firstThree.slice(0, 6),
+        ...fixedRound(3, [finding("critical", "c1")]),
+      ];
+      assert.deepStrictEqual(
+        boardReviewRoundForcingSummary({ round: 3, completions: fixedCritical, overrides: null }),
+        { count: 1, critical: true },
       );
     });
   });
