@@ -37,6 +37,7 @@ import {
   workerFilePath,
   writeWorkerFile,
   type WorkerBoardEntry,
+  type WorkerStatusFile,
 } from "../board/tunnel/workerFile.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
@@ -129,24 +130,51 @@ export function parseJoinTarget(
 const sleep = (ms: number) =>
   Effect.promise(() => new Promise((resolve) => setTimeout(resolve, ms)));
 
+const processAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
+/** What a status file says about a join written at `since`. A status from before the
+    join (a stale `revoked`, or a tunnel still on the old credential) or from a server
+    that's gone says nothing yet. */
+export function joinStatusVerdict(
+  status: WorkerStatusFile | null,
+  boardId: string,
+  since: number,
+  isAlive: (pid: number) => boolean = processAlive,
+): "connected" | "refused" | "pending" | "no-server" {
+  if (status === null || !isAlive(status.pid)) return "no-server";
+  if (!(Date.parse(status.updatedAt) > since)) return "pending";
+  const board = status.boards.find((entry) => entry.boardEnvironmentId === boardId);
+  if (board?.state === "connected") return "connected";
+  if (board?.state === "revoked" || board?.state === "needs-update") return "refused";
+  return "pending";
+}
+
 /** Wait for the running server's tunnel to this board to connect. */
 const awaitConnected = Effect.fn("worker.awaitConnected")(function* (
   home: string,
   boardId: string,
+  since: number,
 ) {
   const deadline = Date.now() + JOIN_CONNECT_TIMEOUT_MS;
   let last: ReturnType<typeof readWorkerStatus> = null;
+  let verdict: ReturnType<typeof joinStatusVerdict> = "no-server";
   while (Date.now() < deadline) {
     last = readWorkerStatus(home);
-    const board = last?.boards.find((entry) => entry.boardEnvironmentId === boardId);
-    if (board?.state === "connected") return { ok: true as const, status: board };
-    if (board?.state === "revoked" || board?.state === "needs-update") {
-      return { ok: false as const, status: board };
-    }
+    verdict = joinStatusVerdict(last, boardId, since);
+    const board = last?.boards.find((entry) => entry.boardEnvironmentId === boardId) ?? null;
+    if (verdict === "connected") return { ok: true as const, status: board };
+    if (verdict === "refused") return { ok: false as const, status: board };
     yield* sleep(500);
   }
   const board = last?.boards.find((entry) => entry.boardEnvironmentId === boardId) ?? null;
-  return { ok: false as const, status: board, noServer: last === null };
+  return { ok: false as const, status: board, noServer: verdict === "no-server" };
 });
 
 const insecureFlag = Flag.Boolean("insecure").pipe(
@@ -229,6 +257,7 @@ const joinCommand = Command.make("join", {
           boardLabel: joined.boardLabel,
           joinedAt: new Date().toISOString(),
         };
+        const writtenAt = Date.now();
         writeWorkerFile(home, upsertWorkerBoard(yield* readBoards(home), entry));
         yield* Console.log(`Joined ${joined.boardLabel} as ${label}.`);
         if (others.length > 0) {
@@ -237,7 +266,7 @@ const joinCommand = Command.make("join", {
           );
         }
         yield* Console.log("Waiting for this machine's T3o server to connect…");
-        const connected = yield* awaitConnected(home, joined.boardEnvironmentId);
+        const connected = yield* awaitConnected(home, joined.boardEnvironmentId, writtenAt);
         if (connected.ok) {
           yield* Console.log(`Connected to ${joined.boardLabel}. Finish in the board's dialog.`);
           return;
