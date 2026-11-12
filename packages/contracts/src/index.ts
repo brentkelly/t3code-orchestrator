@@ -55,6 +55,8 @@ export * from "./boardGroups.ts";
 export * from "./boardUsage.ts";
 export * from "./boardEvent.ts";
 export * from "./boardWorkers.ts";
+// T3o: outbound-only workers (T3O-84).
+export * from "./boardWorkerTunnel.ts";
 export * from "./boardWorkerGateway.ts";
 export * from "./boardWorkspace.ts";
 export * from "./boardEnvelope.ts";

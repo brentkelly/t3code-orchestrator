@@ -162,6 +162,7 @@ export const placementOver = (connections: WorkerConnectionsShape): BoardPlaceme
       snapshot: runtime.snapshot,
     })),
     setups: [],
+    joinCodes: [],
   });
   return {
     workers: connections.current.pipe(Effect.map(summary)),

@@ -1,27 +1,31 @@
 /**
- * T3o board workers — client operations.
- *
- * Each is one `board.workers.*` RPC on the BOARD server. Minting the one-time
- * pairing token on the worker itself is a different call, on a different
- * environment: see `mintEnvironmentPairingToken`.
+ * T3o board workers — client operations. Each is one `board.workers.*` RPC on
+ * the BOARD server.
  */
 import {
   BOARD_WORKERS_WS_METHODS,
   type BoardWorkerIdInput,
-  type BoardWorkersAddInput,
+  type BoardWorkersCancelJoinCodeInput,
   type BoardWorkersDismissSetupInput,
-  type BoardWorkersRepairInput,
+  type BoardWorkersRenameInput,
   type BoardWorkersSetDefaultInput,
   type BoardWorkersSetupProjectInput,
 } from "@t3tools/contracts";
 
 import { request } from "../rpc/client.ts";
 
-export const addBoardWorker = (input: BoardWorkersAddInput) =>
-  request(BOARD_WORKERS_WS_METHODS.add, input);
+/** A one-time join code; the plain code comes back only in this answer. */
+export const createBoardWorkerJoinCode = () => request(BOARD_WORKERS_WS_METHODS.createJoinCode, {});
 
-export const repairBoardWorker = (input: BoardWorkersRepairInput) =>
-  request(BOARD_WORKERS_WS_METHODS.repair, input);
+export const cancelBoardWorkerJoinCode = (input: BoardWorkersCancelJoinCodeInput) =>
+  request(BOARD_WORKERS_WS_METHODS.cancelJoinCode, input);
+
+export const renameBoardWorker = (input: BoardWorkersRenameInput) =>
+  request(BOARD_WORKERS_WS_METHODS.rename, input);
+
+/** A session on a worker for this client, through the board's proxy. */
+export const boardWorkerThreadAccess = (input: BoardWorkerIdInput) =>
+  request(BOARD_WORKERS_WS_METHODS.threadAccess, input);
 
 export const removeBoardWorker = (input: BoardWorkerIdInput) =>
   request(BOARD_WORKERS_WS_METHODS.remove, input);

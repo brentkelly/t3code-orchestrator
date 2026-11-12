@@ -127,6 +127,7 @@ import { BoardGroupUsageButton, BoardUsageChip } from "./usage/BoardUsagePopover
 import { boardUsageInView } from "./usage/boardUsageViews";
 import { projectAccent, projectIconColorOf } from "./projectAccent";
 import { BoardWorkersContext, useBoardWorkersCardView } from "./workers/BoardWorkersContext";
+import { usePruneWorkerThreadEnvironments } from "./workers/boardWorkersState";
 import { boardQueueReason } from "./workers/cardWorker";
 import { BoardWorkersAttentionPill } from "./workers/BoardWorkersAttentionPill";
 import { validateBoardSearch, type BoardSearch } from "../routes/board";
@@ -450,6 +451,7 @@ function useBoardPageModel({
   // Stays the same object across a clone's progress ticks, so those don't
   // rebuild the queue or re-render the columns.
   const cardWorkersState = useBoardWorkersCardView(environmentId);
+  usePruneWorkerThreadEnvironments(environmentId);
   // The strip's thread title and state are joined from the thread shells the
   // client already holds; nothing is duplicated onto the wire.
   const cardThreadsByCard = useAtomValue(boardEnvironment.cardThreadsByCardAtom(environmentId));
@@ -1492,7 +1494,7 @@ function EnvironmentBoard({
     <BoardWorkersContext.Provider value={cardWorkersState}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <BoardTopBar>
-          {/* T3o: workers that are offline, revoked or incompatible,
+          {/* T3o: workers that are offline or need an update,
             and the cards they hold. Renders nothing otherwise. */}
           <BoardWorkersAttentionPill
             cards={everyCard}

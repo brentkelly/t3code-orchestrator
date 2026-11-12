@@ -3,11 +3,7 @@
  * local-only board that refuses every worker operation. Its summary never
  * changes, so a board subscription under test sees exactly today's stream.
  */
-import {
-  BoardWorkerActionError,
-  BoardWorkerAddError,
-  EMPTY_BOARD_WORKERS_STATE,
-} from "@t3tools/contracts";
+import { BoardWorkerActionError, EMPTY_BOARD_WORKERS_STATE } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -16,18 +12,16 @@ import { BoardPlacement } from "./BoardPlacement.ts";
 import { BoardWorkers } from "./BoardWorkers.ts";
 import { WorkerConnections, WorkerUnavailable } from "./WorkerConnections.ts";
 
-const refused = new BoardWorkerAddError({
-  code: "unreachable",
-  message: "This test board has no workers.",
-});
 const refusedAction = new BoardWorkerActionError({
   code: "not-found",
   message: "This test board has no workers.",
 });
 
 export const BoardWorkersLocalOnlyTest = Layer.succeed(BoardWorkers, {
-  add: () => Effect.fail(refused),
-  repair: () => Effect.fail(refused),
+  createJoinCode: Effect.die("This test board has no workers."),
+  cancelJoinCode: () => Effect.fail(refusedAction),
+  rename: () => Effect.fail(refusedAction),
+  threadAccess: () => Effect.fail(refusedAction),
   remove: () => Effect.fail(refusedAction),
   removePreview: () => Effect.fail(refusedAction),
   setDefault: () => Effect.fail(refusedAction),

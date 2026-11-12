@@ -36,7 +36,6 @@ import {
 import { BoardPipelineSection, NumberStepper } from "./BoardPipelineSection";
 import { BoardSettingsCard, BoardSettingsCardRow } from "../../board/settings/boardSettingsCards";
 import { BoardImportNotices } from "../../board/settings/BoardImportNotice";
-import { BoardWorkerSettings } from "../../board/workers/BoardWorkerSettings";
 import { useBoardWorkers } from "../../board/workers/boardWorkersState";
 import { boardShowsWorkers } from "../../board/workers/cardWorker";
 import { WorkerConcurrencySection } from "../../board/workers/WorkerConcurrencySection";
@@ -68,8 +67,8 @@ function useProviderInstanceIds(): ReadonlyArray<string> {
 }
 
 /** Settings → Board → General: the board server, display, the
-    project list with its import notices, the global pipeline, concurrency, workers and
-    lifecycle.
+    project list with its import notices, the global pipeline, concurrency and lifecycle.
+    Workers have their own page.
     The layout resolves the board server first. */
 export function BoardSettingsPanel() {
   const resolution = useBoardEnvironment();
@@ -104,8 +103,6 @@ function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId
         instanceIds={instanceIds}
         update={update}
       />
-      {/* The board's workers, and which projects each has checked out. */}
-      <BoardWorkerSettings environmentId={environmentId} />
       <LifecycleSection board={board} update={update} />
     </>
   );

@@ -90,6 +90,7 @@ const workersState = (online: boolean): BoardWorkersState => ({
   defaultWorkerId: BOARD_LOCAL_WORKER_ID,
   workers: [workerView(online)],
   setups: [],
+  joinCodes: [],
 });
 
 /** The worker summary a test flips, and the supervisor's view of its changes. */

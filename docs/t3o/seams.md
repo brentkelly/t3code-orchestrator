@@ -1069,6 +1069,7 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/server.ts`                                                     | `T3O-59`          | `BoardServerLive` joins `layerRuntimeCoreDependenciesBase`, given the PR service, projection store and upstream's own `layerEventSink`                                                                                             | one merge entry (delegating layer)                                           |
 | `apps/server/src/server.ts`                                                     | `T3O-59`          | Import the service types `runServer`'s annotation names                                                                                                                                                                            | type-only imports                                                            |
 | `apps/server/src/server.ts`                                                     | `T3O-59`          | `runServer` carries an explicit type: with the board's RPCs in `WsRpcGroup` the CLI's inference otherwise gives up as `any`                                                                                                        | annotation (frozen)                                                          |
+| `apps/server/src/server.ts`                                                     | `T3O-84`          | `installBoardTunnelSeam(server)` on the Node HTTP server: the worker tunnel, the join endpoint and the browser proxy to workers are byte pipes Effect's router can't carry (`board/tunnel/upgradeSeam.ts`)                         | import + one call (wraps `emit`)                                             |
 | `apps/server/src/serverRuntimeStartup.ts`                                       | `T3O-59`          | Import `startBoardSupervisor`                                                                                                                                                                                                      | one-line append (import)                                                     |
 | `apps/server/src/serverRuntimeStartup.ts`                                       | `t3o-10`          | Start the supervisor once v2 recovery has settled the runs a restart killed                                                                                                                                                        | one-line append (delegating call)                                            |
 | `apps/server/src/serverRuntimeStartup.autoPull.test.ts`                         | `t3o-10`          | Import and mock `SupervisorReactor`, which startup now starts                                                                                                                                                                      | import + one mock layer                                                      |
@@ -1233,6 +1234,10 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `package.json`                                                                  | `T3O-66`          | `t3o-update` and `t3o-release` beside the `t3o-service` scripts (JSON carries no marker)                                                                                                                                           | two-line append                                                              |
 | `packages/contracts/src/settings.ts`                                            | `T3O-71`          | `boardEnvironmentId` client setting, its patch entry and the `EnvironmentId` import                                                                                                                                                | import + two single-field appends                                            |
 | `apps/server/src/binCli.ts`                                                     | `T3O-71`          | `importThreadsCommand` joins the CLI's subcommands                                                                                                                                                                                 | import + one list entry                                                      |
+| `apps/server/src/binCli.ts`                                                     | `T3O-84`          | `workerCommand` (`t3 worker join/leave/boards/status/config`) joins the CLI's subcommands                                                                                                                                          | import + one list entry                                                      |
+| `apps/server/src/auth/EnvironmentAuth.ts`                                       | `T3O-84`          | The managed-policy sweep also revokes sessions a worker minted for a board (`t3o-board:`, `t3o-board-user:` subjects) when remote clients are disallowed                                                                           | import + one predicate clause                                                |
+| `packages/contracts/src/index.ts`                                               | `T3O-84`          | Re-export `boardWorkerTunnel.ts`                                                                                                                                                                                                   | one-line re-export                                                           |
+| `apps/web/src/components/settings/ConnectionsSettings.tsx`                      | `T3O-84`          | Removing a saved backend prunes the worker environments it tagged as a board (`board/workers/workerThreadEnvironments.ts`)                                                                                                         | import + one command + one call                                              |
 | `apps/server/scripts/migrate-dev-db.ts`                                         | `T3O-71`          | `workspaceRoots` input, so `t3 import-threads` reuses the copy-and-prune; the CLI block runs only when this file is the entry                                                                                                      | one optional input + filter fragment + entry guard                           |
 | `packages/contracts/src/scheduledTask.ts`                                       | `T3O-78`          | Import the board rule schema factory                                                                                                                                                                                               | one-line append (import)                                                     |
 | `packages/contracts/src/scheduledTask.ts`                                       | `T3O-78`          | `BoardWebhookAction` built over upstream's webhook filter schema                                                                                                                                                                   | two-line append                                                              |
@@ -1455,6 +1460,37 @@ covers, and `persistence/Migrations.ts` is pure upstream again. Keep the exclusi
 board-owned paths are added. Run it after each spec lands and after each upstream merge; a hunk you
 cannot map to an inventory row is a seam that escaped the grammar. (After `t3o-04` it yields
 exactly the 17 seamed code files.)
+
+### Client environment base path (T3O-84)
+
+The board proxies a worker's environment at a path prefix on its own origin
+(`https://board.example/api/t3o/workers/<workerId>/`). Upstream's client assumed an environment sits
+at the root of its URL, so these sites now go through
+`packages/client-runtime/src/environment/basePath.ts` (`joinEnvironmentPath`,
+`environmentSocketUrl`, `environmentAddressKey`, `withEnvironmentBasePath`). Each carries a
+`T3o: keep a proxied environment's base path (T3O-84).` marker. Only a worker proxy prefix counts
+as a base path: a root base, or a base with any other path, produces byte-identical URLs and
+connection ids to upstream, so persisted ids do not change.
+
+| File                                                   | Function                                                 |
+| ------------------------------------------------------ | -------------------------------------------------------- |
+| `packages/client-runtime/src/environment/endpoint.ts`  | `environmentEndpointUrl`                                 |
+| `packages/client-runtime/src/rpc/http.ts`              | `remoteApiBaseUrl`                                       |
+| `packages/client-runtime/src/connection/resolver.ts`   | `primarySocketUrl` (`/ws` under the base path)           |
+| `packages/client-runtime/src/authorization/remote.ts`  | `rpcSocketUrl` (`/ws` under the base path)               |
+| `packages/client-runtime/src/connection/onboarding.ts` | `bearerConnectionId`, `prepareBearerConnectionUpdate`    |
+| `packages/client-runtime/src/state/assets.ts`          | `resolveAssetUrl` (absolute `/api/assets/…` URLs)        |
+| `packages/client-runtime/src/webhookAddress.ts`        | `webhookAddress`                                         |
+| `packages/shared/src/remote.ts`                        | `normalizeRemoteBaseUrl`, `toHttpBaseUrl`, `toWsBaseUrl` |
+
+`packages/shared` cannot import client-runtime, so `remote.ts` carries its own three-line
+`remoteBasePathname` (it also strips a trailing `/pair`, the pairing page under the base). Route
+de-duplication (`connection/routes.ts` `routeAddressKey`) already keys by the full base URL and
+needed no seam. Behaviour changes for non-root inputs: a pairing host or edited environment URL
+with a path now keeps it, and a socket base with a path other than `…/ws` gets `/ws` appended.
+
+This is a candidate to send upstream: path-prefixed reverse proxies are a general need, and the
+seam shrinks to nothing if upstream adopts it.
 
 ---
 

@@ -9678,6 +9678,26 @@ export const BoardDisplaySettings = Schema.Struct({
   ),
 });
 export type BoardDisplaySettings = typeof BoardDisplaySettings.Type;
+
+/** An http(s) address workers dial, with no query or fragment. */
+export const BoardAddress = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^https?:\/\/[^\s/?#]+(\/[^\s?#]*)?$/i),
+);
+
+/** The board's worker pool (T3O-84). */
+export const BoardWorkerPoolSettings = Schema.Struct({
+  /** The address workers reach this board on, used in the join command and sent to
+      joined workers. Null: the dialog falls back to the browser's own address. */
+  boardAddress: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** The board server's own name as a worker; null shows "This server". Its
+      abbreviation is always `SRV`. */
+  localLabel: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+});
+export type BoardWorkerPoolSettings = typeof BoardWorkerPoolSettings.Type;
 export const DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT = 3;
 export const DEFAULT_BOARD_STEP_TIMEOUT_MS = 30 * 60 * 1000;
 /** Consecutive unproductive stalls per step (`stallCount`, reset on progress), not
@@ -12115,6 +12135,9 @@ export const BoardSettings = Schema.Struct({
       }),
     ),
   ),
+  workers: BoardWorkerPoolSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ boardAddress: null, localLabel: null })),
+  ),
 });
 export type BoardSettings = typeof BoardSettings.Type;
 
@@ -12167,6 +12190,13 @@ export const BoardSettingsPatch = Schema.Struct({
   concurrency: Schema.optionalKey(BoardConcurrencySettingsPatch),
   lifecycle: Schema.optionalKey(BoardLifecycleSettingsPatch),
   display: Schema.optionalKey(BoardDisplaySettingsPatch),
+  /** A null address is retained and clears it. */
+  workers: Schema.optionalKey(
+    Schema.Struct({
+      boardAddress: Schema.optionalKey(Schema.NullOr(BoardAddress)),
+      localLabel: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+    }),
+  ),
 });
 export type BoardSettingsPatch = typeof BoardSettingsPatch.Type;
 

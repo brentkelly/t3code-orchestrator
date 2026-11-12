@@ -8,9 +8,9 @@ import {
   EMPTY_BOARD_WORKERS_STATE,
   type BoardCardWorkerMoveRequest,
   type BoardWorkerIdInput,
-  type BoardWorkersAddInput,
+  type BoardWorkersCancelJoinCodeInput,
   type BoardWorkersDismissSetupInput,
-  type BoardWorkersRepairInput,
+  type BoardWorkersRenameInput,
   type BoardWorkersSetDefaultInput,
   type BoardWorkersSetupProjectInput,
   type BoardAttachCardFileInput,
@@ -46,11 +46,13 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import type { PendingSubagentRequest } from "./models.ts";
 import {
-  addBoardWorker,
+  boardWorkerThreadAccess,
+  cancelBoardWorkerJoinCode,
+  createBoardWorkerJoinCode,
   dismissBoardWorkerSetup,
   previewBoardWorkerRemoval,
   removeBoardWorker,
-  repairBoardWorker,
+  renameBoardWorker,
   setDefaultBoardWorker,
   setupBoardWorkerProject,
 } from "../operations/boardWorkers.ts";
@@ -844,15 +846,22 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:detach-card-file",
       execute: (input: BoardDetachCardFileInput) => detachBoardCardFile(input),
     }),
-    // Managing the board's workers. Each answers with what the
-    // Workers settings show: the add summary, or a refusal to read inline.
-    addWorker: createEnvironmentCommand(runtime, {
-      label: "environment-data:commands:board:add-worker",
-      execute: (input: BoardWorkersAddInput) => addBoardWorker(input),
+    // Managing the board's workers. A refusal is a sentence to show inline.
+    createWorkerJoinCode: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:create-worker-join-code",
+      execute: (_input: Record<string, never>) => createBoardWorkerJoinCode(),
     }),
-    repairWorker: createEnvironmentCommand(runtime, {
-      label: "environment-data:commands:board:repair-worker",
-      execute: (input: BoardWorkersRepairInput) => repairBoardWorker(input),
+    cancelWorkerJoinCode: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:cancel-worker-join-code",
+      execute: (input: BoardWorkersCancelJoinCodeInput) => cancelBoardWorkerJoinCode(input),
+    }),
+    renameWorker: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:rename-worker",
+      execute: (input: BoardWorkersRenameInput) => renameBoardWorker(input),
+    }),
+    workerThreadAccess: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:worker-thread-access",
+      execute: (input: BoardWorkerIdInput) => boardWorkerThreadAccess(input),
     }),
     removeWorker: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:remove-worker",
@@ -1067,4 +1076,3 @@ function parseBoardCardDetailKey(key: string): {
   ];
   return { environmentId, cardId: input.cardId };
 }
-export * from "./boardWorkerPairing.ts";

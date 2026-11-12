@@ -55,6 +55,7 @@ const summary = (
     },
   ],
   setups: [setup],
+  joinCodes: [],
 });
 
 it.effect("clone progress and snapshot timestamps do not tick placement", () =>

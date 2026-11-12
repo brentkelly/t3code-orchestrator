@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - the worker is a real local HTTP and WebSocket server.
 import * as NodeHttp from "node:http";
+import type * as NodeNet from "node:net";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
@@ -12,6 +13,8 @@ import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import {
   FetchHttpClient,
   HttpRouter,
@@ -21,7 +24,17 @@ import {
 } from "effect/http";
 import { RpcGroup, RpcSerialization, RpcServer } from "effect/rpc";
 
+import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import { makeBoardTunnelHost } from "../tunnel/BoardTunnelHost.ts";
+import {
+  BoardWorkerJoinStore,
+  hashSecret,
+  makeMemoryBoardWorkerJoinStore,
+} from "../tunnel/BoardWorkerJoinStore.ts";
+import { TunnelWorker } from "../tunnel/tunnelWorker.ts";
+import { decodeWorkerToken, workerSecretName } from "./WorkerConnections.ts";
 import { WorkerTransport, WorkerTransportLive } from "./WorkerTransport.ts";
+import { makeFakeWorkerLayer } from "./workers.testkit.ts";
 
 /** Just the worker side of the board protocol, served the way a T3o worker
     serves its whole RPC group: JSON over `/ws`, behind a ticket. */
@@ -39,6 +52,14 @@ const handlers = group.toLayer({
   "boardWorker.providers": () => Effect.succeed({ providers: [], projectsFolder: null }),
   "boardWorker.release": () => Effect.void,
   "boardWorker.renew": () => Effect.succeed({ accessToken: "token-2" }),
+  "boardWorker.mintUserSession": (input) =>
+    Effect.succeed({
+      bearerToken: `user-${input.boardSessionId}`,
+      expiresAt: "2026-11-13T00:00:00.000Z",
+      scopes: input.scopes,
+    }),
+  "boardWorker.revokeUserSessions": (input) =>
+    Effect.succeed({ revoked: input.boardSessionIds.length }),
 });
 
 /** An upstream server: the same socket, but no `boardWorker.hello`. */
@@ -163,6 +184,124 @@ it.live("a server with no board-worker handshake fails hello as unsupported", ()
       assert.isTrue(failure.unsupported);
       // A call it does have still works on the same connection.
       assert.deepStrictEqual(yield* link.rpc.projects, { projects: [] });
+    }),
+  ).pipe(Effect.provide(transport)),
+);
+
+// ── End to end over an outbound tunnel (T3O-84) ──────────────────────
+
+it.live("a worker joined over its tunnel: session handoff, probe, then the board's calls", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const workerUrl = yield* serveWorker();
+      const workerPort = Number(new URL(workerUrl).port);
+      const kit = yield* makeFakeWorkerLayer;
+      const joinStore = yield* makeMemoryBoardWorkerJoinStore;
+      yield* joinStore.issueCredential({
+        workerId: "env-worker",
+        credentialHash: hashSecret("tunnel-credential"),
+        issuedAt: "2026-11-12T10:00:00.000Z",
+      });
+      const host = yield* makeBoardTunnelHost.pipe(
+        Effect.provideService(BoardWorkerJoinStore, joinStore),
+        Effect.provideService(ServerSecretStore, kit.secrets.store),
+      );
+      // The board's HTTP server, routing tunnel upgrades the way the seam does.
+      const board = NodeHttp.createServer();
+      board.on(
+        "upgrade",
+        (request: NodeHttp.IncomingMessage, socket: NodeNet.Socket, head: Buffer) => {
+          if ((request.url ?? "").startsWith("/api/t3o/worker-tunnel/stream")) {
+            host.seam.stream(request, socket, head);
+          } else {
+            host.seam.control(request, socket, head);
+          }
+        },
+      );
+      const boardPort = yield* Effect.callback<number>((resume) => {
+        board.listen(0, "127.0.0.1", () =>
+          resume(Effect.succeed((board.address() as NodeNet.AddressInfo).port)),
+        );
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          board.closeAllConnections();
+          board.close();
+        }),
+      );
+      const endpoint = yield* host.ensure(EnvironmentId.make("env-worker"));
+
+      const minted: Array<string> = [];
+      const tunnel = new TunnelWorker({
+        boardUrl: `http://127.0.0.1:${boardPort}`,
+        credential: "tunnel-credential",
+        environmentId: EnvironmentId.make("env-worker"),
+        label: "linux-box",
+        t3oRelease: "t3o0.1.8.3",
+        gatewayProtocol: BOARD_WORKER_PROTOCOL_VERSION,
+        local: { host: "127.0.0.1", port: workerPort },
+        mintBoardSession: async () => {
+          minted.push("good-token");
+          return "good-token";
+        },
+      });
+      tunnel.start();
+      yield* Effect.addFinalizer(() => Effect.sync(() => tunnel.stop()));
+
+      // The board held no session, asked for one, proved it through the tunnel, stored it.
+      yield* host.states.pipe(
+        Stream.filter((entries) => entries.get("env-worker")?.phase === "ready"),
+        Stream.runHead,
+      );
+      assert.deepStrictEqual(minted, ["good-token"]);
+      const stored = yield* kit.secrets.store.get(
+        workerSecretName(EnvironmentId.make("env-worker")),
+      );
+      assert.strictEqual(
+        Option.map(stored, decodeWorkerToken).pipe(Option.getOrNull),
+        "good-token",
+      );
+
+      // The gateway's own transport dials the loopback endpoint, through the tunnel.
+      const workers = yield* WorkerTransport;
+      const link = yield* workers.connect({ url: endpoint, accessToken: "good-token" });
+      assert.strictEqual((yield* link.rpc.hello).environmentId, "env-worker");
+      assert.deepStrictEqual(yield* link.rpc.projects, { projects: [] });
+
+      // The tunnel drops and comes back: the stored session still works, so none is minted.
+      tunnel.stop();
+      yield* host.states.pipe(
+        Stream.filter((entries) => entries.get("env-worker")?.phase === "down"),
+        Stream.runHead,
+      );
+      const again = new TunnelWorker({
+        boardUrl: `http://127.0.0.1:${boardPort}`,
+        credential: "tunnel-credential",
+        environmentId: EnvironmentId.make("env-worker"),
+        label: "linux-box",
+        t3oRelease: "t3o0.1.8.3",
+        gatewayProtocol: BOARD_WORKER_PROTOCOL_VERSION,
+        local: { host: "127.0.0.1", port: workerPort },
+        mintBoardSession: async () => {
+          minted.push("unexpected");
+          return "good-token";
+        },
+      });
+      again.start();
+      yield* Effect.addFinalizer(() => Effect.sync(() => again.stop()));
+      yield* host.states.pipe(
+        Stream.filter((entries) => entries.get("env-worker")?.readyEpoch === 2),
+        Stream.runHead,
+      );
+      assert.deepStrictEqual(minted, ["good-token"]);
+
+      // The worker leaves: the credential it left on no longer opens a tunnel.
+      yield* Effect.promise(() => again.goodbye());
+      yield* host.states.pipe(
+        Stream.filter((entries) => entries.get("env-worker")?.phase === "down"),
+        Stream.runHead,
+      );
+      assert.strictEqual(yield* joinStore.verifyCredential(hashSecret("tunnel-credential")), null);
     }),
   ).pipe(Effect.provide(transport)),
 );

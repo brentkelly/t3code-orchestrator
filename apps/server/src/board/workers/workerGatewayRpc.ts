@@ -16,6 +16,7 @@ import {
   type BoardWorkerRunCiInput,
   type BoardWorkerReadCiLogInput,
   type EnvironmentId,
+  boardIdOfBoardSubject,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -150,7 +151,12 @@ export const workerGatewayRpcHandlers = (currentSession: AuthenticatedSession) =
     [M.subscribeMcpRelay]: stream(
       M.subscribeMcpRelay,
       (host, input: { readonly centralEnvironmentId: EnvironmentId }) =>
-        host.subscribeMcpRelay(input.centralEnvironmentId, currentSession.sessionId),
+        // T3o (T3O-84): the board is who the session says, never what the request says.
+        host.subscribeMcpRelay(
+          (boardIdOfBoardSubject(currentSession.subject) as EnvironmentId | null) ??
+            input.centralEnvironmentId,
+          currentSession.sessionId,
+        ),
     ),
     [M.mcpRelayRespond]: call(M.mcpRelayRespond, (host, input: BoardMcpRelayResponse) =>
       host.mcpRelayRespond(input, currentSession.sessionId),
