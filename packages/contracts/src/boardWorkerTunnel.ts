@@ -28,7 +28,7 @@ export const boardWorkerProxyPath = (workerId: string): string =>
 /** Subjects of sessions a worker issues for a board (`t3o-board:<id>`) and for one
     board user (`t3o-board-user:<id>:<boardSessionId>`). The worker trusts board RPCs
     only from the first. */
-export const T3O_BOARD_SUBJECT_PREFIX = "t3o-board:";
+const T3O_BOARD_SUBJECT_PREFIX = "t3o-board:";
 export const T3O_BOARD_USER_SUBJECT_PREFIX = "t3o-board-user:";
 
 export const t3oBoardSubject = (boardEnvironmentId: string): string =>
@@ -42,17 +42,6 @@ export function boardIdOfBoardSubject(subject: string): string | null {
   if (!subject.startsWith(T3O_BOARD_SUBJECT_PREFIX)) return null;
   const id = subject.slice(T3O_BOARD_SUBJECT_PREFIX.length);
   return id.length > 0 ? id : null;
-}
-
-/** The board and board session a `t3o-board-user:` subject names. */
-export function parseBoardUserSubject(
-  subject: string,
-): { readonly boardId: string; readonly boardSessionId: string } | null {
-  if (!subject.startsWith(T3O_BOARD_USER_SUBJECT_PREFIX)) return null;
-  const rest = subject.slice(T3O_BOARD_USER_SUBJECT_PREFIX.length);
-  const split = rest.indexOf(":");
-  if (split <= 0 || split === rest.length - 1) return null;
-  return { boardId: rest.slice(0, split), boardSessionId: rest.slice(split + 1) };
 }
 
 /** Whether a session belongs to a board at all, as its own or one of its users'. */

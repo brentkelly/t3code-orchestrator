@@ -208,13 +208,16 @@ it.live("a worker joined over its tunnel: session handoff, probe, then the board
       );
       // The board's HTTP server, routing tunnel upgrades the way the seam does.
       const board = NodeHttp.createServer();
-      board.on("upgrade", (request: NodeHttp.IncomingMessage, socket: NodeNet.Socket, head: Buffer) => {
-        if ((request.url ?? "").startsWith("/api/t3o/worker-tunnel/stream")) {
-          host.seam.stream(request, socket, head);
-        } else {
-          host.seam.control(request, socket, head);
-        }
-      });
+      board.on(
+        "upgrade",
+        (request: NodeHttp.IncomingMessage, socket: NodeNet.Socket, head: Buffer) => {
+          if ((request.url ?? "").startsWith("/api/t3o/worker-tunnel/stream")) {
+            host.seam.stream(request, socket, head);
+          } else {
+            host.seam.control(request, socket, head);
+          }
+        },
+      );
       const boardPort = yield* Effect.callback<number>((resume) => {
         board.listen(0, "127.0.0.1", () =>
           resume(Effect.succeed((board.address() as NodeNet.AddressInfo).port)),
@@ -251,8 +254,13 @@ it.live("a worker joined over its tunnel: session handoff, probe, then the board
         Stream.runHead,
       );
       assert.deepStrictEqual(minted, ["good-token"]);
-      const stored = yield* kit.secrets.store.get(workerSecretName(EnvironmentId.make("env-worker")));
-      assert.strictEqual(Option.map(stored, decodeWorkerToken).pipe(Option.getOrNull), "good-token");
+      const stored = yield* kit.secrets.store.get(
+        workerSecretName(EnvironmentId.make("env-worker")),
+      );
+      assert.strictEqual(
+        Option.map(stored, decodeWorkerToken).pipe(Option.getOrNull),
+        "good-token",
+      );
 
       // The gateway's own transport dials the loopback endpoint, through the tunnel.
       const workers = yield* WorkerTransport;

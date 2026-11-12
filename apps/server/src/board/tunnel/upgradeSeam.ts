@@ -1,17 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off extendsNativeError:off - plain Node sockets and files: a byte pipe below Effect, also used by the CLI.
 /**
- * T3o's one hook into upstream's Node HTTP server (T3O-84): the worker tunnel, the join
- * endpoint and the browser proxy to workers are byte pipes, which Effect's router can't
- * be (its upgrade hides the socket and terminates WebSockets itself). `server.ts` calls
- * `installBoardTunnelSeam` on the server it creates; requests and upgrades under T3o's
- * paths come here, everything else reaches Effect untouched.
- *
- * This wraps `emit` rather than adding listeners: Effect's own listener would otherwise
- * see the same events. The board's services register a handler once their layer is
- * built; until then T3o's paths answer 503.
+ * T3o's hook into upstream's Node HTTP server (T3O-84): tunnel, join and worker-proxy paths
+ * are byte pipes Effect's router can't carry. Wraps `emit`, since an added listener would
+ * run beside Effect's; T3o's paths answer 503 until the board registers its handler.
  */
-import type * as Http from "node:http";
-import type * as Net from "node:net";
+import type * as NodeHttp from "node:http";
+import type * as NodeNet from "node:net";
 
 import {
   BOARD_WORKER_JOIN_PATH,
@@ -23,11 +17,26 @@ import {
 import { refuseUpgrade } from "./lineChannel.ts";
 
 export interface BoardTunnelSeamHandler {
-  readonly control: (request: Http.IncomingMessage, socket: Net.Socket, head: Buffer) => void;
-  readonly stream: (request: Http.IncomingMessage, socket: Net.Socket, head: Buffer) => void;
-  readonly proxyUpgrade: (request: Http.IncomingMessage, socket: Net.Socket, head: Buffer) => void;
-  readonly proxyRequest: (request: Http.IncomingMessage, response: Http.ServerResponse) => void;
-  readonly join: (request: Http.IncomingMessage, response: Http.ServerResponse) => void;
+  readonly control: (
+    request: NodeHttp.IncomingMessage,
+    socket: NodeNet.Socket,
+    head: Buffer,
+  ) => void;
+  readonly stream: (
+    request: NodeHttp.IncomingMessage,
+    socket: NodeNet.Socket,
+    head: Buffer,
+  ) => void;
+  readonly proxyUpgrade: (
+    request: NodeHttp.IncomingMessage,
+    socket: NodeNet.Socket,
+    head: Buffer,
+  ) => void;
+  readonly proxyRequest: (
+    request: NodeHttp.IncomingMessage,
+    response: NodeHttp.ServerResponse,
+  ) => void;
+  readonly join: (request: NodeHttp.IncomingMessage, response: NodeHttp.ServerResponse) => void;
 }
 
 let current: BoardTunnelSeamHandler | null = null;
@@ -40,12 +49,7 @@ export function setBoardTunnelSeamHandler(handler: BoardTunnelSeamHandler | null
   };
 }
 
-type Route =
-  | "control"
-  | "stream"
-  | "proxy"
-  | "join"
-  | null;
+type Route = "control" | "stream" | "proxy" | "join" | null;
 
 export function routeOf(url: string | undefined): Route {
   const queryAt = (url ?? "/").indexOf("?");
@@ -58,10 +62,10 @@ export function routeOf(url: string | undefined): Route {
 }
 
 /** Route one upgrade; false when it isn't T3o's, so upstream handles it. */
-export function routeBoardTunnelUpgrade(
+function routeBoardTunnelUpgrade(
   handler: BoardTunnelSeamHandler | null,
-  request: Http.IncomingMessage,
-  socket: Net.Socket,
+  request: NodeHttp.IncomingMessage,
+  socket: NodeNet.Socket,
   head: Buffer,
 ): boolean {
   const route = routeOf(request.url);
@@ -77,10 +81,10 @@ export function routeBoardTunnelUpgrade(
 }
 
 /** Route one request; false when it isn't T3o's. */
-export function routeBoardTunnelRequest(
+function routeBoardTunnelRequest(
   handler: BoardTunnelSeamHandler | null,
-  request: Http.IncomingMessage,
-  response: Http.ServerResponse,
+  request: NodeHttp.IncomingMessage,
+  response: NodeHttp.ServerResponse,
 ): boolean {
   const route = routeOf(request.url);
   if (route !== "join" && route !== "proxy") return false;
@@ -94,14 +98,14 @@ export function routeBoardTunnelRequest(
   return true;
 }
 
-export function installBoardTunnelSeam<S extends Http.Server>(server: S): S {
+export function installBoardTunnelSeam<S extends NodeHttp.Server>(server: S): S {
   const emit = server.emit.bind(server) as (event: string | symbol, ...args: unknown[]) => boolean;
   server.emit = ((event: string | symbol, ...args: unknown[]) => {
     if (event === "upgrade") {
-      const [request, socket, head] = args as [Http.IncomingMessage, Net.Socket, Buffer];
+      const [request, socket, head] = args as [NodeHttp.IncomingMessage, NodeNet.Socket, Buffer];
       if (routeBoardTunnelUpgrade(current, request, socket, head)) return true;
     } else if (event === "request") {
-      const [request, response] = args as [Http.IncomingMessage, Http.ServerResponse];
+      const [request, response] = args as [NodeHttp.IncomingMessage, NodeHttp.ServerResponse];
       if (routeBoardTunnelRequest(current, request, response)) return true;
     }
     return emit(event, ...args);

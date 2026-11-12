@@ -366,7 +366,7 @@ const makeFakeWorkers = Effect.sync(() => {
  * A tunnel host with no sockets (T3O-84): each worker's endpoint is the URL its fake
  * was added at, and every tunnel is ready unless a test says otherwise.
  */
-export const makeFakeTunnelHost = (urlByEnvironment: ReadonlyMap<string, string>) =>
+const makeFakeTunnelHost = (urlByEnvironment: ReadonlyMap<string, string>) =>
   Effect.gen(function* () {
     const entries = yield* SubscriptionRef.make<ReadonlyMap<string, TunnelEntry>>(new Map());
     const milestones = yield* SubscriptionRef.make<JoinMilestones>(new Map());

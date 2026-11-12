@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - reads and writes a real worker home.
-import * as Fs from "node:fs";
-import * as Os from "node:os";
-import * as Path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
@@ -18,10 +18,10 @@ import {
 
 const homes: string[] = [];
 afterEach(() => {
-  for (const home of homes.splice(0)) Fs.rmSync(home, { recursive: true, force: true });
+  for (const home of homes.splice(0)) NodeFS.rmSync(home, { recursive: true, force: true });
 });
 const makeHome = () => {
-  const home = Fs.mkdtempSync(Path.join(Os.tmpdir(), "t3o-worker-file-"));
+  const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-worker-file-"));
   homes.push(home);
   return home;
 };
@@ -39,11 +39,14 @@ describe("worker.json", () => {
     expect(readWorkerFile(home)).toEqual({ boards: [], config: {} });
     const file = upsertWorkerBoard(readWorkerFile(home), entry("a", "https://a.example"));
     writeWorkerFile(home, upsertWorkerBoard(file, entry("b", "https://b.example")));
-    expect(readWorkerFile(home).boards.map((board) => board.boardEnvironmentId)).toEqual(["a", "b"]);
+    expect(readWorkerFile(home).boards.map((board) => board.boardEnvironmentId)).toEqual([
+      "a",
+      "b",
+    ]);
     // No temporary file is left beside it.
-    expect(Fs.readdirSync(home)).toEqual(["worker.json"]);
-    expect(Fs.statSync(workerFilePath(home)).mode & 0o777).toBe(0o600);
-    Fs.writeFileSync(workerFilePath(home), "{ broken");
+    expect(NodeFS.readdirSync(home)).toEqual(["worker.json"]);
+    expect(NodeFS.statSync(workerFilePath(home)).mode & 0o777).toBe(0o600);
+    NodeFS.writeFileSync(workerFilePath(home), "{ broken");
     expect(readWorkerFile(home)).toEqual({ boards: [], config: {} });
   });
 

@@ -1,9 +1,7 @@
 /**
- * The central server's live connection to each worker: wait for its tunnel to be
- * ready, dial the tunnel's loopback endpoint, handshake, hold, and dial again. Network
- * failures go `offline` and below-floor protocols go `incompatible` (the tunnel stays
- * up); a 401/403, missing token or different server goes `unauthorized` until the
- * worker's next tunnel handshake hands the board a fresh session (T3O-84).
+ * The board's live connection to each worker, over its tunnel's loopback endpoint once the
+ * tunnel is ready. `offline` and below-floor `incompatible` retry; `unauthorized` drops the
+ * tunnel so the worker's next handshake hands over a fresh session (T3O-84).
  */
 import {
   BOARD_WORKER_PROTOCOL_FLOOR,
@@ -262,9 +260,7 @@ export const makeWorkerConnections = Effect.gen(function* () {
       link of its own: `release` revokes the session that calls it. */
   const releaseUnstored = (url: string, accessToken: string) =>
     Effect.scoped(
-      transport
-        .connect({ url, accessToken })
-        .pipe(Effect.flatMap((link) => link.rpc.release)),
+      transport.connect({ url, accessToken }).pipe(Effect.flatMap((link) => link.rpc.release)),
     ).pipe(Effect.ignore);
 
   /** Swap the board's session for its successor: store the new token, then

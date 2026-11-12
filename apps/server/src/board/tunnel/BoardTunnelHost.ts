@@ -5,7 +5,7 @@
  * over (or the one the board already holds) is proved by probing through the tunnel
  * before the worker is `ready`. `WorkerConnections` dials a worker only once it is.
  */
-import * as Http from "node:http";
+import * as NodeHttp from "node:http";
 
 import {
   BOARD_WORKER_JOIN_CODE_TTL_MINUTES,
@@ -89,8 +89,14 @@ const withMilestone = (
 /** Fetch the worker's descriptor through its listener, for the proxy's `.well-known`. */
 function fetchDescriptor(port: number): Promise<unknown> {
   return new Promise((resolve) => {
-    const request = Http.get(
-      { host: "127.0.0.1", port, path: "/.well-known/t3/environment", agent: false, timeout: 10_000 },
+    const request = NodeHttp.get(
+      {
+        host: "127.0.0.1",
+        port,
+        path: "/.well-known/t3/environment",
+        agent: false,
+        timeout: 10_000,
+      },
       (response) => {
         let body = "";
         response.setEncoding("utf8");
@@ -218,7 +224,8 @@ export const makeBoardTunnelHost = Effect.gen(function* () {
     verifyCredential: (credential) => run(store.verifyCredential(hashSecret(credential))),
     onHello: (workerId, hello) => {
       const endpoint = board.endpoint(workerId);
-      if (endpoint === null) return Promise.resolve({ status: "refused", message: "Not registered." });
+      if (endpoint === null)
+        return Promise.resolve({ status: "refused", message: "Not registered." });
       return run(decide(workerId, hello, endpoint.port));
     },
     onReady: (workerId, _hello, credential) => {

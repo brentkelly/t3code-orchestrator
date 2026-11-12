@@ -5,7 +5,7 @@
  * store, then records the board in `<home>/worker.json`, which the running server
  * watches. `pnpm t3o-worker` wraps this with the T3o service's home.
  */
-import * as Os from "node:os";
+import * as NodeOS from "node:os";
 
 import {
   BoardWorkerJoinAccepted,
@@ -52,7 +52,8 @@ class WorkerCliError extends Schema.TaggedError<WorkerCliError>()("WorkerCliErro
   }
 }
 
-const fail = (detail: string) => Effect.fail(new CliError.UserError({ cause: new WorkerCliError({ detail }) }));
+const fail = (detail: string) =>
+  Effect.fail(new CliError.UserError({ cause: new WorkerCliError({ detail }) }));
 
 /** How long `join` waits for the running server to report the tunnel connected. */
 const JOIN_CONNECT_TIMEOUT_MS = 30_000;
@@ -115,7 +116,8 @@ export function parseJoinTarget(
   return { boardUrl, code: resolved.trim() };
 }
 
-const sleep = (ms: number) => Effect.promise(() => new Promise((resolve) => setTimeout(resolve, ms)));
+const sleep = (ms: number) =>
+  Effect.promise(() => new Promise((resolve) => setTimeout(resolve, ms)));
 
 /** Wait for the running server's tunnel to this board to connect. */
 const awaitConnected = Effect.fn("worker.awaitConnected")(function* (
@@ -171,7 +173,7 @@ const joinCommand = Command.make("join", {
           );
         }
         const file = readWorkerFile(home);
-        const label = Option.getOrElse(flags.label, () => Os.hostname()).slice(0, 64);
+        const label = Option.getOrElse(flags.label, () => NodeOS.hostname()).slice(0, 64);
         const response = yield* Effect.tryPromise({
           try: () =>
             fetch(`${target.boardUrl}${BOARD_WORKER_JOIN_PATH}`, {
@@ -315,7 +317,7 @@ const boardsCommand = Command.make("boards", { ...authLocationFlags }).pipe(
 );
 
 /** `status` is a list of sections, so T3O-71 can add capacity beside the tunnels. */
-export const workerStatusSections: Array<(home: string) => ReadonlyArray<string>> = [
+const workerStatusSections: Array<(home: string) => ReadonlyArray<string>> = [
   (home) => {
     const status = readWorkerStatus(home);
     if (status === null) {
@@ -374,7 +376,9 @@ const configCommand = Command.make("config", {
   key: Argument.String("key").pipe(Argument.optional),
   value: Argument.String("value").pipe(Argument.optional),
 }).pipe(
-  Command.withDescription(`Read or change this worker's settings in worker.json.\n\n${configKeysHelp}`),
+  Command.withDescription(
+    `Read or change this worker's settings in worker.json.\n\n${configKeysHelp}`,
+  ),
   Command.withHandler((flags) =>
     withWorkerHome(flags, ({ home }) =>
       Effect.gen(function* () {
@@ -391,7 +395,9 @@ const configCommand = Command.make("config", {
         }
         const known = WORKER_CONFIG_KEYS.find((entry) => entry.key === key);
         if (key === undefined || known === undefined) {
-          return yield* fail(`Unknown setting${key === undefined ? "" : ` ${key}`}. ${configKeysHelp}`);
+          return yield* fail(
+            `Unknown setting${key === undefined ? "" : ` ${key}`}. ${configKeysHelp}`,
+          );
         }
         if (flags.action === "get") {
           yield* Console.log(JSON.stringify(file.config[key] ?? null));
@@ -402,7 +408,8 @@ const configCommand = Command.make("config", {
           delete config[key];
         } else {
           const raw = Option.getOrUndefined(flags.value);
-          if (raw === undefined) return yield* fail(`Give a value: t3o-worker config set ${key} <value>`);
+          if (raw === undefined)
+            return yield* fail(`Give a value: t3o-worker config set ${key} <value>`);
           config[key] = known.parse(raw);
         }
         writeWorkerFile(home, { ...file, config });

@@ -1,19 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off extendsNativeError:off - plain Node sockets and files: a byte pipe below Effect, also used by the CLI.
 /**
- * The board's end of every worker's tunnel, in plain Node sockets.
- *
- * Each registered worker has one stable `127.0.0.1:<port>` listener for the board
- * process's lifetime, so `WorkerTransport` and the gateway dial it like any URL. A
- * connection accepted there is announced to the worker as `dial {streamId, nonce}`;
- * the worker answers with a fresh `Upgrade: t3o-stream` request carrying both, and
- * the two sockets are joined with `pipe()`, so TCP flow control holds end to end.
- *
- * Handshake order (the probe itself needs streams, so streams open before `ok`):
- * credential → listener live → [needs-session → hello with session] → probe → ok.
+ * The board's end of each worker's tunnel: a stable `127.0.0.1` listener per worker whose
+ * connections become `dial`s, joined with the worker's dial-back leg by `pipe()`. Streams
+ * open before `ok`, because the probe needs them: credential → live → session → probe → ok.
  */
-import * as Crypto from "node:crypto";
-import type * as Http from "node:http";
-import * as Net from "node:net";
+import * as NodeCrypto from "node:crypto";
+import type * as NodeHttp from "node:http";
+import * as NodeNet from "node:net";
 import * as Schema from "effect/Schema";
 
 import {
@@ -34,7 +27,7 @@ import {
 } from "./lineChannel.ts";
 
 /** How long a dial waits for the worker's stream leg. */
-export const STREAM_NONCE_TTL_MS = 10_000;
+const STREAM_NONCE_TTL_MS = 10_000;
 const HELLO_TIMEOUT_MS = 10_000;
 export const NONCE_HEADER = "x-t3o-stream-nonce";
 
@@ -57,10 +50,7 @@ export interface TunnelBoardDeps {
    * Called with the listener already live, so this may probe through it. `boardSession`
    * is set when the worker just handed one over.
    */
-  readonly onHello: (
-    workerId: string,
-    hello: WorkerTunnelHello,
-  ) => Promise<TunnelSessionDecision>;
+  readonly onHello: (workerId: string, hello: WorkerTunnelHello) => Promise<TunnelSessionDecision>;
   /** A tunnel reached `ok` (after `onHello` said so), on this credential. */
   readonly onReady?: (workerId: string, hello: WorkerTunnelHello, credential: string) => void;
   /** The worker said it is leaving the board (`t3o-worker leave`). */
@@ -74,18 +64,18 @@ export type TunnelPhase = "down" | "live" | "ready";
 interface Pending {
   readonly workerId: string;
   readonly nonce: string;
-  readonly socket: Net.Socket;
+  readonly socket: NodeNet.Socket;
   readonly timer: ReturnType<typeof setTimeout>;
 }
 
 interface WorkerSlot {
-  readonly server: Net.Server;
+  readonly server: NodeNet.Server;
   readonly port: number;
   channel: LineChannel | null;
   phase: TunnelPhase;
   hello: WorkerTunnelHello | null;
   /** Every socket carried for this worker: accepted loopback sockets and stream legs. */
-  readonly sockets: Set<Net.Socket>;
+  readonly sockets: Set<NodeNet.Socket>;
   /** How many times a newer tunnel replaced an older one, for duplicate-connection warnings. */
   replacements: Array<number>;
 }
@@ -105,7 +95,7 @@ export class TunnelBoard {
   async ensureListener(workerId: string): Promise<number> {
     const existing = this.slots.get(workerId);
     if (existing !== undefined) return existing.port;
-    const server = Net.createServer((socket) => this.accept(workerId, socket));
+    const server = NodeNet.createServer((socket) => this.accept(workerId, socket));
     server.on("error", () => undefined);
     const port = await new Promise<number>((resolve, reject) => {
       server.once("error", reject);
@@ -178,7 +168,7 @@ export class TunnelBoard {
 
   close(): void {
     this.closed = true;
-    for (const workerId of [...this.slots.keys()]) this.closeListener(workerId);
+    for (const workerId of Array.from(this.slots.keys())) this.closeListener(workerId);
     for (const entry of this.pending.values()) {
       clearTimeout(entry.timer);
       entry.socket.destroy();
@@ -188,19 +178,20 @@ export class TunnelBoard {
 
   // ── Loopback side ────────────────────────────────────────────────
 
-  private accept(workerId: string, socket: Net.Socket): void {
+  private accept(workerId: string, socket: NodeNet.Socket): void {
     const slot = this.slots.get(workerId);
     if (slot === undefined || slot.channel === null || slot.phase === "down" || this.closed) {
       // Reset at once, so a dial into an offline worker fails fast rather than hanging.
-      socket.resetAndDestroy?.() ?? socket.destroy();
+      if (typeof socket.resetAndDestroy === "function") socket.resetAndDestroy();
+      else socket.destroy();
       return;
     }
     socket.pause();
     socket.on("error", () => undefined);
     slot.sockets.add(socket);
     socket.once("close", () => slot.sockets.delete(socket));
-    const streamId = Crypto.randomBytes(12).toString("base64url");
-    const nonce = Crypto.randomBytes(24).toString("base64url");
+    const streamId = NodeCrypto.randomBytes(12).toString("base64url");
+    const nonce = NodeCrypto.randomBytes(24).toString("base64url");
     const timer = setTimeout(() => {
       if (this.pending.delete(streamId)) socket.destroy();
     }, STREAM_NONCE_TTL_MS);
@@ -212,13 +203,13 @@ export class TunnelBoard {
   // ── Upgrade side ─────────────────────────────────────────────────
 
   /** `Upgrade: t3o-stream` to the control path. */
-  handleControl(request: Http.IncomingMessage, socket: Net.Socket, head: Buffer): void {
+  handleControl(request: NodeHttp.IncomingMessage, socket: NodeNet.Socket, head: Buffer): void {
     void this.control(request, socket, head).catch(() => socket.destroy());
   }
 
   private async control(
-    request: Http.IncomingMessage,
-    socket: Net.Socket,
+    request: NodeHttp.IncomingMessage,
+    socket: NodeNet.Socket,
     head: Buffer,
   ): Promise<void> {
     socket.on("error", () => undefined);
@@ -301,9 +292,7 @@ export class TunnelBoard {
           return;
         }
         if (message.type !== "hello") return;
-        queue = queue
-          .then(() => onHello(message))
-          .catch(() => channel.close());
+        queue = queue.then(() => onHello(message)).catch(() => channel.close());
       },
       onClose: () => {
         clearTimeout(helloTimer);
@@ -316,14 +305,22 @@ export class TunnelBoard {
     });
   }
 
-  private goLive(workerId: string, slot: WorkerSlot, channel: LineChannel, hello: WorkerTunnelHello) {
+  private goLive(
+    workerId: string,
+    slot: WorkerSlot,
+    channel: LineChannel,
+    hello: WorkerTunnelHello,
+  ) {
     const previous = slot.channel;
     slot.channel = channel;
     slot.phase = "live";
     slot.hello = hello;
     if (previous !== null) {
       // A newer tunnel replaces an older one; everything the old one carried goes with it.
-      slot.replacements = [...slot.replacements.filter((at) => Date.now() - at < 60_000), Date.now()];
+      slot.replacements = [
+        ...slot.replacements.filter((at) => Date.now() - at < 60_000),
+        Date.now(),
+      ];
       previous.close();
       this.dropSockets(workerId, slot);
     }
@@ -342,13 +339,13 @@ export class TunnelBoard {
   }
 
   /** `Upgrade: t3o-stream` to the stream path: one dial-back leg. */
-  handleStream(request: Http.IncomingMessage, socket: Net.Socket, head: Buffer): void {
+  handleStream(request: NodeHttp.IncomingMessage, socket: NodeNet.Socket, head: Buffer): void {
     void this.stream(request, socket, head).catch(() => socket.destroy());
   }
 
   private async stream(
-    request: Http.IncomingMessage,
-    socket: Net.Socket,
+    request: NodeHttp.IncomingMessage,
+    socket: NodeNet.Socket,
     head: Buffer,
   ): Promise<void> {
     socket.on("error", () => undefined);
@@ -405,12 +402,12 @@ const decodeClientMessage = (raw: unknown): WorkerTunnelClientMessage | null => 
   return exit._tag === "Success" ? exit.value : null;
 };
 
-export function isStreamUpgrade(request: Http.IncomingMessage): boolean {
+function isStreamUpgrade(request: NodeHttp.IncomingMessage): boolean {
   return (request.headers.upgrade ?? "").toLowerCase() === BOARD_WORKER_STREAM_UPGRADE;
 }
 
 function timingSafeEqualText(left: string, right: string): boolean {
   const a = Buffer.from(left);
   const b = Buffer.from(right);
-  return a.length === b.length && Crypto.timingSafeEqual(a, b);
+  return a.length === b.length && NodeCrypto.timingSafeEqual(a, b);
 }

@@ -1,14 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off tryCatchInEffectGen:off globalDateInEffect:off - owns the plain-Node tunnel and a file watch; Effect is the service wrapper.
 /**
- * Joining a worker to the board with a one-time code (T3O-84). The board makes a code;
- * the worker presents it at `POST /api/t3o/worker-join` (unauthenticated: the code is the
- * credential) and gets a long-lived tunnel credential back. The worker is registered at
- * that moment, so its listener exists before its tunnel arrives. A re-join with the same
- * environment id reattaches its cards (D22); its old credential is revoked only once the
- * new tunnel is proved (`BoardTunnelHost`).
+ * Joining a worker with a one-time code (T3O-84). The worker presents it at the
+ * unauthenticated join endpoint and gets a tunnel credential; it is registered then, so its
+ * listener exists before its tunnel arrives. A re-join's old credential goes once proved.
  */
-import * as Crypto from "node:crypto";
-import type * as Http from "node:http";
+import * as NodeCrypto from "node:crypto";
+import type * as NodeHttp from "node:http";
 
 import {
   BOARD_LOCAL_WORKER_ABBREVIATION,
@@ -58,7 +55,10 @@ export interface BoardWorkerJoinShape {
   /** Ticks on every code or progress change. Each access subscribes. */
   readonly changes: Stream.Stream<void>;
   /** The seam's HTTP handler for the join endpoint. */
-  readonly handleHttp: (request: Http.IncomingMessage, response: Http.ServerResponse) => void;
+  readonly handleHttp: (
+    request: NodeHttp.IncomingMessage,
+    response: NodeHttp.ServerResponse,
+  ) => void;
 }
 
 export class BoardWorkerJoin extends Context.Service<BoardWorkerJoin, BoardWorkerJoinShape>()(
@@ -86,7 +86,7 @@ const isLoopbackAddress = (address: string | undefined) =>
  * could claim any address.
  */
 export function joinCallerAddress(request: {
-  readonly headers: Http.IncomingHttpHeaders;
+  readonly headers: NodeHttp.IncomingHttpHeaders;
   readonly socket: { readonly remoteAddress?: string | undefined };
 }): string | null {
   const peer = request.socket.remoteAddress?.replace(/^::ffff:/, "");
@@ -105,7 +105,7 @@ export function joinCallerAddress(request: {
 
 /** A soft delay before answering an address that keeps failing: guessing codes gets
     slow, and a proxy in front never locks out everyone else. */
-export function joinFailureDelayMs(failures: number): number {
+function joinFailureDelayMs(failures: number): number {
   return failures <= 0 ? 0 : Math.min(5_000, 100 * 2 ** Math.min(failures, 6));
 }
 
@@ -121,16 +121,19 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
   const ticks = yield* SubscriptionRef.make(0);
   const tick = SubscriptionRef.update(ticks, (count) => count + 1);
   /** Refusals by code, for the dialog: needs-update keeps the code open. */
-  const refusals = new Map<string, { reason: BoardWorkerJoinRefusal; at: string; release: string | null }>();
+  const refusals = new Map<
+    string,
+    { reason: BoardWorkerJoinRefusal; at: string; release: string | null }
+  >();
   const failuresByAddress = new Map<string, number>();
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
-  const newCommandId = Effect.sync(() => CommandId.make(Crypto.randomUUID()));
+  const newCommandId = Effect.sync(() => CommandId.make(NodeCrypto.randomUUID()));
 
   const createCode: BoardWorkerJoinShape["createCode"] = Effect.gen(function* () {
     const now = yield* DateTime.now;
-    const code = formatBoardWorkerJoinCode(Crypto.randomBytes(5));
-    const codeId = Crypto.randomUUID();
+    const code = formatBoardWorkerJoinCode(NodeCrypto.randomBytes(5));
+    const codeId = NodeCrypto.randomUUID();
     const expiresAt = DateTime.formatIso(
       DateTime.add(now, { minutes: BOARD_WORKER_JOIN_CODE_TTL_MINUTES }),
     );
@@ -161,11 +164,17 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
     Effect.map((model) => model.board?.workers ?? ([] as ReadonlyArray<BoardWorker>)),
   );
 
-  const recordRefusal = (record: JoinCodeRecord | null, reason: BoardWorkerJoinRefusal, release: string | null) =>
+  const recordRefusal = (
+    record: JoinCodeRecord | null,
+    reason: BoardWorkerJoinRefusal,
+    release: string | null,
+  ) =>
     record === null
       ? Effect.void
       : nowIso.pipe(
-          Effect.tap((at) => Effect.sync(() => refusals.set(record.codeId, { reason, at, release }))),
+          Effect.tap((at) =>
+            Effect.sync(() => refusals.set(record.codeId, { reason, at, release })),
+          ),
           Effect.andThen(tick),
         );
 
@@ -196,23 +205,38 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
     }
     const request = decoded.value;
     const normalized = normalizeBoardWorkerJoinCode(request.code);
-    const record =
-      normalized === null ? null : yield* store.findCodeByHash(hashSecret(normalized));
+    const record = normalized === null ? null : yield* store.findCodeByHash(hashSecret(normalized));
     if (record === null) {
-      return refused(404, "unknown", "That join code isn't one this board made. Check it, or create a new one.");
+      return refused(
+        404,
+        "unknown",
+        "That join code isn't one this board made. Check it, or create a new one.",
+      );
     }
     if (record.cancelledAt !== null) {
       yield* recordRefusal(record, "cancelled", request.t3oRelease);
-      return refused(410, "cancelled", "That join code was cancelled on the board. Create a new one.");
+      return refused(
+        410,
+        "cancelled",
+        "That join code was cancelled on the board. Create a new one.",
+      );
     }
     if (record.usedAt !== null) {
       yield* recordRefusal(record, "used", request.t3oRelease);
-      return refused(409, "used", "That join code was already used. Each code works once; create a new one.");
+      return refused(
+        409,
+        "used",
+        "That join code was already used. Each code works once; create a new one.",
+      );
     }
     const now = yield* DateTime.now;
     if (DateTime.toEpochMillis(now) >= Date.parse(record.expiresAt)) {
       yield* recordRefusal(record, "expired", request.t3oRelease);
-      return refused(410, "expired", "That join code has expired. Codes work for 10 minutes; create a new one.");
+      return refused(
+        410,
+        "expired",
+        "That join code has expired. Codes work for 10 minutes; create a new one.",
+      );
     }
     if (request.tunnelProtocol !== T3O_TUNNEL_PROTOCOL_VERSION) {
       // The code stays valid: update whichever side is older and run the same command.
@@ -226,7 +250,11 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
     }
     const boardId = yield* environment.getEnvironmentId;
     if (request.environmentId === boardId) {
-      return refused(409, "board-server", "That's the board server itself; it's already a worker as This server.");
+      return refused(
+        409,
+        "board-server",
+        "That's the board server itself; it's already a worker as This server.",
+      );
     }
     const usedAt = DateTime.formatIso(now);
     const workers = yield* registry;
@@ -241,7 +269,11 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
       rejoin: existing !== undefined,
     });
     if (!claimed) {
-      return refused(409, "used", "That join code was already used. Each code works once; create a new one.");
+      return refused(
+        409,
+        "used",
+        "That join code was already used. Each code works once; create a new one.",
+      );
     }
     refusals.delete(record.codeId);
 
@@ -250,7 +282,9 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
       existing?.abbreviation ??
       suggestBoardWorkerAbbreviation(
         label,
-        workers.flatMap((worker) => (worker.abbreviation === undefined ? [] : [worker.abbreviation])),
+        workers.flatMap((worker) =>
+          worker.abbreviation === undefined ? [] : [worker.abbreviation],
+        ),
       ) ??
       undefined;
     const worker: BoardWorker = {
@@ -266,11 +300,13 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
     // A server added back starts reading its signals at its log's head, as a new one does:
     // what it logged while it wasn't a worker isn't the board's.
     if (existing === undefined && relayStore._tag === "Some") {
-      yield* relayStore.value.forgetSignalCursor(request.environmentId as EnvironmentId).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("board worker cursor not forgotten", { cause }),
-        ),
-      );
+      yield* relayStore.value
+        .forgetSignalCursor(request.environmentId as EnvironmentId)
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("board worker cursor not forgotten", { cause }),
+          ),
+        );
     }
     const registered = yield* engine
       .dispatch({
@@ -282,10 +318,14 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
       })
       .pipe(Effect.result);
     if (registered._tag === "Failure") {
-      return refused(500, "busy", "The board couldn't record the worker. Try again with a new code.");
+      return refused(
+        500,
+        "busy",
+        "The board couldn't record the worker. Try again with a new code.",
+      );
     }
 
-    const credential = Crypto.randomBytes(32).toString("base64url");
+    const credential = NodeCrypto.randomBytes(32).toString("base64url");
     yield* store.issueCredential({
       workerId: request.environmentId,
       credentialHash: hashSecret(credential),
@@ -361,7 +401,7 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
     SubscriptionRef.changes(host.milestones).pipe(Stream.drop(1)),
   ).pipe(Stream.as(undefined));
 
-  const respond = (response: Http.ServerResponse, status: number, body: unknown) => {
+  const respond = (response: NodeHttp.ServerResponse, status: number, body: unknown) => {
     if (response.headersSent) return;
     const text = JSON.stringify(body);
     response.writeHead(status, {

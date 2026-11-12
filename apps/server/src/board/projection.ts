@@ -3917,17 +3917,17 @@ function loadBoardState(
         // The worker registry: absent when empty, and the default
         // absent when it is `local`, matching the projector's fold.
         const workers = workerRows
-          .map(
-            (row): BoardWorker => ({
-              id: row.id,
-              label: row.label,
-              addedAt: row.addedAt,
-              ...(row.url === null ? {} : { url: row.url as BoardWorker["label"] }),
-              ...(row.abbreviation === null ? {} : { abbreviation: row.abbreviation }),
-              ...(row.t3oRelease === null ? {} : { t3oRelease: row.t3oRelease as BoardWorker["label"] }),
-              ...(row.joinedAt === null ? {} : { joinedAt: row.joinedAt as BoardWorker["addedAt"] }),
-            }),
-          )
+          .map((row): BoardWorker => ({
+            id: row.id,
+            label: row.label,
+            addedAt: row.addedAt,
+            ...(row.url === null ? {} : { url: row.url as BoardWorker["label"] }),
+            ...(row.abbreviation === null ? {} : { abbreviation: row.abbreviation }),
+            ...(row.t3oRelease === null
+              ? {}
+              : { t3oRelease: row.t3oRelease as BoardWorker["label"] }),
+            ...(row.joinedAt === null ? {} : { joinedAt: row.joinedAt as BoardWorker["addedAt"] }),
+          }))
           .sort(compareBoardWorkers);
         const defaultWorkerId = Option.getOrNull(
           Option.map(defaultWorkerRow, (row) => row.workerId),

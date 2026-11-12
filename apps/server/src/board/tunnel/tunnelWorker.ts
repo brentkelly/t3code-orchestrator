@@ -5,9 +5,9 @@
  * loopback port, and redial with backoff. A stream can reach nothing else: `dial`
  * carries no target.
  */
-import * as Http from "node:http";
-import * as Https from "node:https";
-import * as Net from "node:net";
+import * as NodeHttp from "node:http";
+import * as NodeHttps from "node:https";
+import * as NodeNet from "node:net";
 import * as Schema from "effect/Schema";
 
 import {
@@ -72,9 +72,9 @@ export function tunnelBackoffMs(
 export function openUpgrade(
   url: URL,
   headers: Record<string, string>,
-): Promise<{ readonly socket: Net.Socket; readonly head: Buffer }> {
+): Promise<{ readonly socket: NodeNet.Socket; readonly head: Buffer }> {
   return new Promise((resolve, reject) => {
-    const request = (url.protocol === "https:" ? Https : Http).request(url, {
+    const request = (url.protocol === "https:" ? NodeHttps : NodeHttp).request(url, {
       method: "GET",
       headers: { ...headers, Connection: "Upgrade", Upgrade: BOARD_WORKER_STREAM_UPGRADE },
       agent: false,
@@ -93,9 +93,7 @@ export function openUpgrade(
       response.on("data", (chunk: string) => {
         if (body.length < 4096) body += chunk;
       });
-      response.on("end", () =>
-        reject(new UpgradeRefused(response.statusCode ?? 0, body)),
-      );
+      response.on("end", () => reject(new UpgradeRefused(response.statusCode ?? 0, body)));
       response.on("error", () => reject(new UpgradeRefused(response.statusCode ?? 0, body)));
     });
     request.on("timeout", () => {
@@ -106,7 +104,7 @@ export function openUpgrade(
   });
 }
 
-export class UpgradeRefused extends Error {
+class UpgradeRefused extends Error {
   readonly status: number;
   readonly body: string;
   constructor(status: number, body: string) {
@@ -121,10 +119,11 @@ export class UpgradeRefused extends Error {
 }
 
 /** A short reason for `t3o-worker status`. */
-export function describeTunnelError(error: unknown): string {
+function describeTunnelError(error: unknown): string {
   if (error instanceof UpgradeRefused) return error.message;
   const code = (error as { code?: unknown } | null)?.code;
-  if (code === "ENOTFOUND" || code === "EAI_AGAIN") return "DNS: the board's host name didn't resolve.";
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN")
+    return "DNS: the board's host name didn't resolve.";
   if (code === "ECONNREFUSED") return "Connection refused by the board's address.";
   if (typeof code === "string" && (code.startsWith("ERR_TLS") || code.includes("CERT"))) {
     return `TLS: ${(error as Error).message}`;
@@ -135,7 +134,7 @@ export function describeTunnelError(error: unknown): string {
 export class TunnelWorker {
   private stopped = false;
   private channel: LineChannel | null = null;
-  private readonly legs = new Set<Net.Socket>();
+  private readonly legs = new Set<NodeNet.Socket>();
   private failures = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private boardUrl: string;
@@ -148,7 +147,12 @@ export class TunnelWorker {
   constructor(options: TunnelWorkerOptions) {
     this.options = options;
     this.boardUrl = options.boardUrl.replace(/\/+$/, "");
-    this.status = { state: "connecting", lastConnectedAt: null, lastError: null, boardUrl: this.boardUrl };
+    this.status = {
+      state: "connecting",
+      lastConnectedAt: null,
+      lastError: null,
+      boardUrl: this.boardUrl,
+    };
   }
 
   start(): void {
@@ -190,7 +194,7 @@ export class TunnelWorker {
     if (this.stopped) return;
     const trying = this.candidateUrl ?? this.boardUrl;
     const tryingCandidate = this.candidateUrl !== null;
-    let opened: { readonly socket: Net.Socket; readonly head: Buffer };
+    let opened: { readonly socket: NodeNet.Socket; readonly head: Buffer };
     try {
       opened = await openUpgrade(new URL(`${trying}${BOARD_WORKER_TUNNEL_PATH}`), this.headers());
     } catch (error) {
@@ -217,7 +221,7 @@ export class TunnelWorker {
     this.hold(opened.socket, opened.head, trying, tryingCandidate);
   }
 
-  private hold(socket: Net.Socket, head: Buffer, url: string, candidate: boolean): void {
+  private hold(socket: NodeNet.Socket, head: Buffer, url: string, candidate: boolean): void {
     let ready = false;
     const hello = (boardSession?: string) =>
       channel.send({
@@ -257,7 +261,10 @@ export class TunnelWorker {
                 this.stopped = true;
                 return;
               case "revoked":
-                this.setStatus({ state: "revoked", lastError: message.message ?? "Refused by the board." });
+                this.setStatus({
+                  state: "revoked",
+                  lastError: message.message ?? "Refused by the board.",
+                });
                 this.stopped = true;
                 this.options.onRevoked?.();
                 return;
@@ -307,7 +314,10 @@ export class TunnelWorker {
           socket.destroy();
           return;
         }
-        const local = Net.connect({ host: this.options.local.host, port: this.options.local.port });
+        const local = NodeNet.connect({
+          host: this.options.local.host,
+          port: this.options.local.port,
+        });
         this.legs.add(socket);
         this.legs.add(local);
         const forget = () => {

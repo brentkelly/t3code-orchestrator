@@ -126,7 +126,10 @@ it.effect("mints a board user's session: the board's subject, never wider than t
       readonly ttl: Duration.Duration;
     }>;
     assert.strictEqual(input?.subject, "t3o-board-user:env-board:board-session-9");
-    assert.deepStrictEqual(input?.scopes, [AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
+    assert.deepStrictEqual(input?.scopes, [
+      AuthOrchestrationReadScope,
+      AuthOrchestrationOperateScope,
+    ]);
     assert.strictEqual(Duration.toHours(input!.ttl), 24);
   }).pipe(Effect.provide(layer)),
 );

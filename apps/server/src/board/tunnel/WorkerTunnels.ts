@@ -1,15 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off tryCatchInEffectGen:off globalDateInEffect:off - owns the plain-Node tunnel and a file watch; Effect is the service wrapper.
 /**
- * The worker side of every board this server works for (T3O-84). `t3o-worker join`
- * writes the board into `<T3 home>/worker.json` and its credential into the secret
- * store; this service watches that file and holds one outbound tunnel per board,
- * writing each one's state to `worker-status.json` for `t3o-worker status`.
- *
- * The board's session here is minted in-process, when the board asks for one, with the
- * subject `t3o-board:<boardId>`; board RPCs on this server trust only that subject.
+ * The worker side (T3O-84): one outbound tunnel per board in `<home>/worker.json`, which
+ * `t3o-worker` writes and this watches, with each one's state in `worker-status.json`. The
+ * board's session is minted here, subject `t3o-board:<id>`, only when the board asks.
  */
-import * as Fs from "node:fs";
-import * as Path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import { BOARD_WORKER_PROTOCOL_VERSION, t3oBoardSubject } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -52,7 +48,7 @@ const STATUS_DEBOUNCE_MS = 200;
 export function readT3oRelease(): string {
   try {
     const stamp = JSON.parse(
-      Fs.readFileSync(new URL("./t3o-release.json", import.meta.url), "utf8"),
+      NodeFS.readFileSync(new URL("./t3o-release.json", import.meta.url), "utf8"),
     ) as { readonly version?: unknown };
     if (typeof stamp.version === "string" && stamp.version.length > 0) return stamp.version;
   } catch {
@@ -61,7 +57,7 @@ export function readT3oRelease(): string {
   return packageJson.version;
 }
 
-export const makeWorkerTunnels = Effect.gen(function* () {
+const makeWorkerTunnels = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const secrets = yield* ServerSecretStore;
   const auth = yield* EnvironmentAuth;
@@ -210,11 +206,11 @@ export const makeWorkerTunnels = Effect.gen(function* () {
 
   // Watch the directory, not the file: the CLI replaces it atomically by rename.
   let debounce: ReturnType<typeof setTimeout> | null = null;
-  let watcher: Fs.FSWatcher | null = null;
+  let watcher: NodeFS.FSWatcher | null = null;
   try {
-    Fs.mkdirSync(home, { recursive: true });
-    watcher = Fs.watch(home, (_event, name) => {
-      if (name !== null && Path.basename(String(name)) !== WORKER_FILE_NAME) return;
+    NodeFS.mkdirSync(home, { recursive: true });
+    watcher = NodeFS.watch(home, (_event, name) => {
+      if (name !== null && NodePath.basename(String(name)) !== WORKER_FILE_NAME) return;
       if (debounce !== null) clearTimeout(debounce);
       debounce = setTimeout(() => {
         debounce = null;

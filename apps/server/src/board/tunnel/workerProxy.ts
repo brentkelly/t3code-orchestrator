@@ -1,13 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off extendsNativeError:off - plain Node sockets and files: a byte pipe below Effect, also used by the CLI.
 /**
- * The board's proxy from browsers to a worker's environment, at
- * `/api/t3o/workers/<id>/…`, through that worker's loopback listener (so through its
- * tunnel). Only what a thread view needs is forwarded; the worker's web UI, bootstrap
- * and pairing never are. The board's cookies never reach the worker: the worker shares
- * the board's origin here, so the proxy is bearer-only.
+ * The board's proxy from browsers to a worker at `/api/t3o/workers/<id>/…`, through its
+ * tunnel. Only what a thread view needs is forwarded, never the web UI, bootstrap or
+ * pairing. The worker shares the board's origin here, so it is bearer-only, cookies stripped.
  */
-import * as Http from "node:http";
-import * as Net from "node:net";
+import * as NodeHttp from "node:http";
+import * as NodeNet from "node:net";
 
 import { BOARD_WORKER_PROXY_PREFIX } from "@t3tools/contracts";
 
@@ -16,7 +14,9 @@ import { joinSockets, refuseUpgrade } from "./lineChannel.ts";
 
 export interface WorkerProxyTarget {
   /** The worker's loopback listener, or null when it isn't registered. */
-  readonly endpoint: (workerId: string) => { readonly port: number; readonly ready: boolean } | null;
+  readonly endpoint: (
+    workerId: string,
+  ) => { readonly port: number; readonly ready: boolean } | null;
   /** The worker's last known `/.well-known/t3/environment`, answered without dialling. */
   readonly descriptor: (workerId: string) => unknown;
 }
@@ -28,7 +28,7 @@ export interface ProxiedPath {
   readonly pathname: string;
 }
 
-export function parseProxiedPath(url: string | undefined): ProxiedPath | null {
+function parseProxiedPath(url: string | undefined): ProxiedPath | null {
   const parsed = new URL(url ?? "/", "http://board");
   if (!parsed.pathname.startsWith(BOARD_WORKER_PROXY_PREFIX)) return null;
   const rest = parsed.pathname.slice(BOARD_WORKER_PROXY_PREFIX.length);
@@ -60,7 +60,7 @@ export function isProxyAllowed(method: string, pathname: string): boolean {
 }
 
 /** Whether a request is worth dialling: it carries a credential the worker will check. */
-export function carriesCredential(request: Http.IncomingMessage, pathname: string): boolean {
+function carriesCredential(request: NodeHttp.IncomingMessage, pathname: string): boolean {
   if (/^Bearer\s+\S+/i.test(request.headers.authorization ?? "")) return true;
   if (pathname === "/ws") {
     return new URL(request.url ?? "/", "http://board").searchParams.has("wsTicket");
@@ -80,7 +80,7 @@ const STRIPPED_REQUEST_HEADERS = new Set([
 ]);
 
 function forwardedRequestHeaders(
-  request: Http.IncomingMessage,
+  request: NodeHttp.IncomingMessage,
   port: number,
   upgrade: boolean,
 ): Record<string, string | string[]> {
@@ -97,7 +97,7 @@ function forwardedRequestHeaders(
   return headers;
 }
 
-function sendJson(response: Http.ServerResponse, status: number, body: unknown): void {
+function sendJson(response: NodeHttp.ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
   response.writeHead(status, {
     "content-type": "application/json",
@@ -107,7 +107,7 @@ function sendJson(response: Http.ServerResponse, status: number, body: unknown):
   response.end(text);
 }
 
-function corsHeaders(request: Http.IncomingMessage): Record<string, string> {
+function corsHeaders(request: NodeHttp.IncomingMessage): Record<string, string> {
   const origin = request.headers.origin;
   if (origin === undefined) return {};
   return {
@@ -121,8 +121,8 @@ function corsHeaders(request: Http.IncomingMessage): Record<string, string> {
 
 export function handleWorkerProxyRequest(
   target: WorkerProxyTarget,
-  request: Http.IncomingMessage,
-  response: Http.ServerResponse,
+  request: NodeHttp.IncomingMessage,
+  response: NodeHttp.ServerResponse,
 ): void {
   const proxied = parseProxiedPath(request.url);
   if (proxied === null) {
@@ -167,7 +167,7 @@ export function handleWorkerProxyRequest(
     sendJson(response, 503, { code: "worker-offline" });
     return;
   }
-  const upstream = Http.request(
+  const upstream = NodeHttp.request(
     {
       host: "127.0.0.1",
       port: endpoint.port,
@@ -194,13 +194,13 @@ export function handleWorkerProxyRequest(
 }
 
 /** Keep-alive into the listener, so a thread view's requests reuse tunnel streams. */
-const proxyAgent = new Http.Agent({ keepAlive: true, timeout: 20_000 });
+const proxyAgent = new NodeHttp.Agent({ keepAlive: true, timeout: 20_000 });
 
 /** A WebSocket upgrade through the proxy: the request head rewritten, then raw bytes. */
 export function handleWorkerProxyUpgrade(
   target: WorkerProxyTarget,
-  request: Http.IncomingMessage,
-  socket: Net.Socket,
+  request: NodeHttp.IncomingMessage,
+  socket: NodeNet.Socket,
   head: Buffer,
 ): void {
   socket.on("error", () => undefined);
@@ -223,7 +223,7 @@ export function handleWorkerProxyUpgrade(
   for (const [name, value] of Object.entries(headers)) {
     for (const item of Array.isArray(value) ? value : [value]) lines.push(`${name}: ${item}`);
   }
-  const upstream = Net.connect({ host: "127.0.0.1", port: endpoint.port }, () => {
+  const upstream = NodeNet.connect({ host: "127.0.0.1", port: endpoint.port }, () => {
     upstream.write(`${lines.join("\r\n")}\r\n\r\n`);
     if (head.length > 0) upstream.write(head);
     joinSockets(socket, upstream);

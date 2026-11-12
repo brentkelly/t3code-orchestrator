@@ -8,7 +8,11 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
-import { BOARD_ONLY_METHODS, boardSubjectRefusal, guardBoardHandlers } from "./boardSubjectGuard.ts";
+import {
+  BOARD_ONLY_METHODS,
+  boardSubjectRefusal,
+  guardBoardHandlers,
+} from "./boardSubjectGuard.ts";
 
 const BOARD = "t3o-board:env-board";
 const USER = "t3o-board-user:env-board:session-1";
@@ -37,27 +41,31 @@ it("a worker's board sessions can't manage that worker's own board", () => {
   }
 });
 
-it.effect("wraps a handler record, failing refused calls and streams with an authorization error", () =>
-  Effect.gen(function* () {
-    const handlers = guardBoardHandlers(USER, {
-      [BOARD_WORKER_WS_METHODS.hello]: () => Effect.succeed("hello"),
-      [BOARD_WORKER_GATEWAY_WS_METHODS.subscribeSignals]: () => Stream.make(1),
-      "orchestration.getSnapshot": () => Effect.succeed("ok"),
-    });
-    const hello = yield* Effect.flip(
-      (handlers[BOARD_WORKER_WS_METHODS.hello] as () => Effect.Effect<string, { _tag: string }>)(),
-    );
-    assert.strictEqual(hello._tag, "EnvironmentAuthorizationError");
-    const signals = yield* Stream.runCollect(
-      (
-        handlers[BOARD_WORKER_GATEWAY_WS_METHODS.subscribeSignals] as () => Stream.Stream<
-          number,
-          { _tag: string }
-        >
-      )(),
-    ).pipe(Effect.flip);
-    assert.strictEqual(signals._tag, "EnvironmentAuthorizationError");
-    const own = handlers["orchestration.getSnapshot"] as () => Effect.Effect<string>;
-    assert.strictEqual(yield* own(), "ok");
-  }),
+it.effect(
+  "wraps a handler record, failing refused calls and streams with an authorization error",
+  () =>
+    Effect.gen(function* () {
+      const handlers = guardBoardHandlers(USER, {
+        [BOARD_WORKER_WS_METHODS.hello]: () => Effect.succeed("hello"),
+        [BOARD_WORKER_GATEWAY_WS_METHODS.subscribeSignals]: () => Stream.make(1),
+        "orchestration.getSnapshot": () => Effect.succeed("ok"),
+      });
+      const hello = yield* Effect.flip(
+        (
+          handlers[BOARD_WORKER_WS_METHODS.hello] as () => Effect.Effect<string, { _tag: string }>
+        )(),
+      );
+      assert.strictEqual(hello._tag, "EnvironmentAuthorizationError");
+      const signals = yield* Stream.runCollect(
+        (
+          handlers[BOARD_WORKER_GATEWAY_WS_METHODS.subscribeSignals] as () => Stream.Stream<
+            number,
+            { _tag: string }
+          >
+        )(),
+      ).pipe(Effect.flip);
+      assert.strictEqual(signals._tag, "EnvironmentAuthorizationError");
+      const own = handlers["orchestration.getSnapshot"] as () => Effect.Effect<string>;
+      assert.strictEqual(yield* own(), "ok");
+    }),
 );

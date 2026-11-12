@@ -14,7 +14,6 @@ import {
   boardCardEffectiveWorkerId,
   boardCardStepState,
   boardCardWorkerRemovalOutcome,
-  boardRepositoryGroupingKey,
   boardStageById,
   boardThreadLinkWorkerId,
   boardWorkerProxyPath,

@@ -1,12 +1,9 @@
 #!/usr/bin/env node
+/* oxlint-disable t3code/no-global-process-runtime -- a plain-Node script, run outside the server. */
 /**
- * T3o: `pnpm t3o-worker <join|leave|boards|status|config> …` (T3O-84). Runs the T3o
- * server's own `worker` CLI against the T3o service's home, so a worker needs nothing
- * but a T3o release checkout: `npx t3` and `t3 up` would install upstream's package.
- *
- * `join` on Linux installs the background service first when there is none
- * (`install-t3o-service`, which binds to 127.0.0.1). Elsewhere a T3o server must
- * already be running with this home. See docs/user/board-workers.md#workers.
+ * T3o: `pnpm t3o-worker <join|leave|boards|status|config>` runs the T3o server's `worker` CLI
+ * against the service's home (`npx t3` would install upstream). `join` on Linux installs the
+ * service first; elsewhere a T3o server must already run. See docs/user/board-workers.md.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -76,7 +73,9 @@ if (command === undefined || command === "--help" || command === "-h") {
 if (command === "join") {
   if (process.platform === "linux") {
     if (!unitExists()) {
-      console.log("[t3o-worker] No T3o service on this machine yet: installing it (127.0.0.1 only)…");
+      console.log(
+        "[t3o-worker] No T3o service on this machine yet: installing it (127.0.0.1 only)…",
+      );
       const install = NodeChildProcess.spawnSync(
         process.execPath,
         [NodePath.join(repoRoot, "scripts/t3o-service.mjs"), "install", "--home", home],

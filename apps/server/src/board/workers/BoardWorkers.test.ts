@@ -27,7 +27,6 @@ import { TestClock } from "effect/testing";
 
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { BoardEngine, type BoardEngineShape } from "../BoardEngine.ts";
-import { BoardProjectorDecodeError } from "../errors.ts";
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
 import {
   boardStackEngine,
@@ -56,12 +55,7 @@ import {
   type WorkerConnectionsShape,
 } from "./WorkerConnections.ts";
 import { WorkerRpcError } from "./WorkerTransport.ts";
-import {
-  helloFor,
-  makeFakeWorkerLayer,
-  unsupportedGateway,
-  type FakeWorker,
-} from "./workers.testkit.ts";
+import { makeFakeWorkerLayer, unsupportedGateway, type FakeWorker } from "./workers.testkit.ts";
 
 const BOARD_ENVIRONMENT_ID = EnvironmentId.make("env-board");
 const WORKER_ID = EnvironmentId.make("env-linux-box");
@@ -316,8 +310,14 @@ describe("BoardWorkers", () => {
             ?.rejoin,
         );
         // The old credential goes only once the new tunnel is proved (BoardTunnelHost).
-        assert.strictEqual(yield* joinStore.verifyCredential(hashSecret(first.tunnelCredential)), WORKER_ID);
-        assert.strictEqual(yield* joinStore.verifyCredential(hashSecret(again.tunnelCredential)), WORKER_ID);
+        assert.strictEqual(
+          yield* joinStore.verifyCredential(hashSecret(first.tunnelCredential)),
+          WORKER_ID,
+        );
+        assert.strictEqual(
+          yield* joinStore.verifyCredential(hashSecret(again.tunnelCredential)),
+          WORKER_ID,
+        );
       }),
     ));
 
@@ -363,14 +363,22 @@ describe("BoardWorkers", () => {
         });
         assert.strictEqual(readOnly.bearerToken, "user-board-session-2");
         assert.deepStrictEqual(
-          worker.mintedUserSessions.map((minted) => [minted.boardSessionId, minted.scopes, minted.label]),
+          worker.mintedUserSessions.map((minted) => [
+            minted.boardSessionId,
+            minted.scopes,
+            minted.label,
+          ]),
           [
             [
               "board-session-1",
               [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
               "Chrome via T3o board (studio)",
             ],
-            ["board-session-2", [AuthOrchestrationReadScope, AuthFilesystemReadScope], "Phone via T3o board (studio)"],
+            [
+              "board-session-2",
+              [AuthOrchestrationReadScope, AuthFilesystemReadScope],
+              "Phone via T3o board (studio)",
+            ],
           ],
         );
         // The board's own session asked, never the caller's.

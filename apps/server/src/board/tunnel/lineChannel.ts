@@ -5,11 +5,11 @@
  * and no WebSocket library sits in the path. Each side pings every 15 s and counts
  * the other gone after 30 s of silence.
  */
-import type * as Net from "node:net";
-import { StringDecoder } from "node:string_decoder";
+import type * as NodeNet from "node:net";
+import * as NodeStringDecoder from "node:string_decoder";
 
-export const CONTROL_PING_INTERVAL_MS = 15_000;
-export const CONTROL_DEAD_AFTER_MS = 30_000;
+const CONTROL_PING_INTERVAL_MS = 15_000;
+const CONTROL_DEAD_AFTER_MS = 30_000;
 /** A control message never comes near this; a line that does is a broken peer. */
 const MAX_LINE_BYTES = 256 * 1024;
 
@@ -29,7 +29,7 @@ export interface LineChannelOptions {
 }
 
 export function openLineChannel(
-  socket: Net.Socket,
+  socket: NodeNet.Socket,
   head: Buffer,
   options: LineChannelOptions,
 ): LineChannel {
@@ -43,7 +43,7 @@ export function openLineChannel(
   socket.setNoDelay(true);
   socket.setKeepAlive(true, 30_000);
   // Not `setEncoding`: Node refuses it on a socket an HTTP server handed over.
-  const decoder = new StringDecoder("utf8");
+  const decoder = new NodeStringDecoder.StringDecoder("utf8");
 
   const close = () => {
     if (closed) return;
@@ -112,7 +112,7 @@ const isPong = (value: unknown): boolean =>
 
 /** A refusal on a raw upgrade socket: a plain HTTP response, then close. */
 export function refuseUpgrade(
-  socket: Net.Socket,
+  socket: NodeNet.Socket,
   status: number,
   reason: string,
   body?: unknown,
@@ -125,7 +125,7 @@ export function refuseUpgrade(
   socket.destroySoon?.();
 }
 
-export function acceptUpgrade(socket: Net.Socket, protocol: string): void {
+export function acceptUpgrade(socket: NodeNet.Socket, protocol: string): void {
   socket.write(
     `HTTP/1.1 101 Switching Protocols\r\nUpgrade: ${protocol}\r\nConnection: Upgrade\r\n\r\n`,
   );
@@ -133,7 +133,11 @@ export function acceptUpgrade(socket: Net.Socket, protocol: string): void {
 
 /** Join two sockets both ways. `pipe()` carries backpressure: a slow reader pauses
     the far writer instead of growing a buffer. Either side ending ends both. */
-export function joinSockets(left: Net.Socket, right: Net.Socket, onClose?: () => void): void {
+export function joinSockets(
+  left: NodeNet.Socket,
+  right: NodeNet.Socket,
+  onClose?: () => void,
+): void {
   let done = false;
   const finish = () => {
     if (done) return;

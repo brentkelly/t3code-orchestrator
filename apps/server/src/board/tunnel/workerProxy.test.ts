@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - the proxy and seam are real sockets end to end.
-import * as Http from "node:http";
-import * as Net from "node:net";
+import * as NodeHttp from "node:http";
+import * as NodeNet from "node:net";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
@@ -20,39 +20,48 @@ afterEach(() => {
 interface Seen {
   readonly method: string;
   readonly url: string;
-  readonly headers: Http.IncomingHttpHeaders;
+  readonly headers: NodeHttp.IncomingHttpHeaders;
 }
 
 /** The worker's loopback server, as the board's listener would reach it. */
 async function startWorker() {
   const seen: Seen[] = [];
-  const server = Http.createServer((request, response) => {
+  const server = NodeHttp.createServer((request, response) => {
     seen.push({ method: request.method ?? "", url: request.url ?? "", headers: request.headers });
     response.setHeader("set-cookie", "worker=1");
     response.setHeader("content-security-policy", "default-src 'none'");
     response.end("from-worker");
   });
   const upgrades: Seen[] = [];
-  server.on("upgrade", (request: Http.IncomingMessage, socket: Net.Socket, head: Buffer) => {
-    upgrades.push({ method: request.method ?? "", url: request.url ?? "", headers: request.headers });
-    socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
-    if (head.length > 0) socket.write(head);
-    socket.on("data", (chunk: Buffer) => socket.write(chunk));
-  });
+  server.on(
+    "upgrade",
+    (request: NodeHttp.IncomingMessage, socket: NodeNet.Socket, head: Buffer) => {
+      upgrades.push({
+        method: request.method ?? "",
+        url: request.url ?? "",
+        headers: request.headers,
+      });
+      socket.write(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+      );
+      if (head.length > 0) socket.write(head);
+      socket.on("data", (chunk: Buffer) => socket.write(chunk));
+    },
+  );
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   cleanups.push(() => {
     server.closeAllConnections();
     server.close();
   });
-  return { port: (server.address() as Net.AddressInfo).port, seen, upgrades };
+  return { port: (server.address() as NodeNet.AddressInfo).port, seen, upgrades };
 }
 
 /** The board: every request through the seam, everything else a plain 200 "upstream". */
 async function startBoard(target: WorkerProxyTarget) {
   const server = installBoardTunnelSeam(
-    Http.createServer((_request, response) => response.end("upstream")),
+    NodeHttp.createServer((_request, response) => response.end("upstream")),
   );
-  server.on("upgrade", (_request: Http.IncomingMessage, socket: Net.Socket) => {
+  server.on("upgrade", (_request: NodeHttp.IncomingMessage, socket: NodeNet.Socket) => {
     socket.end("HTTP/1.1 418 Upstream\r\n\r\n");
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -65,25 +74,35 @@ async function startBoard(target: WorkerProxyTarget) {
     setBoardTunnelSeamHandler({
       control: (_request, socket) => socket.end("HTTP/1.1 401 Unauthorized\r\n\r\n"),
       stream: (_request, socket) => socket.end("HTTP/1.1 401 Unauthorized\r\n\r\n"),
-      proxyUpgrade: (request, socket, head) => handleWorkerProxyUpgrade(target, request, socket, head),
+      proxyUpgrade: (request, socket, head) =>
+        handleWorkerProxyUpgrade(target, request, socket, head),
       proxyRequest: (request, response) => handleWorkerProxyRequest(target, request, response),
       join: (_request, response) => response.end("join"),
     });
-  return { port: (server.address() as Net.AddressInfo).port, register };
+  return { port: (server.address() as NodeNet.AddressInfo).port, register };
 }
 
 function request(
   port: number,
   options: { path: string; method?: string; headers?: Record<string, string> },
-): Promise<{ status: number; body: string; headers: Http.IncomingHttpHeaders }> {
+): Promise<{ status: number; body: string; headers: NodeHttp.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
-    const sent = Http.request(
-      { host: "127.0.0.1", port, path: options.path, method: options.method ?? "GET", headers: options.headers, agent: false },
+    const sent = NodeHttp.request(
+      {
+        host: "127.0.0.1",
+        port,
+        path: options.path,
+        method: options.method ?? "GET",
+        headers: options.headers,
+        agent: false,
+      },
       (response) => {
         let body = "";
         response.setEncoding("utf8");
         response.on("data", (chunk: string) => (body += chunk));
-        response.on("end", () => resolve({ status: response.statusCode ?? 0, body, headers: response.headers }));
+        response.on("end", () =>
+          resolve({ status: response.statusCode ?? 0, body, headers: response.headers }),
+        );
       },
     );
     sent.on("error", reject);
@@ -130,8 +149,16 @@ describe("worker proxy", () => {
     const target = targetFor(worker.port);
     const board = await startBoard(target);
     board.register();
-    expect((await request(board.port, { path: `${base}/api/orchestration/shell` })).status).toBe(401);
-    for (const path of ["/", "/api/auth/bootstrap", "/api/auth/browser-session", "/oauth/token", "/api/webhooks/x"]) {
+    expect((await request(board.port, { path: `${base}/api/orchestration/shell` })).status).toBe(
+      401,
+    );
+    for (const path of [
+      "/",
+      "/api/auth/bootstrap",
+      "/api/auth/browser-session",
+      "/oauth/token",
+      "/api/webhooks/x",
+    ]) {
       const answered = await request(board.port, {
         path: `${base}${path}`,
         method: "POST",
@@ -175,7 +202,9 @@ describe("worker proxy", () => {
     const worker = await startWorker();
     const board = await startBoard(targetFor(worker.port));
     board.register();
-    const answered = await request(board.port, { path: `${base}/api/assets/payload.signature/image.png` });
+    const answered = await request(board.port, {
+      path: `${base}/api/assets/payload.signature/image.png`,
+    });
     expect(answered.status).toBe(200);
     expect(worker.seen[0]?.url).toBe("/api/assets/payload.signature/image.png");
   });
@@ -195,7 +224,7 @@ describe("worker proxy", () => {
     const worker = await startWorker();
     const board = await startBoard(targetFor(worker.port));
     board.register();
-    const socket = Net.connect({ host: "127.0.0.1", port: board.port });
+    const socket = NodeNet.connect({ host: "127.0.0.1", port: board.port });
     cleanups.push(() => socket.destroy());
     let received = "";
     const echoed = new Promise<void>((resolve) => {
@@ -220,10 +249,16 @@ describe("HTTP seam", () => {
   it("leaves everything that isn't T3o's to upstream, and answers 503 before the board is up", async () => {
     const board = await startBoard(targetFor(null));
     expect((await request(board.port, { path: "/api/projects" })).body).toBe("upstream");
-    expect((await request(board.port, { path: `${base}/api/orchestration/shell` })).status).toBe(503);
-    expect((await request(board.port, { path: "/api/t3o/worker-join", method: "POST" })).status).toBe(503);
+    expect((await request(board.port, { path: `${base}/api/orchestration/shell` })).status).toBe(
+      503,
+    );
+    expect(
+      (await request(board.port, { path: "/api/t3o/worker-join", method: "POST" })).status,
+    ).toBe(503);
     board.register();
-    expect((await request(board.port, { path: "/api/t3o/worker-join", method: "POST" })).body).toBe("join");
+    expect((await request(board.port, { path: "/api/t3o/worker-join", method: "POST" })).body).toBe(
+      "join",
+    );
     expect((await request(board.port, { path: "/api/t3o/workers" })).body).toBe("upstream");
   });
 

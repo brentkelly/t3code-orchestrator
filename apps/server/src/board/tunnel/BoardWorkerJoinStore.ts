@@ -3,7 +3,7 @@
  * Join codes and tunnel credentials (migration 068). Only SHA-256 hashes are kept,
  * so nothing at rest on the board can be replayed as a code or a credential.
  */
-import * as Crypto from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 export const hashSecret = (secret: string): string =>
-  Crypto.createHash("sha256").update(secret, "utf8").digest("hex");
+  NodeCrypto.createHash("sha256").update(secret, "utf8").digest("hex");
 
 export interface JoinCodeRecord {
   readonly codeId: string;
@@ -84,7 +84,10 @@ const CodeRow = Schema.Struct({
   cancelledAt: Schema.NullOr(Schema.String),
 });
 const decodeCodeRows = Schema.decodeUnknownEffect(Schema.Array(CodeRow));
-const toRecord = (row: typeof CodeRow.Type): JoinCodeRecord => ({ ...row, rejoin: row.rejoin !== 0 });
+const toRecord = (row: typeof CodeRow.Type): JoinCodeRecord => ({
+  ...row,
+  rejoin: row.rejoin !== 0,
+});
 
 /** A broken store is the board's own failure, never something a joining worker handles. */
 export const BoardWorkerJoinStoreLive = Layer.effect(

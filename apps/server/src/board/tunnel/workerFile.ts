@@ -5,12 +5,12 @@
  * `t3o-worker status` reads. The CLI writes `worker.json`; the server watches it.
  * Plain `node:fs` so the CLI can use it without the server's layers. Writes are atomic.
  */
-import * as Fs from "node:fs";
-import * as Path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 
 export const WORKER_FILE_NAME = "worker.json";
-export const WORKER_STATUS_FILE_NAME = "worker-status.json";
+const WORKER_STATUS_FILE_NAME = "worker-status.json";
 
 /** The secret holding a board's tunnel credential, in `ServerSecretStore`. */
 export const tunnelCredentialSecretName = (boardEnvironmentId: string): string =>
@@ -47,7 +47,7 @@ export const WorkerFile = Schema.Struct({
 });
 export type WorkerFile = typeof WorkerFile.Type;
 
-export const EMPTY_WORKER_FILE: WorkerFile = { boards: [], config: {} };
+const EMPTY_WORKER_FILE: WorkerFile = { boards: [], config: {} };
 
 export const WorkerBoardStatus = Schema.Struct({
   boardEnvironmentId: Schema.String,
@@ -69,12 +69,12 @@ export type WorkerStatusFile = typeof WorkerStatusFile.Type;
 const decodeWorkerFile = Schema.decodeUnknownExit(WorkerFile);
 const decodeStatusFile = Schema.decodeUnknownExit(WorkerStatusFile);
 
-export const workerFilePath = (home: string) => Path.join(home, WORKER_FILE_NAME);
-export const workerStatusPath = (home: string) => Path.join(home, WORKER_STATUS_FILE_NAME);
+export const workerFilePath = (home: string) => NodePath.join(home, WORKER_FILE_NAME);
+const workerStatusPath = (home: string) => NodePath.join(home, WORKER_STATUS_FILE_NAME);
 
 function readJson(path: string): unknown {
   try {
-    return JSON.parse(Fs.readFileSync(path, "utf8"));
+    return JSON.parse(NodeFS.readFileSync(path, "utf8"));
   } catch {
     return undefined;
   }
@@ -96,11 +96,11 @@ export function readWorkerStatus(home: string): WorkerStatusFile | null {
 }
 
 /** Write via a temporary file and rename, so a reader never sees half a file. */
-export function writeJsonAtomic(path: string, value: unknown): void {
-  Fs.mkdirSync(Path.dirname(path), { recursive: true });
+function writeJsonAtomic(path: string, value: unknown): void {
+  NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
-  Fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  Fs.renameSync(temporary, path);
+  NodeFS.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  NodeFS.renameSync(temporary, path);
 }
 
 export function writeWorkerFile(home: string, file: WorkerFile): void {

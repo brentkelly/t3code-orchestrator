@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - the tunnel is real sockets end to end.
-import * as Http from "node:http";
-import * as Net from "node:net";
-import { PassThrough, Readable } from "node:stream";
+import * as NodeHttp from "node:http";
+import * as NodeNet from "node:net";
+import * as NodeStream from "node:stream";
 
 import {
   BOARD_WORKER_TUNNEL_PATH,
@@ -14,7 +14,12 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { joinSockets } from "./lineChannel.ts";
 import { NONCE_HEADER, TunnelBoard, type TunnelSessionDecision } from "./tunnelBoard.ts";
-import { openUpgrade, TunnelWorker, tunnelBackoffMs, type WorkerTunnelStatus } from "./tunnelWorker.ts";
+import {
+  openUpgrade,
+  TunnelWorker,
+  tunnelBackoffMs,
+  type WorkerTunnelStatus,
+} from "./tunnelWorker.ts";
 
 const WORKER_ID = EnvironmentId.make("env-worker");
 const CREDENTIAL = "tunnel-credential";
@@ -39,7 +44,7 @@ afterEach(async () => {
 /** The worker's own loopback T3 server: answers `GET /who` with its name and echoes
     `/echo` bodies, so a request that went through the tunnel proves where it landed. */
 async function startLocalServer(name: string) {
-  const server = Http.createServer((request, response) => {
+  const server = NodeHttp.createServer((request, response) => {
     if (request.url === "/who") {
       response.end(name);
       return;
@@ -51,7 +56,7 @@ async function startLocalServer(name: string) {
     request.pipe(response);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = (server.address() as Net.AddressInfo).port;
+  const port = (server.address() as NodeNet.AddressInfo).port;
   cleanups.push(() => {
     server.closeAllConnections();
     server.close();
@@ -61,7 +66,10 @@ async function startLocalServer(name: string) {
 
 /** The board: a plain HTTP server whose upgrades go to the tunnel host by path. */
 async function startBoard(options: {
-  readonly decide?: (hello: WorkerTunnelHello, probe: () => Promise<string>) => Promise<TunnelSessionDecision>;
+  readonly decide?: (
+    hello: WorkerTunnelHello,
+    probe: () => Promise<string>,
+  ) => Promise<TunnelSessionDecision>;
   readonly credentials?: Map<string, string>;
 }) {
   const credentials = options.credentials ?? new Map([[CREDENTIAL, WORKER_ID]]);
@@ -86,18 +94,21 @@ async function startBoard(options: {
       for (const listener of changes.splice(0)) listener();
     },
   });
-  const server = Http.createServer((_request, response) => {
+  const server = NodeHttp.createServer((_request, response) => {
     response.statusCode = 404;
     response.end();
   });
-  server.on("upgrade", (request: Http.IncomingMessage, socket: Net.Socket, head: Buffer) => {
-    const path = new URL(request.url ?? "/", "http://board").pathname;
-    if (path === BOARD_WORKER_TUNNEL_STREAM_PATH) board.handleStream(request, socket, head);
-    else if (path === BOARD_WORKER_TUNNEL_PATH) board.handleControl(request, socket, head);
-    else socket.destroy();
-  });
+  server.on(
+    "upgrade",
+    (request: NodeHttp.IncomingMessage, socket: NodeNet.Socket, head: Buffer) => {
+      const path = new URL(request.url ?? "/", "http://board").pathname;
+      if (path === BOARD_WORKER_TUNNEL_STREAM_PATH) board.handleStream(request, socket, head);
+      else if (path === BOARD_WORKER_TUNNEL_PATH) board.handleControl(request, socket, head);
+      else socket.destroy();
+    },
+  );
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = (server.address() as Net.AddressInfo).port;
+  const port = (server.address() as NodeNet.AddressInfo).port;
   cleanups.push(() => {
     board.close();
     server.closeAllConnections();
@@ -147,7 +158,7 @@ function startWorker(input: {
 
 function httpGet(port: number, path: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const request = Http.get({ host: "127.0.0.1", port, path, agent: false }, (response) => {
+    const request = NodeHttp.get({ host: "127.0.0.1", port, path, agent: false }, (response) => {
       let body = "";
       response.setEncoding("utf8");
       response.on("data", (chunk: string) => (body += chunk));
@@ -281,7 +292,7 @@ describe("worker tunnel", () => {
     startWorker({ boardUrl: board.url, localPort: local.port, onReady: () => ready.resolve() });
     await ready.promise;
     const closed = deferred<void>();
-    const client = Net.connect({ host: "127.0.0.1", port: board.listenerPort }, () => {
+    const client = NodeNet.connect({ host: "127.0.0.1", port: board.listenerPort }, () => {
       client.write("GET /slow HTTP/1.1\r\nHost: x\r\n\r\n");
     });
     client.on("close", () => closed.resolve());
@@ -329,9 +340,9 @@ describe("worker tunnel", () => {
     const adopted: string[] = [];
     // The board advertises an address that doesn't answer: the worker keeps the old one.
     const deadPort = await new Promise<number>((resolve) => {
-      const probe = Net.createServer();
+      const probe = NodeNet.createServer();
       probe.listen(0, "127.0.0.1", () => {
-        const port = (probe.address() as Net.AddressInfo).port;
+        const port = (probe.address() as NodeNet.AddressInfo).port;
         probe.close(() => resolve(port));
       });
     });
@@ -365,20 +376,28 @@ describe("worker tunnel", () => {
 describe("tunnel backpressure", () => {
   it("a stalled reader pauses the writer instead of buffering without bound", async () => {
     let produced = 0;
-    const source = new Readable({
-      read() {
-        produced += 64 * 1024;
-        this.push(Buffer.alloc(64 * 1024));
-      },
-    });
-    // A sink that never drains: its buffer fills once, then pipe() stops reading.
-    const sink = new PassThrough({ highWaterMark: 64 * 1024 });
-    const left = Object.assign(new PassThrough(), { setNoDelay() {}, setKeepAlive() {} });
-    const right = Object.assign(sink, { setNoDelay() {}, setKeepAlive() {} });
-    source.pipe(left);
-    joinSockets(left as unknown as Net.Socket, right as unknown as Net.Socket);
-    for (let turn = 0; turn < 200; turn++) await new Promise((resolve) => setImmediate(resolve));
-    expect(produced).toBeLessThan(2 * 1024 * 1024);
+    const left = Object.assign(
+      new NodeStream.Duplex({
+        highWaterMark: 64 * 1024,
+        read() {
+          produced += 64 * 1024;
+          this.push(Buffer.alloc(64 * 1024));
+        },
+        write(_chunk, _encoding, callback) {
+          callback();
+        },
+      }),
+      { setNoDelay() {}, setKeepAlive() {} },
+    );
+    // A reader that never takes anything: its first write never completes.
+    const right = Object.assign(
+      new NodeStream.Duplex({ highWaterMark: 64 * 1024, read() {}, write() {} }),
+      { setNoDelay() {}, setKeepAlive() {} },
+    );
+    const paused = new Promise((resolve) => left.once("pause", resolve));
+    joinSockets(left as unknown as NodeNet.Socket, right as unknown as NodeNet.Socket);
+    await paused;
+    expect(produced).toBeLessThan(1024 * 1024);
   });
 
   it("backs off with jitter between 1 s and 30 s", () => {

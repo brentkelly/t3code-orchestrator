@@ -1,10 +1,7 @@
 /**
- * Who may call which board RPC (T3O-84). A worker answers board RPCs (`boardWorker.*`:
- * the handshake, the thread gateway, board git, the MCP relay, user sessions) only from
- * a session whose subject is `t3o-board:<id>`, a session it minted for a board itself,
- * and the board's identity comes from that subject, never from the request. Sessions a
- * worker minted for a board or its users are refused on everything else under `board.*`.
- * Scope checks still run inside each handler; this is the identity check beside them.
+ * Who may call which board RPC (T3O-84). Board RPCs on a worker need a `t3o-board:<id>`
+ * subject, which also names the board; sessions minted for a board or its users are refused
+ * on this server's own `board.*`. Scope checks still run inside each handler.
  */
 import {
   BOARD_WORKER_GATEWAY_WS_METHODS,

@@ -5884,7 +5884,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       }
       // T3o (T3O-84): an abbreviation is unique on the board, and `SRV` is the board server's.
       const abbreviation =
-        command.mode === "rename" ? command.worker.abbreviation : (existing?.abbreviation ?? command.worker.abbreviation);
+        command.mode === "rename"
+          ? command.worker.abbreviation
+          : (existing?.abbreviation ?? command.worker.abbreviation);
       if (abbreviation !== undefined) {
         if (abbreviation === BOARD_LOCAL_WORKER_ABBREVIATION) {
           return yield* invariant(command, `${abbreviation} is reserved for the board server.`);
@@ -5914,7 +5916,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
                 ...(command.worker.t3oRelease === undefined
                   ? {}
                   : { t3oRelease: command.worker.t3oRelease }),
-                ...(command.worker.joinedAt === undefined ? {} : { joinedAt: command.worker.joinedAt }),
+                ...(command.worker.joinedAt === undefined
+                  ? {}
+                  : { joinedAt: command.worker.joinedAt }),
               };
       const registered: PlannedBoardEvent = {
         ...(yield* makeBoardWorkerEventBase({

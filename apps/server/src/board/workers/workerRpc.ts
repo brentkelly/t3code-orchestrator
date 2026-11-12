@@ -230,11 +230,9 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
             };
           }),
         ),
-      // Upstream refuses a session revoking itself over HTTP, so a central
-      // server giving its access back asks the worker to do it. Forked, a
-      // moment after answering: the revocation closes the very socket the
-      // answer travels on.
-      // T3o (T3O-84): every session this board holds here goes, its users' too.
+      // Upstream won't let a session revoke itself over HTTP, so the worker revokes every
+      // session of the calling board, its users' too, a moment after answering: the
+      // revocation closes the socket the answer travels on.
       [BOARD_WORKER_WS_METHODS.release]: (_input: Record<string, never>) =>
         authorized(
           BOARD_WORKER_WS_METHODS.release,
