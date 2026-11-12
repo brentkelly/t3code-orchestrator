@@ -54,6 +54,8 @@ export interface TunnelWorkerOptions {
   readonly onAddressAdopted?: ((boardUrl: string) => void) | undefined;
   /** Backoff bounds, injectable for tests. */
   readonly backoff?: { readonly initialMs: number; readonly maxMs: number };
+  /** The tunnel protocol this worker speaks, injectable for tests. */
+  readonly tunnelProtocol?: number;
 }
 
 const decodeServerMessageExit = Schema.decodeUnknownExit(WorkerTunnelServerMessage);
@@ -265,10 +267,11 @@ export class TunnelWorker {
     // One mint per control channel: a board that refuses it again gets a fresh channel
     // after a backoff, never a session minted per round trip.
     let minted = false;
+    let parkedForUpdate = false;
     const hello = (boardSession?: string) =>
       channel.send({
         type: "hello",
-        tunnelProtocol: T3O_TUNNEL_PROTOCOL_VERSION,
+        tunnelProtocol: this.tunnelProtocol,
         environmentId: this.options.environmentId,
         label: this.options.label,
         t3oRelease: this.options.t3oRelease,
@@ -307,9 +310,11 @@ export class TunnelWorker {
               case "needs-update":
                 this.setStatus({
                   state: "needs-update",
-                  lastError: `The board speaks tunnel protocol ${message.tunnelProtocol ?? "?"}, this worker ${T3O_TUNNEL_PROTOCOL_VERSION}. Update T3o on the older side.`,
+                  lastError: `The board speaks tunnel protocol ${message.tunnelProtocol ?? "?"}, this worker ${this.tunnelProtocol}. Update T3o on the older side.`,
                 });
-                this.stopped = true;
+                // Keep dialling, slowly: updating the board brings this worker back by itself.
+                parkedForUpdate = true;
+                channel.close();
                 return;
               case "revoked":
                 this.setStatus({
@@ -342,6 +347,10 @@ export class TunnelWorker {
         if (this.channel === channel) this.channel = null;
         this.dropLegs();
         if (this.stopped) return;
+        if (parkedForUpdate) {
+          this.scheduleRedial(this.backoffBounds().maxMs);
+          return;
+        }
         if (!ready && candidate) this.candidateUrl = null;
         if (this.status.state === "connected") this.setStatus({ state: "offline" });
         const next = redialAfterClose(readyAt === null ? null : Date.now() - readyAt);
@@ -383,10 +392,17 @@ export class TunnelWorker {
     this.legs.clear();
   }
 
+  private backoffBounds(): { readonly initialMs: number; readonly maxMs: number } {
+    return this.options.backoff ?? { initialMs: 1_000, maxMs: 30_000 };
+  }
+
+  private get tunnelProtocol(): number {
+    return this.options.tunnelProtocol ?? T3O_TUNNEL_PROTOCOL_VERSION;
+  }
+
   private scheduleRedial(delayMs?: number): void {
     if (this.stopped) return;
-    const bounds = this.options.backoff ?? { initialMs: 1_000, maxMs: 30_000 };
-    const delay = delayMs ?? tunnelBackoffMs(this.failures, bounds);
+    const delay = delayMs ?? tunnelBackoffMs(this.failures, this.backoffBounds());
     this.failures += 1;
     if (this.timer !== null) clearTimeout(this.timer);
     this.timer = setTimeout(() => {

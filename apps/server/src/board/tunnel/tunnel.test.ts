@@ -140,6 +140,7 @@ function startWorker(input: {
   readonly onRevoked?: () => void;
   readonly onReady?: () => void;
   readonly onAddressAdopted?: (url: string) => void;
+  readonly tunnelProtocol?: number;
 }) {
   const worker = new TunnelWorker({
     boardUrl: input.boardUrl,
@@ -155,6 +156,7 @@ function startWorker(input: {
     onReady: input.onReady,
     onAddressAdopted: input.onAddressAdopted,
     backoff: { initialMs: 5, maxMs: 20 },
+    ...(input.tunnelProtocol === undefined ? {} : { tunnelProtocol: input.tunnelProtocol }),
   });
   cleanups.push(() => worker.stop());
   worker.start();
@@ -318,6 +320,22 @@ describe("worker tunnel", () => {
       null,
       "board-session-2",
     ]);
+  });
+
+  it("a worker told needs-update keeps redialling, slowly, so an updated board gets it back", async () => {
+    const local = await startLocalServer("worker-loopback");
+    const board = await startBoard({});
+    const log = statusLog();
+    startWorker({
+      boardUrl: board.url,
+      localPort: local.port,
+      tunnelProtocol: 0,
+      onStatus: log.onStatus,
+    });
+    await log.when(
+      () => log.states.filter((status) => status.state === "needs-update").length >= 2,
+    );
+    expect(log.states.every((status) => status.state !== "revoked")).toBe(true);
   });
 
   it("refuses a hello naming another worker than the credential's", async () => {
