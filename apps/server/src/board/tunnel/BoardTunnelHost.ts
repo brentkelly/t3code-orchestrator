@@ -242,9 +242,17 @@ export const makeBoardTunnelHost = Effect.gen(function* () {
       );
       void loadDescriptor(workerId);
     },
-    onGoodbye: (workerId) => {
-      void run(Effect.logInfo("A worker left this board from its side.", { workerId }));
-    },
+    // Leaving revokes the credential it left on, so no other copy of it can dial back in.
+    onGoodbye: (workerId, credential) =>
+      run(
+        Effect.gen(function* () {
+          yield* store.revokeCredential({
+            credentialHash: hashSecret(credential),
+            at: DateTime.formatIso(yield* DateTime.now),
+          });
+          yield* Effect.logInfo("A worker left this board from its side.", { workerId });
+        }),
+      ),
     onChange: () => {
       void run(publish(board));
     },

@@ -294,6 +294,14 @@ it.live("a worker joined over its tunnel: session handoff, probe, then the board
         Stream.runHead,
       );
       assert.deepStrictEqual(minted, ["good-token"]);
+
+      // The worker leaves: the credential it left on no longer opens a tunnel.
+      yield* Effect.promise(() => again.goodbye());
+      yield* host.states.pipe(
+        Stream.filter((entries) => entries.get("env-worker")?.phase === "down"),
+        Stream.runHead,
+      );
+      assert.strictEqual(yield* joinStore.verifyCredential(hashSecret("tunnel-credential")), null);
     }),
   ).pipe(Effect.provide(transport)),
 );

@@ -92,7 +92,9 @@ async function startBoard(options: {
         ? { status: "ok", liveBoardSessionIds: ["board-session-1"] }
         : options.decide(hello, probe);
     },
-    onGoodbye: (workerId) => goodbyes.push(workerId),
+    onGoodbye: (workerId) => {
+      goodbyes.push(workerId);
+    },
     onChange: () => {
       for (const listener of changes.splice(0)) listener();
     },

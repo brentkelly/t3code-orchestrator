@@ -64,6 +64,11 @@ export interface BoardWorkerJoinStoreShape {
     readonly at: string;
     readonly keep?: string | undefined;
   }) => Effect.Effect<void>;
+  /** Revoke one credential, as a worker leaving on it does. */
+  readonly revokeCredential: (input: {
+    readonly credentialHash: string;
+    readonly at: string;
+  }) => Effect.Effect<void>;
 }
 
 export class BoardWorkerJoinStore extends Context.Service<
@@ -178,6 +183,11 @@ export const BoardWorkerJoinStoreLive = Layer.effect(
                 )
             `
         ).pipe(Effect.asVoid, Effect.orDie),
+      revokeCredential: (input) =>
+        sql`
+          UPDATE board_worker_tunnel_credentials SET revoked_at = ${input.at}
+          WHERE credential_hash = ${input.credentialHash} AND revoked_at IS NULL
+        `.pipe(Effect.asVoid, Effect.orDie),
     } satisfies BoardWorkerJoinStoreShape;
   }),
 );
@@ -270,6 +280,12 @@ export const makeMemoryBoardWorkerJoinStore = Effect.gen(function* () {
           next.set(hash, { ...entry, revokedAt: input.at });
         }
         return next;
+      }),
+    revokeCredential: (input) =>
+      Ref.update(credentials, (map) => {
+        const entry = map.get(input.credentialHash);
+        if (entry === undefined || entry.revokedAt !== null) return map;
+        return new Map(map).set(input.credentialHash, { ...entry, revokedAt: input.at });
       }),
   };
   return store;

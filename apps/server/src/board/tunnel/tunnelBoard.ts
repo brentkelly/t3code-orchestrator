@@ -54,7 +54,8 @@ export interface TunnelBoardDeps {
   /** A tunnel reached `ok` (after `onHello` said so), on this credential. */
   readonly onReady?: (workerId: string, hello: WorkerTunnelHello, credential: string) => void;
   /** The worker said it is leaving the board (`t3o-worker leave`). */
-  readonly onGoodbye?: (workerId: string) => void;
+  /** A worker left on this credential; the channel closes once this settles. */
+  readonly onGoodbye?: (workerId: string, credential: string) => Promise<void> | void;
   /** Any change in which workers are live or ready. */
   readonly onChange?: () => void;
 }
@@ -277,8 +278,9 @@ export class TunnelBoard {
         const message = decodeClientMessage(raw);
         if (message === null) return;
         if (message.type === "goodbye") {
-          this.deps.onGoodbye?.(workerId);
-          channel.close();
+          void Promise.resolve(this.deps.onGoodbye?.(workerId, credential))
+            .catch(() => undefined)
+            .finally(() => channel.close());
           return;
         }
         if (message.type !== "hello") return;
