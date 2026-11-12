@@ -103,10 +103,22 @@ export function installBoardTunnelSeam<S extends NodeHttp.Server>(server: S): S 
   server.emit = ((event: string | symbol, ...args: unknown[]) => {
     if (event === "upgrade") {
       const [request, socket, head] = args as [NodeHttp.IncomingMessage, NodeNet.Socket, Buffer];
-      if (routeBoardTunnelUpgrade(current, request, socket, head)) return true;
+      try {
+        if (routeBoardTunnelUpgrade(current, request, socket, head)) return true;
+      } catch {
+        // A throw here would escape `emit` and exit the server.
+        refuseUpgrade(socket, 500, "Internal Server Error");
+        return true;
+      }
     } else if (event === "request") {
       const [request, response] = args as [NodeHttp.IncomingMessage, NodeHttp.ServerResponse];
-      if (routeBoardTunnelRequest(current, request, response)) return true;
+      try {
+        if (routeBoardTunnelRequest(current, request, response)) return true;
+      } catch {
+        if (!response.headersSent) response.writeHead(500, { "content-type": "application/json" });
+        response.end(JSON.stringify({ code: "internal" }));
+        return true;
+      }
     }
     return emit(event, ...args);
   }) as S["emit"];

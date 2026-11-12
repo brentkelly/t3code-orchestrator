@@ -209,6 +209,29 @@ describe("worker proxy", () => {
     expect(worker.seen[0]?.url).toBe("/api/assets/payload.signature/image.png");
   });
 
+  it("answers 404 to a malformed worker id instead of throwing out of the seam", async () => {
+    const board = await startBoard(targetFor(null));
+    board.register();
+    const answered = await request(board.port, {
+      path: "/api/t3o/workers/%zz/api/orchestration/shell",
+      headers: { authorization: "Bearer t" },
+    });
+    expect(answered.status).toBe(404);
+    const socket = NodeNet.connect({ host: "127.0.0.1", port: board.port });
+    cleanups.push(() => socket.destroy());
+    let refused = "";
+    const closed = new Promise<void>((resolve) => {
+      socket.on("data", (chunk: Buffer) => (refused += chunk.toString("latin1")));
+      socket.on("close", () => resolve());
+    });
+    socket.write(
+      "GET /api/t3o/workers/%zz/ws HTTP/1.1\r\nHost: board\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+    );
+    await closed;
+    expect(refused.startsWith("HTTP/1.1 404")).toBe(true);
+    expect((await request(board.port, { path: "/api/projects" })).body).toBe("upstream");
+  });
+
   it("answers 503 worker-offline while the worker's tunnel isn't ready", async () => {
     const board = await startBoard(targetFor(1, false));
     board.register();

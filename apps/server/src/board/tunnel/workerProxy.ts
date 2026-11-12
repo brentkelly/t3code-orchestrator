@@ -34,7 +34,12 @@ function parseProxiedPath(url: string | undefined): ProxiedPath | null {
   const rest = parsed.pathname.slice(BOARD_WORKER_PROXY_PREFIX.length);
   const slash = rest.indexOf("/");
   if (slash <= 0) return null;
-  const workerId = decodeURIComponent(rest.slice(0, slash));
+  let workerId: string;
+  try {
+    workerId = decodeURIComponent(rest.slice(0, slash));
+  } catch {
+    return null;
+  }
   const pathname = rest.slice(slash);
   return { workerId, pathname, path: `${pathname}${parsed.search}` };
 }
