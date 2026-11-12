@@ -240,8 +240,10 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
           BOARD_WORKER_WS_METHODS.release,
           Effect.flatMap(auth, (service) =>
             input.all === true
-              ? revokeBoardSessions(service, boardIdOfBoardSubject(currentSession.subject) ?? "")
-              : service.revokeSession(currentSession.sessionId),
+              ? Effect.asVoid(
+                  revokeBoardSessions(service, boardIdOfBoardSubject(currentSession.subject) ?? ""),
+                )
+              : Effect.asVoid(service.revokeSession(currentSession.sessionId)),
           ).pipe(Effect.delay(RELEASE_GRACE), Effect.ignore, Effect.forkDetach, Effect.asVoid),
         ),
       [BOARD_WORKER_WS_METHODS.mintUserSession]: (input: BoardWorkerMintUserSessionInput) =>

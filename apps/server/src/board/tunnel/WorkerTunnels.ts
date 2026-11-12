@@ -12,6 +12,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import { EnvironmentAuth } from "../../auth/EnvironmentAuth.ts";
@@ -45,6 +46,11 @@ export class WorkerTunnels extends Context.Service<WorkerTunnels, WorkerTunnelsS
 ) {}
 
 const STATUS_DEBOUNCE_MS = 200;
+
+class WorkerPolicyRefusal extends Schema.TaggedError<WorkerPolicyRefusal>()(
+  "WorkerPolicyRefusal",
+  { message: Schema.String },
+) {}
 
 /** The release this server runs: the build stamp when there is one, else the package. */
 export function readT3oRelease(): string {
@@ -133,9 +139,9 @@ const makeWorkerTunnels = Effect.gen(function* () {
           Effect.gen(function* () {
             const policy = yield* Effect.serviceOption(ManagedPolicy.ManagedPolicy);
             if (policy._tag === "Some" && !ManagedLimits.allowsRemoteClients(policy.value)) {
-              return yield* Effect.fail(
-                new Error("This worker's managed policy doesn't allow remote clients."),
-              );
+              return yield* new WorkerPolicyRefusal({
+                message: "This worker's managed policy doesn't allow remote clients.",
+              });
             }
             const issued = yield* auth.issueSession({
               subject: t3oBoardSubject(boardId),

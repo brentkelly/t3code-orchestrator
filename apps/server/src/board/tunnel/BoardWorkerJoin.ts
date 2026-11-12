@@ -109,6 +109,9 @@ function joinFailureDelayMs(failures: number): number {
   return failures <= 0 ? 0 : Math.min(5_000, 100 * 2 ** Math.min(failures, 6));
 }
 
+const STRIKE_TTL_MS = BOARD_WORKER_JOIN_CODE_TTL_MINUTES * 60_000;
+const MAX_STRIKE_ADDRESSES = 1_024;
+
 export const makeBoardWorkerJoin = Effect.gen(function* () {
   const store = yield* BoardWorkerJoinStore;
   const host = yield* BoardTunnelHost;
@@ -125,7 +128,8 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
     string,
     { reason: BoardWorkerJoinRefusal; at: string; release: string | null }
   >();
-  const failuresByAddress = new Map<string, number>();
+  /** Recent refused attempts by address, oldest first; forgotten after a code's lifetime. */
+  const strikes = new Map<string, { readonly count: number; readonly at: number }>();
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const newCommandId = Effect.sync(() => CommandId.make(NodeCrypto.randomUUID()));
@@ -180,16 +184,28 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
 
   const join: BoardWorkerJoinShape["join"] = Effect.fn("BoardWorkerJoin.join")(
     function* (body, address) {
-      const failures = address === null ? 0 : (failuresByAddress.get(address) ?? 0);
+      let failures = 0;
+      if (address !== null) {
+        const now = (yield* DateTime.now).epochMilliseconds;
+        const prior = strikes.get(address);
+        failures = prior !== undefined && now - prior.at < STRIKE_TTL_MS ? prior.count : 0;
+        // Counted before the wait, so parallel attempts from one address each wait longer.
+        strikes.delete(address);
+        strikes.set(address, { count: failures + 1, at: now });
+        while (strikes.size > MAX_STRIKE_ADDRESSES) {
+          const oldest = strikes.keys().next().value;
+          if (oldest === undefined) break;
+          strikes.delete(oldest);
+        }
+      }
       const delay = joinFailureDelayMs(failures);
       if (delay > 0) yield* Effect.sleep(delay);
       const outcome = yield* attemptJoin(body, address);
-      if (address !== null) {
-        if (outcome._tag === "refused" && outcome.body.refused !== "needs-update") {
-          failuresByAddress.set(address, failures + 1);
-        } else {
-          failuresByAddress.delete(address);
-        }
+      if (
+        address !== null &&
+        !(outcome._tag === "refused" && outcome.body.refused !== "needs-update")
+      ) {
+        strikes.delete(address);
       }
       return outcome;
     },
