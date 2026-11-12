@@ -147,7 +147,9 @@ function BoardAddressSection(props: { readonly saved: string | null; readonly di
                 if (event.key === "Escape") setDraft(null);
               }}
               aria-label="Board address"
-              aria-invalid={draft !== null && draft.trim().length > 0 && !isBoardAddress(draft.trim())}
+              aria-invalid={
+                draft !== null && draft.trim().length > 0 && !isBoardAddress(draft.trim())
+              }
             />
           }
         />

@@ -262,7 +262,10 @@ export const makeMemoryBoardWorkerJoinStore = Effect.gen(function* () {
         const keptIssuedAt = input.keep === undefined ? undefined : map.get(input.keep)?.issuedAt;
         for (const [hash, entry] of map) {
           if (entry.workerId !== input.workerId || entry.revokedAt !== null) continue;
-          if (input.keep !== undefined && (keptIssuedAt === undefined || entry.issuedAt >= keptIssuedAt))
+          if (
+            input.keep !== undefined &&
+            (keptIssuedAt === undefined || entry.issuedAt >= keptIssuedAt)
+          )
             continue;
           next.set(hash, { ...entry, revokedAt: input.at });
         }

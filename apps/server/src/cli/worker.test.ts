@@ -38,12 +38,27 @@ describe("t3 worker join", () => {
     });
     const alive = () => true;
     // A re-join after Remove: the file still says revoked from before.
-    expect(joinStatusVerdict(status("2026-01-01T00:00:09.000Z", "revoked"), "board-1", since, alive)).toBe("pending");
+    expect(
+      joinStatusVerdict(status("2026-01-01T00:00:09.000Z", "revoked"), "board-1", since, alive),
+    ).toBe("pending");
     // The old credential's tunnel is still up: it says nothing about the new one.
-    expect(joinStatusVerdict(status("2026-01-01T00:00:09.000Z", "connected"), "board-1", since, alive)).toBe("pending");
-    expect(joinStatusVerdict(status("2026-01-01T00:00:11.000Z", "connected"), "board-1", since, alive)).toBe("connected");
-    expect(joinStatusVerdict(status("2026-01-01T00:00:11.000Z", "revoked"), "board-1", since, alive)).toBe("refused");
-    expect(joinStatusVerdict(status("2026-01-01T00:00:11.000Z", "connected"), "board-1", since, () => false)).toBe("no-server");
+    expect(
+      joinStatusVerdict(status("2026-01-01T00:00:09.000Z", "connected"), "board-1", since, alive),
+    ).toBe("pending");
+    expect(
+      joinStatusVerdict(status("2026-01-01T00:00:11.000Z", "connected"), "board-1", since, alive),
+    ).toBe("connected");
+    expect(
+      joinStatusVerdict(status("2026-01-01T00:00:11.000Z", "revoked"), "board-1", since, alive),
+    ).toBe("refused");
+    expect(
+      joinStatusVerdict(
+        status("2026-01-01T00:00:11.000Z", "connected"),
+        "board-1",
+        since,
+        () => false,
+      ),
+    ).toBe("no-server");
     expect(joinStatusVerdict(null, "board-1", since, alive)).toBe("no-server");
   });
 });

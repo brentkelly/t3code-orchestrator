@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../../persistence/Migrations.ts";
@@ -37,7 +38,10 @@ it.effect("a proved credential revokes only those issued before it, never a newe
     yield* store.revokeCredentials({ workerId: "worker-1", at: "2026-01-05" });
     assert.isNull(yield* store.verifyCredential("third"));
   }).pipe(
-    Effect.provide(BoardWorkerJoinStoreLive),
-    Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" })),
+    Effect.provide(
+      BoardWorkerJoinStoreLive.pipe(
+        Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+      ),
+    ),
   ),
 );

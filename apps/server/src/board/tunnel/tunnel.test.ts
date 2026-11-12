@@ -471,7 +471,9 @@ describe("tunnel backpressure", () => {
     expect(advertisedBoardCandidate(current, undefined)).toBeNull();
     expect(advertisedBoardCandidate(current, "http://board.example")).toBeNull();
     expect(advertisedBoardCandidate(current, "not a url")).toBeNull();
-    expect(advertisedBoardCandidate(current, "http://127.0.0.1:3773")).toBe("http://127.0.0.1:3773");
+    expect(advertisedBoardCandidate(current, "http://127.0.0.1:3773")).toBe(
+      "http://127.0.0.1:3773",
+    );
   });
 
   it("comes straight back only after a tunnel held; a flapping one keeps backing off", () => {
