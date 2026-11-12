@@ -27,6 +27,7 @@ import { TestClock } from "effect/testing";
 
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { BoardEngine, type BoardEngineShape } from "../BoardEngine.ts";
+import { BoardCommandInvariantError } from "../errors.ts";
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
 import {
   boardStackEngine,
@@ -230,6 +231,42 @@ describe("BoardWorkers", () => {
         assert.strictEqual(code?.state, "used");
         assert.strictEqual(code?.usedBy?.address, "203.0.113.7");
         assert.deepStrictEqual(code?.milestones, ["code-accepted"]);
+      }),
+    ));
+
+  test("a join whose register fails drops a contested abbreviation, then reopens its code", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let refuseAll = false;
+        const { workers, join } = yield* setupWith({
+          dispatch: (real) => (command, options) =>
+            command.type === "board.worker.register" &&
+            (refuseAll || command.worker.abbreviation !== undefined)
+              ? Effect.fail(
+                  new BoardCommandInvariantError({
+                    commandType: command.type,
+                    detail: "abbreviation taken",
+                  }),
+                )
+              : real(command, options),
+        });
+        const first = yield* workers.createJoinCode;
+        assert.strictEqual(refusalOf(yield* join.join(joinRequest(first.code), null)), "accepted");
+        const joined = (yield* workers.state).workers.find((view) => view.id === WORKER_ID);
+        assert.isUndefined(joined?.abbreviation);
+
+        refuseAll = true;
+        const second = yield* workers.createJoinCode;
+        assert.strictEqual(
+          refusalOf(
+            yield* join.join(joinRequest(second.code, { environmentId: "env-other" }), null),
+          ),
+          "busy",
+        );
+        const reopened = (yield* workers.state).joinCodes.find(
+          (code) => code.codeId === second.codeId,
+        );
+        assert.notStrictEqual(reopened?.state, "used");
       }),
     ));
 

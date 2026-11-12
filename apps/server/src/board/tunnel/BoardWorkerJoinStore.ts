@@ -47,6 +47,8 @@ export interface BoardWorkerJoinStoreShape {
     readonly release: string;
     readonly rejoin: boolean;
   }) => Effect.Effect<boolean>;
+  /** Reopen a code claimed by a join that then couldn't register the worker. */
+  readonly releaseCode: (codeId: string) => Effect.Effect<void>;
   readonly cancelCode: (codeId: string, at: string) => Effect.Effect<boolean>;
   /** Codes created since `since`, newest first. */
   readonly recentCodes: (since: string) => Effect.Effect<ReadonlyArray<JoinCodeRecord>>;
@@ -132,6 +134,13 @@ export const BoardWorkerJoinStoreLive = Layer.effect(
           Effect.map((rows) => rows.length > 0),
           Effect.orDie,
         ),
+      releaseCode: (codeId) =>
+        sql`
+          UPDATE board_worker_join_codes SET
+            used_at = NULL, used_by_worker_id = NULL, used_by_label = NULL,
+            used_from = NULL, used_release = NULL, rejoin = 0
+          WHERE code_id = ${codeId}
+        `.pipe(Effect.asVoid, Effect.orDie),
       cancelCode: (codeId, at) =>
         sql`
           UPDATE board_worker_join_codes SET cancelled_at = ${at}
@@ -234,6 +243,20 @@ export const makeMemoryBoardWorkerJoinStore = Effect.gen(function* () {
             rejoin: input.rejoin,
           }),
         ];
+      }),
+    releaseCode: (codeId) =>
+      Ref.update(codes, (map) => {
+        const code = map.get(codeId);
+        if (code === undefined) return map;
+        return new Map(map).set(codeId, {
+          ...code,
+          usedAt: null,
+          usedByWorkerId: null,
+          usedByLabel: null,
+          usedFrom: null,
+          usedRelease: null,
+          rejoin: false,
+        });
       }),
     cancelCode: (codeId, at) =>
       Ref.modify(codes, (map) => {

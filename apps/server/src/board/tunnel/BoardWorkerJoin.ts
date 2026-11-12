@@ -328,20 +328,34 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
           ),
         );
     }
-    const registered = yield* engine
-      .dispatch({
-        type: "board.worker.register",
-        commandId: yield* newCommandId,
-        mode: existing === undefined ? "add" : "repair",
-        worker,
-        createdAt: usedAt,
-      })
-      .pipe(Effect.result);
+    const register = Effect.fn("BoardWorkerJoin.register")(function* (candidate: BoardWorker) {
+      return yield* engine
+        .dispatch({
+          type: "board.worker.register",
+          commandId: yield* newCommandId,
+          mode: existing === undefined ? "add" : "repair",
+          worker: candidate,
+          createdAt: usedAt,
+        })
+        .pipe(Effect.result);
+    });
+    let registered = yield* register(worker);
+    // A suggested abbreviation can lose a race to a concurrent join; join without one.
+    if (
+      registered._tag === "Failure" &&
+      existing === undefined &&
+      worker.abbreviation !== undefined
+    ) {
+      const { abbreviation: _dropped, ...unabbreviated } = worker;
+      registered = yield* register(unabbreviated);
+    }
     if (registered._tag === "Failure") {
+      // The worker never made it onto the board, so the code isn't spent.
+      yield* store.releaseCode(record.codeId);
       return refused(
         500,
         "busy",
-        "The board couldn't record the worker. Try again with a new code.",
+        "The board couldn't record the worker. Run the same command again; the code still works.",
       );
     }
 
