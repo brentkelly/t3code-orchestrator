@@ -38,8 +38,7 @@ import { useNowAtDeadlines, type BoardWorkersView } from "./boardWorkersState";
 import { joinCodeInPlay, joinDialogPhase, openJoinCodes } from "./joinDialog";
 import { RemoveWorkerDialog } from "./RemoveWorkerDialog";
 import { RenameWorkerDialog } from "./RenameWorkerDialog";
-import { LOCAL_WORKER_LABEL } from "./threadWorker";
-import { useBoardSettings } from "../useBoardEnvironmentId";
+import { localWorkerLabel } from "./threadWorker";
 import {
   clockTime,
   T3O_UPDATE_COMMAND,
@@ -56,8 +55,6 @@ const TONE_BADGE: Record<WorkerTone, "outline" | "info" | "warning" | "success">
   warning: "warning",
   done: "success",
 };
-
-const LOCAL_LABEL = `${LOCAL_WORKER_LABEL} (local)`;
 
 /** The board server as a worker, for the Rename dialog: its label lives in board settings. */
 const localWorkerView = (label: string): BoardWorkerView =>
@@ -157,7 +154,6 @@ export function WorkersSection(props: {
     reportFailure: false,
   });
   const [renaming, setRenaming] = useState<BoardWorkerView | null>(null);
-  const localLabel = useBoardSettings((settings) => settings.board.workers.localLabel);
   const [removing, setRemoving] = useState<BoardWorkerView | null>(null);
   const { state } = workers;
   // "Last seen" and the open codes' expiry are coarse: re-read the clock only when one changes.
@@ -202,7 +198,7 @@ export function WorkersSection(props: {
   };
 
   const defaultItems: ReadonlyArray<{ readonly value: BoardWorkerId; readonly label: string }> = [
-    { value: BOARD_LOCAL_WORKER_ID, label: LOCAL_LABEL },
+    { value: BOARD_LOCAL_WORKER_ID, label: `${localWorkerLabel(state)} (local)` },
     ...state.workers.map((worker) => ({ value: worker.id, label: worker.label })),
   ];
   const firstExpiry = openCodes
@@ -231,7 +227,7 @@ export function WorkersSection(props: {
         </div>
         <WorkerRow
           id="board-worker-local"
-          name={localLabel === null ? LOCAL_LABEL : `${localLabel} (local)`}
+          name={`${localWorkerLabel(state)} (local)`}
           abbreviation={BOARD_LOCAL_WORKER_ABBREVIATION}
           tags={<Badge variant="secondary">Board</Badge>}
           isDefault={state.defaultWorkerId === BOARD_LOCAL_WORKER_ID}
@@ -245,7 +241,7 @@ export function WorkersSection(props: {
               <Button
                 size="xs"
                 variant="ghost"
-                onClick={() => setRenaming(localWorkerView(localLabel ?? LOCAL_WORKER_LABEL))}
+                onClick={() => setRenaming(localWorkerView(localWorkerLabel(state)))}
               >
                 Rename…
               </Button>
@@ -319,7 +315,9 @@ export function WorkersSection(props: {
               <SelectValue />
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem value={BOARD_LOCAL_WORKER_ID}>{LOCAL_LABEL}</SelectItem>
+              <SelectItem
+                value={BOARD_LOCAL_WORKER_ID}
+              >{`${localWorkerLabel(state)} (local)`}</SelectItem>
               {state.workers.filter(canBeDefaultBoardWorker).map((worker) => (
                 <SelectItem key={worker.id} value={worker.id}>
                   {worker.label}

@@ -39,6 +39,7 @@ describe("previewPdfAssetUrl", () => {
     },
   );
 
+  // T3o: a board worker proxy's base path (T3O-84).
   it("keeps a board worker proxy's base path", () => {
     const base = "https://board.example/api/t3o/workers/w1/";
     expect(

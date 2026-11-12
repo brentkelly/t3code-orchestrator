@@ -20,7 +20,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 
-import { LOCAL_WORKER_LABEL } from "./threadWorker";
+import { localWorkerLabel } from "./threadWorker";
 import { clockTime } from "./workerCopy";
 
 /** Whether the board has workers to choose between. */
@@ -30,7 +30,7 @@ export function boardShowsWorkers(state: BoardWorkersState): boolean {
 
 /** A worker's name: "This server", or its label. */
 export function boardWorkerLabel(workerId: BoardWorkerId, state: BoardWorkersState): string {
-  if (workerId === BOARD_LOCAL_WORKER_ID) return LOCAL_WORKER_LABEL;
+  if (workerId === BOARD_LOCAL_WORKER_ID) return localWorkerLabel(state);
   return state.workers.find((worker) => worker.id === workerId)?.label ?? workerId;
 }
 
@@ -148,7 +148,7 @@ export function boardWorkerChoices(input: {
     );
   const local: BoardWorkerChoice = {
     workerId: BOARD_LOCAL_WORKER_ID,
-    label: `${LOCAL_WORKER_LABEL} (local)`,
+    label: `${localWorkerLabel(input.state)} (local)`,
     selectable: true,
     detail: load(BOARD_LOCAL_WORKER_ID),
     tooltip: null,

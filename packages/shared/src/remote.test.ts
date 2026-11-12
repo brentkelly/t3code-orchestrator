@@ -112,6 +112,7 @@ describe("remote", () => {
     });
   });
 
+  // T3o: a board worker proxy's base path (T3O-84).
   it.each([
     [{ pairingUrl: "https://board.example/api/t3o/workers/w1/pair#token=pairing-token" }],
     [{ pairingUrl: "https://board.example/api/t3o/workers/w1/#token=pairing-token" }],
@@ -130,6 +131,7 @@ describe("remote", () => {
     });
   });
 
+  // T3o: a board worker proxy's base path (T3O-84).
   it.each([
     [{ host: "https://myhost.ts.net/settings/connections", pairingCode: "pairing-token" }],
     [{ pairingUrl: "https://myhost.ts.net/settings/pair#token=pairing-token" }],

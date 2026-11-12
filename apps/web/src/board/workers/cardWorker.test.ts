@@ -189,6 +189,12 @@ describe("the worker field", () => {
       label: "This server",
       pinned: true,
     });
+    // Renamed on the Workers page, the board server reads its new name everywhere.
+    const renamed = { ...board, localLabel: "desk-01" };
+    expect(boardWorkerFieldLabel(BOARD_LOCAL_WORKER_ID, renamed).label).toBe("desk-01");
+    expect(
+      boardWorkerFieldLabel(null, { ...renamed, defaultWorkerId: BOARD_LOCAL_WORKER_ID }).label,
+    ).toBe("Follow default (desk-01)");
   });
 
   it("warns in the create dialog when the default worker has no checkout", () => {

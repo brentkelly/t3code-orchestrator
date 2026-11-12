@@ -24,6 +24,11 @@ import { clockTime } from "./workerCopy";
 /** The built-in worker's name: the board server's own machine. */
 export const LOCAL_WORKER_LABEL = "This server";
 
+/** The board server's name as a worker, as renamed on the Workers page. */
+export function localWorkerLabel(state: Pick<BoardWorkersState, "localLabel">): string {
+  return state.localLabel ?? LOCAL_WORKER_LABEL;
+}
+
 export interface BoardThreadWorker {
   readonly workerId: BoardWorkerId;
   /** The environment the thread opens in: the worker's, or the board's own. */
@@ -51,7 +56,7 @@ export function boardThreadWorker(input: {
       workerId: BOARD_LOCAL_WORKER_ID,
       environmentId: input.boardEnvironmentId,
       boardEnvironmentId: input.boardEnvironmentId,
-      label: LOCAL_WORKER_LABEL,
+      label: localWorkerLabel(input.workers),
       abbreviation: BOARD_LOCAL_WORKER_ABBREVIATION,
       state: null,
       lastSeenAt: null,

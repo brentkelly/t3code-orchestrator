@@ -152,6 +152,12 @@ export const makeBoardWorkers = Effect.gen(function* () {
   );
 
   const syncConnections = registry.pipe(Effect.flatMap(connections.sync));
+  const localLabel = Option.isNone(serverSettings)
+    ? Effect.succeed<string | null>(null)
+    : serverSettings.value.getSettings.pipe(
+        Effect.map((settings) => settings.board?.workers.localLabel ?? null),
+        Effect.orElseSucceed(() => null),
+      );
 
   const state: BoardWorkersShape["state"] = Effect.gen(function* () {
     const workers = yield* registry;
@@ -165,6 +171,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
       })),
       setups: [...(yield* SubscriptionRef.get(setups)).values()],
       joinCodes: yield* join.views,
+      localLabel: yield* localLabel,
     };
   });
 
@@ -664,6 +671,16 @@ export const makeBoardWorkers = Effect.gen(function* () {
       connections.states.pipe(Stream.as(undefined)),
       SubscriptionRef.changes(setups).pipe(Stream.as(undefined)),
       join.changes,
+      // Renaming the board server is a settings write, not a log event.
+      ...(Option.isNone(serverSettings)
+        ? []
+        : [
+            serverSettings.value.streamChanges.pipe(
+              Stream.map((settings) => settings.board?.workers.localLabel ?? null),
+              Stream.changes,
+              Stream.as(undefined),
+            ),
+          ]),
     ],
     { concurrency: "unbounded" },
   ).pipe(Stream.mapEffect(() => state));

@@ -183,6 +183,11 @@ const makeWorkerTunnels = Effect.gen(function* () {
         void run(revokeBoardSessions(auth, boardId).pipe(Effect.ignore));
       },
       onAddressAdopted: (boardUrl) => {
+        // The tunnel already runs on the new address: reconcile mustn't restart it for this.
+        const holding = held.get(boardId);
+        if (holding !== undefined) {
+          held.set(boardId, { ...holding, entry: { ...holding.entry, boardUrl } });
+        }
         try {
           const file = readWorkerFile(home);
           const current = file.boards.find((board) => board.boardEnvironmentId === boardId);

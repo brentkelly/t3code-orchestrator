@@ -280,6 +280,7 @@ describe("connection onboarding", () => {
     }),
   );
 
+  // T3o: a board worker proxy's base path (T3O-84).
   it.effect("keeps a proxied environment's base path in its registration and id", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];

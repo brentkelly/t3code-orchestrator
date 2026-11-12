@@ -65,6 +65,7 @@ function learned(id: string, httpBaseUrl: string): ConnectionRoute {
 }
 
 describe("connection routes", () => {
+  // T3o: a board worker proxy's base path (T3O-84).
   it("tells apart environments proxied under different paths of one origin", () => {
     const w1 = direct("w1", "https://board.example/api/t3o/workers/w1/");
     const w2 = direct("w2", "https://board.example/api/t3o/workers/w2/");

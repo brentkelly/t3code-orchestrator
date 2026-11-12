@@ -238,7 +238,11 @@ export const makeBoardTunnelHost = Effect.gen(function* () {
             keep: hashSecret(credential),
           });
           yield* markMilestone(workerId as EnvironmentId, "joined");
-        }),
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Couldn't record a worker's tunnel as ready.", { workerId, cause }),
+          ),
+        ),
       );
       void loadDescriptor(workerId);
     },

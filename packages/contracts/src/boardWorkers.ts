@@ -345,6 +345,8 @@ export const BoardWorkersState = Schema.Struct({
   joinCodes: Schema.Array(BoardWorkerJoinCodeView).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /** The board server's own name as a worker; absent or null reads "This server". */
+  localLabel: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type BoardWorkersState = typeof BoardWorkersState.Type;
 
