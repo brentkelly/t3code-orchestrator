@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off extendsNativeError:off - plain Node sockets and files: a byte pipe below Effect, also used by the CLI.
 /**
  * A worker's end of one board's tunnel, in plain Node sockets: hold the control
  * channel, answer each `dial` with a dial-back stream leg piped into this server's own
@@ -44,12 +45,12 @@ export interface TunnelWorkerOptions {
   /** Mint the board's session on this worker, when the board asks for one. */
   readonly mintBoardSession: () => Promise<string>;
   /** `helloAck ok`: reconcile board-user sessions against the live ones. */
-  readonly onReady?: (ack: WorkerTunnelHelloAck) => void;
-  readonly onStatus?: (status: WorkerTunnelStatus) => void;
+  readonly onReady?: ((ack: WorkerTunnelHelloAck) => void) | undefined;
+  readonly onStatus?: ((status: WorkerTunnelStatus) => void) | undefined;
   /** The board refused the credential: it no longer knows this worker. */
-  readonly onRevoked?: () => void;
+  readonly onRevoked?: (() => void) | undefined;
   /** A new board address worked; persist it. */
-  readonly onAddressAdopted?: (boardUrl: string) => void;
+  readonly onAddressAdopted?: ((boardUrl: string) => void) | undefined;
   /** Backoff bounds, injectable for tests. */
   readonly backoff?: { readonly initialMs: number; readonly maxMs: number };
 }

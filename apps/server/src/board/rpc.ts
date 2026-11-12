@@ -51,6 +51,7 @@ import * as Stream from "effect/Stream";
 import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { parseCardPullRequestText } from "./cardPullRequestTarget.ts";
+import { guardBoardHandlers } from "./tunnel/boardSubjectGuard.ts";
 import {
   BoardAttachmentClaimError,
   claimBoardCardAttachment,
@@ -136,7 +137,8 @@ export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
     ? Context.add(baseSubscriptionContext, BoardUsageRecorder, usageRecorder.value)
     : baseSubscriptionContext;
   const workerConnections = yield* Effect.serviceOption(WorkerConnections);
-  return {
+  // Board RPCs on a worker trust only a board's own session (T3O-84).
+  return guardBoardHandlers(deps.currentSession.subject, {
     ...makeBoardRpcHandlers(deps, {
       ciLogWorker: (workerId) =>
         Option.isNone(workerConnections)
@@ -168,7 +170,7 @@ export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
     // The named git and forge operations, for a central server
     // whose cards run here.
     ...boardWorkerGitCallRpcHandlers(deps.currentSession, workspaces),
-  };
+  });
 });
 
 function makeBoardRpcHandlers(

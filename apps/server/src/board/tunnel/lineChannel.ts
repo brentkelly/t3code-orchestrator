@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off extendsNativeError:off - plain Node sockets and files: a byte pipe below Effect, also used by the CLI.
 /**
  * The tunnel's control channel: newline-delimited JSON over a raw upgraded socket.
  * Not a WebSocket, so a front that passes the stream legs' upgrade passes this too,

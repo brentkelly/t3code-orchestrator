@@ -528,8 +528,12 @@ type BoardCardStepStateDbRow = typeof BoardCardStepStateDbRow.Type;
 const BoardWorkerDbRow = Schema.Struct({
   id: BoardWorker.fields.id,
   label: BoardWorker.fields.label,
-  url: BoardWorker.fields.url,
+  // T3o (T3O-84): outbound workers have no URL; the new columns are nullable in SQL.
+  url: Schema.NullOr(Schema.String),
   addedAt: BoardWorker.fields.addedAt,
+  abbreviation: Schema.NullOr(Schema.String),
+  t3oRelease: Schema.NullOr(Schema.String),
+  joinedAt: Schema.NullOr(Schema.String),
 });
 
 // `dependsOn` JSON-encodes; `locked` travels as 0/1 (SQLite has no boolean).
@@ -2274,10 +2278,17 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
   const upsertBoardWorkerRow = SqlSchema.void({
     Request: BoardWorkerDbRow,
     execute: (row) => sql`
-      INSERT INTO board_workers (worker_id, label, url, added_at)
-      VALUES (${row.id}, ${row.label}, ${row.url}, ${row.addedAt})
+      INSERT INTO board_workers (
+        worker_id, label, url, added_at, abbreviation, t3o_release, joined_at
+      )
+      VALUES (
+        ${row.id}, ${row.label}, ${row.url}, ${row.addedAt}, ${row.abbreviation},
+        ${row.t3oRelease}, ${row.joinedAt}
+      )
       ON CONFLICT (worker_id)
-      DO UPDATE SET label = excluded.label, url = excluded.url, added_at = excluded.added_at
+      DO UPDATE SET label = excluded.label, url = excluded.url, added_at = excluded.added_at,
+        abbreviation = excluded.abbreviation, t3o_release = excluded.t3o_release,
+        joined_at = excluded.joined_at
     `,
   });
 
@@ -2292,7 +2303,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     Request: Schema.Void,
     Result: BoardWorkerDbRow,
     execute: () => sql`
-      SELECT worker_id AS "id", label, url, added_at AS "addedAt"
+      SELECT worker_id AS "id", label, url, added_at AS "addedAt",
+        abbreviation, t3o_release AS "t3oRelease", joined_at AS "joinedAt"
       FROM board_workers
     `,
   });
@@ -2969,7 +2981,15 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
 
   const upsertWorker = (worker: BoardWorker) =>
     queries
-      .upsertBoardWorkerRow(worker)
+      .upsertBoardWorkerRow({
+        id: worker.id,
+        label: worker.label,
+        url: worker.url ?? null,
+        addedAt: worker.addedAt,
+        abbreviation: worker.abbreviation ?? null,
+        t3oRelease: worker.t3oRelease ?? null,
+        joinedAt: worker.joinedAt ?? null,
+      })
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.worker:query")));
 
   const deleteWorker = (workerId: EnvironmentId) =>
@@ -3896,7 +3916,19 @@ function loadBoardState(
         const plans = planRows.map(rowToBoardPlan).sort(compareBoardPlans);
         // The worker registry: absent when empty, and the default
         // absent when it is `local`, matching the projector's fold.
-        const workers = [...workerRows].sort(compareBoardWorkers);
+        const workers = workerRows
+          .map(
+            (row): BoardWorker => ({
+              id: row.id,
+              label: row.label,
+              addedAt: row.addedAt,
+              ...(row.url === null ? {} : { url: row.url as BoardWorker["label"] }),
+              ...(row.abbreviation === null ? {} : { abbreviation: row.abbreviation }),
+              ...(row.t3oRelease === null ? {} : { t3oRelease: row.t3oRelease as BoardWorker["label"] }),
+              ...(row.joinedAt === null ? {} : { joinedAt: row.joinedAt as BoardWorker["addedAt"] }),
+            }),
+          )
+          .sort(compareBoardWorkers);
         const defaultWorkerId = Option.getOrNull(
           Option.map(defaultWorkerRow, (row) => row.workerId),
         );

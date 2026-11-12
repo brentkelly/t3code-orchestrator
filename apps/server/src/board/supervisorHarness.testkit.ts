@@ -423,6 +423,7 @@ export const settingsWith = (input: {
     autoCollapseEmptyStages: DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES,
     costEmphasisUsd: DEFAULT_BOARD_COST_EMPHASIS_USD,
   },
+  workers: { boardAddress: null, localLabel: null },
 });
 
 export type Harness = {

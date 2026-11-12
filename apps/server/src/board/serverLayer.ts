@@ -33,9 +33,16 @@ import { WorkerSignalFeedLive } from "./workers/WorkerSignalFeed.ts";
 import { WorkerSnapshotStoreLive } from "./workers/WorkerSnapshotStore.ts";
 import { WorkerTransportLive } from "./workers/WorkerTransport.ts";
 import { BoardWorkspacesLive } from "./workspace/workspaceLayer.ts";
+import { BoardTunnelHostLive } from "./tunnel/BoardTunnelHost.ts";
+import { BoardTunnelSeamLive, BoardWorkerJoinLive } from "./tunnel/BoardWorkerJoin.ts";
+import { BoardWorkerJoinStoreLive } from "./tunnel/BoardWorkerJoinStore.ts";
+import { WorkerTunnelsLive } from "./tunnel/WorkerTunnels.ts";
 
-/** The central server's connections to its workers. */
+/** The central server's connections to its workers, each over that worker's
+    outbound tunnel (T3O-84). */
 const WorkerConnectionsServerLive = WorkerConnectionsLive.pipe(
+  Layer.provideMerge(BoardTunnelHostLive),
+  Layer.provideMerge(BoardWorkerJoinStoreLive),
   Layer.provideMerge(WorkerTransportLive),
   Layer.provide(WorkerSnapshotStoreLive),
 );
@@ -60,6 +67,10 @@ const BoardThreadsLive = ThreadGatewayRouterLive.pipe(
 // The relay answers board tool calls with the same handlers `/mcp` runs, and
 // they reach the supervisor, so it sits on top.
 export const BoardServerLive = BoardMcpRelayClientLive.pipe(
+  // The worker side: this server's tunnels to the boards it works for (T3O-84).
+  Layer.provideMerge(WorkerTunnelsLive),
+  // Routes the HTTP seam's tunnel, join and proxy paths here.
+  Layer.provideMerge(BoardTunnelSeamLive),
   // Board code reaches upstream services through ports; the adapters
   // live here so the upstream requirement still flows up to `server.ts`.
   Layer.provideMerge(SupervisorReactorLive.pipe(Layer.provide(BoardSetupScriptRunnerLive))),
@@ -74,6 +85,8 @@ export const BoardServerLive = BoardMcpRelayClientLive.pipe(
   // The workers' state placement gates a step on.
   Layer.provideMerge(BoardPlacementLive),
   Layer.provideMerge(BoardWorkersLive),
+  // Join codes and the join endpoint.
+  Layer.provideMerge(BoardWorkerJoinLive),
   // Where each card's git and forge work runs — on the worker
   // the card is placed on, read off the board's engine.
   Layer.provideMerge(BoardWorkspacesLive),

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off extendsNativeError:off - plain Node sockets and files: a byte pipe below Effect, also used by the CLI.
 /**
  * The board's end of every worker's tunnel, in plain Node sockets.
  *
@@ -45,6 +46,8 @@ export type TunnelSessionDecision =
       readonly boardAddress?: string | undefined;
     }
   | { readonly status: "needs-session" }
+  /** The probe failed for another reason: drop the tunnel, the worker redials. */
+  | { readonly status: "retry" }
   | { readonly status: "refused"; readonly message: string };
 
 export interface TunnelBoardDeps {
@@ -58,8 +61,8 @@ export interface TunnelBoardDeps {
     workerId: string,
     hello: WorkerTunnelHello,
   ) => Promise<TunnelSessionDecision>;
-  /** A tunnel reached `ok` (after `onHello` said so). */
-  readonly onReady?: (workerId: string, hello: WorkerTunnelHello) => void;
+  /** A tunnel reached `ok` (after `onHello` said so), on this credential. */
+  readonly onReady?: (workerId: string, hello: WorkerTunnelHello, credential: string) => void;
   /** The worker said it is leaving the board (`t3o-worker leave`). */
   readonly onGoodbye?: (workerId: string) => void;
   /** Any change in which workers are live or ready. */
@@ -149,6 +152,10 @@ export class TunnelBoard {
     this.slots.get(workerId)?.channel?.close();
   }
 
+  workerIds(): ReadonlyArray<string> {
+    return [...this.slots.keys()];
+  }
+
   endpoint(workerId: string): { readonly port: number; readonly phase: TunnelPhase } | null {
     const slot = this.slots.get(workerId);
     return slot === undefined ? null : { port: slot.port, phase: slot.phase };
@@ -221,7 +228,7 @@ export class TunnelBoard {
     }
     const credential = bearerOf(request.headers.authorization);
     const workerId = credential === null ? null : await this.deps.verifyCredential(credential);
-    if (workerId === null) {
+    if (workerId === null || credential === null) {
       refuseUpgrade(socket, 401, "Unauthorized", { error: "revoked" });
       return;
     }
@@ -265,6 +272,9 @@ export class TunnelBoard {
         case "needs-session":
           ack({ status: "needs-session" });
           return;
+        case "retry":
+          channel.close();
+          return;
         case "refused":
           ack({ status: "revoked", message: decision.message });
           channel.close();
@@ -276,7 +286,7 @@ export class TunnelBoard {
             liveBoardSessionIds: [...decision.liveBoardSessionIds],
             ...(decision.boardAddress === undefined ? {} : { boardAddress: decision.boardAddress }),
           });
-          this.deps.onReady?.(workerId, hello);
+          this.deps.onReady?.(workerId, hello, credential);
           this.deps.onChange?.();
       }
     };

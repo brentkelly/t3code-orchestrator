@@ -1,0 +1,241 @@
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off tryCatchInEffectGen:off globalDateInEffect:off - owns the plain-Node tunnel and a file watch; Effect is the service wrapper.
+/**
+ * The worker side of every board this server works for (T3O-84). `t3o-worker join`
+ * writes the board into `<T3 home>/worker.json` and its credential into the secret
+ * store; this service watches that file and holds one outbound tunnel per board,
+ * writing each one's state to `worker-status.json` for `t3o-worker status`.
+ *
+ * The board's session here is minted in-process, when the board asks for one, with the
+ * subject `t3o-board:<boardId>`; board RPCs on this server trust only that subject.
+ */
+import * as Fs from "node:fs";
+import * as Path from "node:path";
+
+import { BOARD_WORKER_PROTOCOL_VERSION, t3oBoardSubject } from "@t3tools/contracts";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+
+import packageJson from "../../../package.json" with { type: "json" };
+import { EnvironmentAuth } from "../../auth/EnvironmentAuth.ts";
+import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../../config.ts";
+import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
+import { boardSessionLabel } from "../workers/workerCredential.ts";
+import { reconcileBoardUserSessions, revokeBoardSessions } from "../workers/workerRpc.ts";
+import { TunnelWorker, type WorkerTunnelStatus } from "./tunnelWorker.ts";
+import {
+  localTunnelTarget,
+  readWorkerFile,
+  tunnelCredentialSecretName,
+  upsertWorkerBoard,
+  WORKER_FILE_NAME,
+  writeWorkerFile,
+  writeWorkerStatus,
+  type WorkerBoardEntry,
+  type WorkerBoardStatus,
+} from "./workerFile.ts";
+
+export interface WorkerTunnelsShape {
+  /** Re-read `worker.json` now and open or close tunnels to match it. */
+  readonly reconcile: Effect.Effect<void>;
+}
+
+export class WorkerTunnels extends Context.Service<WorkerTunnels, WorkerTunnelsShape>()(
+  "t3/board/tunnel/WorkerTunnels",
+) {}
+
+const STATUS_DEBOUNCE_MS = 200;
+
+/** The release this server runs: the build stamp when there is one, else the package. */
+export function readT3oRelease(): string {
+  try {
+    const stamp = JSON.parse(
+      Fs.readFileSync(new URL("./t3o-release.json", import.meta.url), "utf8"),
+    ) as { readonly version?: unknown };
+    if (typeof stamp.version === "string" && stamp.version.length > 0) return stamp.version;
+  } catch {
+    // Not a stamped build: a dev server or a plain build.
+  }
+  return packageJson.version;
+}
+
+export const makeWorkerTunnels = Effect.gen(function* () {
+  const config = yield* ServerConfig.ServerConfig;
+  const secrets = yield* ServerSecretStore;
+  const auth = yield* EnvironmentAuth;
+  const environment = yield* ServerEnvironment;
+  const context = yield* Effect.context<never>();
+  const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromiseWith(context)(effect);
+
+  const home = config.baseDir;
+  const environmentId = yield* environment.getEnvironmentId;
+  const environmentLabel = (yield* environment.getDescriptor).label;
+  const t3oRelease = readT3oRelease();
+  const local = localTunnelTarget(config.host, config.port);
+
+  interface Held {
+    readonly entry: WorkerBoardEntry;
+    readonly credential: string;
+    readonly tunnel: TunnelWorker;
+  }
+  const held = new Map<string, Held>();
+  const statuses = new Map<string, WorkerBoardStatus>();
+  let statusTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const flushStatus = () => {
+    statusTimer = null;
+    try {
+      writeWorkerStatus(home, {
+        updatedAt: new Date().toISOString(),
+        pid: process.pid,
+        boards: [...statuses.values()],
+      });
+    } catch {
+      // Status is advisory; `t3o-worker status` says so when it's missing.
+    }
+  };
+  const scheduleStatus = () => {
+    if (statusTimer !== null) return;
+    statusTimer = setTimeout(flushStatus, STATUS_DEBOUNCE_MS);
+    statusTimer.unref?.();
+  };
+
+  const recordStatus = (entry: WorkerBoardEntry, status: WorkerTunnelStatus) => {
+    statuses.set(entry.boardEnvironmentId, {
+      boardEnvironmentId: entry.boardEnvironmentId,
+      boardLabel: entry.boardLabel,
+      boardUrl: status.boardUrl,
+      state: status.state,
+      lastConnectedAt: status.lastConnectedAt,
+      lastError: status.lastError,
+    });
+    scheduleStatus();
+  };
+
+  const readCredential = (boardId: string) =>
+    secrets.get(tunnelCredentialSecretName(boardId)).pipe(
+      Effect.map(Option.map((bytes) => new TextDecoder().decode(bytes))),
+      Effect.orElseSucceed(() => Option.none<string>()),
+    );
+
+  const open = (entry: WorkerBoardEntry, credential: string) => {
+    const boardId = entry.boardEnvironmentId;
+    const tunnel = new TunnelWorker({
+      boardUrl: entry.boardUrl,
+      credential,
+      environmentId,
+      label: environmentLabel,
+      t3oRelease,
+      gatewayProtocol: BOARD_WORKER_PROTOCOL_VERSION,
+      local,
+      mintBoardSession: () =>
+        run(
+          auth
+            .issueSession({
+              subject: t3oBoardSubject(boardId),
+              label: boardSessionLabel(entry.boardLabel),
+            })
+            .pipe(Effect.map((issued) => issued.token)),
+        ),
+      onReady: (ack) => {
+        void run(
+          reconcileBoardUserSessions(auth, boardId, ack.liveBoardSessionIds ?? []).pipe(
+            Effect.ignore,
+          ),
+        );
+      },
+      onStatus: (status) => recordStatus(entry, status),
+      onRevoked: () => {
+        // The board no longer knows this worker: nothing it was given here stays.
+        void run(revokeBoardSessions(auth, boardId).pipe(Effect.ignore));
+      },
+      onAddressAdopted: (boardUrl) => {
+        try {
+          const file = readWorkerFile(home);
+          const current = file.boards.find((board) => board.boardEnvironmentId === boardId);
+          if (current === undefined) return;
+          writeWorkerFile(
+            home,
+            upsertWorkerBoard(file, { ...current, boardUrl, previousBoardUrl: current.boardUrl }),
+          );
+        } catch {
+          // Kept in memory; the next start dials the old address and learns again.
+        }
+      },
+    });
+    held.set(boardId, { entry, credential, tunnel });
+    tunnel.start();
+  };
+
+  const reconcile: WorkerTunnelsShape["reconcile"] = Effect.gen(function* () {
+    const file = readWorkerFile(home);
+    const wanted = new Map(file.boards.map((board) => [board.boardEnvironmentId, board]));
+    for (const [boardId, current] of held) {
+      const entry = wanted.get(boardId);
+      if (entry !== undefined && entry.boardUrl === current.entry.boardUrl) continue;
+      current.tunnel.stop();
+      held.delete(boardId);
+      if (entry === undefined) {
+        statuses.delete(boardId);
+        scheduleStatus();
+      }
+    }
+    for (const [boardId, entry] of wanted) {
+      const credential = yield* readCredential(boardId);
+      const current = held.get(boardId);
+      if (current !== undefined) {
+        if (Option.isSome(credential) && credential.value === current.credential) continue;
+        // A re-join stored a new credential: start over with it.
+        current.tunnel.stop();
+        held.delete(boardId);
+      }
+      if (Option.isNone(credential)) {
+        recordStatus(entry, {
+          state: "revoked",
+          lastConnectedAt: null,
+          lastError: "No tunnel credential stored for this board. Join it again.",
+          boardUrl: entry.boardUrl,
+        });
+        continue;
+      }
+      open(entry, credential.value);
+    }
+  }).pipe(Effect.withSpan("WorkerTunnels.reconcile"));
+
+  yield* reconcile;
+
+  // Watch the directory, not the file: the CLI replaces it atomically by rename.
+  let debounce: ReturnType<typeof setTimeout> | null = null;
+  let watcher: Fs.FSWatcher | null = null;
+  try {
+    Fs.mkdirSync(home, { recursive: true });
+    watcher = Fs.watch(home, (_event, name) => {
+      if (name !== null && Path.basename(String(name)) !== WORKER_FILE_NAME) return;
+      if (debounce !== null) clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        debounce = null;
+        void run(reconcile);
+      }, 150);
+      debounce.unref?.();
+    });
+    watcher.on("error", () => undefined);
+  } catch {
+    // No watch on this filesystem: joins take effect at the next start.
+  }
+
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      watcher?.close();
+      if (debounce !== null) clearTimeout(debounce);
+      for (const current of held.values()) current.tunnel.stop();
+      held.clear();
+      if (statusTimer !== null) clearTimeout(statusTimer);
+    }),
+  );
+
+  return { reconcile } satisfies WorkerTunnelsShape;
+});
+
+export const WorkerTunnelsLive = Layer.effect(WorkerTunnels, makeWorkerTunnels);

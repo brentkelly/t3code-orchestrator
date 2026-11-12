@@ -6,6 +6,7 @@ import {
   BOARD_WORKER_PROTOCOL_VERSION,
   EnvironmentId,
   type BoardWorkerHello,
+  type BoardWorkerMintUserSessionInput,
   type BoardWorkerProject,
   type BoardWorkerProvider,
   type ProjectCloneListEvent,
@@ -23,6 +24,12 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { SecretStorePersistError, ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import {
+  BoardTunnelHost,
+  type BoardTunnelHostShape,
+  type JoinMilestones,
+  type TunnelEntry,
+} from "../tunnel/BoardTunnelHost.ts";
 import type { WorkerGatewayRpc } from "./gatewayWire.ts";
 import { WorkerSnapshotStore, makeMemoryWorkerSnapshotStore } from "./WorkerSnapshotStore.ts";
 import {
@@ -69,6 +76,12 @@ export interface FakeWorker {
   readonly sessionExpiry: Map<string, number>;
   /** The open link's close signal, while one is open. */
   link: Deferred.Deferred<void> | null;
+  /** `mintUserSession` calls, with the board session that asked (T3O-84). */
+  readonly mintedUserSessions: Array<
+    BoardWorkerMintUserSessionInput & { readonly boardToken: string }
+  >;
+  /** Board session ids `revokeUserSessions` was asked about. */
+  readonly revokedUserSessions: Array<string>;
   /** What the worker's thread gateway answers: an in-process
       worker's own host, or a worker that has none. */
   gateway: WorkerGatewayRpc;
@@ -179,6 +192,8 @@ const linkedGateway = (
 
 const makeFakeWorkers = Effect.sync(() => {
   const workers = new Map<string, FakeWorker>();
+  /** Where the fake tunnel host says each worker's endpoint is. */
+  const urlByEnvironment = new Map<string, string>();
 
   const add = (url: string, environmentId: string) =>
     Effect.gen(function* () {
@@ -206,6 +221,8 @@ const makeFakeWorkers = Effect.sync(() => {
         released: 0,
         onRelease: Effect.void,
         releasedTokens: [],
+        mintedUserSessions: [],
+        revokedUserSessions: [],
         renewedTokens: [],
         renewFailures: 0,
         sessionExpiry: new Map(),
@@ -220,6 +237,7 @@ const makeFakeWorkers = Effect.sync(() => {
           ),
       };
       workers.set(url, worker);
+      urlByEnvironment.set(environmentId, url);
       return worker;
     });
 
@@ -294,6 +312,20 @@ const makeFakeWorkers = Effect.sync(() => {
           return worker.retryApplied;
         }),
       git: (method, payload) => Effect.suspend(() => worker.git(method, payload)),
+      mintUserSession: (input) =>
+        Effect.sync(() => {
+          worker.mintedUserSessions.push({ ...input, boardToken: accessToken });
+          return {
+            bearerToken: `user-${input.boardSessionId}`,
+            expiresAt: "2026-11-13T00:00:00.000Z",
+            scopes: input.scopes,
+          };
+        }),
+      revokeUserSessions: (boardSessionIds) =>
+        Effect.sync(() => {
+          worker.revokedUserSessions.push(...boardSessionIds);
+          return boardSessionIds.length;
+        }),
       // Ends with a failure when the link drops, as a real subscription does.
       // The gateway lives as long as the link: a dropped link ends its
       // streams with a failure and fails its calls, as a real socket does.
@@ -327,8 +359,63 @@ const makeFakeWorkers = Effect.sync(() => {
       }),
   });
 
-  return { workers, add, drop, transport };
+  return { workers, add, drop, transport, urlByEnvironment };
 });
+
+/**
+ * A tunnel host with no sockets (T3O-84): each worker's endpoint is the URL its fake
+ * was added at, and every tunnel is ready unless a test says otherwise.
+ */
+export const makeFakeTunnelHost = (urlByEnvironment: ReadonlyMap<string, string>) =>
+  Effect.gen(function* () {
+    const entries = yield* SubscriptionRef.make<ReadonlyMap<string, TunnelEntry>>(new Map());
+    const milestones = yield* SubscriptionRef.make<JoinMilestones>(new Map());
+    const closed: Array<string> = [];
+    const disconnected: Array<string> = [];
+    const setPhase = (workerId: string, phase: TunnelEntry["phase"]) =>
+      SubscriptionRef.update(entries, (map) => {
+        const before = map.get(workerId) ?? { phase: "down", readyEpoch: 0, hello: null };
+        const readyEpoch =
+          phase === "ready" && before.phase !== "ready" ? before.readyEpoch + 1 : before.readyEpoch;
+        return new Map(map).set(workerId, { ...before, phase, readyEpoch });
+      });
+    const host: BoardTunnelHostShape = {
+      ensure: (workerId) =>
+        SubscriptionRef.get(entries).pipe(
+          Effect.flatMap((map) => (map.has(workerId) ? Effect.void : setPhase(workerId, "ready"))),
+          Effect.as(urlByEnvironment.get(workerId) ?? `http://tunnel-${workerId}`),
+        ),
+      close: (workerId) =>
+        Effect.sync(() => void closed.push(workerId)).pipe(
+          Effect.andThen(
+            SubscriptionRef.update(entries, (map) => {
+              const next = new Map(map);
+              next.delete(workerId);
+              return next;
+            }),
+          ),
+        ),
+      entries: SubscriptionRef.get(entries),
+      states: SubscriptionRef.changes(entries),
+      milestones,
+      beginJoin: (workerId) =>
+        SubscriptionRef.update(milestones, (map) => new Map(map).set(workerId, ["code-accepted"])),
+      markMilestone: () => Effect.void,
+      // The tunnel drops; a test brings it back with `setPhase(id, "ready")`, as the
+      // worker's next hello would.
+      disconnect: (workerId) =>
+        Effect.sync(() => void disconnected.push(workerId)).pipe(
+          Effect.andThen(setPhase(workerId, "down")),
+        ),
+      seam: {
+        control: () => undefined,
+        stream: () => undefined,
+        proxyUpgrade: () => undefined,
+        proxyRequest: () => undefined,
+      },
+    };
+    return { host, setPhase, closed, disconnected };
+  });
 
 const makeMemorySecretStore = Effect.sync(() => {
   const secrets = new Map<string, Uint8Array>();
@@ -361,10 +448,12 @@ export const makeFakeWorkerLayer = Effect.gen(function* () {
   const fake = yield* makeFakeWorkers;
   const secrets = yield* makeMemorySecretStore;
   const snapshots = yield* makeMemoryWorkerSnapshotStore;
+  const tunnel = yield* makeFakeTunnelHost(fake.urlByEnvironment);
   const layer = Layer.mergeAll(
+    Layer.succeed(BoardTunnelHost, tunnel.host),
     Layer.succeed(WorkerTransport, fake.transport),
     Layer.succeed(ServerSecretStore, secrets.store),
     Layer.succeed(WorkerSnapshotStore, snapshots),
   );
-  return { fake, secrets, snapshots, layer };
+  return { fake, secrets, snapshots, tunnel, layer };
 });

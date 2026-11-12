@@ -343,6 +343,7 @@ const makeLayer = (fixture: Fixture) =>
               defaultWorkerId: BOARD_LOCAL_WORKER_ID,
               workers: [workerView(fixture.online ?? true)],
               setups: [],
+              joinCodes: [],
             }),
             changes: Stream.empty,
           }),

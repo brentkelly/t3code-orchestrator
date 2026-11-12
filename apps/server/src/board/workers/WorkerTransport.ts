@@ -21,6 +21,8 @@ import {
   type BoardWorkerProjects,
   type BoardWorkerProviders,
   type BoardWorkerRenewal,
+  type BoardWorkerMintUserSessionInput,
+  type BoardWorkerUserSession,
   type ProjectCloneListEvent,
   type ProjectCloneStartInput,
   type ProjectCloneStartResult,
@@ -68,6 +70,14 @@ export interface WorkerRpc {
   readonly release: Effect.Effect<void, WorkerRpcError>;
   /** A successor to the calling session, before it expires. */
   readonly renew: Effect.Effect<BoardWorkerRenewal, WorkerRpcError>;
+  /** A session on the worker for one board user (T3O-84). */
+  readonly mintUserSession: (
+    input: BoardWorkerMintUserSessionInput,
+  ) => Effect.Effect<BoardWorkerUserSession, WorkerRpcError>;
+  /** Revoke the worker sessions minted for these board sessions. */
+  readonly revokeUserSessions: (
+    boardSessionIds: ReadonlyArray<string>,
+  ) => Effect.Effect<number, WorkerRpcError>;
   readonly startProjectClone: (
     input: ProjectCloneStartInput,
   ) => Effect.Effect<ProjectCloneStartResult, WorkerRpcError>;
@@ -250,6 +260,18 @@ const connectWorker = Effect.fn("WorkerTransport.connect")(function* ({
       client[BOARD_WORKER_WS_METHODS.renew]({}),
       "The worker didn't renew the board's session.",
     ),
+    mintUserSession: (input) =>
+      call(
+        client[BOARD_WORKER_WS_METHODS.mintUserSession](input),
+        "The worker didn't issue a session for this thread view.",
+      ),
+    revokeUserSessions: (boardSessionIds) =>
+      call(
+        client[BOARD_WORKER_WS_METHODS.revokeUserSessions]({ boardSessionIds }).pipe(
+          Effect.map((result) => result.revoked),
+        ),
+        "The worker didn't revoke the board user's sessions.",
+      ),
     startProjectClone: (input) =>
       call(client[WS_METHODS.projectCloneStart](input), "The worker couldn't start the clone."),
     retryProjectClone: (projectId) =>

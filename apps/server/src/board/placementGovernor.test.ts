@@ -101,7 +101,7 @@ const workerView = (
 const workersState = (
   workers: ReadonlyArray<BoardWorkerView>,
   defaultWorkerId: BoardWorkerId = BOARD_LOCAL_WORKER_ID,
-): BoardWorkersState => ({ defaultWorkerId, workers, setups: [] });
+): BoardWorkersState => ({ defaultWorkerId, workers, setups: [], joinCodes: [] });
 
 /** A placement whose worker summary the test changes, ticking on each change. */
 const makePlacement = (initial: BoardWorkersState) =>

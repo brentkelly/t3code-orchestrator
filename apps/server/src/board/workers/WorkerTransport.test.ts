@@ -39,6 +39,14 @@ const handlers = group.toLayer({
   "boardWorker.providers": () => Effect.succeed({ providers: [], projectsFolder: null }),
   "boardWorker.release": () => Effect.void,
   "boardWorker.renew": () => Effect.succeed({ accessToken: "token-2" }),
+  "boardWorker.mintUserSession": (input) =>
+    Effect.succeed({
+      bearerToken: `user-${input.boardSessionId}`,
+      expiresAt: "2026-11-13T00:00:00.000Z",
+      scopes: input.scopes,
+    }),
+  "boardWorker.revokeUserSessions": (input) =>
+    Effect.succeed({ revoked: input.boardSessionIds.length }),
 });
 
 /** An upstream server: the same socket, but no `boardWorker.hello`. */

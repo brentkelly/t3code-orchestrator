@@ -1,4 +1,6 @@
 import {
+  AuthFilesystemWriteScope,
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSessionId,
   BOARD_WORKER_PROTOCOL_VERSION,
@@ -6,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
@@ -16,7 +19,7 @@ import { boardWorkerRpcHandlers } from "./workerRpc.ts";
 
 const session = (scopes: AuthenticatedSession["scopes"]): AuthenticatedSession => ({
   sessionId: AuthSessionId.make("session-board"),
-  subject: "board",
+  subject: "t3o-board:env-board",
   method: "bearer-access-token",
   scopes,
 });
@@ -39,13 +42,38 @@ const layer = Layer.mergeAll(
       Effect.succeed([
         {
           sessionId: AuthSessionId.make("session-board"),
+          subject: "t3o-board:env-board",
           client: { label: "T3o board (central)", deviceType: "bot" },
+        },
+        {
+          sessionId: AuthSessionId.make("session-user-1"),
+          subject: "t3o-board-user:env-board:board-session-1",
+          client: { label: "Chrome via T3o board (central)", deviceType: "bot" },
+        },
+        {
+          sessionId: AuthSessionId.make("session-user-2"),
+          subject: "t3o-board-user:env-board:board-session-2",
+          client: { label: "Phone via T3o board (central)", deviceType: "bot" },
+        },
+        {
+          sessionId: AuthSessionId.make("session-other-board"),
+          subject: "t3o-board:env-elsewhere",
+          client: { label: "T3o board (elsewhere)", deviceType: "bot" },
+        },
+        {
+          sessionId: AuthSessionId.make("session-laptop"),
+          subject: "one-time-token",
+          client: { label: "Laptop", deviceType: "desktop" },
         },
       ] as never),
     issueSession: (input) =>
       Effect.sync(() => {
         issued.push(input);
-        return { token: "token-successor" } as never;
+        return {
+          token: "token-successor",
+          scopes: input?.scopes ?? [],
+          expiresAt: DateTime.makeUnsafe("2026-11-13T10:00:00.000Z"),
+        } as never;
       }),
   }),
 );
@@ -67,14 +95,51 @@ it.effect("refuses a session without the read scope", () =>
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("release revokes the calling session itself, after answering", () =>
+it.effect("release revokes every session of the calling board, after answering", () =>
   Effect.gen(function* () {
     revoked.length = 0;
     const handlers = yield* boardWorkerRpcHandlers(session([AuthOrchestrationReadScope]));
     yield* handlers["boardWorker.release"]({});
     assert.deepStrictEqual(revoked, []);
     yield* TestClock.adjust("250 millis");
-    assert.deepStrictEqual(revoked, ["session-board"]);
+    // Its own and its users', never another board's or this machine's own clients.
+    assert.deepStrictEqual(revoked, ["session-board", "session-user-1", "session-user-2"]);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("mints a board user's session: the board's subject, never wider than the board", () =>
+  Effect.gen(function* () {
+    issued.length = 0;
+    const handlers = yield* boardWorkerRpcHandlers(
+      session([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]),
+    );
+    const minted = yield* handlers["boardWorker.mintUserSession"]({
+      boardSessionId: "board-session-9",
+      scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope, AuthFilesystemWriteScope],
+      label: "Chrome via T3o board (central)",
+    });
+    assert.strictEqual(minted.bearerToken, "token-successor");
+    assert.strictEqual(minted.expiresAt, "2026-11-13T10:00:00.000Z");
+    const [input] = issued as Array<{
+      readonly subject: string;
+      readonly scopes: ReadonlyArray<string>;
+      readonly ttl: Duration.Duration;
+    }>;
+    assert.strictEqual(input?.subject, "t3o-board-user:env-board:board-session-9");
+    assert.deepStrictEqual(input?.scopes, [AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
+    assert.strictEqual(Duration.toHours(input!.ttl), 24);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("revokes only the named board sessions' worker sessions", () =>
+  Effect.gen(function* () {
+    revoked.length = 0;
+    const handlers = yield* boardWorkerRpcHandlers(session([AuthOrchestrationReadScope]));
+    const result = yield* handlers["boardWorker.revokeUserSessions"]({
+      boardSessionIds: ["board-session-2"],
+    });
+    assert.strictEqual(result.revoked, 1);
+    assert.deepStrictEqual(revoked, ["session-user-2"]);
   }).pipe(Effect.provide(layer)),
 );
 
@@ -86,7 +151,11 @@ it.effect("renew issues a successor with the caller's own subject, scopes and la
     const renewal = yield* handlers["boardWorker.renew"]({});
     assert.strictEqual(renewal.accessToken, "token-successor");
     assert.deepStrictEqual(issued, [
-      { subject: "board", scopes: [AuthOrchestrationReadScope], label: "T3o board (central)" },
+      {
+        subject: "t3o-board:env-board",
+        scopes: [AuthOrchestrationReadScope],
+        label: "T3o board (central)",
+      },
     ]);
     // The old session stays valid until the caller gives it back.
     yield* TestClock.adjust("1 second");
@@ -115,7 +184,11 @@ it.effect("renew refuses a browser cookie, a DPoP-bound or a non-board session",
         method: "dpop-access-token",
         proofKeyThumbprint: "thumbprint",
       },
-      { ...session([AuthOrchestrationReadScope]), sessionId: AuthSessionId.make("session-cli") },
+      {
+        ...session([AuthOrchestrationReadScope]),
+        sessionId: AuthSessionId.make("session-laptop"),
+        subject: "one-time-token",
+      },
     ];
     for (const caller of callers) {
       const handlers = yield* boardWorkerRpcHandlers(caller);

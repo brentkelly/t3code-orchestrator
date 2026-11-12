@@ -10,7 +10,7 @@ import {
   T3O_TUNNEL_PROTOCOL_VERSION,
   type WorkerTunnelHello,
 } from "@t3tools/contracts";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { joinSockets } from "./lineChannel.ts";
 import { NONCE_HEADER, TunnelBoard, type TunnelSessionDecision } from "./tunnelBoard.ts";
