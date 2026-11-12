@@ -145,6 +145,15 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   waits on a human's read), Not done is amber, and Shortcut is neutral, never blue, because blue
   means running. A failing check tile is amber, not red.
 
+- **The tab title is a status surface too (T3O-82), and it has no colour to spend.** A tab showing
+  a card, a card's thread or a sub-board names the card's status in brackets after its title; a
+  plain thread names its sidebar status. A leading `*` stands in for violet and amber alike: it
+  marks anything that needs a human or is blocked, and a blue `Working` goes unmarked. The status
+  comes from the card face's own ranking (`tabStatus.logic.ts`), so the tab cannot disagree with
+  the card, with one addition: Ready for merge is starred, by the card notifier's rule, although
+  the face leaves it uncoloured. Done, Paused and idle cards carry no status, and the words never
+  carry a clock, because a ticking title churns the tab.
+
 ## Deliberately outside the convention
 
 These are blue or green for reasons that have nothing to do with work state, and changing them

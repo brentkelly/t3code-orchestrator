@@ -22,6 +22,7 @@ import {
   type TabRouteMatch,
   type TabThread,
 } from "./tabIdentity.logic";
+import type { TabStatus } from "./tabStatus.logic";
 
 const central = EnvironmentId.make("env-central");
 const worker = EnvironmentId.make("env-worker");
@@ -93,9 +94,18 @@ function inputs(overrides: Partial<TabIdentityInputs> = {}): TabIdentityInputs {
     thread: (environmentId, threadId) => threads[`${environmentId}|${threadId}`] ?? null,
     project: (environmentId, projectId) => projects[`${environmentId}|${projectId}`] ?? null,
     creating: null,
+    cardStatus: () => null,
+    threadStatus: () => null,
     ...overrides,
   };
 }
+
+const inputNeeded: TabStatus = { label: "Input needed", needsYou: true };
+const working: TabStatus = { label: "Working", needsYou: false };
+const cardStatuses =
+  (statuses: Record<string, TabStatus>): TabIdentityInputs["cardStatus"] =>
+  (cardId) =>
+    statuses[cardId] ?? null;
 
 const blue = PROJECT_ICON_ACCENTS.blue.mutedHex;
 const t3oTile = (number: string | null) => ({
@@ -123,7 +133,7 @@ describe("resolveIdentity", () => {
     readonly name: string;
     readonly key: TabRouteKey;
     readonly inputs?: Partial<TabIdentityInputs>;
-    readonly expected: { title: string; icon: unknown; pending?: boolean } | null;
+    readonly expected: { title: string; icon?: unknown; pending?: boolean } | null;
   }>([
     {
       name: "a card open on the board",
@@ -274,6 +284,75 @@ describe("resolveIdentity", () => {
       key: { kind: "board", projectId: t3o },
       inputs: { creating: { environmentId: central, projectId: null, title: "  " } },
       expected: { title: "New card · mesh-dev", icon: defaultIcon },
+    },
+    {
+      name: "a card that needs you is starred and names why",
+      key: card("card-65"),
+      inputs: { cardStatus: cardStatuses({ "card-65": inputNeeded }) },
+      expected: { title: "*Tab identity (Input needed) · T3O-65 · mesh-dev", icon: t3oTile("65") },
+    },
+    {
+      name: "a working card names its status without a star",
+      key: card("card-65"),
+      inputs: { cardStatus: cardStatuses({ "card-65": working }) },
+      expected: { title: "Tab identity (Working) · T3O-65 · mesh-dev" },
+    },
+    {
+      name: "a card's thread shows the card's status, not its own",
+      key: thread(central, "thread-local"),
+      inputs: {
+        cardStatus: cardStatuses({ "card-65": inputNeeded }),
+        threadStatus: () => working,
+      },
+      expected: { title: "*Build T3O-65 (Input needed) · T3O-65 · mesh-dev" },
+    },
+    {
+      name: "a sub-board shows its parent card's status",
+      key: { kind: "subBoard", parentCardId: "card-60" },
+      inputs: { cardStatus: cardStatuses({ "card-60": working }) },
+      expected: { title: "Distributed board (Working) · T3O-60 board · mesh-dev" },
+    },
+    {
+      name: "a plain thread shows its own status",
+      key: thread(central, "thread-plain"),
+      inputs: { threadStatus: () => ({ label: "Failed", needsYou: true }) },
+      expected: { title: "*Just chatting (Failed) · mesh-dev" },
+    },
+    {
+      name: "a thread before the snapshot shows no status yet",
+      key: thread(central, "thread-local"),
+      inputs: { cardIndex: null, threadStatus: () => working },
+      expected: { title: "Build T3O-65 · mesh-dev", pending: true },
+    },
+    {
+      name: "trimming cuts the title, never the status",
+      key: card("card-long"),
+      inputs: { cardStatus: cardStatuses({ "card-long": inputNeeded }) },
+      expected: {
+        title:
+          "*A card title that goes on and on well past the sixty charac… (Input needed) · T3O-1204 · mesh-dev",
+      },
+    },
+    {
+      name: "the board carries no status",
+      key: { kind: "board", projectId: t3o },
+      inputs: { cardStatus: () => inputNeeded, threadStatus: () => inputNeeded },
+      expected: { title: "Board · mesh-dev" },
+    },
+    {
+      name: "the New card dialog carries no status",
+      key: card("card-65"),
+      inputs: {
+        cardStatus: () => inputNeeded,
+        creating: { environmentId: central, projectId: t3o, title: "Contour" },
+      },
+      expected: { title: "New: Contour · mesh-dev" },
+    },
+    {
+      name: "a draft carries no status",
+      key: { kind: "draft", draftId: "draft-1", project: null },
+      inputs: { cardStatus: () => inputNeeded, threadStatus: () => inputNeeded },
+      expected: { title: "T3 Code (Beta) · mesh-dev" },
     },
     {
       name: "trimming never splits an emoji",
