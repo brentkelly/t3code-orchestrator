@@ -2,7 +2,7 @@
  * T3o: Settings → Workers (prototype 3.1), its own page under Board. The
  * workers, the address they join on, and which projects each has checked out.
  */
-import { BoardAddress, isLocalOnlyBoardWorkers, type EnvironmentId } from "@t3tools/contracts";
+import { BoardAddress, hasOnlyLocalBoardWorker, type EnvironmentId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { useState } from "react";
 
@@ -35,7 +35,7 @@ export function BoardWorkersSettingsPage() {
   const boardAddress = useBoardSettings((settings) => settings.board.workers.boardAddress);
   const workersAnchor = searchableSetting("board-workers");
   const checkoutsAnchor = searchableSetting("board-project-checkouts");
-  const showCheckouts = !workers.loading && !isLocalOnlyBoardWorkers(workers.state);
+  const showCheckouts = !workers.loading && !hasOnlyLocalBoardWorker(workers.state);
   const focusAddress = () => {
     const input = document.getElementById(BOARD_ADDRESS_INPUT_ID);
     input?.scrollIntoView({ behavior: "smooth", block: "center" });

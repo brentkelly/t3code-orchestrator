@@ -323,9 +323,10 @@ export function suggestBoardWorkerAbbreviation(
   for (const candidate of candidates) {
     if (/^[A-Z0-9]{1,3}$/.test(candidate) && !used.has(candidate)) return candidate;
   }
-  const stem = (letters.slice(0, 2) || "W").padEnd(1, "W");
+  const stem = letters || "W";
   for (let index = 1; index < 100; index++) {
-    const candidate = `${stem}${index}`.slice(0, 3);
+    const suffix = String(index);
+    const candidate = `${stem.slice(0, 3 - suffix.length)}${suffix}`;
     if (!used.has(candidate)) return candidate;
   }
   return null;
@@ -357,15 +358,20 @@ export const EMPTY_BOARD_WORKERS_STATE: BoardWorkersState = {
   joinCodes: [],
 };
 
-/** A board with no workers and the local default is exactly today's board. */
-export function isLocalOnlyBoardWorkers(state: BoardWorkersState | undefined): boolean {
+/** The board server is its only worker: none joined, none being set up, the local default. */
+export function hasOnlyLocalBoardWorker(state: BoardWorkersState | undefined): boolean {
   return (
     state === undefined ||
     (state.workers.length === 0 &&
       state.setups.length === 0 &&
-      state.joinCodes.length === 0 &&
       state.defaultWorkerId === BOARD_LOCAL_WORKER_ID)
   );
+}
+
+/** A board with no workers, no join codes listed and the local default is exactly today's
+    board, so its payload carries no worker state. */
+export function isLocalOnlyBoardWorkers(state: BoardWorkersState | undefined): boolean {
+  return hasOnlyLocalBoardWorker(state) && (state?.joinCodes.length ?? 0) === 0;
 }
 
 /** Every worker id, the built-in `local` first. */

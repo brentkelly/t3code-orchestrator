@@ -12,7 +12,7 @@ import {
   BOARD_LOCAL_WORKER_ABBREVIATION,
   BOARD_LOCAL_WORKER_ID,
   boardWorkerProxyPath,
-  isLocalOnlyBoardWorkers,
+  hasOnlyLocalBoardWorker,
   type BoardWorkerConnectionState,
   type BoardWorkerId,
   type BoardWorkersState,
@@ -82,7 +82,7 @@ export function threadWorkerRanOn(
   worker: BoardThreadWorker,
   workers: BoardWorkersState,
 ): string | null {
-  return isLocalOnlyBoardWorkers(workers) && worker.workerId === BOARD_LOCAL_WORKER_ID
+  return hasOnlyLocalBoardWorker(workers) && worker.workerId === BOARD_LOCAL_WORKER_ID
     ? null
     : `ran on ${worker.label}`;
 }

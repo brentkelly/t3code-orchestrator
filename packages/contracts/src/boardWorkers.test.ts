@@ -8,6 +8,7 @@ import {
   boardWorkerIds,
   EMPTY_BOARD_WORKERS_STATE,
   formatBoardWorkerJoinCode,
+  hasOnlyLocalBoardWorker,
   isLocalOnlyBoardWorkers,
   normalizeBoardWorkerJoinCode,
   suggestBoardWorkerAbbreviation,
@@ -65,6 +66,23 @@ describe("board workers", () => {
         defaultWorkerId: EnvironmentId.make("env-a"),
       }),
     ).toBe(false);
+    // A listed join code carries worker state, but the board still has only itself as a worker.
+    const withCode: BoardWorkersState = {
+      ...EMPTY_BOARD_WORKERS_STATE,
+      joinCodes: [
+        {
+          codeId: "code-1",
+          createdAt: "2026-11-12T09:59:00.000Z",
+          expiresAt: "2026-11-12T10:10:00.000Z",
+          state: "open",
+          usedBy: null,
+          milestones: [],
+          lastRefusal: null,
+        },
+      ],
+    };
+    expect(isLocalOnlyBoardWorkers(withCode)).toBe(false);
+    expect(hasOnlyLocalBoardWorker(withCode)).toBe(true);
   });
 
   describe("project ↔ worker mapping", () => {
@@ -159,6 +177,7 @@ describe("worker abbreviations (T3O-84)", () => {
     ["Linux box", [], "LIN"],
     ["srv-room", [], "SR"],
     ["x", ["X"], "X1"],
+    ["mac-mini", ["MAC", "MM", "MA1", "MA2", "MA3", "MA4", "MA5", "MA6", "MA7", "MA8", "MA9"], "M10"],
     ["42", [], "42"],
   ] as const)("%s, with %j taken, suggests %s", (label, taken, expected) => {
     expect(suggestBoardWorkerAbbreviation(label, taken)).toBe(expected);
