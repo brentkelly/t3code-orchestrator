@@ -307,14 +307,15 @@ const leaveBoard = (flags: {
     Effect.gen(function* () {
       const board = yield* pickBoard(home, Option.getOrUndefined(flags.board));
       // Removing it from worker.json makes the running server say goodbye and close the
-      // tunnel; this works offline too. Then nothing the board was given here stays.
-      const revoked = yield* revokeBoardSessions(auth, board.boardEnvironmentId).pipe(
-        Effect.orElseSucceed(() => 0),
-      );
+      // tunnel; this works offline too. Sessions go last, so a redial in between can't be
+      // handed a fresh one: the mint refuses once the board is gone from the file.
       writeWorkerFile(home, removeWorkerBoard(yield* readBoards(home), board.boardEnvironmentId));
       yield* secrets
         .remove(tunnelCredentialSecretName(board.boardEnvironmentId))
         .pipe(Effect.ignore);
+      const revoked = yield* revokeBoardSessions(auth, board.boardEnvironmentId).pipe(
+        Effect.orElseSucceed(() => 0),
+      );
       yield* Console.log(
         `Left ${board.boardLabel}: ${revoked} session${revoked === 1 ? "" : "s"} it held here revoked. Its cards stay on the board until someone removes this worker there.`,
       );

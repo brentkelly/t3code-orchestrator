@@ -7,7 +7,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { BOARD_WORKER_PROTOCOL_VERSION, t3oBoardSubject } from "@t3tools/contracts";
+import { BOARD_WORKER_PROTOCOL_VERSION } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,7 +22,11 @@ import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import * as ManagedLimits from "../../policy/managedLimits.ts";
 import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
 import { boardSessionLabel } from "../workers/workerCredential.ts";
-import { reconcileBoardUserSessions, revokeBoardSessions } from "../workers/workerRpc.ts";
+import {
+  issueBoardSession,
+  reconcileBoardUserSessions,
+  revokeBoardSessions,
+} from "../workers/workerRpc.ts";
 import { TunnelWorker, type WorkerTunnelStatus } from "./tunnelWorker.ts";
 import {
   localTunnelTarget,
@@ -142,10 +146,20 @@ const makeWorkerTunnels = Effect.gen(function* () {
                 message: "This worker's managed policy doesn't allow remote clients.",
               });
             }
-            const issued = yield* auth.issueSession({
-              subject: t3oBoardSubject(boardId),
-              label: boardSessionLabel(entry.boardLabel),
-            });
+            // A board being left (`t3o-worker leave`) is never handed a fresh session.
+            const stillJoined = yield* Effect.try(() =>
+              readWorkerFile(home).boards.some((board) => board.boardEnvironmentId === boardId),
+            ).pipe(Effect.orElseSucceed(() => true));
+            if (!stillJoined || Option.isNone(yield* readCredential(boardId))) {
+              return yield* new WorkerPolicyRefusal({
+                message: "This worker has left that board.",
+              });
+            }
+            const issued = yield* issueBoardSession(
+              auth,
+              boardId,
+              boardSessionLabel(entry.boardLabel),
+            );
             return issued.token;
           }),
         ),

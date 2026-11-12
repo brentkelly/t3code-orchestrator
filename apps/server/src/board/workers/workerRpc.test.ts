@@ -15,7 +15,11 @@ import { TestClock } from "effect/testing";
 
 import { EnvironmentAuth, type AuthenticatedSession } from "../../auth/EnvironmentAuth.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
-import { boardWorkerRpcHandlers, reconcileBoardUserSessions } from "./workerRpc.ts";
+import {
+  boardWorkerRpcHandlers,
+  issueBoardSession,
+  reconcileBoardUserSessions,
+} from "./workerRpc.ts";
 
 const session = (scopes: AuthenticatedSession["scopes"]): AuthenticatedSession => ({
   sessionId: AuthSessionId.make("session-board"),
@@ -221,5 +225,18 @@ it.effect("a tunnel handshake revokes user sessions whose board session is gone"
     // Only this board's users, only the dead one; never the board's own session.
     assert.strictEqual(count, 1);
     assert.deepStrictEqual(revoked, ["session-user-2"]);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("issuing the board's session revokes the one it held before, and nothing else", () =>
+  Effect.gen(function* () {
+    revoked.length = 0;
+    issued.length = 0;
+    const auth = yield* EnvironmentAuth;
+    yield* issueBoardSession(auth, "env-board", "T3o board (central)");
+    assert.deepStrictEqual(revoked, ["session-board"]);
+    assert.deepStrictEqual(issued, [
+      { subject: "t3o-board:env-board", label: "T3o board (central)" },
+    ]);
   }).pipe(Effect.provide(layer)),
 );

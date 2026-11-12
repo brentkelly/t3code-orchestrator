@@ -67,6 +67,20 @@ export const revokeBoardSessions = Effect.fn("boardWorker.revokeBoardSessions")(
   return revoked;
 });
 
+/** Issue the board's session here, revoking any it held before, so redials never pile them up. */
+export const issueBoardSession = Effect.fn("boardWorker.issueBoardSession")(function* (
+  service: EnvironmentAuth["Service"],
+  boardId: string,
+  label: string,
+) {
+  const own = t3oBoardSubject(boardId);
+  for (const session of yield* service.listSessions()) {
+    if (session.subject !== own) continue;
+    yield* service.revokeSession(session.sessionId).pipe(Effect.ignore);
+  }
+  return yield* service.issueSession({ subject: own, label });
+});
+
 /** Revoke a board's user sessions whose board session is no longer alive there. */
 export const reconcileBoardUserSessions = Effect.fn("boardWorker.reconcileBoardUserSessions")(
   function* (
