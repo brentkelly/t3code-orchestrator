@@ -1,25 +1,20 @@
 /**
- * Add worker and Re-pair. The client mints a one-time pairing token on a
- * connected environment and hands it to the board server; when it can't, the
- * dialog says why and takes a pasted `t3 pair` link.
+ * Add worker (prototype 3.5). The board issues a one-time join code; the
+ * worker runs `pnpm t3o-worker join` and dials the board. The dialog follows
+ * the code through the board's live join-code list: waiting, checking in,
+ * joined, or why not. Closing it never cancels the code.
  */
 import { useAtomValue } from "@effect/atom-react";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { boardWorkerCandidate, boardWorkerCandidateIds } from "@t3tools/client-runtime/state/shell";
 import {
-  AuthAccessWriteScope,
-  BoardWorkerAddError,
-  type BoardWorkerAddResult,
-  type BoardWorkerCredential,
-  type BoardWorkerView,
+  BOARD_WORKER_JOIN_CODE_TTL_MINUTES,
+  BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
+  type BoardWorkerJoinCodeCreated,
+  type BoardWorkerJoinMilestone,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
-import * as Schema from "effect/Schema";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, CircleIcon, InfoIcon } from "lucide-react";
 import { useState } from "react";
 
-import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -30,685 +25,445 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../../components/ui/dialog";
-import { Input } from "../../components/ui/input";
-import { Label } from "../../components/ui/label";
-import { Spinner } from "../../components/ui/spinner";
-import { cn } from "../../lib/utils";
+import { toastManager } from "../../components/ui/toast";
 import { boardEnvironment } from "../../state/board";
-import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
-import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { mintWorkerPairingToken } from "./boardWorkersState";
-import { addWorkerErrorCopy, looksLikePairingLink, type AddWorkerErrorCopy } from "./workerCopy";
+import { describeBoardCommandFailure } from "../boardCommandFeedback";
 import { BoardDialogTitle } from "../ui/BoardDialog";
+import { useNowAtDeadlines } from "./boardWorkersState";
+import {
+  joinDialogDeadlines,
+  joinDialogPhase,
+  minutesLeft,
+  type JoinDialogPhase,
+} from "./joinDialog";
+import { clockTime, T3O_UPDATE_COMMAND } from "./workerCopy";
+import { initialWorkerAbbreviation, workerNameProblems } from "./workerNames";
+import { CopyCommand, WorkerNameFields } from "./workerUi";
 
-export type AddWorkerMode =
-  | { readonly kind: "add" }
-  | { readonly kind: "repair"; readonly worker: BoardWorkerView };
+const BOARD_WORKERS_DOCS_URL =
+  "https://github.com/brentkelly/t3code-orchestrator/blob/t3o/docs/user/board-workers.md#workers";
 
-/** Why the paste step is showing, which decides its explanation box. */
-type PasteReason =
-  | {
-      readonly kind: "needs-link";
-      readonly environment: EnvironmentPresentation;
-      /** Known up front to lack admin access, or the token mint just failed
-          (a refusal or a dropped connection alike). */
-      readonly cause: "no-admin" | "mint-failed";
-    }
-  | { readonly kind: "not-listed" }
-  | { readonly kind: "no-environments" }
-  | { readonly kind: "repair" };
-
-type Step =
-  | { readonly kind: "pick" }
-  | { readonly kind: "paste"; readonly reason: PasteReason; readonly canGoBack: boolean }
-  | { readonly kind: "progress"; readonly viaLink: boolean; readonly minted: boolean }
-  | { readonly kind: "success"; readonly result: BoardWorkerAddResult };
-
-interface AddError extends AddWorkerErrorCopy {
-  /** Unreachable shows under the picked row; the rest under the link field. */
-  readonly code: string;
+/** The join command a worker runs, with the board's address. */
+function workerJoinCommand(boardUrl: string, code: string): string {
+  return `pnpm t3o-worker join ${boardUrl} --code ${code}`;
 }
 
 export function AddWorkerDialog(props: {
   readonly environmentId: EnvironmentId;
-  readonly boardLabel: string;
-  readonly mode: AddWorkerMode;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
+  /** The code this client created and still holds, or null while one is being made. */
+  readonly created: BoardWorkerJoinCodeCreated | null;
+  readonly creating: boolean;
+  readonly createError: string | null;
+  readonly onCreateCode: () => void;
+  readonly boardUrl: string;
+  /** No board address is set: the URL is this browser's own. */
+  readonly boardUrlIsFallback: boolean;
+  readonly onSetBoardAddress: () => void;
   readonly onSetUpProjects: () => void;
 }) {
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogPopup className="max-w-[460px]">
-        {/* Remounted per open, so a reopened dialog starts from its first step. */}
-        {props.open ? <AddWorkerFlow {...props} /> : null}
+      <DialogPopup className="max-w-[500px]">
+        {props.open ? <AddWorkerBody {...props} /> : null}
       </DialogPopup>
     </Dialog>
   );
 }
 
-function AddWorkerFlow(props: {
-  readonly environmentId: EnvironmentId;
-  readonly boardLabel: string;
-  readonly mode: AddWorkerMode;
-  readonly onOpenChange: (open: boolean) => void;
-  readonly onSetUpProjects: () => void;
-}) {
-  const navigate = useNavigate();
-  const { environments } = useEnvironments();
-  const { workers } = useAtomValue(boardEnvironment.workersAtom(props.environmentId));
-  const addWorker = useAtomCommand(boardEnvironment.addWorker, { reportFailure: false });
-  const repairWorker = useAtomCommand(boardEnvironment.repairWorker, { reportFailure: false });
-  const mintToken = useAtomCommand(mintWorkerPairingToken, { reportFailure: false });
-
-  const candidateIds = new Set(
-    boardWorkerCandidateIds({
-      environmentIds: environments.map((environment) => environment.environmentId),
-      boardEnvironmentId: props.environmentId,
-      workerIds: workers.map((worker) => worker.id),
-    }),
-  );
-  const candidates = environments.filter((environment) =>
-    candidateIds.has(environment.environmentId),
-  );
-  const repairWorkerId = props.mode.kind === "repair" ? props.mode.worker.id : null;
-  const repairTarget =
-    repairWorkerId === null
-      ? null
-      : (environments.find((environment) => environment.environmentId === repairWorkerId) ?? null);
-  const scopeSubjects = repairTarget === null ? candidates : [...candidates, repairTarget];
-  const canMint = useEnvironmentsWithScope(scopeSubjects, AuthAccessWriteScope);
-  const candidateOf = (environment: EnvironmentPresentation) =>
-    boardWorkerCandidate({
-      environmentId: environment.environmentId,
-      connected: environment.connection.phase === "connected",
-      relayManaged: environment.relayManaged,
-      canMintPairingToken: canMint.has(environment.environmentId),
-    });
-
-  const repairCanPick = repairTarget !== null && candidateOf(repairTarget).kind === "pick";
-  const [step, setStep] = useState<Step>(() => {
-    if (props.mode.kind === "repair") {
-      return repairCanPick
-        ? { kind: "pick" }
-        : { kind: "paste", reason: { kind: "repair" }, canGoBack: false };
-    }
-    return candidates.length === 0
-      ? { kind: "paste", reason: { kind: "no-environments" }, canGoBack: false }
-      : { kind: "pick" };
-  });
-  const [picked, setPicked] = useState<EnvironmentPresentation | null>(null);
-  const [label, setLabel] = useState(props.mode.kind === "repair" ? props.mode.worker.label : "");
-  const [link, setLink] = useState("");
-  const [error, setError] = useState<AddError | null>(null);
-
-  const target =
-    props.mode.kind === "repair"
-      ? props.mode.worker.label
-      : step.kind === "paste" && step.reason.kind === "needs-link"
-        ? step.reason.environment.label
-        : (picked?.label ?? (label.trim() || "the worker"));
-  const sessionLabel = `T3o board (${props.boardLabel})`;
+function AddWorkerBody(props: Parameters<typeof AddWorkerDialog>[0]) {
   const close = () => props.onOpenChange(false);
-
-  const submit = async (input: {
-    readonly credential: BoardWorkerCredential;
-    readonly url?: string;
-    readonly expectedEnvironmentId?: EnvironmentId;
-  }) => {
-    setError(null);
-    const viaLink = input.credential.kind === "pairing-url";
-    setStep({ kind: "progress", viaLink, minted: true });
-    const previous = step;
-    const result =
-      props.mode.kind === "repair"
-        ? await repairWorker({
-            environmentId: props.environmentId,
-            input: {
-              workerId: props.mode.worker.id,
-              credential: input.credential,
-              ...(input.url === undefined ? {} : { url: input.url }),
-            },
-          })
-        : await addWorker({
-            environmentId: props.environmentId,
-            input: {
-              credential: input.credential,
-              label: label.trim() || target,
-              ...(input.url === undefined ? {} : { url: input.url }),
-              ...(input.expectedEnvironmentId === undefined
-                ? {}
-                : { expectedEnvironmentId: input.expectedEnvironmentId }),
-            },
-          });
-    if (result._tag === "Success") {
-      setStep({ kind: "success", result: result.value });
-      return;
-    }
-    setStep(previous);
-    setError(describeAddFailure(result, target));
-  };
-
-  const submitPicked = async () => {
-    const environment = props.mode.kind === "repair" ? repairTarget : picked;
-    if (environment === null) return;
-    if (candidateOf(environment).kind === "needs-link") {
-      setStep({
-        kind: "paste",
-        reason: { kind: "needs-link", environment, cause: "no-admin" },
-        canGoBack: true,
-      });
-      return;
-    }
-    setError(null);
-    setStep({ kind: "progress", viaLink: false, minted: false });
-    const minted = await mintToken({
-      environmentId: environment.environmentId,
-      sessionLabel,
-    });
-    if (minted._tag !== "Success") {
-      // The session lost admin access, or the connection dropped: the link
-      // path still works.
-      setStep({
-        kind: "paste",
-        reason: { kind: "needs-link", environment, cause: "mint-failed" },
-        canGoBack: true,
-      });
-      return;
-    }
-    await submit({
-      credential: { kind: "pairing-token", token: minted.value.token },
-      url: minted.value.httpBaseUrl,
-      expectedEnvironmentId: environment.environmentId,
-    });
-  };
-
-  const submitLink = async () => {
-    if (!looksLikePairingLink(link)) {
-      setError({
-        code: "invalid-credential",
-        ...addWorkerErrorCopy({ code: "invalid-credential", target, message: "" }),
-      });
-      return;
-    }
-    await submit({
-      credential: { kind: "pairing-url", pairingUrl: link.trim() },
-      ...(step.kind === "paste" && step.reason.kind === "needs-link"
-        ? { expectedEnvironmentId: step.reason.environment.environmentId }
-        : {}),
-    });
-  };
-
-  // ── Success (1.6) ─────────────────────────────────────────────────
-  if (step.kind === "success") {
-    const { worker, coveredProjects, totalProjects } = step.result;
-    const providers = worker.snapshot?.providers.filter((provider) => provider.enabled) ?? [];
+  if (props.created === null) {
     return (
       <>
         <DialogHeader>
-          <BoardDialogTitle look="with-icon">
-            <CheckIcon className="size-4 text-success-foreground" />
-            {props.mode.kind === "repair"
-              ? `${worker.label} is re-paired`
-              : `${worker.label} is now a worker`}
-          </BoardDialogTitle>
-        </DialogHeader>
-        <DialogPanel>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-board-13">
-            <dt className="text-muted-foreground">T3o</dt>
-            <dd>{worker.status.t3oVersion ?? "Unknown"}</dd>
-            <dt className="text-muted-foreground">Providers</dt>
-            <dd>
-              {providers.length === 0
-                ? "None reported"
-                : providers
-                    .map(
-                      (provider) =>
-                        `${provider.displayName ?? provider.driver} (${provider.instanceId})`,
-                    )
-                    .join(", ")}
-            </dd>
-            <dt className="text-muted-foreground">Project checkouts</dt>
-            <dd>
-              {coveredProjects} of {totalProjects} board projects
-            </dd>
-          </dl>
-          <p className="text-board-12-5 text-muted-foreground">
-            On {worker.label}, the board appears under Settings → Sharing & access → Authorized
-            clients as “{sessionLabel}”.
-          </p>
-        </DialogPanel>
-        <DialogFooter>
-          <Button variant="outline" onClick={close}>
-            Done
-          </Button>
-          {coveredProjects < totalProjects ? (
-            <Button
-              onClick={() => {
-                close();
-                props.onSetUpProjects();
-              }}
-            >
-              Set up projects
-            </Button>
-          ) : null}
-        </DialogFooter>
-      </>
-    );
-  }
-
-  // ── In progress (1.5) ─────────────────────────────────────────────
-  if (step.kind === "progress") {
-    return (
-      <>
-        <DialogHeader>
-          <DialogTitle>
-            {props.mode.kind === "repair" ? `Re-pair ${target}` : "Add a worker"}
-          </DialogTitle>
-        </DialogHeader>
-        <DialogPanel>
-          <ul className="flex flex-col gap-2 text-board-13">
-            <ProgressLine done={step.minted}>
-              {step.viaLink
-                ? `Pairing link accepted by ${target}`
-                : `Got a pairing token from ${target} through your connection`}
-            </ProgressLine>
-            <ProgressLine done={false} active={step.minted}>
-              Board server connecting to {target}…
-            </ProgressLine>
-            <ProgressLine done={false}>Reading providers and project checkouts</ProgressLine>
-          </ul>
-        </DialogPanel>
-        <DialogFooter>
-          <Button variant="outline" onClick={close}>
-            Cancel
-          </Button>
-          <Button disabled>Adding…</Button>
-        </DialogFooter>
-      </>
-    );
-  }
-
-  // ── Paste a pairing link (1.7, 1.8) ───────────────────────────────
-  if (step.kind === "paste") {
-    const why = pasteWhy(step.reason, props.mode, sessionLabel);
-    return (
-      <>
-        <DialogHeader>
-          <DialogTitle>
-            {props.mode.kind === "repair"
-              ? `Re-pair ${props.mode.worker.label}`
-              : step.reason.kind === "needs-link"
-                ? `Add ${step.reason.environment.label} as a worker`
-                : "Add a worker"}
-          </DialogTitle>
-          {why.subtitle === null ? null : <DialogDescription>{why.subtitle}</DialogDescription>}
-        </DialogHeader>
-        <DialogPanel>
-          {why.box === null ? null : (
-            <div className="rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-board-12-5">
-              <div className="font-medium text-foreground">{why.box.title}</div>
-              <div className="mt-0.5 text-muted-foreground">{why.box.body}</div>
-            </div>
-          )}
-          <div className="text-board-12-5 text-muted-foreground">
-            <div className="font-medium text-foreground">On the worker machine</div>
-            <ol className="mt-1 list-decimal space-y-0.5 pl-4">
-              <li>
-                Run <code className="rounded bg-muted px-1 font-mono text-board-11-5">t3 pair</code>{" "}
-                in a terminal.
-              </li>
-              <li>
-                Copy the link it prints and paste it below. Links work once and expire after 10
-                minutes.
-              </li>
-            </ol>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="board-worker-link">Pairing link</Label>
-            <Input
-              id="board-worker-link"
-              placeholder="https://…/pair#…"
-              value={link}
-              onChange={(event) => {
-                setLink(event.target.value);
-                setError(null);
-              }}
-              onPaste={(event) => {
-                const pasted = event.clipboardData.getData("text");
-                if (!looksLikePairingLink(pasted)) {
-                  setError({
-                    code: "invalid-credential",
-                    ...addWorkerErrorCopy({ code: "invalid-credential", target, message: "" }),
-                  });
-                }
-              }}
-            />
-            {error === null ? null : <ErrorBox error={error} />}
-          </div>
-          {props.mode.kind === "add" ? (
-            <LabelField
-              value={label}
-              onChange={setLabel}
-              placeholder={
-                step.reason.kind === "needs-link" ? step.reason.environment.label : "e.g. linux-box"
-              }
-            />
-          ) : null}
-        </DialogPanel>
-        <DialogFooter>
-          {step.canGoBack ? (
-            <Button
-              variant="ghost"
-              className="sm:mr-auto"
-              onClick={() => setStep({ kind: "pick" })}
-            >
-              Back to environments
-            </Button>
-          ) : step.reason.kind === "no-environments" ? (
-            <Button
-              variant="ghost"
-              className="sm:mr-auto"
-              onClick={() => {
-                close();
-                void navigate({ to: "/settings/connections" });
-              }}
-            >
-              Open Settings → Environments
-            </Button>
-          ) : null}
-          <Button variant="outline" onClick={close}>
-            Cancel
-          </Button>
-          <Button
-            disabled={
-              link.trim().length === 0 ||
-              (props.mode.kind === "add" &&
-                label.trim().length === 0 &&
-                step.reason.kind !== "needs-link")
-            }
-            onClick={() => void submitLink()}
-          >
-            {props.mode.kind === "repair" ? "Re-pair" : "Use as worker"}
-          </Button>
-        </DialogFooter>
-      </>
-    );
-  }
-
-  // ── Re-pair through this device's connection (1.10) ───────────────
-  if (props.mode.kind === "repair" && repairTarget !== null) {
-    return (
-      <>
-        <DialogHeader>
-          <DialogTitle>Re-pair {props.mode.worker.label}</DialogTitle>
+          <DialogTitle>Add a worker</DialogTitle>
           <DialogDescription>
-            {props.mode.worker.status.state === "unauthorized"
-              ? `The board's access to ${props.mode.worker.label} was revoked on that machine, under Settings → Sharing & access → Authorized clients, where the board is listed as “${sessionLabel}”. Its cards are held until it's re-paired.`
-              : `Give the board a fresh session on ${props.mode.worker.label}.`}
+            {props.createError ?? (props.creating ? "Creating a join code…" : "")}
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel>
-          <div className="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5">
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="text-board-13 font-medium">{repairTarget.label}</span>
-              <span className="truncate font-mono text-board-11-5 text-muted-foreground">
-                Your connection
-                {repairTarget.displayUrl === null ? "" : ` · ${repairTarget.displayUrl}`}
-              </span>
-            </div>
-            <Badge variant="outline">Admin access</Badge>
-          </div>
-          {error === null ? null : <ErrorBox error={error} />}
-          <p className="text-board-12-5 text-muted-foreground">
-            If {props.mode.worker.label}'s owner revoked access on purpose, check with them first.
-            Label, pinned cards and limits are kept.
-          </p>
-        </DialogPanel>
         <DialogFooter>
-          <Button
-            variant="ghost"
-            className="sm:mr-auto"
-            onClick={() => setStep({ kind: "paste", reason: { kind: "repair" }, canGoBack: true })}
-          >
-            Or paste a pairing link
-          </Button>
           <Button variant="outline" onClick={close}>
-            Cancel
+            Close
           </Button>
-          <Button onClick={() => void submitPicked()}>Re-pair</Button>
+          {props.createError === null ? null : (
+            <Button disabled={props.creating} onClick={props.onCreateCode}>
+              Try again
+            </Button>
+          )}
         </DialogFooter>
       </>
     );
   }
+  return <JoinCodeFlow {...props} created={props.created} close={close} />;
+}
 
-  // ── Pick a connected environment (1.4) ────────────────────────────
+function JoinCodeFlow(
+  props: Parameters<typeof AddWorkerDialog>[0] & {
+    readonly created: BoardWorkerJoinCodeCreated;
+    readonly close: () => void;
+  },
+) {
+  const { created } = props;
+  const state = useAtomValue(boardEnvironment.workersAtom(props.environmentId));
+  const deadlines = joinDialogDeadlines({
+    codeId: created.codeId,
+    expiresAt: created.expiresAt,
+    state,
+  });
+  // Minutes left only change once a minute; re-read the clock on those edges.
+  const expiresMs = Date.parse(created.expiresAt);
+  const minuteEdges = Array.from(
+    { length: BOARD_WORKER_JOIN_CODE_TTL_MINUTES + 1 },
+    (_, index) => expiresMs - index * 60_000,
+  );
+  const nowMs = useNowAtDeadlines([...deadlines, ...minuteEdges]);
+  const phase = joinDialogPhase({
+    codeId: created.codeId,
+    expiresAt: created.expiresAt,
+    state,
+    nowMs,
+  });
+  const cancelCode = useAtomCommand(boardEnvironment.cancelWorkerJoinCode, {
+    reportFailure: false,
+  });
+
+  const runCancel = async () => {
+    const result = await cancelCode({
+      environmentId: props.environmentId,
+      input: { codeId: created.codeId },
+    });
+    if (result._tag !== "Success") {
+      toastManager.add({ type: "error", title: describeBoardCommandFailure(result) });
+      return;
+    }
+    props.close();
+  };
+
+  if (phase.kind === "joined") {
+    return (
+      <JoinedStep
+        environmentId={props.environmentId}
+        phase={phase}
+        close={props.close}
+        onSetUpProjects={props.onSetUpProjects}
+      />
+    );
+  }
+
   return (
     <>
       <DialogHeader>
         <DialogTitle>Add a worker</DialogTitle>
         <DialogDescription>
-          Use one of the environments this device is connected to as a worker for this board. The
-          board server connects to it directly; nothing to copy or paste.
+          Run the command below on the machine you want to add. It joins this board and takes cards
+          from it.
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
-        <div className="flex flex-col gap-1.5">
-          <span className="text-board-12-5 font-medium">
-            Environment from Settings → Environments
-          </span>
-          <div
-            className="flex flex-col overflow-hidden rounded-lg border border-border"
-            role="radiogroup"
-          >
-            {candidates.map((environment) => {
-              const candidate = candidateOf(environment);
-              const selected = picked?.environmentId === environment.environmentId;
-              const version = environment.serverConfig?.environment.serverVersion ?? null;
-              return (
-                <div key={environment.environmentId}>
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={selected}
-                    disabled={candidate.kind === "disabled"}
-                    onClick={() => {
-                      setPicked(environment);
-                      setLabel(environment.label);
-                      setError(null);
-                    }}
-                    className={cn(
-                      "flex w-full items-center gap-3 border-b border-border px-3 py-2 text-left last:border-b-0 disabled:opacity-60",
-                      selected ? "bg-accent" : "hover:bg-accent/50",
-                    )}
-                  >
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <span className="text-board-13 font-medium">{environment.label}</span>
-                      <span className="truncate font-mono text-board-11-5 text-muted-foreground">
-                        {environment.displayUrl ?? ""}
-                      </span>
-                    </div>
-                    <span className="shrink-0 text-board-11-5 text-muted-foreground">
-                      {candidate.kind === "pick"
-                        ? version === null
-                          ? ""
-                          : `T3o ${version}`
-                        : candidate.kind === "needs-link"
-                          ? "Needs a pairing link"
-                          : candidate.reason === "relay"
-                            ? "Only reachable through T3 Connect"
-                            : "Not connected"}
-                    </span>
-                  </button>
-                  {selected && error !== null && error.code === "unreachable" ? (
-                    <div className="px-3 pb-2">
-                      <ErrorBox error={error} />
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col items-start gap-1">
+            <span className="font-mono text-board-21 font-semibold tracking-wider">
+              {created.code}
+            </span>
+            <span className="text-board-12 text-muted-foreground">
+              {phase.kind === "expired"
+                ? `Expired at ${clockTime(created.expiresAt)}`
+                : `Expires at ${clockTime(created.expiresAt)} · in ${minutesLeft(created.expiresAt, nowMs)} min · works once`}
+            </span>
           </div>
-          <span className="text-board-11-5 text-muted-foreground">
-            Not listed: this board server, and environments that are already workers.
-          </span>
+          <div className="flex flex-col gap-1.5">
+            <CopyCommand
+              command={workerJoinCommand(props.boardUrl, created.code)}
+              target="join command"
+            />
+            <span className="text-board-12 text-muted-foreground">
+              Run in a T3o checkout on a Linux worker.{" "}
+              <a
+                className="underline underline-offset-2"
+                href={BOARD_WORKERS_DOCS_URL}
+                rel="noreferrer"
+                target="_blank"
+              >
+                How workers join
+              </a>
+            </span>
+            {props.boardUrlIsFallback ? (
+              <span className="text-board-12 text-muted-foreground">
+                Make sure workers can reach this address.{" "}
+                <button
+                  className="underline underline-offset-2 hover:text-foreground"
+                  onClick={() => {
+                    props.close();
+                    props.onSetBoardAddress();
+                  }}
+                  type="button"
+                >
+                  Set the board address
+                </button>
+              </span>
+            ) : null}
+          </div>
+          <div className="flex gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-board-12-5 text-muted-foreground">
+            <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              The worker needs outbound HTTPS to this board only: no inbound ports or VPN. Anyone
+              who uses this board can see the worker's threads.
+            </span>
+          </div>
+          <JoinPhaseBox phase={phase} onCreateCode={props.onCreateCode} creating={props.creating} />
         </div>
-        {error !== null && error.code !== "unreachable" ? <ErrorBox error={error} /> : null}
-        <LabelField value={label} onChange={setLabel} placeholder="e.g. linux-box" />
       </DialogPanel>
       <DialogFooter>
-        <Button
-          variant="ghost"
-          className="sm:mr-auto"
-          onClick={() => {
-            setError(null);
-            setStep({ kind: "paste", reason: { kind: "not-listed" }, canGoBack: true });
-          }}
-        >
-          Server not listed? Paste a pairing link
-        </Button>
-        <Button variant="outline" onClick={close}>
-          Cancel
-        </Button>
-        <Button
-          disabled={picked === null || label.trim().length === 0}
-          onClick={() => void submitPicked()}
-        >
-          Use as worker
+        {phase.kind === "waiting" || phase.kind === "needs-update" ? (
+          <Button variant="ghost-destructive" onClick={() => void runCancel()}>
+            Cancel code
+          </Button>
+        ) : null}
+        <Button variant="outline" onClick={props.close}>
+          Close
         </Button>
       </DialogFooter>
     </>
   );
 }
 
-function pasteWhy(
-  reason: PasteReason,
-  mode: AddWorkerMode,
-  sessionLabel: string,
-): {
-  readonly subtitle: string | null;
-  readonly box: { readonly title: string; readonly body: string } | null;
-} {
-  switch (reason.kind) {
-    case "needs-link":
-      return {
-        subtitle: null,
-        box: {
-          title: `Needs a pairing link from ${reason.environment.label}`,
-          body:
-            reason.cause === "no-admin"
-              ? `Your connection to ${reason.environment.label} doesn't have admin access there, so this device can't issue a pairing token for the board. Someone with access to ${reason.environment.label} can create one.`
-              : `This device couldn't issue a pairing token on ${reason.environment.label}: the connection may have dropped, or it doesn't have admin access there. Paste a pairing link created on ${reason.environment.label} instead.`,
-        },
-      };
-    case "not-listed":
-      return {
-        subtitle: "Use a server this device isn't connected to.",
-        box: {
-          title: "Paste a pairing link",
-          body: "Only environments connected on this device are listed. To add another server, paste a pairing link from it.",
-        },
-      };
-    case "no-environments":
-      return {
-        subtitle: "This device isn't connected to any other environments yet.",
-        box: {
-          title: "Connect first, or paste a link",
-          body: "Environments you connect to in Settings → Environments show up here to use as workers in one step. For a server you don't want to connect to from this device, paste a pairing link instead.",
-        },
-      };
-    case "repair":
-      return {
-        subtitle:
-          mode.kind === "repair" && mode.worker.status.state === "unauthorized"
-            ? `The board's access to ${mode.worker.label} was revoked on that machine, under Settings → Sharing & access → Authorized clients, where the board is listed as “${sessionLabel}”. Its cards are held until it's re-paired.`
-            : null,
-        box:
-          mode.kind === "repair"
-            ? {
-                title: `Needs a pairing link from ${mode.worker.label}`,
-                body: `This device can't issue a pairing token on ${mode.worker.label}: it isn't connected there, or its connection doesn't have admin access. Label, pinned cards and limits are kept.`,
-              }
-            : null,
-      };
+const STEPS: ReadonlyArray<{
+  readonly milestone: Exclude<BoardWorkerJoinMilestone, "joined">;
+  readonly label: string;
+}> = [
+  { milestone: "code-accepted", label: "Code accepted" },
+  { milestone: "connected", label: "Connected" },
+  { milestone: "reading", label: "Reading capacity and providers" },
+  { milestone: "checking", label: "Checking project checkouts" },
+];
+
+function JoinPhaseBox(props: {
+  readonly phase: Exclude<JoinDialogPhase, { kind: "joined" }>;
+  readonly onCreateCode: () => void;
+  readonly creating: boolean;
+}) {
+  const { phase } = props;
+  const newCode = (
+    <div>
+      <Button size="xs" variant="outline" disabled={props.creating} onClick={props.onCreateCode}>
+        Create new code
+      </Button>
+    </div>
+  );
+  switch (phase.kind) {
+    case "waiting":
+      return (
+        <div className="flex items-center gap-2 rounded-lg border border-info/30 bg-info/8 px-3 py-2.5 text-board-12-5 text-info-foreground">
+          <span className="size-2 shrink-0 rounded-full bg-info" />
+          Waiting for a worker to join. Closing this doesn't cancel the code.
+        </div>
+      );
+    case "expired":
+    case "cancelled":
+    case "already-used":
+      return (
+        <WarningBox
+          title={
+            phase.kind === "expired"
+              ? "This code expired"
+              : phase.kind === "cancelled"
+                ? "This code was cancelled"
+                : "This code was already used"
+          }
+          body={
+            phase.kind === "already-used"
+              ? "A code works once. Create a new one for the next worker."
+              : "Create a new code and run the new command on the worker."
+          }
+        >
+          {newCode}
+        </WarningBox>
+      );
+    case "needs-update":
+      return (
+        <WarningBox
+          title={`${phase.usedBy?.label ?? "The worker"} needs a newer T3o`}
+          body={`It runs T3o ${phase.release ?? "an older release"}; this board needs ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION} or newer. Update it, then run the join command again. ${
+            phase.usedBy === null
+              ? "This code stays valid until it expires."
+              : "It's connected but takes no new cards until it's updated."
+          }`}
+        >
+          <CopyCommand command={T3O_UPDATE_COMMAND} target="update command" />
+        </WarningBox>
+      );
+    case "checking": {
+      const reached = new Set(phase.milestones);
+      const next = STEPS.find((step) => !reached.has(step.milestone));
+      return (
+        <div className="flex flex-col gap-2.5 rounded-lg border border-border px-3 py-2.5">
+          <span className="text-board-12-5">
+            Code was used by <span className="font-medium">{phase.usedBy.label}</span>
+            {phase.usedBy.address === null ? "" : ` from ${phase.usedBy.address}`}
+          </span>
+          <ol className="flex flex-col gap-1.5">
+            {STEPS.map((step) => {
+              const done = reached.has(step.milestone);
+              const current = step === next;
+              return (
+                <li
+                  className="flex items-center gap-2 text-board-12-5"
+                  key={step.milestone}
+                  aria-current={current ? "step" : undefined}
+                >
+                  {done ? (
+                    <CheckIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  ) : current ? (
+                    <span className="mx-[3px] size-2 shrink-0 rounded-full bg-info" />
+                  ) : (
+                    <CircleIcon className="size-3.5 shrink-0 text-muted-foreground/50" />
+                  )}
+                  <span className={done || current ? "text-foreground" : "text-muted-foreground"}>
+                    {step.label}
+                    {step.milestone === "connected" && done && phase.usedBy.t3oRelease !== null
+                      ? ` · T3o ${phase.usedBy.t3oRelease}`
+                      : ""}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+          {phase.stalled ? (
+            <WarningBox
+              title={`${phase.usedBy.label} hasn't connected yet`}
+              body="The code was accepted, but the worker hasn't opened its connection to the board. Check it on the worker:"
+            >
+              <CopyCommand command="pnpm t3o-worker status" target="status command" />
+            </WarningBox>
+          ) : null}
+        </div>
+      );
+    }
   }
 }
 
-const isBoardWorkerAddError = Schema.is(BoardWorkerAddError);
-
-function describeAddFailure(result: unknown, target: string): AddError {
-  const failure: unknown = squashAtomCommandFailure(
-    result as Parameters<typeof squashAtomCommandFailure>[0],
+function WarningBox(props: {
+  readonly title: string;
+  readonly body: string;
+  readonly children?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5 rounded-lg border border-warning/30 bg-warning/8 px-3 py-2.5">
+      <span className="text-board-12-5 font-medium text-warning-foreground">{props.title}</span>
+      <span className="text-board-12-5 text-muted-foreground">{props.body}</span>
+      {props.children}
+    </div>
   );
-  if (isBoardWorkerAddError(failure)) {
-    return {
-      code: failure.code,
-      ...addWorkerErrorCopy({
-        code: failure.code,
-        target,
-        workerLabel: failure.workerLabel,
-        workerVersion: failure.workerVersion,
-        message: failure.message,
-      }),
-    };
-  }
-  return {
-    code: "unknown",
-    title: "Couldn't add the worker",
-    body: failure instanceof Error ? failure.message : "The board server didn't answer.",
+}
+
+function JoinedStep(props: {
+  readonly environmentId: EnvironmentId;
+  readonly phase: Extract<JoinDialogPhase, { kind: "joined" }>;
+  readonly close: () => void;
+  readonly onSetUpProjects: () => void;
+}) {
+  const { usedBy, worker } = props.phase;
+  const state = useAtomValue(boardEnvironment.workersAtom(props.environmentId));
+  const rename = useAtomCommand(boardEnvironment.renameWorker, { reportFailure: false });
+  const named = {
+    id: usedBy.workerId,
+    label: worker?.label ?? usedBy.label,
+    abbreviation: worker?.abbreviation,
   };
-}
-
-function ProgressLine(props: {
-  readonly done: boolean;
-  readonly active?: boolean;
-  readonly children: React.ReactNode;
-}) {
-  return (
-    <li className="flex items-center gap-2">
-      {props.done ? (
-        <CheckIcon className="size-3.5 text-muted-foreground" />
-      ) : props.active === true ? (
-        <span className="flex text-info-foreground">
-          <Spinner size="sm" />
-        </span>
-      ) : (
-        <span className="size-3.5 rounded-full border border-border" />
-      )}
-      <span className={props.done ? "text-muted-foreground" : "text-foreground"}>
-        {props.children}
-      </span>
-    </li>
+  const [label, setLabel] = useState(named.label);
+  const [abbreviation, setAbbreviation] = useState(() =>
+    initialWorkerAbbreviation(
+      worker ?? { id: usedBy.workerId, label: usedBy.label },
+      state.workers,
+    ),
   );
-}
+  const [saving, setSaving] = useState(false);
+  const problems = workerNameProblems({
+    workerId: usedBy.workerId,
+    label,
+    abbreviation,
+    workers: state.workers,
+  });
+  const valid = problems.label === null && problems.abbreviation === null;
+  const changed = label.trim() !== named.label || abbreviation !== named.abbreviation;
+  const providers = worker?.snapshot?.providers.filter((provider) => provider.enabled) ?? [];
+  const checkouts = worker?.snapshot?.checkouts.length ?? 0;
 
-function ErrorBox(props: { readonly error: AddWorkerErrorCopy }) {
-  return (
-    <div className="rounded-lg border border-warning/40 bg-warning/8 px-3 py-2 text-board-12-5">
-      <div className="font-medium text-warning-foreground">{props.error.title}</div>
-      {props.error.body.length === 0 ? null : (
-        <div className="mt-0.5 text-muted-foreground">{props.error.body}</div>
-      )}
-    </div>
-  );
-}
+  const save = async (then: () => void) => {
+    if (!changed) {
+      then();
+      return;
+    }
+    setSaving(true);
+    const result = await rename({
+      environmentId: props.environmentId,
+      input: { workerId: usedBy.workerId, label: label.trim(), abbreviation },
+    });
+    setSaving(false);
+    if (result._tag !== "Success") {
+      toastManager.add({ type: "error", title: describeBoardCommandFailure(result) });
+      return;
+    }
+    then();
+  };
 
-function LabelField(props: {
-  readonly value: string;
-  readonly onChange: (value: string) => void;
-  readonly placeholder: string;
-}) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor="board-worker-label">Label shown on cards and in settings</Label>
-      <Input
-        id="board-worker-label"
-        maxLength={64}
-        placeholder={props.placeholder}
-        value={props.value}
-        onChange={(event) => props.onChange(event.target.value)}
-      />
-    </div>
+    <>
+      <DialogHeader>
+        <BoardDialogTitle look="with-icon">
+          <CheckIcon className="size-4 text-muted-foreground" />
+          {usedBy.rejoin ? `${named.label} rejoined` : `${named.label} joined`}
+        </BoardDialogTitle>
+      </DialogHeader>
+      <DialogPanel>
+        <div className="flex flex-col gap-4">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-board-13">
+            <dt className="text-muted-foreground">T3o</dt>
+            <dd>{worker?.status.t3oVersion ?? usedBy.t3oRelease ?? "Unknown"}</dd>
+            <dt className="text-muted-foreground">Providers</dt>
+            <dd>
+              {providers.length === 0
+                ? "None reported"
+                : providers.map((provider) => provider.displayName ?? provider.driver).join(", ")}
+            </dd>
+            <dt className="text-muted-foreground">Projects</dt>
+            <dd>
+              {checkouts === 0
+                ? "None set up yet"
+                : `${checkouts} ${checkouts === 1 ? "checkout" : "checkouts"}`}
+            </dd>
+          </dl>
+          <WorkerNameFields
+            idPrefix="join-worker"
+            label={label}
+            abbreviation={abbreviation}
+            problems={problems}
+            onLabelChange={setLabel}
+            onAbbreviationChange={setAbbreviation}
+            hint="The abbreviation marks this worker on cards and thread rows."
+          />
+        </div>
+      </DialogPanel>
+      <DialogFooter>
+        <Button
+          variant="outline"
+          disabled={!valid || saving}
+          onClick={() =>
+            void save(() => {
+              props.close();
+              props.onSetUpProjects();
+            })
+          }
+        >
+          Set up projects…
+        </Button>
+        <Button disabled={!valid || saving} onClick={() => void save(props.close)}>
+          Done
+        </Button>
+      </DialogFooter>
+    </>
   );
 }

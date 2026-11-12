@@ -48,7 +48,7 @@ import type { BoardDetailThreadLink } from "./BoardCardDetailView";
 import { BoardHint } from "./BoardHint";
 import type { BoardQueueInfo } from "./boardQueueInfo";
 import { BoardThreadWorkerGate } from "./workers/BoardThreadWorkerGate";
-import { threadWorkerOpensOn } from "./workers/threadWorker";
+import { threadWorkerChip, threadWorkerOpensOn } from "./workers/threadWorker";
 
 const NO_THREAD_IDS: ReadonlyArray<ThreadId> = [];
 
@@ -135,6 +135,31 @@ function BoardCardMissingChat({
         </Button>
       ) : null}
     </div>
+  );
+}
+
+/** Where the open thread runs (prototype 6.4): "Running on B01", or amber while its worker is offline. */
+function ThreadWorkerChip({ link }: { readonly link: BoardDetailThreadLink }) {
+  const chip = threadWorkerChip({
+    worker: link.worker,
+    running: link.threadState === "working",
+    // `ranOn` is null only for this server's thread on a board with no other workers.
+    localOnly: link.ranOn === null,
+  });
+  if (chip === null) return null;
+  return (
+    <BoardHint label={chip.tooltip}>
+      <span
+        className={cn(
+          "inline-flex h-[22px] max-w-56 shrink-0 items-center truncate rounded-md border px-1.5 text-board-11-5",
+          chip.warning
+            ? "border-warning/40 bg-warning/8 text-warning-foreground"
+            : "border-border text-muted-foreground",
+        )}
+      >
+        <span className="truncate">{chip.text}</span>
+      </span>
+    </BoardHint>
   );
 }
 
@@ -362,6 +387,7 @@ export function BoardCardThreadPane({
           </BoardHint>
         ) : null}
         <span className="flex-1" />
+        {selected === null || selected.tombstoned ? null : <ThreadWorkerChip link={selected} />}
         <BoardHint label={maximised ? "Exit fullscreen" : "Fullscreen"}>
           <button
             className="inline-flex size-6 shrink-0 items-center justify-center rounded-board-7 border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"

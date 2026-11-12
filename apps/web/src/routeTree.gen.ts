@@ -56,6 +56,7 @@ import { Route as ChatSettingsAboutRouteImport } from './routes/_chat.settings.a
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 import { Route as ChatSettingsBoardIndexRouteImport } from './routes/_chat.settings.board.index'
+import { Route as ChatSettingsBoardWorkersRouteImport } from './routes/_chat.settings.board.workers'
 import { Route as ChatSettingsBoardPipelineRouteImport } from './routes/_chat.settings.board.pipeline'
 import { Route as ChatSettingsBoardProjectsProjectIdTabRouteImport } from './routes/_chat.settings.board.projects.$projectId.$tab'
 
@@ -299,6 +300,12 @@ const ChatSettingsBoardIndexRoute = ChatSettingsBoardIndexRouteImport.update({
   path: '/',
   getParentRoute: () => ChatSettingsBoardRoute,
 } as any)
+const ChatSettingsBoardWorkersRoute =
+  ChatSettingsBoardWorkersRouteImport.update({
+    id: '/workers',
+    path: '/workers',
+    getParentRoute: () => ChatSettingsBoardRoute,
+  } as any)
 const ChatSettingsBoardPipelineRoute =
   ChatSettingsBoardPipelineRouteImport.update({
     id: '/pipeline',
@@ -359,6 +366,7 @@ export interface FileRoutesByFullPath {
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/settings/board/pipeline': typeof ChatSettingsBoardPipelineRoute
+  '/settings/board/workers': typeof ChatSettingsBoardWorkersRoute
   '/settings/board/': typeof ChatSettingsBoardIndexRoute
   '/settings/board/projects/$projectId/$tab': typeof ChatSettingsBoardProjectsProjectIdTabRoute
 }
@@ -408,6 +416,7 @@ export interface FileRoutesByTo {
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/settings/board/pipeline': typeof ChatSettingsBoardPipelineRoute
+  '/settings/board/workers': typeof ChatSettingsBoardWorkersRoute
   '/settings/board': typeof ChatSettingsBoardIndexRoute
   '/settings/board/projects/$projectId/$tab': typeof ChatSettingsBoardProjectsProjectIdTabRoute
 }
@@ -460,6 +469,7 @@ export interface FileRoutesById {
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/_chat/settings/board/pipeline': typeof ChatSettingsBoardPipelineRoute
+  '/_chat/settings/board/workers': typeof ChatSettingsBoardWorkersRoute
   '/_chat/settings/board/': typeof ChatSettingsBoardIndexRoute
   '/_chat/settings/board/projects/$projectId/$tab': typeof ChatSettingsBoardProjectsProjectIdTabRoute
 }
@@ -512,6 +522,7 @@ export interface FileRouteTypes {
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
     | '/settings/board/pipeline'
+    | '/settings/board/workers'
     | '/settings/board/'
     | '/settings/board/projects/$projectId/$tab'
   fileRoutesByTo: FileRoutesByTo
@@ -561,6 +572,7 @@ export interface FileRouteTypes {
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
     | '/settings/board/pipeline'
+    | '/settings/board/workers'
     | '/settings/board'
     | '/settings/board/projects/$projectId/$tab'
   id:
@@ -612,6 +624,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/worktrees'
     | '/threads/$environmentId/$threadId'
     | '/_chat/settings/board/pipeline'
+    | '/_chat/settings/board/workers'
     | '/_chat/settings/board/'
     | '/_chat/settings/board/projects/$projectId/$tab'
   fileRoutesById: FileRoutesById
@@ -961,6 +974,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsBoardIndexRouteImport
       parentRoute: typeof ChatSettingsBoardRoute
     }
+    '/_chat/settings/board/workers': {
+      id: '/_chat/settings/board/workers'
+      path: '/workers'
+      fullPath: '/settings/board/workers'
+      preLoaderRoute: typeof ChatSettingsBoardWorkersRouteImport
+      parentRoute: typeof ChatSettingsBoardRoute
+    }
     '/_chat/settings/board/pipeline': {
       id: '/_chat/settings/board/pipeline'
       path: '/pipeline'
@@ -980,12 +1000,14 @@ declare module '@tanstack/react-router' {
 
 interface ChatSettingsBoardRouteChildren {
   ChatSettingsBoardPipelineRoute: typeof ChatSettingsBoardPipelineRoute
+  ChatSettingsBoardWorkersRoute: typeof ChatSettingsBoardWorkersRoute
   ChatSettingsBoardIndexRoute: typeof ChatSettingsBoardIndexRoute
   ChatSettingsBoardProjectsProjectIdTabRoute: typeof ChatSettingsBoardProjectsProjectIdTabRoute
 }
 
 const ChatSettingsBoardRouteChildren: ChatSettingsBoardRouteChildren = {
   ChatSettingsBoardPipelineRoute: ChatSettingsBoardPipelineRoute,
+  ChatSettingsBoardWorkersRoute: ChatSettingsBoardWorkersRoute,
   ChatSettingsBoardIndexRoute: ChatSettingsBoardIndexRoute,
   ChatSettingsBoardProjectsProjectIdTabRoute:
     ChatSettingsBoardProjectsProjectIdTabRoute,

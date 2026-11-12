@@ -11,10 +11,13 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardConnectionIsDirect,
   boardThreadWorker,
   LOCAL_WORKER_LABEL,
+  threadWorkerChip,
   threadWorkerOpensOn,
   threadWorkerRanOn,
+  workerProxyAddress,
   workerThreadAccess,
   workerThreadAccessCopy,
 } from "./threadWorker";
@@ -28,7 +31,7 @@ const withWorker: BoardWorkersState = {
     {
       id: W1,
       label: "linux-box",
-      url: "http://linux-box:3773",
+      abbreviation: "LB",
       addedAt: "2026-10-21T10:00:00.000Z",
       status: { state: "online", lastSeenAt: null, t3oVersion: null, protocolVersion: null },
       snapshot: null,
@@ -53,8 +56,11 @@ describe("the worker a thread lives on", () => {
     expect(local).toEqual({
       workerId: "local",
       environmentId: BOARD,
+      boardEnvironmentId: BOARD,
       label: LOCAL_WORKER_LABEL,
-      url: null,
+      abbreviation: "SRV",
+      state: null,
+      lastSeenAt: null,
       removed: false,
     });
   });
@@ -62,7 +68,7 @@ describe("the worker a thread lives on", () => {
   it("is the named worker, opening in that worker's environment", () => {
     expect(remote.environmentId).toBe(W1);
     expect(remote.label).toBe("linux-box");
-    expect(remote.url).toBe("http://linux-box:3773");
+    expect(remote.abbreviation).toBe("LB");
     expect(threadWorkerOpensOn(remote)).toBe("Opens on linux-box");
   });
 
@@ -74,7 +80,11 @@ describe("the worker a thread lives on", () => {
     });
     expect(gone.removed).toBe(true);
     expect(
-      workerThreadAccess({ worker: gone, connection: connection({ phase: "connected" }) }),
+      workerThreadAccess({
+        worker: gone,
+        connection: connection({ phase: "connected" }),
+        boardDirect: true,
+      }),
     ).toBe("removed");
   });
 
@@ -91,22 +101,37 @@ describe("the worker a thread lives on", () => {
 });
 
 describe("opening a thread on a worker", () => {
+  const access = (
+    patch: Partial<SupervisorConnectionState> | null,
+    options: { readonly boardDirect?: boolean; readonly worker?: typeof remote } = {},
+  ) =>
+    workerThreadAccess({
+      worker: options.worker ?? remote,
+      connection: patch === null ? null : connection(patch),
+      boardDirect: options.boardDirect ?? true,
+    });
+
   it("needs no connection for this server's own threads", () => {
-    expect(workerThreadAccess({ worker: local, connection: null })).toBe("open");
+    expect(access(null, { worker: local, boardDirect: false })).toBe("open");
   });
 
-  it("asks to connect when this device has no connection to the worker", () => {
-    const access = workerThreadAccess({ worker: remote, connection: null });
-    expect(access).toBe("connect");
-    if (access === "open") return;
-    const copy = workerThreadAccessCopy(access, remote);
-    expect(copy.title).toBe("Connect to worker linux-box to open this thread");
-    expect(copy.action).toBe("open-connections");
+  it("registers through the board when this device has no entry, unless the board is relayed", () => {
+    expect(access(null)).toBe("register");
+    expect(access(null, { boardDirect: false })).toBe("relayed");
+    expect(workerThreadAccessCopy("relayed", remote).title).toBe(
+      "Open this thread from a direct connection to the board",
+    );
   });
 
-  it("follows the device's own connection state", () => {
-    const access = (patch: Partial<SupervisorConnectionState>) =>
-      workerThreadAccess({ worker: remote, connection: connection(patch) });
+  it("waits for an offline worker in amber, whatever this device's connection", () => {
+    const offline = { ...remote, state: "offline" as const };
+    expect(access({ phase: "connected" }, { worker: offline })).toBe("worker-offline");
+    const copy = workerThreadAccessCopy("worker-offline", offline);
+    expect(copy.title).toBe("Messages resume when linux-box reconnects");
+    expect(copy.tone).toBe("warning");
+  });
+
+  it("follows the device's own connection state, re-minting a refused session", () => {
     expect(access({ phase: "connected" })).toBe("open");
     expect(access({ phase: "connecting", attempt: 1 })).toBe("opening");
     expect(access({ phase: "backoff", attempt: 1 })).toBe("opening");
@@ -117,7 +142,7 @@ describe("opening a thread on a worker", () => {
         phase: "blocked",
         lastFailure: new ConnectionBlockedError({ reason: "authentication", detail: "401" }),
       }),
-    ).toBe("sign-in");
+    ).toBe("reauthorize");
     expect(
       access({
         phase: "blocked",
@@ -125,11 +150,62 @@ describe("opening a thread on a worker", () => {
       }),
     ).toBe("offline");
   });
+});
 
-  it("asks for sign-in in the waiting-on-you colour, with Sign in", () => {
-    const copy = workerThreadAccessCopy("sign-in", remote);
-    expect(copy.title).toBe("Connection needs sign-in");
-    expect(copy.tone).toBe("attention");
-    expect(copy.action).toBe("sign-in");
+describe("the thread header's worker chip", () => {
+  it("says where the thread runs or ran, by abbreviation, and amber while offline", () => {
+    expect(threadWorkerChip({ worker: remote, running: true, localOnly: false })).toEqual({
+      text: "Running on LB",
+      tooltip: "linux-box",
+      warning: false,
+    });
+    expect(threadWorkerChip({ worker: remote, running: false, localOnly: false })?.text).toBe(
+      "Ran on LB",
+    );
+    expect(
+      threadWorkerChip({
+        worker: { ...remote, state: "offline" },
+        running: false,
+        localOnly: false,
+      }),
+    ).toMatchObject({ text: "linux-box offline", warning: true });
+    expect(threadWorkerChip({ worker: local, running: true, localOnly: true })).toBeNull();
+    expect(threadWorkerChip({ worker: local, running: true, localOnly: false })?.text).toBe(
+      "Running on SRV",
+    );
+  });
+});
+
+describe("reaching a worker through the board", () => {
+  it("puts the proxy path under the board's own base, for http and ws", () => {
+    expect(workerProxyAddress("https://board.example/", "/api/t3o/workers/env-w1/")).toEqual({
+      httpBaseUrl: "https://board.example/api/t3o/workers/env-w1/",
+      wsBaseUrl: "wss://board.example/api/t3o/workers/env-w1/",
+    });
+    expect(
+      workerProxyAddress("http://10.0.0.2:3773/t3/?x=1", "api/t3o/workers/env-w1").httpBaseUrl,
+    ).toBe("http://10.0.0.2:3773/t3/api/t3o/workers/env-w1/");
+  });
+
+  it("counts only a plain http(s) board connection as direct", () => {
+    const base = {
+      httpBaseUrl: "https://board.example/",
+      httpAuthorization: null,
+      target: { _tag: "PrimaryConnectionTarget" },
+    } as unknown as Parameters<typeof boardConnectionIsDirect>[0];
+    expect(boardConnectionIsDirect(base)).toBe(true);
+    expect(boardConnectionIsDirect(null)).toBe(false);
+    expect(
+      boardConnectionIsDirect({
+        ...base!,
+        httpAuthorization: { _tag: "Dpop", accessToken: "a", expiresAtEpochMs: 0 },
+      }),
+    ).toBe(false);
+    expect(
+      boardConnectionIsDirect({
+        ...base!,
+        target: { _tag: "SshConnectionTarget" },
+      } as unknown as Parameters<typeof boardConnectionIsDirect>[0]),
+    ).toBe(false);
   });
 });

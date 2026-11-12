@@ -158,13 +158,6 @@ export function boardWorkerChoices(input: {
   const rows = input.state.workers.map((worker): BoardWorkerChoice => {
     const base = { workerId: worker.id, label: worker.label, canSetUp: false, cloning: false };
     switch (worker.status.state) {
-      case "unauthorized":
-        return {
-          ...base,
-          selectable: false,
-          detail: "Access revoked",
-          tooltip: `${worker.label}'s access was revoked. Re-pair it in Settings → Workers.`,
-        };
       case "incompatible":
         return {
           ...base,
@@ -173,12 +166,19 @@ export function boardWorkerChoices(input: {
           tooltip: `${worker.label} runs T3o ${worker.status.t3oVersion ?? "an older version"}; this board needs ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION} or newer.`,
         };
       case "offline":
-      case "connecting":
         return {
           ...base,
           selectable: false,
           detail: "Offline",
           tooltip: `${worker.label} is offline. Pin it once it reconnects.`,
+        };
+      case "connecting":
+      case "unauthorized":
+        return {
+          ...base,
+          selectable: false,
+          detail: "Reconnecting",
+          tooltip: `${worker.label} is reconnecting. Pin it once it's connected.`,
         };
       case "online":
         break;
@@ -312,12 +312,11 @@ export function boardQueueReason(input: {
 
 // ── Worker trouble (prototype 6) ──────────────────────────
 
-/** Whether the board can't run anything on a worker now. `connecting` is a
-    first dial, over in seconds, and is not trouble; a redial of a worker
-    already offline stays `offline`. */
+/** Whether the board can't run anything on a worker now. Reconnecting
+    (`connecting`, `unauthorized`) is over in seconds and is not trouble. */
 function boardWorkerOutOfReach(worker: BoardWorkerView): boolean {
   const state = worker.status.state;
-  return state === "offline" || state === "unauthorized" || state === "incompatible";
+  return state === "offline" || state === "incompatible";
 }
 
 /** The card's Worker removed or Worker offline notice, and its panel. */
@@ -363,19 +362,13 @@ export function boardCardWorkerTrouble(
   const name = worker.label;
   const lastSeenAt = worker.status.lastSeenAt;
   const why =
-    worker.status.state === "unauthorized"
-      ? `${name}'s access was revoked.`
-      : worker.status.state === "incompatible"
-        ? `${name} needs a newer T3o.`
-        : lastSeenAt === null
-          ? `${name} is offline.`
-          : `${name} went offline at ${clockTime(lastSeenAt)}.`;
+    worker.status.state === "incompatible"
+      ? `${name} needs a newer T3o.`
+      : lastSeenAt === null
+        ? `${name} is offline.`
+        : `${name} went offline at ${clockTime(lastSeenAt)}.`;
   const panelTitle =
-    worker.status.state === "unauthorized"
-      ? `${name}'s access was revoked`
-      : worker.status.state === "incompatible"
-        ? `${name} needs a newer T3o`
-        : `${name} is offline`;
+    worker.status.state === "incompatible" ? `${name} needs a newer T3o` : `${name} is offline`;
   return {
     kind: "offline",
     workerId,
@@ -389,33 +382,28 @@ export function boardCardWorkerTrouble(
   };
 }
 
-/**
- * When paused work on an out-of-reach worker carries on: a revoked worker
- * needs pairing again and an incompatible one an upgrade; only an offline
- * one comes back by itself.
- */
+/** When paused work on an out-of-reach worker carries on: an incompatible
+    one needs an upgrade; an offline one comes back by itself. */
 function boardWorkerResumesWhen(worker: BoardWorkerView, subject: string): string {
-  return worker.status.state === "unauthorized"
-    ? `once ${subject} is paired again`
-    : worker.status.state === "incompatible"
-      ? `once ${subject} is upgraded`
-      : `when ${subject} reconnects`;
+  return worker.status.state === "incompatible"
+    ? `once ${subject} is upgraded`
+    : `when ${subject} reconnects`;
 }
 
 /** One worker in the board header's indicator popover (prototype 6.3). */
 export interface BoardWorkerAttentionRow {
   readonly workerId: BoardWorkerId;
   readonly label: string;
-  /** "Offline since 09:12", "Access revoked", "Needs T3o 0.14.0 or newer". */
+  /** "Offline since 09:12", "Needs T3o 0.14.0 or newer". */
   readonly status: string;
-  /** "when it reconnects", "once it is paired again", "once it is upgraded". */
+  /** "when it reconnects", "once it is upgraded". */
   readonly resumesWhen: string;
   readonly pausedCards: ReadonlyArray<Pick<BoardCardShell, "cardId" | "key" | "title">>;
 }
 
 /**
  * The board header's worker indicator: "1 worker offline", or "N workers need
- * attention" once any is revoked or incompatible — and each of them with the
+ * attention" once any is incompatible — and each of them with the
  * cards it has paused. Null when every worker is fine, and on a local-only
  * board.
  */
@@ -441,13 +429,11 @@ export function boardWorkersAttention(
     workerId: worker.id,
     label: worker.label,
     status:
-      worker.status.state === "unauthorized"
-        ? "Access revoked"
-        : worker.status.state === "incompatible"
-          ? `Needs T3o ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION} or newer`
-          : worker.status.lastSeenAt === null
-            ? "Offline"
-            : `Offline since ${clockTime(worker.status.lastSeenAt)}`,
+      worker.status.state === "incompatible"
+        ? `Needs T3o ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION} or newer`
+        : worker.status.lastSeenAt === null
+          ? "Offline"
+          : `Offline since ${clockTime(worker.status.lastSeenAt)}`,
     resumesWhen: boardWorkerResumesWhen(worker, "it"),
     pausedCards: cards.filter(
       (card) => boardCardWorkerTrouble(card, state)?.workerId === worker.id,

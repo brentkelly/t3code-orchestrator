@@ -42,7 +42,9 @@ export type SettingsPath =
   | "/settings/about"
   | "/settings/archived"
   // T3o: Board settings page (D1 — the board is a single settings page).
-  | "/settings/board";
+  | "/settings/board"
+  // T3o: the board's workers page (T3O-84).
+  | "/settings/board/workers";
 
 export type SettingsSearchScope =
   | "environment"
@@ -121,6 +123,8 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/archived": "Archive",
   // T3o: Board settings nav label.
   "/settings/board": "Board",
+  // T3o: the board's workers page (T3O-84).
+  "/settings/board/workers": "Workers",
 };
 
 /** Sidebar order. A group without a heading is set apart by space alone. */
@@ -141,7 +145,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     ],
   },
   // T3o: the board's settings page, set apart at the top of the stock groups.
-  { heading: null, paths: ["/settings/board"] },
+  { heading: null, paths: ["/settings/board", "/settings/board/workers"] },
   {
     heading: "Agents",
     paths: [
@@ -1362,6 +1366,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/archived": "project-defaults",
   // T3o: the board page reads the primary environment's settings at any selection.
   "/settings/board": null,
+  "/settings/board/workers": null,
 };
 
 const RENAMED_SETTINGS_PATHS: Readonly<Record<string, SettingsPath>> = {

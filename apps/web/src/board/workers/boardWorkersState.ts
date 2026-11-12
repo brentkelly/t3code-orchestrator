@@ -1,47 +1,11 @@
-/**
- * T3o: the web's reads and the one client-side action behind the
- * Workers settings.
- */
+/** T3o: the web's reads behind the Workers settings. */
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { mintEnvironmentPairingToken } from "@t3tools/client-runtime/state/shell";
-import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import type { BoardWorkersState, EnvironmentId } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
-import { connectionAtomRuntime } from "../../connection/runtime";
 import { boardEnvironment, environmentBoard } from "../../state/board";
-import { readPreparedConnection } from "../../state/session";
-
-export class WorkerEnvironmentNotConnected extends Schema.TaggedError<WorkerEnvironmentNotConnected>()(
-  "WorkerEnvironmentNotConnected",
-  { message: Schema.String },
-) {}
-
-/**
- * Mint a one-time pairing token on a worker environment with THIS client's
- * session there, for the board server to spend. The token is labelled
- * as the board's session, so the worker's Authorized clients list names it.
- */
-export const mintWorkerPairingToken = createRuntimeCommand(connectionAtomRuntime, {
-  label: "web:board:mint-worker-pairing-token",
-  execute: Effect.fn("execute")(function* (input: {
-    readonly environmentId: EnvironmentId;
-    readonly sessionLabel: string;
-  }) {
-    const prepared = readPreparedConnection(input.environmentId);
-    if (prepared === null) {
-      return yield* new WorkerEnvironmentNotConnected({
-        message: "This device isn't connected to that environment.",
-      });
-    }
-    const minted = yield* mintEnvironmentPairingToken({ prepared, label: input.sessionLabel });
-    // Where THIS device reaches the worker, which is where the board server
-    // is asked to dial it.
-    return { token: minted.credential, httpBaseUrl: prepared.httpBaseUrl };
-  }),
-});
+import { useAtomCommand } from "../../state/use-atom-command";
+import { pruneWorkerThreadEnvironments } from "./workerThreadEnvironments";
 
 export interface BoardWorkersView {
   readonly loading: boolean;
@@ -108,4 +72,24 @@ export function useNowAtDeadlines(deadlines: ReadonlyArray<number>): number {
     return () => clearTimeout(timer);
   }, [key]);
   return now;
+}
+
+/**
+ * Removes the environments this client registered for the board's workers
+ * once the board has loaded without them (a removed worker), so a worker's
+ * proxied environment never outlives its place on the board.
+ */
+export function usePruneWorkerThreadEnvironments(environmentId: EnvironmentId): void {
+  const workers = useBoardWorkers(environmentId);
+  const prune = useAtomCommand(pruneWorkerThreadEnvironments, { reportFailure: false });
+  const loaded = !workers.loading && !workers.failed;
+  const workerIds = workers.state.workers.map((worker) => worker.id).join(",");
+  // `prune` is a fresh closure every render; the board and its worker list are what matter.
+  const pruneFor = useEffectEvent((boardEnvironmentId: EnvironmentId, ids: string) => {
+    void prune({ boardEnvironmentId, workerIds: ids.split(",").filter(Boolean) });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- removes stale environments from the client's connection registry when the board's worker list changes.
+  useEffect(() => {
+    if (loaded) pruneFor(environmentId, workerIds);
+  }, [environmentId, workerIds, loaded]);
 }

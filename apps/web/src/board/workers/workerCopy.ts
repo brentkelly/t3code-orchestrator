@@ -1,11 +1,10 @@
 /**
- * The Workers and Project checkouts copy and colours. Online stays grey,
- * connecting and cloning are blue, needs-a-human is amber, and only a finished
+ * The Workers and Project checkouts copy and colours. Connected stays grey,
+ * reconnecting and cloning are blue, blocked is amber, and only a finished
  * setup is green.
  */
 import {
   BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
-  type BoardWorkerAddErrorCode,
   type BoardWorkerCheckout,
   type BoardWorkerSetup,
   type BoardWorkerSetupFailureKind,
@@ -27,53 +26,82 @@ export function clockTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
+/** The command that updates a T3o release checkout, shown with Needs update. */
+export const T3O_UPDATE_COMMAND = "pnpm t3o-update";
+
+/**
+ * A worker's Status cell (prototype 3.2). `connecting` and `unauthorized` are
+ * both a worker re-establishing its tunnel, so both read Reconnecting.
+ */
 export function workerStatusPresentation(
   worker: BoardWorkerView,
-  boardLabel: string,
+  nowMs?: number,
 ): WorkerStatusPresentation {
   switch (worker.status.state) {
     case "online":
-      return { label: "Online", detail: null, tone: "neutral", tooltip: null };
+      return { label: "Connected", detail: null, tone: "neutral", tooltip: null };
     case "connecting":
-      return { label: "Connecting…", detail: null, tone: "running", tooltip: null };
-    case "offline":
-      return {
-        label: "Offline",
-        detail: null,
-        tone: "warning",
-        tooltip:
-          worker.status.lastSeenAt === null
-            ? `The board server can't reach ${worker.label}. Cards on ${worker.label} are paused until it reconnects.`
-            : `Last heard from at ${clockTime(worker.status.lastSeenAt)}. Cards on ${worker.label} are paused until it reconnects.`,
-      };
     case "unauthorized":
       return {
-        label: "Access revoked",
-        detail: `Revoked in ${worker.label}'s Sharing & access`,
-        tone: "warning",
-        tooltip: `${worker.label}'s owner removed “T3o board (${boardLabel})” from Settings → Sharing & access → Authorized clients on that machine, or it no longer recognises this board. Its cards are held until it's re-paired.`,
+        label: "Reconnecting",
+        detail: null,
+        tone: "running",
+        tooltip: `${worker.label} is re-establishing its connection to the board.`,
       };
+    case "offline": {
+      const seenAt = worker.status.lastSeenAt;
+      return {
+        label: "Offline",
+        detail:
+          seenAt === null
+            ? "Never connected"
+            : nowMs === undefined
+              ? `Last seen ${clockTime(seenAt)}`
+              : workerLastSeenLine(seenAt, nowMs),
+        tone: "warning",
+        tooltip: `Cards on ${worker.label} are paused until it reconnects.`,
+      };
+    }
     case "incompatible":
       return {
-        label: "Incompatible version",
-        detail: `Needs T3o ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION} or newer`,
+        label: "Needs update",
+        detail: "Connected · taking no new cards",
         tone: "warning",
-        tooltip: null,
+        tooltip: `${worker.label} runs T3o ${worker.status.t3oVersion ?? "an older release"}. This board needs ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION} or newer: run ${T3O_UPDATE_COMMAND} on it.`,
       };
   }
+}
+
+/** "Last seen 17:52 · 50 min ago". */
+function workerLastSeenLine(seenAt: string, nowMs: number): string {
+  const ago = lastSeenAgo(seenAt, nowMs);
+  return ago.includes(clockTime(seenAt))
+    ? `Last seen ${ago}`
+    : `Last seen ${clockTime(seenAt)} · ${ago}`;
+}
+
+/** Whether the Workers settings item carries its amber dot. */
+export function workersNeedAttention(workers: ReadonlyArray<BoardWorkerView>): boolean {
+  return workers.some(
+    (worker) => worker.status.state === "offline" || worker.status.state === "incompatible",
+  );
 }
 
 /** "Now" while online, otherwise how long ago it was last heard from. */
 export function workerLastSeen(worker: BoardWorkerView, nowMs: number): string {
   if (worker.status.state === "online") return "Now";
   if (worker.status.lastSeenAt === null) return "Never";
-  const seconds = Math.max(0, Math.round((nowMs - Date.parse(worker.status.lastSeenAt)) / 1000));
+  return lastSeenAgo(worker.status.lastSeenAt, nowMs);
+}
+
+function lastSeenAgo(seenAt: string, nowMs: number): string {
+  const seconds = Math.max(0, Math.round((nowMs - Date.parse(seenAt)) / 1000));
   if (seconds < 60) return "Just now";
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes} min ago`;
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${clockTime(worker.status.lastSeenAt)} · ${hours} h ago`;
-  return new Date(worker.status.lastSeenAt).toLocaleString(undefined, {
+  if (hours < 24) return `${clockTime(seenAt)} · ${hours} h ago`;
+  return new Date(seenAt).toLocaleString(undefined, {
     weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
@@ -101,73 +129,6 @@ export function workerLastSeenDeadlines(worker: BoardWorkerView): ReadonlyArray<
   return deadlines;
 }
 
-export interface AddWorkerErrorCopy {
-  readonly title: string;
-  readonly body: string;
-}
-
-/** The add / re-pair error states (prototype 1.9). `target` is the worker the
-    human meant, by the name they know it under. */
-export function addWorkerErrorCopy(input: {
-  readonly code: BoardWorkerAddErrorCode;
-  readonly target: string;
-  readonly workerLabel?: string | undefined;
-  readonly workerVersion?: string | undefined;
-  readonly message: string;
-}): AddWorkerErrorCopy {
-  switch (input.code) {
-    case "unreachable":
-      return {
-        title: `Board server can't reach ${input.target}`,
-        body: "Workers must be reachable from the board server, for example over the same network or VPN.",
-      };
-    case "invalid-credential":
-      return {
-        title: "This link has expired or isn't valid",
-        body: "Pairing links work once and expire after 5 minutes. Run t3 pair on the worker again and paste the new link. It starts with https:// and contains /pair#.",
-      };
-    case "incompatible":
-      return {
-        title:
-          input.workerVersion === undefined
-            ? `${input.target} isn't a compatible T3o server`
-            : `${input.target} runs T3o ${input.workerVersion}`,
-        body: `This board needs ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION} or newer on every worker. Update T3o on ${input.target}, then try again.`,
-      };
-    case "different-server":
-      return {
-        title: "That link is for a different server",
-        body:
-          input.workerLabel === undefined
-            ? `Paste a link created on ${input.target}.`
-            : `You're adding ${input.target}, but this link is from ${input.workerLabel}. Paste a link created on ${input.target}, or go back and pick ${input.workerLabel}.`,
-      };
-    case "board-server":
-      return {
-        title: "That's the board server",
-        body: "This link is from the board server itself, which is already a worker as “This server (local)”. Use a link from another machine.",
-      };
-    case "already-worker":
-      return { title: `${input.workerLabel ?? input.target} is already a worker.`, body: "" };
-    case "not-found":
-      return { title: "That worker isn't on this board any more.", body: input.message };
-  }
-}
-
-/** Whether a pasted link looks like a pairing link at all — checked on paste,
-    before anything is sent (prototype 1.9: "Bad format is checked on paste"). */
-export function looksLikePairingLink(text: string): boolean {
-  try {
-    const url = new URL(text.trim());
-    return (
-      (url.protocol === "https:" || url.protocol === "http:") &&
-      (url.hash.includes("token=") || url.searchParams.has("token"))
-    );
-  } catch {
-    return false;
-  }
-}
-
 // ── Project checkouts ──────────────────────────────────────────────────
 
 /** How long "Set up just now" stays green before settling to "Checked out". */
@@ -184,7 +145,6 @@ export type CheckoutCell =
     }
   | { readonly kind: "not-checked-out"; readonly canSetUp: boolean }
   | { readonly kind: "set-up-when-online" }
-  | { readonly kind: "re-pair-to-check" }
   | { readonly kind: "update-to-check" };
 
 /**
@@ -200,7 +160,6 @@ export function checkoutCell(input: {
   readonly nowMs: number;
 }): CheckoutCell {
   const { worker, checkout, setup } = input;
-  if (worker.status.state === "unauthorized") return { kind: "re-pair-to-check" };
   if (worker.status.state === "incompatible") return { kind: "update-to-check" };
   if (setup?.phase === "cloning") {
     return { kind: "cloning", percent: setup.percent, stage: setup.stage };

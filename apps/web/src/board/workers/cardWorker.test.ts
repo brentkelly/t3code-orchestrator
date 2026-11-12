@@ -75,6 +75,7 @@ const state = (
   defaultWorkerId: BOARD_LOCAL_WORKER_ID,
   workers,
   setups: [],
+  joinCodes: [],
   ...extra,
 });
 
@@ -136,14 +137,12 @@ describe("the worker picker (prototype 4.2)", () => {
       ["linux-box", true, "4 of 4 busy · will queue"],
       ["mbp-brent", false, "No checkout of advisor"],
       ["gpu-rig", false, "Offline"],
-      ["ci-runner-2", false, "Access revoked"],
+      ["ci-runner-2", false, "Reconnecting"],
       ["old-mini", false, "Needs T3o 0.0.45+"],
     ]);
     expect(rows[2]?.canSetUp).toBe(true);
     expect(rows[3]?.tooltip).toBe("gpu-rig is offline. Pin it once it reconnects.");
-    expect(rows[4]?.tooltip).toBe(
-      "ci-runner-2's access was revoked. Re-pair it in Settings → Workers.",
-    );
+    expect(rows[4]?.tooltip).toBe("ci-runner-2 is reconnecting. Pin it once it's connected.");
   });
 
   it("lets a worker still cloning the project be picked, and says how far it is", () => {
@@ -475,33 +474,25 @@ describe("worker trouble (T3O-66)", () => {
     ).toBe("offline");
   });
 
-  it("tells a revoked or incompatible worker apart from one that will reconnect", () => {
-    const revoked = boardCardWorkerTrouble(
-      card(),
-      state([worker(GPU, "gpu-rig", { state: "unauthorized" })]),
-    );
-    expect(revoked?.panelTitle).toBe("gpu-rig's access was revoked");
-    expect(revoked?.panelBody).toContain("once gpu-rig is paired again");
-    expect(revoked?.panelBody).not.toContain("reconnects");
+  it("tells an incompatible worker apart from one that will reconnect", () => {
     const old = boardCardWorkerTrouble(
       card(),
       state([worker(GPU, "gpu-rig", { state: "incompatible" })]),
     );
     expect(old?.panelTitle).toBe("gpu-rig needs a newer T3o");
     expect(old?.panelBody).toContain("once gpu-rig is upgraded");
+    expect(old?.panelBody).not.toContain("reconnects");
     expect(boardCardWorkerTrouble(card(), gpuOffline)?.panelTitle).toBe("gpu-rig is offline");
-    expect(
-      boardWorkersAttention([card()], state([worker(GPU, "gpu-rig", { state: "unauthorized" })]))
-        ?.rows[0]?.resumesWhen,
-    ).toBe("once it is paired again");
   });
 
-  it("says nothing of an idle card pinned there, a reachable worker, or a first dial", () => {
+  it("says nothing of an idle card pinned there, a reachable worker, or a reconnect", () => {
     expect(boardCardWorkerTrouble(card({ stepRunning: false }), gpuOffline)).toBeNull();
     expect(boardCardWorkerTrouble(card({ workerId: LINUX }), gpuOffline)).toBeNull();
-    expect(
-      boardCardWorkerTrouble(card(), state([worker(GPU, "gpu-rig", { state: "connecting" })])),
-    ).toBeNull();
+    for (const reconnecting of ["connecting", "unauthorized"] as const) {
+      expect(
+        boardCardWorkerTrouble(card(), state([worker(GPU, "gpu-rig", { state: reconnecting })])),
+      ).toBeNull();
+    }
     // A card following the default reads the default's state.
     expect(
       boardCardWorkerTrouble(
@@ -526,10 +517,11 @@ describe("worker trouble (T3O-66)", () => {
       [],
       state([
         worker(GPU, "gpu-rig", { state: "offline" }),
-        worker(MBP, "ci-runner-2", { state: "unauthorized" }),
+        worker(MBP, "old-mini", { state: "incompatible" }),
+        worker(LINUX, "linux-box", { state: "unauthorized" }),
       ]),
     );
     expect(mixed?.label).toBe("2 workers need attention");
-    expect(mixed?.rows.map((row) => row.status)).toEqual(["Offline", "Access revoked"]);
+    expect(mixed?.rows.map((row) => row.status)).toEqual(["Offline", "Needs T3o 0.0.45 or newer"]);
   });
 });
