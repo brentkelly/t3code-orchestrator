@@ -523,9 +523,15 @@ describe("tunnel backpressure", () => {
   });
 
   it("joining a socket that already closed destroys the other, rather than leaving it open", () => {
-    const gone = Object.assign(new NodeStream.PassThrough(), { setNoDelay() {}, setKeepAlive() {} });
+    const gone = Object.assign(new NodeStream.PassThrough(), {
+      setNoDelay() {},
+      setKeepAlive() {},
+    });
     gone.destroy();
-    const live = Object.assign(new NodeStream.PassThrough(), { setNoDelay() {}, setKeepAlive() {} });
+    const live = Object.assign(new NodeStream.PassThrough(), {
+      setNoDelay() {},
+      setKeepAlive() {},
+    });
     joinSockets(gone as unknown as NodeNet.Socket, live as unknown as NodeNet.Socket);
     expect(live.destroyed).toBe(true);
   });
