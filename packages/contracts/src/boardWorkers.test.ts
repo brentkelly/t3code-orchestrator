@@ -1,3 +1,5 @@
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -14,6 +16,7 @@ import {
   type BoardWorkersState,
 } from "./boardWorkers.ts";
 import { EnvironmentId, ProjectId } from "./baseSchemas.ts";
+import { BoardWorkerJoinRequest, WorkerTunnelHello } from "./boardWorkerTunnel.ts";
 import type { RepositoryIdentity } from "./environment.ts";
 
 const identity = (canonicalKey: string, origin?: string): RepositoryIdentity => ({
@@ -117,6 +120,34 @@ describe("join codes (T3O-84)", () => {
     expect(normalizeBoardWorkerJoinCode("ABCD-EFGO")).toBe("ABCDEFG0");
     expect(normalizeBoardWorkerJoinCode("ABCD-EFGU")).toBeNull();
     expect(normalizeBoardWorkerJoinCode("ABC")).toBeNull();
+  });
+
+  it("accepts only a plain environment id from a joining worker, since it names secret files", () => {
+    const join = Schema.decodeUnknownOption(BoardWorkerJoinRequest);
+    const hello = Schema.decodeUnknownOption(WorkerTunnelHello);
+    const request = (environmentId: string) => ({
+      code: "ABCD-EFGH",
+      environmentId,
+      label: "build-03",
+      t3oRelease: "0.1.8",
+      tunnelProtocol: 1,
+    });
+    expect(Option.isSome(join(request("6f1c2b0e-3a8d-4c7e-9f21-0d5b8a7c4e19")))).toBe(true);
+    for (const id of ["x/../server-signing-key", "..", ".hidden", "a\\b", "a b"]) {
+      expect(Option.isNone(join(request(id)))).toBe(true);
+      expect(
+        Option.isNone(
+          hello({
+            type: "hello",
+            tunnelProtocol: 1,
+            environmentId: id,
+            label: "build-03",
+            t3oRelease: "0.1.8",
+            gatewayProtocol: 1,
+          }),
+        ),
+      ).toBe(true);
+    }
   });
 });
 

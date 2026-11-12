@@ -50,9 +50,15 @@ export const isT3oBoardSubject = (subject: string): boolean =>
 
 // ── Joining ────────────────────────────────────────────────────────────
 
+/** An environment id a peer hands us. It names secret files and URL paths, so it must
+    be a plain token: no separators, no leading dot. */
+export const TunnelEnvironmentId = EnvironmentId.check(
+  Schema.isPattern(/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$/),
+);
+
 export const BoardWorkerJoinRequest = Schema.Struct({
   code: TrimmedNonEmptyString,
-  environmentId: EnvironmentId,
+  environmentId: TunnelEnvironmentId,
   label: TrimmedNonEmptyString,
   t3oRelease: TrimmedNonEmptyString,
   tunnelProtocol: NonNegativeInt,
@@ -61,7 +67,7 @@ export type BoardWorkerJoinRequest = typeof BoardWorkerJoinRequest.Type;
 
 export const BoardWorkerJoinAccepted = Schema.Struct({
   tunnelCredential: TrimmedNonEmptyString,
-  boardEnvironmentId: EnvironmentId,
+  boardEnvironmentId: TunnelEnvironmentId,
   boardLabel: TrimmedNonEmptyString,
   /** The board's own idea of its address, when its Board address is set. */
   boardAddress: Schema.optionalKey(TrimmedNonEmptyString),
@@ -81,7 +87,7 @@ export type BoardWorkerJoinRefused = typeof BoardWorkerJoinRefused.Type;
 export const WorkerTunnelHello = Schema.Struct({
   type: Schema.Literal("hello"),
   tunnelProtocol: NonNegativeInt,
-  environmentId: EnvironmentId,
+  environmentId: TunnelEnvironmentId,
   label: TrimmedNonEmptyString,
   t3oRelease: TrimmedNonEmptyString,
   gatewayProtocol: NonNegativeInt,
