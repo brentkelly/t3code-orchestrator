@@ -1,7 +1,7 @@
 import { EnvironmentId, type BoardCardId, type ProjectId } from "@t3tools/contracts";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { BoardBriefEditor } from "./BoardBriefEditor";
@@ -102,8 +102,9 @@ describe("BoardBriefEditor", () => {
     await using screen = await renderEditor("See ");
     const { onChange } = screen;
     await userEvent.keyboard("@T3O");
-    const options = screen.getByRole("option");
-    await expect.element(options.first()).toHaveTextContent("T3O-58");
+    // The menu portals out of the render container.
+    const options = page.getByRole("option");
+    await expect.element(options.first()).toHaveTextContent("T3O-58Review round oneT3o");
     await userEvent.keyboard("{Enter}");
     await vi.waitFor(() =>
       expect(onChange).toHaveBeenLastCalledWith(
@@ -118,9 +119,9 @@ describe("BoardBriefEditor", () => {
     await using screen = await renderEditor();
     const { onEscape } = screen;
     await userEvent.keyboard("@58");
-    await expect.element(screen.getByRole("option").first()).toBeVisible();
+    await expect.element(page.getByRole("option").first()).toBeVisible();
     await userEvent.keyboard("{Escape}");
-    await expect.element(screen.getByRole("option").first()).not.toBeInTheDocument();
+    await expect.element(page.getByRole("option").first()).not.toBeInTheDocument();
     expect(onEscape).not.toHaveBeenCalled();
     await userEvent.keyboard("{Escape}");
     expect(onEscape).toHaveBeenCalledTimes(1);
