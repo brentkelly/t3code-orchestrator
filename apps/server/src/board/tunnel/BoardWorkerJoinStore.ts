@@ -57,7 +57,8 @@ export interface BoardWorkerJoinStoreShape {
   }) => Effect.Effect<void>;
   /** The worker an unrevoked credential belongs to. */
   readonly verifyCredential: (credentialHash: string) => Effect.Effect<string | null>;
-  /** Revoke every credential of a worker except `keep` (when given). */
+  /** Revoke every credential of a worker; with `keep`, only those issued before it, so an
+      older credential proving itself late never revokes a newer re-join's. */
   readonly revokeCredentials: (input: {
     readonly workerId: string;
     readonly at: string;
@@ -171,7 +172,10 @@ export const BoardWorkerJoinStoreLive = Layer.effect(
           : sql`
               UPDATE board_worker_tunnel_credentials SET revoked_at = ${input.at}
               WHERE worker_id = ${input.workerId} AND revoked_at IS NULL
-                AND credential_hash != ${input.keep}
+                AND issued_at < (
+                  SELECT issued_at FROM board_worker_tunnel_credentials
+                  WHERE credential_hash = ${input.keep}
+                )
             `
         ).pipe(Effect.asVoid, Effect.orDie),
     } satisfies BoardWorkerJoinStoreShape;
@@ -182,7 +186,7 @@ export const BoardWorkerJoinStoreLive = Layer.effect(
 export const makeMemoryBoardWorkerJoinStore = Effect.gen(function* () {
   const codes = yield* Ref.make(new Map<string, JoinCodeRecord>());
   const credentials = yield* Ref.make(
-    new Map<string, { workerId: string; revokedAt: string | null }>(),
+    new Map<string, { workerId: string; issuedAt: string; revokedAt: string | null }>(),
   );
   const store: BoardWorkerJoinStoreShape = {
     createCode: (record) =>
@@ -239,7 +243,11 @@ export const makeMemoryBoardWorkerJoinStore = Effect.gen(function* () {
       ),
     issueCredential: (input) =>
       Ref.update(credentials, (map) =>
-        new Map(map).set(input.credentialHash, { workerId: input.workerId, revokedAt: null }),
+        new Map(map).set(input.credentialHash, {
+          workerId: input.workerId,
+          issuedAt: input.issuedAt,
+          revokedAt: null,
+        }),
       ),
     verifyCredential: (credentialHash) =>
       Ref.get(credentials).pipe(
@@ -251,9 +259,11 @@ export const makeMemoryBoardWorkerJoinStore = Effect.gen(function* () {
     revokeCredentials: (input) =>
       Ref.update(credentials, (map) => {
         const next = new Map(map);
+        const keptIssuedAt = input.keep === undefined ? undefined : map.get(input.keep)?.issuedAt;
         for (const [hash, entry] of map) {
           if (entry.workerId !== input.workerId || entry.revokedAt !== null) continue;
-          if (hash === input.keep) continue;
+          if (input.keep !== undefined && (keptIssuedAt === undefined || entry.issuedAt >= keptIssuedAt))
+            continue;
           next.set(hash, { ...entry, revokedAt: input.at });
         }
         return next;

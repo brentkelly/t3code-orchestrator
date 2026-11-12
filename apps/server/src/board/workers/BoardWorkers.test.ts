@@ -128,6 +128,7 @@ const setupWith = (
     };
     const join = yield* makeBoardWorkerJoin.pipe(
       Effect.provideService(BoardEngine, engineForTest),
+      Effect.provideService(WorkerConnections, connections),
       Effect.provideService(BoardWorkerJoinStore, joinStore),
       Effect.provide(relay.layer.pipe(Layer.provideMerge(kit.layer))),
     );
@@ -179,10 +180,10 @@ const joinWorker = (
     const created = yield* input.workers.createJoinCode;
     const outcome = yield* input.join.join(joinRequest(created.code), "203.0.113.7");
     assert.strictEqual(outcome._tag, "accepted");
+    // The worker's first hello hands its session over, then its tunnel is ready (again).
     yield* input.kit.secrets.store.set(workerSecretName(WORKER_ID), encodeWorkerToken(token));
-    // The engine's registry change reaches the connections through this sync.
-    const registry = (yield* (yield* BoardEngine).getReadModel).board?.workers ?? [];
-    yield* input.connections.sync(registry);
+    yield* input.kit.tunnel.setPhase(WORKER_ID, "down");
+    yield* input.kit.tunnel.setPhase(WORKER_ID, "ready");
     return { created, outcome };
   });
 
@@ -300,6 +301,10 @@ describe("BoardWorkers", () => {
         const code = yield* workers.createJoinCode;
         const again = acceptedBody(
           yield* join.join(joinRequest(code.code, { t3oRelease: "t3o0.1.9.1" }), null),
+        );
+        // The session held from before is dropped, so the worker's next hello mints one.
+        assert.isTrue(
+          Option.isNone(yield* context.kit.secrets.store.get(workerSecretName(WORKER_ID))),
         );
         const [view] = (yield* workers.state).workers;
         assert.strictEqual(view?.label, "Build box");

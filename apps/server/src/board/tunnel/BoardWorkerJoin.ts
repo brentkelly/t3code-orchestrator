@@ -34,9 +34,11 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
+import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { BoardEngine } from "../BoardEngine.ts";
 import { BoardRelayStore } from "../workers/BoardRelayStore.ts";
+import { WorkerConnections, workerSecretName } from "../workers/WorkerConnections.ts";
 import { BoardTunnelHost, JOIN_PROGRESS_TTL_MS } from "./BoardTunnelHost.ts";
 import { BoardWorkerJoinStore, hashSecret, type JoinCodeRecord } from "./BoardWorkerJoinStore.ts";
 import { setBoardTunnelSeamHandler } from "./upgradeSeam.ts";
@@ -119,6 +121,8 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
   const environment = yield* ServerEnvironment;
   const settings = yield* Effect.serviceOption(ServerSettingsService);
   const relayStore = yield* Effect.serviceOption(BoardRelayStore);
+  const connections = yield* WorkerConnections;
+  const secrets = yield* ServerSecretStore;
   const context = yield* Effect.context<never>();
 
   const ticks = yield* SubscriptionRef.make(0);
@@ -347,8 +351,17 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
       credentialHash: hashSecret(credential),
       issuedAt: usedAt,
     });
+    // The worker mints a fresh session on its first hello. One held from before (a
+    // direct-dial session from an older release) would be probed and refused forever.
+    yield* secrets
+      .remove(workerSecretName(request.environmentId as EnvironmentId))
+      .pipe(Effect.ignore);
     yield* host.ensure(request.environmentId as EnvironmentId);
     yield* host.beginJoin(request.environmentId as EnvironmentId);
+    // Starts following a worker that is new to the registry; a re-joined one is already followed.
+    yield* engine.getReadModel.pipe(
+      Effect.flatMap((model) => connections.sync(model.board?.workers ?? [])),
+    );
     yield* tick;
     const descriptor = yield* environment.getDescriptor;
     const boardAddress = yield* boardAddressSetting;

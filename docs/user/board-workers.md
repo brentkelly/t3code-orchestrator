@@ -52,6 +52,9 @@ A code that expires, or one already used, needs a new one. If the worker's T3o i
 new for the board, the dialog says **Needs update**; update the older side, and the same code still
 works.
 
+A worker added by its address in an earlier release stays on the board but stops connecting once the
+board is updated: join it again with a new code. It keeps its name, abbreviation and placements.
+
 **Everyone who uses the board can see every thread on its workers.** A worker that serves two boards
 lets users of both see all of its threads; `join` warns when you add a second board.
 
