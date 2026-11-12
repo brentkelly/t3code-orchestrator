@@ -240,12 +240,7 @@ export const makeBoardTunnelHost = Effect.gen(function* () {
           yield* markMilestone(workerId as EnvironmentId, "joined");
         }),
       );
-      const endpoint = board.endpoint(workerId);
-      if (endpoint !== null) {
-        void fetchDescriptor(endpoint.port).then((descriptor) => {
-          if (descriptor !== null) descriptors.set(workerId, descriptor);
-        });
-      }
+      void loadDescriptor(workerId);
     },
     onGoodbye: (workerId) => {
       void run(Effect.logInfo("A worker left this board from its side.", { workerId }));
@@ -257,12 +252,30 @@ export const makeBoardTunnelHost = Effect.gen(function* () {
 
   yield* Effect.addFinalizer(() => Effect.sync(() => board.close()));
 
+  const descriptorLoads = new Map<string, Promise<unknown>>();
+  /** Fetch and cache a ready worker's descriptor; one fetch in flight per worker. */
+  function loadDescriptor(workerId: string): Promise<unknown> {
+    const endpoint = board.endpoint(workerId);
+    if (endpoint === null || endpoint.phase !== "ready") return Promise.resolve(null);
+    const inFlight = descriptorLoads.get(workerId);
+    if (inFlight !== undefined) return inFlight;
+    const load = fetchDescriptor(endpoint.port)
+      .then((descriptor) => {
+        if (descriptor !== null) descriptors.set(workerId, descriptor);
+        return descriptor;
+      })
+      .finally(() => descriptorLoads.delete(workerId));
+    descriptorLoads.set(workerId, load);
+    return load;
+  }
+
   const proxyTarget = {
     endpoint: (workerId: string) => {
       const endpoint = board.endpoint(workerId);
       return endpoint === null ? null : { port: endpoint.port, ready: endpoint.phase === "ready" };
     },
-    descriptor: (workerId: string) => descriptors.get(workerId) ?? null,
+    // A miss at ready (a slow worker) is fetched again on demand, not left at 503.
+    descriptor: (workerId: string) => descriptors.get(workerId) ?? loadDescriptor(workerId),
   };
 
   const service: BoardTunnelHostShape = {

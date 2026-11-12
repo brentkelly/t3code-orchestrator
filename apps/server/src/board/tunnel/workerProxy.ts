@@ -17,7 +17,7 @@ export interface WorkerProxyTarget {
   readonly endpoint: (
     workerId: string,
   ) => { readonly port: number; readonly ready: boolean } | null;
-  /** The worker's last known `/.well-known/t3/environment`, answered without dialling. */
+  /** The worker's `/.well-known/t3/environment`: the cached one, else fetched now. */
   readonly descriptor: (workerId: string) => unknown;
 }
 
@@ -136,13 +136,16 @@ export function handleWorkerProxyRequest(
   }
   const method = request.method ?? "GET";
   if (proxied.pathname === "/.well-known/t3/environment" && method === "GET") {
-    const descriptor = target.descriptor(proxied.workerId);
-    if (descriptor === null || descriptor === undefined) {
-      sendJson(response, 503, { code: "worker-offline" });
-      return;
-    }
-    response.setHeader("access-control-allow-origin", request.headers.origin ?? "*");
-    sendJson(response, 200, descriptor);
+    void Promise.resolve(target.descriptor(proxied.workerId))
+      .catch(() => null)
+      .then((descriptor) => {
+        if (descriptor === null || descriptor === undefined) {
+          sendJson(response, 503, { code: "worker-offline" });
+          return;
+        }
+        response.setHeader("access-control-allow-origin", request.headers.origin ?? "*");
+        sendJson(response, 200, descriptor);
+      });
     return;
   }
   if (method === "OPTIONS") {
