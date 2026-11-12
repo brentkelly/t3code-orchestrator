@@ -131,8 +131,8 @@ describe("BoardBriefEditor", () => {
     await using _screen = await renderEditor();
     await userEvent.keyboard("@review");
     const options = page.getByRole("option");
-    await expect.element(options.nth(0)).toHaveTextContent("T3O-58Review round one");
-    await expect.element(options.nth(1)).toHaveTextContent("T3O-90Review tooling");
+    await expect.element(options.nth(0)).toHaveTextContent("T3O-58Review round oneT3o");
+    await expect.element(options.nth(1)).toHaveTextContent("T3O-90Review toolingT3o");
   });
 
   it("closes the menu on Escape before handing Escape to the brief", async () => {
