@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import { EnvironmentAuth } from "../../auth/EnvironmentAuth.ts";
@@ -205,6 +206,9 @@ const makeWorkerTunnels = Effect.gen(function* () {
     tunnel.start();
   };
 
+  // A watcher reconcile can start while another is still reading credentials: one at a time,
+  // or both open a tunnel to the same board.
+  const reconcileLock = yield* Semaphore.make(1);
   const reconcile: WorkerTunnelsShape["reconcile"] = Effect.gen(function* () {
     let file: ReturnType<typeof readWorkerFile>;
     try {
@@ -249,7 +253,7 @@ const makeWorkerTunnels = Effect.gen(function* () {
       }
       open(entry, credential.value);
     }
-  }).pipe(Effect.withSpan("WorkerTunnels.reconcile"));
+  }).pipe(reconcileLock.withPermits(1), Effect.withSpan("WorkerTunnels.reconcile"));
 
   yield* reconcile;
 
