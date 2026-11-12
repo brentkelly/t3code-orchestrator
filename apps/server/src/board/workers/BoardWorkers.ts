@@ -371,7 +371,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
       // knows it revokes the board's sessions itself.
       const revoked = Option.isNone(rpc)
         ? false
-        : yield* rpc.value.release.pipe(
+        : yield* rpc.value.releaseAll.pipe(
             Effect.timeout(RELEASE_TIMEOUT),
             Effect.as(true),
             Effect.orElseSucceed(() => false),

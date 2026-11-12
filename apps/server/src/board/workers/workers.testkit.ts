@@ -61,6 +61,8 @@ export interface FakeWorker {
   /** Whether `projectClone.retry` finds the clone; false once it forgot it. */
   retryApplied: boolean;
   released: number;
+  /** Remove's releases: every session of the board. */
+  releasedAll: number;
   /** Runs as each release arrives, before it is counted. */
   onRelease: Effect.Effect<void>;
   /** The session each release gave back. */
@@ -219,6 +221,7 @@ const makeFakeWorkers = Effect.sync(() => {
         cloneRetries: [],
         retryApplied: true,
         released: 0,
+        releasedAll: 0,
         onRelease: Effect.void,
         releasedTokens: [],
         mintedUserSessions: [],
@@ -285,6 +288,13 @@ const makeFakeWorkers = Effect.sync(() => {
           Effect.sync(() => {
             worker.released += 1;
             worker.releasedTokens.push(accessToken);
+          }),
+        ),
+      ),
+      releaseAll: Effect.suspend(() => worker.onRelease).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            worker.releasedAll += 1;
           }),
         ),
       ),

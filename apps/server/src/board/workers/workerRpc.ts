@@ -12,6 +12,7 @@ import {
   EnvironmentAuthorizationError,
   type BoardWorkerIdInput,
   type BoardWorkerMintUserSessionInput,
+  type BoardWorkerReleaseInput,
   type BoardWorkerRevokeUserSessionsInput,
   type BoardWorkersCancelJoinCodeInput,
   type BoardWorkersDismissSetupInput,
@@ -230,14 +231,17 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
             };
           }),
         ),
-      // Upstream won't let a session revoke itself over HTTP, so the worker revokes every
-      // session of the calling board, its users' too, a moment after answering: the
-      // revocation closes the socket the answer travels on.
-      [BOARD_WORKER_WS_METHODS.release]: (_input: Record<string, never>) =>
+      // Upstream won't let a session revoke itself over HTTP, so the worker does it a
+      // moment after answering: the revocation closes the socket the answer travels on.
+      // Only `all` (Remove) reaches the board's other sessions; a renewal's release must
+      // leave the successor it just stored alone.
+      [BOARD_WORKER_WS_METHODS.release]: (input: BoardWorkerReleaseInput) =>
         authorized(
           BOARD_WORKER_WS_METHODS.release,
           Effect.flatMap(auth, (service) =>
-            revokeBoardSessions(service, boardIdOfBoardSubject(currentSession.subject) ?? ""),
+            input.all === true
+              ? revokeBoardSessions(service, boardIdOfBoardSubject(currentSession.subject) ?? "")
+              : service.revokeSession(currentSession.sessionId),
           ).pipe(Effect.delay(RELEASE_GRACE), Effect.ignore, Effect.forkDetach, Effect.asVoid),
         ),
       [BOARD_WORKER_WS_METHODS.mintUserSession]: (input: BoardWorkerMintUserSessionInput) =>

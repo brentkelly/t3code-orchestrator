@@ -95,11 +95,22 @@ it.effect("refuses a session without the read scope", () =>
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("release revokes every session of the calling board, after answering", () =>
+it.effect("release revokes only the calling session, so a renewal keeps its successor", () =>
   Effect.gen(function* () {
     revoked.length = 0;
     const handlers = yield* boardWorkerRpcHandlers(session([AuthOrchestrationReadScope]));
     yield* handlers["boardWorker.release"]({});
+    assert.deepStrictEqual(revoked, []);
+    yield* TestClock.adjust("250 millis");
+    assert.deepStrictEqual(revoked, ["session-board"]);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("release all revokes every session of the calling board, after answering", () =>
+  Effect.gen(function* () {
+    revoked.length = 0;
+    const handlers = yield* boardWorkerRpcHandlers(session([AuthOrchestrationReadScope]));
+    yield* handlers["boardWorker.release"]({ all: true });
     assert.deepStrictEqual(revoked, []);
     yield* TestClock.adjust("250 millis");
     // Its own and its users', never another board's or this machine's own clients.

@@ -425,7 +425,8 @@ describe("BoardWorkers", () => {
         assert.isNull(
           yield* context.joinStore.verifyCredential(hashSecret(joined.tunnelCredential)),
         );
-        assert.strictEqual(worker.released, 1);
+        assert.strictEqual(worker.releasedAll, 1);
+        assert.strictEqual(worker.released, 0);
         assert.strictEqual(kit.secrets.secrets.size, 0);
         assert.deepStrictEqual((yield* workers.state).workers, []);
         assert.deepStrictEqual(yield* kit.snapshots.list, []);

@@ -66,8 +66,10 @@ export interface WorkerRpc {
   readonly hello: Effect.Effect<BoardWorkerHello, WorkerRpcError>;
   readonly projects: Effect.Effect<BoardWorkerProjects, WorkerRpcError>;
   readonly providers: Effect.Effect<BoardWorkerProviders, WorkerRpcError>;
-  /** Revoke the calling session on the worker (Remove). */
+  /** Revoke the calling session on the worker (a renewal's predecessor). */
   readonly release: Effect.Effect<void, WorkerRpcError>;
+  /** Revoke every session this board holds on the worker, its users' too (Remove). */
+  readonly releaseAll: Effect.Effect<void, WorkerRpcError>;
   /** A successor to the calling session, before it expires. */
   readonly renew: Effect.Effect<BoardWorkerRenewal, WorkerRpcError>;
   /** A session on the worker for one board user (T3O-84). */
@@ -255,6 +257,10 @@ const connectWorker = Effect.fn("WorkerTransport.connect")(function* ({
     release: call(
       client[BOARD_WORKER_WS_METHODS.release]({}),
       "The worker didn't release the board's session.",
+    ),
+    releaseAll: call(
+      client[BOARD_WORKER_WS_METHODS.release]({ all: true }),
+      "The worker didn't release the board's sessions.",
     ),
     renew: call(
       client[BOARD_WORKER_WS_METHODS.renew]({}),

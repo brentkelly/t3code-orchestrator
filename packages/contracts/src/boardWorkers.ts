@@ -471,9 +471,10 @@ export const BOARD_WORKER_WS_METHODS = {
   projects: "boardWorker.projects",
   /** The worker's provider instances and models, and its projects folder. */
   providers: "boardWorker.providers",
-  /** Revoke every session this board holds on the worker — its own and every
-      board user's — how Remove gives the board's access back. Upstream refuses a
-      session revoking itself over HTTP, so the worker does it on the board's behalf. */
+  /** Revoke the calling session — how a renewal gives the old session back — or,
+      with `all`, every session this board holds on the worker, its users' too: how
+      Remove gives the board's access back. Upstream refuses a session revoking
+      itself over HTTP, so the worker does it on the board's behalf. */
   release: "boardWorker.release",
   /** Issue the calling session's successor — same subject, scopes and label —
       so the board's access outlives upstream's fixed session lifetime. The
@@ -486,6 +487,11 @@ export const BOARD_WORKER_WS_METHODS = {
   /** Revoke the worker sessions minted for these board sessions. */
   revokeUserSessions: "boardWorker.revokeUserSessions",
 } as const;
+
+export const BoardWorkerReleaseInput = Schema.Struct({
+  all: Schema.optional(Schema.Boolean),
+});
+export type BoardWorkerReleaseInput = typeof BoardWorkerReleaseInput.Type;
 
 export const BoardWorkerMintUserSessionInput = Schema.Struct({
   /** The caller's own session id on the board: it keys the worker session. */
@@ -565,7 +571,7 @@ export const BOARD_WORKER_RPCS = [
     error: Schema.Union([BoardWorkerRequestError, EnvironmentAuthorizationError]),
   }),
   Rpc.make(BOARD_WORKER_WS_METHODS.release, {
-    payload: Schema.Struct({}),
+    payload: BoardWorkerReleaseInput,
     success: Schema.Void,
     error: Schema.Union([BoardWorkerRequestError, EnvironmentAuthorizationError]),
   }),
