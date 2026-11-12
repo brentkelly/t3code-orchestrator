@@ -34,7 +34,13 @@ import {
   boardStackSnapshotQuery,
   makeBoardStackTestLayer,
 } from "../boardStack.testkit.ts";
-import { BoardWorkerJoin, makeBoardWorkerJoin, type BoardWorkerJoinShape } from "../tunnel/BoardWorkerJoin.ts";
+import {
+  BoardWorkerJoin,
+  joinCallerAddress,
+  makeBoardWorkerJoin,
+  type BoardWorkerJoinShape,
+  type JoinOutcome,
+} from "../tunnel/BoardWorkerJoin.ts";
 import {
   BoardWorkerJoinStore,
   hashSecret,
@@ -186,6 +192,14 @@ const joinWorker = (
     return { created, outcome };
   });
 
+const acceptedBody = (outcome: JoinOutcome) => {
+  assert.strictEqual(outcome._tag, "accepted");
+  return (outcome as Extract<JoinOutcome, { readonly _tag: "accepted" }>).body;
+};
+
+const refusalOf = (outcome: JoinOutcome) =>
+  outcome._tag === "refused" ? outcome.body.refused : "accepted";
+
 /** Each test on its own board: the stack's database is fresh per build. */
 const test = <A, E>(
   name: string,
@@ -193,12 +207,190 @@ const test = <A, E>(
 ) => it.effect(name, () => Effect.scoped(body()).pipe(Effect.provide(layer)));
 
 describe("BoardWorkers", () => {
+  test("joins a worker with a code: registered, credential issued, its tunnel followed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const context = yield* setup;
+        const { kit, worker, connections, workers, joinStore } = context;
+        const { created, outcome } = yield* joinWorker(context);
+        assert.match(created.code, /^[0-9A-Z]{4}-[0-9A-Z]{4}$/);
+        const body = acceptedBody(outcome);
+        assert.strictEqual(body.boardEnvironmentId, BOARD_ENVIRONMENT_ID);
+        assert.strictEqual(body.boardLabel, "studio");
+        // Only the credential's hash is kept, and it names the worker.
+        assert.strictEqual(
+          yield* joinStore.verifyCredential(hashSecret(body.tunnelCredential)),
+          WORKER_ID,
+        );
+        yield* waitFor(connections, "online");
+        assert.strictEqual(worker.dialedTokens.at(-1), "access-one-time");
+        assert.deepStrictEqual(kit.tunnel.closed, []);
+        const state = yield* workers.state;
+        const [view] = state.workers;
+        assert.strictEqual(view?.label, "linux-box");
+        assert.strictEqual(view?.abbreviation, "LIN");
+        assert.strictEqual(view?.t3oRelease, "t3o0.1.8.3");
+        assert.isUndefined(view?.url);
+        const [code] = state.joinCodes;
+        assert.strictEqual(code?.state, "used");
+        assert.strictEqual(code?.usedBy?.address, "203.0.113.7");
+        assert.deepStrictEqual(code?.milestones, ["code-accepted"]);
+      }),
+    ));
+
+  test("refuses unknown, used, cancelled and expired codes; needs-update keeps the code", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { workers, join } = yield* setup;
+        assert.strictEqual(refusalOf(yield* join.join(joinRequest("ZZZZ-ZZZZ"), null)), "unknown");
+        assert.strictEqual(refusalOf(yield* join.join({ code: 1 }, null)), "unknown");
+
+        const older = yield* workers.createJoinCode;
+        const tooOld = yield* join.join(joinRequest(older.code, { tunnelProtocol: 0 }), null);
+        assert.strictEqual(refusalOf(tooOld), "needs-update");
+        const afterUpdate = (yield* workers.state).joinCodes.find(
+          (code) => code.codeId === older.codeId,
+        );
+        assert.strictEqual(afterUpdate?.state, "open");
+        assert.strictEqual(afterUpdate?.lastRefusal?.reason, "needs-update");
+        // Typed loosely (lower case, no dash) it still works, once.
+        const loose = older.code.toLowerCase().replace("-", "");
+        assert.strictEqual(refusalOf(yield* join.join(joinRequest(loose), null)), "accepted");
+        assert.strictEqual(refusalOf(yield* join.join(joinRequest(older.code), null)), "used");
+
+        const cancelled = yield* workers.createJoinCode;
+        yield* workers.cancelJoinCode(cancelled.codeId);
+        assert.strictEqual(
+          refusalOf(yield* join.join(joinRequest(cancelled.code), null)),
+          "cancelled",
+        );
+
+        const expiring = yield* workers.createJoinCode;
+        yield* TestClock.adjust("11 minutes");
+        assert.strictEqual(
+          refusalOf(yield* join.join(joinRequest(expiring.code), null)),
+          "expired",
+        );
+
+        const fresh = yield* workers.createJoinCode;
+        const board = yield* join.join(
+          joinRequest(fresh.code, { environmentId: BOARD_ENVIRONMENT_ID }),
+          null,
+        );
+        assert.strictEqual(refusalOf(board), "board-server");
+      }),
+    ));
+
+  test("trusts X-Forwarded-For only from a reverse proxy on the board's own machine", () =>
+    Effect.sync(() => {
+      const from = (remoteAddress: string, forwarded?: string) =>
+        joinCallerAddress({
+          headers: forwarded === undefined ? {} : { "x-forwarded-for": forwarded },
+          socket: { remoteAddress },
+        });
+      assert.strictEqual(from("127.0.0.1", "198.51.100.1, 203.0.113.9"), "203.0.113.9");
+      assert.strictEqual(from("::ffff:127.0.0.1", "203.0.113.9"), "203.0.113.9");
+      assert.strictEqual(from("::ffff:198.51.100.4", "203.0.113.9"), "198.51.100.4");
+      assert.strictEqual(from("127.0.0.1"), "127.0.0.1");
+    }));
+
+  test("a re-join keeps the worker's names and reattaches it; its new credential works too", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const context = yield* setup;
+        const { workers, join, joinStore, connections } = context;
+        const first = acceptedBody((yield* joinWorker(context)).outcome);
+        yield* waitFor(connections, "online");
+        yield* workers.rename({ workerId: WORKER_ID, label: "Build box", abbreviation: "BB1" });
+
+        const code = yield* workers.createJoinCode;
+        const again = acceptedBody(
+          yield* join.join(joinRequest(code.code, { t3oRelease: "t3o0.1.9.1" }), null),
+        );
+        const [view] = (yield* workers.state).workers;
+        assert.strictEqual(view?.label, "Build box");
+        assert.strictEqual(view?.abbreviation, "BB1");
+        assert.strictEqual(view?.t3oRelease, "t3o0.1.9.1");
+        assert.isTrue(
+          (yield* workers.state).joinCodes.find((entry) => entry.codeId === code.codeId)?.usedBy
+            ?.rejoin,
+        );
+        // The old credential goes only once the new tunnel is proved (BoardTunnelHost).
+        assert.strictEqual(yield* joinStore.verifyCredential(hashSecret(first.tunnelCredential)), WORKER_ID);
+        assert.strictEqual(yield* joinStore.verifyCredential(hashSecret(again.tunnelCredential)), WORKER_ID);
+      }),
+    ));
+
+  test("renames a worker; abbreviations are unique and SRV is the board server's", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const context = yield* setup;
+        const { workers } = context;
+        yield* joinWorker(context);
+        const reserved = yield* Effect.flip(
+          workers.rename({ workerId: WORKER_ID, label: "linux-box", abbreviation: "SRV" }),
+        );
+        assert.strictEqual(reserved.code, "invalid");
+        yield* workers.rename({ workerId: WORKER_ID, label: "Build 03", abbreviation: "B03" });
+        const [view] = (yield* workers.state).workers;
+        assert.strictEqual(view?.label, "Build 03");
+        assert.strictEqual(view?.abbreviation, "B03");
+        const local = yield* Effect.flip(
+          workers.rename({ workerId: BOARD_LOCAL_WORKER_ID, label: "Studio", abbreviation: "STU" }),
+        );
+        assert.strictEqual(local.code, "invalid");
+      }),
+    ));
+
+  test("thread access: a session on the worker no wider than the caller's own", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const context = yield* setup;
+        const { worker, connections, workers } = context;
+        yield* joinWorker(context);
+        yield* waitFor(connections, "online");
+        const access = yield* workers.threadAccess(WORKER_ID, {
+          sessionId: "board-session-1",
+          scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope, "settings:write"],
+          deviceLabel: "Chrome",
+        });
+        assert.strictEqual(access.path, `/api/t3o/workers/${WORKER_ID}/`);
+        assert.strictEqual(access.bearerToken, "user-board-session-1");
+        const readOnly = yield* workers.threadAccess(WORKER_ID, {
+          sessionId: "board-session-2",
+          scopes: [AuthOrchestrationReadScope, AuthFilesystemReadScope],
+          deviceLabel: "Phone",
+        });
+        assert.strictEqual(readOnly.bearerToken, "user-board-session-2");
+        assert.deepStrictEqual(
+          worker.mintedUserSessions.map((minted) => [minted.boardSessionId, minted.scopes, minted.label]),
+          [
+            [
+              "board-session-1",
+              [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+              "Chrome via T3o board (studio)",
+            ],
+            ["board-session-2", [AuthOrchestrationReadScope, AuthFilesystemReadScope], "Phone via T3o board (studio)"],
+          ],
+        );
+        // The board's own session asked, never the caller's.
+        assert.deepStrictEqual(
+          worker.mintedUserSessions.map((minted) => minted.boardToken),
+          ["access-one-time", "access-one-time"],
+        );
+        const refused = yield* Effect.flip(
+          workers.threadAccess(WORKER_ID, { sessionId: "s", scopes: [], deviceLabel: "x" }),
+        );
+        assert.strictEqual(refused.code, "forbidden");
+      }),
+    ));
   test("removes a worker: gives the session back, then forgets token and record", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const context = yield* setup;
         const { kit, worker, connections, workers } = context;
-        yield* joinWorker(context);
+        const { outcome: joinedOutcome } = yield* joinWorker(context);
+        const joined = acceptedBody(joinedOutcome);
         yield* waitFor(connections, "online");
         // The session goes back only once the removal has landed.
         const registeredAtRelease: Array<boolean> = [];
@@ -206,9 +398,25 @@ describe("BoardWorkers", () => {
           Effect.map((current) => current.workers.some((entry) => entry.id === WORKER_ID)),
           Effect.flatMap((registered) => Effect.sync(() => registeredAtRelease.push(registered))),
         );
+        const closedAtRelease: Array<number> = [];
+        const release = worker.onRelease;
+        worker.onRelease = release.pipe(
+          Effect.andThen(Effect.sync(() => void closedAtRelease.push(kit.tunnel.closed.length))),
+        );
+        const credentialBefore = yield* context.joinStore.verifyCredential(
+          hashSecret(joined.tunnelCredential),
+        );
+        assert.strictEqual(credentialBefore, WORKER_ID);
         const removed = yield* workers.remove(WORKER_ID);
         assert.isTrue(removed.revoked);
         assert.deepStrictEqual(registeredAtRelease, [false]);
+        // The board's sessions go back through the tunnel before its endpoint closes,
+        // and the tunnel credential stops working.
+        assert.deepStrictEqual(closedAtRelease, [0]);
+        assert.deepStrictEqual(kit.tunnel.closed, [WORKER_ID]);
+        assert.isNull(
+          yield* context.joinStore.verifyCredential(hashSecret(joined.tunnelCredential)),
+        );
         assert.strictEqual(worker.released, 1);
         assert.strictEqual(kit.secrets.secrets.size, 0);
         assert.deepStrictEqual((yield* workers.state).workers, []);

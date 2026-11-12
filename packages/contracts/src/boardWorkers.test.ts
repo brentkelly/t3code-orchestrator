@@ -5,7 +5,10 @@ import {
   boardRepositoryGroupingKey,
   boardWorkerIds,
   EMPTY_BOARD_WORKERS_STATE,
+  formatBoardWorkerJoinCode,
   isLocalOnlyBoardWorkers,
+  normalizeBoardWorkerJoinCode,
+  suggestBoardWorkerAbbreviation,
   resolveBoardWorkerCheckout,
   type BoardWorkerCheckout,
   type BoardWorkersState,
@@ -102,5 +105,31 @@ describe("board workers", () => {
       expect(resolveBoardWorkerCheckout("github.com/acme/app", [])).toBeNull();
       expect(boardRepositoryGroupingKey(null)).toBeNull();
     });
+  });
+});
+
+describe("join codes (T3O-84)", () => {
+  it("formats 40 bits as XXXX-XXXX and reads them back however they were typed", () => {
+    const code = formatBoardWorkerJoinCode(new Uint8Array([0xff, 0x00, 0xa5, 0x5a, 0x01]));
+    expect(code).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
+    expect(normalizeBoardWorkerJoinCode(code)).toBe(code.replace("-", ""));
+    expect(normalizeBoardWorkerJoinCode(` ${code.toLowerCase()} `)).toBe(code.replace("-", ""));
+    expect(normalizeBoardWorkerJoinCode("ABCD-EFGO")).toBe("ABCDEFG0");
+    expect(normalizeBoardWorkerJoinCode("ABCD-EFGU")).toBeNull();
+    expect(normalizeBoardWorkerJoinCode("ABC")).toBeNull();
+  });
+});
+
+describe("worker abbreviations (T3O-84)", () => {
+  it.each([
+    ["build-03", [], "B03"],
+    ["mac-mini", [], "MAC"],
+    ["mac-mini", ["MAC"], "MM"],
+    ["Linux box", [], "LIN"],
+    ["srv-room", [], "SR"],
+    ["x", ["X"], "X1"],
+    ["42", [], "42"],
+  ] as const)("%s, with %j taken, suggests %s", (label, taken, expected) => {
+    expect(suggestBoardWorkerAbbreviation(label, taken)).toBe(expected);
   });
 });

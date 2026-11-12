@@ -42,7 +42,7 @@ export function boardSubjectRefusal(method: string, subject: string): string | n
       ? "Only a board's own session may call this on a worker."
       : null;
   }
-  return isT3oBoardSubject(subject)
+  return method.startsWith("board.") && isT3oBoardSubject(subject)
     ? "A session a worker issued for a board can't manage this server's own board."
     : null;
 }
