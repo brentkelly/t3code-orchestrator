@@ -196,7 +196,34 @@ function boardCardNotificationVerdict(
     }
   }
   if (
-    atMergeStage &&
+    boardCardReadyForMerge({
+      card,
+      atMergeStage,
+      autoMergeArmed: input.autoMergeArmed,
+      isGroup: input.isGroup,
+      settling,
+    })
+  ) {
+    return verdict(reasonOf("readyForMerge", "ready", card.stage));
+  }
+  return verdict(null);
+}
+
+/**
+ * A card at the merge-role stage with a pull request, nothing running and auto-merge off: a
+ * human merges it. Only meaningful once the card face shows no notice of its own.
+ */
+export function boardCardReadyForMerge(input: {
+  readonly card: BoardCardShell;
+  readonly atMergeStage: boolean;
+  readonly autoMergeArmed: boolean;
+  readonly isGroup: boolean;
+  /** The card's thread is still inside `BOARD_ATTENTION_SETTLE_MS`. */
+  readonly settling: boolean;
+}): boolean {
+  const { card } = input;
+  return (
+    input.atMergeStage &&
     card.hasPr &&
     !input.autoMergeArmed &&
     !input.isGroup &&
@@ -204,11 +231,8 @@ function boardCardNotificationVerdict(
     !card.stepRunning &&
     !card.queued &&
     !isBoardCardCiActive(card) &&
-    !settling
-  ) {
-    return verdict(reasonOf("readyForMerge", "ready", card.stage));
-  }
-  return verdict(null);
+    !input.settling
+  );
 }
 
 const CATEGORY_SETTING: Record<

@@ -9,19 +9,9 @@ import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import type { AnyRouter } from "@tanstack/react-router";
 import {
-  BOARD_SEED_STAGES,
-  DEFAULT_SERVER_SETTINGS,
-  boardShellAutoMergeArmedByCard,
   boardStageWithRole,
-  deriveBoardCardPlanProgress,
-  isBoardMergeStageExecution,
   isBoardProjectHidden,
-  resolveBoardStageExecution,
   type BoardCardId,
-  type BoardCardShell,
-  type BoardProjectStageConfigShell,
-  type BoardStageDefinition,
-  type BoardState,
   type EnvironmentId,
   type OrchestrationV2ThreadShell,
   type ThreadId,
@@ -48,16 +38,14 @@ import {
   playNotificationSound,
   setBoardNotificationBadge,
 } from "../threadNotifications";
-import { deriveBoardThreadIdleSince } from "./boardAttentionSettle";
 import {
   boardCardNotifierNeeded,
   boardCardWaitAlreadyAlerted,
   createBoardCardNotificationGate,
   type BoardCardNotificationFiring,
-  type BoardCardNotificationObservation,
   type BoardCardThreadAlertState,
 } from "./boardCardNotifications.logic";
-import { boardShellGroup } from "./boardGroups";
+import { createBoardCardObserver } from "./boardCardObservations";
 import { setBoardMutedRoutineThreads } from "./boardThreadAlertMute";
 import { resolveBoardEnvironment, type BoardEnvironmentCandidate } from "./useBoardEnvironmentId";
 
@@ -65,18 +53,6 @@ type ToastId = ReturnType<typeof toastManager.add>;
 
 const upstreamAlertsOn = (settings: ClientSettings) =>
   settings.notificationMode !== "off" || settings.inAppNotificationsEnabled;
-
-function stageStateOf(
-  stages: ReadonlyArray<BoardStageDefinition>,
-  projectStageConfigs: Readonly<Record<string, BoardProjectStageConfigShell>>,
-): BoardState {
-  return {
-    cards: [],
-    stages,
-    nextCardNumberByProject: {},
-    projectStageConfigs: projectStageConfigs as unknown as BoardState["projectStageConfigs"],
-  };
-}
 
 /** The board server this device shows, and whether it is connected right now. */
 function resolveWatchedBoard(
@@ -111,7 +87,7 @@ export function startBoardCardNotifications(
   const openToasts = new Map<BoardCardId, Array<ToastId>>();
   let watched: { environmentId: EnvironmentId; unsubscribe: () => void } | null = null;
   let wakeTimer: ReturnType<typeof setTimeout> | null = null;
-  const withProgress = new WeakMap<BoardCardShell, BoardCardShell>();
+  const observe = createBoardCardObserver();
   // Identity of every atom `evaluate` read last time: the board atom derives from the
   // shell, so one shell change notifies two subscriptions with nothing new for the second.
   let lastInputs: ReadonlyArray<unknown> = [];
@@ -246,55 +222,14 @@ export function startBoardCardNotifications(
     const settings = getClientSettings();
     const threads = shell.snapshot.value.threads;
     const threadById = new Map(threads.map((thread) => [thread.id, thread]));
-    const stageList = registry.get(boardEnvironment.stageListAtom(environmentId));
-    const stages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
-    const stageState = stageStateOf(
-      stages,
-      registry.get(boardEnvironment.projectStageConfigsAtom(environmentId)),
-    );
-    const mergeStageId = boardStageWithRole(stageState, "merge")?.stageId ?? null;
-    const boardSettings = (
-      registry.get(serverEnvironment.settingsValueAtom(environmentId)) ?? DEFAULT_SERVER_SETTINGS
-    ).board;
-    const mergeExecution =
-      mergeStageId === null ? null : resolveBoardStageExecution(boardSettings, mergeStageId);
-    const workers = registry.get(boardEnvironment.workersAtom(environmentId));
-    // Plan progress is client-derived; the split and held rules read it.
-    const progress = deriveBoardCardPlanProgress({ cards: board.cards, stages });
-    const cards: ReadonlyArray<BoardCardShell> =
-      progress.size === 0
-        ? board.cards
-        : board.cards.map((card) => {
-            const counts = progress.get(card.cardId);
-            if (counts === undefined) return card;
-            // Reuse the last spread so the gate's per-card cache, keyed on identity, hits.
-            const prior = withProgress.get(card);
-            if (prior?.planTotal === counts.total && prior.planDone === counts.done) return prior;
-            const next = { ...card, planTotal: counts.total, planDone: counts.done };
-            withProgress.set(card, next);
-            return next;
-          });
-    const armedByCard = boardShellAutoMergeArmedByCard({
-      shells: cards,
-      boardWide:
-        mergeExecution !== null && isBoardMergeStageExecution(mergeExecution)
-          ? mergeExecution.autoMerge
-          : false,
-    });
-    const idleByCard = deriveBoardThreadIdleSince({
-      cards,
+    const { cards, stageState, boardSettings, observations } = observe({
+      cards: board.cards,
       threadOf: (threadId) => threadById.get(threadId),
+      stageList: registry.get(boardEnvironment.stageListAtom(environmentId)),
+      projectStageConfigs: registry.get(boardEnvironment.projectStageConfigsAtom(environmentId)),
+      serverSettings: registry.get(serverEnvironment.settingsValueAtom(environmentId)),
+      workers: registry.get(boardEnvironment.workersAtom(environmentId)),
     });
-    const observations: Array<BoardCardNotificationObservation> = cards.map((card) => ({
-      card,
-      stages,
-      mergeStageId,
-      autoMergeArmed: armedByCard.get(String(card.cardId)) === true,
-      isGroup: boardShellGroup(cards, card) !== null,
-      projectHidden: isBoardProjectHidden(boardSettings, card.projectId),
-      workers,
-      threadIdleSince: idleByCard.get(String(card.cardId)) ?? null,
-    }));
     const { fire, cleared, wakeAt } = gate.evaluate({
       cards: observations,
       settings: settings.boardNotifications,
