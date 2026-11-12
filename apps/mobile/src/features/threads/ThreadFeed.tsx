@@ -70,6 +70,8 @@ import {
   replaceComposerContextReferences,
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
+// T3o: board card mentions carry no record.
+import { isT3oRecordlessReference } from "@t3tools/shared/t3oCardContext";
 import { ComposerContextSheet } from "../../components/ComposerContextSheet";
 import { writeComposerContextClipboard } from "../../lib/composerContextClipboard";
 import {
@@ -2344,7 +2346,10 @@ function UserMessageContent(props: UserMessageContentProps) {
   const liveText = useLiveThreadLinkLabels(props.text, props.environmentId);
   const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
   const text = replaceComposerContextReferences(liveText, (ref) => {
-    const available = props.context?.records.some((record) => record.contextId === ref.contextId);
+    const available =
+      props.context?.records.some((record) => record.contextId === ref.contextId) ||
+      // T3o: a board card mention has no record and is never unavailable.
+      isT3oRecordlessReference(ref.kind, ref.contextId);
     return `[${ref.label}${available ? "" : " (unavailable)"}](t3-context://v1/${ref.kind}/${ref.contextId})`;
   });
   const onLinkPress = (href: string) => {
