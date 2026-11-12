@@ -47,10 +47,9 @@ export class WorkerTunnels extends Context.Service<WorkerTunnels, WorkerTunnelsS
 
 const STATUS_DEBOUNCE_MS = 200;
 
-class WorkerPolicyRefusal extends Schema.TaggedError<WorkerPolicyRefusal>()(
-  "WorkerPolicyRefusal",
-  { message: Schema.String },
-) {}
+class WorkerPolicyRefusal extends Schema.TaggedError<WorkerPolicyRefusal>()("WorkerPolicyRefusal", {
+  message: Schema.String,
+}) {}
 
 /** The release this server runs: the build stamp when there is one, else the package. */
 export function readT3oRelease(): string {
