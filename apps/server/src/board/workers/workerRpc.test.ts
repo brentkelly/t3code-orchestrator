@@ -15,7 +15,7 @@ import { TestClock } from "effect/testing";
 
 import { EnvironmentAuth, type AuthenticatedSession } from "../../auth/EnvironmentAuth.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
-import { boardWorkerRpcHandlers } from "./workerRpc.ts";
+import { boardWorkerRpcHandlers, reconcileBoardUserSessions } from "./workerRpc.ts";
 
 const session = (scopes: AuthenticatedSession["scopes"]): AuthenticatedSession => ({
   sessionId: AuthSessionId.make("session-board"),
@@ -196,5 +196,16 @@ it.effect("renew refuses a browser cookie, a DPoP-bound or a non-board session",
       assert.strictEqual(failure._tag, "BoardWorkerRequestError");
     }
     assert.deepStrictEqual(issued, []);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("a tunnel handshake revokes user sessions whose board session is gone", () =>
+  Effect.gen(function* () {
+    revoked.length = 0;
+    const auth = yield* EnvironmentAuth;
+    const count = yield* reconcileBoardUserSessions(auth, "env-board", ["board-session-1"]);
+    // Only this board's users, only the dead one; never the board's own session.
+    assert.strictEqual(count, 1);
+    assert.deepStrictEqual(revoked, ["session-user-2"]);
   }).pipe(Effect.provide(layer)),
 );

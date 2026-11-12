@@ -259,6 +259,33 @@ it.live("a worker joined over its tunnel: session handoff, probe, then the board
       const link = yield* workers.connect({ url: endpoint, accessToken: "good-token" });
       assert.strictEqual((yield* link.rpc.hello).environmentId, "env-worker");
       assert.deepStrictEqual(yield* link.rpc.projects, { projects: [] });
+
+      // The tunnel drops and comes back: the stored session still works, so none is minted.
+      tunnel.stop();
+      yield* host.states.pipe(
+        Stream.filter((entries) => entries.get("env-worker")?.phase === "down"),
+        Stream.runHead,
+      );
+      const again = new TunnelWorker({
+        boardUrl: `http://127.0.0.1:${boardPort}`,
+        credential: "tunnel-credential",
+        environmentId: EnvironmentId.make("env-worker"),
+        label: "linux-box",
+        t3oRelease: "t3o0.1.8.3",
+        gatewayProtocol: BOARD_WORKER_PROTOCOL_VERSION,
+        local: { host: "127.0.0.1", port: workerPort },
+        mintBoardSession: async () => {
+          minted.push("unexpected");
+          return "good-token";
+        },
+      });
+      again.start();
+      yield* Effect.addFinalizer(() => Effect.sync(() => again.stop()));
+      yield* host.states.pipe(
+        Stream.filter((entries) => entries.get("env-worker")?.readyEpoch === 2),
+        Stream.runHead,
+      );
+      assert.deepStrictEqual(minted, ["good-token"]);
     }),
   ).pipe(Effect.provide(transport)),
 );
