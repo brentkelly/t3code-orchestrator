@@ -11,6 +11,8 @@ import {
 } from "@t3tools/contracts";
 
 import { replaceThreadLinks, threadLinkCandidates } from "./threadLinks.ts";
+// T3o: board card mentions carry no record; their envelope text lives in a T3o module.
+import { formatT3oCardContextEntry } from "./t3oCardContext.ts";
 
 const CONTEXT_PROTOCOL = "t3-context:";
 const COMPOSER_CONTEXT_HREF_PREFIX = `${CONTEXT_PROTOCOL}//v1/`;
@@ -362,9 +364,15 @@ function formatEnvelopeEntry(
   kind: ComposerContextKind,
   contextId: ComposerContextId,
   record: ComposerContextRecord | undefined,
+  label: string,
 ): string {
   const open = `<${CONTEXT_ENTRY_TAG} kind="${escapeAttribute(kind)}" id="${escapeAttribute(contextId)}"`;
-  if (!record) return `${open} unavailable="true"/>`;
+  if (!record) {
+    // T3o: a card mention has no record; its entry text comes from a T3o module.
+    const t3o = formatT3oCardContextEntry(kind, contextId, label);
+    if (t3o === null) return `${open} unavailable="true"/>`;
+    return `${open}>\n${escapeComposerContextPayloadText(t3o)}\n</${CONTEXT_ENTRY_TAG}>`;
+  }
   const body =
     "payload" in record
       ? JSON.stringify(record.payload)
@@ -399,6 +407,7 @@ export function projectComposerContextForProvider(input: {
       record?.kind ?? occurrence.kind,
       occurrence.contextId,
       record,
+      occurrence.label,
     );
     entries.push(entry);
   }

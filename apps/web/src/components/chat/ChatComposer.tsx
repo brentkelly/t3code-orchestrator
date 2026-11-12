@@ -270,6 +270,8 @@ import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 import { usePromptSuggestion } from "./usePromptSuggestion";
 import { useFreshSessionArmed } from "./freshSessionArms";
+// T3o: picking a board card in the `@` menu.
+import { t3oSelectCardItem } from "~/board/mentions/boardCardMentions";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
@@ -1846,6 +1848,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
     const { snapshot, trigger } = resolveActiveComposerTrigger();
     if (!trigger) return;
+    // T3o: a board card inserts its record-less token.
+    if (item.type === "card") {
+      return t3oSelectCardItem({
+        item,
+        trigger,
+        snapshot,
+        applyPromptReplacement,
+        setComposerHighlightedItemId,
+      });
+    }
     if (item.type === "path") {
       if (!isPathSuggestionCurrent(item.searchTarget, trigger, environmentId, gitCwd)) return;
       const replacement = `${serializeComposerFileLink(item.path)} `;

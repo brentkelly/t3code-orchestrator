@@ -120,7 +120,8 @@ import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
 import { BoardBaseBranchConfirmDialog } from "./BoardBaseBranchConfirmDialog";
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
 import { BoardCardWorkerRow } from "./workers/BoardCardWorkerRow";
-import { boardBriefDisplayText } from "./boardBriefDisplay";
+import { BoardBriefEditor } from "./mentions/BoardBriefEditor";
+import { BoardBriefView } from "./mentions/BoardBriefView";
 import { BoardCardProjectConfirmDialog } from "./BoardCardProjectConfirmDialog";
 import { BoardCardProjectRowValue, type BoardProjectOption } from "./BoardCardProjectSelect";
 import {
@@ -186,7 +187,6 @@ import {
 } from "./boardStepRecovery";
 import { deriveBoardUsageBreakdown } from "./usage/boardUsageBreakdown";
 import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
-import { BoardTextarea } from "./ui/BoardInput";
 import { BoardSheetPopup } from "./ui/BoardDialog";
 
 const providerDisabledWords = boardStalledWords("provider-disabled-for-project", null, undefined);
@@ -852,6 +852,7 @@ function BriefBody({
   onSave,
   environmentId,
   cardId,
+  projectId,
   attachments,
   attachmentLimits,
   onAttachFile,
@@ -861,6 +862,7 @@ function BriefBody({
   readonly onSave: (brief: string | null) => void;
   readonly environmentId: EnvironmentId;
   readonly cardId: BoardCardId;
+  readonly projectId: ProjectId;
   readonly attachments: ReadonlyArray<BoardCardAttachment>;
   readonly attachmentLimits: BoardAttachmentLimits;
   readonly onAttachFile: (upload: BoardPendingUpload) => Promise<string | null>;
@@ -879,10 +881,19 @@ function BriefBody({
     onUploaded: async (upload) => (await onAttachFile(upload)) ?? "consumed",
   });
   const commit = () => {
+    // Saving an untouched brief would trim it; an agent's brief keeps its exact text.
+    if (draft === (brief ?? "")) {
+      setEditing(false);
+      return;
+    }
     const trimmed = draft.trim();
     const next = trimmed.length === 0 ? null : trimmed;
     if (next !== (brief ?? null)) onSave(next);
     setEditing(false);
+  };
+  const startEditing = () => {
+    setDraft(brief ?? "");
+    setEditing(true);
   };
   const attachRow = (
     <BoardBriefAttachRow
@@ -915,22 +926,22 @@ function BriefBody({
             onDetach={onDetachFile}
             state={staged}
           />
-          <BoardTextarea
+          <BoardBriefEditor
+            ariaLabel="Brief"
             autoFocus
-            className="min-h-24"
-            look="brief"
+            className="text-board-13-5 leading-board-1-6"
+            environmentId={environmentId}
             onBlur={commit}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                setDraft(brief ?? "");
-                setEditing(false);
-              }
-              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) commit();
+            onChange={setDraft}
+            onEscape={() => {
+              setDraft(brief ?? "");
+              setEditing(false);
+              return true;
             }}
+            onModEnter={commit}
             onPaste={staged.handlers.onPaste}
             placeholder="Describe the task. Paste screenshots (⌘V) or drop files in here."
-            unstyled
+            projectId={projectId}
             value={draft}
           />
         </div>
@@ -954,28 +965,31 @@ function BriefBody({
         state={staged}
       />
       <BoardHint label="Click to edit">
-        <button
+        {/* A div, not a button: the brief's chips are links and buttons of their own. */}
+        <div
           className={cn(
-            "-mx-[7px] -my-1 w-[calc(100%+14px)] rounded-lg border px-1.75 py-1 text-left text-board-13-5 leading-board-1-6 hover:bg-accent",
+            "-mx-[7px] -my-1 w-[calc(100%+14px)] cursor-text rounded-lg border px-1.75 py-1 text-left text-board-13-5 leading-board-1-6 hover:bg-accent",
             boardBriefDropClass(staged.dropZone === "brief"),
           )}
-          onClick={() => {
-            setDraft(brief ?? "");
-            setEditing(true);
-          }}
+          onClick={startEditing}
           onDragLeave={staged.handlers.onDragLeave}
           onDragOver={staged.handlers.onBriefDragOver}
           onDrop={staged.handlers.onDrop}
-          type="button"
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget) return;
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            startEditing();
+          }}
+          role="button"
+          tabIndex={0}
         >
           {brief === null ? (
             <span className="text-muted-foreground">Add a brief…</span>
           ) : (
-            <span className="whitespace-pre-wrap text-pretty text-foreground">
-              {boardBriefDisplayText(brief)}
-            </span>
+            <BoardBriefView brief={brief} environmentId={environmentId} />
           )}
-        </button>
+        </div>
       </BoardHint>
       {attachRow}
     </>
@@ -3128,6 +3142,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   onAttachFile={props.onAttachFile}
                   onDetachFile={props.onDetachFile}
                   onSave={props.onSaveBrief}
+                  projectId={props.detail.card.projectId}
                 />
               </div>
             </section>
@@ -3403,6 +3418,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   onAttachFile={props.onAttachFile}
                   onDetachFile={props.onDetachFile}
                   onSave={props.onSaveBrief}
+                  projectId={props.detail.card.projectId}
                 />
               </div>
 
