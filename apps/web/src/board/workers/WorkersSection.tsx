@@ -39,6 +39,7 @@ import { joinDialogPhase, openJoinCodes } from "./joinDialog";
 import { RemoveWorkerDialog } from "./RemoveWorkerDialog";
 import { RenameWorkerDialog } from "./RenameWorkerDialog";
 import { LOCAL_WORKER_LABEL } from "./threadWorker";
+import { useBoardSettings } from "../useBoardEnvironmentId";
 import {
   clockTime,
   T3O_UPDATE_COMMAND,
@@ -57,6 +58,17 @@ const TONE_BADGE: Record<WorkerTone, "outline" | "info" | "warning" | "success">
 };
 
 const LOCAL_LABEL = `${LOCAL_WORKER_LABEL} (local)`;
+
+/** The board server as a worker, for the Rename dialog: its label lives in board settings. */
+const localWorkerView = (label: string): BoardWorkerView =>
+  ({
+    id: BOARD_LOCAL_WORKER_ID,
+    label,
+    abbreviation: BOARD_LOCAL_WORKER_ABBREVIATION,
+    addedAt: "1970-01-01T00:00:00.000Z",
+    status: { state: "online", lastSeenAt: null, t3oVersion: null, protocolVersion: null },
+    snapshot: null,
+  }) as unknown as BoardWorkerView;
 
 function joinedDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
@@ -145,6 +157,7 @@ export function WorkersSection(props: {
     reportFailure: false,
   });
   const [renaming, setRenaming] = useState<BoardWorkerView | null>(null);
+  const localLabel = useBoardSettings((settings) => settings.board.workers.localLabel);
   const [removing, setRemoving] = useState<BoardWorkerView | null>(null);
   const { state } = workers;
   // "Last seen" and the open codes' expiry are coarse: re-read the clock only when one changes.
@@ -218,16 +231,25 @@ export function WorkersSection(props: {
         </div>
         <WorkerRow
           id="board-worker-local"
-          name={LOCAL_LABEL}
+          name={localLabel === null ? LOCAL_LABEL : `${localLabel} (local)`}
           abbreviation={BOARD_LOCAL_WORKER_ABBREVIATION}
           tags={<Badge variant="secondary">Board</Badge>}
           isDefault={state.defaultWorkerId === BOARD_LOCAL_WORKER_ID}
           subline={`${localVersion === null ? "" : `T3o ${localVersion} · `}runs planning`}
           status={{ label: "Connected", detail: null, tone: "neutral", tooltip: null }}
           actions={
-            <BoardHint label="The server hosting the board can't be removed.">
-              <Badge variant="secondary">Built-in</Badge>
-            </BoardHint>
+            <>
+              <BoardHint label="The server hosting the board can't be removed.">
+                <Badge variant="secondary">Built-in</Badge>
+              </BoardHint>
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => setRenaming(localWorkerView(localLabel ?? LOCAL_WORKER_LABEL))}
+              >
+                Rename…
+              </Button>
+            </>
           }
         />
         {state.workers.map((worker) => {
