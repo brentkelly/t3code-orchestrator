@@ -66,7 +66,7 @@ import {
   boardReviewRoundsStarted,
   boardReviewStuckState,
   boardReviewCarryFromStuck,
-  boardReviewRoundForcingCount,
+  boardReviewRoundForcingSummary,
   boardReviewRoundModeOf,
   BoardReviewPayload,
   parseBoardStepPayloadJson,
@@ -2634,19 +2634,21 @@ const make = Effect.gen(function* () {
     const mode =
       plan.reviewRoundMode?.mode ?? boardReviewRoundModeOf(card.reviewOverrides, plan.round);
     const board = yield* readBoard;
+    const previous =
+      plan.round > 1
+        ? boardReviewRoundForcingSummary({
+            round: plan.round - 1,
+            completions: boardCardStepCompletions(board, card.id),
+            overrides: card.reviewOverrides,
+          })
+        : null;
     yield* Effect.logInfo("board: review round starting", {
       cardId: card.id,
       round: plan.round,
       mode: mode.kind,
       sinceSha: mode.kind === "settling" ? mode.sinceSha : null,
-      previousForcingFindings:
-        plan.round > 1
-          ? boardReviewRoundForcingCount({
-              round: plan.round - 1,
-              completions: boardCardStepCompletions(board, card.id),
-              overrides: card.reviewOverrides,
-            })
-          : null,
+      previousForcingFindings: previous?.count ?? null,
+      previousHadCritical: previous?.critical ?? null,
     });
     return plan.reviewRoundMode === undefined ? {} : { reviewRoundMode: plan.reviewRoundMode };
   });
