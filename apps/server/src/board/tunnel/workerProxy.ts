@@ -51,7 +51,7 @@ const SIGNED_ASSET = /^\/api\/assets\/[^/]+\.[^/]+\/[^/]+/;
  * `/api/auth/bootstrap*`, pairing, browser sessions, webhooks or the web UI.
  */
 export function isProxyAllowed(method: string, pathname: string): boolean {
-  if (pathname === "/ws") return method === "GET";
+  if (pathname === "/ws" || pathname === "/ws/voice") return method === "GET";
   if (pathname.startsWith("/api/auth/websocket-ticket")) return true;
   if (pathname === "/api/auth/session") return true;
   if (pathname.startsWith("/api/assets/")) return true;
@@ -67,7 +67,7 @@ export function isProxyAllowed(method: string, pathname: string): boolean {
 /** Whether a request is worth dialling: it carries a credential the worker will check. */
 function carriesCredential(request: NodeHttp.IncomingMessage, pathname: string): boolean {
   if (/^Bearer\s+\S+/i.test(request.headers.authorization ?? "")) return true;
-  if (pathname === "/ws") {
+  if (pathname === "/ws" || pathname === "/ws/voice") {
     return new URL(request.url ?? "/", "http://board").searchParams.has("wsTicket");
   }
   return SIGNED_ASSET.test(pathname);

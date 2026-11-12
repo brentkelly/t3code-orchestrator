@@ -296,6 +296,7 @@ describe("HTTP seam", () => {
 
   it("allows only what a thread view needs", () => {
     expect(isProxyAllowed("GET", "/ws")).toBe(true);
+    expect(isProxyAllowed("GET", "/ws/voice")).toBe(true);
     expect(isProxyAllowed("GET", "/api/projects")).toBe(true);
     expect(isProxyAllowed("POST", "/api/projects")).toBe(false);
     expect(isProxyAllowed("POST", "/api/pull-requests/diff")).toBe(true);

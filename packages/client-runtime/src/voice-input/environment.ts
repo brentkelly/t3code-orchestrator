@@ -15,6 +15,7 @@ import type {
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
+import { environmentBasePath, joinEnvironmentPath } from "../environment/basePath.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   makeEnvironmentHttpApiGroupClient,
@@ -172,7 +173,11 @@ export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
     run: ({ client, headers }) => client.webSocketTicketFor({ headers, params: { use: "media" } }),
   }).pipe(
     Effect.map(({ ticket }) => {
-      const url = new URL(SPEECH_STREAM_PATH, endpoint);
+      // T3o: under the environment's base path, as a board worker proxy needs (T3O-84).
+      const url = joinEnvironmentPath(
+        new URL(`${environmentBasePath(prepared.httpBaseUrl)}/`, endpoint),
+        SPEECH_STREAM_PATH,
+      );
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
       url.searchParams.set("wsTicket", Redacted.value(ticket));
       return url.toString();
