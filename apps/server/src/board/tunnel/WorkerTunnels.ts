@@ -18,6 +18,8 @@ import { EnvironmentAuth } from "../../auth/EnvironmentAuth.ts";
 import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
+import * as ManagedLimits from "../../policy/managedLimits.ts";
+import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
 import { boardSessionLabel } from "../workers/workerCredential.ts";
 import { reconcileBoardUserSessions, revokeBoardSessions } from "../workers/workerRpc.ts";
 import { TunnelWorker, type WorkerTunnelStatus } from "./tunnelWorker.ts";
@@ -128,12 +130,19 @@ const makeWorkerTunnels = Effect.gen(function* () {
       local,
       mintBoardSession: () =>
         run(
-          auth
-            .issueSession({
+          Effect.gen(function* () {
+            const policy = yield* Effect.serviceOption(ManagedPolicy.ManagedPolicy);
+            if (policy._tag === "Some" && !ManagedLimits.allowsRemoteClients(policy.value)) {
+              return yield* Effect.fail(
+                new Error("This worker's managed policy doesn't allow remote clients."),
+              );
+            }
+            const issued = yield* auth.issueSession({
               subject: t3oBoardSubject(boardId),
               label: boardSessionLabel(entry.boardLabel),
-            })
-            .pipe(Effect.map((issued) => issued.token)),
+            });
+            return issued.token;
+          }),
         ),
       onReady: (ack) => {
         void run(

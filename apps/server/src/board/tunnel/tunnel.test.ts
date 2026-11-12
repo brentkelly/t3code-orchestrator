@@ -261,6 +261,60 @@ describe("worker tunnel", () => {
     expect((await log.when((status) => status.state === "revoked")).lastError).toMatch(/revoked/);
   });
 
+  it("retries a 401 that isn't the board's own revocation, such as a gateway's", async () => {
+    const local = await startLocalServer("worker-loopback");
+    let attempts = 0;
+    const second = deferred<void>();
+    const front = NodeHttp.createServer();
+    front.on("upgrade", (_request: NodeHttp.IncomingMessage, socket: NodeNet.Socket) => {
+      attempts += 1;
+      if (attempts >= 2) second.resolve();
+      socket.end("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    });
+    await new Promise<void>((resolve) => front.listen(0, "127.0.0.1", resolve));
+    cleanups.push(() => {
+      front.closeAllConnections();
+      front.close();
+    });
+    let revoked = false;
+    const log = statusLog();
+    startWorker({
+      boardUrl: `http://127.0.0.1:${(front.address() as NodeNet.AddressInfo).port}`,
+      localPort: local.port,
+      onStatus: log.onStatus,
+      onRevoked: () => (revoked = true),
+    });
+    await second.promise;
+    expect(revoked).toBe(false);
+    expect(log.states.some((status) => status.state === "revoked")).toBe(false);
+    expect((await log.when((status) => status.state === "offline")).lastError).toMatch(/401/);
+  });
+
+  it("mints once per control channel, then backs off on a fresh one", async () => {
+    const local = await startLocalServer("worker-loopback");
+    const fourth = deferred<void>();
+    const board = await startBoard({
+      decide: async () => {
+        if (board.hellos.length >= 4) fourth.resolve();
+        return { status: "needs-session" };
+      },
+    });
+    let mints = 0;
+    const worker = startWorker({
+      boardUrl: board.url,
+      localPort: local.port,
+      mint: async () => `board-session-${++mints}`,
+    });
+    await fourth.promise;
+    worker.stop();
+    expect(board.hellos.slice(0, 4).map((hello) => hello.boardSession ?? null)).toEqual([
+      null,
+      "board-session-1",
+      null,
+      "board-session-2",
+    ]);
+  });
+
   it("refuses a hello naming another worker than the credential's", async () => {
     const local = await startLocalServer("worker-loopback");
     const board = await startBoard({ credentials: new Map([[CREDENTIAL, "env-other"]]) });

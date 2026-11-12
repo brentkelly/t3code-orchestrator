@@ -104,17 +104,30 @@ export function openUpgrade(
   });
 }
 
+/** The board's own refusal of a credential: a 401 whose body says `revoked`. Any other
+    401 may come from a proxy or gateway in front of the board, so it is retried. */
+function isRevokedBody(body: string): boolean {
+  try {
+    return (JSON.parse(body) as { error?: unknown } | null)?.error === "revoked";
+  } catch {
+    return false;
+  }
+}
+
 class UpgradeRefused extends Error {
   readonly status: number;
   readonly body: string;
+  readonly revoked: boolean;
   constructor(status: number, body: string) {
+    const revoked = status === 401 && isRevokedBody(body);
     super(
-      status === 401
+      revoked
         ? "The board no longer knows this worker (credential revoked)."
-        : `Upgrade refused: the board answered HTTP ${status}. A front that strips Upgrade headers (some CDNs) can't carry a worker tunnel.`,
+        : `Upgrade refused: the board answered HTTP ${status}. A front that strips Upgrade headers (some CDNs) or demands its own sign-in can't carry a worker tunnel.`,
     );
     this.status = status;
     this.body = body;
+    this.revoked = revoked;
   }
 }
 
@@ -204,7 +217,7 @@ export class TunnelWorker {
         this.scheduleRedial(0);
         return;
       }
-      if (error instanceof UpgradeRefused && error.status === 401) {
+      if (error instanceof UpgradeRefused && error.revoked) {
         this.setStatus({ state: "revoked", lastError: error.message });
         this.stopped = true;
         this.options.onRevoked?.();
@@ -223,6 +236,9 @@ export class TunnelWorker {
 
   private hold(socket: NodeNet.Socket, head: Buffer, url: string, candidate: boolean): void {
     let ready = false;
+    // One mint per control channel: a board that refuses it again gets a fresh channel
+    // after a backoff, never a session minted per round trip.
+    let minted = false;
     const hello = (boardSession?: string) =>
       channel.send({
         type: "hello",
@@ -245,6 +261,15 @@ export class TunnelWorker {
           case "helloAck":
             switch (message.status) {
               case "needs-session":
+                if (minted) {
+                  this.setStatus({
+                    state: "offline",
+                    lastError: "The board refused the session this worker issued it.",
+                  });
+                  channel.close();
+                  return;
+                }
+                minted = true;
                 void this.options
                   .mintBoardSession()
                   .then((session) => hello(session))
