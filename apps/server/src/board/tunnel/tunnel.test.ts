@@ -141,6 +141,7 @@ function startWorker(input: {
   readonly onReady?: () => void;
   readonly onAddressAdopted?: (url: string) => void;
   readonly tunnelProtocol?: number;
+  readonly now?: () => number;
 }) {
   const worker = new TunnelWorker({
     boardUrl: input.boardUrl,
@@ -157,6 +158,7 @@ function startWorker(input: {
     onAddressAdopted: input.onAddressAdopted,
     backoff: { initialMs: 5, maxMs: 20 },
     ...(input.tunnelProtocol === undefined ? {} : { tunnelProtocol: input.tunnelProtocol }),
+    ...(input.now === undefined ? {} : { now: input.now }),
   });
   cleanups.push(() => worker.stop());
   worker.start();
@@ -428,6 +430,9 @@ describe("worker tunnel", () => {
     let readies = 0;
     const second = deferred<void>();
     const third = deferred<void>();
+    const fourth = deferred<void>();
+    const fifth = deferred<void>();
+    let clock = 0;
     const board = await startBoard({
       decide: async () => ({
         status: "ok",
@@ -439,10 +444,13 @@ describe("worker tunnel", () => {
       boardUrl: board.url,
       localPort: local.port,
       onAddressAdopted: (url) => adopted.push(url),
+      now: () => clock,
       onReady: () => {
         readies += 1;
         if (readies === 2) second.resolve();
         if (readies === 3) third.resolve();
+        if (readies === 4) fourth.resolve();
+        if (readies === 5) fifth.resolve();
       },
     });
     const firstReady = board.until(() => board.board.phase(WORKER_ID) === "ready");
@@ -456,6 +464,13 @@ describe("worker tunnel", () => {
     await third.promise;
     expect(deadDials).toBe(1);
     expect(worker.currentStatus().lastError).toContain(`127.0.0.1:${deadPort}`);
+    // A while later it's tried again, in case it was only briefly unreachable.
+    clock += 10 * 60_000;
+    board.board.disconnect(WORKER_ID);
+    await fourth.promise;
+    board.board.disconnect(WORKER_ID);
+    await fifth.promise;
+    expect(deadDials).toBe(2);
   });
 });
 

@@ -56,7 +56,12 @@ export interface TunnelWorkerOptions {
   readonly backoff?: { readonly initialMs: number; readonly maxMs: number };
   /** The tunnel protocol this worker speaks, injectable for tests. */
   readonly tunnelProtocol?: number;
+  /** The clock that ages a failed board address, injectable for tests. */
+  readonly now?: () => number;
 }
+
+/** How long an advertised board address that failed from here waits before it's tried again. */
+const FAILED_CANDIDATE_RETRY_MS = 10 * 60_000;
 
 const decodeServerMessageExit = Schema.decodeUnknownExit(WorkerTunnelServerMessage);
 
@@ -180,8 +185,8 @@ export class TunnelWorker {
   private boardUrl: string;
   /** An address the board told us about, tried on the next dial. */
   private candidateUrl: string | null = null;
-  /** An advertised address that failed from here; not retried until the board advertises another. */
-  private failedCandidateUrl: string | null = null;
+  /** An advertised address that failed from here, and when; not retried for a while. */
+  private failedCandidate: { readonly url: string; readonly at: number } | null = null;
   private status: WorkerTunnelStatus;
 
   private readonly options: TunnelWorkerOptions;
@@ -195,6 +200,10 @@ export class TunnelWorker {
       lastError: null,
       boardUrl: this.boardUrl,
     };
+  }
+
+  private now(): number {
+    return (this.options.now ?? Date.now)();
   }
 
   start(): void {
@@ -265,7 +274,7 @@ export class TunnelWorker {
 
   private candidateFailed(url: string): void {
     this.candidateUrl = null;
-    this.failedCandidateUrl = url;
+    this.failedCandidate = { url, at: this.now() };
   }
 
   private hold(socket: NodeNet.Socket, head: Buffer, url: string, candidate: boolean): void {
@@ -337,11 +346,15 @@ export class TunnelWorker {
                 if (candidate) {
                   this.boardUrl = url;
                   this.candidateUrl = null;
-                  this.failedCandidateUrl = null;
+                  this.failedCandidate = null;
                   this.options.onAddressAdopted?.(url);
                 }
                 const next = advertisedBoardCandidate(this.boardUrl, message.boardAddress);
-                const known = next !== null && next === this.failedCandidateUrl;
+                if (next === null) this.failedCandidate = null;
+                const known =
+                  next !== null &&
+                  next === this.failedCandidate?.url &&
+                  this.now() - this.failedCandidate.at < FAILED_CANDIDATE_RETRY_MS;
                 if (next !== null && !known) this.candidateUrl = next;
                 this.setStatus({
                   state: "connected",
