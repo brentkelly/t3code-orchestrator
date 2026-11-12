@@ -10,6 +10,7 @@ import {
   findWorkerBoard,
   localTunnelTarget,
   readWorkerFile,
+  WorkerFileInvalidError,
   removeWorkerBoard,
   upsertWorkerBoard,
   workerFilePath,
@@ -34,7 +35,7 @@ const entry = (id: string, url: string) => ({
 });
 
 describe("worker.json", () => {
-  it("round-trips atomically and reads a missing or broken file as empty", () => {
+  it("round-trips atomically, reads a missing file as empty and refuses a broken one", () => {
     const home = makeHome();
     expect(readWorkerFile(home)).toEqual({ boards: [], config: {} });
     const file = upsertWorkerBoard(readWorkerFile(home), entry("a", "https://a.example"));
@@ -47,7 +48,9 @@ describe("worker.json", () => {
     expect(NodeFS.readdirSync(home)).toEqual(["worker.json"]);
     expect(NodeFS.statSync(workerFilePath(home)).mode & 0o777).toBe(0o600);
     NodeFS.writeFileSync(workerFilePath(home), "{ broken");
-    expect(readWorkerFile(home)).toEqual({ boards: [], config: {} });
+    expect(() => readWorkerFile(home)).toThrow(WorkerFileInvalidError);
+    NodeFS.writeFileSync(workerFilePath(home), JSON.stringify({ boards: "nope" }));
+    expect(() => readWorkerFile(home)).toThrow(WorkerFileInvalidError);
   });
 
   it("finds a board by id, label or address, and removes it", () => {

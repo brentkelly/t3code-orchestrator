@@ -80,12 +80,36 @@ function readJson(path: string): unknown {
   }
 }
 
-/** The worker file, or the empty one when it is missing or unreadable. */
+/** A `worker.json` that exists but can't be read as one: never "no boards". */
+export class WorkerFileInvalidError extends Error {
+  constructor(path: string, reason: string) {
+    super(`${path} can't be read (${reason}). Fix or remove it; it was left as it is.`);
+  }
+}
+
+/**
+ * The worker file, or the empty one when it is missing. Throws `WorkerFileInvalidError`
+ * when it exists but is unreadable or invalid, so nobody reads it as "this worker serves
+ * no boards" and closes or overwrites the boards it lists.
+ */
 export function readWorkerFile(home: string): WorkerFile {
-  const raw = readJson(workerFilePath(home));
-  if (raw === undefined) return EMPTY_WORKER_FILE;
+  const path = workerFilePath(home);
+  let text: string;
+  try {
+    text = NodeFS.readFileSync(path, "utf8");
+  } catch (error) {
+    if ((error as { code?: unknown }).code === "ENOENT") return EMPTY_WORKER_FILE;
+    throw new WorkerFileInvalidError(path, error instanceof Error ? error.message : String(error));
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new WorkerFileInvalidError(path, "not JSON");
+  }
   const exit = decodeWorkerFile(raw);
-  return exit._tag === "Success" ? exit.value : EMPTY_WORKER_FILE;
+  if (exit._tag !== "Success") throw new WorkerFileInvalidError(path, "not a worker file");
+  return exit.value;
 }
 
 export function readWorkerStatus(home: string): WorkerStatusFile | null {

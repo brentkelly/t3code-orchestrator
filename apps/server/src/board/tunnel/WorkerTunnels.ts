@@ -175,7 +175,16 @@ const makeWorkerTunnels = Effect.gen(function* () {
   };
 
   const reconcile: WorkerTunnelsShape["reconcile"] = Effect.gen(function* () {
-    const file = readWorkerFile(home);
+    let file: ReturnType<typeof readWorkerFile>;
+    try {
+      file = readWorkerFile(home);
+    } catch (error) {
+      // Keep every tunnel as it is until the file reads again.
+      yield* Effect.logWarning("worker tunnels: worker.json unreadable", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
     const wanted = new Map(file.boards.map((board) => [board.boardEnvironmentId, board]));
     for (const [boardId, current] of held) {
       const entry = wanted.get(boardId);

@@ -55,6 +55,16 @@ class WorkerCliError extends Schema.TaggedError<WorkerCliError>()("WorkerCliErro
 const fail = (detail: string) =>
   Effect.fail(new CliError.UserError({ cause: new WorkerCliError({ detail }) }));
 
+/** `worker.json`, or a user error when it exists but can't be read: never written over. */
+const readBoards = (home: string) =>
+  Effect.suspend(() => {
+    try {
+      return Effect.succeed(readWorkerFile(home));
+    } catch (error) {
+      return fail(error instanceof Error ? error.message : String(error));
+    }
+  });
+
 /** How long `join` waits for the running server to report the tunnel connected. */
 const JOIN_CONNECT_TIMEOUT_MS = 30_000;
 
@@ -172,7 +182,7 @@ const joinCommand = Command.make("join", {
             "This machine's managed policy doesn't allow remote clients, so no board can use it as a worker.",
           );
         }
-        const file = readWorkerFile(home);
+        const file = yield* readBoards(home);
         const label = Option.getOrElse(flags.label, () => NodeOS.hostname()).slice(0, 64);
         const response = yield* Effect.tryPromise({
           try: () =>
@@ -219,7 +229,7 @@ const joinCommand = Command.make("join", {
           boardLabel: joined.boardLabel,
           joinedAt: new Date().toISOString(),
         };
-        writeWorkerFile(home, upsertWorkerBoard(readWorkerFile(home), entry));
+        writeWorkerFile(home, upsertWorkerBoard(yield* readBoards(home), entry));
         yield* Console.log(`Joined ${joined.boardLabel} as ${label}.`);
         if (others.length > 0) {
           yield* Console.log(
@@ -245,19 +255,19 @@ const joinCommand = Command.make("join", {
   ),
 );
 
-const pickBoard = (home: string, name: string | undefined) => {
-  const file = readWorkerFile(home);
-  if (name === undefined) {
-    if (file.boards.length === 1) return Effect.succeed(file.boards[0]!);
-    return fail(
-      file.boards.length === 0
-        ? "This worker serves no boards."
-        : `This worker serves ${file.boards.length} boards; name one: ${file.boards.map((board) => board.boardLabel).join(", ")}.`,
-    );
-  }
-  const found = findWorkerBoard(file, name);
-  return found === null ? fail(`No board named ${name} on this worker.`) : Effect.succeed(found);
-};
+const pickBoard = (home: string, name: string | undefined) =>
+  Effect.flatMap(readBoards(home), (file) => {
+    if (name === undefined) {
+      if (file.boards.length === 1) return Effect.succeed(file.boards[0]!);
+      return fail(
+        file.boards.length === 0
+          ? "This worker serves no boards."
+          : `This worker serves ${file.boards.length} boards; name one: ${file.boards.map((board) => board.boardLabel).join(", ")}.`,
+      );
+    }
+    const found = findWorkerBoard(file, name);
+    return found === null ? fail(`No board named ${name} on this worker.`) : Effect.succeed(found);
+  });
 
 const leaveBoard = (flags: {
   readonly baseDir: Option.Option<string>;
@@ -272,7 +282,7 @@ const leaveBoard = (flags: {
       const revoked = yield* revokeBoardSessions(auth, board.boardEnvironmentId).pipe(
         Effect.orElseSucceed(() => 0),
       );
-      writeWorkerFile(home, removeWorkerBoard(readWorkerFile(home), board.boardEnvironmentId));
+      writeWorkerFile(home, removeWorkerBoard(yield* readBoards(home), board.boardEnvironmentId));
       yield* secrets
         .remove(tunnelCredentialSecretName(board.boardEnvironmentId))
         .pipe(Effect.ignore);
@@ -302,7 +312,7 @@ const boardsCommand = Command.make("boards", { ...authLocationFlags }).pipe(
   Command.withHandler((flags) =>
     withWorkerHome(flags, ({ home }) =>
       Effect.gen(function* () {
-        const file = readWorkerFile(home);
+        const file = yield* readBoards(home);
         if (file.boards.length === 0) {
           yield* Console.log("This worker serves no boards. Join one with `t3o-worker join`.");
           return;
@@ -335,7 +345,12 @@ const workerStatusSections: Array<(home: string) => ReadonlyArray<string>> = [
     ];
   },
   (home) => {
-    const file = readWorkerFile(home);
+    let file: ReturnType<typeof readWorkerFile>;
+    try {
+      file = readWorkerFile(home);
+    } catch (error) {
+      return [`Boards: ${error instanceof Error ? error.message : String(error)}`];
+    }
     const status = readWorkerStatus(home);
     if (file.boards.length === 0) return ["Boards: none."];
     return [
@@ -382,7 +397,7 @@ const configCommand = Command.make("config", {
   Command.withHandler((flags) =>
     withWorkerHome(flags, ({ home }) =>
       Effect.gen(function* () {
-        const file = readWorkerFile(home);
+        const file = yield* readBoards(home);
         const key = Option.getOrUndefined(flags.key);
         if (flags.action === "list") {
           const entries = Object.entries(file.config);
