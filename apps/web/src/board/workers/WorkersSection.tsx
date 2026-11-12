@@ -99,6 +99,8 @@ export function useAddWorker(input: {
 
   const start = () => {
     setOpen(true);
+    // A code being created is the one this opens on; never mint a second.
+    if (creating) return;
     // A code still in play reopens where it was; anything else starts a new one.
     if (created !== null) {
       const phase = joinDialogPhase({

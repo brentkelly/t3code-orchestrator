@@ -231,12 +231,16 @@ export function handleWorkerProxyUpgrade(
   for (const [name, value] of Object.entries(headers)) {
     for (const item of Array.isArray(value) ? value : [value]) lines.push(`${name}: ${item}`);
   }
+  let joined = false;
   const upstream = NodeNet.connect({ host: "127.0.0.1", port: endpoint.port }, () => {
     upstream.write(`${lines.join("\r\n")}\r\n\r\n`);
     if (head.length > 0) upstream.write(head);
+    joined = true;
     joinSockets(socket, upstream);
   });
   upstream.on("error", () => {
-    refuseUpgrade(socket, 503, "Service Unavailable", { code: "worker-offline" });
+    // Once joined the browser's socket carries the worker's bytes: an HTTP reply would corrupt it.
+    if (joined) socket.destroy();
+    else refuseUpgrade(socket, 503, "Service Unavailable", { code: "worker-offline" });
   });
 }

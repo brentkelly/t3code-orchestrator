@@ -119,7 +119,14 @@ export function BoardThreadWorkerGate({
   }, [access]);
 
   if (access === "open") return <>{children(worker.environmentId)}</>;
-  const shownFailure = failure !== null && failure.reason === access ? failure.message : null;
+  // Unreachable (say, switched off in Connections): Retry re-registers it through the board.
+  const retryReason: MintReason | null =
+    access === "register" || access === "reauthorize"
+      ? access
+      : access === "offline"
+        ? "register"
+        : null;
+  const shownFailure = failure !== null && failure.reason === retryReason ? failure.message : null;
   const copy =
     shownFailure !== null
       ? {
@@ -142,12 +149,12 @@ export function BoardThreadWorkerGate({
         <div className="text-board-12-5 leading-board-1-6 text-pretty text-muted-foreground">
           {copy.detail}
         </div>
-        {shownFailure !== null && (access === "register" || access === "reauthorize") ? (
+        {retryReason !== null && (shownFailure !== null || access === "offline") ? (
           <div className="pt-0.5">
             <Button
               onClick={() => {
                 setFailure(null);
-                mint(access);
+                mint(retryReason);
               }}
               size="sm"
               variant="outline"

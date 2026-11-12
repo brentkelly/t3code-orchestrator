@@ -1364,7 +1364,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/labs": null,
   "/settings/about": null,
   "/settings/archived": "project-defaults",
-  // T3o: the board page reads the primary environment's settings at any selection.
+  // T3o: the board pages read the primary environment's settings at any selection.
   "/settings/board": null,
   "/settings/board/workers": null,
 };

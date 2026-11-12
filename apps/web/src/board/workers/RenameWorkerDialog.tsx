@@ -1,6 +1,10 @@
 /** Rename worker (prototype 3.6): label and abbreviation, checked as typed, with the chip it makes. */
 import { useAtomValue } from "@effect/atom-react";
-import type { BoardWorkerView, EnvironmentId } from "@t3tools/contracts";
+import {
+  BOARD_LOCAL_WORKER_ID,
+  type BoardWorkerView,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -104,6 +108,7 @@ function RenameForm(props: {
             problems={problems}
             onLabelChange={setLabel}
             onAbbreviationChange={setAbbreviation}
+            abbreviationLocked={worker.id === BOARD_LOCAL_WORKER_ID}
           />
           <div className="flex items-center gap-2 text-board-12-5 text-muted-foreground">
             <span>Preview</span>

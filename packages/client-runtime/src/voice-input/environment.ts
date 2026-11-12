@@ -15,6 +15,7 @@ import type {
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
+// T3o: voice requests keep a worker proxy's base path (T3O-84).
 import { environmentBasePath, joinEnvironmentPath } from "../environment/basePath.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import {

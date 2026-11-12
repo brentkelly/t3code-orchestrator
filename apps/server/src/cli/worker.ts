@@ -224,6 +224,8 @@ const joinCommand = Command.make("join", {
                 t3oRelease: readT3oRelease(),
                 tunnelProtocol: T3O_TUNNEL_PROTOCOL_VERSION,
               }),
+              // A black-holed address fails instead of hanging the command.
+              signal: AbortSignal.timeout(30_000),
             }),
           catch: (cause) =>
             new WorkerCliError({
@@ -363,13 +365,7 @@ const workerStatusSections: Array<(home: string) => ReadonlyArray<string>> = [
     if (status === null) {
       return ["Server: no status yet. Is the T3o service running with this home?"];
     }
-    let alive = false;
-    try {
-      process.kill(status.pid, 0);
-      alive = true;
-    } catch {
-      alive = false;
-    }
+    const alive = processAlive(status.pid);
     return [
       `Server: ${alive ? `running (pid ${status.pid})` : "not running"}, last report ${status.updatedAt}`,
     ];
