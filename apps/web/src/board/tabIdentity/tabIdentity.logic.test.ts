@@ -133,7 +133,7 @@ describe("resolveIdentity", () => {
     readonly name: string;
     readonly key: TabRouteKey;
     readonly inputs?: Partial<TabIdentityInputs>;
-    readonly expected: { title: string; icon: unknown; pending?: boolean } | null;
+    readonly expected: { title: string; icon?: unknown; pending?: boolean } | null;
   }>([
     {
       name: "a card open on the board",

@@ -6,12 +6,9 @@
 import {
   BOARD_ATTENTION_SETTLE_MS,
   boardCardAttention,
-  boardCardChildAttentionLabel,
-  deriveBoardCardChildAttention,
   deriveBoardCardChildRunning,
   isBoardCardWorking,
   type BoardCardAttentionReason,
-  type BoardCardChildAttention,
 } from "@t3tools/contracts";
 
 import type { SidebarThreadStatus } from "../../components/Sidebar.logic";
@@ -22,7 +19,10 @@ import {
   boardCardReadyForMerge,
   type BoardCardNotificationObservation,
 } from "../boardCardNotifications.logic";
-import { createBoardCardObserver, type BoardCardObservationSources } from "../boardCardObservations";
+import {
+  createBoardCardObserver,
+  type BoardCardObservationSources,
+} from "../boardCardObservations";
 import { boardCardSummary } from "../boardCardSummary";
 import { boardCardStageGoneNotes } from "../boardProjectPipelines";
 
@@ -55,16 +55,10 @@ const fromReason = (reason: BoardCardAttentionReason): TabStatus | null => {
 };
 
 /** A notice's status; `undefined` when the notice says nothing a title should carry. */
-function fromNotice(
-  notice: BoardCardNotice,
-  inherited: BoardCardChildAttention | null,
-): TabStatus | null | undefined {
+function fromNotice(notice: BoardCardNotice): TabStatus | null | undefined {
   switch (notice.kind) {
     case "attention":
-      if (notice.attention.tone === "neutral") return null;
-      return inherited === null
-        ? fromReason(notice.attention.reason)
-        : needsYou(boardCardChildAttentionLabel(inherited));
+      return notice.attention.tone === "neutral" ? null : fromReason(notice.attention.reason);
     case "worker":
       return needsYou(notice.trouble.kind === "removed" ? "Worker removed" : "Worker offline");
     case "worker-move":
@@ -88,11 +82,12 @@ function fromNotice(
 
 /**
  * One card's tab status: the ranked card-face notice first, then Ready for merge (the card
- * notifier's rule), then the working dot. Done, archived and hidden cards carry none.
+ * notifier's rule), then the working dot. Done, archived and hidden cards carry none. A parent
+ * with children is a group, whose face takes no tone from them, so neither does its tab.
  */
 export function boardCardTabStatus(
   input: BoardCardNotificationObservation & {
-    readonly childAttention: BoardCardChildAttention | null;
+    /** Working children (`deriveBoardCardChildRunning`): a group's working dot. */
     readonly childRunning: number;
     readonly stageGone: string | null;
     readonly now: number;
@@ -109,7 +104,7 @@ export function boardCardTabStatus(
     card,
     summary,
     attention: boardCardAttention({ card: withIdle, stages: input.stages, now }),
-    childAttention: input.childAttention,
+    childAttention: null,
     isGroup: input.isGroup,
     noPullRequest: boardCardNoPullRequest({
       atMergeStage,
@@ -131,7 +126,7 @@ export function boardCardTabStatus(
     return fromReason(own.reason);
   }
   if (notice !== null) {
-    const status = fromNotice(notice, own === null ? input.childAttention : null);
+    const status = fromNotice(notice);
     if (status !== undefined) return status;
   }
   const settling =
@@ -154,7 +149,7 @@ export function boardCardTabStatus(
 
 /**
  * The status of the one card a tab shows, from the board's sources narrowed to that card, its
- * ancestors (auto-merge inherits down them) and its children (plan progress, roll-ups). Also
+ * ancestors (auto-merge inherits down them) and its children (plan progress, group, working). Also
  * when a settle grace ends and the answer can change, so the caller sets one timer.
  */
 export function resolveCardTabStatus(
@@ -165,7 +160,7 @@ export function resolveCardTabStatus(
   if (target === undefined) return { status: null, settleAt: null };
   const related = [target];
   const seen = new Set([input.cardId]);
-  for (let parent = target.parentCardId; parent !== undefined; ) {
+  for (let parent = target.parentCardId; parent !== undefined;) {
     const ancestor = byId.get(String(parent));
     if (ancestor === undefined || seen.has(String(parent))) break;
     seen.add(String(parent));
@@ -178,20 +173,8 @@ export function resolveCardTabStatus(
   const view = createBoardCardObserver()({ ...input, cards: related });
   const observation = view.observations[0];
   if (observation === undefined) return { status: null, settleAt: null };
-  const liveChildren = view.cards
-    .filter((card) => String(card.parentCardId) === input.cardId)
-    .map((card) => {
-      const threadIdleSince = view.idleByCard.get(String(card.cardId));
-      return threadIdleSince === undefined ? card : { ...card, threadIdleSince };
-    });
-  const childAttention =
-    deriveBoardCardChildAttention({
-      cards: liveChildren,
-      stages: view.stages,
-      now: input.now,
-    }).get(observation.card.cardId) ?? null;
   const childRunning =
-    deriveBoardCardChildRunning({ cards: liveChildren }).get(observation.card.cardId) ?? 0;
+    deriveBoardCardChildRunning({ cards: children }).get(observation.card.cardId) ?? 0;
   const stageGone = boardCardStageGoneNotes(
     { stages: view.stages, projectStageConfigs: input.projectStageConfigs, cards: related },
     () => "",
@@ -199,7 +182,6 @@ export function resolveCardTabStatus(
   return {
     status: boardCardTabStatus({
       ...observation,
-      childAttention,
       childRunning,
       stageGone,
       now: input.now,

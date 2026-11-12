@@ -337,7 +337,10 @@ export function resolveIdentity(key: TabRouteKey, inputs: TabIdentityInputs): Ta
       const cardId = index?.cardIdByThread.get(cardThreadKey(key.environmentId, key.threadId));
       const card = cardId === undefined ? null : (index?.cards.get(cardId) ?? null);
       if (card !== null && boardEnv !== null) {
-        const title = withStatus(thread?.title ?? inputs.fallbackName, inputs.cardStatus(card.cardId));
+        const title = withStatus(
+          thread?.title ?? inputs.fallbackName,
+          inputs.cardStatus(card.cardId),
+        );
         return make(`${title} · ${card.key}`, cardTile(card, inputs, boardEnv), true);
       }
       // While the snapshot loads the thread may still be a card's, so it shows no status yet.
