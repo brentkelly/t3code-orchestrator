@@ -17,6 +17,7 @@ import { resolveServerBackedAppDisplayName } from "../../branding.logic";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import { boardLabelForeground } from "../labelColour";
 import { projectAccent, projectIconColorOf } from "../projectAccent";
+import type { TabStatus } from "./tabStatus.logic";
 
 const TITLE_MAX = 60;
 
@@ -183,6 +184,10 @@ export interface TabIdentityInputs {
   readonly project: (environmentId: EnvironmentId, projectId: ProjectId) => TabProject | null;
   /** The open New card dialog, which names the tab over whatever board route is under it. */
   readonly creating: TabCreatingCard | null;
+  /** The status a card's tab names; asked only for the card the route shows. */
+  readonly cardStatus: (cardId: string) => TabStatus | null;
+  /** A plain thread's status; asked only for the thread the route shows. */
+  readonly threadStatus: (environmentId: EnvironmentId, threadId: ThreadId) => TabStatus | null;
 }
 
 export interface TabCreatingCard {
@@ -216,6 +221,12 @@ function trimTitle(title: string): string {
         .join("")
         .trimEnd()}…`
     : points.join("");
+}
+
+/** `*` (needs you), the trimmed title, then the status in brackets. Only the title is trimmed. */
+function withStatus(title: string, status: TabStatus | null): string {
+  if (status === null) return trimTitle(title);
+  return `${status.needsYou ? "*" : ""}${trimTitle(title)} (${status.label})`;
 }
 
 function splitCardKey(key: string): { readonly prefix: string; readonly number: string | null } {
@@ -285,7 +296,7 @@ export function resolveIdentity(key: TabRouteKey, inputs: TabIdentityInputs): Ta
     if (parent === null || boardEnv === null) return make("Board", { kind: "default" }, true);
     const { prefix } = splitCardKey(parent.key);
     return make(
-      `${trimTitle(parent.title)} · ${parent.key} board`,
+      `${withStatus(parent.title, inputs.cardStatus(parent.cardId))} · ${parent.key} board`,
       tile(prefix, null, parent.projectId, inputs.project(boardEnv, parent.projectId)),
       true,
     );
@@ -315,16 +326,31 @@ export function resolveIdentity(key: TabRouteKey, inputs: TabIdentityInputs): Ta
         const scoped = scopeIdentity(key.scope);
         return { ...scoped, pending };
       }
-      return make(`${trimTitle(card.title)} · ${card.key}`, cardTile(card, inputs, boardEnv), true);
+      return make(
+        `${withStatus(card.title, inputs.cardStatus(card.cardId))} · ${card.key}`,
+        cardTile(card, inputs, boardEnv),
+        true,
+      );
     }
     case "thread": {
       const thread = inputs.thread(key.environmentId, key.threadId);
       const cardId = index?.cardIdByThread.get(cardThreadKey(key.environmentId, key.threadId));
       const card = cardId === undefined ? null : (index?.cards.get(cardId) ?? null);
-      const title = thread === null ? inputs.fallbackName : trimTitle(thread.title);
       if (card !== null && boardEnv !== null) {
+        const title = withStatus(
+          thread?.title ?? inputs.fallbackName,
+          inputs.cardStatus(card.cardId),
+        );
         return make(`${title} · ${card.key}`, cardTile(card, inputs, boardEnv), true);
       }
+      // While the snapshot loads the thread may still be a card's, so it shows no status yet.
+      const title =
+        thread === null
+          ? inputs.fallbackName
+          : withStatus(
+              thread.title,
+              pending ? null : inputs.threadStatus(key.environmentId, key.threadId),
+            );
       // While the snapshot loads the thread may still be a card's: no prefix-only tile yet.
       const icon =
         thread === null || pending

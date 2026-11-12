@@ -35,6 +35,9 @@ import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
+// T3o: board card rows in the `@` menu.
+import { BoardCardMentionMenuRow } from "~/board/mentions/BoardCardMentionChip";
+import type { BoardCardMentionItem } from "~/board/mentions/boardCardMentions";
 
 export type ComposerCommandItem =
   | {
@@ -102,7 +105,9 @@ export type ComposerCommandItem =
       acpRegistryIconUrl: string | undefined;
       label: string;
       description: string;
-    };
+    }
+  // T3o: a board card match.
+  | BoardCardMentionItem;
 
 export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   listId: string;
@@ -245,6 +250,8 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           iconClassName="size-4"
         />
       ) : null}
+      {/* T3o: a card row leads with its project-coloured key pill. */}
+      {props.item.type === "card" ? <BoardCardMentionMenuRow item={props.item} /> : null}
       {pullRequestPresentation ? (
         <pullRequestPresentation.Icon
           role="img"

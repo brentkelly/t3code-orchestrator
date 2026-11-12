@@ -10610,7 +10610,8 @@ export function boardReviewRoundModeOf(
 /**
  * The mode round `round` runs in: its record when one exists, so a re-plan composes the same
  * prompt. Otherwise settling once past `settleAfterRound`, outside a gate round, after a round
- * with fewer than `settleBelowFindings` forcing findings. Only the executor asks this.
+ * with no surviving critical and fewer than `settleBelowFindings` forcing findings. Only the
+ * executor asks this.
  */
 export function boardReviewNextRoundMode(input: {
   readonly round: number;
@@ -10631,12 +10632,14 @@ export function boardReviewNextRoundMode(input: {
   const done = succeededBoardReviewSteps(input.completions);
   // A gate round reviews the rebased combined diff, and its previous SHA is no longer an ancestor.
   if (done.has(reviewStepId("sync", previous))) return BOARD_REVIEW_FULL_ROUND;
-  const forcing = boardReviewRoundForcingCount({
+  const forcing = boardReviewRoundSurvivingForcing({
     round: previous,
     completions: input.completions,
     overrides,
   });
   if (forcing === null) return BOARD_REVIEW_FULL_ROUND;
+  // A round that found a critical needs fresh eyes on the whole branch, not a delta of its fix.
+  if (forcing.some((finding) => finding.severity === "critical")) return BOARD_REVIEW_FULL_ROUND;
   const previousReview = done.get(reviewStepId("review", previous));
   const reviewedSha =
     previousReview === undefined
@@ -10649,7 +10652,7 @@ export function boardReviewNextRoundMode(input: {
   if (reviewedSha === null || !BOARD_REVIEW_COMMIT_ID.test(reviewedSha)) {
     return BOARD_REVIEW_FULL_ROUND;
   }
-  return forcing < review.settleBelowFindings
+  return forcing.length < review.settleBelowFindings
     ? { kind: "settling", sinceSha: reviewedSha }
     : BOARD_REVIEW_FULL_ROUND;
 }
@@ -10667,16 +10670,28 @@ function succeededBoardReviewSteps(
 }
 
 /**
- * How many of a finished round's findings forced another round in its recorded mode, less those
- * whose latest adjudication is rejection-justified: a false positive is not a bug. Read as the
- * loop stood when the round ended, so a later round's review does not hide it. Null for a legacy
- * round or one whose records cannot be read, which give no count to trust.
+ * A finished round's surviving forcing findings (not ruled rejection-justified) and whether any
+ * is a critical, read as the loop stood when the round ended so a later review cannot hide them.
+ * Null for a legacy round or one whose records cannot be read.
  */
-export function boardReviewRoundForcingCount(input: {
+export function boardReviewRoundForcingSummary(input: {
   readonly round: number;
   readonly completions: ReadonlyArray<BoardStepCompletion>;
   readonly overrides: BoardCardReviewOverrides | null;
-}): number | null {
+}): { readonly count: number; readonly critical: boolean } | null {
+  const forcing = boardReviewRoundSurvivingForcing(input);
+  if (forcing === null) return null;
+  return {
+    count: forcing.length,
+    critical: forcing.some((finding) => finding.severity === "critical"),
+  };
+}
+
+function boardReviewRoundSurvivingForcing(input: {
+  readonly round: number;
+  readonly completions: ReadonlyArray<BoardStepCompletion>;
+  readonly overrides: BoardCardReviewOverrides | null;
+}): ReadonlyArray<BoardReviewRoundFinding> | null {
   const done = succeededBoardReviewSteps(input.completions);
   done.delete(reviewStepId("review", input.round + 1));
   const fold = boardReviewRoundVerdicts({
@@ -10684,12 +10699,12 @@ export function boardReviewRoundForcingCount(input: {
     done,
     carriedFindings: input.overrides?.carriedFindings ?? {},
   });
-  if (fold.kind === "converge") return 0;
+  if (fold.kind === "converge") return [];
   if (fold.kind !== "folded") return null;
   return boardReviewForcingFindings(
     fold,
     boardReviewRoundModeOf(input.overrides, input.round),
-  ).filter((finding) => fold.latestVerdict(finding.id)?.verdict !== "rejection-justified").length;
+  ).filter((finding) => fold.latestVerdict(finding.id)?.verdict !== "rejection-justified");
 }
 
 /**
@@ -11679,7 +11694,8 @@ export const BoardStageExecutionReview = Schema.Struct({
   settleAfterRound: Schema.NullOr(PositiveInt).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND)),
   ),
-  /** A round with fewer forcing findings than this makes the next round settle. */
+  /** A round with fewer forcing findings than this, and no surviving critical, makes the next
+      round settle. */
   settleBelowFindings: BoardReviewSettleBelowFindings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_SETTLE_BELOW_FINDINGS)),
   ),

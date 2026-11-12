@@ -39,6 +39,8 @@ import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTermin
 import { EnvironmentContextChip } from "./EnvironmentContextChip";
 import { ThreadContextChip } from "./ThreadContextChip";
 import { useLinkedEnvironments } from "~/state/peerLinks";
+// T3o: board card mentions are record-less tokens drawn by a T3o chip.
+import { t3oRecordlessChip } from "~/board/mentions/BoardCardMentionChip";
 import {
   createContextPresentationRegistry,
   type ContextPresentationCapability,
@@ -487,6 +489,9 @@ export function ComposerContextReferenceChip(props: {
   label: string;
 }): ReactElement {
   const records = use(ComposerContextRecordsContext);
+  // T3o: a card mention has no record; the T3o chip draws it.
+  const t3o = t3oRecordlessChip(props);
+  if (t3o) return t3o;
   return composerContextPresentationRegistry.render(props.kind, records.get(props.contextId), {
     label: props.label,
   });

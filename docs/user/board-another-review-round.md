@@ -106,17 +106,18 @@ again if it still asks the reviewer to read earlier rounds.
 Late in a loop, rounds tend to find one small thing each, usually in the code the last fix touched,
 and every fix then needs another round to read it. Settling rounds stop that treadmill.
 
-After round 3, a round with fewer than 2 blocking findings makes the next round a settling round.
+After round 3, a round with no critical finding and fewer than 2 blocking findings makes the next
+round a settling round.
 A settling round reviews only the changes made since the previous round's review, and only
 **critical** findings start another round. Improvements are still fixed, and the adjudicator still
 checks every fix, but those fixes do not need a round of their own. The review pane tags these
 rounds **Settling**. When a loop ends this way, the pane says how many fixes the adjudicator verified
 but no reviewer re-read.
 
-The rule is checked again every round. In a full round every blocking finding counts toward the
-threshold; in a settling round only critical findings and findings you sent back do, so a settling round with 2 or more
-critical findings sends the next round back to a full review. Findings the adjudicator ruled not
-issues never count.
+The rule is checked again every round. A round that raised a critical finding, full or settling,
+always sends the next round back to a full review, however few findings it had. Otherwise, in a
+full round every blocking finding counts toward the threshold; in a settling round only findings you
+sent back do. Findings the adjudicator ruled not issues never count.
 **Another review round** always runs a full review.
 
 To change when settling starts, or to turn it off, go to **Settings → Board → Pipeline → Code review**. In

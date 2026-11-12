@@ -83,7 +83,8 @@ import { boardStageLabel } from "./boardStages";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { projectAccent, projectIconColorOf } from "./projectAccent";
 import { useBoardSettings, useUpdateBoardSettings } from "./useBoardEnvironmentId";
-import { BoardInput, BoardTextarea } from "./ui/BoardInput";
+import { BoardInput } from "./ui/BoardInput";
+import { BoardBriefEditor } from "./mentions/BoardBriefEditor";
 import { BoardButton } from "./ui/BoardButton";
 import { BoardDialogFooter, BoardDialogTitle } from "./ui/BoardDialog";
 import { BoardKbd } from "./ui/BoardKbd";
@@ -814,13 +815,18 @@ export function BoardCardCreateDialog({
                 onDetach={null}
                 state={briefAttachments}
               />
-              <BoardTextarea
-                className="min-h-24"
-                look="brief"
-                onChange={(event) => setBrief(event.target.value)}
+              <BoardBriefEditor
+                ariaLabel="Brief"
+                className="px-3 py-2 text-board-13-5 leading-board-1-6"
+                environmentId={environmentId}
+                onChange={setBrief}
+                onEscape={() => false}
+                onModEnter={() => {
+                  if (canSubmit) submit();
+                }}
                 onPaste={briefAttachments.handlers.onPaste}
                 placeholder="What's the context? Paste screenshots (⌘V) or drop files in here."
-                unstyled
+                projectId={projectId}
                 value={brief}
               />
             </div>
