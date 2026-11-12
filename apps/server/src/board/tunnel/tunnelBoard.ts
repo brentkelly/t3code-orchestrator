@@ -76,8 +76,6 @@ interface WorkerSlot {
   hello: WorkerTunnelHello | null;
   /** Every socket carried for this worker: accepted loopback sockets and stream legs. */
   readonly sockets: Set<NodeNet.Socket>;
-  /** How many times a newer tunnel replaced an older one, for duplicate-connection warnings. */
-  replacements: Array<number>;
 }
 
 export class TunnelBoard {
@@ -121,7 +119,6 @@ export class TunnelBoard {
       phase: "down",
       hello: null,
       sockets: new Set(),
-      replacements: [],
     });
     return port;
   }
@@ -157,13 +154,6 @@ export class TunnelBoard {
 
   hello(workerId: string): WorkerTunnelHello | null {
     return this.slots.get(workerId)?.hello ?? null;
-  }
-
-  /** Tunnels replaced more than 3 times in the last minute: two machines sharing an id. */
-  duplicateConnection(workerId: string, now = Date.now()): boolean {
-    const slot = this.slots.get(workerId);
-    if (slot === undefined) return false;
-    return slot.replacements.filter((at) => now - at < 60_000).length > 3;
   }
 
   close(): void {
@@ -317,10 +307,6 @@ export class TunnelBoard {
     slot.hello = hello;
     if (previous !== null) {
       // A newer tunnel replaces an older one; everything the old one carried goes with it.
-      slot.replacements = [
-        ...slot.replacements.filter((at) => Date.now() - at < 60_000),
-        Date.now(),
-      ];
       previous.close();
       this.dropSockets(workerId, slot);
     }

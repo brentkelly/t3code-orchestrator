@@ -67,6 +67,18 @@ export function tunnelBackoffMs(
   return Math.round(ceiling / 2 + (random() * ceiling) / 2);
 }
 
+/** A tunnel that held this long was healthy: it redials at once and its backoff starts over. */
+export const TUNNEL_STABLE_MS = 30_000;
+
+/** The delay before redialing after a tunnel closes. Only one that stayed ready for
+    `TUNNEL_STABLE_MS` comes straight back, so two machines sharing an id and
+    credential, replacing each other's tunnel, back off instead of churning. */
+export function redialAfterClose(heldReadyMs: number | null): { delayMs?: number; reset: boolean } {
+  return heldReadyMs !== null && heldReadyMs >= TUNNEL_STABLE_MS
+    ? { delayMs: 250, reset: true }
+    : { reset: false };
+}
+
 /** A raw `Upgrade: t3o-stream` request to the board. Resolves with the socket on 101,
     rejects with a described error otherwise. */
 export function openUpgrade(
@@ -236,6 +248,7 @@ export class TunnelWorker {
 
   private hold(socket: NodeNet.Socket, head: Buffer, url: string, candidate: boolean): void {
     let ready = false;
+    let readyAt: number | null = null;
     // One mint per control channel: a board that refuses it again gets a fresh channel
     // after a backoff, never a session minted per round trip.
     let minted = false;
@@ -295,7 +308,7 @@ export class TunnelWorker {
                 return;
               case "ok":
                 ready = true;
-                this.failures = 0;
+                readyAt = Date.now();
                 if (candidate) {
                   this.boardUrl = url;
                   this.candidateUrl = null;
@@ -322,8 +335,9 @@ export class TunnelWorker {
         if (this.stopped) return;
         if (!ready && candidate) this.candidateUrl = null;
         if (this.status.state === "connected") this.setStatus({ state: "offline" });
-        // A tunnel that held for a while comes straight back; a flapping one backs off.
-        this.scheduleRedial(ready ? 250 : undefined);
+        const next = redialAfterClose(readyAt === null ? null : Date.now() - readyAt);
+        if (next.reset) this.failures = 0;
+        this.scheduleRedial(next.delayMs);
       },
     });
     this.channel = channel;

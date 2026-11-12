@@ -16,6 +16,8 @@ import { joinSockets } from "./lineChannel.ts";
 import { NONCE_HEADER, TunnelBoard, type TunnelSessionDecision } from "./tunnelBoard.ts";
 import {
   openUpgrade,
+  redialAfterClose,
+  TUNNEL_STABLE_MS,
   TunnelWorker,
   tunnelBackoffMs,
   type WorkerTunnelStatus,
@@ -459,5 +461,12 @@ describe("tunnel backpressure", () => {
     expect(tunnelBackoffMs(0, bounds, () => 0)).toBe(500);
     expect(tunnelBackoffMs(0, bounds, () => 1)).toBe(1_000);
     expect(tunnelBackoffMs(10, bounds, () => 1)).toBe(30_000);
+  });
+
+  it("comes straight back only after a tunnel held; a flapping one keeps backing off", () => {
+    expect(redialAfterClose(TUNNEL_STABLE_MS)).toEqual({ delayMs: 250, reset: true });
+    // Two machines sharing an id replace each other's tunnel right after it is ready.
+    expect(redialAfterClose(100)).toEqual({ reset: false });
+    expect(redialAfterClose(null)).toEqual({ reset: false });
   });
 });
