@@ -186,6 +186,17 @@ export function workerProxyRouteIds(
   });
 }
 
+/** Whether the board's worker list can be trusted to prune by: a snapshot has arrived. The
+    subscription reports success with no snapshot before its first one, which lists no workers. */
+export function boardWorkersLoad(input: {
+  readonly resultTag: "Initial" | "Success" | "Failure";
+  readonly hasSnapshot: boolean;
+}): { readonly loading: boolean; readonly failed: boolean; readonly loaded: boolean } {
+  if (input.hasSnapshot) return { loading: false, failed: false, loaded: true };
+  const failed = input.resultTag === "Failure";
+  return { loading: !failed, failed, loaded: false };
+}
+
 /** The environments a board tagged for workers it no longer has; `workerIds: null` means the
     board itself is gone, so every environment it tagged is stale. */
 export function staleWorkerEnvironmentIds(

@@ -188,7 +188,10 @@ describe("worker proxy", () => {
     expect(answered.status).toBe(200);
     expect(answered.body).toBe("from-worker");
     expect(answered.headers["set-cookie"]).toBeUndefined();
-    expect(answered.headers["content-security-policy"]).toBe("default-src 'none'");
+    expect(answered.headers["content-security-policy"]).toBe(
+      "default-src 'none', sandbox allow-scripts allow-forms allow-popups allow-downloads",
+    );
+    expect(answered.headers["x-content-type-options"]).toBe("nosniff");
     const [seen] = worker.seen;
     expect(seen?.url).toBe("/api/orchestration/shell?x=1");
     expect(seen?.headers.authorization).toBe("Bearer user-token");

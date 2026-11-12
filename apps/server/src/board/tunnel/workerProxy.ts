@@ -190,6 +190,13 @@ export function handleWorkerProxyRequest(
       delete headers["set-cookie"];
       delete headers.connection;
       delete headers["keep-alive"];
+      // The worker answers on the board's origin: whatever it sends renders in an opaque origin,
+      // never with the board's cookies. A second CSP only narrows; this is upstream's loosest.
+      headers["x-content-type-options"] = "nosniff";
+      headers["content-security-policy"] = [
+        ...[answer.headers["content-security-policy"] ?? []].flat(),
+        PROXIED_RESPONSE_CONTENT_SECURITY_POLICY,
+      ];
       response.writeHead(answer.statusCode ?? 502, headers);
       // `pipe` leaves the browser waiting forever if the tunnel drops mid-body.
       NodeStream.pipeline(answer, response, () => undefined);
@@ -202,6 +209,9 @@ export function handleWorkerProxyRequest(
   response.on("close", () => upstream.destroy());
   request.pipe(upstream);
 }
+
+const PROXIED_RESPONSE_CONTENT_SECURITY_POLICY =
+  "sandbox allow-scripts allow-forms allow-popups allow-downloads";
 
 /** Keep-alive into the listener, so a thread view's requests reuse tunnel streams. */
 const proxyAgent = new NodeHttp.Agent({ keepAlive: true, timeout: 20_000 });

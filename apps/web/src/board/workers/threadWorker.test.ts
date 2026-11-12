@@ -12,6 +12,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardConnectionIsDirect,
+  boardWorkersLoad,
   boardThreadWorker,
   isWorkerProxyEntry,
   LOCAL_WORKER_LABEL,
@@ -189,6 +190,23 @@ describe("opening a thread on a worker", () => {
     expect(check(["https://old-board.example/api/t3o/workers/env-w1/"])).toBe(false);
     expect(check([proxied], null)).toBeNull();
     expect(check(null)).toBeNull();
+  });
+
+  it("prunes by the worker list only once the board's first snapshot has arrived", () => {
+    expect(boardWorkersLoad({ resultTag: "Initial", hasSnapshot: false })).toEqual({
+      loading: true,
+      failed: false,
+      loaded: false,
+    });
+    // The subscription's initial value reads as success before any snapshot.
+    expect(boardWorkersLoad({ resultTag: "Success", hasSnapshot: false }).loaded).toBe(false);
+    expect(boardWorkersLoad({ resultTag: "Failure", hasSnapshot: false })).toEqual({
+      loading: false,
+      failed: true,
+      loaded: false,
+    });
+    expect(boardWorkersLoad({ resultTag: "Success", hasSnapshot: true }).loaded).toBe(true);
+    expect(boardWorkersLoad({ resultTag: "Failure", hasSnapshot: true }).loaded).toBe(true);
   });
 
   it("forgets only the board's proxy routes, never the user's own pairing", () => {

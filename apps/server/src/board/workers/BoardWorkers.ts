@@ -1,7 +1,7 @@
 /**
  * The central server's worker management, as a service so RPC handlers, MCP tools
- * and agents share one path. `add`/`repair` refuse the wrong server before
- * spending the one-time token. `remove` deletes nothing on the worker.
+ * and agents share one path. Workers join with a code through `BoardWorkerJoin`;
+ * `remove` deletes nothing on the worker.
  */
 import {
   AuthFilesystemReadScope,

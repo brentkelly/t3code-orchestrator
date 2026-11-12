@@ -5,12 +5,15 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { boardEnvironment, environmentBoard } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { boardWorkersLoad } from "./threadWorker";
 import { pruneWorkerThreadEnvironments } from "./workerThreadEnvironments";
 
 export interface BoardWorkersView {
   readonly loading: boolean;
   /** The board server didn't answer and nothing is held. */
   readonly failed: boolean;
+  /** A snapshot has arrived, so `state` is the board's real worker list. */
+  readonly loaded: boolean;
   readonly retry: () => void;
   readonly state: BoardWorkersState;
 }
@@ -19,13 +22,9 @@ export interface BoardWorkersView {
 export function useBoardWorkers(environmentId: EnvironmentId): BoardWorkersView {
   const result = useAtomValue(environmentBoard.stateAtom(environmentId));
   const retry = useAtomRefresh(environmentBoard.stateAtom(environmentId));
+  const hasSnapshot = useAtomValue(environmentBoard.snapshotValueAtom(environmentId)) !== null;
   const state = useAtomValue(boardEnvironment.workersAtom(environmentId));
-  return {
-    loading: result._tag === "Initial",
-    failed: result._tag === "Failure",
-    retry,
-    state,
-  };
+  return { ...boardWorkersLoad({ resultTag: result._tag, hasSnapshot }), retry, state };
 }
 
 /**
@@ -82,7 +81,7 @@ export function useNowAtDeadlines(deadlines: ReadonlyArray<number>): number {
 export function usePruneWorkerThreadEnvironments(environmentId: EnvironmentId): void {
   const workers = useBoardWorkers(environmentId);
   const prune = useAtomCommand(pruneWorkerThreadEnvironments, { reportFailure: false });
-  const loaded = !workers.loading && !workers.failed;
+  const loaded = workers.loaded;
   const workerIds = workers.state.workers.map((worker) => worker.id).join(",");
   // `prune` is a fresh closure every render; the board and its worker list are what matter.
   const pruneFor = useEffectEvent((boardEnvironmentId: EnvironmentId, ids: string) => {
