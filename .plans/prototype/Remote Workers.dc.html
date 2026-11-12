@@ -1,0 +1,1288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remote workers</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#fcfcfc; --fg:#27272a; --card:#ffffff; --popover:#ffffff;
+  --muted:#fafafa; --muted-fg:#71717a; --accent:#f4f4f5; --accent-fg:#18181b;
+  --border:#e4e4e7; --input:#d4d4d8; --sidebar:#fafafa; --sidebar-row-hover:#f4f4f5;
+  --column-bg:color-mix(in srgb,var(--fg) 4.5%,transparent);
+  --sidebar-row-selected:#ffffff; --primary:oklch(0.488 0.217 264); --primary-fg:#fff;
+  --info:#3b82f6; --info-fg:#1d4ed8; --attention:#8b5cf6; --attention-fg:#6d28d9; --success:#10b981; --success-fg:#047857;
+  --warning:#f59e0b; --warning-fg:#b45309; --destructive:#ef4444; --destructive-fg:#b91c1c;
+  --radius:10px; --control-radius:0.5rem;
+  --sidebar-icon-color:color-mix(in srgb,var(--muted-fg) 60%,var(--sidebar));
+  --shadow-xs:0 1px 2px rgb(0 0 0 / 5%);
+  --shadow-pop:0 24px 64px -24px rgb(0 0 0 / 35%);
+  --font-sans:"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  --font-mono:"SF Mono","SFMono-Regular","JetBrains Mono",Consolas,Menlo,monospace;
+}
+html[data-t3-theme="dark"]{
+  color-scheme:dark;
+  --bg:#000000; --fg:#f1f3f7; --card:#18181b; --popover:#141416; --column-bg:#131316;
+  --muted:#0a0a0a; --muted-fg:#a3a3a3; --accent:#191a1d; --accent-fg:#f7f9ff;
+  --border:rgb(255 255 255 / 8%); --input:rgb(255 255 255 / 18%); --sidebar:#000000;
+  --sidebar-row-hover:rgb(255 255 255 / 6%); --sidebar-row-selected:rgb(255 255 255 / 8%);
+  --primary:oklch(0.588 0.217 264); --primary-fg:#fff;
+  --info-fg:#60a5fa; --attention-fg:#a78bfa; --success-fg:#34d399; --warning-fg:#fbbf24; --destructive-fg:#f87171;
+  --shadow-xs:none; --shadow-pop:0 24px 72px -20px rgb(0 0 0 / 90%);
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font-sans);background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased}
+a{color:var(--info-fg);text-decoration:none}
+a:hover{text-decoration:underline}
+input,textarea,select,button{font-family:inherit}
+button{color:inherit}
+.sec{display:flex;flex-direction:column;gap:24px;padding-top:40px;border-top:1px solid var(--border)}
+.sh{display:flex;flex-direction:column;gap:6px;max-width:880px}
+.sh h2{margin:0;font:600 21px var(--font-sans);letter-spacing:-0.015em}
+.sh p{margin:0;font:400 13.5px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty}
+.row{display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start}
+.ab{display:flex;flex-direction:column;gap:10px}
+.abh{display:flex;align-items:center;gap:8px}
+.num{padding:2px 7px;border-radius:6px;background:var(--fg);color:var(--bg);font:600 11px var(--font-mono)}
+.abt{font:600 13px var(--font-sans)}
+.note{margin:0;font:400 12px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty}
+.notes{display:flex;flex-direction:column;gap:6px;max-width:1100px}
+.notes .n{display:flex;gap:8px;font:400 12px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty}
+.notes .n b{color:var(--fg);font-weight:600}
+.mk{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex:none;border-radius:99px;background:var(--fg);color:var(--bg);font:600 9.5px/1 var(--font-mono);vertical-align:middle}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 12px var(--font-sans);box-shadow:var(--shadow-xs);white-space:nowrap;cursor:pointer}
+.btn.sm{height:24px;padding:0 8px;font-size:11.5px;border-radius:7px}
+.btn.lg{height:32px;padding:0 12px;font-size:13px}
+.btn.p{background:var(--primary);border-color:var(--primary);color:var(--primary-fg)}
+.btn.ghost{border-color:transparent;background:transparent;box-shadow:none;color:var(--muted-fg)}
+.btn.danger{background:var(--destructive);border-color:var(--destructive);color:#fff}
+.card{display:block;border:1px solid var(--border);border-radius:10px;background:var(--card);padding:10px 11px;box-shadow:var(--shadow-xs)}
+.key{font:500 11px var(--font-mono);color:var(--muted-fg)}
+.ttl{font:500 13px/1.35 var(--font-sans);text-wrap:pretty}
+.top{display:flex;align-items:center;gap:6px;margin-bottom:6px;min-height:17px}
+.meta{display:flex;align-items:center;gap:10px;margin-top:9px;color:var(--muted-fg);font:500 10.5px var(--font-sans)}
+.chip{display:inline-flex;align-items:center;gap:4px;max-width:124px;height:18px;padding:0 6px;border:1px solid var(--border);border-radius:5px;background:transparent;font:500 10.5px var(--font-mono);color:var(--muted-fg);white-space:nowrap;overflow:hidden;cursor:pointer}
+.chip.un{border-style:dashed;font-family:var(--font-sans)}
+.rsn{display:flex;align-items:flex-start;gap:5px;width:100%;margin-top:7px;padding:0;border:none;background:transparent;text-align:left;font:500 11.5px/1.4 var(--font-sans);cursor:pointer}
+.rsn svg{flex:none;margin-top:2px}
+.rsn.q{color:var(--info-fg)}
+.rsn.b{color:var(--warning-fg)}
+.tg{display:inline-flex;align-items:center;gap:4px;height:17px;padding:0 6px;border-radius:5px;font:500 10.5px var(--font-sans);white-space:nowrap}
+.tg.run{background:color-mix(in srgb,var(--info) 12%,transparent);color:var(--info-fg)}
+.tg.wait{background:color-mix(in srgb,var(--attention) 13%,transparent);color:var(--attention-fg)}
+.tg.blk{background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning-fg)}
+.tg.done{background:color-mix(in srgb,var(--success) 13%,transparent);color:var(--success-fg)}
+.tg.mut{background:var(--accent);color:var(--muted-fg)}
+.rdot{width:8px;height:8px;flex:none;border-radius:99px;background:var(--info-fg)}
+.segs{display:flex;gap:3px;margin-top:8px}
+.segs span{flex:1;height:4px;border-radius:99px;background:var(--accent)}
+.segs span.on{background:var(--info)}
+.panel{border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden;box-shadow:var(--shadow-xs)}
+.pop{border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:var(--shadow-pop);overflow:hidden}
+.ph{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border)}
+.hdr{font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)}
+.mono{font-family:var(--font-mono)}
+.mut{color:var(--muted-fg)}
+.tab{font-variant-numeric:tabular-nums}
+.bar{display:flex;height:6px;border-radius:99px;background:var(--accent);overflow:hidden}
+.b-this{background:color-mix(in srgb,var(--fg) 72%,transparent)}
+.b-oth{background:color-mix(in srgb,var(--muted-fg) 40%,transparent)}
+.b-amb{background:var(--warning)}
+.inp{display:inline-flex;align-items:center;height:30px;padding:0 10px;border:1px solid var(--input);border-radius:var(--control-radius);background:var(--popover);font:500 13px var(--font-sans);box-shadow:var(--shadow-xs);white-space:nowrap}
+.inp.ro{background:var(--muted);box-shadow:none;color:var(--fg)}
+.seg{display:inline-flex;padding:2px;gap:2px;border-radius:8px;background:var(--accent)}
+.sp{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:24px;padding:0 7px;border:none;border-radius:6px;background:transparent;font:500 11.5px var(--font-sans);color:var(--muted-fg);cursor:pointer}
+.sp.on{background:var(--popover);color:var(--fg);box-shadow:var(--shadow-xs)}
+.log{margin:0;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--muted);font:400 11px/1.6 var(--font-mono);color:var(--muted-fg);white-space:pre;overflow-x:auto}
+.kv{display:grid;grid-template-columns:96px minmax(0,1fr);align-items:start;gap:0 10px;padding:7px 0;font:400 12.5px var(--font-sans)}
+.kv > span:first-child{color:var(--muted-fg);padding-top:1px}
+.th{display:grid;align-items:center;gap:0 10px;padding:6px 12px;border-bottom:1px solid var(--border);background:var(--muted);font:600 9.5px var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--muted-fg)}
+.tr{display:grid;align-items:center;gap:0 10px;padding:8px 12px;border-bottom:1px solid var(--border);font:400 12px var(--font-sans)}
+.tr:last-child{border-bottom:none}
+.r{text-align:right}
+.sw{display:inline-block;width:30px;height:18px;flex:none;border-radius:99px;background:var(--input);position:relative}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:99px;background:#fff;box-shadow:0 1px 2px rgb(0 0 0 / 20%)}
+.sw.on{background:var(--primary)}
+.sw.on::after{left:14px}
+.nav{height:30px;padding:0 10px;display:flex;align-items:center;gap:8px;font:500 13px var(--font-sans);color:var(--muted-fg);border-radius:8px}
+.nav.on{color:var(--fg);background:var(--sidebar-row-selected);box-shadow:var(--shadow-xs)}
+.navh{padding:12px 10px 4px;font:500 10.5px var(--font-sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg)}
+.ico{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none;border-radius:8px;border:1px solid var(--border);background:var(--muted);color:var(--muted-fg)}
+.box{display:flex;gap:9px;padding:10px 11px;border-radius:9px}
+.box.amb{border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);background:color-mix(in srgb,var(--warning) 7%,transparent)}
+.box.blu{border:1px solid color-mix(in srgb,var(--info) 28%,transparent);background:color-mix(in srgb,var(--info) 6%,transparent)}
+.box.neu{background:var(--accent)}
+.st{display:inline-flex;align-items:center;gap:6px;font:500 12.5px var(--font-sans)}
+.st i{display:inline-block;width:7px;height:7px;border-radius:99px;background:var(--muted-fg)}
+.st.amb{color:var(--warning-fg)} .st.amb i{background:var(--warning)}
+.st.blu{color:var(--info-fg)} .st.blu i{background:var(--info)}
+.wr{display:grid;grid-template-columns:110px minmax(0,1fr);gap:4px 12px;padding:9px 14px;border-bottom:1px solid var(--border)}
+.wr:last-child{border-bottom:none}
+.wv{font:600 12px var(--font-sans)}
+.wv.q{color:var(--info-fg)} .wv.b{color:var(--warning-fg)} .wv.m{color:var(--muted-fg)}
+</style>
+</helmet>
+
+<div style="min-width:1600px;padding:64px 72px 160px;display:flex;flex-direction:column;gap:72px;background:var(--bg);color:var(--fg);font-size:14px">
+
+  <!-- ═════════ HEADER ═════════ -->
+  <header style="display:flex;flex-direction:column;gap:18px;max-width:1100px">
+    <div style="display:flex;align-items:baseline;gap:8px;font-size:15px;letter-spacing:-0.01em">
+      <span style="font-weight:700">T3</span><span style="font-weight:500;color:var(--muted-fg)">Code</span>
+      <span style="color:var(--border)">/</span>
+      <span style="font:500 13px var(--font-mono);color:var(--muted-fg)">t3o · remote workers</span>
+    </div>
+    <h1 style="margin:0;font:600 30px/1.15 var(--font-sans);letter-spacing:-0.02em">Remote workers and load-balanced placement</h1>
+    <p style="margin:0;max-width:86ch;font:400 14px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Workers are headless machines that join a board with a one-time code, then connect out to it and take its cards. The board knows only what each worker reports: its status, the headroom it offers, provider quota, and readiness per project. It never knows or shows whether a worker serves anything else. Cards are placed when their build starts, and every card carries a resource size. Planning always runs on the board server. This replaces Distributed Board's pairing flow; moving cards works as described there.</p>
+
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+      <div class="panel" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+        <span class="hdr">Workers on this board</span>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:2px 14px;font:400 12.5px var(--font-sans)">
+          <span class="mono">This server (board)</span><span class="mut">8 cores · 32 GiB · 400 GB · always present, runs planning</span>
+          <span class="mono">build-01</span><span class="mut">32 cores · 128 GiB · 1 TB</span>
+          <span class="mono">build-02</span><span class="mut">16 cores · 64 GiB · 500 GB</span>
+          <span class="mono">mac-mini</span><span class="mut">10 cores · 32 GiB · 256 GB</span>
+          <span class="mono">build-03</span><span class="mut">joins in flow 1 · 24 cores · 96 GiB · 750 GB</span>
+        </div>
+      </div>
+      <div class="panel" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+        <span class="hdr">Projects and baselines</span>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:2px 14px;font:400 12.5px var(--font-sans)">
+          <span class="mono">z5</span><span class="mut">heavy Rust/Gradle · 12 cores · 40 GiB · 45 GB</span>
+          <span class="mono">t3o</span><span class="mut">medium · 4 cores · 8 GiB · 12 GB</span>
+          <span class="mono">web</span><span class="mut">light · 2 cores · 4 GiB · 3 GB</span>
+        </div>
+        <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">Card sizes are S ½× · M 1× · L 2× · XL 4× the baseline, set separately for CPU, RAM and disk.</span>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-wrap:wrap;gap:8px 20px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card)">
+      <span style="font:600 11px var(--font-sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg);align-self:center">Status colours</span>
+      <span style="display:inline-flex;align-items:center;gap:6px;font:500 12px var(--font-sans)"><span style="width:8px;height:8px;border-radius:99px;background:var(--info)"></span>Blue · running, preparing, queued, waiting for a join</span>
+      <span style="display:inline-flex;align-items:center;gap:6px;font:500 12px var(--font-sans)"><span style="width:8px;height:8px;border-radius:99px;background:var(--attention)"></span>Violet · waiting on a person</span>
+      <span style="display:inline-flex;align-items:center;gap:6px;font:500 12px var(--font-sans)"><span style="width:8px;height:8px;border-radius:99px;background:var(--warning)"></span>Amber · blocked until something changes</span>
+      <span style="display:inline-flex;align-items:center;gap:6px;font:500 12px var(--font-sans)"><span style="width:8px;height:8px;border-radius:99px;background:var(--success)"></span>Green · Done cards only</span>
+      <span style="display:inline-flex;align-items:center;gap:6px;font:500 12px var(--font-sans)"><span style="width:8px;height:8px;border-radius:99px;background:var(--muted-fg)"></span>Grey · steady or neutral (connected, ready, joined, not placed)</span>
+    </div>
+    <p class="note" style="max-width:100ch">Nothing animates. Running is a still blue dot, and progress is a stepped bar or a count that changes when the server reports. Finished stages, ready checkouts and a successful join get a grey tick: green belongs to Done cards only.</p>
+    <nav style="display:flex;flex-wrap:wrap;gap:6px">
+      <a href="#p1" style="padding:4px 10px;border:1px solid var(--border);border-radius:99px;font:500 12px var(--font-sans);color:var(--fg)">1 · Add worker</a>
+      <a href="#p2" style="padding:4px 10px;border:1px solid var(--border);border-radius:99px;font:500 12px var(--font-sans);color:var(--fg)">2 · Workers list</a>
+      <a href="#p3" style="padding:4px 10px;border:1px solid var(--border);border-radius:99px;font:500 12px var(--font-sans);color:var(--fg)">3 · Board filter</a>
+      <a href="#p4" style="padding:4px 10px;border:1px solid var(--border);border-radius:99px;font:500 12px var(--font-sans);color:var(--fg)">4 · Card faces</a>
+      <a href="#p5" style="padding:4px 10px;border:1px solid var(--border);border-radius:99px;font:500 12px var(--font-sans);color:var(--fg)">5 · Card detail</a>
+      <a href="#p6" style="padding:4px 10px;border:1px solid var(--border);border-radius:99px;font:500 12px var(--font-sans);color:var(--fg)">6 · Why waiting?</a>
+      <a href="#p7" style="padding:4px 10px;border:1px solid var(--border);border-radius:99px;font:500 12px var(--font-sans);color:var(--fg)">7 · Project resources</a>
+    </nav>
+  </header>
+
+  <!-- ═════════ 1 · ADD WORKER ═════════ -->
+  <section id="p1" class="sec" data-screen-label="1 Add worker">
+    <div class="sh">
+      <h2>1 · Settings → Board → Workers → Add worker</h2>
+      <p>Add worker creates a one-time join code on the board server. You run one command on the worker; it connects out to the board and appears in the list. Nothing is copied back, and the board never connects in to the worker.</p>
+    </div>
+    <div class="row" style="gap:32px">
+      <div id="1.1" class="ab" style="width:520px">
+        <div class="abh"><span class="num">1.1</span><span class="abt">Join code created · waiting</span></div>
+        <div class="pop">
+          <div style="padding:18px 20px 0;display:flex;flex-direction:column;gap:6px"><span style="font:600 15px var(--font-sans);letter-spacing:-0.01em">Add a worker</span><span style="font:400 12.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">On the machine you want to use, run this command. It installs the worker if needed and joins it to this board.</span></div>
+          <div style="padding:14px 20px 18px;display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;align-items:center;gap:12px">
+              <div style="display:flex;flex-direction:column;gap:3px"><span style="font:500 11.5px var(--font-sans);color:var(--muted-fg)">Join code</span><span class="mono" style="font:600 26px var(--font-mono);letter-spacing:.06em">K7Q-4MZ</span></div>
+              <span style="flex:1"></span>
+              <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px"><span style="font:500 12px var(--font-sans)">Expires at 22:58</span><span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">in 10 min · works once</span></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <span style="font:500 12px var(--font-sans)">Command</span>
+              <div style="display:flex;align-items:center;gap:8px;padding:0 6px 0 11px;height:38px;border:1px solid var(--input);border-radius:10px;background:var(--muted)">
+                <span class="mono" style="flex:1;min-width:0;font:400 12.5px var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span class="mut">$</span> npx t3 worker join https://board.example --code K7Q-4MZ</span>
+                <span class="btn sm"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>Copy</span>
+                <span class="mk">1</span>
+              </div>
+            </div>
+            <div class="box neu"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:2px"><circle cx="12" cy="12" r="9"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg><span style="font:400 12px/1.5 var(--font-sans);text-wrap:pretty">The worker needs only <b style="font-weight:600">outbound HTTPS to board.example</b>. No inbound ports, VPN or shared network. Node 20+ and git must be installed on it.</span></div>
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--info) 28%,transparent);border-radius:10px;background:color-mix(in srgb,var(--info) 6%,transparent)">
+              <span class="rdot"></span>
+              <div style="flex:1;display:flex;flex-direction:column;gap:2px"><span style="font:600 12.5px var(--font-sans);color:var(--info-fg)">Waiting for a worker to join</span><span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">You can close this. The code keeps working until 22:58, and the worker appears in the list when it joins.</span></div>
+              <span class="mk">2</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--border);background:var(--muted)"><span style="font:500 12px var(--font-sans);color:var(--destructive-fg)">Cancel code</span><span style="flex:1"></span><span class="btn lg">Close</span></div>
+        </div>
+      </div>
+
+      <div id="1.2" class="ab" style="width:460px">
+        <div class="abh"><span class="num">1.2</span><span class="abt">Code used · worker checking in</span></div>
+        <div class="pop">
+          <div style="padding:18px 20px 0;display:flex;flex-direction:column;gap:6px"><span style="font:600 15px var(--font-sans);letter-spacing:-0.01em">Add a worker</span><span style="font:400 12.5px var(--font-sans);color:var(--muted-fg)">Code K7Q-4MZ was used by <span class="mono">build-03</span> from 203.0.113.48.</span></div>
+          <div style="padding:14px 20px 18px">
+            <div style="display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--muted)">
+              <span style="display:flex;align-items:center;gap:9px;font:500 12.5px var(--font-sans)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Code accepted, worker credentials issued</span>
+              <span style="display:flex;align-items:center;gap:9px;font:500 12.5px var(--font-sans)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Connected over HTTPS · T3o 0.16.1</span>
+              <span style="display:flex;align-items:center;gap:9px;font:600 12.5px var(--font-sans);color:var(--info-fg)"><span style="width:13px;display:inline-flex;justify-content:center"><span class="rdot"></span></span>Reading capacity and providers</span>
+              <span style="display:flex;align-items:center;gap:9px;font:400 12.5px var(--font-sans);color:var(--muted-fg)"><span style="width:13px;height:13px;flex:none;border-radius:99px;border:1.5px solid var(--input)"></span>Checking project checkouts</span>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border);background:var(--muted)"><span class="btn lg">Close</span></div>
+        </div>
+        <p class="note">Usually under three seconds. Each line ticks when the worker reports that step; nothing spins in between.</p>
+      </div>
+
+      <div id="1.3" class="ab" style="width:460px">
+        <div class="abh"><span class="num">1.3</span><span class="abt">build-03 joined</span></div>
+        <div class="pop">
+          <div style="padding:20px 20px 16px;display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;align-items:center;gap:10px"><span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:99px;background:var(--accent);color:var(--fg)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span><span style="font:600 15px var(--font-sans);letter-spacing:-0.01em">build-03 joined</span></div>
+            <div class="panel" style="box-shadow:none">
+              <div class="tr" style="grid-template-columns:120px 1fr"><span class="mut">Capacity</span><span class="mono tab">24 cores · 96 GiB · 750 GB</span></div>
+              <div class="tr" style="grid-template-columns:120px 1fr"><span class="mut">Providers</span><span style="display:flex;flex-direction:column;gap:2px"><span>Claude · <span class="mono" style="font-size:12px">ops@studio.example</span> <span class="mut">· Max</span></span><span>Codex · <span class="mono" style="font-size:12px">ops@studio.example</span> <span class="mut">· Team</span></span></span></div>
+              <div class="tr" style="grid-template-columns:120px 1fr"><span class="mut">Projects</span><span>None set up yet</span></div>
+            </div>
+            <div style="display:grid;grid-template-columns:minmax(0,1fr) 110px;gap:10px"><div style="display:flex;flex-direction:column;gap:6px"><label style="display:flex;align-items:baseline;gap:8px;font:500 12px var(--font-sans)">Label<span style="font-weight:400;font-size:11.5px;color:var(--muted-fg)">defaults to the hostname</span></label><div class="inp" style="height:34px">build-03</div></div><div style="display:flex;flex-direction:column;gap:6px"><label style="display:flex;align-items:center;gap:6px;font:500 12px var(--font-sans)">Abbreviation <span class="mk">3</span></label><div class="inp" style="height:34px;font:600 13px var(--font-mono)">B03</div></div></div><span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);margin-top:-6px">Up to 3 letters or digits, unique on this board. Used on card chips and in tight spots; the label is used everywhere else.</span>
+            <span style="font:400 12px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">build-03 can take cards once a project is set up on it. Its capacity is set on build-03 with <span class="mono">t3 worker config</span>.</span>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border);background:var(--muted)"><span class="btn lg">Done</span><span class="btn lg p">Set up projects…</span></div>
+        </div>
+        <p class="note">Set up projects opens a checklist of z5, t3o and web, with each project's disk need beside it, and runs Set up on worker for each one ticked.</p>
+      </div>
+
+      <div id="1.4" class="ab" style="width:400px">
+        <div class="abh"><span class="num">1.4</span><span class="abt">Code expired · rejected join</span></div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div class="box amb"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warning-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:2px"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><div style="flex:1;display:flex;flex-direction:column;gap:6px"><span style="font:600 12.5px var(--font-sans);color:var(--warning-fg)">Code K7Q-4MZ expired at 22:58</span><span style="font:400 12px/1.5 var(--font-sans);color:var(--muted-fg)">No worker used it. Create a new code and run the command again.</span><span class="btn sm" style="align-self:flex-start">Create new code</span></div></div>
+          <div class="box amb"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warning-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:2px"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg><div style="flex:1;display:flex;flex-direction:column;gap:2px"><span style="font:600 12.5px var(--font-sans);color:var(--warning-fg)">A worker tried to join with T3o 0.14.2</span><span style="font:400 12px/1.5 var(--font-sans);color:var(--muted-fg)">This board needs 0.16.0 or newer. The code is still valid: update T3o on the worker (<span class="mono">npx t3@latest</span>) and run the command again.</span></div></div>
+        </div>
+        <p class="note">Only one of these shows at a time, in place of the waiting box in 1.1. A code that has already been used shows “Code already used by build-03” and links to its row.</p>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="n"><span class="mk">1</span><span><b>Copy</b> copies the whole command, with the code filled in. The button reads “Copied” for 2 seconds, then reverts. The board address is the server's public URL from Settings → General. If none is set, the field shows the URL this browser is using, with the hint “Make sure workers can reach this address”.</span></div>
+      <div class="n"><span class="mk">3</span><span><b>Abbreviation</b> is suggested from the label: a trailing number becomes its first letter plus the number (<span class="mono">build-03</span> → <span class="mono">B03</span>); otherwise it takes the first three letters (<span class="mono">mac-mini</span> → <span class="mono">MAC</span>). It can be edited here and in Rename, and input is forced to uppercase. A duplicate shows inline as “B03 is already used by build-03”, and Done stays disabled until it is changed. <span class="mono">SRV</span> is reserved for the board server.</span></div>
+      <div class="n"><span class="mk">2</span><span><b>Expiry</b> is shown as a clock time, and “in N min” updates once a minute rather than counting seconds, so nothing repaints continuously. Closing the dialog doesn't cancel the code; open codes appear as a grey “1 join code open · expires 22:58” line above the workers list, with Cancel.</span></div>
+    </div>
+  </section>
+
+  <!-- ═════════ 2 · WORKERS LIST ═════════ -->
+  <section id="p2" class="sec" data-screen-label="2 Workers list">
+    <div class="sh">
+      <h2>2 · Settings → Board → Workers</h2>
+      <p>One row per worker, with its projects nested beneath it. Every number comes from the worker's own report. Connected and Ready are steady states, so they stay grey. Capacity is read-only here.</p>
+    </div>
+    <div id="2.1" class="ab" style="width:1400px">
+      <div class="abh"><span class="num">2.1</span><span class="abt">Workers · board server + four workers, every status · row menu open on build-02</span></div>
+      <div style="display:flex;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--bg);box-shadow:var(--shadow-xs)">
+        <aside style="width:220px;flex:none;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:8px;height:52px;padding:0 12px;border-bottom:1px solid var(--border)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg><span style="font:600 14.5px var(--font-sans)">Settings</span></div>
+          <div style="padding:8px;display:flex;flex-direction:column;gap:1px">
+            <div class="navh" style="padding-top:6px">Board</div>
+            <div class="nav">General</div><div class="nav">Pipeline</div><div class="nav">Concurrency</div><div class="nav on">Workers<span style="flex:1"></span><span style="width:6px;height:6px;border-radius:99px;background:var(--warning)"></span></div>
+            <div class="navh">Projects</div>
+            <div class="nav">z5</div><div class="nav">t3o</div><div class="nav">web</div>
+          </div>
+        </aside>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:8px;height:52px;padding:0 20px;border-bottom:1px solid var(--border)"><span style="font-size:13.5px;color:var(--muted-fg)">Board</span><span style="color:var(--border)">/</span><span style="font-size:13.5px;font-weight:500">Workers</span></div>
+          <div style="padding:26px 28px 32px;display:flex;flex-direction:column;gap:16px">
+            <div style="display:flex;align-items:flex-end;gap:16px">
+              <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+                <h1 style="margin:0;font:600 19px var(--font-sans);letter-spacing:-0.015em">Workers</h1>
+                <p style="margin:0;max-width:80ch;font:400 13px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Machines that take this board's cards. The planner places each build on a ready worker with room, and planning always runs on this server.</p>
+              </div>
+              <span class="btn lg p"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>Add worker</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;background:var(--accent);font:400 12px/1.5 var(--font-sans)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><rect width="18" height="11" x="3" y="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+              <span style="flex:1">Capacity is set on each worker with <span class="mono" style="padding:1px 5px;border-radius:5px;background:var(--popover)">t3 worker config</span> and is read-only here. Headroom is what the worker currently offers this board, out of the capacity it declares.</span>
+              <span class="mk">1</span>
+            </div>
+
+            <div class="panel">
+              <div class="th" style="grid-template-columns:minmax(0,1.2fr) 150px minmax(0,1.4fr) 230px 34px;padding:8px 14px"><span>Worker</span><span>Status</span><span>Headroom offered</span><span>Provider quota · weekly · account</span><span></span></div>
+
+              <!-- This server -->
+              <div style="border-bottom:1px solid var(--border)">
+                <div style="display:grid;grid-template-columns:minmax(0,1.2fr) 150px minmax(0,1.4fr) 230px 34px;gap:0 10px;align-items:start;padding:12px 14px">
+                  <div style="display:flex;align-items:center;gap:10px;min-width:0"><span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg></span><div style="display:flex;flex-direction:column;gap:2px"><span style="display:flex;align-items:center;gap:6px;font:600 13.5px var(--font-sans)">This server<span title="Abbreviation" style="padding:1px 5px;border:1px solid var(--border);border-radius:5px;font:600 10.5px var(--font-mono);color:var(--muted-fg)">SRV</span><span style="padding:1px 6px;border-radius:5px;background:var(--accent);font:500 10.5px var(--font-sans);color:var(--muted-fg)">Board</span></span><span class="mono mut" style="font-size:11.5px">board.example · T3o 0.16.1 · runs planning</span></div></div>
+                  <span class="st" style="padding-top:6px"><i></i>Connected</span>
+                  <div style="display:grid;grid-template-columns:34px minmax(0,1fr) 112px;align-items:center;gap:4px 10px;font:400 11.5px var(--font-sans)"><span class="mut">CPU</span><div class="bar"><span class="b-this" style="width:25%"></span></div><span class="tab"><b style="font-weight:600">6</b> / 8 cores</span><span class="mut">RAM</span><div class="bar"><span class="b-this" style="width:25%"></span></div><span class="tab"><b style="font-weight:600">24</b> / 32 GiB</span><span class="mut">Disk</span><div class="bar"><span class="b-this" style="width:27.5%"></span></div><span class="tab"><b style="font-weight:600">290</b> / 400 GB</span></div>
+                  <div style="display:grid;grid-template-columns:46px minmax(0,1fr) 40px;align-items:center;gap:4px 8px;font:400 11.5px var(--font-sans)"><span>Claude</span><div class="bar"><span class="b-this" style="width:58%"></span></div><span class="tab r">58%</span><span style="grid-column:1 / 4;margin:-2px 0 3px;font:400 10.5px var(--font-mono);color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">studio-board@studio.example · Max</span><span>Codex</span><div class="bar"><span class="b-amb" style="width:93%"></span></div><span class="tab r" style="color:var(--warning-fg);font-weight:600">93%</span><span style="grid-column:1 / 4;margin:-2px 0 3px;font:400 10.5px var(--font-mono);color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">studio-board@studio.example · Team</span></div>
+                  <span title="The board server can't be removed" style="justify-self:end;padding-top:6px;font:400 11px var(--font-sans);color:var(--muted-fg)">Built-in</span>
+                </div>
+                <div style="padding:0 14px 12px 52px;display:flex;flex-direction:column">
+                  <div class="tr" style="grid-template-columns:60px 150px minmax(0,1fr) auto;padding:6px 0;border-bottom:1px dashed var(--border)"><span class="mono">t3o</span><span class="st" style="font-size:12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Ready</span><span class="mut" style="font-size:11.5px">Readiness script passed · 08:02</span><span class="btn sm">Re-check</span></div>
+                  <div class="tr" style="grid-template-columns:60px 150px minmax(0,1fr) auto;padding:6px 0;border-bottom:1px dashed var(--border)"><span class="mono">web</span><span class="st" style="font-size:12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Ready</span><span class="mut" style="font-size:11.5px">Readiness script passed · 08:02</span><span class="btn sm">Re-check</span></div>
+                  <div class="tr" style="grid-template-columns:60px 150px minmax(0,1fr) auto;padding:6px 0;border-bottom:none"><span class="mono">z5</span><span class="st amb" style="font-size:12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>Not set up</span><span class="mut" style="font-size:11.5px">Planning for z5 is paused. Cards already past Plan keep running on workers.</span><span class="btn sm">Set up on this server</span></div>
+                  <div style="display:flex;align-items:center;gap:12px;margin-top:8px;padding:11px 13px;border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);border-radius:10px;background:color-mix(in srgb,var(--warning) 6%,transparent)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--warning-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg>
+                    <div style="flex:1;display:flex;flex-direction:column;gap:2px">
+                      <span style="font:600 12.5px var(--font-sans);color:var(--warning-fg)">Set up z5 on the board server</span>
+                      <span style="font:400 12px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Planning runs here, so z5 cards can't be planned until this server has a checkout: 2 are waiting (Z5-224, Z5-226). Planning needs a shallow clone and the toolchain, about 6 GB, not the full 45 GB build worktree.</span>
+                    </div>
+                    <span class="btn sm p">Set up z5 here</span>
+                    <span class="mk">2</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- build-01 -->
+              <div style="border-bottom:1px solid var(--border)">
+                <div style="display:grid;grid-template-columns:minmax(0,1.2fr) 150px minmax(0,1.4fr) 230px 34px;gap:0 10px;align-items:start;padding:12px 14px">
+                  <div style="display:flex;align-items:center;gap:10px;min-width:0"><span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg></span><div style="display:flex;flex-direction:column;gap:2px"><span style="display:flex;align-items:center;gap:6px;font:600 13.5px var(--font-sans)">build-01<span title="Abbreviation" style="padding:1px 5px;border:1px solid var(--border);border-radius:5px;font:600 10.5px var(--font-mono);color:var(--muted-fg)">B01</span></span><span class="mono mut" style="font-size:11.5px">T3o 0.16.1 · joined 3 Nov</span></div></div>
+                  <div style="display:flex;flex-direction:column;gap:2px;padding-top:6px"><span class="st"><i></i>Connected</span><span class="mut" style="font-size:11px">4 cards · 3 agents running</span></div>
+                  <div style="display:grid;grid-template-columns:34px minmax(0,1fr) 112px;align-items:center;gap:4px 10px;font:400 11.5px var(--font-sans)"><span class="mut">CPU</span><div class="bar"><span class="b-this" style="width:87.5%"></span></div><span class="tab"><b style="font-weight:600">4</b> / 32 cores</span><span class="mut">RAM</span><div class="bar"><span class="b-this" style="width:68.75%"></span></div><span class="tab"><b style="font-weight:600">40</b> / 128 GiB</span><span class="mut">Disk</span><div class="bar"><span class="b-this" style="width:96.2%"></span></div><span class="tab"><b style="font-weight:600">38</b> / 1,000 GB</span></div>
+                  <div style="display:grid;grid-template-columns:46px minmax(0,1fr) 40px;align-items:center;gap:4px 8px;font:400 11.5px var(--font-sans)"><span>Claude</span><div class="bar"><span class="b-this" style="width:64%"></span></div><span class="tab r">64%</span><span style="grid-column:1 / 4;margin:-2px 0 3px;font:400 10.5px var(--font-mono);color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">builds@studio.example · Max</span><span>Codex</span><div class="bar"><span class="b-this" style="width:41%"></span></div><span class="tab r">41%</span><span style="grid-column:1 / 4;margin:-2px 0 3px;font:400 10.5px var(--font-mono);color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">builds@studio.example · Team</span></div>
+                  <span style="justify-self:end;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;color:var(--muted-fg)"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg></span>
+                </div>
+                <div style="padding:0 14px 12px 52px;display:flex;flex-direction:column">
+                  <div class="tr" style="grid-template-columns:60px 150px minmax(0,1fr) auto;padding:6px 0;border-bottom:1px dashed var(--border)"><span class="mono">z5</span><span class="st" style="font-size:12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Ready</span><span class="mut" style="font-size:11.5px">Readiness script passed · 07:40 · disk offered is below the z5 baseline (45 GB)</span><span class="btn sm">Re-check</span></div>
+                  <div class="tr" style="grid-template-columns:60px 150px minmax(0,1fr) auto;padding:6px 0;border-bottom:1px dashed var(--border)"><span class="mono">t3o</span><span class="st" style="font-size:12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Ready</span><span class="mut" style="font-size:11.5px">Readiness script passed · 07:40</span><span class="btn sm">Re-check</span></div>
+                  <div class="tr" style="grid-template-columns:60px 150px minmax(0,1fr) auto;padding:6px 0;border-bottom:none"><span class="mono">web</span><span class="st" style="font-size:12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Ready</span><span class="mut" style="font-size:11.5px">Readiness script passed · 07:40</span><span class="btn sm">Re-check</span></div>
+                </div>
+              </div>
+
+              <!-- build-02 -->
+              <div style="border-bottom:1px solid var(--border)">
+                <div style="display:grid;grid-template-columns:minmax(0,1.2fr) 150px minmax(0,1.4fr) 230px 34px;gap:0 10px;align-items:start;padding:12px 14px">
+                  <div style="display:flex;align-items:center;gap:10px;min-width:0"><span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg></span><div style="display:flex;flex-direction:column;gap:2px"><span style="display:flex;align-items:center;gap:6px;font:600 13.5px var(--font-sans)">build-02<span title="Abbreviation" style="padding:1px 5px;border:1px solid var(--border);border-radius:5px;font:600 10.5px var(--font-mono);color:var(--muted-fg)">B02</span></span><span class="mono mut" style="font-size:11.5px">T3o 0.16.1 · joined 3 Nov</span></div></div>
+                  <div style="display:flex;flex-direction:column;gap:2px;padding-top:6px"><span class="st"><i></i>Connected</span><span class="mut" style="font-size:11px">3 cards · offering 0 agent slots</span></div>
+                  <div style="display:grid;grid-template-columns:34px minmax(0,1fr) 112px;align-items:center;gap:4px 10px;font:400 11.5px var(--font-sans)"><span class="mut">CPU</span><div class="bar"><span class="b-this" style="width:87.5%"></span></div><span class="tab"><b style="font-weight:600">2</b> / 16 cores</span><span class="mut">RAM</span><div class="bar"><span class="b-this" style="width:56.25%"></span></div><span class="tab"><b style="font-weight:600">28</b> / 64 GiB</span><span class="mut">Disk</span><div class="bar"><span class="b-this" style="width:94%"></span></div><span class="tab"><b style="font-weight:600">30</b> / 500 GB</span></div>
+                  <div style="display:grid;grid-template-columns:46px minmax(0,1fr) 40px;align-items:center;gap:4px 8px;font:400 11.5px var(--font-sans)"><span>Claude</span><div class="bar"><span class="b-this" style="width:72%"></span></div><span class="tab r">72%</span><span style="grid-column:1 / 4;margin:-2px 0 3px;font:400 10.5px var(--font-mono);color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="Signed in on build-02 with claude login">ana.k@studio.example · Max</span><span>Codex</span><div class="bar"><span class="b-amb" style="width:96%"></span></div><span class="tab r" style="color:var(--warning-fg);font-weight:600">96%</span><span style="grid-column:1 / 4;margin:-2px 0 3px;font:400 10.5px var(--font-mono);color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">ana.k@studio.example · Plus</span><span style="grid-column:1 / 4;display:flex;align-items:center;gap:6px;font:500 10.5px var(--font-sans);color:var(--warning-fg)">Codex near limit · no new Codex steps<span class="mk">3</span></span></div>
+                  <div style="justify-self:end;position:relative">
+                    <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;background:var(--accent);color:var(--fg)"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg></span>
+                    <div class="pop" style="position:absolute;right:0;top:30px;z-index:5;width:210px;padding:4px;display:flex;flex-direction:column;gap:1px">
+                      <span style="display:flex;align-items:center;height:30px;padding:0 9px;font:500 12.5px var(--font-sans)">Re-check all projects</span>
+                      <span style="display:flex;align-items:center;height:30px;padding:0 9px;font:500 12.5px var(--font-sans)">Rename…</span>
+                      <span style="display:flex;align-items:center;height:30px;padding:0 9px;font:500 12.5px var(--font-sans)">Show cards on build-02</span>
+                      <span style="height:1px;margin:3px 4px;background:var(--border)"></span>
+                      <span style="display:flex;align-items:center;height:30px;padding:0 9px;border-radius:7px;background:var(--accent);font:500 12.5px var(--font-sans);color:var(--destructive-fg)">Remove worker…</span>
+                    </div>
+                  </div>
+                </div>
+                <div style="padding:0 14px 12px 52px;display:flex;flex-direction:column">
+                  <div class="tr" style="grid-template-columns:60px 150px minmax(0,1fr) auto;padding:6px 0;border-bottom:1px dashed var(--border)"><span class="mono">z5</span><span class="st" style="font-size:12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Ready</span><span class="mut" style="font-size:11.5px">Readiness script passed · 07:55</span><span class="btn sm">Re-check</span></div>
+                  <div class="tr" style="grid-template-columns:60px 150px minmax(0,1fr) auto;padding:6px 0;border-bottom:1px dashed var(--border)"><span class="mono">t3o</span><span class="st" style="font-size:12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Ready</span><span class="mut" style="font-size:11.5px">Readiness script passed · 07:55</span><span class="btn sm">Re-check</span></div>
+                  <div class="tr" style="grid-template-columns:60px 150px minmax(0,1fr) auto;padding:6px 0;border-bottom:none"><span class="mono">web</span><span style="display:flex;flex-direction:column;gap:4px"><span class="st blu" style="font-size:12px">Cloning · 62%</span><span class="segs" style="margin:0;width:100px"><span class="on"></span><span class="on"></span><span class="on"></span><span></span><span></span></span></span><span class="mut" style="font-size:11.5px">Started 18:36 · 1.9 of 3.1 GB</span><span class="btn sm">Cancel</span></div>
+                </div>
+              </div>
+
+              <!-- mac-mini -->
+              <div>
+                <div style="display:grid;grid-template-columns:minmax(0,1.2fr) 150px minmax(0,1.4fr) 230px 34px;gap:0 10px;align-items:start;padding:12px 14px">
+                  <div style="display:flex;align-items:center;gap:10px;min-width:0"><span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg></span><div style="display:flex;flex-direction:column;gap:2px"><span style="display:flex;align-items:center;gap:6px;font:600 13.5px var(--font-sans)">mac-mini<span title="Abbreviation" style="padding:1px 5px;border:1px solid var(--border);border-radius:5px;font:600 10.5px var(--font-mono);color:var(--muted-fg)">MAC</span></span><span class="mono mut" style="font-size:11.5px">T3o 0.16.0 · joined 28 Oct</span></div></div>
+                  <div style="display:flex;flex-direction:column;gap:2px;padding-top:6px"><span class="st amb"><i></i>Offline</span><span class="mut" style="font-size:11px">Last seen 17:52 · 50 min ago</span></div>
+                  <div style="display:grid;grid-template-columns:34px minmax(0,1fr) 112px;align-items:center;gap:4px 10px;font:400 11.5px var(--font-sans);opacity:.55"><span class="mut">CPU</span><div class="bar"><span class="b-this" style="width:20%"></span></div><span class="tab"><b style="font-weight:600">8</b> / 10 cores</span><span class="mut">RAM</span><div class="bar"><span class="b-this" style="width:18.75%"></span></div><span class="tab"><b style="font-weight:600">26</b> / 32 GiB</span><span class="mut">Disk</span><div class="bar"><span class="b-this" style="width:20%"></span></div><span class="tab"><b style="font-weight:600">204</b> / 256 GB</span><span></span><span style="grid-column:2 / 4;font:400 10.5px var(--font-sans);color:var(--muted-fg)">as of 17:52</span></div>
+                  <div style="display:grid;grid-template-columns:46px minmax(0,1fr) 40px;align-items:center;gap:4px 8px;font:400 11.5px var(--font-sans);opacity:.55"><span>Claude</span><div class="bar"><span class="b-this" style="width:18%"></span></div><span class="tab r">18%</span><span style="grid-column:1 / 4;margin:-2px 0 3px;font:400 10.5px var(--font-mono);color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">lee@studio.example · Pro · as of 17:52</span></div>
+                  <span style="justify-self:end;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;color:var(--muted-fg)"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg></span>
+                </div>
+                <div style="padding:0 14px 12px 52px;display:flex;flex-direction:column">
+                  <div class="tr" style="grid-template-columns:60px 150px minmax(0,1fr) auto;padding:8px 0;border-bottom:1px dashed var(--border);align-items:start">
+                    <span class="mono" style="padding-top:1px">z5</span>
+                    <span class="st amb" style="font-size:12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>Not ready</span>
+                    <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+                      <span style="font-size:11.5px">Readiness script <span class="mono">.t3/ready.sh</span> <span class="mut">exited 1 · 17:40</span></span>
+<pre class="log" style="font-size:10.5px;max-width:520px">✓ JDK 21
+✓ Gradle wrapper
+✗ Rust 1.82 needed, found rustc 1.78.0 (9b00956e5 2024-04-29)
+exit status 1</pre>
+                    </div>
+                    <span style="display:flex;gap:6px"><span class="btn sm" title="Available when mac-mini reconnects" style="opacity:.5">Re-check</span><span class="btn sm" title="Available when mac-mini reconnects" style="opacity:.5">Set up on worker</span></span>
+                  </div>
+                  <div class="tr" style="grid-template-columns:60px 150px minmax(0,1fr) auto;padding:6px 0;border-bottom:1px dashed var(--border)"><span class="mono">web</span><span class="st" style="font-size:12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Ready</span><span class="mut" style="font-size:11.5px">Readiness script passed · 17:40</span><span class="btn sm" style="opacity:.5">Re-check</span></div>
+                  <div class="tr" style="grid-template-columns:60px 150px minmax(0,1fr) auto;padding:6px 0;border-bottom:none"><span class="mono">t3o</span><span class="st" style="font-size:12px;color:var(--muted-fg)"><span style="width:11px;height:11px;border-radius:99px;border:1.5px solid var(--input)"></span>Not set up</span><span class="mut" style="font-size:11.5px">Needs about 12 GB</span><span class="btn sm" style="opacity:.5">Set up on worker</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <div class="n"><span class="mk">1</span><span><b>Read-only capacity.</b> Bars show capacity in use (ink) against what the worker declares, and the bold number is the free headroom it offers this board. The board doesn't ask why a worker offers less than it has free, and doesn't say. Hovering a bar shows “Declared 32 cores · offered 4 · this board's cards hold 24”. The hint has no edit link because the board can't reach in; the command copies on click.</span></div>
+        <div class="n"><span class="mk">2</span><span><b>Set up on the board server</b> appears inside This server's row whenever a project isn't set up there. It's amber, and shown before any worker problem, because planning for that project is stopped. Set up runs the project's setup stages on the board server, then its readiness script. The row reads “Cloning · 40%” in blue until it's done.</span></div>
+        <div class="n"><span class="mk">3</span><span><b>Signed-in account.</b> Each worker reports, for every provider, the account its CLI is signed in as and that account's plan, read from the worker's own login (<span class="mono">claude login</span>, <span class="mono">codex login</span>). It sits under that provider's quota bar, so you can see whose quota a percentage belongs to. Here build-02 runs on a personal account, which explains why its Codex quota is nearly gone while build-01's isn't. The board only displays the account; to change it, sign in again on the worker. If a provider is signed out, its line turns violet, “Signed out · run claude login on build-02”, and the planner skips that provider on that worker until it reports a login. Offline workers show the last reported account with “as of”.</span></div>
+        <div class="n"><span class="mk">·</span><span><b>Re-check</b> re-runs the project's readiness script (7) in the existing checkout, and the row reads “Checking…” in blue until it exits. <b>Set up on worker</b> clones and runs setup on that worker. Both are disabled while the worker is offline, with the tooltip “Available when mac-mini reconnects”. Clicking a not-ready row expands the script's full output.</span></div>
+      </div>
+    </div>
+
+    <div class="row" style="gap:32px">
+      <div id="2.2" class="ab" style="width:540px">
+        <div class="abh"><span class="num">2.2</span><span class="abt">Remove worker · confirm lists affected cards</span></div>
+        <div class="pop">
+          <div style="padding:18px 20px 0;display:flex;flex-direction:column;gap:6px"><span style="font:600 15px var(--font-sans);letter-spacing:-0.01em">Remove build-02?</span><span style="font:400 12.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">build-02 stops taking this board's cards, and its worker credentials are revoked. 3 cards are on it now.</span></div>
+          <div style="padding:16px 20px 18px;display:flex;flex-direction:column;gap:16px">
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="display:flex;align-items:baseline;gap:8px"><span style="font:600 12.5px var(--font-sans)">Re-placed when their next step starts</span><span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">branch is pushed, nothing running</span></div>
+              <div class="panel" style="box-shadow:none">
+                <div class="tr" style="grid-template-columns:62px minmax(0,1fr) auto;padding:7px 10px"><span class="key">T3O-61</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Retry worktree setup after a failed readiness check</span><span class="mut" style="font-size:11px">Queued · Build</span></div>
+                <div class="tr" style="grid-template-columns:62px minmax(0,1fr) auto;padding:7px 10px"><span class="key">T3O-66</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Back off worker heartbeats when the board is idle</span><span class="mut" style="font-size:11px">Queued · Review</span></div>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="display:flex;align-items:baseline;gap:8px"><span style="font:600 12.5px var(--font-sans)">Stopped, then re-placed</span><span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">a step is running now</span></div>
+              <div style="display:flex;flex-direction:column;border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);border-radius:9px;overflow:hidden">
+                <div class="tr" style="grid-template-columns:62px minmax(0,1fr) auto;padding:7px 10px"><span class="key">Z5-209</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Parallelise integration test shards</span><span style="font:500 11px var(--font-sans);color:var(--warning-fg)">Review running · 2 unpushed commits</span></div>
+              </div>
+              <span style="font:400 12px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">The running review is stopped. Before removing, T3o asks build-02 to push t3/Z5-209-test-shards; if it can't, the card shows amber “Unpushed work left on build-02”.</span>
+            </div>
+            <div class="box neu"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:2px"><circle cx="12" cy="12" r="9"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg><span style="font:400 12px/1.5 var(--font-sans);text-wrap:pretty">Nothing on build-02 is deleted by the board. Thread transcripts stay readable here because they were mirrored to the board as they ran. To use build-02 again later, add it with a new join code.</span></div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border);background:var(--muted)"><span class="btn lg">Cancel</span><span class="btn lg danger">Remove build-02</span></div>
+        </div>
+        <p class="note">With no cards on it, the body reads “No cards are on build-02.” followed by the same note. An offline worker can be removed too: its running steps are treated as stopped, and any unpushed work is listed as “may be lost”.</p>
+      </div>
+
+      <div id="2.3" class="ab" style="width:760px">
+        <div class="abh"><span class="num">2.3</span><span class="abt">Needs update · mac-mini reconnected on an old version</span></div>
+        <div class="panel">
+          <div style="display:grid;grid-template-columns:minmax(0,1.25fr) 170px minmax(0,1.3fr);gap:0 10px;align-items:start;padding:12px 14px">
+            <div style="display:flex;align-items:center;gap:10px;min-width:0"><span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg></span><div style="display:flex;flex-direction:column;gap:2px"><span style="display:flex;align-items:center;gap:6px;font:600 13.5px var(--font-sans)">mac-mini<span title="Abbreviation" style="padding:1px 5px;border:1px solid var(--border);border-radius:5px;font:600 10.5px var(--font-mono);color:var(--muted-fg)">MAC</span></span><span class="mono" style="font-size:11.5px;color:var(--warning-fg)">T3o 0.15.2</span></div></div>
+            <div style="display:flex;flex-direction:column;gap:2px;padding-top:6px"><span class="st amb"><i></i>Needs update</span><span class="mut" style="font-size:11px">Connected · taking no new cards</span></div>
+            <div style="display:flex;flex-direction:column;gap:6px;padding-top:4px"><span style="font:400 12px/1.5 var(--font-sans);color:var(--muted-fg)">This board needs T3o 0.16.0 or newer to place work and to read resource use. Cards already on mac-mini carry on.</span><span style="display:flex;align-items:center;gap:6px"><span class="mono" style="font-size:11.5px;padding:2px 6px;border-radius:5px;background:var(--accent)">npx t3@latest worker restart</span><span class="btn sm">Copy</span></span></div>
+          </div>
+        </div>
+        <p class="note">Headroom and quota are hidden in this state because 0.15 doesn't report them; the projects sub-rows stay. The board-header worker indicator (Distributed Board 6.3) counts this together with offline workers: “2 workers need attention”.</p>
+      </div>
+
+      <div id="2.4" class="ab" style="width:420px">
+        <div class="abh"><span class="num">2.4</span><span class="abt">Rename worker · label and abbreviation</span></div>
+        <div class="pop">
+          <div style="padding:18px 20px 0;display:flex;flex-direction:column;gap:6px"><span style="font:600 15px var(--font-sans);letter-spacing:-0.01em">Rename build-02</span><span style="font:400 12.5px/1.55 var(--font-sans);color:var(--muted-fg)">Changes how this worker appears on this board only.</span></div>
+          <div style="padding:14px 20px 18px;display:grid;grid-template-columns:minmax(0,1fr) 110px;gap:10px">
+            <div style="display:flex;flex-direction:column;gap:6px"><label style="font:500 12px var(--font-sans)">Label</label><div class="inp" style="height:34px">build-02</div></div>
+            <div style="display:flex;flex-direction:column;gap:6px"><label style="font:500 12px var(--font-sans)">Abbreviation</label><div class="inp" style="height:34px;font:600 13px var(--font-mono);border-color:var(--warning);box-shadow:0 0 0 3px color-mix(in srgb,var(--warning) 18%,transparent)">B01</div></div>
+            <span style="grid-column:1 / 3;font:500 11.5px var(--font-sans);color:var(--warning-fg)">B01 is already used by build-01.</span>
+            <div style="grid-column:1 / 3;display:flex;align-items:center;gap:8px;padding-top:4px"><span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">Preview</span><span class="chip" style="cursor:default"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg>B02</span><span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">current, kept until saved</span></div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border);background:var(--muted)"><span class="btn lg">Cancel</span><span class="btn lg p" style="opacity:.5">Save</span></div>
+        </div>
+        <p class="note">Opened from the row menu's Rename…. Abbreviations are 1–3 uppercase letters or digits. SRV is reserved for This server, which can be renamed but keeps SRV. Saving updates every chip, thread row and filter on the board straight away; a saved filter URL keeps working because it stores the worker, not the text.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═════════ 3 · BOARD FILTER ═════════ -->
+  <section id="p3" class="sec" data-screen-label="3 Board filter">
+    <div class="sh">
+      <h2>3 · Board filtered by worker</h2>
+      <p>The Worker filter sits in the board header beside Filter tasks. It narrows the view and doesn't change any cards. You can pick several workers (cards on any of them show), plus “Not placed yet”. This mock works: toggle workers in the menu, click a worker chip on a card, or click a blue or amber reason line to open the waiting panel.</p>
+    </div>
+
+    <div id="3.1" class="ab" style="width:1600px">
+      <div class="abh"><span class="num">3.1</span><span class="abt">Board · filter applied (build-01 + Not placed yet) · menu open · why-panel open on Z5-215</span></div>
+      <div style="border:1px solid var(--border);border-radius:12px;background:var(--bg);box-shadow:var(--shadow-xs);overflow:visible">
+        <div style="display:flex;align-items:center;gap:8px;height:52px;padding:0 16px;border-bottom:1px solid var(--border)">
+          <span style="font-size:15px;letter-spacing:-0.01em"><b style="font-weight:700">T3</b> <span style="font-weight:500;color:var(--muted-fg)">Code</span></span>
+          <span style="color:var(--border)">/</span><span style="font:500 13.5px var(--font-sans)">studio</span>
+          <span class="inp" style="height:26px;margin-left:8px;gap:6px;font-size:12px">All projects<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></span>
+          <span style="flex:1"></span>
+          <span style="display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border:1px solid color-mix(in srgb,var(--warning) 45%,transparent);border-radius:8px;background:color-mix(in srgb,var(--warning) 12%,transparent);color:var(--warning-fg);font:500 11.5px var(--font-sans)">1 worker offline</span>
+          <span class="btn sm" style="color:var(--muted-fg)">Filter tasks</span>
+          <div style="position:relative">
+            <div style="{{ wfStyle }}">
+              <button type="button" onClick="{{ toggleMenu }}" style="display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 4px 0 6px;border:none;background:transparent;font:500 11.5px var(--font-sans);color:inherit;cursor:pointer">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg>
+                {{ wfLabel }}
+              </button>
+              <sc-if value="{{ anySel }}" hint-placeholder-val="{{ true }}">
+                <button type="button" onClick="{{ clearSel }}" title="Clear worker filter" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;margin-right:3px;border:none;border-radius:5px;background:transparent;color:inherit;cursor:pointer"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>
+              </sc-if>
+            </div>
+            <sc-if value="{{ menuOpen }}" hint-placeholder-val="{{ true }}">
+              <div class="pop" style="position:absolute;right:0;top:32px;z-index:20;width:300px;padding:4px">
+                <div style="display:flex;align-items:center;padding:8px 9px 6px"><span style="font:600 12.5px var(--font-sans)">Show cards on</span><span style="flex:1"></span><span class="mk" style="background:var(--primary)">1</span></div>
+                <sc-for list="{{ wOpts }}" as="o" hint-placeholder-count="4">
+                  <button type="button" onClick="{{ o.toggle }}" style="display:flex;align-items:center;gap:9px;width:100%;min-height:36px;padding:5px 9px;border:none;border-radius:7px;background:transparent;text-align:left;cursor:pointer">
+                    <span style="{{ o.box }}"><sc-if value="{{ o.on }}" hint-placeholder-val="{{ false }}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></sc-if></span>
+                    <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px"><span style="display:flex;align-items:center;gap:6px;font:500 12.5px var(--font-mono)">{{ o.label }}<span style="padding:0 4px;border:1px solid var(--border);border-radius:4px;font:600 10px var(--font-mono);color:var(--muted-fg)">{{ o.code }}</span></span><span style="{{ o.subStyle }}">{{ o.sub }}</span></span>
+                    <span style="font:500 11.5px var(--font-sans);color:var(--muted-fg)" class="tab">{{ o.count }}</span>
+                  </button>
+                </sc-for>
+                <div style="height:1px;margin:4px 6px;background:var(--border)"></div>
+                <button type="button" onClick="{{ unOpt.toggle }}" style="display:flex;align-items:center;gap:9px;width:100%;min-height:36px;padding:5px 9px;border:none;border-radius:7px;background:transparent;text-align:left;cursor:pointer">
+                  <span style="{{ unOpt.box }}"><sc-if value="{{ unOpt.on }}" hint-placeholder-val="{{ true }}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></sc-if></span>
+                  <span style="flex:1;display:flex;flex-direction:column;gap:1px"><span style="font:500 12.5px var(--font-sans)">Not placed yet</span><span style="font:400 11px var(--font-sans);color:var(--muted-fg)">Worker is chosen when the build starts</span></span>
+                  <span style="font:500 11.5px var(--font-sans);color:var(--muted-fg)" class="tab">{{ unOpt.count }}</span>
+                </button>
+                <div style="display:flex;align-items:center;gap:8px;padding:8px 9px 6px;margin-top:4px;border-top:1px solid var(--border)">
+                  <span style="flex:1;font:400 11px/1.45 var(--font-sans);color:var(--muted-fg)">Planning always runs on This server, so cards in Plan count there.</span>
+                  <button type="button" onClick="{{ clearSel }}" class="btn sm">Clear</button>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+          <span class="btn sm" style="color:var(--muted-fg)">Usage</span>
+        </div>
+        <sc-if value="{{ anySel }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:center;gap:8px;height:34px;padding:0 16px;border-bottom:1px solid var(--border);background:var(--muted);font:400 12px var(--font-sans);color:var(--muted-fg)">
+            <span>Showing <b style="color:var(--fg);font-weight:600" class="tab">{{ shown }}</b> of {{ total }} cards</span><span>·</span><span>Worker is {{ selText }}</span>
+            <button type="button" onClick="{{ clearSel }}" style="border:none;background:transparent;padding:0 4px;font:500 12px var(--font-sans);color:var(--info-fg);cursor:pointer">Clear filter</button>
+            <span style="flex:1"></span><span class="mk">4</span><span>Remembered for you on this board</span>
+          </div>
+        </sc-if>
+        <div style="display:flex;gap:10px;align-items:flex-start;padding:14px 16px 18px;min-height:640px">
+          <sc-for list="{{ cols }}" as="col" hint-placeholder-count="5">
+            <div style="width:232px;flex:none;display:flex;flex-direction:column;gap:8px;padding:10px 8px;border-radius:12px;background:var(--column-bg)">
+              <div style="display:flex;align-items:center;gap:6px;padding:2px 4px"><span style="font:600 13.5px var(--font-sans);color:var(--muted-fg)">{{ col.name }}</span><span style="flex:1"></span><span style="font:500 11px var(--font-sans);color:var(--muted-fg)">{{ col.count }}</span></div>
+              <sc-for list="{{ col.cards }}" as="c" hint-placeholder-count="2">
+                <article class="card" style="{{ c.ring }}">
+                  <div class="top">
+                    <span class="key">{{ c.k }}</span>
+                    <sc-if value="{{ c.isRun }}" hint-placeholder-val="{{ false }}"><span class="rdot" title="Step running"></span></sc-if>
+                    <span style="flex:1"></span>
+                    <sc-if value="{{ c.isPrep }}" hint-placeholder-val="{{ false }}"><span class="tg run" title="Setting up the worktree on build-01: seeding nightly cache (stage 3 of 5)">Preparing · 3/5</span></sc-if>
+                    <sc-if value="{{ c.isInput }}" hint-placeholder-val="{{ false }}"><span class="tg wait">Input needed</span></sc-if>
+                    <sc-if value="{{ c.isDone }}" hint-placeholder-val="{{ false }}"><span class="tg done"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Done</span></sc-if>
+                  </div>
+                  <div class="ttl">{{ c.t }}</div>
+                  <sc-if value="{{ c.isPrep }}" hint-placeholder-val="{{ false }}"><div class="segs"><span class="on"></span><span class="on"></span><span class="on"></span><span></span><span></span></div></sc-if>
+                  <sc-if value="{{ c.isQ }}" hint-placeholder-val="{{ false }}">
+                    <button type="button" class="rsn q" onClick="{{ c.why }}" title="Why is this card waiting?"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span>{{ c.r }}</span></button>
+                  </sc-if>
+                  <sc-if value="{{ c.isBlk }}" hint-placeholder-val="{{ false }}">
+                    <button type="button" class="rsn b" onClick="{{ c.why }}" title="Why can't this card start?"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg><span>{{ c.r }}</span></button>
+                  </sc-if>
+                  <div class="meta">
+                    <span style="display:inline-flex;align-items:center;gap:4px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg>{{ c.th }}</span>
+                    <span style="flex:1"></span>
+                    <sc-if value="{{ c.placed }}" hint-placeholder-val="{{ true }}"><button type="button" onClick="{{ c.pick }}" class="{{ c.chipClass }}" title="{{ c.chipTip }}">
+                      <sc-if value="{{ c.pin }}" hint-placeholder-val="{{ false }}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg></sc-if>
+                      <sc-if value="{{ c.placedNoPin }}" hint-placeholder-val="{{ true }}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg></sc-if>
+                      <span style="overflow:hidden;text-overflow:ellipsis">{{ c.chip }}</span>
+                    </button></sc-if>
+                  </div>
+                </article>
+              </sc-for>
+              <sc-if value="{{ col.empty }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:14px 8px;border:1px dashed var(--border);border-radius:10px;text-align:center;font:400 11.5px var(--font-sans);color:var(--muted-fg)">No cards on these workers</div>
+              </sc-if>
+            </div>
+          </sc-for>
+
+          <sc-if value="{{ why.show }}" hint-placeholder-val="{{ true }}">
+            <aside class="pop" style="width:336px;flex:none;margin-left:6px">
+              <div class="ph" style="align-items:flex-start">
+                <div style="flex:1;display:flex;flex-direction:column;gap:3px;min-width:0">
+                  <span style="font:600 13px var(--font-sans)">{{ why.title }}</span>
+                  <span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg)">{{ why.need }}</span>
+                </div>
+                <button type="button" onClick="{{ closeWhy }}" title="Close" class="btn sm ghost" style="width:24px;padding:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>
+              </div>
+              <div style="padding:7px 14px;border-bottom:1px solid var(--border);background:var(--muted);font:500 10.5px var(--font-sans);color:var(--muted-fg)">Each worker, and why it wasn't used</div>
+              <sc-for list="{{ why.rows }}" as="r" hint-placeholder-count="4">
+                <div class="wr">
+                  <span style="font:500 12px var(--font-mono);padding-top:1px">{{ r.w }}</span>
+                  <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+                    <span class="{{ r.vClass }}">{{ r.v }}</span>
+                    <span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg)">{{ r.d }}</span>
+                    <sc-if value="{{ r.hasAlso }}" hint-placeholder-val="{{ false }}"><span style="font:400 11px/1.45 var(--font-sans);color:var(--muted-fg)">Also: {{ r.also }}</span></sc-if>
+                    <sc-if value="{{ r.hasAct }}" hint-placeholder-val="{{ false }}"><span class="btn sm" style="align-self:flex-start;margin-top:4px">{{ r.act }}</span></sc-if>
+                  </div>
+                </div>
+              </sc-for>
+              <div style="display:flex;flex-direction:column;gap:8px;padding:10px 14px;border-top:1px solid var(--border);background:var(--muted)">
+                <span style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg)">{{ why.foot }}</span>
+                <div style="display:flex;gap:6px;flex-wrap:wrap"><sc-for list="{{ why.acts }}" as="a" hint-placeholder-count="2"><span class="btn sm">{{ a.l }}</span></sc-for></div>
+              </div>
+            </aside>
+          </sc-if>
+        </div>
+      </div>
+      <div class="notes">
+        <div class="n"><span class="mk">1</span><span><b>Where it lives.</b> The worker filter sits beside Filter tasks because it's a view control, like the project picker, not a setting. With nothing selected the chip reads “Worker” in grey. With a selection it turns ink, gains a ×, and lists up to two names, then “build-01 + 2”. Counts respect any other active filter. Offline workers stay listed with an amber sub-line.</span></div>
+        <div class="n"><span class="mk">2</span><span><b>Chip shortcut.</b> Clicking a card's worker chip filters to that worker alone, and shift-click adds it to the selection. Unplaced cards have no chip; use “Not placed yet” in the menu. Chips and the filter button use abbreviations (“Worker: B01, Not placed yet”); the menu and the applied-filter strip use full names, with the abbreviation alongside.</span></div>
+        <div class="n"><span class="mk">3</span><span><b>Reason line opens the waiting panel.</b> The blue or amber line under the title is a button that docks “Why is this card waiting?” beside the columns. Esc or × closes it; clicking another card's reason swaps the contents.</span></div>
+        <div class="n"><span class="mk">4</span><span><b>Persistence.</b> The filter is kept per user and per board, and is mirrored in the URL (<span class="mono">?worker=build-01,unplaced</span>). If a card is placed on an unselected worker while you're looking, it stays at 50% opacity with “Placed on build-02” until you next change the filter, so cards don't vanish mid-glance.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═════════ 4 · CARD FACE STATES ═════════ -->
+  <section id="p4" class="sec" data-screen-label="4 Card faces">
+    <div class="sh">
+      <h2>4 · Card face states</h2>
+      <p>The top-right slot keeps short states: Preparing, Input needed, Done. Waiting and blocked reasons are longer, so they get their own line under the title, and that line opens the waiting panel. The worker chip at the right end of the meta row never takes a status colour.</p>
+    </div>
+    <div id="4.1" class="ab" style="width:1300px">
+      <div class="abh"><span class="num">4.1</span><span class="abt">Every face state</span></div>
+      <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px 10px;padding:14px;border-radius:12px;background:var(--column-bg)">
+
+        <div style="display:flex;flex-direction:column;gap:6px"><span class="hdr">Preparing</span>
+          <article class="card"><div class="top"><span class="key">Z5-218</span><span style="flex:1"></span><span class="tg run" title="Setting up the worktree on build-01: seeding nightly cache (stage 3 of 5)">Preparing · 3/5</span></div><div class="ttl">Bump Rust toolchain to 1.82</div><div class="segs"><span class="on"></span><span class="on"></span><span class="on"></span><span></span><span></span></div><div class="meta"><span>2 threads</span><span style="flex:1"></span><span class="chip" title="build-01"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg>B01</span></div></article>
+          <span class="note">Worktree setup is running: 5 static steps, on the third.</span></div>
+
+        <div style="display:flex;flex-direction:column;gap:6px"><span class="hdr">Placed · running</span>
+          <article class="card"><div class="top"><span class="key">Z5-212</span><span class="rdot"></span><span style="flex:1"></span></div><div class="ttl">Incremental Gradle cache for proto modules</div><div class="meta"><span>3 threads</span><span style="flex:1"></span><span class="chip" title="On build-01 · placed by the planner at 17:20"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg>B01</span></div></article>
+          <span class="note">The chip appears once a card is placed and shows the worker's abbreviation (B01), with the full name in its tooltip.</span></div>
+
+        <div style="display:flex;flex-direction:column;gap:6px"><span class="hdr">Queued · CPU</span>
+          <article class="card"><div class="top"><span class="key">T3O-64</span><span style="flex:1"></span></div><div class="ttl">Planner: per-dimension size estimates</div><div class="rsn q"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span>Waiting for CPU on build-01</span></div><div class="meta"><span>2 threads</span><span style="flex:1"></span><span class="chip" title="Pinned to build-01"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg>B01</span></div></article>
+          <span class="note">Pinned, so the reason names the worker. A pin icon replaces the server icon.</span></div>
+
+        <div style="display:flex;flex-direction:column;gap:6px"><span class="hdr">Queued · disk</span>
+          <article class="card"><div class="top"><span class="key">Z5-215</span><span style="flex:1"></span></div><div class="ttl">Split the linker step out of the release build</div><div class="rsn q"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span>Waiting for a worker with 45 GB free disk</span></div><div class="meta"><span>2 threads</span></div></article>
+          <span class="note">Names the dimension that rules out the most ready workers.</span></div>
+
+        <div style="display:flex;flex-direction:column;gap:6px"><span class="hdr">Queued · quota</span>
+          <article class="card"><div class="top"><span class="key">T3O-66</span><span style="flex:1"></span></div><div class="ttl">Back off worker heartbeats when the board is idle</div><div class="rsn q"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span>Provider near quota</span></div><div class="meta"><span>1 thread</span><span style="flex:1"></span><span class="chip" title="build-02"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg>B02</span></div></article>
+          <span class="note">Tooltip: “The Review step uses Codex, which build-02 reports at 96% of its weekly quota.”</span></div>
+
+        <div style="display:flex;flex-direction:column;gap:6px"><span class="hdr">Queued · worker busy</span>
+          <article class="card"><div class="top"><span class="key">T3O-61</span><span style="flex:1"></span></div><div class="ttl">Retry worktree setup after a failed readiness check</div><div class="rsn q"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span>Worker busy</span></div><div class="meta"><span>3 threads</span><span style="flex:1"></span><span class="chip" title="build-02"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg>B02</span></div></article>
+          <span class="note">Its worktree is on build-02, which currently offers no free agent slots.</span></div>
+
+        <div style="display:flex;flex-direction:column;gap:6px"><span class="hdr">Blocked · not ready</span>
+          <article class="card"><div class="top"><span class="key">WEB-97</span><span style="flex:1"></span></div><div class="ttl">Add a Safari visual-regression run</div><div class="rsn b"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg><span>No ready worker for this project</span></div><div class="meta"><span>1 thread</span></div></article>
+          <span class="note">Example: the card needs a macOS worker for web, and mac-mini (the only one) is offline.</span></div>
+
+        <div style="display:flex;flex-direction:column;gap:6px"><span class="hdr">Blocked · too big</span>
+          <article class="card"><div class="top"><span class="key">Z5-220</span><span style="flex:1"></span></div><div class="ttl">Profile-guided build of z5-core</div><div class="rsn b"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg><span>Too big for any worker</span></div><div class="meta"><span>1 thread</span></div></article>
+          <span class="note">RAM XL is 160 GiB; the largest declared worker has 128 GiB. Waiting won't help.</span></div>
+
+        <div style="display:flex;flex-direction:column;gap:6px"><span class="hdr">Blocked · board server</span>
+          <article class="card"><div class="top"><span class="key">Z5-224</span><span style="flex:1"></span></div><div class="ttl">Bisect the nightly perf regression</div><div class="rsn b"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg><span>Set up this project on the board server</span></div><div class="meta"><span>0 threads</span><span style="flex:1"></span><span class="chip" title="This server (board)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg>SRV</span></div></article>
+          <span class="note">Planning runs on the board server, which has no z5 checkout. The line opens Workers at that row.</span></div>
+
+        <div style="display:flex;flex-direction:column;gap:6px"><span class="hdr">Waiting on you · Done</span>
+          <article class="card"><div class="top"><span class="key">WEB-91</span><span style="flex:1"></span><span class="tg wait">Input needed</span></div><div class="ttl">Fix hydration warning on /pricing</div><div class="meta"><span>3 threads</span><span style="flex:1"></span><span class="chip" title="This server (board)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg>SRV</span></div></article>
+          <article class="card"><div class="top"><span class="key">Z5-207</span><span style="flex:1"></span><span class="tg done"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Done</span></div><div class="ttl">Cache cargo registry between worktrees</div><div class="meta"><span>5 threads</span><span style="flex:1"></span><span style="font:500 10.5px var(--font-mono);color:var(--muted-fg)">$6.12</span><span class="chip" title="build-01"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg>B01</span></div></article>
+        </div>
+      </div>
+    </div>
+
+    <div id="4.2" class="ab" style="width:1500px">
+      <div class="abh"><span class="num">4.2</span><span class="abt">Copy reference · placement reasons</span></div>
+      <div class="panel">
+        <div class="th" style="grid-template-columns:190px 70px 280px minmax(0,1.5fr) minmax(0,1fr)"><span>State</span><span>Colour</span><span>Face line</span><span>Tooltip</span><span>Clears when</span></div>
+        <div class="tr" style="grid-template-columns:190px 70px 280px minmax(0,1.5fr) minmax(0,1fr)"><b style="font-weight:600">Preparing</b><span style="color:var(--info-fg)">Blue</span><span>Preparing · {n}/{m}</span><span>Setting up the worktree on {worker}: {stage} (stage {n} of {m}).</span><span class="mut">Setup finishes, or fails (→ amber “Setup failed · {n}/{m}”).</span></div>
+        <div class="tr" style="grid-template-columns:190px 70px 280px minmax(0,1.5fr) minmax(0,1fr)"><b style="font-weight:600">Queued · CPU / RAM</b><span style="color:var(--info-fg)">Blue</span><span>Waiting for {CPU|RAM} on {worker}</span><span>{worker} offers {free} {unit}; this step needs {need}.</span><span class="mut">{worker} offers enough.</span></div>
+        <div class="tr" style="grid-template-columns:190px 70px 280px minmax(0,1.5fr) minmax(0,1fr)"><b style="font-weight:600">Queued · disk</b><span style="color:var(--info-fg)">Blue</span><span>Waiting for a worker with {need} free disk</span><span>No ready worker offers {need} of disk right now. Most offered: {worker}, {free}.</span><span class="mut">Any ready worker offers enough.</span></div>
+        <div class="tr" style="grid-template-columns:190px 70px 280px minmax(0,1.5fr) minmax(0,1fr)"><b style="font-weight:600">Queued · quota</b><span style="color:var(--info-fg)">Blue</span><span>Provider near quota</span><span>The {step} step uses {provider}, which {worker|every ready worker} reports at {pct}% of its weekly quota.</span><span class="mut">The worker reports quota available again.</span></div>
+        <div class="tr" style="grid-template-columns:190px 70px 280px minmax(0,1.5fr) minmax(0,1fr)"><b style="font-weight:600">Queued · worker busy</b><span style="color:var(--info-fg)">Blue</span><span>Worker busy</span><span>{worker} isn't offering an agent slot right now.</span><span class="mut">{worker} offers a slot.</span></div>
+        <div class="tr" style="grid-template-columns:190px 70px 280px minmax(0,1.5fr) minmax(0,1fr)"><b style="font-weight:600">No ready worker</b><span style="color:var(--warning-fg)">Amber</span><span>No ready worker for this project</span><span>No connected worker has a passing checkout of {project}.</span><span class="mut">A worker becomes ready for {project}.</span></div>
+        <div class="tr" style="grid-template-columns:190px 70px 280px minmax(0,1.5fr) minmax(0,1fr)"><b style="font-weight:600">Too big</b><span style="color:var(--warning-fg)">Amber</span><span>Too big for any worker</span><span>Needs {need}; the largest worker declares {max} ({worker}). Lower the card's {dimension} size.</span><span class="mut">Size lowered, or a worker declares more.</span></div>
+        <div class="tr" style="grid-template-columns:190px 70px 280px minmax(0,1.5fr) minmax(0,1fr)"><b style="font-weight:600">Board server not set up</b><span style="color:var(--warning-fg)">Amber</span><span>Set up this project on the board server</span><span>Planning runs on the board server, which has no checkout of {project}.</span><span class="mut">{project} is ready on This server.</span></div>
+      </div>
+      <p class="note">If a card has several reasons, blocked ones win; otherwise the capacity reason that rules out the most workers is shown. Each reason fits one line in the 232px column, wraps to a second if needed, then truncates with the full text in the tooltip.</p>
+    </div>
+  </section>
+
+  <!-- ═════════ 5 · CARD DETAIL ═════════ -->
+  <section id="p5" class="sec" data-screen-label="5 Card detail">
+    <div class="sh">
+      <h2>5 · Card detail</h2>
+      <p>The Summary pane gains a Worker row, the pin control and the resource profile. The main column gains Setup progress, with Measured actuals beside Usage so you can read time, compute and cost for one step across a row. Threads open in place through the board, whichever worker ran them.</p>
+    </div>
+
+    <div id="5.1" class="ab" style="width:1400px">
+      <div class="abh"><span class="num">5.1</span><span class="abt">Desktop · Z5-218 preparing on build-01 (the S/M/L/XL controls work)</span></div>
+      <div class="pop" style="display:flex;flex-direction:column">
+        <div style="display:flex;align-items:center;gap:10px;height:52px;padding:0 18px;border-bottom:1px solid var(--border)">
+          <span class="key" style="font-size:12px">Z5-218</span><span class="mut" style="font:400 12px var(--font-sans)">z5</span>
+          <span style="font:600 15px var(--font-sans);letter-spacing:-0.01em">Bump Rust toolchain to 1.82</span>
+          <span class="tg run">Preparing · 3/5</span>
+          <span style="flex:1"></span>
+          <span class="btn sm ghost" style="width:26px;padding:0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span>
+        </div>
+        <div style="display:flex;align-items:stretch">
+          <div style="flex:1;min-width:0;padding:18px 20px 22px;display:flex;flex-direction:column;gap:18px">
+            <p style="margin:0;max-width:80ch;font:400 13px/1.6 var(--font-sans)">Move <span class="mono" style="font-size:12px">rust-toolchain.toml</span> to 1.82, fix the new clippy lints in z5-core and z5-cli, and refresh the Gradle-built JNI bindings.</p>
+
+            <div class="panel">
+              <div class="ph"><span class="hdr">Setup progress</span><span class="mut" style="font:400 11.5px var(--font-sans)">worktree on build-01 · started 18:31 · 4m 10s</span><span style="flex:1"></span><span class="mk">1</span><span class="btn sm">Cancel setup</span></div>
+              <div style="display:grid;grid-template-columns:300px minmax(0,1fr)">
+                <div style="display:flex;flex-direction:column;padding:8px 0;border-right:1px solid var(--border)">
+                  <div style="display:flex;align-items:center;gap:9px;padding:6px 14px;font:500 12.5px var(--font-sans)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg><span style="flex:1">Clone repo</span><span class="mut mono" style="font-size:11px">0:42</span></div>
+                  <div style="display:flex;align-items:center;gap:9px;padding:6px 14px;font:500 12.5px var(--font-sans)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg><span style="flex:1">Install toolchain <span class="mut" style="font-weight:400">rustup · Gradle wrapper</span></span><span class="mut mono" style="font-size:11px">1:18</span></div>
+                  <div style="display:flex;align-items:center;gap:9px;padding:6px 14px;font:600 12.5px var(--font-sans);color:var(--info-fg);background:color-mix(in srgb,var(--info) 6%,transparent)"><span style="width:13px;height:13px;flex:none;display:inline-flex;align-items:center;justify-content:center"><span class="rdot"></span></span><span style="flex:1">Seed nightly cache</span><span class="mono" style="font-size:11px">2:10 · 61%</span></div>
+                  <div style="display:flex;align-items:center;gap:9px;padding:6px 14px;font:400 12.5px var(--font-sans);color:var(--muted-fg)"><span style="width:13px;height:13px;flex:none;border-radius:99px;border:1.5px solid var(--input)"></span><span style="flex:1">Warm Gradle daemon</span></div>
+                  <div style="display:flex;align-items:center;gap:9px;padding:6px 14px;font:400 12.5px var(--font-sans);color:var(--muted-fg)"><span style="width:13px;height:13px;flex:none;border-radius:99px;border:1.5px solid var(--input)"></span><span style="flex:1">Readiness script</span></div>
+                </div>
+                <div style="padding:10px 14px;display:flex;flex-direction:column;gap:8px;min-width:0">
+                  <div style="display:flex;align-items:center;gap:8px"><span style="font:500 11.5px var(--font-sans)">Log · Seed nightly cache</span><span style="flex:1"></span><span style="font:500 11.5px var(--font-sans);color:var(--info-fg)">Open full log</span></div>
+<pre class="log">$ t3 cache seed --from s3://z5-ci/nightly/2026-11-12 --into target/
+fetching manifest … 1,284 objects, 31.6 GiB
+  target/release/deps   [##########----------]  9.8 / 16.0 GiB
+  ~/.gradle/caches      [#############-------]  7.1 /  9.4 GiB
+  ~/.cargo/registry     [####################]  6.2 /  6.2 GiB done
+throughput 212 MB/s · eta 0:52</pre>
+                  <span class="note">The last 6 lines, relayed through the board. They refresh when the worker sends output, and don't auto-scroll.</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:minmax(0,1.62fr) minmax(0,1fr);gap:14px;align-items:start">
+              <div class="panel">
+                <div class="ph"><span class="hdr">Measured</span><span class="mut" style="font:400 11.5px var(--font-sans)">per step, reported by the worker that ran it</span><span style="flex:1"></span><span class="mk">2</span></div>
+                <div class="th" style="grid-template-columns:minmax(0,1.3fr) 66px 46px 58px 84px 56px 74px"><span>Step</span><span class="r">CPU core·s</span><span class="r">p90</span><span class="r">Peak RAM</span><span class="r">I/O r / w</span><span class="r">Disk</span><span class="r">Data</span></div>
+                <div class="tr" style="grid-template-columns:minmax(0,1.3fr) 66px 46px 58px 84px 56px 74px">
+                  <span style="display:flex;flex-direction:column;gap:1px;min-width:0"><span style="font-weight:600">Plan · round 1</span><span class="mut mono" style="font-size:10.5px" title="This server (board)">SRV</span></span>
+                  <span class="r mono tab">410</span><span class="r mono tab">1.6</span><span class="r mono tab">2.4 GiB</span><span class="r mono tab">0.3 / 0.1 GB</span><span class="r mono tab">1.2 GB</span><span class="r mut" style="font-size:11px">complete</span>
+                </div>
+                <div class="tr" style="grid-template-columns:minmax(0,1.3fr) 66px 46px 58px 84px 56px 74px">
+                  <span style="display:flex;flex-direction:column;gap:1px;min-width:0"><span style="font-weight:600">Plan · round 2</span><span class="mut mono" style="font-size:10.5px" title="This server (board)">SRV</span></span>
+                  <span class="r mono tab">≥ 380</span><span class="r mono tab">1.4</span><span class="r mono tab">2.1 GiB</span><span class="r mono tab">0.3 / 0.1 GB</span><span class="r mono tab">1.2 GB</span>
+                  <span class="r" title="The sampler restarted at 17:58; 2 of 9 minutes weren't sampled. Totals are lower bounds."><span class="tg mut">Partial · 7/9 min</span></span>
+                </div>
+                <div class="tr" style="grid-template-columns:minmax(0,1.3fr) 66px 46px 58px 84px 56px 74px">
+                  <span style="display:flex;flex-direction:column;gap:1px;min-width:0"><span style="font-weight:600">Setup · attempt 1</span><span class="mut mono" style="font-size:10.5px" title="mac-mini">MAC</span></span>
+                  <span class="r mut">—</span><span class="r mut">—</span><span class="r mut">—</span><span class="r mut">—</span><span class="r mut">—</span>
+                  <span class="r" title="mac-mini didn't report resource use for this step (it went offline before sending its summary). Setup was re-placed on build-01."><span class="tg mut">Not measured</span></span>
+                </div>
+                <div class="tr" style="grid-template-columns:minmax(0,1.3fr) 66px 46px 58px 84px 56px 74px;background:color-mix(in srgb,var(--info) 4%,transparent)">
+                  <span style="display:flex;flex-direction:column;gap:1px;min-width:0"><span style="font-weight:600;display:flex;align-items:center;gap:6px">Setup · attempt 2 <span class="rdot" style="width:6px;height:6px"></span></span><span class="mut mono" style="font-size:10.5px" title="build-01">B01</span></span>
+                  <span class="r mono tab">3,940</span><span class="r mono tab">7.6</span><span class="r mono tab">9.4 GiB</span><span class="r mono tab">21.8 / 38.2 GB</span><span class="r mono tab">41.3 GB</span>
+                  <span class="r" style="font:500 11px var(--font-sans);color:var(--info-fg)">so far</span>
+                </div>
+                <div class="tr" style="grid-template-columns:minmax(0,1.3fr) 66px 46px 58px 84px 56px 74px">
+                  <span style="display:flex;flex-direction:column;gap:1px"><span style="font-weight:600;color:var(--muted-fg)">Build</span><span class="mut" style="font-size:10.5px">not started</span></span>
+                  <span class="r mut">—</span><span class="r mut">—</span><span class="r mut">—</span><span class="r mut">—</span><span class="r mut">—</span><span></span>
+                </div>
+                <div style="padding:8px 12px;border-top:1px solid var(--border);background:var(--muted);font:400 11px/1.5 var(--font-sans);color:var(--muted-fg)">Reserved for this card: <span class="mono" style="color:var(--fg)">12 cores · 40 GiB · 45 GB</span>. Peak so far is 63% of the CPU hold and 92% of disk.</div>
+              </div>
+
+              <div class="panel">
+                <div style="display:flex;flex-direction:column;gap:9px;padding:10px 14px 12px">
+                  <div style="display:flex;align-items:center;gap:8px"><span class="hdr">Usage</span><span style="flex:1"></span><div class="seg"><span class="sp on">By stage</span><span class="sp">By model</span></div></div>
+                  <div style="display:flex;align-items:baseline;gap:8px"><span style="font:600 22px var(--font-mono);letter-spacing:-0.02em" class="tab">$0.59</span><span style="font:500 12px var(--font-sans);color:var(--muted-fg)">so far</span></div>
+                  <div style="display:flex;gap:2px;height:6px"><span style="flex:38;border-radius:3px 0 0 3px;background:color-mix(in srgb,var(--fg) 70%,transparent)"></span><span style="flex:21;border-radius:0 3px 3px 0;background:color-mix(in srgb,var(--fg) 40%,transparent)"></span></div>
+                </div>
+                <div class="th" style="grid-template-columns:minmax(0,1fr) 64px 60px"><span>Stage</span><span class="r">Tokens</span><span class="r">Cost</span></div>
+                <div class="tr" style="grid-template-columns:minmax(0,1fr) 64px 60px"><span style="display:flex;flex-direction:column;gap:1px"><span style="font-weight:600">Plan · round 1</span><span class="mut" style="font-size:10.5px">Claude · Opus</span></span><span class="r mono tab">142k</span><span class="r mono tab">$0.38</span></div>
+                <div class="tr" style="grid-template-columns:minmax(0,1fr) 64px 60px"><span style="display:flex;flex-direction:column;gap:1px"><span style="font-weight:600">Plan · round 2</span><span class="mut" style="font-size:10.5px">Claude · Sonnet</span></span><span class="r mono tab">96k</span><span class="r mono tab">$0.21</span></div>
+                <div class="tr" style="grid-template-columns:minmax(0,1fr) 64px 60px"><span style="display:flex;flex-direction:column;gap:1px"><span style="font-weight:600">Setup</span><span class="mut" style="font-size:10.5px">shell stages, no agent</span></span><span class="r mut">—</span><span class="r mono tab mut">$0.00</span></div>
+                <div class="tr" style="grid-template-columns:minmax(0,1fr) 64px 60px"><span style="font-weight:600;color:var(--muted-fg)">Build</span><span class="r mut">—</span><span class="r mut">—</span></div>
+              </div>
+            </div>
+          </div>
+
+          <aside style="width:400px;flex:none;border-left:1px solid var(--border);background:color-mix(in srgb,var(--muted) 55%,var(--card));padding:14px 16px 18px;display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;align-items:center;gap:8px"><span style="font:600 12.5px var(--font-sans)">Summary</span><span style="flex:1"></span><span class="tg run">Preparing · 3/5</span></div>
+            <div class="box blu"><span class="rdot" style="margin-top:5px"></span><div style="display:flex;flex-direction:column;gap:2px"><span style="font:600 12.5px var(--font-sans);color:var(--info-fg)">Preparing worktree on build-01</span><span style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg)">Seeding nightly cache (stage 3 of 5). The build starts once the readiness script passes.</span></div></div>
+            <div style="display:flex;flex-direction:column">
+              <div class="kv"><span>Stage</span><span>Build</span></div>
+              <div class="kv"><span>Branch</span><span class="mono" style="font-size:12px">t3/Z5-218-rust-1.82</span></div>
+              <div class="kv" style="padding:8px 0">
+                <span>Worker</span>
+                <div style="display:flex;flex-direction:column;gap:3px">
+                  <span style="display:flex;align-items:center;gap:6px;font:500 12.5px var(--font-sans)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.2"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg><span class="mono">build-01</span><span class="mut" style="font-weight:400">· placed at 18:31</span></span>
+                  <span style="font:400 11px/1.45 var(--font-sans);color:var(--muted-fg)">Chosen because it offered the most RAM among ready workers. The worktree stays on build-01 for later steps unless you move the card.</span>
+                </div>
+              </div>
+              <div class="kv" style="padding:6px 0 10px">
+                <span style="padding-top:6px">Pin</span>
+                <div style="display:flex;flex-direction:column;gap:4px">
+                  <span style="display:flex;align-items:center;gap:7px"><span class="inp" style="height:28px;gap:6px;font-size:12.5px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg>Pin builds to…<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></span><span class="mk">3</span></span>
+                  <span style="font:400 11px/1.45 var(--font-sans);color:var(--muted-fg)">Not pinned. If this card is ever re-placed, the planner chooses again.</span>
+                </div>
+              </div>
+              <div class="kv"><span>Model</span><span>Claude · claude-max · Opus</span></div>
+            </div>
+
+            <div class="panel" style="display:flex;flex-direction:column">
+              <div class="ph"><span class="hdr">Resource profile</span><span style="flex:1"></span><span class="mk">4</span></div>
+              <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:3px">
+                <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">Project baseline · z5</span>
+                <span style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap"><span class="mono tab" style="font:600 13px var(--font-mono)">12 cores · 40 GiB · 45 GB</span><a href="#p7" style="font:500 11.5px var(--font-sans)">Edit in project</a></span>
+                <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">CPU and RAM learned from 23 builds · disk pinned to declared</span>
+              </div>
+              <div style="padding:6px 14px 4px">
+                <div style="display:grid;grid-template-columns:40px auto minmax(0,1fr);gap:4px 10px;padding:4px 0 6px;font:600 9.5px var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--muted-fg)"><span></span><span>Size</span><span class="r">Reserves</span></div>
+                <sc-for list="{{ dims }}" as="d" hint-placeholder-count="3">
+                  <div style="display:grid;grid-template-columns:40px auto minmax(0,1fr);align-items:center;gap:4px 10px;padding:4px 0">
+                    <span style="font:500 12px var(--font-sans)">{{ d.label }}</span>
+                    <div class="seg"><sc-for list="{{ d.pills }}" as="p" hint-placeholder-count="4"><button type="button" onClick="{{ p.pick }}" class="{{ p.cls }}" title="{{ p.tip }}">{{ p.l }}</button></sc-for></div>
+                    <span style="{{ d.valStyle }}">{{ d.value }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <sc-if value="{{ sizeEdited }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;align-items:center;gap:8px;margin:2px 14px 8px;padding:6px 9px;border-radius:8px;background:var(--accent);font:400 11.5px var(--font-sans)"><span style="flex:1">Edited by you · planner suggested M · M · M</span><button type="button" onClick="{{ resetSize }}" style="border:none;background:transparent;padding:0;font:500 11.5px var(--font-sans);color:var(--info-fg);cursor:pointer">Reset to planner</button></div>
+              </sc-if>
+              <sc-if value="{{ tooBig }}" hint-placeholder-val="{{ false }}">
+                <div class="box amb" style="margin:0 14px 8px;padding:7px 9px"><span style="font:400 11.5px/1.45 var(--font-sans);color:var(--warning-fg)">{{ tooBigText }}</span></div>
+              </sc-if>
+              <div style="margin:2px 14px 12px;padding:9px 10px;border:1px dashed var(--input);border-radius:9px;background:var(--muted);display:flex;flex-direction:column;gap:3px">
+                <span style="font:500 11.5px var(--font-sans)">Planner's reason</span>
+                <span style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">A toolchain bump rebuilds every crate once. Similar cards (Z5-188, Z5-201) peaked at 11.2 cores and 36 GiB, which is within the M baseline. The disk figure includes the nightly cache seed.</span>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <span class="hdr">Threads</span>
+              <div class="panel" style="padding:4px">
+                <div style="display:flex;align-items:center;gap:9px;height:34px;padding:0 9px;border-radius:8px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--sidebar-icon-color)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg><span style="flex:1;font:500 12.5px var(--font-sans)">Plan · round 2</span><span class="mono mut" style="font-size:10.5px" title="This server (board)">SRV</span></div>
+                <div style="display:flex;align-items:center;gap:9px;height:34px;padding:0 9px;border-radius:8px;background:var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--sidebar-icon-color)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg><span style="flex:1;font:500 12.5px var(--font-sans)">Plan · round 1</span><span class="mono mut" style="font-size:10.5px" title="This server (board)">SRV</span></div>
+                <div style="display:flex;align-items:center;gap:9px;height:34px;padding:0 9px;border-radius:8px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--sidebar-icon-color)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg><span style="flex:1;font:500 12.5px var(--font-sans)">Review of Z5-201 (linked)</span><span class="mono mut" style="font-size:10.5px" title="build-02">B02</span></div>
+              </div>
+              <span class="note">Every row names the worker it ran on. Clicking opens the thread in this modal (5.5).</span>
+            </div>
+          </aside>
+        </div>
+      </div>
+      <div class="notes">
+        <div class="n"><span class="mk">1</span><span><b>Setup progress</b> shows in the main column while a worktree is being set up, or after setup has failed. Once it finishes, it collapses to one line, “Setup · build-01 · 6m 12s ✓”, which you can expand. Cancel setup stops the current stage, frees the reservation and returns the card to “Not placed yet”.</span></div>
+        <div class="n"><span class="mk">2</span><span><b>Measured</b> lines up row-for-row with Usage. Core·s is CPU time; p90 is the 90th-percentile cores in use. I/O is bytes read and written; Disk is the worktree's size at the end of the step, or now if it's still running. “Partial” totals are lower bounds, marked ≥. “Not measured” explains why in its tooltip. Hovering a row highlights the matching Usage row.</span></div>
+        <div class="n"><span class="mk">3</span><span><b>Pin builds to…</b> opens 5.3. A pin applies to the next placement. Here the worktree already exists, so that means a move or a re-setup; on an unplaced card it decides where the build starts.</span></div>
+        <div class="n"><span class="mk">4</span><span><b>Size controls</b> set CPU, RAM and disk independently. A change applies to the next step; the running step keeps its reservation. A size that no worker could ever fit turns the value amber immediately. Try CPU XL or RAM XL here.</span></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div id="5.2" class="ab" style="width:720px">
+        <div class="abh"><span class="num">5.2</span><span class="abt">Setup failed · error state</span></div>
+        <div class="panel">
+          <div class="ph"><span class="hdr">Setup progress</span><span class="mut" style="font:400 11.5px var(--font-sans)">worktree on build-01 · failed at 18:34</span><span style="flex:1"></span><span class="btn sm">Cancel</span><span class="btn sm p">Retry from stage 3</span></div>
+          <div style="display:grid;grid-template-columns:250px minmax(0,1fr)">
+            <div style="display:flex;flex-direction:column;padding:8px 0;border-right:1px solid var(--border)">
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 14px;font:500 12.5px var(--font-sans)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg><span style="flex:1">Clone repo</span><span class="mut mono" style="font-size:11px">0:42</span></div>
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 14px;font:500 12.5px var(--font-sans)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg><span style="flex:1">Install toolchain</span><span class="mut mono" style="font-size:11px">1:18</span></div>
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 14px;font:600 12.5px var(--font-sans);color:var(--warning-fg);background:color-mix(in srgb,var(--warning) 7%,transparent)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg><span style="flex:1">Seed nightly cache</span><span class="mono" style="font-size:11px">exit 22</span></div>
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 14px;font:400 12.5px var(--font-sans);color:var(--muted-fg)"><span style="width:13px;height:13px;flex:none;border-radius:99px;border:1.5px solid var(--input)"></span><span style="flex:1">Warm Gradle daemon</span><span style="font-size:11px">skipped</span></div>
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 14px;font:400 12.5px var(--font-sans);color:var(--muted-fg)"><span style="width:13px;height:13px;flex:none;border-radius:99px;border:1.5px solid var(--input)"></span><span style="flex:1">Readiness script</span><span style="font-size:11px">skipped</span></div>
+            </div>
+            <div style="padding:10px 14px;display:flex;flex-direction:column;gap:9px;min-width:0">
+              <div class="box amb" style="padding:8px 10px"><div style="display:flex;flex-direction:column;gap:2px"><span style="font:600 12.5px var(--font-sans);color:var(--warning-fg)">Couldn't download the nightly cache</span><span style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg)">build-01 got 403 from s3://z5-ci. Its AWS credentials may have expired. Retry runs from the failed stage onward and keeps stages 1–2.</span></div></div>
+<pre class="log">$ t3 cache seed --from s3://z5-ci/nightly/2026-11-12 --into target/
+fetching manifest …
+error: GET s3://z5-ci/nightly/2026-11-12/manifest.json
+  403 Forbidden (ExpiredToken)
+  profile: z5-ci-readonly · region: ap-southeast-2
+exit status 22</pre>
+              <div style="display:flex;gap:12px;align-items:center"><span style="font:500 11.5px var(--font-sans);color:var(--info-fg)">Open full log</span><span style="font:500 11.5px var(--font-sans);color:var(--info-fg)">Skip cache and continue</span><span style="flex:1"></span><span style="font:500 11.5px var(--font-sans);color:var(--info-fg)">Pick another worker…</span></div>
+            </div>
+          </div>
+        </div>
+        <p class="note">On the card face this shows amber “Setup failed · 3/5”. The CPU and RAM reservations are released straight away; the 41 GB already on disk stays held until Retry or Cancel. “Skip cache and continue” appears only for stages the project marks as optional. Cancel removes the partial worktree and returns the card to “Not placed yet”.</p>
+      </div>
+
+      <div id="5.3" class="ab" style="width:400px">
+        <div class="abh"><span class="num">5.3</span><span class="abt">Pin builds to… · menu open</span></div>
+        <div class="pop" style="padding:4px">
+          <div style="display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 9px;border-radius:7px;background:var(--accent)">
+            <div style="flex:1;display:flex;flex-direction:column;gap:1px"><span style="font:500 12.5px var(--font-sans)">Any ready worker</span><span style="font:400 11px var(--font-sans);color:var(--muted-fg)">Planner picks the one offering the most room when a build starts</span></div>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+          </div>
+          <div style="padding:8px 9px 4px" class="hdr">Pin to</div>
+          <div style="display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 9px"><div style="flex:1;display:flex;flex-direction:column;gap:1px"><span style="font:500 12.5px var(--font-mono)">build-01</span><span style="font:400 11px var(--font-sans);color:var(--muted-fg)">Ready · offers 4 of 32 cores · would wait for CPU</span></div></div>
+          <div style="display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 9px"><div style="flex:1;display:flex;flex-direction:column;gap:1px"><span style="font:500 12.5px var(--font-mono)">build-02</span><span style="font:400 11px var(--font-sans);color:var(--muted-fg)">Ready · offers 30 GB, needs 45 · would wait for disk</span></div></div>
+          <div style="display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 9px"><div style="flex:1;display:flex;flex-direction:column;gap:1px"><span style="font:500 12.5px var(--font-mono);color:var(--muted-fg)">This server</span><span style="font:400 11px var(--font-sans);color:var(--muted-fg)">z5 isn't set up here</span></div><span class="btn sm">Set up</span></div>
+          <div style="display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 9px"><div style="flex:1;display:flex;flex-direction:column;gap:1px"><span style="font:500 12.5px var(--font-mono);color:var(--muted-fg)">mac-mini</span><span style="font:400 11px var(--font-sans);color:var(--warning-fg)">Offline since 17:52</span></div></div>
+        </div>
+        <p class="note">You can pin to a worker that's ready but full; the card then waits there (“Waiting for CPU on build-01”). Offline workers and ones that aren't ready are disabled, with the reason underneath. When pinned, the field reads “Pinned to build-01”, and this menu gains Unpin at the top.</p>
+      </div>
+    </div>
+
+    <div class="row">
+      <div id="5.5" class="ab" style="width:860px">
+        <div class="abh"><span class="num">5.5</span><span class="abt">Thread opened in place · ran on build-01, through the board</span></div>
+        <div class="pop" style="display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:10px;height:48px;padding:0 16px;border-bottom:1px solid var(--border)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+            <span class="key" style="font-size:12px">Z5-212</span><span style="font:600 13.5px var(--font-sans)">Build · round 2</span>
+            <span class="rdot"></span>
+            <span style="flex:1"></span>
+            <span style="display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border:1px solid var(--border);border-radius:7px;font:500 11.5px var(--font-sans);color:var(--muted-fg)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect></svg>Running on <span class="mono" style="color:var(--fg)">build-01</span><span class="mk">1</span></span>
+          </div>
+          <div style="padding:14px 18px;display:flex;flex-direction:column;gap:12px;min-height:300px">
+            <div style="display:flex;flex-direction:column;gap:4px;max-width:620px"><span style="font:600 11.5px var(--font-sans);color:var(--muted-fg)">Agent · 18:40</span><span style="font:400 13px/1.6 var(--font-sans)">The proto modules now share a build cache keyed on the descriptor hash. Re-running <span class="mono" style="font-size:12px">./gradlew :proto:build</span> with no changes takes 14s, down from 3m 02s.</span></div>
+            <div style="display:flex;flex-direction:column;gap:6px;max-width:620px;padding:9px 11px;border:1px solid var(--border);border-radius:9px;background:var(--muted)"><span style="font:500 11.5px var(--font-mono)">$ ./gradlew :proto:build --build-cache</span><span style="font:400 11.5px var(--font-mono);color:var(--muted-fg)">BUILD SUCCESSFUL in 14s · 38 actionable tasks: 2 executed, 36 from cache</span><span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">ran on build-01 · /srv/t3o/worktrees/Z5-212</span></div>
+            <div style="display:flex;flex-direction:column;gap:4px;max-width:620px"><span style="font:600 11.5px var(--font-sans);color:var(--muted-fg)">Agent · 18:42</span><span style="font:400 13px/1.6 var(--font-sans)">Next I'll wire the cache into the CI profile and check the release build still links.</span></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 16px;border-top:1px solid var(--border)">
+            <div class="inp" style="flex:1;height:34px;color:var(--muted-fg);font-weight:400">Message the agent on build-01…</div>
+            <span class="btn lg p">Send</span>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="n"><span class="mk">1</span><span><b>Opens in place.</b> Threads stream through the board server, so this app never connects to build-01 directly; Distributed Board's “Connect to worker” step goes away. The worker chip in the header and the footer of each command block say where the thread ran. A finished thread reads “Ran on build-01”.</span></div>
+          <div class="n"><span class="mk">·</span><span><b>Worker offline.</b> The transcript is mirrored to the board as it runs, so it still opens. The header chip turns amber, “build-01 offline · transcript up to 18:05”, and the composer is replaced by “Messages resume when build-01 reconnects”.</span></div>
+        </div>
+      </div>
+
+      <div id="5.4" class="ab" style="width:390px">
+        <div class="abh"><span class="num">5.4</span><span class="abt">Narrow (390 px) · Z5-215 not placed yet</span></div>
+        <div style="width:390px;border:1px solid var(--border);border-radius:22px;background:var(--bg);overflow:hidden;box-shadow:var(--shadow-pop)">
+          <div style="display:flex;align-items:center;gap:8px;height:48px;padding:0 12px;border-bottom:1px solid var(--border)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+            <span class="key" style="font-size:12px">Z5-215</span><span class="mut" style="font:400 12px var(--font-sans)">z5 · Build</span><span style="flex:1"></span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="var(--muted-fg)"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>
+          </div>
+          <div style="padding:14px 14px 18px;display:flex;flex-direction:column;gap:14px">
+            <span style="font:600 17px/1.3 var(--font-sans);letter-spacing:-0.01em">Split the linker step out of the release build</span>
+            <div class="box blu" style="flex-direction:column;gap:6px">
+              <span style="display:flex;align-items:center;gap:6px;font:600 12.5px var(--font-sans);color:var(--info-fg)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>Waiting for a worker with 45 GB free disk</span>
+              <span style="font:400 12px/1.5 var(--font-sans);color:var(--muted-fg)">The most offered right now is 38 GB, on build-01. This card starts by itself when a worker offers enough.</span>
+              <span style="font:500 12px var(--font-sans);color:var(--info-fg)">Why is this card waiting? ›</span>
+            </div>
+            <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;background:var(--card);padding:2px 12px">
+              <div style="display:flex;flex-direction:column;gap:3px;padding:10px 0;border-bottom:1px solid var(--border)"><span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">Worker</span><span style="font:500 13px var(--font-sans)">Not placed yet — chosen when the build starts</span></div>
+              <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border)"><div style="flex:1;display:flex;flex-direction:column;gap:3px"><span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">Pin</span><span style="font:500 13px var(--font-sans)">Any ready worker</span></div><span class="btn" style="height:32px">Pin builds to…</span></div>
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0"><span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">Branch</span><span class="mono" style="font-size:12px">t3/Z5-215-split-linker</span></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <span class="hdr">Resource profile</span>
+              <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden">
+                <div style="padding:9px 12px;border-bottom:1px solid var(--border);font:400 11.5px var(--font-sans);color:var(--muted-fg)">z5 baseline · <span class="mono" style="color:var(--fg)">12 cores · 40 GiB · 45 GB</span></div>
+                <div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-bottom:1px solid var(--border)"><div style="display:flex;align-items:baseline"><span style="flex:1;font:500 12.5px var(--font-sans)">CPU</span><span class="mono" style="font-size:12px">12 cores</span></div><div class="seg" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr))"><span class="sp" style="height:30px">S</span><span class="sp on" style="height:30px">M</span><span class="sp" style="height:30px">L</span><span class="sp" style="height:30px">XL</span></div></div>
+                <div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-bottom:1px solid var(--border)"><div style="display:flex;align-items:baseline"><span style="flex:1;font:500 12.5px var(--font-sans)">RAM</span><span class="mono" style="font-size:12px">40 GiB</span></div><div class="seg" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr))"><span class="sp" style="height:30px">S</span><span class="sp on" style="height:30px">M</span><span class="sp" style="height:30px">L</span><span class="sp" style="height:30px">XL</span></div></div>
+                <div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-bottom:1px solid var(--border)"><div style="display:flex;align-items:baseline"><span style="flex:1;font:500 12.5px var(--font-sans)">Disk</span><span class="mono" style="font-size:12px">45 GB</span></div><div class="seg" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr))"><span class="sp" style="height:30px">S</span><span class="sp on" style="height:30px">M</span><span class="sp" style="height:30px">L</span><span class="sp" style="height:30px">XL</span></div></div>
+                <div style="padding:10px 12px;font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg)"><span style="color:var(--fg);font-weight:500">Planner:</span> The linker split only touches release profiles. Disk S would undercount: the release worktree reached 44 GB on Z5-207.</div>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;align-items:center"><span class="hdr" style="flex:1">Setup</span><span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">runs on the chosen worker</span></div>
+              <div style="padding:10px 12px;border:1px dashed var(--input);border-radius:12px;font:400 12px/1.5 var(--font-sans);color:var(--muted-fg)">5 stages, about 6 min on build-01 last time. Progress appears here once the card is placed.</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <span class="hdr">Measured · Usage</span>
+              <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden">
+                <div style="display:flex;flex-direction:column;gap:5px;padding:10px 12px;border-bottom:1px solid var(--border)">
+                  <div style="display:flex;align-items:baseline;gap:6px"><span style="flex:1;font:600 12.5px var(--font-sans)">Plan · round 1</span><span class="mono tab" style="font-size:12px">$0.44</span></div>
+                  <span style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg)"><span class="mono" title="This server (board)">SRV</span> · 410 core·s · p90 1.6 · 2.4 GiB peak · I/O 0.3 / 0.1 GB · 1.2 GB disk</span>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:5px;padding:10px 12px;border-bottom:1px solid var(--border)">
+                  <div style="display:flex;align-items:baseline;gap:6px"><span style="flex:1;font:600 12.5px var(--font-sans)">Plan · round 2</span><span class="mono tab" style="font-size:12px">$0.19</span></div>
+                  <span style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg)"><span class="mono" title="This server (board)">SRV</span> · <span class="tg mut" style="height:16px">Partial</span> ≥ 290 core·s · 6 of 8 min sampled</span>
+                </div>
+                <div style="display:flex;align-items:baseline;gap:6px;padding:10px 12px;background:var(--muted)"><span style="flex:1;font:500 12px var(--font-sans)">Total</span><span class="mono tab" style="font:600 13px var(--font-mono)">$0.63</span></div>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <span class="hdr">Threads</span>
+              <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden">
+                <div style="display:flex;align-items:center;gap:9px;height:44px;padding:0 12px;border-bottom:1px solid var(--border)"><span style="flex:1;font:500 13px var(--font-sans)">Plan · round 2</span><span class="mono mut" style="font-size:11px" title="This server (board)">SRV</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg></div>
+                <div style="display:flex;align-items:center;gap:9px;height:44px;padding:0 12px"><span style="flex:1;font:500 13px var(--font-sans)">Plan · round 1</span><span class="mono mut" style="font-size:11px" title="This server (board)">SRV</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="note">One column. Measured and Usage merge into a card per step, with cost on the right and resources underneath. The size controls become full-width 4-way segments with 30px tap targets. “Why is this card waiting?” opens 6.1 as a bottom sheet, and threads open full-screen with the worker chip in the header.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═════════ 6 · WHY WAITING ═════════ -->
+  <section id="p6" class="sec" data-screen-label="6 Why waiting">
+    <div class="sh">
+      <h2>6 · Why is this card waiting?</h2>
+      <p>A compact popover lists each worker and why it wasn't used. It opens from the card's reason line, from “Why?” in the card detail status box, or as a bottom sheet on narrow screens. Verdict colours follow the board: blue will clear by itself, amber needs a change, grey means the worker wasn't a candidate.</p>
+    </div>
+    <div class="row" style="gap:32px">
+      <div id="6.1" class="ab" style="width:620px">
+        <div class="abh"><span class="num">6.1</span><span class="abt">Anchored to the card · Z5-215</span></div>
+        <div style="display:flex;gap:10px;align-items:flex-start;padding:14px;border-radius:12px;background:var(--column-bg)">
+          <article class="card" style="width:232px;flex:none;box-shadow:0 0 0 2px color-mix(in srgb,var(--info) 35%,transparent)"><div class="top"><span class="key">Z5-215</span><span style="flex:1"></span></div><div class="ttl">Split the linker step out of the release build</div><div class="rsn q" style="text-decoration:underline;text-underline-offset:2px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span>Waiting for a worker with 45 GB free disk</span></div><div class="meta"><span>2 threads</span></div></article>
+          <div class="pop" style="flex:1;min-width:0">
+            <div class="ph" style="align-items:flex-start"><div style="flex:1;display:flex;flex-direction:column;gap:3px"><span style="font:600 13px var(--font-sans)">Why is Z5-215 waiting?</span><span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg)">Build step · needs 12 cores · 40 GiB · 45 GB (M · M · M)</span></div></div>
+            <div class="wr"><span class="mono" style="font-size:12px">build-01</span><div style="display:flex;flex-direction:column;gap:2px"><span class="wv q">Not enough disk</span><span class="mut" style="font-size:11.5px">Offers 38 GB, needs 45 GB</span><span class="mut" style="font-size:11px">Also: busy, offers 4 of 12 cores</span></div></div>
+            <div class="wr"><span class="mono" style="font-size:12px">build-02</span><div style="display:flex;flex-direction:column;gap:2px"><span class="wv q">Not enough disk</span><span class="mut" style="font-size:11.5px">Offers 30 GB, needs 45 GB</span><span class="mut" style="font-size:11px">Also: busy, no agent slot</span></div></div>
+            <div class="wr"><span class="mono" style="font-size:12px">this server</span><div style="display:flex;flex-direction:column;gap:3px"><span class="wv b">Not ready for z5</span><span class="mut" style="font-size:11.5px">No z5 checkout on the board server</span><span class="btn sm" style="align-self:flex-start;margin-top:3px">Set up z5 here</span></div></div>
+            <div class="wr"><span class="mono" style="font-size:12px">mac-mini</span><div style="display:flex;flex-direction:column;gap:2px"><span class="wv b">Offline</span><span class="mut" style="font-size:11.5px">Last seen 17:52</span></div></div>
+            <div style="padding:9px 14px;border-top:1px solid var(--border);background:var(--muted);font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg)">Checked 18:42. Starts by itself when a ready worker offers enough. Disk S (23 GB) would fit build-01 now. <span style="color:var(--info-fg);font-weight:500">Edit size</span></div>
+          </div>
+        </div>
+        <p class="note">Rows are ordered by how close each worker is to fitting, so the likeliest home is first. The popover updates in place whenever a worker reports new headroom, readiness or quota, and keeps its scroll position. The size suggestion appears only when a change would place the card immediately.</p>
+      </div>
+
+      <div id="6.2" class="ab" style="width:360px">
+        <div class="abh"><span class="num">6.2</span><span class="abt">T3O-66 · provider near quota</span></div>
+        <div class="pop">
+          <div class="ph" style="align-items:flex-start"><div style="flex:1;display:flex;flex-direction:column;gap:3px"><span style="font:600 13px var(--font-sans)">Why is T3O-66 waiting?</span><span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg)">Review step · Codex · worktree on build-02</span></div></div>
+          <div class="wr"><span class="mono" style="font-size:12px">build-02</span><div style="display:flex;flex-direction:column;gap:2px"><span class="wv q">Provider near quota</span><span class="mut" style="font-size:11.5px">Reports Codex at 96% of its weekly quota</span><span class="mut" style="font-size:11px">Also: busy, no agent slot</span></div></div>
+          <div class="wr"><span class="mono" style="font-size:12px">build-01</span><div style="display:flex;flex-direction:column;gap:2px"><span class="wv m">Pinned elsewhere</span><span class="mut" style="font-size:11.5px">The worktree is on build-02. Moving needs the branch pushed.</span></div></div>
+          <div class="wr"><span class="mono" style="font-size:12px">this server</span><div style="display:flex;flex-direction:column;gap:2px"><span class="wv m">Pinned elsewhere</span><span class="mut" style="font-size:11.5px">Also near quota: Codex 93%</span></div></div>
+          <div class="wr"><span class="mono" style="font-size:12px">mac-mini</span><div style="display:flex;flex-direction:column;gap:2px"><span class="wv m">Pinned elsewhere</span><span class="mut" style="font-size:11.5px">Also offline</span></div></div>
+          <div style="padding:9px 14px;border-top:1px solid var(--border);background:var(--muted);display:flex;flex-direction:column;gap:8px"><span style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg)">build-02 reports Codex resets Mon 00:00. A Claude review could start on build-02 once it offers a slot.</span><span style="display:flex;gap:6px"><span class="btn sm">Change model</span><span class="btn sm">Move…</span></span></div>
+        </div>
+      </div>
+
+      <div id="6.3" class="ab" style="width:360px">
+        <div class="abh"><span class="num">6.3</span><span class="abt">T3O-64 · pinned to build-01</span></div>
+        <div class="pop">
+          <div class="ph" style="align-items:flex-start"><div style="flex:1;display:flex;flex-direction:column;gap:3px"><span style="font:600 13px var(--font-sans)">Why is T3O-64 waiting?</span><span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg)">Build step · needs 8 cores · 8 GiB · 12 GB (L · M · M) · pinned</span></div></div>
+          <div class="wr"><span class="mono" style="font-size:12px">build-01</span><div style="display:flex;flex-direction:column;gap:2px"><span class="wv q">Busy</span><span class="mut" style="font-size:11.5px">Offers 4 cores, needs 8</span></div></div>
+          <div class="wr"><span class="mono" style="font-size:12px">this server</span><div style="display:flex;flex-direction:column;gap:2px"><span class="wv m">Pinned elsewhere</span><span class="mut" style="font-size:11.5px">Would fit now: offers 6 cores, t3o ready</span></div></div>
+          <div class="wr"><span class="mono" style="font-size:12px">build-02</span><div style="display:flex;flex-direction:column;gap:2px"><span class="wv m">Pinned elsewhere</span><span class="mut" style="font-size:11.5px">Also busy: no agent slot</span></div></div>
+          <div class="wr"><span class="mono" style="font-size:12px">mac-mini</span><div style="display:flex;flex-direction:column;gap:2px"><span class="wv m">Pinned elsewhere</span><span class="mut" style="font-size:11.5px">Also offline</span></div></div>
+          <div style="padding:9px 14px;border-top:1px solid var(--border);background:var(--muted);display:flex;gap:6px;flex-wrap:wrap"><span class="btn sm">Unpin</span><span class="btn sm">Pin to This server instead</span></div>
+        </div>
+        <p class="note">For a pinned card the pinned worker comes first. The others are greyed and say what they would offer, so you can judge whether the pin is worth the wait.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═════════ 7 · PROJECT RESOURCES ═════════ -->
+  <section id="p7" class="sec" data-screen-label="7 Project resources">
+    <div class="sh">
+      <h2>7 · Settings → Projects → z5 → Resources</h2>
+      <p>The baseline is what an M card reserves. You declare it, and T3o also learns it from measured builds. Declared and learned values sit side by side, and each dimension can pin the declared value. A readiness script in the project's repo decides whether a worker, or the board server, is ready for it.</p>
+    </div>
+    <div id="7.1" class="ab" style="width:1180px">
+      <div class="abh"><span class="num">7.1</span><span class="abt">z5 · Resources tab</span></div>
+      <div style="display:flex;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--bg);box-shadow:var(--shadow-xs)">
+        <aside style="width:220px;flex:none;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:8px;height:52px;padding:0 12px;border-bottom:1px solid var(--border)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg><span style="font:600 14.5px var(--font-sans)">Settings</span></div>
+          <div style="padding:8px;display:flex;flex-direction:column;gap:1px">
+            <div class="navh" style="padding-top:6px">Board</div>
+            <div class="nav">General</div><div class="nav">Pipeline</div><div class="nav">Concurrency</div><div class="nav">Workers</div>
+            <div class="navh">Projects</div>
+            <div class="nav on">z5</div><div class="nav">t3o</div><div class="nav">web</div>
+          </div>
+        </aside>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:8px;height:52px;padding:0 20px;border-bottom:1px solid var(--border)"><span style="font-size:13.5px;color:var(--muted-fg)">Projects</span><span style="color:var(--border)">/</span><span style="font-size:13.5px;font-weight:500">z5</span></div>
+          <div style="display:flex;gap:4px;padding:0 20px;border-bottom:1px solid var(--border)">
+            <span style="padding:10px;font:500 13px var(--font-sans);color:var(--muted-fg)">General</span><span style="padding:10px;font:500 13px var(--font-sans);color:var(--muted-fg)">Pipeline</span><span style="padding:10px;font:500 13px var(--font-sans);border-bottom:2px solid var(--fg);margin-bottom:-1px">Resources</span><span style="padding:10px;font:500 13px var(--font-sans);color:var(--muted-fg)">CI</span>
+          </div>
+          <div style="padding:24px 28px 32px;display:flex;flex-direction:column;gap:24px">
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;flex-direction:column;gap:3px"><h2 style="margin:0;font:600 15px var(--font-sans)">Baseline</h2><p style="margin:0;font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg)">What one M-sized step reserves. S is half, L double and XL four times, chosen per dimension on each card.</p></div>
+              <div class="panel">
+                <div class="th" style="grid-template-columns:110px 150px minmax(0,1fr) 130px 120px"><span>Dimension</span><span>Declared</span><span>Learned</span><span>Planner uses</span><span class="r">Pin declared</span></div>
+                <div class="tr" style="grid-template-columns:110px 150px minmax(0,1fr) 130px 120px;padding:10px 12px">
+                  <span style="font-weight:600">CPU</span><span class="inp" style="width:120px;justify-content:space-between">10<span class="mut" style="font-weight:400">cores</span></span>
+                  <span style="display:flex;flex-direction:column;gap:2px"><span class="mono tab" style="font-weight:600">12 cores</span><span class="mut" style="font-size:11px">p90 11.6, rounded up · 23 builds, last 30 days</span></span>
+                  <span class="mono tab" style="font-weight:600">12 · learned</span><span style="justify-self:end"><span class="sw"></span></span>
+                </div>
+                <div class="tr" style="grid-template-columns:110px 150px minmax(0,1fr) 130px 120px;padding:10px 12px">
+                  <span style="font-weight:600">RAM</span><span class="inp" style="width:120px;justify-content:space-between">36<span class="mut" style="font-weight:400">GiB</span></span>
+                  <span style="display:flex;flex-direction:column;gap:2px"><span class="mono tab" style="font-weight:600">40 GiB</span><span class="mut" style="font-size:11px">peak p90 39.2 · 23 builds</span></span>
+                  <span class="mono tab" style="font-weight:600">40 · learned</span><span style="justify-self:end"><span class="sw"></span></span>
+                </div>
+                <div class="tr" style="grid-template-columns:110px 150px minmax(0,1fr) 130px 120px;padding:10px 12px">
+                  <span style="font-weight:600">Disk</span><span class="inp" style="width:120px;justify-content:space-between">45<span class="mut" style="font-weight:400">GB</span></span>
+                  <span style="display:flex;flex-direction:column;gap:2px"><span class="mono tab mut">41 GB</span><span class="mut" style="font-size:11px">worktree p90 · ignored while pinned</span></span>
+                  <span class="mono tab" style="font-weight:600">45 · declared</span><span style="justify-self:end;display:flex;align-items:center;gap:8px"><span class="mk">1</span><span class="sw on"></span></span>
+                </div>
+                <div style="padding:8px 12px;border-top:1px solid var(--border);background:var(--muted);font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg)">Learned values need at least 5 measured builds, and ignore partial and not-measured steps. Cards already placed keep their reservation when the baseline changes.</div>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;align-items:flex-end;gap:12px"><div style="flex:1;display:flex;flex-direction:column;gap:3px"><h2 style="margin:0;font:600 15px var(--font-sans)">Readiness script</h2><p style="margin:0;max-width:80ch;font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">A script the project keeps in its repo that answers one question: can this machine take z5 cards? T3o runs it in the project checkout on each worker and on the board server, after setup, on Re-check, and after T3o updates. Exit 0 means ready. Anything else means not ready, and the script's output is shown as the reason.</p></div><span class="btn">Run on all workers</span><span class="mk">2</span></div>
+              <div class="panel">
+                <div style="display:grid;grid-template-columns:110px minmax(0,1fr) auto;align-items:center;gap:10px 14px;padding:12px">
+                  <span style="font:500 12.5px var(--font-sans)">Script</span>
+                  <span style="display:flex;align-items:center;gap:10px"><span class="inp mono" style="width:260px;font:400 12.5px var(--font-mono)">.t3/ready.sh</span><span class="st" style="font-size:12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Found on main · 14 lines</span></span>
+                  <span style="font:500 12px var(--font-sans);color:var(--info-fg)">Open in repo</span>
+                  <span style="font:500 12.5px var(--font-sans)">Timeout</span>
+                  <span><span class="inp" style="width:90px;justify-content:space-between">60<span class="mut" style="font-weight:400">s</span></span></span>
+                  <span></span>
+                </div>
+                <div style="padding:0 12px 12px;display:flex;flex-direction:column;gap:6px">
+                  <span style="font:500 11.5px var(--font-sans);color:var(--muted-fg)">Preview · read-only · from origin/main at 4e1a9c2</span>
+<pre class="log" style="color:var(--fg)">#!/usr/bin/env bash
+# Exit 0 when this machine can take z5 cards.
+set -euo pipefail
+
+java -version 2&gt;&amp;1 | grep -q '"21\.' || { echo "✗ JDK 21 needed"; exit 1; }
+echo "✓ JDK 21"
+
+./gradlew --version -q --offline &gt;/dev/null || { echo "✗ Gradle wrapper broken"; exit 1; }
+echo "✓ Gradle wrapper"
+
+rustc --version | grep -q '1\.82' || { echo "✗ Rust 1.82 needed, found $(rustc --version)"; exit 1; }
+echo "✓ Rust 1.82"</pre>
+                </div>
+                <div class="th" style="grid-template-columns:150px 170px minmax(0,1fr) 70px 90px;border-top:1px solid var(--border)"><span>Machine</span><span>Last result</span><span>Output</span><span class="r">Took</span><span></span></div>
+                <div class="tr" style="grid-template-columns:150px 170px minmax(0,1fr) 70px 90px;padding:8px 12px"><span style="display:flex;align-items:center;gap:6px"><span class="mono" style="font-size:11px;font-weight:600;color:var(--muted-fg)">SRV</span>This server</span><span class="st" style="font-size:12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Ready</span><span class="mut" style="font-size:11.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">✓ Rust 1.82 · 08:02</span><span class="r mono tab mut" style="font-size:11.5px">3.1 s</span><span style="justify-self:end"><span class="btn sm">Re-check</span></span></div>
+                <div class="tr" style="grid-template-columns:150px 170px minmax(0,1fr) 70px 90px;padding:8px 12px"><span style="display:flex;align-items:center;gap:6px"><span class="mono" style="font-size:11px;font-weight:600;color:var(--muted-fg)">B01</span>build-01</span><span class="st" style="font-size:12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Ready</span><span class="mut" style="font-size:11.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">✓ Rust 1.82 · 07:40</span><span class="r mono tab mut" style="font-size:11.5px">2.8 s</span><span style="justify-self:end"><span class="btn sm">Re-check</span></span></div>
+                <div class="tr" style="grid-template-columns:150px 170px minmax(0,1fr) 70px 90px;padding:8px 12px"><span style="display:flex;align-items:center;gap:6px"><span class="mono" style="font-size:11px;font-weight:600;color:var(--muted-fg)">B02</span>build-02</span><span class="st" style="font-size:12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>Ready</span><span class="mut" style="font-size:11.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">✓ Rust 1.82 · 07:55</span><span class="r mono tab mut" style="font-size:11.5px">3.4 s</span><span style="justify-self:end"><span class="btn sm">Re-check</span></span></div>
+                <div class="tr" style="grid-template-columns:150px 170px minmax(0,1fr) 70px 90px;padding:8px 12px"><span style="display:flex;align-items:center;gap:6px"><span class="mono" style="font-size:11px;font-weight:600;color:var(--muted-fg)">MAC</span>mac-mini</span><span class="st amb" style="font-size:12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>Not ready · exit 1</span><span class="mut" style="font-size:11.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">✗ Rust 1.82 needed, found rustc 1.78.0 · 17:40</span><span class="r mono tab mut" style="font-size:11.5px">1.2 s</span><span style="justify-self:end"><span class="btn sm" style="opacity:.5" title="Available when mac-mini reconnects">Re-check</span></span></div>
+                <div class="tr" style="grid-template-columns:150px 170px minmax(0,1fr) 70px 90px;padding:8px 12px"><span style="display:flex;align-items:center;gap:6px"><span class="mono" style="font-size:11px;font-weight:600;color:var(--muted-fg)">B03</span>build-03</span><span class="st" style="font-size:12px;color:var(--muted-fg)"><span style="width:11px;height:11px;border-radius:99px;border:1.5px solid var(--input)"></span>Not run</span><span class="mut" style="font-size:11.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">z5 isn't set up on build-03</span><span class="r mono tab mut" style="font-size:11.5px">—</span><span style="justify-self:end"><span class="btn sm">Set up on worker</span></span></div>
+              </div>
+              <div class="box neu" style="max-width:820px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:2px"><circle cx="12" cy="12" r="9"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg><span style="font:400 12px/1.5 var(--font-sans)"><b style="font-weight:600">If there's no script:</b> this panel reads “No .t3/ready.sh in z5”, offers <span style="color:var(--info-fg);font-weight:500">Copy a starter script</span>, and a machine counts as ready as soon as setup finishes.</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <div class="n"><span class="mk">1</span><span><b>Pin declared</b> makes the planner use the declared number and ignore what it has learned. That's useful when you know something the measurements miss: here, the nightly cache grows through the week, so disk is pinned to 45. With pin off, the planner uses the learned value once it has 5 builds, and Declared is the fallback. Hovering Learned shows a static sparkline of the last 23 builds.</span></div>
+        <div class="n"><span class="mk">2</span><span><b>The script belongs to the project.</b> It's edited by committing to the repo, not here; this tab only sets the path and timeout, previews the script and shows results. When the script on the default branch changes, every machine's z5 row in Workers reads “Not checked with this version yet” until you press Run on all workers or the next scheduled check runs. The Output column shows the last line the script printed; clicking a row shows the full output. Changing the path re-runs it everywhere.</span></div>
+      </div>
+    </div>
+  </section>
+</div>
+</x-dc>
+
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light","tsType":"\"light\"|\"dark\""}}'>
+class Component extends DCLogic {
+  applyTheme() { document.documentElement.setAttribute('data-t3-theme', this.props.theme ?? 'light'); }
+  componentDidMount() { this.applyTheme(); }
+  componentDidUpdate() { this.applyTheme(); }
+
+  renderVals() {
+    const S = Object.assign({ sel: { 'build-01': true, unplaced: true }, menuOpen: true, whyKey: 'Z5-215', sz: { cpu: 'M', ram: 'M', disk: 'M' } }, this.state || {});
+    const WORKERS = [
+      { id: 'this', code: 'SRV', label: 'This server', sub: 'Connected · runs planning', amber: false },
+      { id: 'build-01', code: 'B01', label: 'build-01', sub: 'Connected', amber: false },
+      { id: 'build-02', code: 'B02', label: 'build-02', sub: 'Connected', amber: false },
+      { id: 'mac-mini', code: 'MAC', label: 'mac-mini', sub: 'Offline · last seen 17:52', amber: true },
+    ];
+    const COLS = ['Backlog', 'Plan', 'Build', 'Review', 'Done'];
+    const CARDS = [
+      { k: 'WEB-95', t: 'A/B test the newsletter signup copy', c: 0, w: null, s: 'idle', th: 0 },
+      { k: 'T3O-70', t: 'Export worker metrics to Prometheus', c: 0, w: null, s: 'idle', th: 0 },
+      { k: 'T3O-68', t: 'Re-run readiness checks when a worker reconnects', c: 1, w: 'this', s: 'run', th: 1 },
+      { k: 'Z5-224', t: 'Bisect the nightly perf regression', c: 1, w: 'this', s: 'blk', r: 'Set up this project on the board server', th: 0 },
+      { k: 'Z5-212', t: 'Incremental Gradle cache for proto modules', c: 2, w: 'build-01', s: 'run', th: 3 },
+      { k: 'Z5-218', t: 'Bump Rust toolchain to 1.82', c: 2, w: 'build-01', s: 'prep', th: 2 },
+      { k: 'Z5-215', t: 'Split the linker step out of the release build', c: 2, w: null, s: 'q', r: 'Waiting for a worker with 45 GB free disk', th: 2 },
+      { k: 'T3O-64', t: 'Planner: per-dimension size estimates', c: 2, w: 'build-01', pin: true, s: 'q', r: 'Waiting for CPU on build-01', th: 2 },
+      { k: 'T3O-61', t: 'Retry worktree setup after a failed readiness check', c: 2, w: 'build-02', s: 'q', r: 'Worker busy', th: 3 },
+      { k: 'WEB-88', t: 'Dark-mode tokens for the marketing site', c: 2, w: 'this', s: 'run', th: 2 },
+      { k: 'Z5-220', t: 'Profile-guided build of z5-core', c: 2, w: null, s: 'blk', r: 'Too big for any worker', th: 1 },
+      { k: 'T3O-66', t: 'Back off worker heartbeats when the board is idle', c: 3, w: 'build-02', s: 'q', r: 'Provider near quota', th: 1 },
+      { k: 'WEB-91', t: 'Fix hydration warning on /pricing', c: 3, w: 'this', s: 'input', th: 3 },
+      { k: 'Z5-209', t: 'Parallelise integration test shards', c: 3, w: 'build-02', s: 'run', th: 4 },
+      { k: 'Z5-207', t: 'Cache cargo registry between worktrees', c: 4, w: 'build-01', s: 'done', th: 5 },
+      { k: 'WEB-86', t: 'Compress hero images at build time', c: 4, w: 'this', s: 'done', th: 2 },
+    ];
+    const WHY = {
+      'Z5-215': { title: 'Why is Z5-215 waiting?', need: 'Build step · needs 12 cores · 40 GiB · 45 GB (M · M · M)', rows: [
+        { w: 'build-01', v: 'Not enough disk', t: 'q', d: 'Offers 38 GB, needs 45 GB', also: 'busy, offers 4 of 12 cores' },
+        { w: 'build-02', v: 'Not enough disk', t: 'q', d: 'Offers 30 GB, needs 45 GB', also: 'busy, no agent slot' },
+        { w: 'this server', v: 'Not ready for z5', t: 'b', d: 'No z5 checkout on the board server', act: 'Set up z5 here' },
+        { w: 'mac-mini', v: 'Offline', t: 'b', d: 'Last seen 17:52' } ],
+        foot: 'Checked 18:42. Starts by itself when a ready worker offers enough. Disk S (23 GB) would fit build-01 now.', acts: ['Edit size', 'Pin builds to…'] },
+      'T3O-66': { title: 'Why is T3O-66 waiting?', need: 'Review step · Codex · worktree on build-02', rows: [
+        { w: 'build-02', v: 'Provider near quota', t: 'q', d: 'Reports Codex at 96% of its weekly quota', also: 'busy, no agent slot' },
+        { w: 'build-01', v: 'Pinned elsewhere', t: 'm', d: 'Worktree is on build-02; moving needs the branch pushed' },
+        { w: 'this server', v: 'Pinned elsewhere', t: 'm', d: 'Also near quota: Codex 93%' },
+        { w: 'mac-mini', v: 'Pinned elsewhere', t: 'm', d: 'Also offline' } ],
+        foot: 'build-02 reports Codex resets Mon 00:00.', acts: ['Change model', 'Move…'] },
+      'T3O-64': { title: 'Why is T3O-64 waiting?', need: 'Build step · needs 8 cores · 8 GiB · 12 GB (L · M · M) · pinned to build-01', rows: [
+        { w: 'build-01', v: 'Busy', t: 'q', d: 'Offers 4 cores, needs 8' },
+        { w: 'this server', v: 'Pinned elsewhere', t: 'm', d: 'Would fit now: offers 6 cores, t3o ready' },
+        { w: 'build-02', v: 'Pinned elsewhere', t: 'm', d: 'Also busy: no agent slot' },
+        { w: 'mac-mini', v: 'Pinned elsewhere', t: 'm', d: 'Also offline' } ],
+        foot: 'Waits for build-01 because of the pin.', acts: ['Unpin', 'Pin to This server instead'] },
+      'T3O-61': { title: 'Why is T3O-61 waiting?', need: 'Build · round 2 · worktree on build-02', rows: [
+        { w: 'build-02', v: 'Busy', t: 'q', d: "Isn't offering an agent slot right now" },
+        { w: 'build-01', v: 'Pinned elsewhere', t: 'm', d: 'Worktree is on build-02; moving needs a push' },
+        { w: 'this server', v: 'Pinned elsewhere', t: 'm', d: 'Worktree is on build-02' },
+        { w: 'mac-mini', v: 'Pinned elsewhere', t: 'm', d: 'Also offline' } ],
+        foot: 'Starts on build-02 when it offers a slot.', acts: ['Move…'] },
+      'Z5-220': { title: "Why can't Z5-220 start?", need: 'Build step · needs 24 cores · 160 GiB · 90 GB (L · XL · L)', rows: [
+        { w: 'build-01', v: 'Too big', t: 'b', d: 'Declares 128 GiB RAM, needs 160' },
+        { w: 'build-02', v: 'Too big', t: 'b', d: 'Declares 64 GiB RAM and 16 cores' },
+        { w: 'this server', v: 'Too big', t: 'b', d: 'Declares 32 GiB RAM · z5 not set up' },
+        { w: 'mac-mini', v: 'Too big', t: 'b', d: 'Declares 32 GiB RAM · offline' } ],
+        foot: "Waiting won't help. RAM L (80 GiB) fits build-01.", acts: ['Edit size'] },
+      'Z5-224': { title: "Why can't Z5-224 start?", need: 'Plan step · planning always runs on the board server', rows: [
+        { w: 'this server', v: 'Not ready for z5', t: 'b', d: 'No z5 checkout here, so this card can\'t be planned', act: 'Set up z5 here' },
+        { w: 'build-01', v: 'Not used for planning', t: 'm', d: 'z5 is ready here for builds' },
+        { w: 'build-02', v: 'Not used for planning', t: 'm', d: 'z5 is ready here for builds' },
+        { w: 'mac-mini', v: 'Not used for planning', t: 'm', d: 'Offline' } ],
+        foot: 'Setting up needs about 6 GB on the board server.', acts: ['Open Workers'] },
+    };
+
+    const sel = S.sel;
+    const any = Object.keys(sel).some((k) => sel[k]);
+    const match = (c) => !any || (c.w ? !!sel[c.w] : !!sel.unplaced);
+    const setSel = (next) => this.setState({ sel: next });
+    const toggle = (id) => setSel({ ...sel, [id]: !sel[id] });
+
+    const boxStyle = (on) => 'display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex:none;border-radius:5px;' + (on ? 'background:var(--primary);border:1px solid var(--primary)' : 'background:var(--popover);border:1px solid var(--input)');
+
+    const wOpts = WORKERS.map((w) => ({
+      label: w.label, code: w.code, sub: w.sub, count: CARDS.filter((c) => c.w === w.id).length, on: !!sel[w.id],
+      box: boxStyle(!!sel[w.id]),
+      subStyle: 'font:400 11px var(--font-sans);color:' + (w.amber ? 'var(--warning-fg)' : 'var(--muted-fg)'),
+      toggle: () => toggle(w.id),
+    }));
+    const unOpt = { on: !!sel.unplaced, box: boxStyle(!!sel.unplaced), count: CARDS.filter((c) => !c.w).length, toggle: () => toggle('unplaced') };
+
+    const names = [];
+    WORKERS.forEach((w) => { if (sel[w.id]) names.push(w.code); });
+    if (sel.unplaced) names.push('Not placed yet');
+    const wfLabel = !any ? 'Worker' : (names.length <= 2 ? 'Worker: ' + names.join(', ') : 'Worker: ' + names[0] + ' + ' + (names.length - 1));
+    const wfStyle = 'display:inline-flex;align-items:center;height:24px;border-radius:7px;' + (any
+      ? 'border:1px solid color-mix(in srgb,var(--fg) 35%,var(--border));background:var(--accent);color:var(--fg)'
+      : 'border:1px solid var(--input);background:var(--popover);color:var(--muted-fg)') + (S.menuOpen ? ';box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 18%,transparent)' : '');
+
+    const shownCards = CARDS.filter(match);
+    const cols = COLS.map((name, i) => {
+      const cs = shownCards.filter((c) => c.c === i).map((c) => {
+        const placed = !!c.w;
+        const W = WORKERS.find((x) => x.id === c.w);
+        const chip = placed ? W.code : '';
+        const full = placed ? (c.w === 'this' ? 'This server (board)' : c.w) : '';
+        return {
+          k: c.k, t: c.t, th: c.th, r: c.r || '',
+          isRun: c.s === 'run', isPrep: c.s === 'prep', isQ: c.s === 'q', isBlk: c.s === 'blk', isInput: c.s === 'input', isDone: c.s === 'done',
+          pin: !!c.pin, placed, placedNoPin: placed && !c.pin,
+          chip, chipClass: placed ? 'chip' : 'chip un',
+          chipTip: placed ? (c.pin ? 'Pinned to ' + full + '. Click to filter to this worker' : 'On ' + full + '. Click to filter to this worker') : 'Planner picks a worker when the build starts. Click to filter',
+          ring: S.whyKey === c.k ? 'box-shadow:0 0 0 2px color-mix(in srgb,var(--info) 35%,transparent)' : '',
+          why: () => this.setState({ whyKey: c.k }),
+          pick: (e) => {
+            const id = placed ? c.w : 'unplaced';
+            if (e && e.shiftKey) setSel({ ...sel, [id]: true }); else setSel({ [id]: true });
+          },
+        };
+      });
+      return { name, count: cs.length, cards: cs, empty: cs.length === 0 };
+    });
+
+    const wd = S.whyKey ? WHY[S.whyKey] : null;
+    const why = wd ? {
+      show: true, title: wd.title, need: wd.need, foot: wd.foot,
+      acts: wd.acts.map((l) => ({ l })),
+      rows: wd.rows.map((r) => ({ w: r.w, v: r.v, d: r.d, vClass: 'wv ' + r.t, hasAlso: !!r.also, also: r.also || '', hasAct: !!r.act, act: r.act || '' })),
+    } : { show: false, title: '', need: '', foot: '', acts: [], rows: [] };
+
+    const selParts = [];
+    WORKERS.forEach((w) => { if (sel[w.id]) selParts.push(w.label); });
+    if (sel.unplaced) selParts.push('Not placed yet');
+
+    // Resource profile (card detail 3.1)
+    const MULT = { S: 0.5, M: 1, L: 2, XL: 4 };
+    const DIMS = [
+      { id: 'cpu', label: 'CPU', base: 12, unit: 'cores', max: 32, maxW: 'build-01', fmt: (v) => (v % 1 ? v.toFixed(0) : v) + ' cores' },
+      { id: 'ram', label: 'RAM', base: 40, unit: 'GiB', max: 128, maxW: 'build-01', fmt: (v) => v + ' GiB' },
+      { id: 'disk', label: 'Disk', base: 45, unit: 'GB', max: 1000, maxW: 'build-01', fmt: (v) => (v % 1 ? v.toFixed(1) : v) + ' GB' },
+    ];
+    let tooBigParts = [];
+    const dims = DIMS.map((d) => {
+      const cur = S.sz[d.id];
+      const v = d.base * MULT[cur];
+      const big = v > d.max;
+      if (big) tooBigParts.push(d.label + ' ' + cur + ' needs ' + d.fmt(v) + '; the largest worker (' + d.maxW + ') declares ' + d.fmt(d.max) + '.');
+      return {
+        label: d.label, value: d.fmt(v),
+        valStyle: 'text-align:right;font:500 12px var(--font-mono);font-variant-numeric:tabular-nums;color:' + (big ? 'var(--warning-fg)' : 'var(--fg)'),
+        pills: ['S', 'M', 'L', 'XL'].map((l) => ({
+          l, cls: l === cur ? 'sp on' : 'sp',
+          tip: l + ' · ' + d.fmt(d.base * MULT[l]) + (l === 'M' ? ' · planner' : ''),
+          pick: () => this.setState({ sz: { ...S.sz, [d.id]: l } }),
+        })),
+      };
+    });
+    const sizeEdited = S.sz.cpu !== 'M' || S.sz.ram !== 'M' || S.sz.disk !== 'M';
+
+    return {
+      wfLabel, wfStyle, anySel: any, menuOpen: S.menuOpen,
+      toggleMenu: () => this.setState({ menuOpen: !S.menuOpen }),
+      clearSel: () => setSel({}),
+      wOpts, unOpt, cols, why,
+      closeWhy: () => this.setState({ whyKey: null }),
+      shown: shownCards.length, total: CARDS.length, selText: selParts.join(' or '),
+      dims, sizeEdited, resetSize: () => this.setState({ sz: { cpu: 'M', ram: 'M', disk: 'M' } }),
+      tooBig: tooBigParts.length > 0, tooBigText: 'Too big for any worker. ' + tooBigParts.join(' '),
+    };
+  }
+}
+</script>
+</body>
+</html>
