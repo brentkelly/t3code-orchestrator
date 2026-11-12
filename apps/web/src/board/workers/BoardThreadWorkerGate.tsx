@@ -48,7 +48,7 @@ export function BoardThreadWorkerGate({
 }) {
   const access = useWorkerThreadAccess(worker);
   const open = useAtomCommand(openWorkerThreadEnvironment, { reportFailure: false });
-  // One automatic mint per mount and reason; after that the human retries.
+  // One automatic mint per reason until one succeeds; after a failure the human retries.
   const attempted = useRef(new Set<MintReason>());
   const [failure, setFailure] = useState<{
     readonly reason: MintReason;
@@ -63,6 +63,8 @@ export function BoardThreadWorkerGate({
       label: worker.label,
     }).then((result) => {
       if (result._tag === "Success") {
+        // A later refusal (expiry, revocation) in this mount re-mints once more.
+        attempted.current.delete(reason);
         setFailure(null);
         return;
       }
