@@ -157,6 +157,27 @@ const cases: ReadonlyArray<Case> = [
     },
   },
   {
+    name: "keeps a section whole across an indented # line in its body",
+    body: "## Steps\n- build:\n\n        # build first\n        make\n\nAfter.\n\n## Rollout\nShip it.\n",
+    edits: [{ section: "## Steps", new_text: "## Steps\nNone.\n" }],
+    expected: "## Steps\nNone.\n\n## Rollout\nShip it.\n",
+  },
+  {
+    name: "ends the plan with one newline when the last section's new_text lacks one",
+    edits: [{ section: "## Tests", new_text: "## Tests\nProperty based." }],
+    expected: PLAN.replace("## Tests\nTable driven.\n", "## Tests\nProperty based.\n"),
+  },
+  {
+    name: "drops the blank separator line when deleting the last section",
+    edits: [{ section: "## Tests", new_text: "" }],
+    expected: PLAN.replace("\n## Tests\nTable driven.\n", ""),
+  },
+  {
+    name: "refuses a multi-line section value",
+    edits: [{ section: "## Rollout\nShip it.", new_text: "## Rollout\nx\n" }],
+    expected: { error: 'edits[0]: section must be a markdown heading line like "## Name"' },
+  },
+  {
     name: "refuses a section value that is not a heading",
     edits: [{ section: "Rollout", new_text: "x" }],
     expected: { error: 'edits[0]: section must be a markdown heading line like "## Name"' },

@@ -25,6 +25,11 @@ const normaliseNewlines = (text: string): string => text.replace(/\r\n/g, "\n");
     closing sequence (`## Name ##`) do not count. */
 const headingKey = (line: string): string => line.trim().replace(/[ \t]+#+$/, "");
 
+/** CommonMark: four or more leading spaces (or a tab) make an indented code
+    line, never a heading. `briefHeadingLevel` trims first, so guard here. */
+const planHeadingLevel = (line: string): number | null =>
+  /^ {0,3}#/.test(line) ? briefHeadingLevel(line) : null;
+
 const countOccurrences = (haystack: string, needle: string): number => {
   let count = 0;
   for (
@@ -76,19 +81,19 @@ function applySectionEdit(
       error: `the plan has an unclosed code fence at "${unclosed}"; fix it with a text edit first`,
     };
   }
-  const level = briefHeadingLevel(section);
+  const level = section.includes("\n") ? null : planHeadingLevel(section);
   if (level === null) {
     return { error: 'section must be a markdown heading line like "## Name"' };
   }
   const target = headingKey(section);
-  if (newText.length > 0 && briefHeadingLevel(newText.split("\n", 1)[0]!) === null) {
+  if (newText.length > 0 && planHeadingLevel(newText.split("\n", 1)[0]!) === null) {
     return {
       error: `new_text must start with the section's heading line, e.g. "${target}"; use "" to delete the section`,
     };
   }
   const lines = body.split("\n");
   const headings = scanBriefLines(lines).structural.filter(
-    (index) => briefHeadingLevel(lines[index]!) !== null,
+    (index) => planHeadingLevel(lines[index]!) !== null,
   );
   const matches = headings.filter((index) => headingKey(lines[index]!) === target);
   if (matches.length === 0) {
@@ -108,7 +113,7 @@ function applySectionEdit(
   }
   const start = matches[0]!;
   const end =
-    headings.find((index) => index > start && briefHeadingLevel(lines[index]!)! <= level) ??
+    headings.find((index) => index > start && planHeadingLevel(lines[index]!)! <= level) ??
     lines.length;
 
   const before = lines.slice(0, start).join("\n");
@@ -118,7 +123,12 @@ function applySectionEdit(
   const replacement =
     newText.length > 0 && hasAfter ? `${newText.replace(/\n+$/, "")}\n\n` : newText;
   const head = start === 0 ? "" : `${before}\n`;
-  return { body: hasAfter ? `${head}${replacement}${after}` : `${head}${replacement}` };
+  // The last section ends the plan with exactly one newline.
+  return {
+    body: hasAfter
+      ? `${head}${replacement}${after}`
+      : `${head}${replacement}`.replace(/\n*$/, "\n"),
+  };
 }
 
 /** Applies `edits` in order, all or nothing. */
