@@ -186,6 +186,40 @@ export function workerProxyRouteIds(
   });
 }
 
+/** The environments a board tagged for workers it no longer has; `workerIds: null` means the
+    board itself is gone, so every environment it tagged is stale. */
+export function staleWorkerEnvironmentIds(
+  tags: Readonly<
+    Record<string, { readonly boardEnvironmentId: string; readonly workerId: string }>
+  >,
+  input: { readonly boardEnvironmentId: string; readonly workerIds: ReadonlyArray<string> | null },
+): ReadonlyArray<string> {
+  const keep = new Set(input.workerIds ?? []);
+  return Object.entries(tags).flatMap(([environmentId, tag]) =>
+    tag.boardEnvironmentId === input.boardEnvironmentId && !keep.has(tag.workerId)
+      ? [environmentId]
+      : [],
+  );
+}
+
+export type WorkerThreadMintReason = "register" | "reauthorize";
+
+/** What the thread gate does when access changes: `reset` forgets past mints once the thread
+    opens, `mint` mints once per reason, and `refused` reports a fresh mint the worker refused. */
+export function workerThreadMintStep(input: {
+  readonly access: WorkerThreadAccess;
+  readonly attempted: ReadonlySet<WorkerThreadMintReason>;
+  readonly minting: boolean;
+}):
+  | { readonly kind: "reset" | "none" }
+  | { readonly kind: "mint" | "refused"; readonly reason: WorkerThreadMintReason } {
+  const { access } = input;
+  if (access === "open") return { kind: "reset" };
+  if (access !== "register" && access !== "reauthorize") return { kind: "none" };
+  if (!input.attempted.has(access)) return { kind: "mint", reason: access };
+  return input.minting ? { kind: "none" } : { kind: "refused", reason: access };
+}
+
 export interface WorkerThreadAccessCopy {
   readonly title: string;
   readonly detail: string;

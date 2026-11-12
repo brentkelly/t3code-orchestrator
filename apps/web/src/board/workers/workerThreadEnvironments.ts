@@ -22,7 +22,12 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { readPreparedConnection } from "../../state/session";
-import { boardConnectionIsDirect, workerProxyAddress, workerProxyRouteIds } from "./threadWorker";
+import {
+  boardConnectionIsDirect,
+  staleWorkerEnvironmentIds,
+  workerProxyAddress,
+  workerProxyRouteIds,
+} from "./threadWorker";
 
 const STORAGE_KEY = "t3o:board-worker-environments:v1";
 
@@ -161,19 +166,15 @@ const forgetEnvironment = Effect.fn("BoardWorkerThreads.forget")(function* (
   writeWorkerEnvironmentTags(rest);
 });
 
-/** Remove the environments a board tagged for workers it no longer has. */
+/** Remove the environments a board tagged for workers it no longer has (`workerIds: null`:
+    the board itself was removed from this client). */
 export const pruneWorkerThreadEnvironments = createRuntimeCommand(connectionAtomRuntime, {
   label: "web:board:prune-worker-thread-environments",
   execute: Effect.fn("BoardWorkerThreads.prune")(function* (input: {
     readonly boardEnvironmentId: EnvironmentId;
-    readonly workerIds: ReadonlyArray<string>;
+    readonly workerIds: ReadonlyArray<string> | null;
   }) {
-    const keep = new Set(input.workerIds);
-    const stale = Object.entries(readWorkerEnvironmentTags()).flatMap(([environmentId, tag]) =>
-      tag.boardEnvironmentId === input.boardEnvironmentId && !keep.has(tag.workerId)
-        ? [EnvironmentId.make(environmentId)]
-        : [],
-    );
-    for (const environmentId of stale) yield* forgetEnvironment(environmentId);
+    const stale = staleWorkerEnvironmentIds(readWorkerEnvironmentTags(), input);
+    for (const environmentId of stale) yield* forgetEnvironment(EnvironmentId.make(environmentId));
   }),
 });

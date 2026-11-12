@@ -15,6 +15,7 @@ import {
   boardThreadWorker,
   isWorkerProxyEntry,
   LOCAL_WORKER_LABEL,
+  staleWorkerEnvironmentIds,
   threadWorkerChip,
   threadWorkerOpensOn,
   threadWorkerRanOn,
@@ -22,6 +23,7 @@ import {
   workerProxyRouteIds,
   workerThreadAccess,
   workerThreadAccessCopy,
+  workerThreadMintStep,
 } from "./threadWorker";
 
 const BOARD = EnvironmentId.make("env-board");
@@ -256,5 +258,38 @@ describe("reaching a worker through the board", () => {
         target: { _tag: "SshConnectionTarget" },
       } as unknown as Parameters<typeof boardConnectionIsDirect>[0]),
     ).toBe(false);
+  });
+});
+
+describe("a board's tagged worker environments", () => {
+  const tags = {
+    "env-w1": { boardEnvironmentId: "env-board", workerId: "env-w1" },
+    "env-w2": { boardEnvironmentId: "env-board", workerId: "env-w2" },
+    "env-x1": { boardEnvironmentId: "env-other-board", workerId: "env-x1" },
+  };
+
+  it.each([
+    ["a removed worker's", ["env-w1"], ["env-w2"]],
+    ["none while every worker is listed", ["env-w1", "env-w2"], []],
+    ["every one when the board itself is gone", null, ["env-w1", "env-w2"]],
+  ] as const)("are stale: %s", (_name, workerIds, expected) => {
+    expect(staleWorkerEnvironmentIds(tags, { boardEnvironmentId: "env-board", workerIds })).toEqual(
+      expected,
+    );
+  });
+});
+
+describe("the thread gate's mint", () => {
+  it.each([
+    ["open", [], false, { kind: "reset" }],
+    ["opening", [], false, { kind: "none" }],
+    ["register", [], false, { kind: "mint", reason: "register" }],
+    ["reauthorize", ["register"], false, { kind: "mint", reason: "reauthorize" }],
+    ["reauthorize", ["reauthorize"], true, { kind: "none" }],
+    ["reauthorize", ["reauthorize"], false, { kind: "refused", reason: "reauthorize" }],
+  ] as const)("on %s after %j (minting %s) is %j", (access, attempted, minting, expected) => {
+    expect(workerThreadMintStep({ access, attempted: new Set(attempted), minting })).toEqual(
+      expected,
+    );
   });
 });

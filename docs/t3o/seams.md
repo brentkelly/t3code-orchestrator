@@ -1237,6 +1237,7 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/binCli.ts`                                                     | `T3O-84`          | `workerCommand` (`t3 worker join/leave/boards/status/config`) joins the CLI's subcommands                                                                                                                                          | import + one list entry                                                      |
 | `apps/server/src/auth/EnvironmentAuth.ts`                                       | `T3O-84`          | The managed-policy sweep also revokes sessions a worker minted for a board (`t3o-board:`, `t3o-board-user:` subjects) when remote clients are disallowed                                                                           | import + one predicate clause                                                |
 | `packages/contracts/src/index.ts`                                               | `T3O-84`          | Re-export `boardWorkerTunnel.ts`                                                                                                                                                                                                   | one-line re-export                                                           |
+| `apps/web/src/components/settings/ConnectionsSettings.tsx`                      | `T3O-84`          | Removing a saved backend prunes the worker environments it tagged as a board (`board/workers/workerThreadEnvironments.ts`)                                                                                                         | import + one command + one call                                              |
 | `apps/server/scripts/migrate-dev-db.ts`                                         | `T3O-71`          | `workspaceRoots` input, so `t3 import-threads` reuses the copy-and-prune; the CLI block runs only when this file is the entry                                                                                                      | one optional input + filter fragment + entry guard                           |
 | `packages/contracts/src/scheduledTask.ts`                                       | `T3O-78`          | Import the board rule schema factory                                                                                                                                                                                               | one-line append (import)                                                     |
 | `packages/contracts/src/scheduledTask.ts`                                       | `T3O-78`          | `BoardWebhookAction` built over upstream's webhook filter schema                                                                                                                                                                   | two-line append                                                              |
@@ -1460,8 +1461,9 @@ The board proxies a worker's environment at a path prefix on its own origin
 at the root of its URL, so these sites now go through
 `packages/client-runtime/src/environment/basePath.ts` (`joinEnvironmentPath`,
 `environmentSocketUrl`, `environmentAddressKey`, `withEnvironmentBasePath`). Each carries a
-`T3o: keep a proxied environment's base path (T3O-84).` marker. A root base produces byte-identical
-URLs and connection ids to upstream, so persisted ids do not change.
+`T3o: keep a proxied environment's base path (T3O-84).` marker. Only a worker proxy prefix counts
+as a base path: a root base, or a base with any other path, produces byte-identical URLs and
+connection ids to upstream, so persisted ids do not change.
 
 | File                                                   | Function                                                 |
 | ------------------------------------------------------ | -------------------------------------------------------- |

@@ -15,7 +15,7 @@ import { readPreparedConnection } from "../../state/session";
 import { BoardSettingsCard, BoardSettingsCardRow } from "../settings/boardSettingsCards";
 import { useBoardSettingsContext } from "../settings/BoardSettingsLayout";
 import { useBoardSettings, useUpdateBoardSettings } from "../useBoardEnvironmentId";
-import { useBoardWorkers } from "./boardWorkersState";
+import { useBoardWorkers, usePruneWorkerThreadEnvironments } from "./boardWorkersState";
 import { ProjectCheckoutsSection } from "./ProjectCheckoutsSection";
 import { AddWorkerButton, useAddWorker, WorkersSection } from "./WorkersSection";
 
@@ -29,6 +29,8 @@ function fallbackBoardUrl(environmentId: EnvironmentId): string {
 export function BoardWorkersSettingsPage() {
   const { environmentId, canWrite } = useBoardSettingsContext();
   const workers = useBoardWorkers(environmentId);
+  // A worker removed here takes its proxied environment with it.
+  usePruneWorkerThreadEnvironments(environmentId);
   const addWorker = useAddWorker({ environmentId, workers });
   const boardAddress = useBoardSettings((settings) => settings.board.workers.boardAddress);
   const workersAnchor = searchableSetting("board-workers");

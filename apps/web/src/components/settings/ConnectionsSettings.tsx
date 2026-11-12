@@ -138,6 +138,8 @@ import {
   SavedBackendListRow,
 } from "./SavedEnvironmentRows";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
+// T3o: a removed board takes its workers' proxied environments with it (T3O-84).
+import { pruneWorkerThreadEnvironments } from "../../board/workers/workerThreadEnvironments";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
@@ -248,6 +250,10 @@ function ConnectionsSettingsContent({
   const primaryEnvironment = usePrimaryEnvironment();
   const peerLinkHosts = usePeerLinkHosts();
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
+  // T3o: a removed board takes its workers' proxied environments with it (T3O-84).
+  const pruneWorkerEnvironments = useAtomCommand(pruneWorkerThreadEnvironments, {
+    reportFailure: false,
+  });
   const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
     reportFailure: false,
   });
@@ -672,6 +678,8 @@ function ConnectionsSettingsContent({
     setSavedBackendError(null);
     const result = await removeEnvironment(environmentId);
     setRemovingSavedEnvironmentId(null);
+    // T3o: a removed board takes its workers' proxied environments with it (T3O-84).
+    if (result._tag === "Success") void pruneWorkerEnvironments({ boardEnvironmentId: environmentId, workerIds: null });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       const message = error instanceof Error ? error.message : "Failed to remove backend.";

@@ -25,12 +25,14 @@ import {
   isWorkerProxyEntry,
   workerThreadAccess,
   workerThreadAccessCopy,
+  workerThreadMintStep,
   type BoardThreadWorker,
   type WorkerThreadAccess,
+  type WorkerThreadMintReason,
 } from "./threadWorker";
 import { openWorkerThreadEnvironment } from "./workerThreadEnvironments";
 
-type MintReason = "register" | "reauthorize";
+type MintReason = WorkerThreadMintReason;
 
 /** This device's way into a thread on `worker`. */
 function useWorkerThreadAccess(worker: BoardThreadWorker): WorkerThreadAccess {
@@ -100,22 +102,25 @@ export function BoardThreadWorkerGate({
   };
 
   // `mint` is a fresh closure every render; the access state is what matters.
-  const mintFor = useEffectEvent((reason: MintReason) => {
-    if (!attempted.current.has(reason)) {
-      mint(reason);
-    } else if (!minting.current) {
+  const stepFor = useEffectEvent((next: WorkerThreadAccess) => {
+    const step = workerThreadMintStep({
+      access: next,
+      attempted: attempted.current,
+      minting: minting.current,
+    });
+    if (step.kind === "reset") attempted.current.clear();
+    if (step.kind === "mint") mint(step.reason);
+    if (step.kind === "refused") {
       // The worker refused what was just minted: a fresh mint would be refused too.
       setFailure({
-        reason,
+        reason: step.reason,
         message: `${worker.label} refused the access the board just issued. Retry, or check the worker's clock and any proxy in front of the board.`,
       });
     }
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the worker's proxied environment with the client's connection registry, once per reason until it opens.
   useEffect(() => {
-    // A later refusal (expiry, revocation) after the thread opened re-mints once more.
-    if (access === "open") attempted.current.clear();
-    if (access === "register" || access === "reauthorize") mintFor(access);
+    stepFor(access);
   }, [access]);
 
   if (access === "open") return <>{children(worker.environmentId)}</>;
