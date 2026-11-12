@@ -81,6 +81,11 @@ function applySectionEdit(
     return { error: 'section must be a markdown heading line like "## Name"' };
   }
   const target = headingKey(section);
+  if (newText.length > 0 && briefHeadingLevel(newText.split("\n", 1)[0]!) === null) {
+    return {
+      error: `new_text must start with the section's heading line, e.g. "${target}"; use "" to delete the section`,
+    };
+  }
   const lines = body.split("\n");
   const headings = scanBriefLines(lines).structural.filter(
     (index) => briefHeadingLevel(lines[index]!) !== null,
@@ -109,8 +114,9 @@ function applySectionEdit(
   const before = lines.slice(0, start).join("\n");
   const after = lines.slice(end).join("\n");
   const hasAfter = end < lines.length;
-  let replacement = newText;
-  if (replacement.length > 0 && hasAfter && !replacement.endsWith("\n")) replacement += "\n";
+  // One blank line before the following heading, however new_text ends.
+  const replacement =
+    newText.length > 0 && hasAfter ? `${newText.replace(/\n+$/, "")}\n\n` : newText;
   const head = start === 0 ? "" : `${before}\n`;
   return { body: hasAfter ? `${head}${replacement}${after}` : `${head}${replacement}` };
 }
@@ -141,6 +147,13 @@ export function applyBoardPlanEdits(
       return { ok: false, index, message: `edits[${index}]: ${result.error}` };
     }
     body = result.body;
+  }
+  if (body.trim().length === 0) {
+    return {
+      ok: false,
+      index: null,
+      message: "edits would leave the plan empty; use board_write_plan to replace it",
+    };
   }
   if (body === original) {
     return { ok: false, index: null, message: "edits made no change to the plan" };

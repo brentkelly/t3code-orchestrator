@@ -125,19 +125,24 @@ const cases: ReadonlyArray<Case> = [
     expected: PLAN.replace("## Rollout\nShip it.\n\n", ""),
   },
   {
-    name: "adds the newline new_text lacks when content follows",
+    name: "keeps one blank line before the next heading however new_text ends",
     edits: [{ section: "## Rollout", new_text: "## Rollout\nShip it slowly." }],
-    expected: PLAN.replace("## Rollout\nShip it.\n\n", "## Rollout\nShip it slowly.\n"),
+    expected: PLAN.replace("## Rollout\nShip it.\n\n", "## Rollout\nShip it slowly.\n\n"),
+  },
+  {
+    name: "collapses extra trailing blank lines before the next heading",
+    edits: [{ section: "## Rollout", new_text: "## Rollout\nShip it slowly.\n\n\n\n" }],
+    expected: PLAN.replace("## Rollout\nShip it.\n\n", "## Rollout\nShip it slowly.\n\n"),
   },
   {
     name: "matches a heading despite trailing whitespace and a closing sequence",
     body: "## Rollout ##  \nShip it.\n## Tests\nx\n",
     edits: [{ section: "## Rollout   ", new_text: "## Rollout\nShip.\n" }],
-    expected: "## Rollout\nShip.\n## Tests\nx\n",
+    expected: "## Rollout\nShip.\n\n## Tests\nx\n",
   },
   {
     name: "treats the # level as part of the match",
-    edits: [{ section: "### Rollout", new_text: "x" }],
+    edits: [{ section: "### Rollout", new_text: "### Rollout\nx" }],
     expected: {
       error:
         'edits[0]: no heading "### Rollout"; headings are: # Plan, ## Design, ### Details, ## Rollout, ## Tests',
@@ -155,6 +160,14 @@ const cases: ReadonlyArray<Case> = [
     name: "refuses a section value that is not a heading",
     edits: [{ section: "Rollout", new_text: "x" }],
     expected: { error: 'edits[0]: section must be a markdown heading line like "## Name"' },
+  },
+  {
+    name: "refuses a new_text that does not start with a heading",
+    edits: [{ section: "## Rollout", new_text: "Ship it slowly." }],
+    expected: {
+      error:
+        'edits[0]: new_text must start with the section\'s heading line, e.g. "## Rollout"; use "" to delete the section',
+    },
   },
   {
     name: "ignores # lines inside ``` and ~~~ fences as targets and as boundaries",
@@ -181,7 +194,7 @@ const cases: ReadonlyArray<Case> = [
     name: "treats an end-marker line as ordinary text",
     body: "## A\na\n<!-- end ## A -->\ntrailing\n## B\nb\n",
     edits: [{ section: "## A", new_text: "## A\nnew\n" }],
-    expected: "## A\nnew\n## B\nb\n",
+    expected: "## A\nnew\n\n## B\nb\n",
   },
 
   // Shape and batch
@@ -213,6 +226,11 @@ const cases: ReadonlyArray<Case> = [
       error:
         'edits[1]: no heading "## Missing"; headings are: # Plan, ## Design, ### Details, ## Rollout, ## Tests',
     },
+  },
+  {
+    name: "rejects edits that leave the plan empty",
+    edits: [{ section: "# Plan", new_text: "" }],
+    expected: { error: "edits would leave the plan empty; use board_write_plan to replace it" },
   },
   {
     name: "rejects edits that leave the plan unchanged",
