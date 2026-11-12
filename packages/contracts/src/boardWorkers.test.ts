@@ -177,7 +177,11 @@ describe("worker abbreviations (T3O-84)", () => {
     ["Linux box", [], "LIN"],
     ["srv-room", [], "SR"],
     ["x", ["X"], "X1"],
-    ["mac-mini", ["MAC", "MM", "MA1", "MA2", "MA3", "MA4", "MA5", "MA6", "MA7", "MA8", "MA9"], "M10"],
+    [
+      "mac-mini",
+      ["MAC", "MM", "MA1", "MA2", "MA3", "MA4", "MA5", "MA6", "MA7", "MA8", "MA9"],
+      "M10",
+    ],
     ["42", [], "42"],
   ] as const)("%s, with %j taken, suggests %s", (label, taken, expected) => {
     expect(suggestBoardWorkerAbbreviation(label, taken)).toBe(expected);

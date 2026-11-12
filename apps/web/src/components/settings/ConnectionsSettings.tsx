@@ -679,7 +679,8 @@ function ConnectionsSettingsContent({
     const result = await removeEnvironment(environmentId);
     setRemovingSavedEnvironmentId(null);
     // T3o: a removed board takes its workers' proxied environments with it (T3O-84).
-    if (result._tag === "Success") void pruneWorkerEnvironments({ boardEnvironmentId: environmentId, workerIds: null });
+    if (result._tag === "Success")
+      void pruneWorkerEnvironments({ boardEnvironmentId: environmentId, workerIds: null });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       const message = error instanceof Error ? error.message : "Failed to remove backend.";
