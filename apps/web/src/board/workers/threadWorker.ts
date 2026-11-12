@@ -136,23 +136,49 @@ export function workerThreadAccess(input: {
   }
 }
 
-/** Whether a worker environment's registered address is this board's proxy for it; null while
-    either address is unresolved. */
+/** Whether a worker environment's saved routes include this board's proxy for it, read from
+    the saved entry so it holds while the entry isn't connected; null while unresolved. */
 export function isWorkerProxyEntry(input: {
   readonly workerId: string;
   readonly boardHttpBaseUrl: string | null;
-  readonly entryHttpBaseUrl: string | null;
+  readonly entryHttpBaseUrls: ReadonlyArray<string> | null;
 }): boolean | null {
-  if (input.boardHttpBaseUrl === null || input.entryHttpBaseUrl === null) return null;
+  if (input.boardHttpBaseUrl === null || input.entryHttpBaseUrls === null) return null;
+  let expected: string;
   try {
-    const expected = workerProxyAddress(
+    expected = workerProxyAddress(
       input.boardHttpBaseUrl,
       boardWorkerProxyPath(input.workerId),
     ).httpBaseUrl;
-    return new URL(input.entryHttpBaseUrl).toString() === expected;
   } catch {
     return false;
   }
+  return input.entryHttpBaseUrls.some((url) => {
+    try {
+      return new URL(url).toString() === expected;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** The routes a board added for a worker's proxy, on any board address; a user's own pairing
+    to the same machine is never one of them. */
+export function workerProxyRouteIds(
+  routes: ReadonlyArray<{ readonly id: string; readonly httpBaseUrl: string | null }>,
+  workerId: string,
+): ReadonlyArray<string> {
+  const suffix = boardWorkerProxyPath(workerId).replace(/^\/*/, "/").replace(/\/*$/, "/");
+  return routes.flatMap((route) => {
+    if (route.httpBaseUrl === null) return [];
+    try {
+      return new URL(route.httpBaseUrl).pathname.replace(/\/*$/, "/").endsWith(suffix)
+        ? [route.id]
+        : [];
+    } catch {
+      return [];
+    }
+  });
 }
 
 export interface WorkerThreadAccessCopy {

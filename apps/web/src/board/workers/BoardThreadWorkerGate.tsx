@@ -4,7 +4,11 @@
  * once; until the thread can open, the pane says why instead of showing the chat.
  */
 import { useAtomValue } from "@effect/atom-react";
-import { AVAILABLE_CONNECTION_STATE } from "@t3tools/client-runtime/connection";
+import {
+  AVAILABLE_CONNECTION_STATE,
+  connectionRoutes,
+  routeHttpBaseUrl,
+} from "@t3tools/client-runtime/connection";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
@@ -33,10 +37,11 @@ function useWorkerThreadAccess(worker: BoardThreadWorker): WorkerThreadAccess {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const state = useAtomValue(environmentCatalog.stateAtom(worker.environmentId));
   const prepared = Option.getOrNull(usePreparedConnection(worker.boardEnvironmentId));
-  const entry = Option.getOrNull(usePreparedConnection(worker.environmentId));
-  const connection = catalog.entries.has(worker.environmentId)
-    ? Option.getOrElse(AsyncResult.value(state), () => AVAILABLE_CONNECTION_STATE)
-    : null;
+  const entry = catalog.entries.get(worker.environmentId);
+  const connection =
+    entry !== undefined
+      ? Option.getOrElse(AsyncResult.value(state), () => AVAILABLE_CONNECTION_STATE)
+      : null;
   return workerThreadAccess({
     worker,
     connection,
@@ -44,7 +49,10 @@ function useWorkerThreadAccess(worker: BoardThreadWorker): WorkerThreadAccess {
     throughBoard: isWorkerProxyEntry({
       workerId: worker.workerId,
       boardHttpBaseUrl: prepared?.httpBaseUrl ?? null,
-      entryHttpBaseUrl: entry?.httpBaseUrl ?? null,
+      entryHttpBaseUrls:
+        entry === undefined
+          ? null
+          : connectionRoutes(entry).flatMap((route) => routeHttpBaseUrl(route) ?? []),
     }),
   });
 }

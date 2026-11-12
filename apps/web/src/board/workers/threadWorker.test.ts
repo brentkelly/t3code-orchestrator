@@ -19,6 +19,7 @@ import {
   threadWorkerOpensOn,
   threadWorkerRanOn,
   workerProxyAddress,
+  workerProxyRouteIds,
   workerThreadAccess,
   workerThreadAccessCopy,
 } from "./threadWorker";
@@ -174,16 +175,29 @@ describe("opening a thread on a worker", () => {
     expect(access({ phase: "backoff", attempt: 5 }, unknown)).toBe("offline");
   });
 
-  it("knows the board's proxy entry for a worker by its address", () => {
+  it("knows the board's proxy route for a worker among an entry's saved routes", () => {
     const board = "https://board.example/";
     const proxied = "https://board.example/api/t3o/workers/env-w1/";
-    const check = (entry: string | null, boardUrl: string | null = board) =>
-      isWorkerProxyEntry({ workerId: W1, boardHttpBaseUrl: boardUrl, entryHttpBaseUrl: entry });
-    expect(check(proxied)).toBe(true);
-    expect(check("http://100.64.0.2:3773/")).toBe(false);
-    expect(check("https://old-board.example/api/t3o/workers/env-w1/")).toBe(false);
-    expect(check(proxied, null)).toBeNull();
+    const own = "http://100.64.0.2:3773/";
+    const check = (entry: ReadonlyArray<string> | null, boardUrl: string | null = board) =>
+      isWorkerProxyEntry({ workerId: W1, boardHttpBaseUrl: boardUrl, entryHttpBaseUrls: entry });
+    expect(check([proxied])).toBe(true);
+    expect(check([own, proxied])).toBe(true);
+    expect(check([own])).toBe(false);
+    expect(check(["https://old-board.example/api/t3o/workers/env-w1/"])).toBe(false);
+    expect(check([proxied], null)).toBeNull();
     expect(check(null)).toBeNull();
+  });
+
+  it("forgets only the board's proxy routes, never the user's own pairing", () => {
+    const routes = [
+      { id: "own", httpBaseUrl: "http://100.64.0.2:3773/" },
+      { id: "proxy", httpBaseUrl: "https://board.example/api/t3o/workers/env-w1/" },
+      { id: "old-proxy", httpBaseUrl: "https://old.example/t3/api/t3o/workers/env-w1" },
+      { id: "other-worker", httpBaseUrl: "https://board.example/api/t3o/workers/env-w2/" },
+      { id: "ssh", httpBaseUrl: null },
+    ];
+    expect(workerProxyRouteIds(routes, W1)).toEqual(["proxy", "old-proxy"]);
   });
 });
 

@@ -4,6 +4,9 @@
  * session can be re-minted and a removed worker's environment pruned.
  */
 import {
+  connectionRouteId,
+  connectionRoutes,
+  routeHttpBaseUrl,
   BearerConnectionCredential,
   BearerConnectionProfile,
   BearerConnectionRegistration,
@@ -15,10 +18,11 @@ import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import { BOARD_WORKERS_WS_METHODS, EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { readPreparedConnection } from "../../state/session";
-import { boardConnectionIsDirect, workerProxyAddress } from "./threadWorker";
+import { boardConnectionIsDirect, workerProxyAddress, workerProxyRouteIds } from "./threadWorker";
 
 const STORAGE_KEY = "t3o:board-worker-environments:v1";
 
@@ -127,22 +131,32 @@ export const openWorkerThreadEnvironment = createRuntimeCommand(connectionAtomRu
   }),
 });
 
-/** Remove a tagged environment from this client and forget its tag. Untagged ones are left alone. */
+/** Remove a tagged environment's board proxy routes from this client and forget its tag. The
+    user's own routes to that machine stay; untagged environments are left alone. */
 const forgetEnvironment = Effect.fn("BoardWorkerThreads.forget")(function* (
   environmentId: EnvironmentId,
 ) {
   const tags = readWorkerEnvironmentTags();
-  if (tags[environmentId] === undefined) return;
+  const tag = tags[environmentId];
+  if (tag === undefined) return;
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-  yield* registry
-    .remove(environmentId)
-    .pipe(
-      Effect.catch((error) =>
-        error._tag === "EnvironmentNotRegisteredError"
-          ? Effect.void
-          : Effect.logWarning("Could not remove a board worker's environment.", { error }),
-      ),
-    );
+  const entry = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
+  const routes =
+    entry === undefined
+      ? []
+      : connectionRoutes(entry).map((route) => ({
+          id: connectionRouteId(route.target),
+          httpBaseUrl: routeHttpBaseUrl(route),
+        }));
+  yield* Effect.forEach(workerProxyRouteIds(routes, tag.workerId), (routeId) =>
+    registry.removeRoute(environmentId, routeId),
+  ).pipe(
+    Effect.catch((error) =>
+      error._tag === "EnvironmentNotRegisteredError"
+        ? Effect.void
+        : Effect.logWarning("Could not remove a board worker's environment.", { error }),
+    ),
+  );
   const { [environmentId]: _removed, ...rest } = readWorkerEnvironmentTags();
   writeWorkerEnvironmentTags(rest);
 });
