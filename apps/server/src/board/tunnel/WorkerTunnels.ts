@@ -203,6 +203,13 @@ const makeWorkerTunnels = Effect.gen(function* () {
       },
     });
     held.set(boardId, { entry, credential, tunnel });
+    // Replace a previous tunnel's state (a re-join's stale `revoked`) before this one reports.
+    recordStatus(entry, {
+      state: "connecting",
+      lastConnectedAt: statuses.get(boardId)?.lastConnectedAt ?? null,
+      lastError: null,
+      boardUrl: entry.boardUrl,
+    });
     tunnel.start();
   };
 
