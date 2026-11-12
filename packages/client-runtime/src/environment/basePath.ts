@@ -5,9 +5,9 @@ import { environmentBasePathname } from "@t3tools/shared/remote";
 // built for an environment goes through here so that prefix survives. A root
 // base produces exactly what the upstream builders produced before.
 
-/** The base URL's path without trailing slashes; `""` for a root base. */
+/** The base URL's worker proxy prefix without its trailing slash; `""` for any other base. */
 export function environmentBasePath(base: string | URL): string {
-  return new URL(base).pathname.replace(/\/+$/, "");
+  return environmentBasePathname(new URL(base).pathname).replace(/\/+$/, "");
 }
 
 /**
@@ -36,12 +36,12 @@ export function withEnvironmentBasePath(normalized: string, raw: string): string
 }
 
 /**
- * The RPC socket URL: `/ws` under the base path. A base that already names the
- * socket (`…/ws`) is used as is, as configured socket URLs always were.
+ * The RPC socket URL: `/ws` under a bare base (root or worker proxy prefix). A
+ * base with any other path already names the socket and is used as is.
  */
 export function environmentSocketUrl(wsBaseUrl: string): URL {
   const url = new URL(wsBaseUrl);
-  if (/\/ws\/?$/.test(url.pathname)) return url;
+  if (url.pathname.replace(/\/+$/, "") !== environmentBasePath(url)) return url;
   const socket = joinEnvironmentPath(url, "/ws");
   socket.search = url.search;
   socket.hash = url.hash;

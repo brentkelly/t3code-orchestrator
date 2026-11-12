@@ -33,6 +33,8 @@ describe("environment base path", () => {
     ],
     [PREFIXED, "/", "https://board.example/api/t3o/workers/w1/"],
     [ROOT, "/", ROOT],
+    // Only a worker proxy prefix is a base path; any other path is the root.
+    ["https://host.example/ws", "/api/auth/session", "https://host.example/api/auth/session"],
   ])("joins %s + %s", (base, path, expected) => {
     expect(joinEnvironmentPath(base, path).toString()).toBe(expected);
   });
@@ -40,6 +42,8 @@ describe("environment base path", () => {
   it("keys an address by origin, plus the base path when there is one", () => {
     expect(environmentBasePath(ROOT)).toBe("");
     expect(environmentBasePath(PREFIXED)).toBe("/api/t3o/workers/w1");
+    expect(environmentBasePath("https://host.example/ws")).toBe("");
+    expect(environmentAddressKey("https://host.example/ws")).toBe("https://host.example");
     expect(environmentAddressKey(ROOT)).toBe("https://remote.example.com");
     expect(environmentAddressKey(PREFIXED)).toBe("https://board.example/api/t3o/workers/w1");
     expect(environmentAddressKey("https://board.example/api/t3o/workers/w2")).not.toBe(
@@ -67,6 +71,8 @@ describe("environment base path", () => {
     ["wss://remote.example.com/ws", "wss://remote.example.com/ws"],
     ["wss://board.example/api/t3o/workers/w1/", "wss://board.example/api/t3o/workers/w1/ws"],
     ["wss://board.example/api/t3o/workers/w1/ws", "wss://board.example/api/t3o/workers/w1/ws"],
+    ["wss://board.example/api/t3o/workers/w1", "wss://board.example/api/t3o/workers/w1/ws"],
+    ["wss://remote.example.com/socket", "wss://remote.example.com/socket"],
   ])("puts the RPC socket of %s at %s", (wsBaseUrl, expected) => {
     expect(environmentSocketUrl(wsBaseUrl).toString()).toBe(expected);
   });
@@ -74,6 +80,7 @@ describe("environment base path", () => {
   it.each([
     [ROOT, "https://remote.example.com/"],
     [PREFIXED, PREFIXED],
+    ["https://remote.example.com/ws", "https://remote.example.com/"],
   ])("builders keep the base path of %s", (base, expectedRoot) => {
     expect(environmentEndpointUrl(base, "/oauth/token")).toBe(`${expectedRoot}oauth/token`);
     expect(makeEnvironmentHttpApiUrlBuilder(base).auth.session()).toBe(
