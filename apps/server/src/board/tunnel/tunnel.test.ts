@@ -415,16 +415,19 @@ describe("worker tunnel", () => {
   it("adopts a new board address only after a connection to it succeeds", async () => {
     const local = await startLocalServer("worker-loopback");
     const adopted: string[] = [];
-    // The board advertises an address that doesn't answer: the worker keeps the old one.
-    const deadPort = await new Promise<number>((resolve) => {
-      const probe = NodeNet.createServer();
-      probe.listen(0, "127.0.0.1", () => {
-        const port = (probe.address() as NodeNet.AddressInfo).port;
-        probe.close(() => resolve(port));
-      });
+    // The board advertises an address that drops every connection: the worker keeps the old one.
+    let deadDials = 0;
+    const dead = NodeNet.createServer((socket) => {
+      deadDials += 1;
+      socket.destroy();
     });
+    const deadPort = await new Promise<number>((resolve) => {
+      dead.listen(0, "127.0.0.1", () => resolve((dead.address() as NodeNet.AddressInfo).port));
+    });
+    cleanups.push(() => dead.close());
     let readies = 0;
     const second = deferred<void>();
+    const third = deferred<void>();
     const board = await startBoard({
       decide: async () => ({
         status: "ok",
@@ -439,6 +442,7 @@ describe("worker tunnel", () => {
       onReady: () => {
         readies += 1;
         if (readies === 2) second.resolve();
+        if (readies === 3) third.resolve();
       },
     });
     const firstReady = board.until(() => board.board.phase(WORKER_ID) === "ready");
@@ -447,6 +451,11 @@ describe("worker tunnel", () => {
     await second.promise;
     expect(adopted).toEqual([]);
     expect(worker.currentStatus().boardUrl).toBe(board.url);
+    // Advertised again, the address that failed isn't redialled, and the status says why.
+    board.board.disconnect(WORKER_ID);
+    await third.promise;
+    expect(deadDials).toBe(1);
+    expect(worker.currentStatus().lastError).toContain(`127.0.0.1:${deadPort}`);
   });
 });
 

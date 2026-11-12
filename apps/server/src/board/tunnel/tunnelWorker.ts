@@ -180,6 +180,8 @@ export class TunnelWorker {
   private boardUrl: string;
   /** An address the board told us about, tried on the next dial. */
   private candidateUrl: string | null = null;
+  /** An advertised address that failed from here; not retried until the board advertises another. */
+  private failedCandidateUrl: string | null = null;
   private status: WorkerTunnelStatus;
 
   private readonly options: TunnelWorkerOptions;
@@ -240,7 +242,7 @@ export class TunnelWorker {
     } catch (error) {
       if (tryingCandidate) {
         // The new address doesn't work from here: keep the last good one.
-        this.candidateUrl = null;
+        this.candidateFailed(trying);
         this.scheduleRedial(0);
         return;
       }
@@ -259,6 +261,11 @@ export class TunnelWorker {
       return;
     }
     this.hold(opened.socket, opened.head, trying, tryingCandidate);
+  }
+
+  private candidateFailed(url: string): void {
+    this.candidateUrl = null;
+    this.failedCandidateUrl = url;
   }
 
   private hold(socket: NodeNet.Socket, head: Buffer, url: string, candidate: boolean): void {
@@ -330,14 +337,18 @@ export class TunnelWorker {
                 if (candidate) {
                   this.boardUrl = url;
                   this.candidateUrl = null;
+                  this.failedCandidateUrl = null;
                   this.options.onAddressAdopted?.(url);
                 }
                 const next = advertisedBoardCandidate(this.boardUrl, message.boardAddress);
-                if (next !== null) this.candidateUrl = next;
+                const known = next !== null && next === this.failedCandidateUrl;
+                if (next !== null && !known) this.candidateUrl = next;
                 this.setStatus({
                   state: "connected",
                   lastConnectedAt: new Date().toISOString(),
-                  lastError: null,
+                  lastError: known
+                    ? `The board's address ${next} isn't reachable from this worker; staying on ${this.boardUrl}.`
+                    : null,
                 });
                 this.options.onReady?.(message);
             }
@@ -351,7 +362,7 @@ export class TunnelWorker {
           this.scheduleRedial(this.backoffBounds().maxMs);
           return;
         }
-        if (!ready && candidate) this.candidateUrl = null;
+        if (!ready && candidate) this.candidateFailed(url);
         if (this.status.state === "connected") this.setStatus({ state: "offline" });
         const next = redialAfterClose(readyAt === null ? null : Date.now() - readyAt);
         if (next.reset) this.failures = 0;
