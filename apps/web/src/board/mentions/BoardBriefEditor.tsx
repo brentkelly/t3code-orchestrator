@@ -7,14 +7,7 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { ProviderDriverKind, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
 import { replaceTextRange } from "@t3tools/shared/composerTrigger";
-import {
-  type ClipboardEventHandler,
-  type ReactNode,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-} from "react";
+import { type ClipboardEventHandler, useEffect, useId, useRef, useState } from "react";
 
 import {
   ComposerCommandMenu,
@@ -49,6 +42,7 @@ import {
   mergeBoardBriefProviderCatalog,
   nudgeBoardBriefHighlight,
 } from "./boardBriefEditor.logic";
+import { BoardCardMentionProjectContext } from "./boardCardMentionProject";
 
 const NO_LINKED_ENVIRONMENTS = new Map<EnvironmentId, string>();
 const NOOP = () => {};
@@ -72,10 +66,17 @@ export interface BoardBriefEditorProps {
   readonly ariaLabel: string;
   readonly autoFocus?: boolean | undefined;
   readonly className?: string | undefined;
-  readonly children?: ReactNode;
 }
 
 export function BoardBriefEditor(props: BoardBriefEditorProps) {
+  return (
+    <BoardCardMentionProjectContext value={props.projectId}>
+      <BriefEditor {...props} />
+    </BoardCardMentionProjectContext>
+  );
+}
+
+function BriefEditor(props: BoardBriefEditorProps) {
   const { environmentId, projectId, value } = props;
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -84,7 +85,7 @@ export function BoardBriefEditor(props: BoardBriefEditorProps) {
   const { resolvedTheme } = useTheme();
   const [cursor, setCursor] = useState(() => collapseExpandedComposerCursor(value, value.length));
   const [trigger, setTrigger] = useState<ComposerTrigger | null>(null);
-  // An Escape or outside press closes the menu for this trigger only; typing on reopens it.
+  // An Escape or outside press closes the menu until this `@`, `$` or `/` ends or another starts.
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
   const [highlight, setHighlight] = useState<{ id: string | null; searchKey: string | null }>({
     id: null,
@@ -288,7 +289,6 @@ export function BoardBriefEditor(props: BoardBriefEditorProps) {
           />
         </PopoverPopup>
       </Popover>
-      {props.children}
     </div>
   );
 }

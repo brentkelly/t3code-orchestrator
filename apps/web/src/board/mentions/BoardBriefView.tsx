@@ -3,11 +3,16 @@
  * mounts until the brief is clicked.
  */
 import type { EnvironmentId } from "@t3tools/contracts";
-import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import type { ReactNode } from "react";
 
+import { FileTagChipContent } from "~/components/chat/FileTagChip";
+import { ModelMentionChip } from "~/components/chat/ModelMentionChip";
+import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
+import { ContextChip } from "~/components/ContextChip";
 import { EnvironmentContextChip } from "~/components/EnvironmentContextChip";
 import { ThreadContextChip } from "~/components/ThreadContextChip";
+import { useTheme } from "~/hooks/useTheme";
+import { basenameOfPath, documentChipKindForFileName } from "~/pierre-icons";
 import { boardBriefDisplayText } from "../boardBriefDisplay";
 import { boardBriefContextRecords } from "./boardBriefEditor.logic";
 import { BoardCardMentionChip } from "./BoardCardMentionChip";
@@ -26,39 +31,82 @@ function ChipSlot(props: { children: ReactNode }) {
   );
 }
 
+/** Each segment with its offset in the brief, which keys its chip. */
+function segmentsWithOffsets(text: string) {
+  let offset = 0;
+  return splitPromptIntoComposerSegments(text).map((segment) => {
+    const index = offset;
+    offset += segment.type === "text" ? segment.text.length : segment.source.length;
+    return { segment, index };
+  });
+}
+
 export function BoardBriefView(props: { brief: string; environmentId: EnvironmentId }) {
+  const { resolvedTheme } = useTheme();
   const text = boardBriefDisplayText(props.brief);
   const records = boardBriefContextRecords(text, props.environmentId);
-  const parts: ReactNode[] = [];
-  let at = 0;
-  for (const reference of collectComposerContextReferences(text)) {
-    parts.push(text.slice(at, reference.start));
-    at = reference.end;
-    const record = records.get(reference.contextId);
-    const cardId =
-      reference.kind === "card" ? cardIdFromMentionContextId(reference.contextId) : null;
-    if (cardId !== null) {
-      parts.push(
-        <ChipSlot key={reference.start}>
-          <BoardCardMentionChip cardId={cardId} label={reference.label} />
-        </ChipSlot>,
-      );
-    } else if (record?.kind === "thread") {
-      parts.push(
-        <ChipSlot key={reference.start}>
-          <ThreadContextChip record={record.record} />
-        </ChipSlot>,
-      );
-    } else if (record?.kind === "environment") {
-      parts.push(
-        <ChipSlot key={reference.start}>
-          <EnvironmentContextChip record={record.record} />
-        </ChipSlot>,
-      );
-    } else {
-      parts.push(reference.label);
+  const parts = segmentsWithOffsets(text).map(({ segment, index }): ReactNode => {
+    switch (segment.type) {
+      case "text":
+        return segment.text;
+      case "mention":
+        return (
+          <ChipSlot key={index}>
+            <ContextChip
+              kind={documentChipKindForFileName(segment.path) ?? "mention"}
+              dir="ltr"
+              title={segment.path}
+            >
+              <FileTagChipContent
+                path={segment.path}
+                environmentId={props.environmentId}
+                label={basenameOfPath(segment.path)}
+                theme={resolvedTheme}
+              />
+            </ContextChip>
+          </ChipSlot>
+        );
+      case "model":
+        return (
+          <ChipSlot key={index}>
+            <ModelMentionChip
+              environmentId={props.environmentId}
+              instanceId={segment.instanceId}
+              model={segment.model}
+              source={segment.source}
+            />
+          </ChipSlot>
+        );
+      case "context-reference": {
+        const cardId =
+          segment.kind === "card" ? cardIdFromMentionContextId(segment.contextId) : null;
+        const record = records.get(segment.contextId);
+        if (cardId !== null) {
+          return (
+            <ChipSlot key={index}>
+              <BoardCardMentionChip cardId={cardId} label={segment.label} />
+            </ChipSlot>
+          );
+        }
+        if (record?.kind === "thread") {
+          return (
+            <ChipSlot key={index}>
+              <ThreadContextChip record={record.record} />
+            </ChipSlot>
+          );
+        }
+        if (record?.kind === "environment") {
+          return (
+            <ChipSlot key={index}>
+              <EnvironmentContextChip record={record.record} />
+            </ChipSlot>
+          );
+        }
+        return segment.label;
+      }
+      default:
+        return segment.source;
     }
-  }
-  parts.push(text.slice(at));
+  });
   return <span className="whitespace-pre-wrap text-pretty text-foreground">{parts}</span>;
 }

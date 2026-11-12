@@ -17,29 +17,41 @@ const CARDS = [
     title: "Older card",
     projectId: PROJECT,
   },
+  {
+    cardId: "22222222-3333-4444-8555-666666666666" as BoardCardId,
+    key: "T3O-90",
+    title: "Review tooling",
+    projectId: "project-2" as ProjectId,
+  },
 ];
 
-vi.mock("~/board/mentions/boardCardMentionState", () => ({
-  useBoardCardMentionItems: (input: { active: boolean; query: string }) =>
-    input.active
-      ? matchBoardCardMentions({ cards: CARDS, currentProjectId: null, query: input.query }).map(
-          (card) => ({
-            id: `card:${card.cardId}`,
-            type: "card",
-            cardId: card.cardId,
-            key: card.key,
-            projectId: card.projectId,
-            accent: null,
-            label: card.title,
-            description: "T3o",
-          }),
-        )
-      : [],
-  useBoardCardMentionSummary: (cardId: string | null) => {
-    const card = CARDS.find((candidate) => candidate.cardId === cardId);
-    return card ? { ...card, projectName: "T3o", accent: null, stageLabel: "Building" } : null;
-  },
-}));
+vi.mock("~/board/mentions/boardCardMentionState", async () => {
+  const { useContext } = await import("react");
+  const { BoardCardMentionProjectContext } = await import("./boardCardMentionProject");
+  return {
+    useBoardCardMentionItems: (input: { active: boolean; query: string }) => {
+      const currentProjectId = useContext(BoardCardMentionProjectContext);
+      return input.active
+        ? matchBoardCardMentions({ cards: CARDS, currentProjectId, query: input.query }).map(
+            (card) => ({
+              id: `card:${card.cardId}`,
+              type: "card",
+              cardId: card.cardId,
+              key: card.key,
+              projectId: card.projectId,
+              accent: null,
+              label: card.title,
+              description: "T3o",
+            }),
+          )
+        : [];
+    },
+    useBoardCardMentionSummary: (cardId: string | null) => {
+      const card = CARDS.find((candidate) => candidate.cardId === cardId);
+      return card ? { ...card, projectName: "T3o", accent: null, stageLabel: "Building" } : null;
+    },
+  };
+});
 
 vi.mock("~/board/useBoardEnvironmentId", () => ({
   useBoardSettings: () => ({}),
@@ -113,6 +125,14 @@ describe("BoardBriefEditor", () => {
     );
     const chip = screen.getByRole("link", { name: "Card, T3O-58 Review round one" });
     await expect.element(chip).toHaveTextContent("T3O-58Review round one");
+  });
+
+  it("ranks the brief's own project's cards first", async () => {
+    await using _screen = await renderEditor();
+    await userEvent.keyboard("@review");
+    const options = page.getByRole("option");
+    await expect.element(options.nth(0)).toHaveTextContent("T3O-58Review round one");
+    await expect.element(options.nth(1)).toHaveTextContent("T3O-90Review tooling");
   });
 
   it("closes the menu on Escape before handing Escape to the brief", async () => {

@@ -13,12 +13,14 @@ import type {
 } from "@t3tools/contracts";
 import { Option } from "effect";
 import { Atom } from "effect/reactivity";
+import { useContext } from "react";
 
 import { boardEnvironment } from "~/state/board";
 import { useThreadShell } from "~/state/entities";
 import { environmentShell } from "~/state/shell";
 import { projectIconColorOf } from "../projectAccent";
 import { useBoardEnvironmentId } from "../useBoardEnvironmentId";
+import { BoardCardMentionProjectContext } from "./boardCardMentionProject";
 import {
   matchBoardCardMentions,
   type BoardCardMentionCandidate,
@@ -122,6 +124,7 @@ export function useBoardCardMentionItems(input: {
   readonly activeThreadId: ThreadId | null;
 }): BoardCardMentionItem[] {
   const boardEnvironmentId = useBoardEnvironmentId();
+  const scopeProjectId = useContext(BoardCardMentionProjectContext);
   const live = input.active && boardEnvironmentId !== null;
   const candidates = useAtomValue(live ? candidatesAtom(boardEnvironmentId) : emptyCandidatesAtom);
   // A worker's project ids differ from the board's, so only a board-server thread has a project here.
@@ -133,7 +136,7 @@ export function useBoardCardMentionItems(input: {
   if (!live) return [];
   return matchBoardCardMentions({
     cards: candidates,
-    currentProjectId: thread?.projectId ?? null,
+    currentProjectId: thread?.projectId ?? scopeProjectId,
     query: input.query,
   }).map((card) => ({
     id: `card:${card.cardId}`,
