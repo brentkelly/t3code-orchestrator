@@ -175,8 +175,10 @@ export const makeWorkerTunnels = Effect.gen(function* () {
     for (const [boardId, current] of held) {
       const entry = wanted.get(boardId);
       if (entry !== undefined && entry.boardUrl === current.entry.boardUrl) continue;
-      current.tunnel.stop();
       held.delete(boardId);
+      // Left (`t3o-worker leave`): tell the board while the tunnel is still up.
+      if (entry === undefined) void current.tunnel.goodbye();
+      else current.tunnel.stop();
       if (entry === undefined) {
         statuses.delete(boardId);
         scheduleStatus();
