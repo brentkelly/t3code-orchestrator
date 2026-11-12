@@ -80,6 +80,21 @@ export function joinDialogPhase(input: {
   return input.nowMs >= Date.parse(code.expiresAt) ? { kind: "expired" } : { kind: "waiting" };
 }
 
+/** Whether the code can still bring a worker on, so Add worker reopens on it rather than
+    minting another. A spent code whose worker stalled or needs an update can't. */
+export function joinCodeInPlay(phase: JoinDialogPhase): boolean {
+  switch (phase.kind) {
+    case "waiting":
+      return true;
+    case "checking":
+      return !phase.stalled;
+    case "needs-update":
+      return phase.usedBy === null;
+    default:
+      return false;
+  }
+}
+
 /** What changes when a join moves on, so a component remembers only real progress. */
 export function joinProgressKey(phase: JoinDialogPhase): string {
   return phase.kind === "checking" ? `checking:${phase.milestones.join(",")}` : phase.kind;

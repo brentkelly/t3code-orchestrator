@@ -9,6 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   JOIN_STALL_MS,
+  joinCodeInPlay,
   joinDialogPhase,
   latchJoinDialogPhase,
   minutesLeft,
@@ -108,6 +109,22 @@ describe("Add worker phases", () => {
       code({ state: "used", usedBy, milestones: ["code-accepted", "connected"] }),
     ]);
     expect(phase(connected, NOW + JOIN_STALL_MS)).toMatchObject({ stalled: false });
+  });
+
+  it("lets Add worker mint a new code once a spent one stalled or its worker needs an update", () => {
+    const accepted = board([code({ state: "used", usedBy, milestones: ["code-accepted"] })]);
+    expect(joinCodeInPlay(phase(board([code()])))).toBe(true);
+    expect(joinCodeInPlay(phase(accepted))).toBe(true);
+    expect(joinCodeInPlay(phase(accepted, NOW + JOIN_STALL_MS))).toBe(false);
+    const refusedOld = board([
+      code({ lastRefusal: { reason: "needs-update", at: USED_AT, t3oRelease: "0.0.40" } }),
+    ]);
+    expect(joinCodeInPlay(phase(refusedOld))).toBe(true);
+    const joinedOld = board(
+      [code({ state: "used", usedBy, milestones: ["code-accepted"] })],
+      [worker("incompatible")],
+    );
+    expect(joinCodeInPlay(phase(joinedOld))).toBe(false);
   });
 
   it("keeps where a code got to once the board stops listing it", () => {

@@ -35,7 +35,7 @@ import { BoardHint } from "../BoardHint";
 import { describeBoardCommandFailure } from "../boardCommandFeedback";
 import { AddWorkerDialog } from "./AddWorkerDialog";
 import { useNowAtDeadlines, type BoardWorkersView } from "./boardWorkersState";
-import { joinDialogPhase, openJoinCodes } from "./joinDialog";
+import { joinCodeInPlay, joinDialogPhase, openJoinCodes } from "./joinDialog";
 import { RemoveWorkerDialog } from "./RemoveWorkerDialog";
 import { RenameWorkerDialog } from "./RenameWorkerDialog";
 import { LOCAL_WORKER_LABEL } from "./threadWorker";
@@ -109,9 +109,7 @@ export function useAddWorker(input: {
         state: input.workers.state,
         nowMs: Date.now(),
       });
-      if (phase.kind === "waiting" || phase.kind === "checking" || phase.kind === "needs-update") {
-        return;
-      }
+      if (joinCodeInPlay(phase)) return;
     }
     void createCode();
   };

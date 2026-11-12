@@ -230,7 +230,7 @@ function JoinCodeFlow(
         </div>
       </DialogPanel>
       <DialogFooter>
-        {phase.kind === "waiting" || phase.kind === "needs-update" ? (
+        {phase.kind === "waiting" || (phase.kind === "needs-update" && phase.usedBy === null) ? (
           <Button variant="ghost-destructive" onClick={() => void runCancel()}>
             Cancel code
           </Button>
@@ -269,8 +269,8 @@ function JoinPhaseBox(props: {
   switch (phase.kind) {
     case "waiting":
       return (
-        <div className="flex items-center gap-2 rounded-lg border border-info/30 bg-info/8 px-3 py-2.5 text-board-12-5 text-info-foreground">
-          <span className="size-2 shrink-0 rounded-full bg-info" />
+        <div className="flex items-center gap-2 rounded-lg border border-attention/30 bg-attention/8 px-3 py-2.5 text-board-12-5 text-attention-foreground">
+          <span className="size-2 shrink-0 rounded-full bg-attention" />
           Waiting for a worker to join. Closing this doesn't cancel the code.
         </div>
       );
@@ -306,6 +306,7 @@ function JoinPhaseBox(props: {
           }`}
         >
           <CopyCommand command={T3O_UPDATE_COMMAND} target="update command" />
+          {phase.usedBy === null ? null : newCode}
         </WarningBox>
       );
     case "checking": {
@@ -350,6 +351,7 @@ function JoinPhaseBox(props: {
               body="The code was accepted, but the worker hasn't opened its connection to the board. Check it on the worker:"
             >
               <CopyCommand command="pnpm t3o-worker status" target="status command" />
+              {newCode}
             </WarningBox>
           ) : null}
         </div>
