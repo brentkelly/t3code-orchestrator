@@ -55,6 +55,18 @@ const layer = Layer.mergeAll(
           client: { label: "Chrome via T3o board (central)", deviceType: "bot" },
         },
         {
+          sessionId: AuthSessionId.make("session-user-9-old"),
+          subject: "t3o-board-user:env-board:board-session-9",
+          issuedAt: DateTime.makeUnsafe("2026-11-12T08:00:00.000Z"),
+          client: { label: "Chrome via T3o board (central)", deviceType: "bot" },
+        },
+        {
+          sessionId: AuthSessionId.make("session-user-9-new"),
+          subject: "t3o-board-user:env-board:board-session-9",
+          issuedAt: DateTime.makeUnsafe("2026-11-12T09:00:00.000Z"),
+          client: { label: "Chrome via T3o board (central)", deviceType: "bot" },
+        },
+        {
           sessionId: AuthSessionId.make("session-user-2"),
           subject: "t3o-board-user:env-board:board-session-2",
           client: { label: "Phone via T3o board (central)", deviceType: "bot" },
@@ -118,13 +130,20 @@ it.effect("release all revokes every session of the calling board, after answeri
     assert.deepStrictEqual(revoked, []);
     yield* TestClock.adjust("250 millis");
     // Its own and its users', never another board's or this machine's own clients.
-    assert.deepStrictEqual(revoked, ["session-board", "session-user-1", "session-user-2"]);
+    assert.deepStrictEqual(revoked, [
+      "session-board",
+      "session-user-1",
+      "session-user-9-old",
+      "session-user-9-new",
+      "session-user-2",
+    ]);
   }).pipe(Effect.provide(layer)),
 );
 
 it.effect("mints a board user's session: the board's subject, never wider than the board", () =>
   Effect.gen(function* () {
     issued.length = 0;
+    revoked.length = 0;
     const handlers = yield* boardWorkerRpcHandlers(
       session([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]),
     );
@@ -146,6 +165,8 @@ it.effect("mints a board user's session: the board's subject, never wider than t
       AuthOrchestrationOperateScope,
     ]);
     assert.strictEqual(Duration.toHours(input!.ttl), 24);
+    // A re-mint keeps only the newest earlier session for that board user.
+    assert.deepStrictEqual(revoked, ["session-user-9-old"]);
   }).pipe(Effect.provide(layer)),
 );
 
@@ -221,7 +242,10 @@ it.effect("a tunnel handshake revokes user sessions whose board session is gone"
   Effect.gen(function* () {
     revoked.length = 0;
     const auth = yield* EnvironmentAuth;
-    const count = yield* reconcileBoardUserSessions(auth, "env-board", ["board-session-1"]);
+    const count = yield* reconcileBoardUserSessions(auth, "env-board", [
+      "board-session-1",
+      "board-session-9",
+    ]);
     // Only this board's users, only the dead one; never the board's own session.
     assert.strictEqual(count, 1);
     assert.deepStrictEqual(revoked, ["session-user-2"]);

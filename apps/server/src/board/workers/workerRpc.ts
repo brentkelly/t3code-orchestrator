@@ -81,6 +81,22 @@ export const issueBoardSession = Effect.fn("boardWorker.issueBoardSession")(func
   return yield* service.issueSession({ subject: own, label });
 });
 
+/**
+ * Before a re-mint, revoke a board user's earlier sessions but the newest, so re-mints never
+ * pile them up; the newest stays for a second tab still holding it.
+ */
+const retireUserSessions = Effect.fn("boardWorker.retireUserSessions")(function* (
+  service: EnvironmentAuth["Service"],
+  subject: string,
+) {
+  const earlier = (yield* service.listSessions())
+    .filter((session) => session.subject === subject)
+    .toSorted((a, b) => DateTime.toEpochMillis(b.issuedAt) - DateTime.toEpochMillis(a.issuedAt));
+  for (const session of earlier.slice(1)) {
+    yield* service.revokeSession(session.sessionId).pipe(Effect.ignore);
+  }
+});
+
 /** Revoke a board's user sessions whose board session is no longer alive there. */
 export const reconcileBoardUserSessions = Effect.fn("boardWorker.reconcileBoardUserSessions")(
   function* (
@@ -278,13 +294,17 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
             const scopes = input.scopes.filter((scope): scope is AuthEnvironmentScope =>
               currentSession.scopes.includes(scope as AuthEnvironmentScope),
             );
+            const subject = t3oBoardUserSubject(boardId, input.boardSessionId);
             const issued = yield* Effect.flatMap(auth, (service) =>
-              service.issueSession({
-                subject: t3oBoardUserSubject(boardId, input.boardSessionId),
-                scopes,
-                label: input.label,
-                ttl: USER_SESSION_TTL,
-              }),
+              Effect.andThen(
+                retireUserSessions(service, subject),
+                service.issueSession({
+                  subject,
+                  scopes,
+                  label: input.label,
+                  ttl: USER_SESSION_TTL,
+                }),
+              ),
             ).pipe(Effect.mapError(requestError("Couldn't issue a session for this thread view.")));
             return {
               bearerToken: issued.token,
