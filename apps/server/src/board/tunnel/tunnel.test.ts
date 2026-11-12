@@ -424,7 +424,7 @@ describe("worker tunnel", () => {
     const deadPort = await new Promise<number>((resolve) => {
       dead.listen(0, "127.0.0.1", () => resolve((dead.address() as NodeNet.AddressInfo).port));
     });
-    cleanups.push(() => dead.close());
+    cleanups.push(() => void dead.close());
     let readies = 0;
     const second = deferred<void>();
     const third = deferred<void>();
