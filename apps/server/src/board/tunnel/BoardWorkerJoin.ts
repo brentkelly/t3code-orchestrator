@@ -39,7 +39,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { BoardEngine } from "../BoardEngine.ts";
 import { BoardRelayStore } from "../workers/BoardRelayStore.ts";
 import { WorkerConnections, workerSecretName } from "../workers/WorkerConnections.ts";
-import { BoardTunnelHost, JOIN_PROGRESS_TTL_MS } from "./BoardTunnelHost.ts";
+import { BoardTunnelHost, JOIN_PROGRESS_TTL_MS, type JoinMilestones } from "./BoardTunnelHost.ts";
 import { BoardWorkerJoinStore, hashSecret, type JoinCodeRecord } from "./BoardWorkerJoinStore.ts";
 import { setBoardTunnelSeamHandler } from "./upgradeSeam.ts";
 
@@ -371,7 +371,7 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
       .remove(workerSecretName(request.environmentId as EnvironmentId))
       .pipe(Effect.ignore);
     yield* host.ensure(request.environmentId as EnvironmentId);
-    yield* host.beginJoin(request.environmentId as EnvironmentId);
+    yield* host.beginJoin(request.environmentId as EnvironmentId, record.codeId);
     // Starts following a worker that is new to the registry; a re-joined one is already followed.
     yield* engine.getReadModel.pipe(
       Effect.flatMap((model) => connections.sync(model.board?.workers ?? [])),
@@ -397,6 +397,14 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
           Effect.map((value) => value.board?.workers.boardAddress ?? null),
           Effect.orElseSucceed(() => null),
         );
+
+  const progressOf = (
+    progress: JoinMilestones,
+    record: { readonly codeId: string; readonly usedByWorkerId: string | null },
+  ) => {
+    const entry = record.usedByWorkerId === null ? undefined : progress.get(record.usedByWorkerId);
+    return entry?.codeId === record.codeId ? [...entry.milestones] : [];
+  };
 
   const views: BoardWorkerJoinShape["views"] = Effect.gen(function* () {
     const now = yield* DateTime.now;
@@ -429,8 +437,7 @@ export const makeBoardWorkerJoin = Effect.gen(function* () {
                 usedAt: record.usedAt,
                 rejoin: record.rejoin,
               },
-        milestones:
-          record.usedByWorkerId === null ? [] : [...(progress.get(record.usedByWorkerId) ?? [])],
+        milestones: progressOf(progress, record),
         lastRefusal:
           refusal === undefined
             ? null

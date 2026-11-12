@@ -347,10 +347,13 @@ describe("BoardWorkers", () => {
         assert.strictEqual(view?.label, "Build box");
         assert.strictEqual(view?.abbreviation, "BB1");
         assert.strictEqual(view?.t3oRelease, "t3o0.1.9.1");
-        assert.isTrue(
-          (yield* workers.state).joinCodes.find((entry) => entry.codeId === code.codeId)?.usedBy
-            ?.rejoin,
-        );
+        const codes = (yield* workers.state).joinCodes;
+        assert.isTrue(codes.find((entry) => entry.codeId === code.codeId)?.usedBy?.rejoin);
+        // The re-join's progress shows on its own code, never on the earlier one.
+        assert.deepStrictEqual(codes.find((entry) => entry.codeId === code.codeId)?.milestones, [
+          "code-accepted",
+        ]);
+        assert.deepStrictEqual(codes.find((entry) => entry.codeId !== code.codeId)?.milestones, []);
         // The old credential goes only once the new tunnel is proved (BoardTunnelHost).
         assert.strictEqual(
           yield* joinStore.verifyCredential(hashSecret(first.tunnelCredential)),

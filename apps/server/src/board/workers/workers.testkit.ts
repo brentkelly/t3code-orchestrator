@@ -408,8 +408,10 @@ const makeFakeTunnelHost = (urlByEnvironment: ReadonlyMap<string, string>) =>
       entries: SubscriptionRef.get(entries),
       states: SubscriptionRef.changes(entries),
       milestones,
-      beginJoin: (workerId) =>
-        SubscriptionRef.update(milestones, (map) => new Map(map).set(workerId, ["code-accepted"])),
+      beginJoin: (workerId, codeId) =>
+        SubscriptionRef.update(milestones, (map) =>
+          new Map(map).set(workerId, { codeId, milestones: ["code-accepted"] }),
+        ),
       markMilestone: () => Effect.void,
       // The tunnel drops; a test brings it back with `setPhase(id, "ready")`, as the
       // worker's next hello would.

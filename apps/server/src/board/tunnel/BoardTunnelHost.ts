@@ -43,8 +43,11 @@ export interface TunnelEntry {
   readonly hello: WorkerTunnelHello | null;
 }
 
-/** Join progress, by worker: what Add worker ticks off. */
-export type JoinMilestones = ReadonlyMap<string, ReadonlyArray<BoardWorkerJoinMilestone>>;
+/** Join progress, by worker, for the code that started it: what Add worker ticks off. */
+export type JoinMilestones = ReadonlyMap<
+  string,
+  { readonly codeId: string; readonly milestones: ReadonlyArray<BoardWorkerJoinMilestone> }
+>;
 
 export interface BoardTunnelHostShape {
   /** Open the worker's stable loopback listener (once); its URL for `WorkerTransport`. */
@@ -55,8 +58,8 @@ export interface BoardTunnelHostShape {
   /** Every entry now, then after each change. Each access subscribes. */
   readonly states: Stream.Stream<ReadonlyMap<string, TunnelEntry>>;
   readonly milestones: SubscriptionRef.SubscriptionRef<JoinMilestones>;
-  /** A code was just used by this worker: its milestones start over. */
-  readonly beginJoin: (workerId: EnvironmentId) => Effect.Effect<void>;
+  /** A code was just used by this worker: its milestones start over, under that code. */
+  readonly beginJoin: (workerId: EnvironmentId, codeId: string) => Effect.Effect<void>;
   readonly markMilestone: (
     workerId: EnvironmentId,
     milestone: BoardWorkerJoinMilestone,
@@ -82,8 +85,11 @@ const withMilestone = (
   milestone: BoardWorkerJoinMilestone,
 ): JoinMilestones => {
   const current = map.get(workerId);
-  if (current === undefined || current.includes(milestone)) return map;
-  return new Map(map).set(workerId, [...current, milestone]);
+  if (current === undefined || current.milestones.includes(milestone)) return map;
+  return new Map(map).set(workerId, {
+    codeId: current.codeId,
+    milestones: [...current.milestones, milestone],
+  });
 };
 
 /** Fetch the worker's descriptor through its listener, for the proxy's `.well-known`. */
@@ -304,8 +310,10 @@ export const makeBoardTunnelHost = Effect.gen(function* () {
     entries: SubscriptionRef.get(entries),
     states: SubscriptionRef.changes(entries),
     milestones,
-    beginJoin: (workerId) =>
-      SubscriptionRef.update(milestones, (map) => new Map(map).set(workerId, ["code-accepted"])),
+    beginJoin: (workerId, codeId) =>
+      SubscriptionRef.update(milestones, (map) =>
+        new Map(map).set(workerId, { codeId, milestones: ["code-accepted"] }),
+      ),
     markMilestone,
     seam: {
       control: (request, socket, head) => board.handleControl(request, socket, head),
