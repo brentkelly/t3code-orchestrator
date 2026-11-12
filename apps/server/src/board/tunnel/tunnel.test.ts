@@ -270,6 +270,27 @@ describe("worker tunnel", () => {
     expect((await log.when((status) => status.state === "revoked")).lastError).toMatch(/revoked/);
   });
 
+  it("retries a valid credential whose worker has no listener yet, instead of revoking it", async () => {
+    const local = await startLocalServer("worker-loopback");
+    const board = await startBoard({
+      credentials: new Map([[CREDENTIAL, "env-not-listening"]]),
+    });
+    let revoked = false;
+    const log = statusLog();
+    startWorker({
+      boardUrl: board.url,
+      localPort: local.port,
+      onStatus: log.onStatus,
+      onRevoked: () => (revoked = true),
+    });
+    const refused = await log.when(
+      (status) => status.state === "offline" || status.state === "revoked",
+    );
+    expect(refused.state).toBe("offline");
+    expect(refused.lastError).toMatch(/503/);
+    expect(revoked).toBe(false);
+  });
+
   it("retries a 401 that isn't the board's own revocation, such as a gateway's", async () => {
     const local = await startLocalServer("worker-loopback");
     let attempts = 0;

@@ -216,7 +216,8 @@ export class TunnelBoard {
     }
     const slot = this.slots.get(workerId);
     if (slot === undefined) {
-      refuseUpgrade(socket, 401, "Unauthorized", { error: "revoked" });
+      // A valid credential whose listener isn't open yet: retried, never read as revoked.
+      refuseUpgrade(socket, 503, "Service Unavailable", { code: "worker-not-ready" });
       return;
     }
     acceptUpgrade(socket, BOARD_WORKER_STREAM_UPGRADE);
