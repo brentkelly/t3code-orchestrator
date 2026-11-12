@@ -243,6 +243,40 @@ describe("worker proxy", () => {
     expect(JSON.parse(answered.body)).toEqual({ code: "worker-offline" });
   });
 
+  it("ends the browser's response when the worker drops mid-body, instead of leaving it hanging", async () => {
+    const worker = NodeHttp.createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "text/plain" });
+      response.write("partial", () => response.socket?.destroy());
+    });
+    await new Promise<void>((resolve) => worker.listen(0, "127.0.0.1", resolve));
+    cleanups.push(() => {
+      worker.closeAllConnections();
+      worker.close();
+    });
+    const board = await startBoard(targetFor((worker.address() as NodeNet.AddressInfo).port));
+    board.register();
+    const outcome = await new Promise<string>((resolve) => {
+      const sent = NodeHttp.request(
+        {
+          host: "127.0.0.1",
+          port: board.port,
+          path: `${base}/api/orchestration/shell`,
+          headers: { authorization: "Bearer t" },
+          agent: false,
+        },
+        (response) => {
+          response.resume();
+          response.on("end", () => resolve("end"));
+          response.on("error", () => resolve("error"));
+          response.on("aborted", () => resolve("aborted"));
+        },
+      );
+      sent.on("error", () => resolve("error"));
+      sent.end();
+    });
+    expect(outcome).not.toBe("end");
+  });
+
   it("forwards a WebSocket upgrade with its ticket, byte for byte after the handshake", async () => {
     const worker = await startWorker();
     const board = await startBoard(targetFor(worker.port));

@@ -6,6 +6,7 @@
  */
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
+import * as NodeStream from "node:stream";
 
 import { BOARD_WORKER_PROXY_PREFIX } from "@t3tools/contracts";
 
@@ -190,7 +191,8 @@ export function handleWorkerProxyRequest(
       delete headers.connection;
       delete headers["keep-alive"];
       response.writeHead(answer.statusCode ?? 502, headers);
-      answer.pipe(response);
+      // `pipe` leaves the browser waiting forever if the tunnel drops mid-body.
+      NodeStream.pipeline(answer, response, () => undefined);
     },
   );
   upstream.on("error", () => {
