@@ -28,7 +28,7 @@ export function briefHeadingLevel(line: string): number | null {
 /** The lines that are markdown structure — everything outside fenced code
     blocks, fence markers excluded, so a heading inside a fence is text — and
     the index of the line opening a fence that never closes, if any. */
-function scanBriefLines(lines: ReadonlyArray<string>): {
+export function scanBriefLines(lines: ReadonlyArray<string>): {
   readonly structural: Array<number>;
   readonly unclosedFence: number | null;
 } {

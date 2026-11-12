@@ -95,6 +95,7 @@ import { boardAgentActor, stampBoardActivityActor } from "../../../board/activit
 import { boardBriefVersion } from "../../../board/briefEdits.ts";
 import { createBoardCard, resolveBoardCardKeyPrefix } from "../../../board/createCard.ts";
 import { isKeptStepThread, keptPlanningStepId } from "../../../board/planningThreadKeep.ts";
+import { applyBoardPlanEdits } from "../../../board/planEdits.ts";
 import {
   boardCompletionReopened,
   planReviewInstructions,
@@ -1949,6 +1950,46 @@ export const boardHandlers = {
     return { planId: input.planId };
   }),
 
+  board_edit_plan: Effect.fn("BoardToolkit.board_edit_plan")(function* (input) {
+    const deps = yield* boardToolDeps;
+    const board = yield* readBoardState(deps);
+    const card = yield* requireCallerCard(board, deps.scope);
+    const plan = boardCardPlans(board, card.id).find(
+      (candidate) => candidate.planId === input.planId,
+    );
+    if (plan === undefined) {
+      return yield* new BoardToolError({
+        code: "plan-not-found",
+        message: `No plan '${input.planId}' on your card.`,
+      });
+    }
+    // Before matching: a locked plan's stored body can lag its file, which
+    // would surface as a misleading "old_text not found".
+    if (plan.locked) {
+      return yield* new BoardToolError({
+        code: "rejected",
+        message: `Plan '${input.planId}' is locked (materialised to .plans/); edit the file instead.`,
+      });
+    }
+    const current = yield* deps.board
+      .boardPlanBody(input.planId)
+      .pipe(Effect.mapError(internalError));
+    const edited = applyBoardPlanEdits(current ?? "", input.edits);
+    if (!edited.ok) {
+      return yield* new BoardToolError({ code: "invalid-input", message: edited.message });
+    }
+    const command: BoardPlanWriteCommand = {
+      type: "board.plan.write",
+      commandId: yield* mintCommandId,
+      cardId: card.id,
+      planId: input.planId,
+      body: edited.body,
+      createdAt: yield* nowIso,
+    };
+    yield* dispatch(deps, command);
+    return { planId: input.planId, length: edited.body.length };
+  }),
+
   board_record_decisions: Effect.fn("BoardToolkit.board_record_decisions")(function* (input) {
     const deps = yield* boardToolDeps;
     const board = yield* readBoardState(deps);
@@ -2113,6 +2154,9 @@ export const BoardToolkitHandlersLive = McpToolAccess.toLayer(BoardToolkit, {
   ),
   board_write_plan: McpToolAccess.writesWithCapability(
     relayable("board_write_plan", boardHandlers.board_write_plan),
+  ),
+  board_edit_plan: McpToolAccess.writesWithCapability(
+    relayable("board_edit_plan", boardHandlers.board_edit_plan),
   ),
   board_record_decisions: McpToolAccess.writesWithCapability(
     relayable("board_record_decisions", boardHandlers.board_record_decisions),

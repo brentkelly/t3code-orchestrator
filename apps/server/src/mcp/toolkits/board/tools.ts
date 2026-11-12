@@ -687,7 +687,7 @@ const BoardManageLabelsTool = Tool.make("board_manage_labels", {
 const BoardProposePlansTool = Tool.make("board_propose_plans", {
   // The description leads with the split's consequence so a single plan reads as the norm.
   description:
-    "Record your card's plan (the planning output). Pass ONE plan in almost every case: the array is how a card is SPLIT, and two or more plans each become a child card with its own branch, build and review, behind a human approval gate that blocks the card until a human approves it. Split only for a large feature worth building and reviewing in separate pieces, or where building parts concurrently buys a real speed-up, and then splitRationale is required and is shown to the human at the gate. Each plan has a key (a short unique slug), a title, a summary, a dependsOn list referencing other plans' keys (only meaningful in a split), and a markdown body. In a split, mark each plan planned: true when its body is a full implementation plan, so its child lands in Ready to be built, or planned: false when its body is a brief that still needs its own planning, so its child lands in Backlog. A split also recommends the group's settings, which the human sees pre-set at the gate and can change: recommendedAutoBuild (children start themselves once the group is started) and recommendedMergeTarget ('own' cuts the group its own integration branch with one final review; 'inherit' merges each child wherever this card itself merges). Every child fully planned: recommend autoBuild true and 'own'. An epic breakdown whose children still need planning: recommend autoBuild false and 'inherit', with those children planned: false. If your card already sits inside a group that has its own branch (its base branch is an integration branch such as board/<KEY>), prefer 'inherit'. Omitted recommendations fall back to these rules. Approval creates the children; it starts nothing unless the card's Auto-build is on, which also approves the split without the gate. Validated on ingest (unique keys, known dependency references, and no cycles) and rejected naming the offending edge. Proposing again replaces the card's whole plan set. When plan review is on for the card, the first proposal returns planReview with the review's instructions: follow them before completing. Your card is resolved from your thread.",
+    "Record your card's plan (the planning output). Pass ONE plan in almost every case: the array is how a card is SPLIT, and two or more plans each become a child card with its own branch, build and review, behind a human approval gate that blocks the card until a human approves it. Split only for a large feature worth building and reviewing in separate pieces, or where building parts concurrently buys a real speed-up, and then splitRationale is required and is shown to the human at the gate. Each plan has a key (a short unique slug), a title, a summary, a dependsOn list referencing other plans' keys (only meaningful in a split), and a markdown body. In a split, mark each plan planned: true when its body is a full implementation plan, so its child lands in Ready to be built, or planned: false when its body is a brief that still needs its own planning, so its child lands in Backlog. A split also recommends the group's settings, which the human sees pre-set at the gate and can change: recommendedAutoBuild (children start themselves once the group is started) and recommendedMergeTarget ('own' cuts the group its own integration branch with one final review; 'inherit' merges each child wherever this card itself merges). Every child fully planned: recommend autoBuild true and 'own'. An epic breakdown whose children still need planning: recommend autoBuild false and 'inherit', with those children planned: false. If your card already sits inside a group that has its own branch (its base branch is an integration branch such as board/<KEY>), prefer 'inherit'. Omitted recommendations fall back to these rules. Approval creates the children; it starts nothing unless the card's Auto-build is on, which also approves the split without the gate. Validated on ingest (unique keys, known dependency references, and no cycles) and rejected naming the offending edge. Proposing again replaces the card's whole plan set. To change part of a plan's body, use board_edit_plan instead of re-proposing. When plan review is on for the card, the first proposal returns planReview with the review's instructions: follow them before completing. Your card is resolved from your thread.",
   parameters: Schema.Struct({
     plans: Schema.Array(BoardProposedPlanInput),
     /** Required once `plans` holds two or more (enforced by the decider, which
@@ -722,7 +722,7 @@ const BoardGetPlanTool = Tool.make("board_get_plan", {
 
 const BoardWritePlanTool = Tool.make("board_write_plan", {
   description:
-    "Replace the markdown body of one of your card's plans. Rejected once the plan is locked. Locking happens when the plan is materialised to a file at build time, after which the file is the single source of truth and you edit it directly instead. Your card is resolved from your thread.",
+    "Replace the whole body of one of your card's plans. Prefer board_edit_plan to change part of it. Rejected once the plan is locked. Locking happens when the plan is materialised to a file at build time, after which the file is the single source of truth and you edit it directly instead. Your card is resolved from your thread.",
   parameters: Schema.Struct({
     planId: BoardPlan.fields.planId,
     body: Schema.String,
@@ -731,6 +731,27 @@ const BoardWritePlanTool = Tool.make("board_write_plan", {
   failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Write board plan");
+
+const BoardPlanEditInput = Schema.Struct({
+  old_text: Schema.optional(Schema.String),
+  section: Schema.optional(Schema.String),
+  new_text: Schema.String,
+  replace_all: Schema.optional(Schema.Boolean),
+});
+
+const BoardEditPlanTool = Tool.make("board_edit_plan", {
+  // One flat edit struct, not a union: the JSON codec drops undeclared keys, so
+  // a union would silently misread an edit that mixes both kinds.
+  description:
+    'Patch one of your card\'s plans without resending it. This is the normal way to revise a plan you have proposed: prefer it over board_write_plan, and do not re-propose just because a body changed. Each edit sets exactly one of old_text or section. A text edit, { old_text, new_text, replace_all? }: old_text must appear exactly once unless replace_all is set (best for small fixes). A section edit, { section, new_text }: section is a markdown heading line exactly as written (e.g. "## Rollout"), and everything from that heading up to the next heading of the same or higher level is replaced by new_text. Unlike board_update_card\'s briefSection, new_text INCLUDES the heading line, so it must start with a heading line; you can rename the section or delete it with "", and a heading that isn\'t there is an error, not an append. Section edits are best for rewriting a large block; a top-level "# Title" section spans the whole plan. To add a section, use a text edit that puts it in front of the following heading line. Edits apply in order and all-or-nothing, and a failure names the edit and why. Returns the new body\'s length. Rejected once the plan is locked; edit the .plans/ file instead. Your card is resolved from your thread.',
+  parameters: Schema.Struct({
+    planId: BoardPlan.fields.planId,
+    edits: Schema.Array(BoardPlanEditInput).check(Schema.isMinLength(1)),
+  }),
+  success: Schema.Struct({ planId: BoardPlan.fields.planId, length: Schema.Number }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Edit board plan");
 
 const BoardRecordDecisionsTool = Tool.make("board_record_decisions", {
   description:
@@ -813,6 +834,7 @@ export const BoardToolkit = Toolkit.make(
   BoardProposePlansTool.annotate(McpSchema.EnabledWhen, shownToThreads),
   BoardGetPlanTool.annotate(McpSchema.EnabledWhen, shownToThreads),
   BoardWritePlanTool.annotate(McpSchema.EnabledWhen, shownToThreads),
+  BoardEditPlanTool.annotate(McpSchema.EnabledWhen, shownToThreads),
   BoardRecordDecisionsTool.annotate(McpSchema.EnabledWhen, shownToThreads),
   BoardSetAutomationTool.annotate(McpSchema.EnabledWhen, shownToThreads),
 );

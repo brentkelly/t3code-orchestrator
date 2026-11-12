@@ -80,6 +80,7 @@ export function boardAutoPlanOffInstruction(options?: { readonly reopened?: bool
 export const BOARD_ENVELOPE_PLAN_DELIVERABLE = [
   BOARD_ENVELOPE_DECISION_LOG,
   "When the plan is agreed, record it with board_propose_plans, as ONE plan.",
+  "To revise a plan you have already proposed, patch it with board_edit_plan rather than resending it.",
   "Two or more plans is not a longer plan: it splits this card into that many child cards, each with its own branch, build and code review, and holds the card behind a human approval gate until someone approves it.",
   "Split only when this card is a large feature whose parts are worth building and reviewing one at a time, or whose parts could be built concurrently for a real speed-up; then pass splitRationale saying why.",
   "A bug fix, a contained change, or work that is merely long is one plan with several sections.",
@@ -337,7 +338,7 @@ export function planReviewInstructionsClosing(input: {
     "- Run the reviewers in the foreground and do not end your turn while waiting for them.",
     "- If your runtime cannot spawn subagents, run each reviewer pass yourself in turn, and say so in the thread.",
     "- Post each reviewer's findings in the thread, and record any new decisions with board_record_decisions.",
-    "- If the plan changed, re-propose the final plan with board_propose_plans (that does not start another review). If board_propose_plans refuses because the plans are frozen, stop reviewing and summarise.",
+    "- Patch plan changes in place with board_edit_plan. Re-propose with board_propose_plans only if titles, summaries or the set of plans changed; if you only edited bodies, do not re-propose (re-proposing does not start another review). If board_edit_plan or board_propose_plans refuses because the plans are frozen, stop reviewing and summarise.",
     "- When you call board_complete_step, add `planReview: { roundsRun, converged }` to the payload.",
     `- ${finish}`,
     "- If an auto-plan instruction arrives during the review, it overrides this text: stop asking and finish.",
@@ -372,13 +373,13 @@ export const BOARD_PLAN_REVIEW_LATE_START_LEAD =
 /** Leads the turn sent when a human changes a running plan review's rounds.
     Only the agent knows how many it has run, so it decides. */
 export function boardPlanReviewRoundsChangedLead(rounds: number): string {
-  return `The plan review limit is now ${rounds} ${rounds === 1 ? "round" : "rounds"} in total. If you have already run ${rounds} or more, stop reviewing: summarise what the reviews found, re-propose the plan with board_propose_plans if it changed, and finish as normal. Otherwise continue until you reach ${rounds}, as below.`;
+  return `The plan review limit is now ${rounds} ${rounds === 1 ? "round" : "rounds"} in total. If you have already run ${rounds} or more, stop reviewing: summarise what the reviews found, patch any plan changes in place with board_edit_plan (re-propose with board_propose_plans only if titles, summaries or the set of plans changed; if you only edited bodies, do not re-propose), and finish as normal. Otherwise continue until you reach ${rounds}, as below.`;
 }
 
 /** The turn sent into a planning thread when a human turns its running plan
     review off (plan review). */
 export const BOARD_PLAN_REVIEW_STOP_INSTRUCTION =
-  "Stop the plan review now: summarise what the reviews found so far, re-propose the plan with board_propose_plans if it changed, and finish as normal.";
+  "Stop the plan review now: summarise what the reviews found so far, patch any plan changes in place with board_edit_plan (re-propose with board_propose_plans only if titles, summaries or the set of plans changed; if you only edited bodies, do not re-propose), and finish as normal.";
 
 /** A review phase's system preamble: the round header, plus — for any
     phase past the very first review — the pointer to the prior phases'
