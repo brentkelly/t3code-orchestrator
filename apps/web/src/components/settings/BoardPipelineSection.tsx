@@ -1919,7 +1919,7 @@ function ReviewStageBody(props: {
               />
               <NumberRow
                 label="When a round has fewer than this many blocking findings"
-                hint="In a settling round only critical findings count. Findings ruled not issues never count."
+                hint="A round with a critical finding is always followed by a full round. Findings ruled not issues never count."
                 stepper={
                   <NumberStepper
                     value={exec.settleBelowFindings}

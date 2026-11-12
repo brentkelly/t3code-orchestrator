@@ -1734,6 +1734,30 @@ describe("T3O-64: settling rounds", () => {
       assert.deepStrictEqual(modeOf(4, clean), settlingSince(reviewSha(3)));
     });
 
+    it("keeps round 4 full after a round 3 that fixed one critical (T3O-83)", () => {
+      const critical = [...firstThree.slice(0, 6), ...fixedRound(3, [finding("critical", "c1")])];
+      assert.deepStrictEqual(modeOf(4, critical), { kind: "full" });
+      // Whatever the threshold says.
+      assert.deepStrictEqual(
+        modeOf(4, critical, null, { settleAfterRound: 3, settleBelowFindings: 5 }),
+        { kind: "full" },
+      );
+      // A critical ruled not an issue does not count.
+      const rejected = [
+        ...firstThree.slice(0, 6),
+        review(3, [finding("critical", "c1")]),
+        triage(3, { c1: "rejected" }, reviewSha(3)),
+        ruling("adjudicate", 3, { c1: "rejection-justified" }),
+      ];
+      assert.deepStrictEqual(modeOf(4, rejected), settlingSince(reviewSha(3)));
+    });
+
+    it("sends the loop back to full after a settling round that fixed one critical", () => {
+      const settledFour = { "4": settlingSince(reviewSha(3)) };
+      const oneCritical = [...firstThree, ...fixedRound(4, [finding("critical", "c1")])];
+      assert.deepStrictEqual(modeOf(5, oneCritical, overrides(settledFour)), { kind: "full" });
+    });
+
     it("keeps round 4 full after a round 3 with two forcing findings", () => {
       const busy = [...firstThree.slice(0, 6), ...fixedRound(3, improvements(3, 2))];
       assert.deepStrictEqual(modeOf(4, busy), { kind: "full" });
@@ -1826,14 +1850,22 @@ describe("T3O-64: settling rounds", () => {
     });
 
     it("lets a Fix it round follow the rule like any other", () => {
-      // Round 3 stuck on one critical a human then ordered fixed: one forcing finding.
+      // Round 3 stuck on one improvement a human then ordered fixed: one forcing finding.
       const stuckThree = [
+        ...firstThree.slice(0, 6),
+        review(3, [finding("improvement", "i1")]),
+        triage(3, { i1: "rejected" }, reviewSha(3)),
+        ruling("adjudicate", 3, { i1: "escalated" }),
+      ];
+      assert.deepStrictEqual(modeOf(4, stuckThree), settlingSince(reviewSha(3)));
+      // A stuck critical is still a critical: the next round reviews the whole branch.
+      const stuckCritical = [
         ...firstThree.slice(0, 6),
         review(3, [finding("critical", "c1")]),
         triage(3, { c1: "rejected" }, reviewSha(3)),
         ruling("adjudicate", 3, { c1: "escalated" }),
       ];
-      assert.deepStrictEqual(modeOf(4, stuckThree), settlingSince(reviewSha(3)));
+      assert.deepStrictEqual(modeOf(4, stuckCritical), { kind: "full" });
     });
 
     it("reads a round with no record as full", () => {
