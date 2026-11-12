@@ -132,7 +132,7 @@ popover lists the cards each one has paused, with **Open Workers settings**.
 
 A card's thread runs on the worker the card was placed on, and opens in place through the board:
 nothing to add on your device. The thread's header says which worker it's running on. While that
-worker is offline, the transcript up to that point stays readable and you can reply again once it
+worker is offline, its threads can't be opened; they open again, transcript and all, once it
 reconnects. A device connected to the board through a relay or SSH can't open worker threads yet;
 connect to the board's address directly.
 

@@ -248,7 +248,7 @@ export function threadWorkerChip(input: {
       text:
         worker.lastSeenAt === null
           ? `${worker.label} offline`
-          : `${worker.label} offline · transcript up to ${clockTime(worker.lastSeenAt)}`,
+          : `${worker.label} offline since ${clockTime(worker.lastSeenAt)}`,
       tooltip: worker.label,
       warning: true,
     };
