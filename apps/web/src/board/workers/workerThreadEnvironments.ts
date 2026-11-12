@@ -86,8 +86,13 @@ export const openWorkerThreadEnvironment = createRuntimeCommand(connectionAtomRu
         request(BOARD_WORKERS_WS_METHODS.threadAccess, { workerId: input.workerId }),
       )
       .pipe(
+        // Only a worker the board no longer has, or won't open for this user, is forgotten;
+        // a passing refusal (the worker offline) keeps the environment.
         Effect.tapError((error) =>
-          error._tag === "BoardWorkerActionError" ? forgetEnvironment(input.workerId) : Effect.void,
+          error._tag === "BoardWorkerActionError" &&
+          (error.code === "not-found" || error.code === "forbidden")
+            ? forgetEnvironment(input.workerId)
+            : Effect.void,
         ),
       );
     const address = workerProxyAddress(prepared.httpBaseUrl, access.path);

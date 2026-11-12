@@ -18,6 +18,7 @@ import { usePreparedConnection } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   boardConnectionIsDirect,
+  isWorkerProxyEntry,
   workerThreadAccess,
   workerThreadAccessCopy,
   type BoardThreadWorker,
@@ -32,10 +33,20 @@ function useWorkerThreadAccess(worker: BoardThreadWorker): WorkerThreadAccess {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const state = useAtomValue(environmentCatalog.stateAtom(worker.environmentId));
   const prepared = Option.getOrNull(usePreparedConnection(worker.boardEnvironmentId));
+  const entry = Option.getOrNull(usePreparedConnection(worker.environmentId));
   const connection = catalog.entries.has(worker.environmentId)
     ? Option.getOrElse(AsyncResult.value(state), () => AVAILABLE_CONNECTION_STATE)
     : null;
-  return workerThreadAccess({ worker, connection, boardDirect: boardConnectionIsDirect(prepared) });
+  return workerThreadAccess({
+    worker,
+    connection,
+    boardDirect: boardConnectionIsDirect(prepared),
+    throughBoard: isWorkerProxyEntry({
+      workerId: worker.workerId,
+      boardHttpBaseUrl: prepared?.httpBaseUrl ?? null,
+      entryHttpBaseUrl: entry?.httpBaseUrl ?? null,
+    }),
+  });
 }
 
 export function BoardThreadWorkerGate({
@@ -48,8 +59,9 @@ export function BoardThreadWorkerGate({
 }) {
   const access = useWorkerThreadAccess(worker);
   const open = useAtomCommand(openWorkerThreadEnvironment, { reportFailure: false });
-  // One automatic mint per reason until one succeeds; after a failure the human retries.
+  // One automatic mint per reason until the thread opens; after that the human retries.
   const attempted = useRef(new Set<MintReason>());
+  const minting = useRef(false);
   const [failure, setFailure] = useState<{
     readonly reason: MintReason;
     readonly message: string;
@@ -57,14 +69,14 @@ export function BoardThreadWorkerGate({
 
   const mint = (reason: MintReason) => {
     attempted.current.add(reason);
+    minting.current = true;
     void open({
       boardEnvironmentId: worker.boardEnvironmentId,
       workerId: worker.environmentId,
       label: worker.label,
     }).then((result) => {
+      minting.current = false;
       if (result._tag === "Success") {
-        // A later refusal (expiry, revocation) in this mount re-mints once more.
-        attempted.current.delete(reason);
         setFailure(null);
         return;
       }
@@ -81,10 +93,20 @@ export function BoardThreadWorkerGate({
 
   // `mint` is a fresh closure every render; the access state is what matters.
   const mintFor = useEffectEvent((reason: MintReason) => {
-    if (!attempted.current.has(reason)) mint(reason);
+    if (!attempted.current.has(reason)) {
+      mint(reason);
+    } else if (!minting.current) {
+      // The worker refused what was just minted: a fresh mint would be refused too.
+      setFailure({
+        reason,
+        message: `${worker.label} refused the access the board just issued. Retry, or check the worker's clock and any proxy in front of the board.`,
+      });
+    }
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the worker's proxied environment with the client's connection registry, once per reason.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the worker's proxied environment with the client's connection registry, once per reason until it opens.
   useEffect(() => {
+    // A later refusal (expiry, revocation) after the thread opened re-mints once more.
+    if (access === "open") attempted.current.clear();
     if (access === "register" || access === "reauthorize") mintFor(access);
   }, [access]);
 

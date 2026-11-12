@@ -13,6 +13,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   boardConnectionIsDirect,
   boardThreadWorker,
+  isWorkerProxyEntry,
   LOCAL_WORKER_LABEL,
   threadWorkerChip,
   threadWorkerOpensOn,
@@ -84,6 +85,7 @@ describe("the worker a thread lives on", () => {
         worker: gone,
         connection: connection({ phase: "connected" }),
         boardDirect: true,
+        throughBoard: true,
       }),
     ).toBe("removed");
   });
@@ -103,12 +105,17 @@ describe("the worker a thread lives on", () => {
 describe("opening a thread on a worker", () => {
   const access = (
     patch: Partial<SupervisorConnectionState> | null,
-    options: { readonly boardDirect?: boolean; readonly worker?: typeof remote } = {},
+    options: {
+      readonly boardDirect?: boolean;
+      readonly worker?: typeof remote;
+      readonly throughBoard?: boolean;
+    } = {},
   ) =>
     workerThreadAccess({
       worker: options.worker ?? remote,
       connection: patch === null ? null : connection(patch),
       boardDirect: options.boardDirect ?? true,
+      throughBoard: options.throughBoard ?? true,
     });
 
   it("needs no connection for this server's own threads", () => {
@@ -149,6 +156,28 @@ describe("opening a thread on a worker", () => {
         lastFailure: new ConnectionBlockedError({ reason: "configuration", detail: "bad" }),
       }),
     ).toBe("offline");
+  });
+
+  it("replaces an entry that isn't the board's proxy once it can't connect", () => {
+    const own = { throughBoard: false };
+    // The user's own direct pairing still works: it's used as is.
+    expect(access({ phase: "connected" }, own)).toBe("open");
+    expect(access({ phase: "backoff", attempt: 1 }, own)).toBe("opening");
+    expect(access({ phase: "backoff", attempt: 5 }, own)).toBe("register");
+    expect(access({ phase: "offline" }, own)).toBe("register");
+    expect(access({ phase: "offline" }, { ...own, boardDirect: false })).toBe("offline");
+  });
+
+  it("knows the board's proxy entry for a worker by its address", () => {
+    const board = "https://board.example/";
+    const proxied = "https://board.example/api/t3o/workers/env-w1/";
+    const check = (entry: string | null, boardUrl: string | null = board) =>
+      isWorkerProxyEntry({ workerId: W1, boardHttpBaseUrl: boardUrl, entryHttpBaseUrl: entry });
+    expect(check(proxied)).toBe(true);
+    expect(check("http://100.64.0.2:3773/")).toBe(false);
+    expect(check("https://old-board.example/api/t3o/workers/env-w1/")).toBe(false);
+    expect(check(proxied, null)).toBe(false);
+    expect(check(null)).toBe(false);
   });
 });
 
