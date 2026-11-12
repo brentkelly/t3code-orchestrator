@@ -1,3 +1,5 @@
+import { environmentBasePathname } from "@t3tools/shared/remote";
+
 // T3o (T3O-84): a board server proxies a worker's environment at a path prefix on
 // its own origin, e.g. `https://board.example/api/t3o/workers/<id>/`. Every URL
 // built for an environment goes through here so that prefix survives. A root
@@ -27,9 +29,10 @@ export function environmentAddressKey(base: string | URL): string {
   return `${url.origin}${environmentBasePath(url)}`;
 }
 
-/** Re-applies `raw`'s base path to a URL a root-only normaliser produced from it. */
+/** Re-applies `raw`'s base path to a URL a root-only normaliser produced from it. Only a
+    board worker proxy's prefix is a base path; any other pasted path is the root. */
 export function withEnvironmentBasePath(normalized: string, raw: string): string {
-  return joinEnvironmentPath(normalized, `${environmentBasePath(raw)}/`).toString();
+  return joinEnvironmentPath(normalized, environmentBasePathname(new URL(raw).pathname)).toString();
 }
 
 /**

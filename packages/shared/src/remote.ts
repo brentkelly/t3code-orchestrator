@@ -78,11 +78,12 @@ const hasSupportedRemoteBackendProtocol = (url: URL): boolean =>
 
 // T3o: keep a proxied environment's base path (T3O-84).
 // A board proxies a worker at `/api/t3o/workers/<id>/`; every other path is the root.
-const remoteBasePathname = (url: URL): string => {
-  if (!url.pathname.startsWith(BOARD_WORKER_PROXY_PREFIX)) return "/";
-  const workerId = url.pathname.slice(BOARD_WORKER_PROXY_PREFIX.length).split("/")[0] ?? "";
+export const environmentBasePathname = (pathname: string): string => {
+  if (!pathname.startsWith(BOARD_WORKER_PROXY_PREFIX)) return "/";
+  const workerId = pathname.slice(BOARD_WORKER_PROXY_PREFIX.length).split("/")[0] ?? "";
   return workerId.length === 0 ? "/" : `${BOARD_WORKER_PROXY_PREFIX}${workerId}/`;
 };
+const remoteBasePathname = (url: URL): string => environmentBasePathname(url.pathname);
 
 const normalizeRemoteBaseUrl = (
   rawValue: string,

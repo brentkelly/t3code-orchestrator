@@ -632,8 +632,8 @@ describe("connection onboarding", () => {
         profile: {
           environmentId,
           label: "Renamed environment",
-          httpBaseUrl: "http://100.65.180.100:3773/path/",
-          wsBaseUrl: "ws://100.65.180.100:3773/path/",
+          httpBaseUrl: "http://100.65.180.100:3773/",
+          wsBaseUrl: "ws://100.65.180.100:3773/",
         },
         credential: { token: "bearer-token" },
       });

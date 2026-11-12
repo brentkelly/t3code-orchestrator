@@ -52,6 +52,13 @@ describe("environment base path", () => {
     expect(withEnvironmentBasePath("wss://board.example/", PREFIXED)).toBe(
       "wss://board.example/api/t3o/workers/w1/",
     );
+    // A pasted page path isn't a base: the environment is at the root.
+    expect(
+      withEnvironmentBasePath(
+        "http://100.65.180.100:3773/",
+        "http://100.65.180.100:3773/settings/connections",
+      ),
+    ).toBe("http://100.65.180.100:3773/");
   });
 
   it.each([
