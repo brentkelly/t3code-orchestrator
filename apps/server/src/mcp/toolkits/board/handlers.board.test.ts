@@ -29,6 +29,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ServerConfig } from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
+import { BoardEngine } from "../../../board/BoardEngine.ts";
 import { BoardQueries } from "../../../board/BoardQueries.ts";
 import {
   SupervisorReactor,
@@ -1474,6 +1475,82 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("board_edit_plan patches a plan body in place and reports its length", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const planId = boardPlanId(cardId, "edited");
+      yield* boardHandlers
+        .board_propose_plans({
+          plans: [
+            {
+              key: "edited",
+              title: "Edited",
+              summary: "s",
+              dependsOn: [],
+              body: "# Plan\n\n## Rollout\nShip it.\n\n## Tests\nSome.\n",
+            },
+          ],
+        })
+        .pipe(withScope(linkedThread));
+      const edited = yield* boardHandlers
+        .board_edit_plan({
+          planId,
+          edits: [
+            { old_text: "Ship it.", new_text: "Ship it behind a flag." },
+            { section: "## Tests", new_text: "## Tests\nTable driven.\n" },
+          ],
+        })
+        .pipe(withScope(linkedThread));
+      const expected = "# Plan\n\n## Rollout\nShip it behind a flag.\n\n## Tests\nTable driven.\n";
+      assert.deepStrictEqual(edited, { planId, length: expected.length });
+      const reread = yield* boardHandlers.board_get_plan({ planId }).pipe(withScope(linkedThread));
+      assert.strictEqual(reread.body, expected);
+
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_edit_plan({ planId, edits: [{ old_text: "Nope", new_text: "x" }] })
+          .pipe(withScope(linkedThread)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.strictEqual(failure.message, "edits[0]: old_text not found");
+    }),
+  );
+
+  it.effect("board_edit_plan refuses a locked plan before matching its stale body", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const planId = boardPlanId(cardId, "locked");
+      yield* boardHandlers
+        .board_propose_plans({
+          plans: [{ key: "locked", title: "L", summary: "s", dependsOn: [], body: "old body" }],
+        })
+        .pipe(withScope(linkedThread));
+      // No command locks a plan today, so the read model is doctored to show one.
+      const engine = yield* BoardEngine;
+      const lockedEngine = {
+        ...engine,
+        getReadModel: engine.getReadModel.pipe(
+          Effect.map((model) => ({
+            ...model,
+            board: model.board && {
+              ...model.board,
+              plans: (model.board.plans ?? []).map((plan) =>
+                plan.planId === planId ? { ...plan, locked: true } : plan,
+              ),
+            },
+          })),
+        ),
+      };
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_edit_plan({ planId, edits: [{ old_text: "not in the db body", new_text: "x" }] })
+          .pipe(withScope(linkedThread), Effect.provideService(BoardEngine, lockedEngine)),
+      );
+      assert.strictEqual(failure.code, "rejected");
+      assert.include(failure.message, "edit the file instead");
+    }),
+  );
+
   it.effect("board_propose_plans carries the Planned flags and the recommendation (T3O-31)", () =>
     Effect.gen(function* () {
       yield* seed();
@@ -2490,6 +2567,67 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
           .pipe(withScope(orphanThread));
         assert.strictEqual(deleted.key, "CARD-1");
       }),
+  );
+
+  it.effect("board_edit_plan cannot edit the plan of a group the caller's card sits in", () =>
+    Effect.gen(function* () {
+      const { ownCard, ownThread, ownProject } = yield* seedOwnCard("edit-plan-group");
+      const engine = yield* boardStackEngine;
+      yield* boardHandlers
+        .board_propose_plans({
+          plans: [
+            { key: "a", title: "A", summary: "s", dependsOn: [], body: "body a" },
+            { key: "b", title: "B", summary: "s", dependsOn: [], body: "body b" },
+          ],
+          splitRationale:
+            "Two independently reviewable pieces, each worth its own branch, build and review.",
+        })
+        .pipe(withScope(ownThread));
+      yield* engine.dispatch({
+        type: "board.plans.approve",
+        commandId: CommandId.make("cmd-approve-edit-plan-group"),
+        cardId: ownCard,
+        createdAt: t0,
+      });
+      const snapshotQuery = yield* boardStackSnapshotQuery;
+      const board = (yield* snapshotQuery.getCommandReadModel()).board;
+      const child = board?.cards.find((card) => card.parentCardId === ownCard);
+      assert.isDefined(child);
+      const childThread = ThreadId.make("thread-edit-plan-group-child");
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-edit-plan-group-child"),
+        threadId: childThread,
+        projectId: ownProject,
+        title: "Child thread",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "board.card.link-thread",
+        commandId: CommandId.make("cmd-link-edit-plan-group-child"),
+        cardId: child!.id,
+        threadId: childThread,
+        role: "planning",
+        createdAt: t0,
+      });
+      const groupPlan = boardPlanId(ownCard, "a");
+      // Readable from the child, as planning context, but not editable.
+      const read = yield* boardHandlers
+        .board_get_plan({ planId: groupPlan })
+        .pipe(withScope(childThread));
+      assert.strictEqual(read.body, "body a");
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_edit_plan({ planId: groupPlan, edits: [{ old_text: "body", new_text: "x" }] })
+          .pipe(withScope(childThread)),
+      );
+      assert.strictEqual(failure.code, "plan-not-found");
+    }),
   );
 
   it.effect("archive and delete surface the decider's 'plan cards still exist' rejection", () =>
