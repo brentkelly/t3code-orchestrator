@@ -147,9 +147,16 @@ const makeWorkerTunnels = Effect.gen(function* () {
               });
             }
             // A board being left (`t3o-worker leave`) is never handed a fresh session.
-            const stillJoined = yield* Effect.try(() =>
-              readWorkerFile(home).boards.some((board) => board.boardEnvironmentId === boardId),
-            ).pipe(Effect.orElseSucceed(() => true));
+            const stillJoined = yield* Effect.sync(() => {
+              try {
+                return readWorkerFile(home).boards.some(
+                  (board) => board.boardEnvironmentId === boardId,
+                );
+              } catch {
+                // An unreadable file keeps every tunnel as it is (see reconcile).
+                return true;
+              }
+            });
             if (!stillJoined || Option.isNone(yield* readCredential(boardId))) {
               return yield* new WorkerPolicyRefusal({
                 message: "This worker has left that board.",
