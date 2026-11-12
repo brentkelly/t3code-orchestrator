@@ -1,4 +1,6 @@
 import * as Schema from "effect/Schema";
+// T3o: the board's worker proxy prefix (T3O-84).
+import { BOARD_WORKER_PROXY_PREFIX } from "@t3tools/contracts";
 
 const PAIRING_TOKEN_PARAM = "token";
 const HOSTED_PAIRING_HOST_PARAM = "host";
@@ -75,9 +77,12 @@ const hasSupportedRemoteBackendProtocol = (url: URL): boolean =>
   SUPPORTED_REMOTE_BACKEND_PROTOCOLS.has(url.protocol);
 
 // T3o: keep a proxied environment's base path (T3O-84).
-// A board proxies a worker at a path prefix; the pairing page sits at `<base>/pair`.
-const remoteBasePathname = (url: URL): string =>
-  `${url.pathname.replace(/\/+$/, "").replace(/\/pair$/, "")}/`;
+// A board proxies a worker at `/api/t3o/workers/<id>/`; every other path is the root.
+const remoteBasePathname = (url: URL): string => {
+  if (!url.pathname.startsWith(BOARD_WORKER_PROXY_PREFIX)) return "/";
+  const workerId = url.pathname.slice(BOARD_WORKER_PROXY_PREFIX.length).split("/")[0] ?? "";
+  return workerId.length === 0 ? "/" : `${BOARD_WORKER_PROXY_PREFIX}${workerId}/`;
+};
 
 const normalizeRemoteBaseUrl = (
   rawValue: string,

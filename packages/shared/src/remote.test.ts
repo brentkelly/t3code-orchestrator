@@ -130,6 +130,18 @@ describe("remote", () => {
     });
   });
 
+  it.each([
+    [{ host: "https://myhost.ts.net/settings/connections", pairingCode: "pairing-token" }],
+    [{ pairingUrl: "https://myhost.ts.net/settings/pair#token=pairing-token" }],
+    [{ host: "https://myhost.ts.net/api/t3o/workers/", pairingCode: "pairing-token" }],
+  ])("resets any other path to the root from %j", (input) => {
+    expect(resolveRemotePairingTarget(input)).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: "https://myhost.ts.net/",
+      wsBaseUrl: "wss://myhost.ts.net/",
+    });
+  });
+
   it("rejects unsupported direct pairing URL protocols", () => {
     let pairingUrlError: unknown;
     try {
