@@ -109,16 +109,16 @@ export function workerThreadAccess(input: {
   /** The client reaches the board over plain http(s), so the board's proxy path works. */
   readonly boardDirect: boolean;
   /** The client's entry is at this board's proxy address, not a pairing of its own or an
-      address the board was reached on before. */
-  readonly throughBoard: boolean;
+      address the board was reached on before; null while either address is unresolved. */
+  readonly throughBoard: boolean | null;
 }): WorkerThreadAccess {
   const { worker, connection } = input;
   if (worker.workerId === BOARD_LOCAL_WORKER_ID) return "open";
   if (worker.removed) return "removed";
   if (worker.state === "offline") return "worker-offline";
   if (connection === null) return input.boardDirect ? "register" : "relayed";
-  // An entry that isn't the board's proxy and can't connect is replaced by one that is.
-  const unreachable = !input.throughBoard && input.boardDirect ? "register" : "offline";
+  // An entry known not to be the board's proxy that fails to connect is replaced by one that is.
+  const unreachable = input.throughBoard === false && input.boardDirect ? "register" : "offline";
   switch (connection.phase) {
     case "connected":
       return "open";
@@ -128,19 +128,22 @@ export function workerThreadAccess(input: {
       return connection.attempt <= 2 ? "opening" : unreachable;
     case "blocked":
       return connection.lastFailure?.reason === "authentication" ? "reauthorize" : unreachable;
+    // Not yet tried: an entry that may still work is never minted over.
     case "available":
+      return "offline";
     case "offline":
       return unreachable;
   }
 }
 
-/** Whether a worker environment's registered address is this board's proxy for it. */
+/** Whether a worker environment's registered address is this board's proxy for it; null while
+    either address is unresolved. */
 export function isWorkerProxyEntry(input: {
   readonly workerId: string;
   readonly boardHttpBaseUrl: string | null;
   readonly entryHttpBaseUrl: string | null;
-}): boolean {
-  if (input.boardHttpBaseUrl === null || input.entryHttpBaseUrl === null) return false;
+}): boolean | null {
+  if (input.boardHttpBaseUrl === null || input.entryHttpBaseUrl === null) return null;
   try {
     const expected = workerProxyAddress(
       input.boardHttpBaseUrl,

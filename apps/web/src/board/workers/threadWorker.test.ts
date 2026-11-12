@@ -108,7 +108,7 @@ describe("opening a thread on a worker", () => {
     options: {
       readonly boardDirect?: boolean;
       readonly worker?: typeof remote;
-      readonly throughBoard?: boolean;
+      readonly throughBoard?: boolean | null;
     } = {},
   ) =>
     workerThreadAccess({
@@ -166,6 +166,12 @@ describe("opening a thread on a worker", () => {
     expect(access({ phase: "backoff", attempt: 5 }, own)).toBe("register");
     expect(access({ phase: "offline" }, own)).toBe("register");
     expect(access({ phase: "offline" }, { ...own, boardDirect: false })).toBe("offline");
+    // Not yet tried, or the entry's address not yet resolved: never minted over.
+    expect(access({ phase: "available" }, own)).toBe("offline");
+    const unknown = { throughBoard: null };
+    expect(access({ phase: "available" }, unknown)).toBe("offline");
+    expect(access({ phase: "offline" }, unknown)).toBe("offline");
+    expect(access({ phase: "backoff", attempt: 5 }, unknown)).toBe("offline");
   });
 
   it("knows the board's proxy entry for a worker by its address", () => {
@@ -176,8 +182,8 @@ describe("opening a thread on a worker", () => {
     expect(check(proxied)).toBe(true);
     expect(check("http://100.64.0.2:3773/")).toBe(false);
     expect(check("https://old-board.example/api/t3o/workers/env-w1/")).toBe(false);
-    expect(check(proxied, null)).toBe(false);
-    expect(check(null)).toBe(false);
+    expect(check(proxied, null)).toBeNull();
+    expect(check(null)).toBeNull();
   });
 });
 
