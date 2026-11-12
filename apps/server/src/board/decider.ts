@@ -5912,6 +5912,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               }
             : {
                 ...existingWithoutUrl,
+                ...(abbreviation === undefined ? {} : { abbreviation }),
                 ...(command.worker.url === undefined ? {} : { url: command.worker.url }),
                 ...(command.worker.t3oRelease === undefined
                   ? {}

@@ -307,6 +307,31 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
+    it.effect("a re-join of a worker with no abbreviation keeps the one it was given", () =>
+      Effect.gen(function* () {
+        const rejoined = yield* apply(
+          {
+            type: "board.worker.register",
+            commandId: CommandId.make("cmd-rejoin"),
+            mode: "repair",
+            worker: {
+              id: workerA,
+              label: "worker-a",
+              abbreviation: "WA",
+              addedAt: NOW,
+              t3oRelease: "t3o0.1.9.1",
+              joinedAt: NOW,
+            },
+            createdAt: NOW,
+          },
+          makeReadModel({ cards: [] }),
+        );
+        const worker = rejoined.board!.workers!.find((entry) => entry.id === workerA);
+        expect(worker?.abbreviation).toBe("WA");
+        expect(worker?.url).toBeUndefined();
+      }),
+    );
+
     it.effect("adding the worker back reattaches the cards its removal left holding", () =>
       Effect.gen(function* () {
         const removed = yield* apply(
