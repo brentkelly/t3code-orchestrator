@@ -55,6 +55,13 @@ const layer = Layer.mergeAll(
           client: { label: "Chrome via T3o board (central)", deviceType: "bot" },
         },
         {
+          sessionId: AuthSessionId.make("session-user-9-live"),
+          subject: "t3o-board-user:env-board:board-session-9",
+          issuedAt: DateTime.makeUnsafe("2026-11-12T07:00:00.000Z"),
+          connected: true,
+          client: { label: "Chrome via T3o board (central)", deviceType: "bot" },
+        },
+        {
           sessionId: AuthSessionId.make("session-user-9-old"),
           subject: "t3o-board-user:env-board:board-session-9",
           issuedAt: DateTime.makeUnsafe("2026-11-12T08:00:00.000Z"),
@@ -133,6 +140,7 @@ it.effect("release all revokes every session of the calling board, after answeri
     assert.deepStrictEqual(revoked, [
       "session-board",
       "session-user-1",
+      "session-user-9-live",
       "session-user-9-old",
       "session-user-9-new",
       "session-user-2",
@@ -165,7 +173,7 @@ it.effect("mints a board user's session: the board's subject, never wider than t
       AuthOrchestrationOperateScope,
     ]);
     assert.strictEqual(Duration.toHours(input!.ttl), 24);
-    // A re-mint keeps only the newest earlier session for that board user.
+    // A re-mint keeps the newest earlier session and any another tab still has a socket on.
     assert.deepStrictEqual(revoked, ["session-user-9-old"]);
   }).pipe(Effect.provide(layer)),
 );

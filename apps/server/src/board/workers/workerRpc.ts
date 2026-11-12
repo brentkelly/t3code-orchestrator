@@ -82,8 +82,9 @@ export const issueBoardSession = Effect.fn("boardWorker.issueBoardSession")(func
 });
 
 /**
- * Before a re-mint, revoke a board user's earlier sessions but the newest, so re-mints never
- * pile them up; the newest stays for a second tab still holding it.
+ * Before a re-mint, revoke a board user's idle earlier sessions so re-mints never pile them up.
+ * Each tab holds its own bearer, so a session with a live socket stays, as does the newest,
+ * which a tab may have minted and not yet connected.
  */
 const retireUserSessions = Effect.fn("boardWorker.retireUserSessions")(function* (
   service: EnvironmentAuth["Service"],
@@ -93,6 +94,7 @@ const retireUserSessions = Effect.fn("boardWorker.retireUserSessions")(function*
     .filter((session) => session.subject === subject)
     .toSorted((a, b) => DateTime.toEpochMillis(b.issuedAt) - DateTime.toEpochMillis(a.issuedAt));
   for (const session of earlier.slice(1)) {
+    if (session.connected) continue;
     yield* service.revokeSession(session.sessionId).pipe(Effect.ignore);
   }
 });
