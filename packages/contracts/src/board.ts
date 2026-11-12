@@ -9679,6 +9679,11 @@ export const BoardDisplaySettings = Schema.Struct({
 });
 export type BoardDisplaySettings = typeof BoardDisplaySettings.Type;
 
+/** An http(s) address workers dial, with no query or fragment. */
+export const BoardAddress = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^https?:\/\/[^\s/?#]+(\/[^\s?#]*)?$/i),
+);
+
 /** The board's worker pool (T3O-84). */
 export const BoardWorkerPoolSettings = Schema.Struct({
   /** The address workers reach this board on, used in the join command and sent to
@@ -12172,7 +12177,7 @@ export const BoardSettingsPatch = Schema.Struct({
   /** A null address is retained and clears it. */
   workers: Schema.optionalKey(
     Schema.Struct({
-      boardAddress: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+      boardAddress: Schema.optionalKey(Schema.NullOr(BoardAddress)),
       localLabel: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
     }),
   ),

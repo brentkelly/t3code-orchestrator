@@ -22,6 +22,7 @@ import {
 
 import { joinSockets, openLineChannel, type LineChannel } from "./lineChannel.ts";
 import { NONCE_HEADER } from "./tunnelBoard.ts";
+import { boardUrlRefusal } from "./workerFile.ts";
 
 export type WorkerTunnelState = "connecting" | "connected" | "offline" | "revoked" | "needs-update";
 
@@ -77,6 +78,18 @@ export function redialAfterClose(heldReadyMs: number | null): { delayMs?: number
   return heldReadyMs !== null && heldReadyMs >= TUNNEL_STABLE_MS
     ? { delayMs: 250, reset: true }
     : { reset: false };
+}
+
+/** The board's advertised address, when the worker should try it next. The credential goes
+    there, so it passes the join's clear-text check; `--insecure` never carries over. */
+export function advertisedBoardCandidate(
+  current: string,
+  advertised: string | undefined,
+): string | null {
+  if (advertised === undefined) return null;
+  const trimmed = advertised.replace(/\/+$/, "");
+  if (trimmed === current) return null;
+  return boardUrlRefusal(trimmed, false) === null ? trimmed : null;
 }
 
 /** A raw `Upgrade: t3o-stream` request to the board. Resolves with the socket on 101,
@@ -314,12 +327,8 @@ export class TunnelWorker {
                   this.candidateUrl = null;
                   this.options.onAddressAdopted?.(url);
                 }
-                if (
-                  message.boardAddress !== undefined &&
-                  message.boardAddress.replace(/\/+$/, "") !== this.boardUrl
-                ) {
-                  this.candidateUrl = message.boardAddress.replace(/\/+$/, "");
-                }
+                const next = advertisedBoardCandidate(this.boardUrl, message.boardAddress);
+                if (next !== null) this.candidateUrl = next;
                 this.setStatus({
                   state: "connected",
                   lastConnectedAt: new Date().toISOString(),

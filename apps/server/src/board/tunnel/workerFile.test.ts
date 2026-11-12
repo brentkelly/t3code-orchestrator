@@ -76,6 +76,7 @@ describe("board addresses", () => {
     expect(boardUrlRefusal("http://studio.tail1234.ts.net", false)).toBeNull();
     expect(boardUrlRefusal("http://100.128.0.1", false)).toMatch(/unencrypted/);
     expect(boardUrlRefusal("http://192.168.1.20:3773", false)).toMatch(/unencrypted/);
+    expect(boardUrlRefusal("http://127.example.com", false)).toMatch(/unencrypted/);
     expect(boardUrlRefusal("http://192.168.1.20:3773", true)).toBeNull();
     expect(boardUrlRefusal("ftp://board.example", true)).toMatch(/https/);
     expect(boardUrlRefusal("board.example", false)).toMatch(/isn't a URL/);

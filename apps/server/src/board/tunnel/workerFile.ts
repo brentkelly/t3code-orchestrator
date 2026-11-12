@@ -167,7 +167,10 @@ export function findWorkerBoard(file: WorkerFile, name: string): WorkerBoardEntr
 }
 
 const isLoopbackHost = (host: string) =>
-  host === "localhost" || host === "::1" || host === "[::1]" || /^127\./.test(host);
+  host === "localhost" ||
+  host === "::1" ||
+  host === "[::1]" ||
+  /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 
 /** 100.64.0.0/10, the tailnet's address range. */
 const isTailscaleAddress = (host: string) => {

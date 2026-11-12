@@ -2,7 +2,8 @@
  * T3o: Settings → Workers (prototype 3.1), its own page under Board. The
  * workers, the address they join on, and which projects each has checked out.
  */
-import { isLocalOnlyBoardWorkers, type EnvironmentId } from "@t3tools/contracts";
+import { BoardAddress, isLocalOnlyBoardWorkers, type EnvironmentId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { useState } from "react";
 
 import { searchableSetting } from "../../components/settings/settingsSearch";
@@ -18,12 +19,9 @@ import { useBoardWorkers } from "./boardWorkersState";
 import { ProjectCheckoutsSection } from "./ProjectCheckoutsSection";
 import { AddWorkerButton, useAddWorker, WorkersSection } from "./WorkersSection";
 
-/** Where workers reach this board when no address is set: this browser's own
-    origin, or the board connection's address in a shell with no web origin. */
+/** Where workers reach this board when no address is set: the board connection's
+    address (it can be another origin than this page's), else this page's origin. */
 function fallbackBoardUrl(environmentId: EnvironmentId): string {
-  if (window.location.protocol === "http:" || window.location.protocol === "https:") {
-    return window.location.origin;
-  }
   const prepared = readPreparedConnection(environmentId);
   return prepared === null ? window.location.origin : new URL(prepared.httpBaseUrl).origin;
 }
@@ -112,6 +110,8 @@ export function BoardWorkersSettingsPage() {
 
 const BOARD_ADDRESS_INPUT_ID = "board-address-input";
 
+const isBoardAddress = Schema.is(BoardAddress);
+
 function BoardAddressSection(props: { readonly saved: string | null; readonly disabled: boolean }) {
   const update = useUpdateBoardSettings();
   const anchor = searchableSetting("board-address");
@@ -120,6 +120,8 @@ function BoardAddressSection(props: { readonly saved: string | null; readonly di
   const commit = () => {
     if (draft === null) return;
     const next = draft.trim();
+    // An address the board would refuse stays in the field, marked, until it's fixed.
+    if (next.length > 0 && !isBoardAddress(next)) return;
     setDraft(null);
     if (next === (props.saved ?? "")) return;
     update({ board: { workers: { boardAddress: next.length === 0 ? null : next } } });
@@ -129,7 +131,7 @@ function BoardAddressSection(props: { readonly saved: string | null; readonly di
       <BoardSettingsCard>
         <BoardSettingsCardRow
           label="Board address"
-          description="The address workers join and connect to, shown in the join command. Leave empty to use this browser's address."
+          description="The address workers join and connect to, shown in the join command. Leave empty to use the address this board is open on."
           control={
             <Input
               id={BOARD_ADDRESS_INPUT_ID}
@@ -145,6 +147,7 @@ function BoardAddressSection(props: { readonly saved: string | null; readonly di
                 if (event.key === "Escape") setDraft(null);
               }}
               aria-label="Board address"
+              aria-invalid={draft !== null && draft.trim().length > 0 && !isBoardAddress(draft.trim())}
             />
           }
         />

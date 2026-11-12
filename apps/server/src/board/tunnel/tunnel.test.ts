@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { joinSockets } from "./lineChannel.ts";
 import { NONCE_HEADER, TunnelBoard, type TunnelSessionDecision } from "./tunnelBoard.ts";
 import {
+  advertisedBoardCandidate,
   openUpgrade,
   redialAfterClose,
   TUNNEL_STABLE_MS,
@@ -461,6 +462,16 @@ describe("tunnel backpressure", () => {
     expect(tunnelBackoffMs(0, bounds, () => 0)).toBe(500);
     expect(tunnelBackoffMs(0, bounds, () => 1)).toBe(1_000);
     expect(tunnelBackoffMs(10, bounds, () => 1)).toBe(30_000);
+  });
+
+  it("follows an advertised board address only when it passes the clear-text check", () => {
+    const current = "https://board.example";
+    expect(advertisedBoardCandidate(current, "https://new.example/")).toBe("https://new.example");
+    expect(advertisedBoardCandidate(current, "https://board.example/")).toBeNull();
+    expect(advertisedBoardCandidate(current, undefined)).toBeNull();
+    expect(advertisedBoardCandidate(current, "http://board.example")).toBeNull();
+    expect(advertisedBoardCandidate(current, "not a url")).toBeNull();
+    expect(advertisedBoardCandidate(current, "http://127.0.0.1:3773")).toBe("http://127.0.0.1:3773");
   });
 
   it("comes straight back only after a tunnel held; a flapping one keeps backing off", () => {
