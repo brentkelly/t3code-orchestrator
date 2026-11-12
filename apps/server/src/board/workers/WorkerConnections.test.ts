@@ -169,8 +169,11 @@ it.effect("a revoked session drops the tunnel and heals on the next session hand
       // The board drops the tunnel so the worker's next hello hands over a session,
       // and doesn't dial again until it has.
       assert.deepStrictEqual(kit.tunnel.disconnected, [WORKER_ID]);
-      yield* TestClock.adjust("1 minute");
+      yield* TestClock.adjust("30 seconds");
       assert.strictEqual((yield* statusOf(connections))?.status.state, "unauthorized");
+      // No handoff within the grace: the worker is down or can't mint, so it reads offline.
+      yield* TestClock.adjust("1 minute");
+      yield* waitFor(connections, "offline");
       assert.strictEqual(worker.dialedTokens.length, 1);
 
       // The tunnel's handshake stored a fresh session and the tunnel is ready again.

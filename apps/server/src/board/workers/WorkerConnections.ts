@@ -153,6 +153,9 @@ interface Entry extends WorkerRuntime {
 
 /** How long a booting board waits for a worker's tunnel before calling it offline. */
 const BOOT_GRACE = Duration.seconds(10);
+/** How long an unauthorized worker reads as reconnecting while its fresh session is
+    awaited: past it the worker is down, or can't mint one, and reads offline. */
+const HANDOFF_GRACE = Duration.minutes(1);
 
 export const makeWorkerConnections = Effect.gen(function* () {
   const transport = yield* WorkerTransport;
@@ -379,19 +382,21 @@ export const makeWorkerConnections = Effect.gen(function* () {
       const ready = yield* tunnelOf(worker.id);
       let tunnel = ready;
       if (ready.phase !== "ready" || ready.readyEpoch <= waitPast) {
-        // An unauthorized worker reads as reconnecting until its next handoff.
-        if (!booting && waitPast === 0) yield* setState(worker.id, "offline");
-        tunnel = booting
-          ? yield* awaitReady(worker.id, waitPast).pipe(
-              Effect.timeoutOrElse({
-                duration: BOOT_GRACE,
-                orElse: () =>
-                  setState(worker.id, "offline").pipe(
-                    Effect.andThen(awaitReady(worker.id, waitPast)),
-                  ),
-              }),
-            )
-          : yield* awaitReady(worker.id, waitPast);
+        // An unauthorized worker reads as reconnecting until its next handoff, for a while.
+        const grace = booting ? BOOT_GRACE : waitPast !== 0 ? HANDOFF_GRACE : null;
+        if (grace === null) yield* setState(worker.id, "offline");
+        tunnel =
+          grace === null
+            ? yield* awaitReady(worker.id, waitPast)
+            : yield* awaitReady(worker.id, waitPast).pipe(
+                Effect.timeoutOrElse({
+                  duration: grace,
+                  orElse: () =>
+                    setState(worker.id, "offline").pipe(
+                      Effect.andThen(awaitReady(worker.id, waitPast)),
+                    ),
+                }),
+              );
       }
       booting = false;
       const outcome: AttemptOutcome = yield* attempt(worker, url, renewed);
