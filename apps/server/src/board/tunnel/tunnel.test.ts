@@ -522,6 +522,14 @@ describe("tunnel backpressure", () => {
     expect(produced).toBeLessThan(1024 * 1024);
   });
 
+  it("joining a socket that already closed destroys the other, rather than leaving it open", () => {
+    const gone = Object.assign(new NodeStream.PassThrough(), { setNoDelay() {}, setKeepAlive() {} });
+    gone.destroy();
+    const live = Object.assign(new NodeStream.PassThrough(), { setNoDelay() {}, setKeepAlive() {} });
+    joinSockets(gone as unknown as NodeNet.Socket, live as unknown as NodeNet.Socket);
+    expect(live.destroyed).toBe(true);
+  });
+
   it("backs off with jitter between 1 s and 30 s", () => {
     const bounds = { initialMs: 1_000, maxMs: 30_000 };
     expect(tunnelBackoffMs(0, bounds, () => 0)).toBe(500);

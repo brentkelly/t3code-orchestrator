@@ -152,6 +152,11 @@ export function joinSockets(
     socket.on("error", finish);
     socket.on("close", finish);
   }
+  // A leg that closed before the join already fired its "close".
+  if (left.destroyed || right.destroyed) {
+    finish();
+    return;
+  }
   left.pipe(right);
   right.pipe(left);
 }
