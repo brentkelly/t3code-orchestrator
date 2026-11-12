@@ -74,6 +74,11 @@ export type RemotePairingTargetError = typeof RemotePairingTargetError.Type;
 const hasSupportedRemoteBackendProtocol = (url: URL): boolean =>
   SUPPORTED_REMOTE_BACKEND_PROTOCOLS.has(url.protocol);
 
+// T3o: keep a proxied environment's base path (T3O-84).
+// A board proxies a worker at a path prefix; the pairing page sits at `<base>/pair`.
+const remoteBasePathname = (url: URL): string =>
+  `${url.pathname.replace(/\/+$/, "").replace(/\/pair$/, "")}/`;
+
 const normalizeRemoteBaseUrl = (
   rawValue: string,
   source: RemoteBackendUrlInvalidError["source"],
@@ -99,7 +104,8 @@ const normalizeRemoteBaseUrl = (
       protocol: url.protocol,
     });
   }
-  url.pathname = "/";
+  // T3o: keep a proxied environment's base path (T3O-84).
+  url.pathname = remoteBasePathname(url);
   url.search = "";
   url.hash = "";
   return url;
@@ -112,7 +118,8 @@ const toHttpBaseUrl = (url: URL): string => {
   } else if (next.protocol === "wss:") {
     next.protocol = "https:";
   }
-  next.pathname = "/";
+  // T3o: keep a proxied environment's base path (T3O-84).
+  next.pathname = remoteBasePathname(next);
   next.search = "";
   next.hash = "";
   return next.toString();
@@ -125,7 +132,8 @@ const toWsBaseUrl = (url: URL): string => {
   } else if (next.protocol === "https:") {
     next.protocol = "wss:";
   }
-  next.pathname = "/";
+  // T3o: keep a proxied environment's base path (T3O-84).
+  next.pathname = remoteBasePathname(next);
   next.search = "";
   next.hash = "";
   return next.toString();

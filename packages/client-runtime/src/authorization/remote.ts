@@ -15,6 +15,8 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
+// T3o: keep a proxied environment's base path (T3O-84).
+import { environmentSocketUrl } from "../environment/basePath.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   executeEnvironmentHttpRequest,
@@ -267,11 +269,8 @@ export const issueRemoteDpopWebSocketTicket = Effect.fn(
 });
 
 function rpcSocketUrl(wsBaseUrl: string): URL {
-  const url = new URL(wsBaseUrl);
-  if (url.pathname === "" || url.pathname === "/") {
-    url.pathname = "/ws";
-  }
-  return url;
+  // T3o: keep a proxied environment's base path (T3O-84).
+  return environmentSocketUrl(wsBaseUrl);
 }
 
 export const resolveRemoteWebSocketConnectionUrl = Effect.fn(

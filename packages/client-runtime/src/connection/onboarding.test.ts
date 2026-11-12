@@ -280,6 +280,29 @@ describe("connection onboarding", () => {
     }),
   );
 
+  it.effect("keeps a proxied environment's base path in its registration and id", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const registration = yield* preparePairingRegistration({
+        pairingUrl: "https://board.example.test/api/t3o/workers/w1/pair#token=pairing-token",
+      }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls)));
+
+      expect(registration).toMatchObject({
+        target: {
+          connectionId: "bearer:environment-paired:https://board.example.test/api/t3o/workers/w1",
+        },
+        profile: {
+          httpBaseUrl: "https://board.example.test/api/t3o/workers/w1/",
+          wsBaseUrl: "wss://board.example.test/api/t3o/workers/w1/",
+        },
+      });
+      expect(calls.map((call) => call.url)).toEqual([
+        "https://board.example.test/api/t3o/workers/w1/.well-known/t3/environment",
+        "https://board.example.test/api/t3o/workers/w1/oauth/token",
+      ]);
+    }),
+  );
+
   it.effect("turns a switched-off environment back on when it is paired again", () =>
     Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
@@ -609,8 +632,8 @@ describe("connection onboarding", () => {
         profile: {
           environmentId,
           label: "Renamed environment",
-          httpBaseUrl: "http://100.65.180.100:3773/",
-          wsBaseUrl: "ws://100.65.180.100:3773/",
+          httpBaseUrl: "http://100.65.180.100:3773/path/",
+          wsBaseUrl: "ws://100.65.180.100:3773/path/",
         },
         credential: { token: "bearer-token" },
       });

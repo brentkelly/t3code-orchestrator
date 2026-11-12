@@ -112,6 +112,24 @@ describe("remote", () => {
     });
   });
 
+  it.each([
+    [{ pairingUrl: "https://board.example/api/t3o/workers/w1/pair#token=pairing-token" }],
+    [{ pairingUrl: "https://board.example/api/t3o/workers/w1/#token=pairing-token" }],
+    [{ host: "https://board.example/api/t3o/workers/w1", pairingCode: "pairing-token" }],
+    [
+      {
+        pairingUrl:
+          "https://app.t3.codes/pair?host=https%3A%2F%2Fboard.example%2Fapi%2Ft3o%2Fworkers%2Fw1%2F#token=pairing-token",
+      },
+    ],
+  ])("keeps a proxied environment's base path from %j", (input) => {
+    expect(resolveRemotePairingTarget(input)).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: "https://board.example/api/t3o/workers/w1/",
+      wsBaseUrl: "wss://board.example/api/t3o/workers/w1/",
+    });
+  });
+
   it("rejects unsupported direct pairing URL protocols", () => {
     let pairingUrlError: unknown;
     try {
