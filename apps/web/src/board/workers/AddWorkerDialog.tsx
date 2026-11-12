@@ -34,6 +34,8 @@ import { useNowAtDeadlines } from "./boardWorkersState";
 import {
   joinDialogDeadlines,
   joinDialogPhase,
+  joinProgressKey,
+  latchJoinDialogPhase,
   minutesLeft,
   type JoinDialogPhase,
 } from "./joinDialog";
@@ -97,7 +99,10 @@ function AddWorkerBody(props: Parameters<typeof AddWorkerDialog>[0]) {
       </>
     );
   }
-  return <JoinCodeFlow {...props} created={props.created} close={close} />;
+  // Keyed by code: the phase a code reached never carries over to the next one.
+  return (
+    <JoinCodeFlow key={props.created.codeId} {...props} created={props.created} close={close} />
+  );
 }
 
 function JoinCodeFlow(
@@ -120,12 +125,20 @@ function JoinCodeFlow(
     (_, index) => expiresMs - index * 60_000,
   );
   const nowMs = useNowAtDeadlines([...deadlines, ...minuteEdges]);
-  const phase = joinDialogPhase({
+  const [reached, setReached] = useState<JoinDialogPhase | null>(null);
+  const listed = joinDialogPhase({
     codeId: created.codeId,
     expiresAt: created.expiresAt,
     state,
     nowMs,
   });
+  if (
+    (listed.kind === "checking" || listed.kind === "joined") &&
+    joinProgressKey(listed) !== (reached === null ? null : joinProgressKey(reached))
+  ) {
+    setReached(listed);
+  }
+  const phase = latchJoinDialogPhase(reached, listed, state);
   const cancelCode = useAtomCommand(boardEnvironment.cancelWorkerJoinCode, {
     reportFailure: false,
   });

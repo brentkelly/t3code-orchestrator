@@ -80,6 +80,28 @@ export function joinDialogPhase(input: {
   return input.nowMs >= Date.parse(code.expiresAt) ? { kind: "expired" } : { kind: "waiting" };
 }
 
+/** What changes when a join moves on, so a component remembers only real progress. */
+export function joinProgressKey(phase: JoinDialogPhase): string {
+  return phase.kind === "checking" ? `checking:${phase.milestones.join(",")}` : phase.kind;
+}
+
+/**
+ * Never step back from a worker this client saw accepted: once the board stops listing the
+ * code (its progress window passed, or the board restarted) the dialog keeps where it got to.
+ */
+export function latchJoinDialogPhase(
+  previous: JoinDialogPhase | null,
+  next: JoinDialogPhase,
+  state: BoardWorkersState,
+): JoinDialogPhase {
+  if (previous === null || (next.kind !== "expired" && next.kind !== "waiting")) return next;
+  if (previous.kind === "checking") return previous;
+  if (previous.kind !== "joined") return next;
+  const worker =
+    state.workers.find((candidate) => candidate.id === previous.usedBy.workerId) ?? null;
+  return { ...previous, worker };
+}
+
 /** The moments the phase can change with no new state: expiry and the stall. */
 export function joinDialogDeadlines(input: {
   readonly codeId: string;

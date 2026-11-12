@@ -7,7 +7,13 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { JOIN_STALL_MS, joinDialogPhase, minutesLeft, openJoinCodes } from "./joinDialog";
+import {
+  JOIN_STALL_MS,
+  joinDialogPhase,
+  latchJoinDialogPhase,
+  minutesLeft,
+  openJoinCodes,
+} from "./joinDialog";
 
 const NOW = Date.parse("2026-11-12T10:00:00.000Z");
 const EXPIRES = "2026-11-12T10:10:00.000Z";
@@ -102,6 +108,21 @@ describe("Add worker phases", () => {
       code({ state: "used", usedBy, milestones: ["code-accepted", "connected"] }),
     ]);
     expect(phase(connected, NOW + JOIN_STALL_MS)).toMatchObject({ stalled: false });
+  });
+
+  it("keeps where a code got to once the board stops listing it", () => {
+    const later = Date.parse(EXPIRES) + 1;
+    const gone = board([]);
+    const joined = phase(
+      board([code({ state: "used", usedBy, milestones: ["code-accepted", "joined"] })]),
+    );
+    expect(latchJoinDialogPhase(joined, phase(gone, later), gone).kind).toBe("joined");
+    const checking = phase(board([code({ state: "used", usedBy, milestones: ["code-accepted"] })]));
+    expect(latchJoinDialogPhase(checking, phase(gone, later), gone).kind).toBe("checking");
+    // A code that never got used still expires.
+    expect(latchJoinDialogPhase(phase(board([code()])), phase(gone, later), gone).kind).toBe(
+      "expired",
+    );
   });
 
   it("lists only open, unused, unexpired codes and counts minutes up", () => {
