@@ -40,7 +40,14 @@ import {
   type TabIdentity,
   type TabRouteKey,
 } from "./tabIdentity.logic";
-import { resolveCardTabStatus, threadTabStatus } from "./tabStatus.logic";
+import {
+  resolveCardTabStatus,
+  sameCardTabStatus,
+  threadTabStatus,
+  type CardTabStatus,
+} from "./tabStatus.logic";
+
+const NO_CARD_STATUS: CardTabStatus = { status: null, settleAt: null };
 
 function draftProject(draftId: string) {
   const session = useComposerDraftStore.getState().getDraftSession(draftId as DraftId);
@@ -138,9 +145,32 @@ export function startTabIdentity(router: AppRouter): void {
     Atom.withLabel("t3o-tab-identity-settle-tick"),
   );
 
+  // Reads the shell, which changes on every streaming tick; equality keeps an unchanged status
+  // from recomputing the identity.
+  const cardStatusAtom = Atom.family((cardId: string) =>
+    Atom.make((get): CardTabStatus => {
+      get(settleTickAtom);
+      const boardEnv = get(boardEnvAtom);
+      if (boardEnv.kind !== "ready") return NO_CARD_STATUS;
+      const environmentId = boardEnv.environmentId;
+      const board = get(boardEnvironment.boardAtom(environmentId));
+      if (board === null) return NO_CARD_STATUS;
+      const shell = get(environmentShell.stateValueAtom(environmentId));
+      const threads = Option.isSome(shell.snapshot) ? shell.snapshot.value.threads : [];
+      return resolveCardTabStatus({
+        cardId,
+        cards: board.cards,
+        threadOf: (threadId) => threads.find((thread) => thread.id === threadId),
+        stageList: get(boardEnvironment.stageListAtom(environmentId)),
+        projectStageConfigs: get(boardEnvironment.projectStageConfigsAtom(environmentId)),
+        serverSettings: get(serverEnvironment.settingsValueAtom(environmentId)),
+        workers: get(boardEnvironment.workersAtom(environmentId)),
+        now: Date.now(),
+      });
+    }).pipe(Atom.withEquality(sameCardTabStatus), Atom.withLabel("t3o-tab-identity-card-status")),
+  );
+
   const identityAtom = Atom.make((get) => {
-    get(settleTickAtom);
-    const now = Date.now();
     const settle: { at: number | null } = { at: null };
     const key = get(locationKeyAtom);
     const config = get(primaryServerConfigAtom);
@@ -161,22 +191,7 @@ export function startTabIdentity(router: AppRouter): void {
         get(environmentProjects.projectAtom({ environmentId, projectId })),
       creating: get(tabCreatingCardAtom),
       cardStatus: (cardId) => {
-        if (boardEnv.kind !== "ready") return null;
-        const environmentId = boardEnv.environmentId;
-        const board = get(boardEnvironment.boardAtom(environmentId));
-        if (board === null) return null;
-        const shell = get(environmentShell.stateValueAtom(environmentId));
-        const threads = Option.isSome(shell.snapshot) ? shell.snapshot.value.threads : [];
-        const resolved = resolveCardTabStatus({
-          cardId,
-          cards: board.cards,
-          threadOf: (threadId) => threads.find((thread) => thread.id === threadId),
-          stageList: get(boardEnvironment.stageListAtom(environmentId)),
-          projectStageConfigs: get(boardEnvironment.projectStageConfigsAtom(environmentId)),
-          serverSettings: boardServerSettings,
-          workers: get(boardEnvironment.workersAtom(environmentId)),
-          now,
-        });
+        const resolved = get(cardStatusAtom(cardId));
         settle.at = resolved.settleAt;
         return resolved.status;
       },

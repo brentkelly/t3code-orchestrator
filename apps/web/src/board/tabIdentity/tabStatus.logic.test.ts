@@ -158,6 +158,7 @@ describe("boardCardTabStatus", () => {
       }),
       star("Move failed"),
     ],
+
     ["Ready for merge", shell("merge", { hasPr: true }), star("Ready for merge")],
     [
       "a working card",
@@ -198,6 +199,29 @@ describe("boardCardTabStatus", () => {
   it("names the stage a project switched off", () => {
     expect(statusOf(shell("building"), { stageGone: "Building is off" })).toEqual(
       star("Stage removed"),
+    );
+  });
+
+  it("names a failed checkout clone, not a move", () => {
+    const workers = {
+      ...EMPTY_BOARD_WORKERS_STATE,
+      setups: [
+        {
+          projectId: ProjectId.make("project-1"),
+          workerId: EMPTY_BOARD_WORKERS_STATE.defaultWorkerId,
+          workerProjectId: null,
+          destinationPath: "/repo",
+          phase: "failed",
+          stage: null,
+          percent: null,
+          failure: { kind: "no-credentials", message: "denied", log: "" },
+          startedAt: iso(T0),
+          endedAt: iso(T0),
+        },
+      ],
+    } as never;
+    expect(statusOf(shell("building", { queued: true, queuedBy: "setup" }), { workers })).toEqual(
+      star("Clone failed"),
     );
   });
 
@@ -288,6 +312,19 @@ describe("resolveCardTabStatus", () => {
     const settleAt = T0 - 1_000 + BOARD_ATTENTION_SETTLE_MS;
     expect(at(T0)).toEqual({ status: null, settleAt });
     expect(at(settleAt)).toEqual({ status: star("Needs a human"), settleAt: null });
+  });
+
+  it("wakes for the shown card's own grace, not an ancestor's", () => {
+    const parentThread = ThreadId.make("thread-parent");
+    const resolved = resolveCardTabStatus({
+      ...sources,
+      cardId: "a",
+      cards: [{ ...parent, activeThreadId: parentThread }, child("a")],
+      threadOf: (id) =>
+        id === parentThread ? { latestRunCompletedAt: DateTime.makeUnsafe(T0 - 1_000) } : undefined,
+      now: T0,
+    });
+    expect(resolved.settleAt).toBeNull();
   });
 
   it("is null for a card the board does not hold", () => {

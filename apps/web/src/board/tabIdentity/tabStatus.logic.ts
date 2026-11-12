@@ -64,7 +64,7 @@ function fromNotice(notice: BoardCardNotice): TabStatus | null | undefined {
     case "worker-move":
       return notice.move.status === "moving"
         ? { label: "Moving", needsYou: false }
-        : needsYou("Move failed");
+        : needsYou(notice.move.status === "clone-failed" ? "Clone failed" : "Move failed");
     case "conflicts":
       return needsYou("Conflicts");
     case "auto-merge":
@@ -147,6 +147,16 @@ export function boardCardTabStatus(
   return null;
 }
 
+export interface CardTabStatus {
+  readonly status: TabStatus | null;
+  readonly settleAt: number | null;
+}
+
+export const sameCardTabStatus = (a: CardTabStatus, b: CardTabStatus): boolean =>
+  a.settleAt === b.settleAt &&
+  a.status?.label === b.status?.label &&
+  a.status?.needsYou === b.status?.needsYou;
+
 /**
  * The status of the one card a tab shows, from the board's sources narrowed to that card, its
  * ancestors (auto-merge inherits down them) and its children (plan progress, group, working). Also
@@ -154,7 +164,7 @@ export function boardCardTabStatus(
  */
 export function resolveCardTabStatus(
   input: BoardCardObservationSources & { readonly cardId: string; readonly now: number },
-): { readonly status: TabStatus | null; readonly settleAt: number | null } {
+): CardTabStatus {
   const byId = new Map(input.cards.map((card) => [String(card.cardId), card]));
   const target = byId.get(input.cardId);
   if (target === undefined) return { status: null, settleAt: null };
@@ -186,7 +196,11 @@ export function resolveCardTabStatus(
       stageGone,
       now: input.now,
     }),
-    settleAt: nextBoardAttentionSettleAt(view.idleByCard.values(), input.now),
+    // Only the shown card's own idle time feeds its status; related cards' graces change nothing.
+    settleAt: nextBoardAttentionSettleAt(
+      observation.threadIdleSince === null ? [] : [observation.threadIdleSince],
+      input.now,
+    ),
   };
 }
 
