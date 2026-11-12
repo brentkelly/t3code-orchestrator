@@ -102,19 +102,31 @@ export function joinProgressKey(phase: JoinDialogPhase): string {
 
 /**
  * Never step back from a worker this client saw accepted: once the board stops listing the
- * code (its progress window passed, or the board restarted) the dialog keeps where it got to.
+ * code (its progress window passed), or lists it with its progress lost (the board
+ * restarted), the dialog keeps where it got to.
  */
 export function latchJoinDialogPhase(
   previous: JoinDialogPhase | null,
   next: JoinDialogPhase,
   state: BoardWorkersState,
 ): JoinDialogPhase {
-  if (previous === null || (next.kind !== "expired" && next.kind !== "waiting")) return next;
-  if (previous.kind === "checking") return previous;
-  if (previous.kind !== "joined") return next;
-  const worker =
-    state.workers.find((candidate) => candidate.id === previous.usedBy.workerId) ?? null;
-  return { ...previous, worker };
+  if (previous === null) return next;
+  const lostProgress = next.kind === "expired" || next.kind === "waiting";
+  if (previous.kind === "joined" && (lostProgress || next.kind === "checking")) {
+    const worker =
+      state.workers.find((candidate) => candidate.id === previous.usedBy.workerId) ?? null;
+    return { ...previous, worker };
+  }
+  if (previous.kind !== "checking") return next;
+  if (lostProgress) return previous;
+  if (next.kind === "checking" && next.milestones.length < previous.milestones.length) {
+    return {
+      ...next,
+      milestones: previous.milestones,
+      stalled: next.stalled && !previous.milestones.includes("connected"),
+    };
+  }
+  return next;
 }
 
 /** The moments the phase can change with no new state: expiry and the stall. */

@@ -142,6 +142,26 @@ describe("Add worker phases", () => {
     );
   });
 
+  it("keeps where a code got to when a restarted board lists it with its progress lost", () => {
+    const stallAt = Date.parse(USED_AT) + 60_000;
+    const restarted = board([code({ state: "used", usedBy, milestones: [] })], [worker("online")]);
+    const joined = phase(
+      board([code({ state: "used", usedBy, milestones: ["code-accepted", "joined"] })]),
+    );
+    const latchedJoined = latchJoinDialogPhase(joined, phase(restarted, stallAt), restarted);
+    expect(latchedJoined.kind).toBe("joined");
+    expect(latchedJoined.kind === "joined" && latchedJoined.worker?.id).toBe(BUILD);
+    const connected = phase(
+      board([code({ state: "used", usedBy, milestones: ["code-accepted", "connected"] })]),
+    );
+    expect(latchJoinDialogPhase(connected, phase(restarted, stallAt), restarted)).toEqual({
+      kind: "checking",
+      usedBy,
+      milestones: ["code-accepted", "connected"],
+      stalled: false,
+    });
+  });
+
   it("lists only open, unused, unexpired codes and counts minutes up", () => {
     const state = board([
       code(),
