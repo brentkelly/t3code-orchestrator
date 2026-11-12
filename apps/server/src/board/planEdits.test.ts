@@ -104,7 +104,10 @@ const cases: ReadonlyArray<Case> = [
   {
     name: "keeps ### content inside its ## parent",
     edits: [{ section: "## Design", new_text: "## Design\nRewritten.\n\n" }],
-    expected: PLAN.replace("## Design\nUse a tool.\n\n### Details\nFlat schema.\n\n", "## Design\nRewritten.\n\n"),
+    expected: PLAN.replace(
+      "## Design\nUse a tool.\n\n### Details\nFlat schema.\n\n",
+      "## Design\nRewritten.\n\n",
+    ),
   },
   {
     name: "stops a ### section at the next higher-level heading",
@@ -219,17 +222,15 @@ const cases: ReadonlyArray<Case> = [
 ];
 
 describe("applyBoardPlanEdits", () => {
-  for (const testCase of cases) {
-    it(testCase.name, () => {
-      const result = applyBoardPlanEdits(testCase.body ?? PLAN, testCase.edits);
-      if (typeof testCase.expected === "string") {
-        expect(result).toEqual({ ok: true, body: testCase.expected });
-      } else {
-        expect(result.ok).toBe(false);
-        expect(result.ok ? null : result.message).toBe(testCase.expected.error);
-      }
-    });
-  }
+  it.each(cases)("$name", (testCase) => {
+    const result = applyBoardPlanEdits(testCase.body ?? PLAN, testCase.edits);
+    if (typeof testCase.expected === "string") {
+      expect(result).toEqual({ ok: true, body: testCase.expected });
+    } else {
+      expect(result.ok).toBe(false);
+      expect(result.ok ? null : result.message).toBe(testCase.expected.error);
+    }
+  });
 
   it("caps the listed headings at 40", () => {
     const body = Array.from({ length: 45 }, (_, index) => `## H${index}\n`).join("");

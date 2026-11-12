@@ -27,7 +27,11 @@ const headingKey = (line: string): string => line.trim().replace(/[ \t]+#+$/, ""
 
 const countOccurrences = (haystack: string, needle: string): number => {
   let count = 0;
-  for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + needle.length)) {
+  for (
+    let at = haystack.indexOf(needle);
+    at !== -1;
+    at = haystack.indexOf(needle, at + needle.length)
+  ) {
     count += 1;
   }
   return count;
@@ -122,7 +126,7 @@ export function applyBoardPlanEdits(
     const oldText = edit.old_text === undefined ? "" : normaliseNewlines(edit.old_text);
     const section = edit.section === undefined ? "" : normaliseNewlines(edit.section);
     const newText = normaliseNewlines(edit.new_text);
-    if ((oldText.length > 0) === (section.length > 0)) {
+    if (oldText.length > 0 === section.length > 0) {
       return {
         ok: false,
         index,
