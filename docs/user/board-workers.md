@@ -1,7 +1,7 @@
 # Running the board across several machines
 
-One server hosts the board. Other T3o servers you own can be added to it as **workers**: machines
-the board connects to and can run cards on. The server hosting the board is always a worker itself,
+One server hosts the board. Other T3o servers you own can join it as **workers**: machines that
+connect out to the board and run its cards. The server hosting the board is always a worker itself,
 listed as **This server (local)**, so a board with no workers added works exactly as it always has.
 
 Workers are managed under **Settings → Board → Workers**. Every device connected to the board
@@ -15,28 +15,57 @@ board from another device, pair with the board server in **Settings → Environm
 **Settings → Board → Board server**. The choice is saved on that device only. If the chosen server
 is not connected, the board says so and offers to reconnect or switch back to this device's server.
 
-## Before you add one
+## Workers
 
-- The worker must run T3o, at or above the version the board needs. A worker on an older version
-  shows **Incompatible version** and says which version it needs. Upstream T3 Code servers can't be
-  workers.
-- **The board server** must be able to reach the worker over the network, for example on the same
-  LAN or over Tailscale. It's not enough for your laptop to reach it. Workers never connect to the
-  board server; the board server connects to them.
+### What a worker needs
 
-## Adding a worker
+- A T3o release checkout on **Linux** (other platforms are below), its projects, and its providers
+  signed in (Claude Code and so on).
+- **Outbound HTTPS to the board's address.** That's all: no open port, no reverse proxy, no SSH.
+  The worker connects out to the board, and the board reaches the worker back through that
+  connection.
+- The board's address must reach the board server directly: your own domain behind Caddy or nginx,
+  the LAN, or Tailscale. Fronts that only pass WebSockets (Cloudflare's proxy) and corporate HTTP
+  proxies don't work yet, nor does T3 Connect. Plain `http://` is refused unless it's loopback or a
+  Tailscale address; pass `--insecure` to override.
+- Run one board server process per address.
 
-Press **Add worker**. The dialog lists the environments this device is already connected to in
-**Settings → Environments**. Pick one and press **Use as worker**. This device creates a one-time
-pairing token on that machine, and the board server uses it to get its own access there.
+Set the address workers should use under **Settings → Board → Board address**. Until you do, the
+join command uses the address your browser has open, which may not be reachable from the worker.
 
-If an environment says **Needs a pairing link**, your connection to it doesn't have admin access, so
-this device can't create a token there. In that case, and for a server this device isn't connected
-to at all, run `t3 pair` on the worker machine and paste the link it prints. Links work once and
-expire after 5 minutes.
+### Adding a worker
 
-On the worker, the board then appears under **Settings → Sharing & access → Authorized clients** as
-**T3o board (_board server name_)**.
+Press **Add worker** under **Settings → Board → Workers**. The dialog shows a one-time code (it works
+once, for 10 minutes) and the command to run on the worker, in its T3o checkout:
+
+```sh
+pnpm t3o-worker join https://board.example --code ABCD-EFGH
+```
+
+On Linux, the first join installs the T3o background service (listening on `127.0.0.1` only). On
+macOS, start a T3o server with the same home first and keep it running; Windows workers aren't
+supported yet. The dialog ticks off each step as the worker checks in, then lets you name it and
+pick its 1–3 character abbreviation. If it stalls, run `pnpm t3o-worker status` on the worker: it
+shows the last error (DNS, TLS, a refused upgrade, a revoked credential).
+
+A code that expires, or one already used, needs a new one. If the worker's T3o is too old or too
+new for the board, the dialog says **Needs update**; update the older side, and the same code still
+works.
+
+**Everyone who uses the board can see every thread on its workers.** A worker that serves two boards
+lets users of both see all of its threads; `join` warns when you add a second board.
+
+### The worker's commands
+
+Run these in the worker's T3o checkout:
+
+- `pnpm t3o-worker status` — the service, and each board's connection and last error.
+- `pnpm t3o-worker boards` — the boards this worker serves.
+- `pnpm t3o-worker leave [board]` (or `boards remove [board]`) — stop working for a board. It takes
+  back everything the board held on this machine, even while the board is unreachable.
+- `pnpm t3o-worker config` — the worker's own settings in `worker.json`; `config --help` lists them.
+
+If the worker's managed policy forbids remote clients, it can't join a board.
 
 ## Default worker
 
@@ -82,7 +111,7 @@ the board limit and this server's limits.
 
 ## When a worker needs attention
 
-While any worker is offline, revoked or incompatible, the board's header shows how many, and its
+While any worker is offline or needs an update, the board's header shows how many, and its
 popover lists the cards each one has paused, with **Open Workers settings**.
 
 - **Offline** — the board server can't reach it. It keeps trying, and the worker comes back by
@@ -91,19 +120,18 @@ popover lists the cards each one has paused, with **Open Workers settings**.
   isn't treated as dead, and the time the worker is offline doesn't count toward a step's timeout.
   When the worker is back, the board catches up on what happened there first, then carries on.
   A card that can't wait can be **Force-move**d to another worker (see below).
-- **Access revoked** — someone removed the board under Settings → Sharing & access → Authorized clients on that
-  machine, or the worker was reset. The board renews its own access while it runs, but if the board
-  server was off for most of a month its access has expired, and that shows here too. Use **Re-pair…** to give the board access again. The worker
-  keeps its label and settings.
-- **Incompatible version** — update T3o on the worker.
+- **Reconnecting** — the worker is connected but the board's access there has to be renewed; it
+  happens by itself on the worker's next connection.
+- **Needs update** — the worker is connected but too old for this board, so it takes no new cards;
+  its threads stay readable. Run `pnpm t3o-update` on the worker.
 
 ## Threads on a worker
 
-A card's thread runs on the worker the card was placed on, and that's where it opens. On a board
-with workers, each thread row says which worker it ran on. The board itself works without a
-connection to the worker, but to read or reply in one of its threads this device needs a connection
-to that worker too. If it has none, the thread pane says so and **Open Settings → Environments**
-opens the Add environment dialog with the worker's address filled in.
+A card's thread runs on the worker the card was placed on, and opens in place through the board:
+nothing to add on your device. The thread's header says which worker it's running on. While that
+worker is offline, the transcript up to that point stays readable and you can reply again once it
+reconnects. A device connected to the board through a relay or SSH can't open worker threads yet;
+connect to the board's address directly.
 
 Agents on a worker keep reaching the board through their own server, which passes their board calls
 on to the board server. While the board server isn't connected to that worker, an agent's board
@@ -111,8 +139,9 @@ calls fail with a message telling it to retry shortly.
 
 ## Removing a worker
 
-**Remove worker…** in a worker's menu takes it off the board and gives the board's access back on
-that machine, if it can be reached. Nothing on the worker is deleted: its worktrees, branches and
+**Remove worker…** in a worker's menu takes it off the board, gives back everything the board held
+on that machine (its own access and every user's), and stops the worker's credential working. An
+offline worker can be removed too; work it never pushed may be lost. Nothing on the worker is deleted: its worktrees, branches and
 thread history stay there. The default worker can't be removed; make another one the default first.
 
 The confirmation lists the cards on that worker:
@@ -121,7 +150,8 @@ The confirmation lists the cards on that worker:
 - Cards with a worktree, or a step running there, show **Worker removed: move this card** until you
   move them. A running step is stopped first, if the worker can be reached.
 
-Adding the same server back as a worker puts those cards back on it, and a stopped step carries on.
+Joining the same server again, with a new code, puts those cards back on it, and a stopped step
+carries on.
 
 ## Force-moving a card off an unreachable worker
 
