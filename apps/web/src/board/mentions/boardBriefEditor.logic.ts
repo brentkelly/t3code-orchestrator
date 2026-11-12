@@ -17,6 +17,10 @@ import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import type { ComposerCommandItem } from "~/components/chat/ComposerCommandMenu";
 import type { ComposerDraftContextRecords } from "~/components/composerContextPresentation";
 import {
+  splitPromptIntoComposerSegments,
+  type ComposerPromptSegment,
+} from "~/composer-editor-mentions";
+import {
   environmentContextRecord,
   environmentContextReference,
   threadContextReference,
@@ -168,4 +172,23 @@ export function nudgeBoardBriefHighlight(
   const from = index >= 0 ? index : key === "ArrowDown" ? -1 : 0;
   const next = (from + (key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
   return items[next]?.id ?? null;
+}
+
+/**
+ * A brief's segments for view mode, each with its offset. Only the link-form file mention the
+ * `@` menu inserts is a file: a bare `@word` in prose (a handle, a package) stays text.
+ */
+export function boardBriefViewSegments(
+  text: string,
+): Array<{ segment: ComposerPromptSegment; index: number }> {
+  let offset = 0;
+  return splitPromptIntoComposerSegments(text).map((parsed) => {
+    const index = offset;
+    offset += parsed.type === "text" ? parsed.text.length : parsed.source.length;
+    const segment: ComposerPromptSegment =
+      parsed.type === "mention" && !parsed.source.startsWith("[")
+        ? { type: "text", text: parsed.source }
+        : parsed;
+    return { segment, index };
+  });
 }

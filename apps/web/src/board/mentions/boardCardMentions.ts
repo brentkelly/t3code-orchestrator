@@ -36,12 +36,17 @@ const TOKEN_TITLE_MAX_CHARS = 60;
 const TITLE_QUERY_MIN_CHARS = 3;
 const BOARD_CARD_MENTION_LIMIT = 5;
 
+/** Cut to `max` UTF-16 units with an ellipsis, never leaving half of a surrogate pair. */
+export function cutBoardCardTitle(title: string, max: number): string {
+  if (title.length <= max) return title;
+  let end = max - 1;
+  const last = title.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return `${title.slice(0, end).trimEnd()}…`;
+}
+
 export function boardCardMentionLabel(card: { key: string; title: string }): string {
-  const title = card.title.replace(/\s+/g, " ").trim();
-  const cut =
-    title.length > TOKEN_TITLE_MAX_CHARS
-      ? `${title.slice(0, TOKEN_TITLE_MAX_CHARS - 1).trimEnd()}…`
-      : title;
+  const cut = cutBoardCardTitle(card.title.replace(/\s+/g, " ").trim(), TOKEN_TITLE_MAX_CHARS);
   return cut.length > 0 ? `${card.key} · ${cut}` : card.key;
 }
 

@@ -94,6 +94,12 @@ describe("card mention token", () => {
     );
     const long = boardCardMentionLabel({ key: "T3O-1", title: "x".repeat(80) });
     expect(long).toBe(`T3O-1 · ${"x".repeat(59)}…`);
+    // An emoji straddling the cut is dropped whole, not split into a lone surrogate.
+    const emoji = boardCardMentionLabel({
+      key: "T3O-1",
+      title: `${"x".repeat(58)}🎉${"y".repeat(9)}`,
+    });
+    expect(emoji).toBe(`T3O-1 · ${"x".repeat(58)}…`);
   });
 
   it("round-trips the card id through the token", () => {

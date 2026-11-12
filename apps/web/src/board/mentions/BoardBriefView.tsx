@@ -7,14 +7,13 @@ import type { ReactNode } from "react";
 
 import { FileTagChipContent } from "~/components/chat/FileTagChip";
 import { ModelMentionChip } from "~/components/chat/ModelMentionChip";
-import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { ContextChip } from "~/components/ContextChip";
 import { EnvironmentContextChip } from "~/components/EnvironmentContextChip";
 import { ThreadContextChip } from "~/components/ThreadContextChip";
 import { useTheme } from "~/hooks/useTheme";
 import { basenameOfPath, documentChipKindForFileName } from "~/pierre-icons";
 import { boardBriefDisplayText } from "../boardBriefDisplay";
-import { boardBriefContextRecords } from "./boardBriefEditor.logic";
+import { boardBriefContextRecords, boardBriefViewSegments } from "./boardBriefEditor.logic";
 import { BoardCardMentionChip } from "./BoardCardMentionChip";
 import { cardIdFromMentionContextId } from "./boardCardMentions";
 
@@ -31,21 +30,11 @@ function ChipSlot(props: { children: ReactNode }) {
   );
 }
 
-/** Each segment with its offset in the brief, which keys its chip. */
-function segmentsWithOffsets(text: string) {
-  let offset = 0;
-  return splitPromptIntoComposerSegments(text).map((segment) => {
-    const index = offset;
-    offset += segment.type === "text" ? segment.text.length : segment.source.length;
-    return { segment, index };
-  });
-}
-
 export function BoardBriefView(props: { brief: string; environmentId: EnvironmentId }) {
   const { resolvedTheme } = useTheme();
   const text = boardBriefDisplayText(props.brief);
   const records = boardBriefContextRecords(text, props.environmentId);
-  const parts = segmentsWithOffsets(text).map(({ segment, index }): ReactNode => {
+  const parts = boardBriefViewSegments(text).map(({ segment, index }): ReactNode => {
     switch (segment.type) {
       case "text":
         return segment.text;

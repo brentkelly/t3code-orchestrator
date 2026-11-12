@@ -207,6 +207,12 @@ function BriefEditor(props: BoardBriefEditorProps) {
         }
         props.onBlur?.();
       }}
+      // A chip is a link inside the wrapper, so its click never blurs; commit before it navigates.
+      onClickCapture={(event) => {
+        const target = event.target;
+        if (!(target instanceof Element) || popupRef.current?.contains(target)) return;
+        if (target.closest("a[href]")) props.onBlur?.();
+      }}
     >
       <ComposerContextActionsContext
         value={{

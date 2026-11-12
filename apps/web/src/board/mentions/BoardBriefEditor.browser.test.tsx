@@ -68,6 +68,7 @@ function Harness(props: {
   onChange: (value: string) => void;
   onEscape: () => boolean;
   onModEnter: () => void;
+  onBlur: () => void;
 }) {
   const [value, setValue] = useState(props.initial);
   return (
@@ -81,6 +82,7 @@ function Harness(props: {
       }}
       onEscape={props.onEscape}
       onModEnter={props.onModEnter}
+      onBlur={props.onBlur}
       onPaste={() => {}}
       placeholder="Describe the task"
       projectId={PROJECT}
@@ -93,10 +95,17 @@ async function renderEditor(initial = "") {
   const onChange = vi.fn<(value: string) => void>();
   const onEscape = vi.fn(() => true);
   const onModEnter = vi.fn();
+  const onBlur = vi.fn();
   await using stack = new AsyncDisposableStack();
   const screen = stack.use(
     await render(
-      <Harness initial={initial} onChange={onChange} onEscape={onEscape} onModEnter={onModEnter} />,
+      <Harness
+        initial={initial}
+        onBlur={onBlur}
+        onChange={onChange}
+        onEscape={onEscape}
+        onModEnter={onModEnter}
+      />,
     ),
   );
   await expect.element(screen.getByRole("textbox", { name: "Brief" })).toHaveFocus();
@@ -106,6 +115,7 @@ async function renderEditor(initial = "") {
     onChange,
     onEscape,
     onModEnter,
+    onBlur,
   });
 }
 
@@ -125,6 +135,15 @@ describe("BoardBriefEditor", () => {
     );
     const chip = screen.getByRole("link", { name: "Card, T3O-58 Review round one" });
     await expect.element(chip).toHaveTextContent("T3O-58Review round one");
+  });
+
+  it("commits the draft before a chip's link navigates away", async () => {
+    await using screen = await renderEditor(
+      `See [T3O-58 · Review round one](t3-context://v1/card/card_${CARD_ID}) `,
+    );
+    const { onBlur } = screen;
+    await screen.getByRole("link", { name: "Card, T3O-58 Review round one" }).click();
+    expect(onBlur).toHaveBeenCalledTimes(1);
   });
 
   it("ranks the brief's own project's cards first", async () => {

@@ -10,6 +10,7 @@ import { projectAccent } from "../projectAccent";
 import {
   boardCardKeyFromMentionLabel,
   cardIdFromMentionContextId,
+  cutBoardCardTitle,
   type BoardCardMentionItem,
 } from "./boardCardMentions";
 import { useBoardCardMentionSummary } from "./boardCardMentionState";
@@ -33,12 +34,6 @@ function BoardCardKeyPill(props: {
       {props.cardKey}
     </span>
   );
-}
-
-function cutTitle(title: string): string {
-  return title.length > CHIP_TITLE_MAX_CHARS
-    ? `${title.slice(0, CHIP_TITLE_MAX_CHARS - 1).trimEnd()}…`
-    : title;
 }
 
 export function BoardCardMentionChip(props: {
@@ -69,7 +64,11 @@ export function BoardCardMentionChip(props: {
               projectId={card?.projectId ?? null}
               accent={card?.accent ?? null}
             />
-            {card ? <ContextChipLabel>{cutTitle(card.title)}</ContextChipLabel> : null}
+            {card ? (
+              <ContextChipLabel>
+                {cutBoardCardTitle(card.title, CHIP_TITLE_MAX_CHARS)}
+              </ContextChipLabel>
+            ) : null}
           </ContextChip>
         }
       />

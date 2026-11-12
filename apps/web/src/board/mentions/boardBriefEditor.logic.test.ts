@@ -14,6 +14,7 @@ import type { ComposerCommandItem } from "~/components/chat/ComposerCommandMenu"
 import {
   boardBriefContextRecords,
   boardBriefMenuReplacement,
+  boardBriefViewSegments,
   mergeBoardBriefProviderCatalog,
   nudgeBoardBriefHighlight,
 } from "./boardBriefEditor.logic";
@@ -167,5 +168,15 @@ describe("nudgeBoardBriefHighlight", () => {
     expect(nudgeBoardBriefHighlight(items, "a", "ArrowUp")).toBe("c");
     expect(nudgeBoardBriefHighlight(items, null, "ArrowDown")).toBe("a");
     expect(nudgeBoardBriefHighlight([], null, "ArrowDown")).toBeNull();
+  });
+});
+
+describe("boardBriefViewSegments", () => {
+  it("chips a link-form file mention and keeps a bare @word as text", () => {
+    const text = "Ask @alice about [README.md](docs/README.md) today";
+    const parts = boardBriefViewSegments(text).map(({ segment }) =>
+      segment.type === "text" ? segment.text : `<${segment.type}>`,
+    );
+    expect(parts).toEqual(["Ask ", "@alice", " about ", "<mention>", " today"]);
   });
 });
