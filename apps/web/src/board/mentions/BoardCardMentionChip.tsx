@@ -45,7 +45,7 @@ export function BoardCardMentionChip(props: {
   const key = card?.key ?? boardCardKeyFromMentionLabel(props.label);
   const tooltip = card
     ? [card.title, card.stageLabel, card.projectName].filter(Boolean).join(" · ")
-    : `${props.label} · not on this board`;
+    : `${props.label} · archived or not on this board`;
   return (
     <Tooltip>
       <TooltipTrigger

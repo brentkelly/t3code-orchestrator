@@ -67,7 +67,7 @@ export function cardIdFromMentionContextId(contextId: string): BoardCardId | nul
   return cardIdFromContextId(contextId) as BoardCardId | null;
 }
 
-/** The key a token's label starts with, for a chip whose card is not on this board. */
+/** The key a token's label starts with, for a chip whose card is archived or not on this board. */
 export function boardCardKeyFromMentionLabel(label: string): string {
   return label.split(" · ")[0]!.trim() || label;
 }
