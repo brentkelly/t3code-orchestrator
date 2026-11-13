@@ -858,6 +858,18 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
             baseRefName: "main",
             createdAt,
           });
+          // T3O-87: while it is made, the shell still knows the card is placed.
+          const provisioning = yield* shellCard;
+          assert.strictEqual(provisioning?.worktreeProvisioning, true);
+          assert.isFalse(provisioning !== undefined && "worktreeReady" in provisioning);
+          const provisioningModel = yield* snapshotQuery.getCommandReadModel();
+          const provisioningAggregate = provisioningModel.board?.cards.find(
+            (entry) => entry.id === cardId,
+          );
+          assert.strictEqual(
+            boardCardShellFromCard(provisioningAggregate!).worktreeProvisioning,
+            true,
+          );
           yield* engine.dispatch({
             type: "board.card.record-worktree",
             commandId: CommandId.make("cmd-record"),
@@ -867,6 +879,7 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
           });
           const ready = yield* shellCard;
           assert.strictEqual(ready?.worktreeReady, true);
+          assert.isFalse(ready !== undefined && "worktreeProvisioning" in ready);
           assert.isFalse(ready !== undefined && "worktreeKeptReason" in ready);
 
           yield* engine.dispatch({

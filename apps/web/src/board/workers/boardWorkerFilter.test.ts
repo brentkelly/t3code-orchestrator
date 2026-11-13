@@ -28,6 +28,12 @@ describe("the worker filter (T3O-87)", () => {
     expect(boardCardMatchesWorkerFilter(pinnedOnly, new Set([B1]))).toBe(false);
     expect(boardCardMatchesWorkerFilter(pinnedOnly, new Set([BOARD_UNPLACED_FILTER]))).toBe(true);
     expect(boardCardMatchesWorkerFilter(local, new Set([BOARD_LOCAL_WORKER_ID]))).toBe(true);
+    // A worktree still being made on B1 is placed there, not unplaced.
+    const provisioning = { workerId: B1, worktreeProvisioning: true };
+    expect(boardCardMatchesWorkerFilter(provisioning, new Set([B1]))).toBe(true);
+    expect(boardCardMatchesWorkerFilter(provisioning, new Set([BOARD_UNPLACED_FILTER]))).toBe(
+      false,
+    );
     // A multi-select keeps cards on any chosen worker; no selection keeps every card.
     expect(boardCardMatchesWorkerFilter(built, new Set([B2, B1]))).toBe(true);
     expect(boardCardMatchesWorkerFilter(pinnedOnly, new Set())).toBe(true);

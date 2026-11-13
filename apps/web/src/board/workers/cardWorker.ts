@@ -20,6 +20,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 
+import { boardShellHoldsWorktree } from "./boardWorkerFilter";
 import { localWorkerLabel } from "./threadWorker";
 import { clockTime } from "./workerCopy";
 
@@ -55,12 +56,12 @@ export interface BoardCardWorkerChip {
 /** The meta row's worker chip, or null on a one-worker board or before the card is placed
     or pinned. */
 export function boardCardWorkerChip(
-  card: Pick<BoardCardShell, "workerId" | "worktreeReady">,
+  card: Pick<BoardCardShell, "workerId" | "worktreeReady" | "worktreeProvisioning">,
   state: BoardWorkersState,
 ): BoardCardWorkerChip | null {
   if (!boardShowsWorkers(state) || card.workerId === undefined) return null;
   const name = boardWorkerLabel(card.workerId, state);
-  const placed = card.worktreeReady === true;
+  const placed = boardShellHoldsWorktree(card);
   return {
     label: card.workerId === BOARD_LOCAL_WORKER_ID ? "local" : name,
     kind: placed ? "placed" : "pinned",

@@ -14,11 +14,18 @@ import type { BoardStageColumns } from "@t3tools/client-runtime/state/shell";
 /** The "Not placed yet" choice. */
 export const BOARD_UNPLACED_FILTER = "unplaced";
 
+type ShellPlacementFields = Pick<
+  BoardCardShell,
+  "workerId" | "worktreeReady" | "worktreeProvisioning"
+>;
+
+/** Whether the shell's `workerId` is a placement: its worktree is ready or being made there. */
+export const boardShellHoldsWorktree = (card: ShellPlacementFields): boolean =>
+  card.worktreeReady === true || card.worktreeProvisioning === true;
+
 /** The worker a card's worktree is on, or null before the gate places it. */
-export function boardShellPlacementTarget(
-  card: Pick<BoardCardShell, "workerId" | "worktreeReady">,
-): string | null {
-  return card.worktreeReady === true ? (card.workerId ?? BOARD_LOCAL_WORKER_ID) : null;
+export function boardShellPlacementTarget(card: ShellPlacementFields): string | null {
+  return boardShellHoldsWorktree(card) ? (card.workerId ?? BOARD_LOCAL_WORKER_ID) : null;
 }
 
 /** The selection a URL names, without ids of workers no longer on the board. */
@@ -39,7 +46,7 @@ export const serializeBoardWorkerFilter = (selection: ReadonlyArray<string>): st
   selection.length === 0 ? undefined : selection.join(",");
 
 export function boardCardMatchesWorkerFilter(
-  card: Pick<BoardCardShell, "workerId" | "worktreeReady">,
+  card: ShellPlacementFields,
   selection: ReadonlySet<string>,
 ): boolean {
   if (selection.size === 0) return true;

@@ -7405,6 +7405,9 @@ export const BoardCardShell = Schema.Struct({
       kept" needs settings the SQL producer cannot see, so the client derives the flag
       (`boardCardWorktreeKept`). */
   worktreeReady: Schema.optionalKey(Schema.Boolean),
+  /** T3o: the worktree is being made on its placed worker, absent when not (T3O-87). With
+      `worktreeReady`, whether `workerId` is a placement rather than a pin. */
+  worktreeProvisioning: Schema.optionalKey(Schema.Boolean),
   /** Why the last reclaim kept the worktree (`reclaimBlockedReason`), absent
       when none has. */
   worktreeKeptReason: Schema.optionalKey(TrimmedNonEmptyString),
@@ -7784,6 +7787,7 @@ export function makeBoardCardShell(input: {
   /** The worktree pair. On the card aggregate like the auto-merge
       trio, so both producers carry it; `cardMetaShellFields.test.ts` pins it. */
   readonly worktreeReady?: boolean | null | undefined;
+  readonly worktreeProvisioning?: boolean | null | undefined;
   readonly worktreeKeptReason?: string | null | undefined;
   /** The worker the card is bound to, and its move. On the card
       aggregate, so both producers carry them; omitted when null so a
@@ -7883,6 +7887,7 @@ export function makeBoardCardShell(input: {
     // The worktree pair: omitted when there is nothing on disk,
     // so a card without a worktree costs what it did before.
     ...(input.worktreeReady === true ? { worktreeReady: true } : {}),
+    ...(input.worktreeProvisioning === true ? { worktreeProvisioning: true } : {}),
     ...(input.worktreeReady === true && input.worktreeKeptReason != null
       ? { worktreeKeptReason: input.worktreeKeptReason }
       : {}),
@@ -7993,6 +7998,7 @@ export function boardCardShellFromCard(
     autoMergeGaveUp: boardCardAutoMergeGaveUp(card.autoMergeHold),
     prDraft: boardCardPullRequestIsOpenDraft(card.pullRequest),
     worktreeReady: card.worktree?.status === "ready",
+    worktreeProvisioning: card.worktree?.status === "provisioning",
     worktreeKeptReason: card.worktree?.reclaimBlockedReason ?? null,
     workerId: boardCardBoundWorkerId(card),
     workerMove: card.workerMove,

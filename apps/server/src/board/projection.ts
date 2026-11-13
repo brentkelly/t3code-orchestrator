@@ -653,6 +653,7 @@ const BoardCardShellDbRow = Schema.Struct({
       reclaim kept it. Derived in SQL here and in JS on the delta path;
       `cardMetaShellFields.test.ts` pins the pair. */
   worktreeReady: Schema.Int,
+  worktreeProvisioning: Schema.Int,
   worktreeKeptReason: Schema.NullOr(Schema.String),
   /** The placement pair: the bound worker, and a move's status and
       target. Derived in SQL here and in JS on the delta path. */
@@ -1239,6 +1240,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         -- path reads the same two facts off the aggregate's worktree.
         CASE WHEN json_extract(worktree, '$.status') = 'ready' THEN 1 ELSE 0 END
           AS "worktreeReady",
+        CASE WHEN json_extract(worktree, '$.status') = 'provisioning' THEN 1 ELSE 0 END
+          AS "worktreeProvisioning",
         json_extract(worktree, '$.reclaimBlockedReason') AS "worktreeKeptReason",
         -- The SECOND producer of the placement pair (T3O-65); the delta path
         -- reads it through boardCardBoundWorkerId: the placement while the
@@ -1340,6 +1343,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         -- path reads the same two facts off the aggregate's worktree.
         CASE WHEN json_extract(worktree, '$.status') = 'ready' THEN 1 ELSE 0 END
           AS "worktreeReady",
+        CASE WHEN json_extract(worktree, '$.status') = 'provisioning' THEN 1 ELSE 0 END
+          AS "worktreeProvisioning",
         json_extract(worktree, '$.reclaimBlockedReason') AS "worktreeKeptReason",
         -- The SECOND producer of the placement pair (T3O-65); the delta path
         -- reads it through boardCardBoundWorkerId: the placement while the
@@ -4153,6 +4158,7 @@ function boardShellCards(
           autoMergeGaveUp: row.autoMergeGaveUp !== 0,
           prDraft: row.prDraft !== 0,
           worktreeReady: row.worktreeReady !== 0,
+          worktreeProvisioning: row.worktreeProvisioning !== 0,
           worktreeKeptReason: row.worktreeKeptReason,
           workerId: row.workerId,
           workerMove:
@@ -4245,6 +4251,7 @@ function boardArchivedShellCards(
             autoMergeGaveUp: row.autoMergeGaveUp !== 0,
             prDraft: row.prDraft !== 0,
             worktreeReady: row.worktreeReady !== 0,
+            worktreeProvisioning: row.worktreeProvisioning !== 0,
             worktreeKeptReason: row.worktreeKeptReason,
             workerId: row.workerId,
             workerMove:
