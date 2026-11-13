@@ -1851,7 +1851,7 @@ function ReviewStageBody(props: {
   const setPhase = (phaseId: BoardReviewPhaseId, patch: Partial<BoardReviewPhaseExecution>) =>
     set({ phases: { ...exec.phases, [phaseId]: { ...exec.phases[phaseId], ...patch } } });
   // Off writes null, so the chosen round lives here until the toggle comes back on.
-  const lastSettleAfterRound = useRef(
+  const lastConvergeAfterRound = useRef(
     exec.convergeAfterRound ?? DEFAULT_BOARD_REVIEW_CONVERGE_AFTER_ROUND,
   );
   // A phase with no model of its own runs on the review STAGE's model, and only
@@ -1892,40 +1892,40 @@ function ReviewStageBody(props: {
             }
           />
           <ToggleRow
-            label="Settling rounds"
-            hint="After this, each round reviews only the new changes and only critical findings start another round. Another review round always runs a full review."
+            label="Help long reviews converge"
+            hint="After the chosen round, the bar for a blocking improvement rises every two rounds until only critical findings block, and the adjudicator can rule an improvement below the bar. Quiet rounds review only the new changes. Another review round always reviews the whole branch, at that round's bar."
             checked={exec.convergeAfterRound !== null}
-            ariaLabel="Settling rounds"
+            ariaLabel="Help long reviews converge"
             onChange={(checked) => {
               if (!checked && exec.convergeAfterRound !== null) {
-                lastSettleAfterRound.current = exec.convergeAfterRound;
+                lastConvergeAfterRound.current = exec.convergeAfterRound;
               }
-              set({ convergeAfterRound: checked ? lastSettleAfterRound.current : null });
+              set({ convergeAfterRound: checked ? lastConvergeAfterRound.current : null });
             }}
           />
           {exec.convergeAfterRound === null ? null : (
             <>
               <NumberRow
-                label="Settle after round"
+                label="Make it easier to settle after round"
                 stepper={
                   <NumberStepper
                     value={exec.convergeAfterRound}
                     min={1}
                     max={20}
-                    ariaLabel="Settle after round"
+                    ariaLabel="Make it easier to settle after round"
                     onChange={(convergeAfterRound) => set({ convergeAfterRound })}
                   />
                 }
               />
               <NumberRow
-                label="When a round has fewer than this many blocking findings"
-                hint="A round with a critical finding is always followed by a full round. Findings ruled not issues never count."
+                label="Review only the new changes when a round has fewer than this many blocking findings"
+                hint="A round with a critical finding is always followed by a full round. Findings ruled not issues never count. Improvements ruled below the bar never count."
                 stepper={
                   <NumberStepper
                     value={exec.settleBelowFindings}
                     min={BOARD_REVIEW_SETTLE_BELOW_FINDINGS_MIN}
                     max={20}
-                    ariaLabel="Settle below blocking findings"
+                    ariaLabel="Review only the new changes below this many blocking findings"
                     onChange={(settleBelowFindings) => set({ settleBelowFindings })}
                   />
                 }

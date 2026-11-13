@@ -136,6 +136,35 @@ describe("deriveBoardReviewLoop", () => {
     expect(loop.totals.disputed).toBe(1);
   });
 
+  it("T3O-92: an improvement ruled below the bar is flagged, never disputed, and converges", () => {
+    const loop = deriveBoardReviewLoop(
+      [
+        completion("review@1", review([finding("improvement")])),
+        completion("triage@1", {
+          fixedSha: "sha",
+          dispositions: [{ findingId: "f1", action: "rejected", note: "edge case" }],
+        }),
+        completion("adjudicate@1", {
+          verdicts: [
+            {
+              findingId: "f1",
+              verdict: "rejection-unjustified",
+              note: "real, but below this round's bar",
+              belowBar: true,
+            },
+          ],
+          anotherRound: true,
+        }),
+      ],
+      5,
+    );
+    const entry = loop.rounds[0]?.findings[0];
+    expect(entry?.belowBar).toBe(true);
+    expect(entry?.resolution).toBe("rejected");
+    expect(loop.status).toBe("converged");
+    expect(loop.convergedBy).toBe("below-bar");
+  });
+
   it("exhausting the round cap ends the loop at the cap with findings open", () => {
     const loop = deriveBoardReviewLoop(
       [
