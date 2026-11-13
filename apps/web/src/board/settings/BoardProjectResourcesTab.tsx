@@ -139,14 +139,7 @@ export function BoardProjectResourcesTab(props: {
   };
   // Use learned writes the decrease as the declared value, editable back by hand.
   const applyLearned = (dimension: BoardResourceDimension, value: number) =>
-    send({
-      ...current,
-      baseline: {
-        ...declaredBaseline,
-        [BOARD_RESOURCE_PROFILE_KEYS[dimension]]: value,
-        setAtUpgrade: false,
-      },
-    });
+    send({ ...current, baseline: boardBaselineWithLearned(current, dimension, value) });
 
   const save = (confirmed: boolean) => {
     if (!("ok" in parsed)) return;
