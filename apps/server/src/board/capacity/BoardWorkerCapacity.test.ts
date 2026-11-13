@@ -30,6 +30,7 @@ interface Fakes {
   saved: Map<string, { lastSeq: number | null; records: ReadonlyArray<CapacityRecord> }>;
   freeDiskBytes: number;
   availableBytes: number;
+  stored: Map<string, string>;
 }
 
 const makeFakes = (): Fakes => ({
@@ -40,6 +41,7 @@ const makeFakes = (): Fakes => ({
   saved: new Map(),
   freeDiskBytes: 1000 * 1000 ** 3,
   availableBytes: 500 * GiB,
+  stored: new Map(),
 });
 
 const portsOver = (
@@ -60,8 +62,8 @@ const portsOver = (
     saveBoard: (boardId, lastSeq, records) =>
       Effect.sync(() => void fakes.saved.set(boardId, { lastSeq, records })),
     deleteBoard: (boardId) => Effect.sync(() => void fakes.saved.delete(boardId)),
-    setting: () => Effect.succeed(null),
-    saveSetting: () => Effect.void,
+    setting: (key) => Effect.sync(() => fakes.stored.get(key) ?? null),
+    saveSetting: (key, value) => Effect.sync(() => void fakes.stored.set(key, value)),
   },
 });
 
@@ -342,6 +344,39 @@ it.effect("records and the last seq persist, reload, and go when the board is fo
     yield* reloaded.service.forgetBoard("board-a");
     assert.isFalse(fakes.saved.has("board-a"));
     assert.lengthOf(reloaded.state().records, 0);
+  }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
+});
+
+it.effect("the default disk counts the worktrees that were there, as they are measured", () => {
+  const fakes = makeFakes();
+  fakes.config = { "capacity.cpuCores": 16, "capacity.ramGiB": 64 };
+  return Effect.gen(function* () {
+    // At the first snapshot nothing is backfilled yet: 90% of the 1000 GB free is kept.
+    const first = yield* makeBoardWorkerCapacity(portsOver(fakes));
+    assert.strictEqual((yield* first.service.snapshot("board-a")).declared.diskGB, 900);
+    const backfilled: CapacityRecord = {
+      boardId: "board-a",
+      cardId: "a-1",
+      repositoryKey: null,
+      branch: "board/a-1",
+      worktreePath: "/w/a-1",
+      profile: { cpuCores: 1, ramGiB: 1, diskGB: 5 },
+      phase: "light",
+      settled: true,
+      seq: 1,
+      diskFromMeasurement: true,
+      measuredDiskGB: 120,
+      measuredAt: 0,
+      heavySince: null,
+    };
+    // Free space has since shrunk, but the stored part stands; the measured tree adds to it.
+    fakes.freeDiskBytes = 10 * 1000 ** 3;
+    const later = yield* makeBoardWorkerCapacity(
+      portsOver(fakes, { ...EMPTY_CAPACITY_STATE, records: [backfilled] }),
+    );
+    const snapshot = yield* later.service.snapshot("board-a");
+    assert.strictEqual(snapshot.declared.diskGB, 1020);
+    assert.isFalse(snapshot.over.disk);
   }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
 });
 
