@@ -161,6 +161,17 @@ export type WorkerFile = typeof WorkerFile.Type;
 
 const EMPTY_WORKER_FILE: WorkerFile = { boards: [], config: {} };
 
+/** Boards holding capacity records here that this worker no longer serves: left or removed,
+    perhaps while the server was stopped. The board on this server itself is never one. */
+export function departedCapacityBoards(
+  recorded: ReadonlyArray<string>,
+  file: WorkerFile,
+  localBoardId: string,
+): ReadonlyArray<string> {
+  const served = new Set(file.boards.map((board) => board.boardEnvironmentId));
+  return recorded.filter((boardId) => boardId !== localBoardId && !served.has(boardId));
+}
+
 export const WorkerBoardStatus = Schema.Struct({
   boardEnvironmentId: Schema.String,
   boardLabel: Schema.String,

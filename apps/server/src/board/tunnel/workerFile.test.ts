@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   boardUrlRefusal,
+  departedCapacityBoards,
   findWorkerConfigKey,
   resolveWorkerCapacitySettings,
   findWorkerBoard,
@@ -53,6 +54,12 @@ describe("worker.json", () => {
     expect(() => readWorkerFile(home)).toThrow(WorkerFileInvalidError);
     NodeFS.writeFileSync(workerFilePath(home), JSON.stringify({ boards: "nope" }));
     expect(() => readWorkerFile(home)).toThrow(WorkerFileInvalidError);
+  });
+
+  it("names the boards whose records outlived them, never this server's own", () => {
+    const file = { boards: [entry("b1", "https://b1.example")], config: {} };
+    // b2 was removed while the server was stopped: its records go at the next reconcile.
+    expect(departedCapacityBoards(["b1", "b2", "self"], file, "self")).toEqual(["b2"]);
   });
 
   it("finds a board by id, label or address, and removes it", () => {

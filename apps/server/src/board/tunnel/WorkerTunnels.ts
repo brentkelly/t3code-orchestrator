@@ -32,6 +32,7 @@ import {
 } from "../workers/workerRpc.ts";
 import { TunnelWorker, type WorkerTunnelStatus } from "./tunnelWorker.ts";
 import {
+  departedCapacityBoards,
   localTunnelTarget,
   readWorkerFile,
   tunnelCredentialSecretName,
@@ -244,8 +245,14 @@ const makeWorkerTunnels = Effect.gen(function* () {
       if (entry === undefined) {
         statuses.delete(boardId);
         scheduleStatus();
-        // T3o: leaving a board drops its card records and claims here (T3O-86).
-        if (Option.isSome(capacity)) yield* capacity.value.forgetBoard(boardId);
+      }
+    }
+    // T3o: a board left or removed, even while this server was down, drops its card records
+    // and claims here (T3O-86).
+    if (Option.isSome(capacity)) {
+      const recorded = yield* capacity.value.boardIds;
+      for (const boardId of departedCapacityBoards(recorded, file, environmentId)) {
+        yield* capacity.value.forgetBoard(boardId);
       }
     }
     for (const [boardId, entry] of wanted) {
