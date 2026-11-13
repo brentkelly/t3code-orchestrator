@@ -297,3 +297,152 @@ export function withBoardCardPlannerSize(
 ): BoardCardResources | null {
   return withSizing(resources, { planner, edit: resources?.sizing?.edit ?? null });
 }
+
+// ── Worker capacity on the wire (T3O-86) ──────────────────────────────
+
+/** The card phase the board last granted: heavy holds CPU and RAM, light only disk. */
+export const BoardCardPhase = Schema.Literals(["heavy", "light"]);
+export type BoardCardPhase = typeof BoardCardPhase.Type;
+
+/** Why a placement can't go ahead on a worker. Open to extension: a peer reads an unknown
+    reason as a plain denial. */
+export const BOARD_CLAIM_DENIAL_REASONS = ["capacity", "quota", "not-ready"] as const;
+export type BoardClaimDenialReason = (typeof BOARD_CLAIM_DENIAL_REASONS)[number];
+
+export const BoardCapacityClaimInput = Schema.Struct({
+  claimId: TrimmedNonEmptyString,
+  seq: Schema.Int,
+  cardId: TrimmedNonEmptyString,
+  repositoryKey: Schema.NullOr(TrimmedNonEmptyString),
+  kind: Schema.Literals(["placement", "grow"]),
+  profile: BoardResourceProfile,
+  providerInstanceId: Schema.NullOr(TrimmedNonEmptyString),
+  force: Schema.optionalKey(Schema.Boolean),
+});
+export type BoardCapacityClaimInput = typeof BoardCapacityClaimInput.Type;
+
+export const BoardCapacityClaimResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("granted") }),
+  Schema.Struct({
+    outcome: Schema.Literal("denied"),
+    /** `BoardClaimDenialReason`, or one a newer worker added. */
+    reason: TrimmedNonEmptyString,
+    dimension: Schema.optionalKey(BoardResourceDimension),
+    providerInstanceId: Schema.optionalKey(TrimmedNonEmptyString),
+    resetsAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
+    detail: Schema.optionalKey(Schema.String),
+  }),
+]);
+export type BoardCapacityClaimResult = typeof BoardCapacityClaimResult.Type;
+
+/** The placement a provision consumes, so a worker that lost the claim checks it again. */
+export const BoardProvisionClaim = Schema.Struct({
+  claimId: TrimmedNonEmptyString,
+  seq: Schema.Int,
+  cardId: TrimmedNonEmptyString,
+  repositoryKey: Schema.NullOr(TrimmedNonEmptyString),
+  profile: BoardResourceProfile,
+  providerInstanceId: Schema.NullOr(TrimmedNonEmptyString),
+  force: Schema.optionalKey(Schema.Boolean),
+});
+export type BoardProvisionClaim = typeof BoardProvisionClaim.Type;
+
+/** One card the board holds a worktree for on the worker. */
+export const BoardSyncedCard = Schema.Struct({
+  cardId: TrimmedNonEmptyString,
+  repositoryKey: Schema.NullOr(TrimmedNonEmptyString),
+  branch: TrimmedNonEmptyString,
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  grantedProfile: BoardResourceProfile,
+  phase: BoardCardPhase,
+  settled: Schema.Boolean,
+  /** The card finished a Building step: its worktree counts as set up. */
+  builtOnce: Schema.optionalKey(Schema.Boolean),
+});
+export type BoardSyncedCard = typeof BoardSyncedCard.Type;
+
+export const BoardSyncCardsInput = Schema.Struct({
+  seq: Schema.Int,
+  /** The first sync on a new connection: it resets the worker's `lastSeq` for this board. */
+  authoritative: Schema.Boolean,
+  cards: Schema.Array(BoardSyncedCard),
+});
+export type BoardSyncCardsInput = typeof BoardSyncCardsInput.Type;
+
+export const BoardSyncCardsResult = Schema.Struct({
+  lastSeq: Schema.Int,
+  /** Entries the worker could not adopt: no worktree there with this board's marker. */
+  refused: Schema.Array(TrimmedNonEmptyString),
+});
+export type BoardSyncCardsResult = typeof BoardSyncCardsResult.Type;
+
+/** A project's readiness on a worker (section 5), one per repository and script path. */
+export const BoardWorkerReadinessState = Schema.Literals([
+  "not-set-up",
+  "cloning",
+  "checking",
+  "not-ready",
+  "ready",
+]);
+export type BoardWorkerReadinessState = typeof BoardWorkerReadinessState.Type;
+
+export const BoardWorkerReadiness = Schema.Struct({
+  repositoryKey: Schema.NullOr(TrimmedNonEmptyString),
+  path: TrimmedNonEmptyString,
+  state: BoardWorkerReadinessState,
+  /** The script's blob id the last result ran, or null with no script or no result. */
+  version: Schema.NullOr(TrimmedNonEmptyString),
+  /** The script on the default branch now, when newer than `version`. */
+  pendingVersion: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  checkedAt: Schema.NullOr(IsoDateTime),
+  exitCode: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+  lastLine: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  durationMs: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
+  /** The last fetch failed: the result stands, checked with the version named. */
+  fetchFailed: Schema.optionalKey(Schema.Boolean),
+  /** The repository has no readiness script at the path. */
+  noScript: Schema.optionalKey(Schema.Boolean),
+  cloneProgress: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
+});
+export type BoardWorkerReadiness = typeof BoardWorkerReadiness.Type;
+
+export const BoardWorkerProviderCapacity = Schema.Struct({
+  instanceId: TrimmedNonEmptyString,
+  driver: TrimmedNonEmptyString,
+  account: Schema.Struct({
+    status: Schema.Literals(["signed-in", "signed-out", "unknown"]),
+    email: Schema.optionalKey(TrimmedNonEmptyString),
+    plan: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+  quota: Schema.Struct({
+    exhausted: Schema.Boolean,
+    checkedAt: Schema.NullOr(IsoDateTime),
+    /** When the gating window that is exhausted resets. */
+    resetsAt: Schema.NullOr(IsoDateTime),
+    windows: Schema.Array(
+      Schema.Struct({
+        label: TrimmedNonEmptyString,
+        usedPercent: Schema.Finite,
+        resetsAt: Schema.NullOr(IsoDateTime),
+        gating: Schema.Boolean,
+      }),
+    ),
+  }),
+  agents: Schema.Struct({ running: Schema.Int, max: Schema.NullOr(Schema.Int) }),
+});
+export type BoardWorkerProviderCapacity = typeof BoardWorkerProviderCapacity.Type;
+
+/** What a worker offers one board. Nothing in it is about any other board. */
+export const BoardWorkerCapacitySnapshot = Schema.Struct({
+  at: IsoDateTime,
+  declared: BoardResourceProfile,
+  headroom: BoardResourceProfile,
+  /** Over declared CPU or RAM: nothing is offered. Over disk only: placements are refused. */
+  over: Schema.Struct({ cpuRam: Schema.Boolean, disk: Schema.Boolean }),
+  agents: Schema.Struct({ running: Schema.Int, max: Schema.NullOr(Schema.Int) }),
+  providers: Schema.Array(BoardWorkerProviderCapacity),
+  readiness: Schema.Array(BoardWorkerReadiness),
+  /** This board's cards the worker counts heavy because a turn is running there. */
+  heavyCards: Schema.Array(TrimmedNonEmptyString),
+});
+export type BoardWorkerCapacitySnapshot = typeof BoardWorkerCapacitySnapshot.Type;
