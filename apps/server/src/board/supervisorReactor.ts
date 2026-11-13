@@ -12147,9 +12147,12 @@ const make = Effect.gen(function* () {
               ) || [...ciWaitingForRoom.values()].some((ci) => ci.workerId === workerId);
             if (!waiting) return;
             pending = true;
-            yield* Effect.sleep(Duration.millis(yield* Random.nextIntBetween(0, 2000)));
-            pending = false;
-            yield* enqueueCapacityPass;
+            // Forked, so snapshots arriving during the jitter are dropped rather than queued.
+            yield* Effect.sleep(Duration.millis(yield* Random.nextIntBetween(0, 2000))).pipe(
+              Effect.andThen(enqueueCapacityPass),
+              Effect.ensuring(Effect.sync(() => (pending = false))),
+              Effect.forkDetach,
+            );
           }),
         ),
       );

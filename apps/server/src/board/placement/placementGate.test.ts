@@ -619,6 +619,31 @@ describe("holds at build start (T3O-87)", () => {
     }),
   );
 
+  it.effect("a burst of snapshots wakes the board once, not once per snapshot", () =>
+    Effect.gen(function* () {
+      const capacity = yield* capacityOf([
+        [W1, FULL],
+        [W2, FULL],
+      ]);
+      capacity.external.set(W1, CPU_RAM_TAKEN);
+      capacity.external.set(W2, CPU_RAM_TAKEN);
+      const card = unplaced("card-1", "a");
+      yield* run({ cards: [card], capacity, git: newWorkerGit() }, (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(card, 1));
+          for (let index = 0; index < 5; index++) yield* capacity.publish(W1);
+          yield* TestClock.adjust("2 seconds");
+          yield* h.reactor.drain;
+          // Room frees with no snapshot: only a backlogged wake-up would place the card.
+          capacity.external.delete(W1);
+          yield* TestClock.adjust("2 seconds");
+          yield* h.reactor.drain;
+          assert.isNull((yield* cardIn(h, "card-1")).placedWorkerId);
+        }),
+      );
+    }),
+  );
+
   it.effect("a later card's hold gives way to an earlier card that can use the worker", () =>
     Effect.gen(function* () {
       const capacity = yield* capacityOf([[W1, FULL]]);
