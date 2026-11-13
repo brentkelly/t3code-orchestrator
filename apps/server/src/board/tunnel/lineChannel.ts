@@ -98,6 +98,8 @@ export function openLineChannel(
 
   socket.on("data", (chunk: Buffer) => consume(decoder.write(chunk)));
   socket.on("close", close);
+  // Upgraded HTTP sockets are half-open: a peer that ends emits "end" but never "close".
+  socket.on("end", close);
   socket.on("error", close);
   if (head.length > 0) consume(decoder.write(head));
 

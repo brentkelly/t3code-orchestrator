@@ -435,6 +435,21 @@ describe("worker tunnel", () => {
     expect(board.goodbyes).toEqual([WORKER_ID]);
   });
 
+  it("marks the worker down when it stops and its tunnel half-closes", async () => {
+    const local = await startLocalServer("worker-loopback");
+    const board = await startBoard({});
+    const ready = deferred<void>();
+    const worker = startWorker({
+      boardUrl: board.url,
+      localPort: local.port,
+      onReady: () => ready.resolve(),
+    });
+    await ready.promise;
+    await board.until(() => board.board.phase(WORKER_ID) === "ready");
+    worker.stop();
+    await board.until(() => board.board.phase(WORKER_ID) === "down");
+  });
+
   it("adopts a new board address only after a connection to it succeeds", async () => {
     const local = await startLocalServer("worker-loopback");
     const adopted: string[] = [];

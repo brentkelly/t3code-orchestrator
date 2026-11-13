@@ -54,6 +54,7 @@ export const BOARD_TAILWIND_MERGE_THEME = {
     "board-card-attention-hover",
     "board-card-stack",
     "board-card-stack-hover",
+    "board-card-urgent",
     "board-menu",
     "board-menu-dark",
     "board-ring-border",
