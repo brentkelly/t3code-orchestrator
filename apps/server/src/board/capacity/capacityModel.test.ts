@@ -182,6 +182,18 @@ describe("headroom", () => {
     expect(later.offered.ramGiB).toBe(20);
   });
 
+  it("a claim granted to one board takes its RAM from the machine's free RAM for the next", () => {
+    const machine: MachineReading = { availableRamGiB: 10, freeDiskGB: 1000 };
+    const granted = decideClaim(EMPTY_CAPACITY_STATE, claim(), context({ machine }));
+    expect(granted.result.outcome).toBe("granted");
+    const refused = decideClaim(
+      granted.state,
+      claim({ cardId: "card-x", claimId: "x" }),
+      context({ boardId: "board-b", machine }),
+    );
+    expect(refused.result).toMatchObject({ reason: "capacity", dimension: "ram" });
+  });
+
   it("offers no CPU or RAM over declared CPU or RAM, and refuses only placements over disk", () => {
     const over: CapacityState = sync(EMPTY_CAPACITY_STATE, {
       seq: 1,

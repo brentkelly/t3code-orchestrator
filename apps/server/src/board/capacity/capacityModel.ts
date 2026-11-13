@@ -167,16 +167,20 @@ function pendingDiskGB(state: CapacityState, now: number): number {
   return round2(pending);
 }
 
-/** RAM reserved by cards that went heavy in the last ten minutes, not yet in use. */
-function recentHeavyRamGiB(state: CapacityState, activity: CapacityActivity, now: number): number {
-  let recent = 0;
+/** RAM granted but not yet in use: cards that went heavy in the last ten minutes, plus
+    unconsumed claims, so two boards' claims can't both take the same free RAM. */
+function pendingRamGiB(state: CapacityState, activity: CapacityActivity, now: number): number {
+  let pending = 0;
   for (const record of state.records) {
     if (!recordIsHeavy(record, activity)) continue;
     if (record.heavySince !== null && now - record.heavySince < RECENT_HEAVY_MS) {
-      recent += record.profile.ramGiB;
+      pending += record.profile.ramGiB;
     }
   }
-  return round2(recent);
+  for (const reservation of liveReservations(state, now)) {
+    pending += reservation.load.ramGiB;
+  }
+  return round2(pending);
 }
 
 export interface Headroom {
@@ -211,7 +215,7 @@ export function computeHeadroom(input: {
     input.declared.ramGiB - held.ramGiB,
     input.machine.availableRamGiB === null
       ? Number.POSITIVE_INFINITY
-      : input.machine.availableRamGiB - recentHeavyRamGiB(input.state, input.activity, input.now),
+      : input.machine.availableRamGiB - pendingRamGiB(input.state, input.activity, input.now),
   );
   // Over CPU or RAM offers none of either; its free disk still counts, so a card that needs
   // disk can hold it until the CPU and RAM free.
