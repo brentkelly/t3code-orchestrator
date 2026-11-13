@@ -214,14 +214,16 @@ export const makeBoardActualsMeter = Effect.gen(function* () {
       }
       entry.askedAtMs = nowMs;
       if (input.op === "read") return readingOf(entry, null);
-      if (entry.ended === null) {
+      let ended = entry.ended;
+      if (ended === null) {
         if (entry.running) {
           yield* tickEntry(entry);
           entry.running = false;
         }
         const ending = entry;
-        const ended = yield* Deferred.make<BoardStepReading>();
-        ending.ended = ended;
+        const made = yield* Deferred.make<BoardStepReading>();
+        ended = made;
+        ending.ended = made;
         forgetOldFinished();
         // Detached: `du` may outlast the relay's timeout, and the retried `end` collects it.
         yield* (
@@ -229,11 +231,11 @@ export const makeBoardActualsMeter = Effect.gen(function* () {
             ? Effect.succeed(null)
             : machine.diskUsageBytes(input.worktreePath)
         ).pipe(
-          Effect.flatMap((diskBytes) => Deferred.succeed(ended, readingOf(ending, diskBytes))),
+          Effect.flatMap((diskBytes) => Deferred.succeed(made, readingOf(ending, diskBytes))),
           Effect.forkDetach,
         );
       }
-      return yield* Deferred.await(entry.ended);
+      return yield* Deferred.await(ended);
     },
   );
 
