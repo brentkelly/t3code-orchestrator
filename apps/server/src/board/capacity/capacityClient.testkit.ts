@@ -132,6 +132,7 @@ export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
       syncCards: (workerId, cards) =>
         Effect.sync(() => {
           fake.syncs.push({ workerId, cards });
+          if (fake.unreachable.has(workerId)) return false;
           synced.set(workerId, cards);
           const onWorker = pending.get(workerId);
           for (const card of cards) onWorker?.delete(card.cardId);

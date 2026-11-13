@@ -51,8 +51,8 @@ export interface BoardCapacityClientShape {
   /** The next `seq` for a worker, persisted. */
   readonly nextSeq: (workerId: BoardWorkerId) => Effect.Effect<number>;
   /** Send the board's granted state for a worker when it changed, or when this connection
-      has not been synced yet (that first sync is authoritative). Whether the worker has
-      acknowledged a sync on its current connection. */
+      has not been synced yet (that first sync is authoritative). Whether the worker holds
+      this state: acknowledged now, or unchanged since it last did. */
   readonly syncCards: (
     workerId: BoardWorkerId,
     cards: ReadonlyArray<BoardSyncedCard>,
@@ -201,7 +201,7 @@ const makeBoardCapacityClient = Effect.gen(function* () {
       }
     }
     if (acked) lastSynced.set(workerId, payload);
-    return acked || previous !== undefined;
+    return acked;
   });
 
   const unavailable = (workerId: BoardWorkerId) =>

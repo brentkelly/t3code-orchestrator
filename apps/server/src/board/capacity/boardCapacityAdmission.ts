@@ -284,8 +284,9 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       workerId,
       syncEntriesFor({ board, workerId, repositoryKey: keys }),
     );
+    // Unanswered, even by a worker synced before, costs the next passes nothing until the backoff.
     if (!synced) yield* noteReach(workerId, false);
-    return synced;
+    return synced || (yield* deps.client.synced(workerId));
   });
 
   const workersOf = (board: BoardState): ReadonlyArray<BoardWorkerId> => [
