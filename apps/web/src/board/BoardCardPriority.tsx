@@ -71,7 +71,7 @@ export function BoardCardPriorityIcon({
 }
 
 /** Each level with its rule and a tick on the selected one. Picking saves at once. */
-export function BoardCardPriorityOptions({
+function BoardCardPriorityOptions({
   value,
   onChange,
   showRules = true,
