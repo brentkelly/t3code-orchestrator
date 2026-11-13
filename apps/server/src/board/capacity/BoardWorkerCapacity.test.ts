@@ -176,6 +176,38 @@ it.effect(
   },
 );
 
+it.effect(
+  "a hung usage refresh holds no other board's calls, and the claim decides after it times out",
+  () => {
+    const fakes = makeFakes();
+    return Effect.gen(function* () {
+      fakes.providers = [
+        provider("claude", [{ kind: "session", label: "Session", usedPercent: 10 }]),
+      ];
+      const { service } = yield* makeBoardWorkerCapacity({
+        ...portsOver(fakes),
+        refreshProviderUsage: () => Effect.never,
+      });
+      yield* TestClock.adjust(60 * 60_000);
+      const pending = yield* Effect.forkChild(
+        service.claim("board-a", {
+          claimId: "c1",
+          seq: 1,
+          cardId: "card-1",
+          repositoryKey: null,
+          kind: "placement",
+          profile: { cpuCores: 1, ramGiB: 1, diskGB: 1 },
+          providerInstanceId: "claude",
+        }),
+      );
+      // Another board's sync runs while the refresh hangs: the lock isn't held across it.
+      yield* service.syncCards("board-b", { seq: 1, cards: [] });
+      yield* TestClock.adjust(5_000);
+      assert.strictEqual((yield* Fiber.join(pending)).outcome, "granted");
+    }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
+  },
+);
+
 it.effect("the background refresh re-reads an exhausted provider every ten minutes", () => {
   const fakes = makeFakes();
   return Effect.gen(function* () {

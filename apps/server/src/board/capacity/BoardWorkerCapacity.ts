@@ -57,6 +57,8 @@ const MEASURE_INTERVAL_MS = 5 * 60_000;
 /** Usage is refreshed this often while a gating window is at the threshold, and on a
     placement claim when the reading is older. */
 const QUOTA_REFRESH_MS = 10 * 60_000;
+/** A claim waits this long for a stale usage reading, then decides on what it has. */
+const CLAIM_QUOTA_REFRESH_TIMEOUT_MS = 2_000;
 
 /** A thread on this worker, as capacity sees it. */
 export interface CapacityThread {
@@ -365,7 +367,17 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     if (checkedAt !== null && now - checkedAt < QUOTA_REFRESH_MS) return;
     if (last !== undefined && now - last < QUOTA_REFRESH_MS) return;
     quotaRefreshedAt = new Map(quotaRefreshedAt).set(providerInstanceId, now);
-    yield* ports.refreshProviderUsage(providerInstanceId).pipe(Effect.ignore);
+    yield* ports
+      .refreshProviderUsage(providerInstanceId)
+      .pipe(Effect.timeout(CLAIM_QUOTA_REFRESH_TIMEOUT_MS), Effect.ignore);
+  });
+
+  /** Run before taking the lock: a slow provider must not hold every board's claims. */
+  const refreshBeforePlacement = Effect.fn("BoardWorkerCapacity.refreshBeforePlacement")(function* (
+    input: Pick<BoardCapacityClaimInput, "kind" | "force" | "providerInstanceId">,
+  ) {
+    if (input.kind !== "placement" || input.force === true) return;
+    yield* freshUsage(input.providerInstanceId, yield* Clock.currentTimeMillis);
   });
 
   const decide = Effect.fn("BoardWorkerCapacity.decide")(function* (
@@ -373,9 +385,6 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     input: BoardCapacityClaimInput,
   ) {
     const now = yield* Clock.currentTimeMillis;
-    if (input.kind === "placement" && input.force !== true) {
-      yield* freshUsage(input.providerInstanceId, now);
-    }
     const settings = yield* ports.settings;
     const providers = yield* ports.providers;
     const threads = yield* ports.threads;
@@ -392,12 +401,16 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
   });
 
   const claim: BoardWorkerCapacityShape["claim"] = (boardId, input) =>
-    lock.withPermits(1)(
-      Effect.gen(function* () {
-        const decision = yield* decide(boardId, input);
-        state = decision.state;
-        return decision.result;
-      }),
+    refreshBeforePlacement(input).pipe(
+      Effect.andThen(
+        lock.withPermits(1)(
+          Effect.gen(function* () {
+            const decision = yield* decide(boardId, input);
+            state = decision.state;
+            return decision.result;
+          }),
+        ),
+      ),
     );
 
   /** A claim of nothing: a group card's worktree, which takes no claim and makes no record. */
@@ -407,29 +420,36 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     provisionClaim.profile.diskGB === 0;
 
   const checkProvision: BoardWorkerCapacityShape["checkProvision"] = (boardId, provisionClaim) =>
-    lock.withPermits(1)(
-      Effect.gen(function* () {
-        if (isEmptyClaim(provisionClaim)) {
-          return { outcome: "granted" } satisfies BoardCapacityClaimResult;
-        }
-        const now = yield* Clock.currentTimeMillis;
-        const held =
-          state.records.some(
-            (record) => record.boardId === boardId && record.cardId === provisionClaim.cardId,
-          ) ||
-          state.reservations.some(
-            (reservation) =>
-              reservation.boardId === boardId &&
-              reservation.claimId === provisionClaim.claimId &&
-              reservation.kind === "placement" &&
-              reservation.expiresAt > now,
-          );
-        if (held) return { outcome: "granted" } satisfies BoardCapacityClaimResult;
-        // Unknown or expired (a slow board, or a worker restart): checked again now.
-        const decision = yield* decide(boardId, { ...provisionClaim, kind: "placement" });
-        state = decision.state;
-        return decision.result;
-      }),
+    (isEmptyClaim(provisionClaim)
+      ? Effect.void
+      : refreshBeforePlacement({ ...provisionClaim, kind: "placement" })
+    ).pipe(
+      Effect.andThen(
+        lock.withPermits(1)(
+          Effect.gen(function* () {
+            if (isEmptyClaim(provisionClaim)) {
+              return { outcome: "granted" } satisfies BoardCapacityClaimResult;
+            }
+            const now = yield* Clock.currentTimeMillis;
+            const held =
+              state.records.some(
+                (record) => record.boardId === boardId && record.cardId === provisionClaim.cardId,
+              ) ||
+              state.reservations.some(
+                (reservation) =>
+                  reservation.boardId === boardId &&
+                  reservation.claimId === provisionClaim.claimId &&
+                  reservation.kind === "placement" &&
+                  reservation.expiresAt > now,
+              );
+            if (held) return { outcome: "granted" } satisfies BoardCapacityClaimResult;
+            // Unknown or expired (a slow board, or a worker restart): checked again now.
+            const decision = yield* decide(boardId, { ...provisionClaim, kind: "placement" });
+            state = decision.state;
+            return decision.result;
+          }),
+        ),
+      ),
     );
 
   const recordProvision: BoardWorkerCapacityShape["recordProvision"] = (
