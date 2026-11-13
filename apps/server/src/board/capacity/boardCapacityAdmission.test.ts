@@ -517,6 +517,49 @@ it.effect("a size change reaches a placed card: grows in the background, shrinks
   }),
 );
 
+it.effect("a learned increase reaches a placed card only as a background grow claim (T3O-87)", () =>
+  Effect.gen(function* () {
+    const now = { ms: T0 };
+    const learned = (value: number | null) => ({ value, samples: 6, history: [] });
+    const board: BoardState = {
+      ...boardWith([granted("heavy"), granted("light", { heavy: false })]),
+      projectStageConfigs: {
+        [projectId]: {
+          stageSwitches: {},
+          overrides: {},
+          ci: { steps: [] },
+          dismissedImportSha: null,
+          warnings: [],
+          version: "v1",
+          lastChangedBy: null,
+          // The 2-core placeholder learned 4 cores: unclamped, since no human declared it.
+          resources: {
+            baseline: null,
+            setupTimeoutMinutes: null,
+            readinessPath: null,
+            readinessTimeoutSeconds: null,
+            learned: {
+              computedAt: iso(T0),
+              cpu: learned(4),
+              ram: learned(null),
+              disk: learned(null),
+            },
+          },
+        },
+      },
+    };
+    const h = yield* harness(board, now);
+    yield* h.admission.syncAll();
+    yield* h.admission.resizeGrants();
+    assert.strictEqual((yield* h.grantOf("heavy"))?.profile.cpuCores, 4);
+    // A light card holds no CPU: the learned value waits for its next grow.
+    assert.deepStrictEqual(
+      h.fake.claims.map((claim) => [claim.cardId, claim.kind, claim.profile.cpuCores]),
+      [["heavy", "grow", 4]],
+    );
+  }),
+);
+
 it.effect(
   "a board-started step on a light card takes a grow claim first, at its granted profile",
   () =>

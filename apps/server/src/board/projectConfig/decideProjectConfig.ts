@@ -139,7 +139,10 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
   if (expected !== undefined && expected !== current.version) {
     return yield* refuse(command, BOARD_CONFIG_VERSION_MISMATCH);
   }
-  const changedBy = { actor: command.actor ?? BOARD_SYSTEM_ACTOR, at: command.createdAt };
+  const changedBy = {
+    actor: ("actor" in command ? command.actor : undefined) ?? BOARD_SYSTEM_ACTOR,
+    at: command.createdAt,
+  };
   const emit = (config: BoardProjectStageConfig, cause: ConfigCause) =>
     projectConfigEvent({ command, projectId: command.projectId, config, cause }).pipe(
       Effect.map((event) => [event]),

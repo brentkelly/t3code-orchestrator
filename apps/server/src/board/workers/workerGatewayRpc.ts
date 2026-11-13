@@ -95,6 +95,8 @@ const runGatewayCall = (
         return host.checkReadiness(call.input, caller);
       case "readinessOutput":
         return host.readinessOutput(call.repositoryKey, call.path, caller);
+      case "actuals":
+        return host.actuals(call.input, caller);
     }
   };
   return answer().pipe(
