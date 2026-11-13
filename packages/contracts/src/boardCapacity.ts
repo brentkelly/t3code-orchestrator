@@ -501,3 +501,51 @@ export const BoardWorkerCheckReadinessInput = Schema.Struct({
   requested: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardWorkerCheckReadinessInput = typeof BoardWorkerCheckReadinessInput.Type;
+
+/** What a card's capacity reads as, for an agent's card read (T3O-86). */
+export const BoardCardCapacityView = Schema.Struct({
+  /** The size the card would be placed at now. */
+  size: BoardCardSize,
+  planner: Schema.NullOr(
+    Schema.Struct({ size: BoardCardSize, reason: Schema.NullOr(TrimmedNonEmptyString) }),
+  ),
+  /** An edit over the planner's size, and whose. */
+  edit: Schema.NullOr(Schema.Struct({ size: BoardCardSize, by: BoardCardSizeEditor })),
+  /** What placing it now would reserve: the project's baseline times its size. */
+  reservation: BoardResourceProfile,
+  /** What its worker granted it, while it holds a worktree; null otherwise. */
+  granted: Schema.NullOr(Schema.Struct({ profile: BoardResourceProfile, heavy: Schema.Boolean })),
+  /** The worker it runs on, or will. */
+  workerId: TrimmedNonEmptyString,
+  /** Why its step waits, when it does. */
+  queuedBy: Schema.NullOr(TrimmedNonEmptyString),
+  queuedDetail: Schema.NullOr(
+    Schema.Struct({
+      workerId: Schema.optionalKey(TrimmedNonEmptyString),
+      dimension: Schema.optionalKey(BoardResourceDimension),
+      behindCardId: Schema.optionalKey(TrimmedNonEmptyString),
+    }),
+  ),
+});
+export type BoardCardCapacityView = typeof BoardCardCapacityView.Type;
+
+export function boardCardCapacityView(input: {
+  readonly resources: BoardCardResources | null;
+  readonly projectResources: BoardProjectResources | null | undefined;
+  readonly workerId: string;
+  readonly queuedBy: string | null;
+  readonly queuedDetail: BoardCardCapacityView["queuedDetail"];
+}): BoardCardCapacityView {
+  const sizing = input.resources?.sizing ?? null;
+  const grant = input.resources?.grant ?? null;
+  return {
+    size: boardCardEffectiveSize(sizing),
+    planner: sizing?.planner ?? null,
+    edit: sizing?.edit ?? null,
+    reservation: boardCardRequestedProfile(input.resources, input.projectResources),
+    granted: grant === null ? null : { profile: grant.profile, heavy: grant.heavy },
+    workerId: input.workerId,
+    queuedBy: input.queuedBy,
+    queuedDetail: input.queuedDetail,
+  };
+}

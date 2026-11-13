@@ -21,6 +21,7 @@ import {
   ProjectId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { BoardWorkerCapacitySnapshot } from "./boardCapacity.ts";
 import { RepositoryIdentity, repositoryGroupingKeyOf } from "./environment.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -622,7 +623,34 @@ export const BOARD_WORKERS_WS_METHODS = {
   dismissSetup: "board.workers.dismissSetup",
   /** A session for the caller on a worker, to open its threads through the board. */
   threadAccess: "board.workers.threadAccess",
+  /** T3o: what each worker offers this board, then each change, at most every 5 s per worker
+      (T3O-86). Kept out of `BoardWorkersState`, which every card reads. */
+  subscribeCapacity: "board.workers.subscribeCapacity",
+  /** T3o: Re-check a project's readiness, or read a readiness or setup log (T3O-86). */
+  capacityAction: "board.workers.capacityAction",
 } as const;
+
+export const BoardWorkerCapacityItem = Schema.Struct({
+  workerId: BoardWorkerId,
+  snapshot: BoardWorkerCapacitySnapshot,
+});
+export type BoardWorkerCapacityItem = typeof BoardWorkerCapacityItem.Type;
+
+export const BoardWorkersCapacityActionInput = Schema.Union([
+  /** A project's readiness checked again now; no project is every project on the worker. */
+  Schema.Struct({
+    action: Schema.Literal("recheck"),
+    workerId: BoardWorkerId,
+    projectId: Schema.NullOr(ProjectId),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("readinessOutput"),
+    workerId: BoardWorkerId,
+    projectId: ProjectId,
+  }),
+  Schema.Struct({ action: Schema.Literal("setupLog"), cardId: TrimmedNonEmptyString }),
+]);
+export type BoardWorkersCapacityActionInput = typeof BoardWorkersCapacityActionInput.Type;
 
 export const BoardWorkerJoinCodeCreated = Schema.Struct({
   codeId: TrimmedNonEmptyString,
@@ -806,6 +834,17 @@ export const BOARD_WORKERS_RPCS = [
     success: Schema.Void,
     error: EnvironmentAuthorizationError,
   }),
+  Rpc.make(BOARD_WORKERS_WS_METHODS.subscribeCapacity, {
+    payload: Schema.Struct({}),
+    success: BoardWorkerCapacityItem,
+    error: EnvironmentAuthorizationError,
+    stream: true,
+  }),
+  Rpc.make(BOARD_WORKERS_WS_METHODS.capacityAction, {
+    payload: BoardWorkersCapacityActionInput,
+    success: Schema.NullOr(Schema.String),
+    error: Schema.Union([BoardWorkerActionError, EnvironmentAuthorizationError]),
+  }),
 ] as const;
 
 /**
@@ -836,4 +875,7 @@ export const BOARD_WORKER_RPC_SCOPES = {
   [BOARD_WORKERS_WS_METHODS.setDefault]: AuthOrchestrationOperateScope,
   [BOARD_WORKERS_WS_METHODS.setupProject]: AuthSourceControlWriteScope,
   [BOARD_WORKERS_WS_METHODS.dismissSetup]: AuthOrchestrationOperateScope,
+  // Capacity is a read of the workers; a re-check runs a project's own script on one.
+  [BOARD_WORKERS_WS_METHODS.subscribeCapacity]: AuthOrchestrationReadScope,
+  [BOARD_WORKERS_WS_METHODS.capacityAction]: AuthOrchestrationOperateScope,
 } as const;

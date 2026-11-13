@@ -24,10 +24,12 @@ import {
   t3oBoardSubject,
   t3oBoardUserSubject,
   type AuthEnvironmentScope,
+  type BoardWorkersCapacityActionInput,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import { EnvironmentAuth, type AuthenticatedSession } from "../../auth/EnvironmentAuth.ts";
@@ -35,6 +37,7 @@ import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { ProjectService } from "../../project/ProjectService.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { BoardWorkerCapacity } from "../capacity/BoardWorkerCapacity.ts";
+import { boardCapacityAction, boardCapacityStream } from "../capacity/boardCapacityRpc.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { BoardWorkers } from "./BoardWorkers.ts";
 import * as ManagedLimits from "../../policy/managedLimits.ts";
@@ -218,6 +221,20 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
           BOARD_WORKERS_WS_METHODS.dismissSetup,
           Effect.flatMap(workers, (service) => service.dismissSetup(input)),
         ),
+      // T3o: worker capacity for the Workers page, the pin picker and queued cards (T3O-86).
+      [BOARD_WORKERS_WS_METHODS.subscribeCapacity]: (_input: Record<string, never>) =>
+        currentSession.scopes.includes(
+          BOARD_WORKER_RPC_SCOPES[BOARD_WORKERS_WS_METHODS.subscribeCapacity],
+        )
+          ? boardCapacityStream
+          : Stream.fail(
+              new EnvironmentAuthorizationError({
+                message: "The authenticated token is missing a required scope.",
+                requiredScope: BOARD_WORKER_RPC_SCOPES[BOARD_WORKERS_WS_METHODS.subscribeCapacity],
+              }),
+            ),
+      [BOARD_WORKERS_WS_METHODS.capacityAction]: (input: BoardWorkersCapacityActionInput) =>
+        authorized(BOARD_WORKERS_WS_METHODS.capacityAction, boardCapacityAction(input)),
 
       // ── Worker: answering a central server ──────────────────────────
       [BOARD_WORKER_WS_METHODS.hello]: (_input: Record<string, never>) =>

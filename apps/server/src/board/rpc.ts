@@ -37,6 +37,7 @@ import {
   type BoardSettingsClientCommand,
   OrchestrationClientOrigin,
   type ProjectId,
+  type BoardWorkerId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -85,6 +86,8 @@ import { workerGatewayRpcHandlers } from "./workers/workerGatewayRpc.ts";
 import { boardWorkerRpcHandlers } from "./workers/workerRpc.ts";
 import { BoardWorkspaces, type BoardWorkspacesShape } from "./workspace/BoardWorkspace.ts";
 import { BoardWorkerCapacity } from "./capacity/BoardWorkerCapacity.ts";
+import { BoardCapacityClient } from "./capacity/BoardCapacityClient.ts";
+import { boardPinRefusal } from "./capacity/boardCapacityRpc.ts";
 import { boardWorkerGitCallRpcHandlers } from "./workspace/workerGitRpc.ts";
 
 export interface BoardRpcHandlerDeps {
@@ -138,6 +141,8 @@ export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
     ? Context.add(baseSubscriptionContext, BoardUsageRecorder, usageRecorder.value)
     : baseSubscriptionContext;
   const workerConnections = yield* Effect.serviceOption(WorkerConnections);
+  const capacityClientForPins = yield* Effect.serviceOption(BoardCapacityClient);
+  const pinContext = yield* Effect.context<BoardEngine | ThreadGateway>();
   // Board RPCs on a worker trust only a board's own session (T3O-84).
   return guardBoardHandlers(deps.currentSession.subject, {
     ...makeBoardRpcHandlers(deps, {
@@ -153,6 +158,15 @@ export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
       stampActor,
       projectActorName,
       projectConfig: yield* makeBoardProjectConfigService,
+      pinRefusal: Option.isNone(capacityClientForPins)
+        ? () => Effect.succeed(null)
+        : (cardId, workerId) =>
+            boardPinRefusal(cardId, workerId).pipe(
+              Effect.provideContext(
+                Context.add(pinContext, BoardCapacityClient, capacityClientForPins.value),
+              ),
+              Effect.orElseSucceed(() => null),
+            ),
       mover: yield* BoardCardMover,
       subscriptionContext,
       usageChanges: Option.isSome(usageRecorder)
@@ -190,6 +204,11 @@ function makeBoardRpcHandlers(
     readonly mover: BoardCardMoverShape;
     readonly ciLogWorker: BoardCiLogDeps<unknown>["worker"];
     readonly projectTokenStatus: ReturnType<typeof boardProjectTokenStatus>;
+    /** T3o: why a pin can't go to a worker yet (T3O-86), or null. */
+    readonly pinRefusal: (
+      cardId: BoardCardId,
+      workerId: BoardWorkerId | null,
+    ) => Effect.Effect<string | null>;
     readonly subscriptionContext: Context.Context<
       BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
     >;
@@ -268,7 +287,17 @@ function makeBoardRpcHandlers(
         input.type === "board.card.move" ? { ...input, cause: "human" } : input;
       return authorized(
         BOARD_WS_METHODS.dispatchCommand,
-        services.stampActor(command).pipe(
+        // T3o: a worker not ready for the card's project can't be its pin (T3O-86).
+        (command.type === "board.card.pin-worker"
+          ? services.pinRefusal(command.cardId, command.workerId)
+          : Effect.succeed(null)
+        ).pipe(
+          Effect.flatMap((refusal) =>
+            refusal === null
+              ? Effect.void
+              : Effect.fail(new BoardDispatchCommandError({ message: refusal })),
+          ),
+          Effect.andThen(services.stampActor(command)),
           Effect.andThen(
             boardEngine.dispatch(
               command,

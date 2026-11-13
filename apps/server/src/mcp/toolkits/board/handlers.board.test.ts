@@ -36,7 +36,7 @@ import {
   type SupervisorReactorShape,
 } from "../../../board/supervisorReactor.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
-import { boardHandlers } from "./handlers.ts";
+import { boardPlanSizeWarnings, boardHandlers } from "./handlers.ts";
 import { BoardToolkit } from "./tools.ts";
 import { projectBoardEvent, type BoardReadModel } from "../../../board/projector.ts";
 import {
@@ -3741,4 +3741,20 @@ it.layer(makeLayer("t3o-board-mcp-labels-test-"))("board mcp toolkit — labels 
       assert.include(capped.message, "at most");
     }),
   );
+});
+
+it("board_propose_plans names a too-big size's dimension, worker and the largest that fits (T3O-86)", () => {
+  const warnings = boardPlanSizeWarnings({
+    baseline: { cpuCores: 12, ramGiB: 16, diskGB: 45 },
+    declared: { cpuCores: 16, ramGiB: 64, diskGB: 500 },
+    workerLabel: "build-02",
+    plans: [
+      { key: "big", size: { cpu: "XL", ram: "M", disk: "M" } },
+      { key: "fine", size: { cpu: "M", ram: "M", disk: "M" } },
+      { key: "unsized" },
+    ],
+  });
+  assert.deepStrictEqual(warnings, [
+    "Plan 'big': CPU XL needs 18 cores; build-02 has 16. The largest size that fits is L.",
+  ]);
 });

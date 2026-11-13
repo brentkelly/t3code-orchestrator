@@ -152,6 +152,7 @@ import { BoardQueries } from "./board/BoardQueries.ts";
 import { BoardThreadTail } from "./board/boardThreadTail.ts";
 import { BoardWorkers } from "./board/workers/BoardWorkers.ts";
 import { BoardWorkspaces } from "./board/workspace/BoardWorkspace.ts";
+import { BoardCapacityClient } from "./board/capacity/BoardCapacityClient.ts";
 import { SupervisorReactor } from "./board/supervisorReactor.ts";
 import { ThreadGateway } from "./board/ThreadGateway.ts";
 import { WorkerGatewayHost } from "./board/workers/WorkerGatewayHost.ts";
@@ -860,6 +861,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(BoardWorkers)({}),
   Layer.mock(BoardWorkspaces)({ local: {} as never, forBoard: (() => ({})) as never }),
   Layer.mock(SupervisorReactor)({}),
+  Layer.mock(BoardCapacityClient)({ localBoardId: "env-test" }),
   Layer.mock(ThreadGateway)({}),
   Layer.mock(WorkerGatewayHost)({}),
   Layer.mock(WorktreeRetirer)({}),

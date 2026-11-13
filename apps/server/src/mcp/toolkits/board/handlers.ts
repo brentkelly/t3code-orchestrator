@@ -68,6 +68,17 @@ import {
   boardNewPhasePlan,
   type BoardCommand,
   type ProjectId,
+  BOARD_CARD_SIZE_LETTERS,
+  BOARD_CARD_SIZE_MULTIPLIERS,
+  BOARD_RESOURCE_DIMENSIONS,
+  boardCardCapacityView,
+  boardResourceProfile,
+  boardResourceProfileValue,
+  resolveBoardProjectBaseline,
+  type BoardCardSize,
+  type BoardResourceProfile,
+  BOARD_LOCAL_WORKER_ID,
+  boardProjectStageConfig,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -84,6 +95,7 @@ import {
   type BoardProject,
   type ThreadGatewayShape,
 } from "../../../board/ThreadGateway.ts";
+import { BoardCapacityClient } from "../../../board/capacity/BoardCapacityClient.ts";
 import { BoardEngine, type BoardEngineShape } from "../../../board/BoardEngine.ts";
 import { BoardQueries } from "../../../board/BoardQueries.ts";
 import type { BoardDispatchError } from "../../../board/errors.ts";
@@ -159,6 +171,83 @@ interface BoardToolDeps {
   readonly stateDir: string;
   readonly path: Path.Path;
 }
+
+/** T3o: a card's size, reservation, worker and queue reason, for an agent (T3O-86). */
+const boardCardCapacityFor = (board: BoardState, card: BoardCard) => {
+  const state = boardCardStepState(board, card.id);
+  const queued = state?.status === "queued";
+  return boardCardCapacityView({
+    resources: card.resources,
+    projectResources: boardProjectStageConfig(board, card.projectId)?.resources ?? null,
+    workerId: card.placedWorkerId ?? boardCardEffectiveWorkerId(card, board.defaultWorkerId),
+    queuedBy: queued ? (state.queuedBy ?? null) : null,
+    queuedDetail: queued ? (state.queuedDetail ?? null) : null,
+  });
+};
+
+const SIZE_UNITS = { cpu: "cores", ram: "GiB", disk: "GB" } as const;
+const SIZE_NAMES = { cpu: "CPU", ram: "RAM", disk: "Disk" } as const;
+
+/**
+ * T3o: a planned size too big for the worker the card would run on, per dimension, naming the
+ * largest size that fits (T3O-86). The size is still accepted. Empty with no capacity yet.
+ */
+export function boardPlanSizeWarnings(input: {
+  readonly baseline: BoardResourceProfile;
+  readonly declared: BoardResourceProfile;
+  readonly workerLabel: string;
+  readonly plans: ReadonlyArray<{
+    readonly key: string;
+    readonly size?: BoardCardSize | undefined;
+  }>;
+}): ReadonlyArray<string> {
+  const warnings: Array<string> = [];
+  for (const plan of input.plans) {
+    if (plan.size === undefined) continue;
+    const profile = boardResourceProfile(input.baseline, plan.size);
+    for (const dimension of BOARD_RESOURCE_DIMENSIONS) {
+      const need = boardResourceProfileValue(profile, dimension);
+      const has = boardResourceProfileValue(input.declared, dimension);
+      if (need <= has) continue;
+      const base = boardResourceProfileValue(input.baseline, dimension);
+      const fit = [...BOARD_CARD_SIZE_LETTERS]
+        .reverse()
+        .find((letter) => base * BOARD_CARD_SIZE_MULTIPLIERS[letter] <= has);
+      warnings.push(
+        `Plan '${plan.key}': ${SIZE_NAMES[dimension]} ${plan.size[dimension]} needs ${need} ${SIZE_UNITS[dimension]}; ${input.workerLabel} has ${has}. ${
+          fit === undefined
+            ? "No size fits: lower the project's baseline."
+            : `The largest size that fits is ${fit}.`
+        }`,
+      );
+    }
+  }
+  return warnings;
+}
+
+const planSizeWarnings = Effect.fn("board_propose_plans.sizeWarnings")(function* (
+  board: BoardState,
+  card: BoardCard,
+  plans: ReadonlyArray<{ readonly key: string; readonly size?: BoardCardSize | undefined }>,
+) {
+  const client = yield* Effect.serviceOption(BoardCapacityClient);
+  if (Option.isNone(client)) return [];
+  const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+  const snapshot = yield* client.value.latest(workerId);
+  if (snapshot === null) return [];
+  const label =
+    workerId === BOARD_LOCAL_WORKER_ID
+      ? "this server"
+      : ((board.workers ?? []).find((worker) => worker.id === workerId)?.label ?? workerId);
+  return boardPlanSizeWarnings({
+    baseline: resolveBoardProjectBaseline(
+      boardProjectStageConfig(board, card.projectId)?.resources ?? null,
+    ),
+    declared: snapshot.declared,
+    workerLabel: label,
+    plans,
+  });
+});
 
 /** The strategy the card's pull request would merge with now, so an
     agent reading an inherited or board-default card sees the real answer. */
@@ -930,6 +1019,7 @@ export const boardHandlers = {
       );
     }
     return {
+      capacity: boardCardCapacityFor(board, card),
       card: reviewCaller
         ? {
             ...card,
@@ -1143,6 +1233,7 @@ export const boardHandlers = {
       projectId: card.projectId,
       title: card.title,
       stage: card.stage,
+      capacity: boardCardCapacityFor(board, card),
       labels: card.labels.flatMap((labelId) => {
         const label = catalogue.find((candidate) => candidate.labelId === labelId);
         return label === undefined ? [] : [label.name];
@@ -1457,6 +1548,7 @@ export const boardHandlers = {
       input.externalRef,
       input.mergeStrategy,
       input.planReview,
+      input.size,
     ].some((value) => value !== undefined);
     if (updatesFields || input.pullRequest === undefined) {
       const command: BoardCardUpdateCommand = {
@@ -1477,6 +1569,8 @@ export const boardHandlers = {
         externalRef: input.externalRef,
         mergeStrategy: input.mergeStrategy,
         planReview: input.planReview,
+        // T3o: an agent's size edit is the agent's, never a human override (T3O-86).
+        ...(input.size === undefined ? {} : { size: input.size, sizeEditor: "agent" as const }),
         createdAt: yield* nowIso,
       };
       yield* dispatch(deps, command);
@@ -1899,9 +1993,11 @@ export const boardHandlers = {
       settings,
       before: board,
     });
+    const sizeWarnings = yield* planSizeWarnings(board, card, input.plans);
     return {
       planIds: input.plans.map((plan) => boardPlanId(card.id, plan.key)),
       ...(planReview === null ? {} : { planReview }),
+      ...(sizeWarnings.length === 0 ? {} : { sizeWarnings }),
     };
   }),
 
