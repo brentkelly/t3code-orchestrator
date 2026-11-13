@@ -30,6 +30,7 @@ import {
   CommandId,
   EMPTY_BOARD_STATE,
   resolveBoardCardForThread,
+  boardCardBoundWorkerId,
   boardCardEffectiveWorkerId,
   boardCardPlacementTarget,
   unwrapStringifiedBoardStepPayload,
@@ -79,6 +80,7 @@ import {
   resolveBoardProjectBaseline,
   type BoardCardSize,
   type BoardResourceProfile,
+  type BoardWorkerId,
   BOARD_LOCAL_WORKER_ID,
   boardProjectStageConfig,
 } from "@t3tools/contracts";
@@ -191,13 +193,16 @@ const SIZE_UNITS = { cpu: "cores", ram: "GiB", disk: "GB" } as const;
 const SIZE_NAMES = { cpu: "CPU", ram: "RAM", disk: "Disk" } as const;
 
 /**
- * T3o: a planned size too big for the worker the card would run on, per dimension, naming the
- * largest size that fits (T3O-86). The size is still accepted. Empty with no capacity yet.
+ * T3o: a planned size too big for every worker the card could run on, per dimension, naming the
+ * largest worker and the largest size that fits there (T3O-86). The size is still accepted.
+ * Empty with no capacity yet.
  */
 export function boardPlanSizeWarnings(input: {
   readonly baseline: BoardResourceProfile;
-  readonly declared: BoardResourceProfile;
-  readonly workerLabel: string;
+  readonly workers: ReadonlyArray<{
+    readonly label: string;
+    readonly declared: BoardResourceProfile;
+  }>;
   readonly plans: ReadonlyArray<{
     readonly key: string;
     readonly size?: BoardCardSize | undefined;
@@ -208,15 +213,25 @@ export function boardPlanSizeWarnings(input: {
     if (plan.size === undefined) continue;
     const profile = boardResourceProfile(input.baseline, plan.size);
     for (const dimension of BOARD_RESOURCE_DIMENSIONS) {
+      const largest = input.workers.reduce<(typeof input.workers)[number] | null>(
+        (best, worker) =>
+          best === null ||
+          boardResourceProfileValue(worker.declared, dimension) >
+            boardResourceProfileValue(best.declared, dimension)
+            ? worker
+            : best,
+        null,
+      );
+      if (largest === null) continue;
       const need = boardResourceProfileValue(profile, dimension);
-      const has = boardResourceProfileValue(input.declared, dimension);
+      const has = boardResourceProfileValue(largest.declared, dimension);
       if (need <= has) continue;
       const base = boardResourceProfileValue(input.baseline, dimension);
       const fit = [...BOARD_CARD_SIZE_LETTERS]
         .reverse()
         .find((letter) => base * BOARD_CARD_SIZE_MULTIPLIERS[letter] <= has);
       warnings.push(
-        `Plan '${plan.key}': ${SIZE_NAMES[dimension]} ${plan.size[dimension]} needs ${need} ${SIZE_UNITS[dimension]}; ${input.workerLabel} has ${has}. ${
+        `Plan '${plan.key}': ${SIZE_NAMES[dimension]} ${plan.size[dimension]} needs ${need} ${SIZE_UNITS[dimension]}; ${largest.label} has ${has}. ${
           fit === undefined
             ? "No size fits: lower the project's baseline."
             : `The largest size that fits is ${fit}.`
@@ -227,6 +242,8 @@ export function boardPlanSizeWarnings(input: {
   return warnings;
 }
 
+/** A card bound to a worker (pinned, or holding a worktree) is measured against that worker; an
+    unbound one against every worker ready for its project (T3O-87). */
 const planSizeWarnings = Effect.fn("board_propose_plans.sizeWarnings")(function* (
   board: BoardState,
   card: BoardCard,
@@ -234,19 +251,30 @@ const planSizeWarnings = Effect.fn("board_propose_plans.sizeWarnings")(function*
 ) {
   const client = yield* Effect.serviceOption(BoardCapacityClient);
   if (Option.isNone(client)) return [];
-  const workerId = boardCardEffectiveWorkerId(card);
-  const snapshot = yield* client.value.latest(workerId);
-  if (snapshot === null) return [];
-  const label =
+  const label = (workerId: BoardWorkerId) =>
     workerId === BOARD_LOCAL_WORKER_ID
       ? "this server"
       : ((board.workers ?? []).find((worker) => worker.id === workerId)?.label ?? workerId);
+  const bound = boardCardBoundWorkerId(card);
+  let candidates: ReadonlyArray<{
+    readonly workerId: BoardWorkerId;
+    readonly declared: BoardResourceProfile;
+  }>;
+  if (bound === null) {
+    const supervisor = yield* SupervisorReactor;
+    candidates = yield* supervisor.readyWorkerCapacity(card.projectId);
+  } else {
+    const snapshot = yield* client.value.latest(bound);
+    candidates = snapshot === null ? [] : [{ workerId: bound, declared: snapshot.declared }];
+  }
   return boardPlanSizeWarnings({
     baseline: resolveBoardProjectBaseline(
       boardProjectStageConfig(board, card.projectId)?.resources ?? null,
     ),
-    declared: snapshot.declared,
-    workerLabel: label,
+    workers: candidates.map((worker) => ({
+      label: label(worker.workerId),
+      declared: worker.declared,
+    })),
     plans,
   });
 });

@@ -3744,10 +3744,10 @@ it.layer(makeLayer("t3o-board-mcp-labels-test-"))("board mcp toolkit — labels 
 });
 
 it("board_propose_plans names a too-big size's dimension, worker and the largest that fits (T3O-86)", () => {
+  const baseline = { cpuCores: 12, ramGiB: 16, diskGB: 45 };
   const warnings = boardPlanSizeWarnings({
-    baseline: { cpuCores: 12, ramGiB: 16, diskGB: 45 },
-    declared: { cpuCores: 16, ramGiB: 64, diskGB: 500 },
-    workerLabel: "build-02",
+    baseline,
+    workers: [{ label: "build-02", declared: { cpuCores: 16, ramGiB: 64, diskGB: 500 } }],
     plans: [
       { key: "big", size: { cpu: "XL", ram: "M", disk: "M" } },
       { key: "fine", size: { cpu: "M", ram: "M", disk: "M" } },
@@ -3757,4 +3757,17 @@ it("board_propose_plans names a too-big size's dimension, worker and the largest
   assert.deepStrictEqual(warnings, [
     "Plan 'big': CPU XL needs 18 cores; build-02 has 16. The largest size that fits is L.",
   ]);
+  // An unbound card is measured against the largest worker ready for its project (T3O-87): a
+  // board server with no build capacity raises nothing when build-03 fits.
+  assert.deepStrictEqual(
+    boardPlanSizeWarnings({
+      baseline,
+      workers: [
+        { label: "this server", declared: { cpuCores: 0, ramGiB: 0, diskGB: 50 } },
+        { label: "build-03", declared: { cpuCores: 32, ramGiB: 128, diskGB: 500 } },
+      ],
+      plans: [{ key: "big", size: { cpu: "XL", ram: "M", disk: "M" } }],
+    }),
+    [],
+  );
 });

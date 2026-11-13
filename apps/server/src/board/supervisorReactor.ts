@@ -481,6 +481,12 @@ export interface SupervisorReactorShape {
   readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   /** T3o: refresh this board's holds now, as the 20 s fiber does (T3O-87). */
   readonly refreshHolds: Effect.Effect<void>;
+  /** T3o: each worker ready for a project now, with its declared capacity (T3O-87). */
+  readonly readyWorkerCapacity: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<{ readonly workerId: BoardWorkerId; readonly declared: BoardResourceProfile }>
+  >;
   /** Reconcile every non-terminal step against the live world (boot / test). */
   readonly reconcile: Effect.Effect<void>;
   /** One timeout-sweep pass over running unattended steps. In
@@ -1803,46 +1809,58 @@ const make = Effect.gen(function* () {
     return true;
   });
 
+  /** Each worker ready for `projectId` now, with its declared capacity. */
+  const readyWorkersFor = Effect.fn("board-supervisor-readyWorkersFor")(function* (
+    board: BoardState,
+    projectId: ProjectId,
+  ) {
+    const ready: Array<{
+      readonly workerId: BoardWorkerId;
+      readonly declared: BoardResourceProfile;
+    }> = [];
+    if (Option.isNone(capacityClient)) return ready;
+    const workersState = yield* workersNow;
+    const repositoryKey = yield* projectRepositoryKey(projectId);
+    for (const workerId of [BOARD_LOCAL_WORKER_ID, ...(board.workers ?? []).map((w) => w.id)]) {
+      const snapshot = yield* capacityClient.value.latest(workerId);
+      if (snapshot === null) continue;
+      const gate = boardPlacementGate({
+        workerId,
+        workers: workersState,
+        projectRepositoryKey: repositoryKey,
+        providerInstanceId: null,
+      });
+      if (
+        boardWorkerReadyForProject({
+          workerId,
+          gate: gate.kind,
+          snapshot,
+          repositoryKey,
+          projectId: String(projectId),
+        })
+      )
+        ready.push({ workerId, declared: snapshot.declared });
+    }
+    return ready;
+  });
+
   /** Online workers ready for at least one of the board's projects that fit an M card of it. */
   const readyWorkerCount = Effect.fn("board-supervisor-readyWorkerCount")(function* (
     board: BoardState,
   ) {
-    if (Option.isNone(capacityClient)) return 0;
-    const workersState = yield* workersNow;
     const projects = [
       ...new Set(board.cards.filter((c) => c.archivedAt === null).map((c) => c.projectId)),
     ];
-    let count = 0;
-    for (const workerId of [BOARD_LOCAL_WORKER_ID, ...(board.workers ?? []).map((w) => w.id)]) {
-      const snapshot = yield* capacityClient.value.latest(workerId);
-      if (snapshot === null) continue;
-      for (const projectId of projects) {
-        const repositoryKey = yield* projectRepositoryKey(projectId);
-        const gate = boardPlacementGate({
-          workerId,
-          workers: workersState,
-          projectRepositoryKey: repositoryKey,
-          providerInstanceId: null,
-        });
-        const baseline = resolveBoardProjectBaseline(
-          boardProjectStageConfig(board, projectId)?.resources ?? null,
-        );
-        if (
-          boardWorkerReadyForProject({
-            workerId,
-            gate: gate.kind,
-            snapshot,
-            repositoryKey,
-            projectId: String(projectId),
-          }) &&
-          boardResourceProfileOverflow(baseline, snapshot.declared) === null
-        ) {
-          count += 1;
-          break;
-        }
+    const counted = new Set<BoardWorkerId>();
+    for (const projectId of projects) {
+      const baseline = resolveBoardProjectBaseline(
+        boardProjectStageConfig(board, projectId)?.resources ?? null,
+      );
+      for (const { workerId, declared } of yield* readyWorkersFor(board, projectId)) {
+        if (boardResourceProfileOverflow(baseline, declared) === null) counted.add(workerId);
       }
     }
-    return count;
+    return counted.size;
   });
 
   /**
@@ -12081,6 +12099,8 @@ const make = Effect.gen(function* () {
       Effect.andThen(sweepCapacity),
     ),
     refreshHolds,
+    readyWorkerCapacity: (projectId) =>
+      readBoard.pipe(Effect.flatMap((board) => readyWorkersFor(board, projectId))),
     fireSchedules: sweepSchedules,
     fireAutoArchives: sweepAutoArchives,
     startArmed: sweepArmedCards,

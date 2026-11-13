@@ -116,6 +116,7 @@ const supervisorStub: SupervisorReactorShape = {
   reconcile: Effect.void,
   sweep: Effect.void,
   refreshHolds: Effect.void,
+  readyWorkerCapacity: () => Effect.succeed([]),
   fireSchedules: Effect.void,
   fireAutoArchives: Effect.void,
   startArmed: Effect.void,
