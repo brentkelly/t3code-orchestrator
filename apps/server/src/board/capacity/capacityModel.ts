@@ -211,13 +211,13 @@ export function computeHeadroom(input: {
       ? Number.POSITIVE_INFINITY
       : input.machine.availableRamGiB - recentHeavyRamGiB(input.state, input.activity, input.now),
   );
-  const offered = over.cpuRam
-    ? ZERO_BOARD_RESOURCE_PROFILE
-    : clean({
-        cpuCores: Math.max(0, cpu),
-        ramGiB: Math.max(0, ram),
-        diskGB: Math.max(0, disk),
-      });
+  // Over CPU or RAM offers none of either; its free disk still counts, so a card that needs
+  // disk can hold it until the CPU and RAM free.
+  const offered = clean({
+    cpuCores: over.cpuRam ? 0 : Math.max(0, cpu),
+    ramGiB: over.cpuRam ? 0 : Math.max(0, ram),
+    diskGB: Math.max(0, disk),
+  });
   return { declared: input.declared, held, offered, over };
 }
 
