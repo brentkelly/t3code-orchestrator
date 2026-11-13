@@ -678,16 +678,26 @@ it.effect("a full worker queues its cards without holding up another worker's (T
   }),
 );
 
-it.effect.each(["reclaimed", "failed"] as const)(
-  "a %s card whose branch the remote lacks goes back where its commits are",
-  (status) =>
+it.effect.each([
+  { name: "reclaimed card", status: "reclaimed", reprovision: false, home: true },
+  { name: "failed re-provision", status: "failed", reprovision: true, home: true },
+  // A fresh card's failed first provision left no commits on W1, so it ranks freely.
+  { name: "failed first provision", status: "failed", reprovision: false, home: false },
+] as const)(
+  "a $name whose branch the remote lacks goes back to W1: $home",
+  ({ status, reprovision, home }) =>
     Effect.gen(function* () {
       const { placement } = yield* makePlacement(workersState([workerView(W1)]));
       // `local` has far more room, so an unbound card would rank there first.
       const capacity = yield* w1RoomForOne();
       const reclaimed: BoardCard = {
         ...placedBuildingCard("card-a", "a", W1),
-        worktree: { ...readyWorktree("card-a"), status, path: null },
+        worktree: {
+          ...readyWorktree("card-a"),
+          status,
+          path: null,
+          ...(reprovision ? { reprovision: true } : {}),
+        },
       };
       yield* withGovernor(
         {
@@ -699,7 +709,7 @@ it.effect.each(["reclaimed", "failed"] as const)(
         (h) =>
           Effect.gen(function* () {
             yield* h.pumpDomain(movedToBuilding(reclaimed, 1));
-            assert.deepStrictEqual(yield* spawnsOn(h), [W1]);
+            assert.deepStrictEqual(yield* spawnsOn(h), [home ? W1 : BOARD_LOCAL_WORKER_ID]);
           }),
       );
     }),

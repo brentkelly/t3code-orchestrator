@@ -148,6 +148,7 @@ import {
   boardCardAncestors,
   boardCardGroupOf,
   boardCardHoldsWorktree,
+  boardWorktreeKeepsHome,
   boardCardInheritedDependsOn,
   boardCardDisplayPullRequest,
   boardCardEffectivePriority,
@@ -1613,18 +1614,18 @@ const make = Effect.gen(function* () {
   /**
    * T3o: a reclaimed card whose branch never reached the remote has its commits only on the
    * worker it last ran on, so it ranks as pinned there; a human's pin, or a worker since
-   * removed, still wins. A failed re-provision leaves the record `failed`, and keeps its home.
+   * removed, still wins. A failed re-provision of one keeps its home; a fresh card's failed
+   * first provision has no commits there, so it ranks freely.
    */
   const withUnpushedHome = Effect.fn("board-supervisor-withUnpushedHome")(function* (
     card: BoardCard,
   ) {
     const last = card.placedWorkerId;
-    const status = card.worktree?.status;
     if (
       card.pinnedWorkerId !== null ||
       last === null ||
       card.worktree === null ||
-      (status !== "reclaimed" && status !== "failed")
+      !boardWorktreeKeepsHome(card.worktree)
     ) {
       return card;
     }

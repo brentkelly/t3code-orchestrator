@@ -424,6 +424,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("card sizes", (it
         );
         const home = yield* cardAfter(undo(reclaimed), makeReadModel({ cards: [rePlaced] }));
         assert.strictEqual(home.placedWorkerId, workerA);
+        // The re-provision is marked, and a failed retry of it keeps that home too.
+        assert.strictEqual(rePlaced.worktree?.reprovision, true);
+        const failedRetry: BoardCardWorktree = { ...rePlaced.worktree!, status: "failed" };
+        const retried = yield* provisionAfter(
+          makeCard({ worktree: failedRetry }),
+          makeReadModel({ cards: [makeCard({ worktree: failedRetry })] }),
+        );
+        assert.strictEqual(retried.worktree?.reprovision, true);
+        const stillHome = yield* cardAfter(undo(failedRetry), makeReadModel({ cards: [retried] }));
+        assert.strictEqual(stillHome.placedWorkerId, workerA);
+        // A fresh card's failed first provision left nothing there: the card is ranked again.
+        const freshFailed: BoardCardWorktree = { ...branchOnly, status: "failed" };
+        const freshRetry = yield* provisionAfter(
+          makeCard({ worktree: freshFailed }),
+          makeReadModel({ cards: [makeCard({ worktree: freshFailed })] }),
+        );
+        assert.isUndefined(freshRetry.worktree?.reprovision);
+        const unhomed = yield* cardAfter(undo(freshFailed), makeReadModel({ cards: [freshRetry] }));
+        assert.isNull(unhomed.placedWorkerId);
         // With nothing before it, the record goes.
         const fresh = yield* provisionAfter(makeCard(), makeReadModel({ cards: [makeCard()] }));
         const nulled = yield* cardAfter(undo(null), makeReadModel({ cards: [fresh] }));

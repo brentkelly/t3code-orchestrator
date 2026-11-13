@@ -627,6 +627,9 @@ export const BoardCardWorktree = Schema.Struct({
   /** A confirmed group archive has not yet deleted this branch; the
       worktree sweep retries until it has. */
   discardPending: Schema.optionalKey(Schema.Boolean),
+  /** T3o: this provision (or its failed retries) replaces a reclaimed worktree, so the card's
+      unpushed commits may still be on the worker it last ran on (T3O-71). */
+  reprovision: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardCardWorktree = typeof BoardCardWorktree.Type;
 
@@ -13098,6 +13101,16 @@ export function boardCardHasLiveBranch(card: Pick<BoardCard, "worktree">): boole
 export function boardCardHoldsWorktree(card: Pick<BoardCard, "worktree">): boolean {
   const status = card.worktree?.status ?? null;
   return status === "ready" || status === "provisioning";
+}
+
+/** T3o: whether a worktree record that holds no checkout still marks its worker as the card's
+    home: a reclaimed card, or a failed re-provision of one, may have unpushed commits only
+    there. A fresh card's failed first provision has none (T3O-71). */
+export function boardWorktreeKeepsHome(worktree: BoardCardWorktree | null | undefined): boolean {
+  return (
+    worktree?.status === "reclaimed" ||
+    (worktree?.status === "failed" && worktree.reprovision === true)
+  );
 }
 
 type BoardCardPlacementFields = Pick<BoardCard, "worktree" | "pinnedWorkerId" | "placedWorkerId">;

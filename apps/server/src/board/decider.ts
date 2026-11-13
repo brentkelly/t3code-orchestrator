@@ -128,6 +128,7 @@ import {
   boardCardBoundWorkerId,
   boardCardEffectiveWorkerId,
   boardCardHoldsWorktree,
+  boardWorktreeKeepsHome,
   boardCardWorkerRemovalOutcome,
   type BoardCardWorkerMove,
   type BoardWorkerId,
@@ -4653,6 +4654,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         card.worktree.status === "branch-only"
           ? 1
           : card.worktree.attempts + 1;
+      // T3o: a re-provision of a reclaimed card, and every retry of one, keeps its home worker.
+      const reprovision =
+        card.worktree?.status === "reclaimed" ||
+        (card.worktree?.status === "failed" && card.worktree.reprovision === true);
       const nextCard: BoardCard = {
         ...card,
         worktree: {
@@ -4663,6 +4668,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           attempts,
           lastError: null,
           reclaimBlockedReason: null,
+          ...(reprovision ? { reprovision: true } : {}),
         },
         // The worktree binds the card to the worker the gate placed it on (T3O-87). From
         // here only a move or the worker's removal changes it.
@@ -4778,10 +4784,11 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${command.cardId}' has no worktree in 'provisioning'; cannot record a ready worktree.`,
         );
       }
+      const { reprovision: _reprovision, ...landed } = card.worktree;
       const nextCard: BoardCard = {
         ...card,
         worktree: {
-          ...card.worktree,
+          ...landed,
           path: command.path,
           status: "ready",
           lastError: null,
@@ -5164,10 +5171,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const { setupDue: _due, ...rest } = card.resources ?? EMPTY_BOARD_CARD_RESOURCES;
       // T3o: the claim expired, so the placement goes too and the card is ranked again
       // (T3O-87) — unless the restored record still binds it to its worker. A reclaimed or
-      // failed record keeps its worker too: unpushed commits may live only there.
+      // failed re-provision keeps its worker too: unpushed commits may live only there.
       const restoredHolds = boardCardHoldsWorktree({ worktree: command.restore });
-      const keepsHome =
-        command.restore?.status === "reclaimed" || command.restore?.status === "failed";
+      const keepsHome = boardWorktreeKeepsHome(command.restore);
       return yield* cardResourcesRecordedEvent({
         card: {
           ...card,
@@ -6578,10 +6584,11 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             );
           }
           recorded = move;
+          const { reprovision: _reprovision, ...moved } = card.worktree;
           nextCard = {
             ...card,
             worktree: {
-              ...card.worktree,
+              ...moved,
               path: step.worktreePath,
               status: "ready",
               lastError: null,
