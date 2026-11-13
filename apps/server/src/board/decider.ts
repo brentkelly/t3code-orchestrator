@@ -549,6 +549,10 @@ const withSetupDue = (resources: BoardCardResources | null): BoardCardResources 
   setupDue: true,
 });
 
+/** T3o: a card with no placement on record (T3O-87). */
+const withoutPlacement = (resources: BoardCardResources | null): BoardCardResources | null =>
+  resources === null ? null : withoutEmptyResources({ ...resources, placement: null });
+
 /** T3o: a card's resources changed (T3O-86), carrying the whole card. */
 const cardResourcesRecordedEvent = Effect.fn("cardResourcesRecordedEvent")(function* (input: {
   readonly card: BoardCard;
@@ -6522,6 +6526,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             placedWorkerId: null,
             // Off the removed worker for good: the hold is over.
             placementOrphaned: null,
+            resources: withoutPlacement(card.resources),
             updatedAt: command.createdAt,
           };
         } else if (step.phase === "done") {
@@ -6553,8 +6558,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             placedWorkerId: move.toWorkerId,
             workerMove: null,
             placementOrphaned: null,
-            // T3o: the moved worktree runs setup once (T3O-86).
-            resources: withSetupDue(card.resources),
+            // T3o: the moved worktree runs setup once (T3O-86); the Worker row names where it
+            // landed (T3O-87).
+            resources: {
+              ...withSetupDue(card.resources),
+              placement: { workerId: move.toWorkerId, at: command.createdAt, reason: "moved here" },
+            },
             updatedAt: command.createdAt,
           };
         } else if (step.phase === "restarted") {
@@ -6569,6 +6578,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             placedWorkerId: null,
             workerMove: null,
             placementOrphaned: null,
+            resources: withoutPlacement(card.resources),
             updatedAt: command.createdAt,
           };
         } else {

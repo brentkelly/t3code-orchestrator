@@ -438,7 +438,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
     it.effect("a move runs start → retired → done and lands the card on the new worker", () =>
       Effect.gen(function* () {
         let model = makeReadModel({
-          cards: [makeCard({ placedWorkerId: workerA, worktree: readyWorktree })],
+          cards: [
+            makeCard({
+              placedWorkerId: workerA,
+              worktree: readyWorktree,
+              resources: {
+                sizing: null,
+                grant: null,
+                setup: null,
+                placement: { workerId: workerA, at: NOW, reason: "pinned" },
+              },
+            }),
+          ],
           stepStates: [makeStep("succeeded")],
         });
         const steps = [
@@ -464,12 +475,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         expect(retired!.worktree?.status).toBe("reclaimed");
         expect(retired!.worktree?.path).toBeNull();
         expect(retired!.placedWorkerId).toBeNull();
+        expect(retired!.resources?.placement ?? null).toBeNull();
         // Done: the new worktree, pinned and placed on B, the move cleared.
         expect(done!.worktree?.status).toBe("ready");
         expect(done!.worktree?.path).toBe("/worker-b/worktrees/card-1");
         expect(done!.worktree?.branch).toBe("board/card-1");
         expect(done!.pinnedWorkerId).toBe(workerB);
         expect(done!.placedWorkerId).toBe(workerB);
+        expect(done!.resources?.placement?.workerId).toBe(workerB);
         expect(done!.workerMove).toBeNull();
       }),
     );
