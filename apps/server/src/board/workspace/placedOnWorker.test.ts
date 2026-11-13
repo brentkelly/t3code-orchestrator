@@ -353,6 +353,33 @@ describe("a worker the board cannot reach (T3O-64)", () => {
     );
   });
 
+  it.effect("a provision a board restart cut off resumes on its slice at boot", () => {
+    const placement = placeCardOnWorker();
+    const cutOff = makeBoardCard({
+      id: "card-1",
+      stage: BUILDING,
+      orderKey: "m",
+      worktree: { ...readyWorktree("card-1"), path: null, status: "provisioning" },
+    });
+    return withGovernor(
+      {
+        board: { cards: [cutOff], nextCardNumberByProject: {} },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 4 }),
+        registeredWorktrees: workerWorktrees(["/tmp/worktrees/board/card-1", "board/card-1"]),
+        workspaces: placement.workspaces,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(cutOff, 1));
+          const commands = yield* h.commands;
+          assert.strictEqual(commandsOf(commands, "board.card.provision-worktree").length, 0);
+          assert.strictEqual(commandsOf(commands, "board.card.record-worktree").length, 1);
+          const resumed = (yield* h.board).cards.find((entry) => entry.id === placedId)!;
+          assert.strictEqual(resumed.worktree?.status, "ready");
+        }),
+    );
+  });
+
   it.effect(
     "a merge against an unreachable worker is refused as retryable, not as a failure",
     () => {

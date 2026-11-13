@@ -1435,8 +1435,8 @@ const make = Effect.gen(function* () {
   /**
    * Cards whose provision the worker dropped mid-way: their worktree
    * is recorded `provisioning`, and the next pass finishes the provision on
-   * that slice instead of starting another. In memory — after a restart the
-   * boot reconcile sees the slice as it always did.
+   * that slice instead of starting another. In memory: boot reconcile seeds
+   * it with every card a restart left `provisioning`, since none is in flight then.
    */
   const interruptedProvisions = new Set<string>();
 
@@ -10332,6 +10332,10 @@ const make = Effect.gen(function* () {
       ),
     );
     const board = yield* readBoard;
+    // T3o: a provision the restart cut off resumes with its persisted claim (T3O-86).
+    for (const card of board.cards) {
+      if (card.worktree?.status === "provisioning") interruptedProvisions.add(String(card.id));
+    }
     // Cards reconcile settles as succeeded may auto-advance, but subscribers are parked until
     // activation, so their kickoff is re-derived from state at the end of the pass.
     const advanced: BoardCard["id"][] = [];
