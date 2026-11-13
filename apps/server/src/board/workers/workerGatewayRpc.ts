@@ -14,6 +14,7 @@ import {
   type BoardStageAttachmentsInput,
   type BoardWorkerRunCiInput,
   type BoardWorkerReadCiLogInput,
+  type BoardWorkerRunSetupInput,
   type EnvironmentId,
   boardIdOfBoardSubject,
 } from "@t3tools/contracts";
@@ -84,6 +85,16 @@ const runGatewayCall = (
         return host.claimCapacity(call.input, caller);
       case "syncCards":
         return host.syncCards(call.input, caller);
+      case "setupState":
+        return host.setupState(call.worktreePath, caller);
+      case "cancelSetup":
+        return host.cancelSetup(call.worktreePath, caller).pipe(Effect.as(null));
+      case "readSetupLog":
+        return host.readSetupLog(call.worktreePath, caller);
+      case "checkReadiness":
+        return host.checkReadiness(call.input, caller);
+      case "readinessOutput":
+        return host.readinessOutput(call.repositoryKey, call.path, caller);
     }
   };
   return answer().pipe(
@@ -180,6 +191,9 @@ export const workerGatewayRpcHandlers = (currentSession: AuthenticatedSession) =
     ),
     [M.subscribeCapacity]: stream(M.subscribeCapacity, (host, _input: Record<string, never>) =>
       host.subscribeCapacity(caller),
+    ),
+    [M.runSetup]: stream(M.runSetup, (host, input: BoardWorkerRunSetupInput) =>
+      host.runSetup(input, caller),
     ),
   };
 };

@@ -693,7 +693,7 @@ function useBoardPageModel({
     );
     if (queue.size === 0) return EMPTY_QUEUE_INFO;
     const running = boardRunningStepCount(everyCard);
-    const cap = boardSettings.concurrency.globalMaxConcurrent;
+    const cardKeys = new Map(everyCard.map((card) => [String(card.cardId), card.key] as const));
     const cardsById = new Map(everyCard.map((card) => [card.cardId, card] as const));
     const projectNames = new Map(
       allProjects.map((project) => [project.id, project.title] as const),
@@ -707,11 +707,10 @@ function useBoardPageModel({
           : boardQueueReason({
               card,
               state: cardWorkersState,
-              cards: everyCard,
-              concurrency: boardSettings.concurrency,
+              cardKeys,
               projectName: projectNames.get(card.projectId) ?? "this project",
             });
-      const resolved = boardQueueInfo({ slot, running, cap, reason });
+      const resolved = boardQueueInfo({ slot, running, reason });
       if (resolved !== null) info.set(cardId, resolved);
     }
     return info;

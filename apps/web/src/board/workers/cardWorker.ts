@@ -246,16 +246,18 @@ export function boardWorkerCheckoutWarning(input: {
 
 // ── Queue reasons (prototype notice copy) ─────────────────────────
 
-/** What a queued card is waiting on, ready for `boardQueueInfo`. */
+/** What a queued card is waiting on, ready for `boardQueueInfo` (T3O-86). */
 export type BoardQueueReason =
   | {
-      readonly kind: "worker";
+      readonly kind: "capacity";
       readonly worker: string;
-      readonly running: number;
-      readonly limit: number;
+      readonly dimension: "cpu" | "ram" | "disk" | null;
+      /** The card ahead in this board's queue on that worker, by key. */
+      readonly behind: string | null;
     }
-  | { readonly kind: "provider"; readonly worker: string }
-  | { readonly kind: "board"; readonly running: number; readonly limit: number }
+  | { readonly kind: "quota"; readonly worker: string }
+  | { readonly kind: "agent-cap"; readonly worker: string }
+  | { readonly kind: "needs-update"; readonly worker: string }
   | {
       readonly kind: "setup";
       readonly worker: string;
@@ -267,36 +269,45 @@ export type BoardQueueReason =
     };
 
 /**
- * The binding limit's copy inputs for a queued card, or null with one worker —
- * a local-only board keeps plain "Queued #n".
+ * The copy inputs for what holds a queued card, or null for plain "Queued #n". Shown on a
+ * board with no remote workers too: there the worker is this server. Legacy reasons from the
+ * board's old concurrency limits read as plain "Queued".
  */
 export function boardQueueReason(input: {
-  readonly card: Pick<BoardCardShell, "workerId" | "queuedBy" | "projectId">;
+  readonly card: Pick<BoardCardShell, "workerId" | "queuedBy" | "queuedDetail" | "projectId">;
   readonly state: BoardWorkersState;
-  readonly cards: ReadonlyArray<Pick<BoardCardShell, "workerId" | "stepRunning">>;
-  readonly concurrency: BoardConcurrencySettings;
+  /** Card keys by id, for "Waiting behind T3O-90". */
+  readonly cardKeys: ReadonlyMap<string, string>;
   readonly projectName: string;
 }): BoardQueueReason | null {
   const queuedBy: BoardStepQueuedBy | undefined = input.card.queuedBy;
-  if (!boardShowsWorkers(input.state) || queuedBy === undefined) return null;
-  const { workerId } = boardCardWorker(input.card, input.state);
+  if (queuedBy === undefined) return null;
+  const detail = input.card.queuedDetail;
+  const workerId = detail?.workerId ?? boardCardWorker(input.card, input.state).workerId;
   const worker = boardWorkerLabel(workerId, input.state);
   switch (queuedBy) {
-    case "worker": {
-      const limit = resolveBoardWorkerConcurrency(input.concurrency, workerId).maxConcurrent;
-      const running = boardWorkerRunningCounts(input.cards, input.state).get(workerId) ?? 0;
-      return { kind: "worker", worker, running, limit: limit ?? running };
-    }
+    case "board":
+    case "worker":
     case "provider":
-      return { kind: "provider", worker };
-    case "board": {
-      let running = 0;
-      for (const card of input.cards) if (card.stepRunning) running += 1;
-      return { kind: "board", running, limit: input.concurrency.globalMaxConcurrent };
-    }
     case "worker-offline":
-      // The card's Worker offline notice says it.
+      // Legacy limits read as plain Queued; Worker offline has its own notice.
       return null;
+    case "capacity":
+      return {
+        kind: "capacity",
+        worker,
+        dimension: detail?.dimension ?? null,
+        behind:
+          detail?.behindCardId === undefined
+            ? null
+            : (input.cardKeys.get(detail.behindCardId) ?? null),
+      };
+    case "quota":
+      return { kind: "quota", worker };
+    case "agent-cap":
+      return { kind: "agent-cap", worker };
+    case "needs-update":
+      return { kind: "needs-update", worker };
     case "setup": {
       const setup = setupOf(input.state, workerId, input.card.projectId);
       return {

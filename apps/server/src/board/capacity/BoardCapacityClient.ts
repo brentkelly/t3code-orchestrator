@@ -1,15 +1,17 @@
 /**
- * The board's side of worker-owned capacity (T3O-86): it asks each worker for room and keeps
- * the worker's card records in step with what the board was granted. `local` is this server's
- * own capacity service, called in-process under the server's environment id; every other
- * worker is asked over its gateway. Snapshots are cached per worker for the scheduling pass
- * and the browser stream.
+ * The board's side of worker-owned capacity (T3O-86): claims, `syncCards` and the snapshot
+ * cache per worker. `local` is called in-process under this server's environment id.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
   type BoardCapacityClaimInput,
   type BoardCapacityClaimResult,
   type BoardProvisionClaim,
+  type BoardCardSetupProgress,
+  type BoardWorkerCheckReadinessInput,
+  type BoardWorkerReadiness,
+  type BoardWorkerRunSetupInput,
+  type BoardWorkerSetupState,
   type BoardSyncedCard,
   type BoardWorkerCapacitySnapshot,
   type BoardWorkerId,
@@ -22,6 +24,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
@@ -70,9 +73,38 @@ export interface BoardCapacityClientShape {
   readonly localAgentCapRefusal: (
     providerInstanceId: string | null,
   ) => Effect.Effect<string | null>;
+  /** Section 5, on a card's worker: its setup, and a project's readiness. A worker out of
+      reach fails the stream or answers null. */
+  readonly runSetup: (
+    workerId: BoardWorkerId,
+    input: BoardWorkerRunSetupInput,
+  ) => Stream.Stream<BoardCardSetupProgress, BoardCapacityUnavailable>;
+  readonly setupState: (
+    workerId: BoardWorkerId,
+    worktreePath: string,
+  ) => Effect.Effect<BoardWorkerSetupState | null>;
+  readonly cancelSetup: (workerId: BoardWorkerId, worktreePath: string) => Effect.Effect<void>;
+  readonly readSetupLog: (
+    workerId: BoardWorkerId,
+    worktreePath: string,
+  ) => Effect.Effect<string | null>;
+  readonly checkReadiness: (
+    workerId: BoardWorkerId,
+    input: BoardWorkerCheckReadinessInput,
+  ) => Effect.Effect<BoardWorkerReadiness | null>;
+  readonly readinessOutput: (
+    workerId: BoardWorkerId,
+    repositoryKey: string | null,
+    path: string,
+  ) => Effect.Effect<string | null>;
   /** The worker went away or came back: its next sync is authoritative again. */
   readonly connectionChanged: (workerId: BoardWorkerId) => Effect.Effect<void>;
 }
+
+export class BoardCapacityUnavailable extends Schema.TaggedError<BoardCapacityUnavailable>()(
+  "BoardCapacityUnavailable",
+  { workerId: Schema.String, message: Schema.String },
+) {}
 
 export class BoardCapacityClient extends Context.Service<
   BoardCapacityClient,
@@ -172,6 +204,20 @@ export const makeBoardCapacityClient = Effect.gen(function* () {
     return acked || previous !== undefined;
   });
 
+  const unavailable = (workerId: BoardWorkerId) =>
+    new BoardCapacityUnavailable({ workerId, message: "The worker is out of reach." });
+  const remoteOrNull = <A, E>(
+    workerId: EnvironmentId,
+    run: (gateway: WorkerGatewayRpc) => Effect.Effect<A, E>,
+  ): Effect.Effect<A | null> =>
+    gatewayOf(workerId).pipe(
+      Effect.flatMap((gateway) =>
+        gateway === null
+          ? Effect.succeed(null)
+          : run(gateway).pipe(Effect.orElseSucceed(() => null)),
+      ),
+    );
+
   const publish = (workerId: BoardWorkerId, snapshot: BoardWorkerCapacitySnapshot) =>
     Effect.suspend(() => {
       snapshots.set(workerId, snapshot);
@@ -238,6 +284,42 @@ export const makeBoardCapacityClient = Effect.gen(function* () {
     localAgentCapRefusal: (providerInstanceId) => localCapacity.agentCapRefusal(providerInstanceId),
     recordLocalProvision: (claim, worktree) =>
       localCapacity.recordProvision(localBoardId, claim, worktree),
+    runSetup: (workerId, input) =>
+      workerId === BOARD_LOCAL_WORKER_ID
+        ? localCapacity.runSetup(input)
+        : Stream.unwrap(
+            gatewayOf(workerId).pipe(
+              Effect.map((gateway) =>
+                gateway === null
+                  ? Stream.fail(unavailable(workerId))
+                  : gateway.runSetup(input).pipe(Stream.mapError(() => unavailable(workerId))),
+              ),
+            ),
+          ),
+    setupState: (workerId, worktreePath) =>
+      workerId === BOARD_LOCAL_WORKER_ID
+        ? localCapacity.setupState(worktreePath)
+        : remoteOrNull(workerId, (gateway) => gateway.setupState(worktreePath)),
+    cancelSetup: (workerId, worktreePath) =>
+      workerId === BOARD_LOCAL_WORKER_ID
+        ? localCapacity.cancelSetup(worktreePath)
+        : remoteOrNull(workerId, (gateway) => gateway.cancelSetup(worktreePath)).pipe(
+            Effect.asVoid,
+          ),
+    readSetupLog: (workerId, worktreePath) =>
+      workerId === BOARD_LOCAL_WORKER_ID
+        ? localCapacity.readSetupLog(worktreePath)
+        : remoteOrNull(workerId, (gateway) => gateway.readSetupLog(worktreePath)),
+    checkReadiness: (workerId, input) =>
+      workerId === BOARD_LOCAL_WORKER_ID
+        ? localCapacity.checkReadiness(localBoardId, input)
+        : remoteOrNull(workerId, (gateway) => gateway.checkReadiness(input)),
+    readinessOutput: (workerId, repositoryKey, path) =>
+      workerId === BOARD_LOCAL_WORKER_ID
+        ? localCapacity.readinessOutput(localBoardId, repositoryKey, path)
+        : remoteOrNull(workerId, (gateway) => gateway.readinessOutput(repositoryKey, path)).pipe(
+            Effect.map((value) => value ?? null),
+          ),
     connectionChanged: (workerId) => Effect.sync(() => void lastSynced.delete(workerId)),
   } satisfies BoardCapacityClientShape;
 });

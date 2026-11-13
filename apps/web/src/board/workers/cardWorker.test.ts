@@ -1,4 +1,5 @@
 import {
+  BoardCardId,
   BOARD_LOCAL_WORKER_ID,
   EnvironmentId,
   PositiveInt,
@@ -241,25 +242,42 @@ describe("the worker field", () => {
 });
 
 describe("queue reasons and move notices", () => {
-  it("names the binding limit only once there is more than one worker", () => {
-    const card = { workerId: LINUX, queuedBy: "worker" as const, projectId };
-    const cards = [
-      { workerId: LINUX, stepRunning: true },
-      { workerId: LINUX, stepRunning: true },
-      { workerId: LINUX, stepRunning: true },
-      { workerId: LINUX, stepRunning: true },
-    ];
+  it("names a capacity wait on any board, and reads legacy limits as plain Queued (T3O-86)", () => {
+    const card = {
+      workerId: LINUX,
+      queuedBy: "capacity" as const,
+      queuedDetail: { workerId: LINUX, behindCardId: BoardCardId.make("card-90") },
+      projectId,
+    };
+    const cardKeys = new Map([["card-90", "T3O-90"]]);
     expect(
       boardQueueReason({
         card,
         state: state([worker(LINUX, "linux-box")]),
-        cards,
-        concurrency,
+        cardKeys,
         projectName: "advisor",
       }),
-    ).toEqual({ kind: "worker", worker: "linux-box", running: 4, limit: 4 });
+    ).toEqual({ kind: "capacity", worker: "linux-box", dimension: null, behind: "T3O-90" });
+    // A board with no remote workers says it too: the worker is this server.
     expect(
-      boardQueueReason({ card, state: state([]), cards, concurrency, projectName: "advisor" }),
+      boardQueueReason({
+        card: {
+          queuedBy: "capacity",
+          queuedDetail: { workerId: BOARD_LOCAL_WORKER_ID },
+          projectId,
+        },
+        state: state([]),
+        cardKeys,
+        projectName: "advisor",
+      })?.kind,
+    ).toBe("capacity");
+    expect(
+      boardQueueReason({
+        card: { ...card, queuedBy: "board" as const },
+        state: state([]),
+        cardKeys,
+        projectName: "advisor",
+      }),
     ).toBeNull();
   });
 

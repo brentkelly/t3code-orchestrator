@@ -51,7 +51,7 @@ const portsOver = (
   providers: Effect.sync(() => fakes.providers),
   refreshProviderUsage: (instanceId) => Effect.sync(() => void fakes.refreshed.push(instanceId)),
   notReady: () => Effect.succeed(null),
-  readiness: Effect.succeed([]),
+  readiness: () => Effect.succeed([]),
   worktreePresence: () => Effect.succeed("owned"),
   worktreeVolume: "/w",
   unownedWorktrees: () => Effect.succeed([]),

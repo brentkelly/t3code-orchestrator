@@ -133,6 +133,12 @@ export const unsupportedGateway: WorkerGatewayRpc = (() => {
     claimCapacity: fail,
     syncCards: fail,
     subscribeCapacity: Stream.fail(unsupported),
+    runSetup: failStream,
+    setupState: fail,
+    cancelSetup: fail,
+    readSetupLog: fail,
+    checkReadiness: fail,
+    readinessOutput: fail,
   };
 })();
 
@@ -195,6 +201,12 @@ const linkedGateway = (
     claimCapacity: (input) => guard(gateway.claimCapacity(input)),
     syncCards: (input) => guard(gateway.syncCards(input)),
     subscribeCapacity: live(gateway.subscribeCapacity),
+    runSetup: (input) => live(gateway.runSetup(input)),
+    setupState: (path) => guard(gateway.setupState(path)),
+    cancelSetup: (path) => guard(gateway.cancelSetup(path)),
+    readSetupLog: (path) => guard(gateway.readSetupLog(path)),
+    checkReadiness: (input) => guard(gateway.checkReadiness(input)),
+    readinessOutput: (key, path) => guard(gateway.readinessOutput(key, path)),
   };
 };
 

@@ -401,5 +401,13 @@ const makeLiveGatewayRpc = (
       client[M.subscribeCapacity]({}),
       "The worker's capacity stream ended.",
     ),
+    runSetup: (input) =>
+      wireStream(client[M.runSetup](input), "The worker's setup stream ended early."),
+    setupState: (worktreePath) => call({ _tag: "setupState", worktreePath }),
+    cancelSetup: (worktreePath) => call({ _tag: "cancelSetup", worktreePath }).pipe(Effect.asVoid),
+    readSetupLog: (worktreePath) => call({ _tag: "readSetupLog", worktreePath }),
+    checkReadiness: (input) => call({ _tag: "checkReadiness", input }),
+    readinessOutput: (repositoryKey, path) =>
+      call({ _tag: "readinessOutput", repositoryKey, path }),
   };
 };

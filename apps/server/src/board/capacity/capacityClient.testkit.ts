@@ -159,6 +159,12 @@ export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
       localAgentCapRefusal: () => Effect.sync(() => fake.agentCap),
       connectionChanged: () => Effect.void,
       recordLocalProvision: () => Effect.void,
+      runSetup: () => Stream.empty,
+      setupState: () => Effect.succeed("none" as const),
+      cancelSetup: () => Effect.void,
+      readSetupLog: () => Effect.succeed(""),
+      checkReadiness: () => Effect.succeed(null),
+      readinessOutput: () => Effect.succeed(null),
     },
   };
   return fake;

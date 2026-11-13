@@ -162,6 +162,7 @@ import {
   type BoardProvisionClaim,
   type BoardStepQueuedDetail,
   type ProviderInstanceId,
+  resolveBoardProjectResourceSettings,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -188,6 +189,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
 import { BoardCapacityClient } from "./capacity/BoardCapacityClient.ts";
 import { runBoardCapacityUpgrade } from "./capacity/boardCapacityUpgrade.ts";
+import { makeBoardCardSetup } from "./capacity/boardCardSetup.ts";
 import {
   headroomShortfall,
   makeBoardCapacityAdmission,
@@ -1528,6 +1530,11 @@ const make = Effect.gen(function* () {
       path: provisioned.path,
       createdAt: yield* nowIso,
     });
+    // T3o: the new worktree's setup starts now, once (T3O-86).
+    if (Option.isSome(cardSetup) && card.group === null) {
+      const ready = yield* readCard(card.id);
+      if (ready !== null) yield* cardSetup.value.gate(ready, workspace.workerId);
+    }
     return { kind: "ready", path: provisioned.path } as WorktreeOutcome;
   });
 
@@ -1692,6 +1699,26 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed(() => false));
     if (done) upgradeDone = true;
   });
+  let requestCapacityPass: Effect.Effect<void> = Effect.void;
+  /** T3o: each card's setup, once per worktree, on its worker (T3O-86). */
+  const cardSetup = Option.map(capacityClient, (client) =>
+    makeBoardCardSetup({
+      client,
+      readBoard,
+      dispatch: dispatchOptional,
+      commandId: (tag) => commandId(tag).pipe(Effect.orDie),
+      nowIso,
+      placement: (card) =>
+        workspaceFor(card).pipe(
+          Effect.map((workspace) => ({
+            workerId: workspace.workerId,
+            projectId: String(workspace.projectId),
+          })),
+        ),
+      // Lazy: the serial worker is built after this.
+      onFinished: Effect.suspend((): Effect.Effect<void> => requestCapacityPass),
+    }),
+  );
   /** Where a card's next thread runs, and whether the step can start there now. */
   const placementFor = Effect.fn("board-supervisor-placementFor")(function* (
     board: BoardState,
@@ -1903,7 +1930,8 @@ const make = Effect.gen(function* () {
     });
     // Run the worktree setup script in the build thread's terminal.
     // Build-mode only — a plan-mode step has no worktree. Best-effort.
-    if (input.runSetup && remoteWorker === null) {
+    // T3o: with worker capacity, setup runs once per worktree at provisioning instead (T3O-86).
+    if (input.runSetup && remoteWorker === null && Option.isNone(capacityClient)) {
       yield* runBoardCardWorktreeSetup({
         threadId,
         projectId: card.projectId,
@@ -2764,6 +2792,15 @@ const make = Effect.gen(function* () {
       }
     }
     if (worktreePath === null) return;
+    // T3o: a setup that holds the agent, running or failed, holds the step (T3O-86).
+    if (Option.isSome(cardSetup)) {
+      const fresh = (yield* readCard(card.id)) ?? card;
+      const hold = yield* cardSetup.value.gate(fresh, workerId);
+      if (hold !== null) {
+        yield* holdQueued(state, hold.queuedBy, hold.detail);
+        return;
+      }
+    }
     yield* admitBuildCandidate({ card, state, worktreePath });
   });
 
@@ -10749,12 +10786,62 @@ const make = Effect.gen(function* () {
     yield* capacityAdmission.value.recordUnstartedTurn(card.id);
   });
 
+  /**
+   * T3o: ask each worker about every project this board has open cards for, when its snapshot
+   * doesn't carry that project's readiness yet (T3O-86). The worker runs the script on its own
+   * schedule after that; this only names the projects. Off the serial queue: a script can run
+   * for minutes.
+   */
+  const readinessAsked = new Set<string>();
+  const requestReadiness = Effect.gen(function* () {
+    if (Option.isNone(capacityClient)) return;
+    const client = capacityClient.value;
+    const board = yield* readBoard;
+    const workers: Array<BoardWorkerId> = [
+      BOARD_LOCAL_WORKER_ID,
+      ...(yield* workersNow).workers
+        .filter((view) => view.id !== BOARD_LOCAL_WORKER_ID && view.status.state === "online")
+        .map((view) => view.id),
+    ];
+    const projects = new Set(
+      board.cards.filter((card) => card.archivedAt === null).map((card) => card.projectId),
+    );
+    for (const workerId of workers) {
+      const snapshot = yield* client.latest(workerId);
+      if (snapshot === null) continue;
+      for (const projectId of projects) {
+        const repositoryKey = yield* projectRepositoryKey(projectId);
+        const settings = resolveBoardProjectResourceSettings(
+          boardProjectStageConfig(board, projectId)?.resources ?? null,
+        );
+        const known = snapshot.readiness.some(
+          (entry) => entry.repositoryKey === repositoryKey && entry.path === settings.readinessPath,
+        );
+        const key = `${workerId}\0${repositoryKey ?? projectId}\0${settings.readinessPath}`;
+        if (known || readinessAsked.has(key)) continue;
+        readinessAsked.add(key);
+        const workspace = yield* workspaces.forWorker(workerId, projectId);
+        if (workspace.checkoutPath === null) continue;
+        yield* client
+          .checkReadiness(workerId, {
+            repositoryKey,
+            path: settings.readinessPath,
+            timeoutSeconds: settings.readinessTimeoutSeconds,
+            projectId: String(workspace.projectId),
+          })
+          .pipe(Effect.ensuring(Effect.sync(() => readinessAsked.delete(key))), Effect.forkDetach);
+      }
+    }
+  }).pipe(Effect.ignoreCause);
+
   /** T3o: release idle cards' CPU and RAM, settle grants, keep workers' records in step, run
       the one-time upgrade until it has, then schedule what that freed (T3O-86). */
   const sweepCapacity = Effect.gen(function* () {
     if (Option.isNone(capacityAdmission)) return;
     yield* runCapacityUpgrade;
     yield* capacityAdmission.value.sweep();
+    if (Option.isSome(cardSetup)) yield* cardSetup.value.reconcile();
+    yield* requestReadiness;
     yield* schedule();
   }).pipe(
     Effect.catchCause((cause) =>
@@ -10950,6 +11037,7 @@ const make = Effect.gen(function* () {
     );
 
   const worker = yield* makeDrainableWorker(processInputSafely);
+  requestCapacityPass = worker.enqueue({ source: "capacity" }).pipe(Effect.asVoid);
 
   const start: SupervisorReactorShape["start"] = Effect.fn("board-supervisor-start")(function* () {
     // forkParked holds these subscriptions until activation, so reconcile cannot rely on them and
@@ -10964,6 +11052,12 @@ const make = Effect.gen(function* () {
           event.type === "board.card-worktree-reclaimed"
         ) {
           return requestWorktreeSweep();
+        }
+        // T3o: a human's Retry or Cancel on a card's setup (T3O-86).
+        if (event.type === "board.card-resources-recorded") {
+          return Option.isSome(cardSetup)
+            ? cardSetup.value.onRequested(event.payload.card)
+            : Effect.void;
         }
         if (
           event.type !== "board.card-moved" &&

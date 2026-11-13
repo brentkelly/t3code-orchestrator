@@ -5074,6 +5074,51 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       });
     }
 
+    case "board.card.record-setup": {
+      const card = yield* requireBoardCard({ board, command });
+      const current = card.resources?.setup ?? null;
+      if (canonicalJson(current) === canonicalJson(command.setup)) return [];
+      const base = card.resources ?? EMPTY_BOARD_CARD_RESOURCES;
+      return yield* cardResourcesRecordedEvent({
+        card,
+        resources: withoutEmptyResources({ ...base, setup: command.setup }),
+        command,
+      });
+    }
+
+    case "board.card.setup-action": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      const setup = card.resources?.setup ?? null;
+      // Nothing to act on: a click that raced the setup's end, or a card with no worktree.
+      if (setup === null || card.worktree?.status !== "ready") return [];
+      if (command.action === "cancel") {
+        if (setup.status !== "running") return [];
+        return yield* cardResourcesRecordedEvent({
+          card,
+          resources: { ...card.resources!, setup: { ...setup, status: "cancelled" } },
+          command,
+        });
+      }
+      if (setup.status === "running") return [];
+      // Retry re-runs the setup script only: fetch, checkout and submodules stand.
+      return yield* cardResourcesRecordedEvent({
+        card,
+        resources: {
+          ...card.resources!,
+          setup: {
+            ...setup,
+            status: "running",
+            stage: "setup-script",
+            exitCode: null,
+            startedAt: command.createdAt,
+            durationMs: null,
+            detail: null,
+          },
+        },
+        command,
+      });
+    }
+
     case "board.card.undo-provision": {
       const card = yield* requireBoardCard({ board, command });
       // Only a provision still in flight is undone; one that landed or failed stands.

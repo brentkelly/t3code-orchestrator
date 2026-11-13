@@ -239,6 +239,8 @@ export const BoardCardSetupResult = Schema.Struct({
   durationMs: Schema.NullOr(Schema.Finite),
   workerId: TrimmedNonEmptyString,
   detail: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** The setup holds the agent until it exits. */
+  blocking: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type BoardCardSetupResult = typeof BoardCardSetupResult.Type;
 
@@ -444,3 +446,58 @@ export const BoardWorkerCapacitySnapshot = Schema.Struct({
   heavyCards: Schema.Array(TrimmedNonEmptyString),
 });
 export type BoardWorkerCapacitySnapshot = typeof BoardWorkerCapacitySnapshot.Type;
+
+// ── Card setup and readiness on the wire (T3O-86, section 5) ───────────
+
+/** The last lines of setup output a card's detail shows. */
+export const BOARD_CARD_SETUP_TAIL_LINES = 6;
+/** The most of a setup or readiness log kept and read back. */
+export const BOARD_CAPACITY_LOG_MAX_BYTES = 64 * 1024;
+
+/** A card's setup as it runs: four fixed stages, then a result. */
+export const BoardCardSetupProgress = Schema.Struct({
+  status: Schema.Literals(["running", "succeeded", "failed", "cancelled"]),
+  stage: BoardCardSetupStage,
+  stages: Schema.Array(
+    Schema.Struct({
+      stage: BoardCardSetupStage,
+      status: Schema.Literals(["done", "running", "pending", "failed", "skipped"]),
+      durationMs: Schema.NullOr(Schema.Finite),
+    }),
+  ),
+  exitCode: Schema.NullOr(Schema.Int),
+  startedAt: IsoDateTime,
+  durationMs: Schema.NullOr(Schema.Finite),
+  tail: Schema.String,
+  /** The project's setup script holds the agent until it exits (upstream's `async: false`). */
+  blocking: Schema.Boolean,
+  detail: Schema.NullOr(Schema.String),
+});
+export type BoardCardSetupProgress = typeof BoardCardSetupProgress.Type;
+
+export const BoardWorkerRunSetupInput = Schema.Struct({
+  cardId: TrimmedNonEmptyString,
+  /** The WORKER's project id. */
+  projectId: TrimmedNonEmptyString,
+  worktreePath: TrimmedNonEmptyString,
+  timeoutMinutes: Schema.Finite,
+  /** Re-run only the setup script on a worktree that exists. */
+  retry: Schema.optionalKey(Schema.Boolean),
+  /** Mark it set up without running anything: its card already built (the upgrade). */
+  markOnly: Schema.optionalKey(Schema.Boolean),
+});
+export type BoardWorkerRunSetupInput = typeof BoardWorkerRunSetupInput.Type;
+
+export const BoardWorkerSetupState = Schema.Literals(["running", "done", "failed", "none"]);
+export type BoardWorkerSetupState = typeof BoardWorkerSetupState.Type;
+
+export const BoardWorkerCheckReadinessInput = Schema.Struct({
+  repositoryKey: Schema.NullOr(TrimmedNonEmptyString),
+  /** The WORKER's project, for a repository with no remote (no key to find it by). */
+  projectId: Schema.optionalKey(TrimmedNonEmptyString),
+  path: TrimmedNonEmptyString,
+  timeoutSeconds: Schema.Finite,
+  /** A human asked (Re-check): a failure counts at once, and a fresh result is wanted. */
+  requested: Schema.optionalKey(Schema.Boolean),
+});
+export type BoardWorkerCheckReadinessInput = typeof BoardWorkerCheckReadinessInput.Type;

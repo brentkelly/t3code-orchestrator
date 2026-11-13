@@ -15,7 +15,11 @@ import {
   type BoardSyncCardsResult,
   type BoardWorkerCapacitySnapshot,
   type BoardWorkerProviderCapacity,
+  type BoardCardSetupProgress,
+  type BoardWorkerCheckReadinessInput,
   type BoardWorkerReadiness,
+  type BoardWorkerRunSetupInput,
+  type BoardWorkerSetupState,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -73,7 +77,8 @@ export interface WorkerCapacityPorts {
   readonly refreshProviderUsage: (instanceId: string) => Effect.Effect<void>;
   /** Null when the worker is ready for the repository, else why not (section 5). */
   readonly notReady: (repositoryKey: string | null) => Effect.Effect<string | null>;
-  readonly readiness: Effect.Effect<ReadonlyArray<BoardWorkerReadiness>>;
+  /** Readiness of the projects this board asked about (section 5). */
+  readonly readiness: (boardId: string) => Effect.Effect<ReadonlyArray<BoardWorkerReadiness>>;
   /** Whether a listed worktree is this board's here, adopting a legacy marker. */
   readonly worktreePresence: (
     boardId: string,
@@ -135,7 +140,33 @@ export interface BoardWorkerCapacityShape {
   readonly registerLocalBoardThreads: (
     read: Effect.Effect<ReadonlySet<string>>,
   ) => Effect.Effect<void>;
+  // Section 5: a card's setup and a project's readiness on this worker.
+  readonly runSetup: (input: BoardWorkerRunSetupInput) => Stream.Stream<BoardCardSetupProgress>;
+  readonly setupState: (worktreePath: string) => Effect.Effect<BoardWorkerSetupState>;
+  readonly cancelSetup: (worktreePath: string) => Effect.Effect<void>;
+  readonly readSetupLog: (worktreePath: string) => Effect.Effect<string>;
+  readonly checkReadiness: (
+    boardId: string,
+    input: BoardWorkerCheckReadinessInput,
+  ) => Effect.Effect<BoardWorkerReadiness>;
+  readonly readinessOutput: (
+    boardId: string,
+    repositoryKey: string | null,
+    path: string,
+  ) => Effect.Effect<string | null>;
+  /** Whether a worktree here is one of this board's cards: its setup is that board's. */
+  readonly boardHoldsWorktree: (boardId: string, worktreePath: string) => Effect.Effect<boolean>;
 }
+
+/** What the live layer adds around the capacity arithmetic. */
+type LiveOnly =
+  | "registerLocalBoardThreads"
+  | "runSetup"
+  | "setupState"
+  | "cancelSetup"
+  | "readSetupLog"
+  | "checkReadiness"
+  | "readinessOutput";
 
 export class BoardWorkerCapacity extends Context.Service<
   BoardWorkerCapacity,
@@ -508,7 +539,7 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
             max: settings.providerCaps[provider.instanceId] ?? null,
           },
         })),
-        readiness: yield* ports.readiness,
+        readiness: yield* ports.readiness(boardId),
         heavyCards: state.records
           .filter(
             (record) =>
@@ -625,9 +656,15 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
       subscribe,
       forgetBoard: forget,
       boardIds: Effect.sync(() => [...new Set(state.records.map((record) => record.boardId))]),
+      boardHoldsWorktree: (boardId: string, worktreePath: string) =>
+        Effect.sync(() =>
+          state.records.some(
+            (record) => record.boardId === boardId && record.worktreePath === worktreePath,
+          ),
+        ),
       status,
       measure,
-    } satisfies Omit<BoardWorkerCapacityShape, "registerLocalBoardThreads">,
+    } satisfies Omit<BoardWorkerCapacityShape, LiveOnly>,
     /** The background work: measuring worktrees and refreshing exhausted quota. */
     background: Effect.all(
       [

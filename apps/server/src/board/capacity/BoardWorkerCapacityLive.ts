@@ -5,11 +5,14 @@
  */
 import {
   boardRepositoryGroupingKey,
-  DEFAULT_BOARD_READINESS_SCRIPT_PATH,
-  type BoardWorkerReadiness,
+  type ProjectId,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { projectScriptRuntimeEnv, setupProjectScript } from "@t3tools/shared/projectScripts";
 import * as Clock from "effect/Clock";
+import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -41,7 +44,9 @@ import {
   type WorkerCapacityPorts,
 } from "./BoardWorkerCapacity.ts";
 import { EMPTY_CAPACITY_STATE, type CapacityRecord } from "./capacityModel.ts";
+import { makeCardSetup } from "./cardSetup.ts";
 import { BoardMachine, bytesToGB } from "./machine.ts";
+import { makeReadiness } from "./readiness.ts";
 
 const RecordJson = Schema.fromJsonString(
   Schema.Array(
@@ -179,6 +184,94 @@ export const makeBoardWorkerCapacityLive = Effect.gen(function* () {
     return out;
   });
 
+  const checkoutOf = Effect.fn("BoardWorkerCapacity.checkoutOf")(function* (
+    repositoryKey: string | null,
+    projectId?: string,
+  ) {
+    const projects = yield* local.projects().pipe(Effect.orElseSucceed(() => []));
+    for (const project of projects) {
+      if (project.deleted || project.workspaceRoot.length === 0) continue;
+      if (repositoryKey === null) {
+        if (project.id === projectId) return project.workspaceRoot;
+        continue;
+      }
+      const detail = yield* local.project(project.id).pipe(Effect.orElseSucceed(() => null));
+      if (boardRepositoryGroupingKey(detail?.repositoryIdentity ?? null) === repositoryKey) {
+        return project.workspaceRoot;
+      }
+    }
+    return null;
+  });
+  const gitRead = (cwd: string, args: ReadonlyArray<string>, timeoutMs = 15_000) =>
+    git
+      .execute({
+        operation: "board.capacity.readiness",
+        cwd,
+        args: [...args],
+        timeoutMs,
+        allowNonZeroExit: true,
+      })
+      .pipe(
+        Effect.map((result) => (result.exitCode === 0 ? result.stdout : null)),
+        Effect.orElseSucceed(() => null),
+      );
+  /** The default branch, as the workspace resolves it: origin/HEAD, else the current one. */
+  const defaultRef = Effect.fn("BoardWorkerCapacity.defaultRef")(function* (cwd: string) {
+    const originHead = (yield* gitRead(cwd, [
+      "symbolic-ref",
+      "--quiet",
+      "--short",
+      "refs/remotes/origin/HEAD",
+    ]))?.trim();
+    return originHead !== undefined && originHead.startsWith("origin/") ? originHead : "HEAD";
+  });
+  let readinessProjects = new Map<string, string | undefined>();
+  const readiness = makeReadiness({
+    git: {
+      checkout: (repositoryKey) =>
+        checkoutOf(repositoryKey, readinessProjects.get(repositoryKey ?? "")),
+      fetch: Effect.fn("BoardWorkerCapacity.readinessFetch")(function* (checkout: string) {
+        const remote = yield* git
+          .resolvePrimaryRemoteName(checkout)
+          .pipe(Effect.orElseSucceed(() => null));
+        if (remote === null) return true;
+        return (yield* gitRead(checkout, ["fetch", "--quiet", remote], 60_000)) !== null;
+      }),
+      committed: Effect.fn("BoardWorkerCapacity.readinessScript")(function* (
+        checkout: string,
+        scriptPath: string,
+      ) {
+        const ref = yield* defaultRef(checkout);
+        const version = (yield* gitRead(checkout, ["rev-parse", `${ref}:${scriptPath}`]))?.trim();
+        if (version === undefined || version === "") return null;
+        const text = yield* gitRead(checkout, ["show", `${ref}:${scriptPath}`]);
+        return text === null ? null : { version, text };
+      }),
+    },
+  });
+  const setup = makeCardSetup({
+    gitDir: (worktreePath) =>
+      gitRead(worktreePath, ["rev-parse", "--absolute-git-dir"]).pipe(
+        Effect.map((dir) => (dir === null || dir.trim() === "" ? null : dir.trim())),
+      ),
+    script: Effect.fn("BoardWorkerCapacity.setupScript")(function* (
+      projectId: string,
+      worktreePath: string,
+    ) {
+      const project = yield* local
+        .project(projectId as ProjectId)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (project === null) return null;
+      const script = setupProjectScript(project.scripts);
+      if (script === null) return null;
+      return {
+        command: script.command,
+        async: script.async !== false,
+        env: projectScriptRuntimeEnv({ project: { cwd: project.workspaceRoot }, worktreePath }),
+      };
+    }),
+  });
+
   const ports: WorkerCapacityPorts = {
     unownedWorktrees,
     settings: Effect.sync(() => {
@@ -199,26 +292,16 @@ export const makeBoardWorkerCapacityLive = Effect.gen(function* () {
         onSome: (service) =>
           service.refreshInstance(instanceId as ProviderInstanceId).pipe(Effect.asVoid),
       }),
-    // Section 5 replaces this: a checkout of the repository counts as ready.
+    // Section 5: no checkout of the repository is not set up; then its readiness script.
     notReady: (repositoryKey) =>
       repositoryKey === null
-        ? Effect.succeed(null)
+        ? Effect.succeed(readiness.notReady(null))
         : repositoryKeys.pipe(
             Effect.map((keys) =>
-              keys.has(repositoryKey) ? null : "This worker has no checkout of the project.",
+              keys.has(repositoryKey) ? readiness.notReady(repositoryKey) : "not-set-up",
             ),
           ),
-    readiness: repositoryKeys.pipe(
-      Effect.map((keys) =>
-        [...keys].map((repositoryKey): BoardWorkerReadiness => ({
-          repositoryKey,
-          path: DEFAULT_BOARD_READINESS_SCRIPT_PATH,
-          state: "ready",
-          version: null,
-          checkedAt: null,
-        })),
-      ),
-    ),
+    readiness: (boardId) => Effect.sync(() => readiness.forBoard(boardId)),
     worktreePresence: (boardId, entry) =>
       entry.worktreePath === null
         ? Effect.succeed("missing" as const)
@@ -281,8 +364,41 @@ export const makeBoardWorkerCapacityLive = Effect.gen(function* () {
   };
   const made = yield* makeBoardWorkerCapacity(ports);
   yield* Effect.forkScoped(made.background);
+  // Readiness re-checks what is due: hourly when passing, every 15 minutes when failing.
+  yield* readiness
+    .sweep()
+    .pipe(Effect.ignoreCause, Effect.repeat(Schedule.spaced("1 minute")), Effect.forkScoped);
+  const hostEnvironment = yield* HostProcess.Environment;
   return {
     ...made.service,
+    runSetup: (input) =>
+      setup.run(input).pipe(Stream.provideService(HostProcess.Environment, hostEnvironment)),
+    setupState: setup.state,
+    cancelSetup: setup.cancel,
+    readSetupLog: setup.readLog,
+    checkReadiness: (boardId, input) => {
+      if (input.projectId !== undefined) {
+        readinessProjects = new Map(readinessProjects).set(
+          input.repositoryKey ?? "",
+          input.projectId,
+        );
+      }
+      return readiness
+        .check(boardId, input)
+        .pipe(Effect.provideService(HostProcess.Environment, hostEnvironment));
+    },
+    readinessOutput: (boardId, repositoryKey, scriptPath) =>
+      Effect.sync(() =>
+        readiness
+          .forBoard(boardId)
+          .some((entry) => entry.repositoryKey === repositoryKey && entry.path === scriptPath)
+          ? readiness.output(repositoryKey, scriptPath)
+          : null,
+      ),
+    forgetBoard: (boardId) =>
+      made.service
+        .forgetBoard(boardId)
+        .pipe(Effect.tap(() => Effect.sync(() => readiness.forgetBoard(boardId)))),
     registerLocalBoardThreads: (read) =>
       Effect.sync(() => {
         ownBoardThreads = read;

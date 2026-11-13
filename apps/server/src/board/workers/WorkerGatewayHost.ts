@@ -21,6 +21,11 @@ import {
   type BoardSyncCardsInput,
   type BoardSyncCardsResult,
   type BoardWorkerCapacitySnapshot,
+  type BoardCardSetupProgress,
+  type BoardWorkerCheckReadinessInput,
+  type BoardWorkerReadiness,
+  type BoardWorkerRunSetupInput,
+  type BoardWorkerSetupState,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -62,7 +67,13 @@ type CallerBound =
   | "mcpRelayRespond"
   | "claimCapacity"
   | "syncCards"
-  | "subscribeCapacity";
+  | "subscribeCapacity"
+  | "runSetup"
+  | "setupState"
+  | "cancelSetup"
+  | "readSetupLog"
+  | "checkReadiness"
+  | "readinessOutput";
 
 /** Who is calling: the session, and the board its `t3o-board:<id>` subject names (T3O-86). */
 export interface GatewayCaller {
@@ -101,6 +112,31 @@ export type WorkerGatewayHostShape = Omit<
   readonly subscribeCapacity: (
     caller: GatewayCaller,
   ) => Stream.Stream<BoardWorkerCapacitySnapshot, BoardWorkerGatewayError>;
+  readonly runSetup: (
+    input: BoardWorkerRunSetupInput,
+    caller: GatewayCaller,
+  ) => Stream.Stream<BoardCardSetupProgress, BoardWorkerGatewayError>;
+  readonly setupState: (
+    worktreePath: string,
+    caller: GatewayCaller,
+  ) => Effect.Effect<BoardWorkerSetupState, BoardWorkerGatewayError>;
+  readonly cancelSetup: (
+    worktreePath: string,
+    caller: GatewayCaller,
+  ) => Effect.Effect<void, BoardWorkerGatewayError>;
+  readonly readSetupLog: (
+    worktreePath: string,
+    caller: GatewayCaller,
+  ) => Effect.Effect<string, BoardWorkerGatewayError>;
+  readonly checkReadiness: (
+    input: BoardWorkerCheckReadinessInput,
+    caller: GatewayCaller,
+  ) => Effect.Effect<BoardWorkerReadiness, BoardWorkerGatewayError>;
+  readonly readinessOutput: (
+    repositoryKey: string | null,
+    path: string,
+    caller: GatewayCaller,
+  ) => Effect.Effect<string | null, BoardWorkerGatewayError>;
   readonly subscribeMcpRelay: (
     centralEnvironmentId: EnvironmentId,
     caller: AuthSessionId,
@@ -124,6 +160,12 @@ export const hostForSession = (
   claimCapacity: (input) => host.claimCapacity(input, caller),
   syncCards: (input) => host.syncCards(input, caller),
   subscribeCapacity: host.subscribeCapacity(caller),
+  runSetup: (input) => host.runSetup(input, caller),
+  setupState: (path) => host.setupState(path, caller),
+  cancelSetup: (path) => host.cancelSetup(path, caller),
+  readSetupLog: (path) => host.readSetupLog(path, caller),
+  checkReadiness: (input) => host.checkReadiness(input, caller),
+  readinessOutput: (key, path) => host.readinessOutput(key, path, caller),
 });
 
 export class WorkerGatewayHost extends Context.Service<WorkerGatewayHost, WorkerGatewayHostShape>()(
@@ -182,6 +224,25 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     }
     return Effect.succeed({ service: capacity.value, boardId: caller.boardId });
   };
+  const ownWorktree = (operation: string, caller: GatewayCaller, worktreePath: string) =>
+    capacityOf(operation, caller).pipe(
+      Effect.flatMap(({ service, boardId }) =>
+        service.boardHoldsWorktree(boardId, worktreePath).pipe(
+          Effect.flatMap((holds) =>
+            holds
+              ? Effect.succeed(service)
+              : Effect.fail(
+                  new BoardWorkerGatewayError({
+                    kind: "refused",
+                    operation,
+                    threadId: null,
+                    detail: `${worktreePath} is not one of this board's worktrees here.`,
+                  }),
+                ),
+          ),
+        ),
+      ),
+    );
   /** A board's new turn waits while the worker is at its agent cap (`agent-cap`). */
   const refuseOverAgentCap = (
     operation: string,
@@ -327,6 +388,35 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
       Stream.unwrap(
         capacityOf("subscribeCapacity", caller).pipe(
           Effect.map(({ service, boardId }) => service.subscribe(boardId)),
+        ),
+      ),
+    // A card's setup is its board's alone: the worktree must be one of that board's cards.
+    runSetup: (input, caller) =>
+      Stream.unwrap(
+        ownWorktree("runSetup", caller, input.worktreePath).pipe(
+          Effect.map((service) => service.runSetup(input)),
+        ),
+      ),
+    setupState: (worktreePath, caller) =>
+      ownWorktree("setupState", caller, worktreePath).pipe(
+        Effect.flatMap((service) => service.setupState(worktreePath)),
+      ),
+    cancelSetup: (worktreePath, caller) =>
+      ownWorktree("cancelSetup", caller, worktreePath).pipe(
+        Effect.flatMap((service) => service.cancelSetup(worktreePath)),
+      ),
+    readSetupLog: (worktreePath, caller) =>
+      ownWorktree("readSetupLog", caller, worktreePath).pipe(
+        Effect.flatMap((service) => service.readSetupLog(worktreePath)),
+      ),
+    checkReadiness: (input, caller) =>
+      capacityOf("checkReadiness", caller).pipe(
+        Effect.flatMap(({ service, boardId }) => service.checkReadiness(boardId, input)),
+      ),
+    readinessOutput: (repositoryKey, path, caller) =>
+      capacityOf("readinessOutput", caller).pipe(
+        Effect.flatMap(({ service, boardId }) =>
+          service.readinessOutput(boardId, repositoryKey, path),
         ),
       ),
     interrupt: (input) => wireCommand(local.interrupt(input)),

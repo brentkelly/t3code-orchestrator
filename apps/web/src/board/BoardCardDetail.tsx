@@ -596,12 +596,12 @@ export function BoardCardDetail({
           // oxlint-disable-next-line react/purity -- the queue order samples the clock when the shells change; the compiler recomputes it only then.
           slot: boardBuildQueue(allShellCards, queueStages, Date.now()).get(cardId),
           running: boardRunningStepCount(allShellCards),
-          cap: boardSettings.concurrency.globalMaxConcurrent,
           reason: boardQueueReason({
             card: cardShell,
             state: workersState,
-            cards: allShellCards,
-            concurrency: boardSettings.concurrency,
+            cardKeys: new Map(
+              allShellCards.map((card) => [String(card.cardId), card.key] as const),
+            ),
             // Named as the board's own queue pill names it.
             projectName:
               snapshot?.projects.find((project) => project.id === cardShell.projectId)?.title ??

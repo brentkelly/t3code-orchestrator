@@ -25,7 +25,12 @@ import {
   BoardCapacityClaimResult,
   BoardSyncCardsInput,
   BoardSyncCardsResult,
+  BoardCardSetupProgress,
   BoardWorkerCapacitySnapshot,
+  BoardWorkerCheckReadinessInput,
+  BoardWorkerReadiness,
+  BoardWorkerRunSetupInput,
+  BoardWorkerSetupState,
 } from "./boardCapacity.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { RepositoryIdentity } from "./environment.ts";
@@ -385,6 +390,14 @@ export const BoardGatewayCall = Schema.Union([
   // T3o: worker-owned capacity (T3O-86). The board is the calling session's.
   Schema.TaggedStruct("claimCapacity", { input: BoardCapacityClaimInput }),
   Schema.TaggedStruct("syncCards", { input: BoardSyncCardsInput }),
+  Schema.TaggedStruct("setupState", { worktreePath: Schema.String }),
+  Schema.TaggedStruct("cancelSetup", { worktreePath: Schema.String }),
+  Schema.TaggedStruct("readSetupLog", { worktreePath: Schema.String }),
+  Schema.TaggedStruct("checkReadiness", { input: BoardWorkerCheckReadinessInput }),
+  Schema.TaggedStruct("readinessOutput", {
+    repositoryKey: Schema.NullOr(Schema.String),
+    path: Schema.String,
+  }),
 ]);
 export type BoardGatewayCall = typeof BoardGatewayCall.Type;
 
@@ -414,6 +427,11 @@ export const BOARD_GATEWAY_CALL_RESULTS = {
   todoLogHead: NonNegativeInt,
   claimCapacity: BoardCapacityClaimResult,
   syncCards: BoardSyncCardsResult,
+  setupState: BoardWorkerSetupState,
+  cancelSetup: Schema.Null,
+  readSetupLog: Schema.String,
+  checkReadiness: BoardWorkerReadiness,
+  readinessOutput: Schema.NullOr(Schema.String),
 } as const satisfies Record<BoardGatewayCall["_tag"], Schema.Top>;
 
 /**
@@ -559,6 +577,8 @@ export const BOARD_WORKER_GATEWAY_WS_METHODS = {
   readCiLog: "boardWorker.gateway.readCiLog",
   /** What the worker offers this board, then each meaningful change (T3O-86). */
   subscribeCapacity: "boardWorker.gateway.subscribeCapacity",
+  /** Run a card's setup in its new worktree, streaming its four stages (T3O-86). */
+  runSetup: "boardWorker.gateway.runSetup",
 } as const;
 
 const M = BOARD_WORKER_GATEWAY_WS_METHODS;
@@ -618,6 +638,12 @@ export const BOARD_WORKER_GATEWAY_RPCS = [
     error: failure,
     stream: true,
   }),
+  Rpc.make(M.runSetup, {
+    payload: BoardWorkerRunSetupInput,
+    success: BoardCardSetupProgress,
+    error: failure,
+    stream: true,
+  }),
   Rpc.make(M.subscribeCapacity, {
     payload: Schema.Struct({}),
     success: BoardWorkerCapacitySnapshot,
@@ -644,6 +670,8 @@ export const BOARD_WORKER_GATEWAY_RPC_SCOPES = {
   [M.readCiLog]: AuthOrchestrationReadScope,
   // What the worker offers the board: a read of the worker's load.
   [M.subscribeCapacity]: AuthOrchestrationReadScope,
+  // Runs the project's own setup script in a worktree, like a build agent would.
+  [M.runSetup]: AuthOrchestrationOperateScope,
 } as const;
 
 /** How long a worker waits for the central server to answer a relayed call

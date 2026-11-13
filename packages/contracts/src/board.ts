@@ -53,6 +53,7 @@ import {
 } from "./boardWorkerGateway.ts";
 import {
   BoardCardResources,
+  BoardCardSetupResult,
   BoardCardSize,
   BoardCardSizeEditor,
   BoardProjectResources,
@@ -6031,6 +6032,26 @@ export const BoardCardUndoProvisionCommand = Schema.Struct({
 });
 export type BoardCardUndoProvisionCommand = typeof BoardCardUndoProvisionCommand.Type;
 
+/** T3o: a card's setup progressed or ended on its worker (T3O-86). */
+export const BoardCardRecordSetupCommand = Schema.Struct({
+  type: Schema.Literal("board.card.record-setup"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  setup: Schema.NullOr(BoardCardSetupResult),
+  createdAt: IsoDateTime,
+});
+export type BoardCardRecordSetupCommand = typeof BoardCardRecordSetupCommand.Type;
+
+/** T3o: a human's Retry (the setup script only) or Cancel on a card's setup (T3O-86). */
+export const BoardCardSetupActionCommand = Schema.Struct({
+  type: Schema.Literal("board.card.setup-action"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  action: Schema.Literals(["retry", "cancel"]),
+  createdAt: IsoDateTime,
+});
+export type BoardCardSetupActionCommand = typeof BoardCardSetupActionCommand.Type;
+
 export const BoardCardRecordAutoMergeHoldCommand = Schema.Struct({
   type: Schema.Literal("board.card.record-auto-merge-hold"),
   commandId: CommandId,
@@ -8145,6 +8166,8 @@ const BOARD_CLIENT_COMMANDS = [
   BoardCardForceStartStepCommand,
   // The card's Resume button — a parked step re-enters the build queue.
   BoardCardRequeueStepCommand,
+  // T3o: Retry or Cancel a card's setup (T3O-86).
+  BoardCardSetupActionCommand,
   BoardPlansProposeCommand,
   BoardPlanWriteCommand,
   BoardPlansApproveCommand,
@@ -8172,6 +8195,7 @@ const BOARD_INTERNAL_COMMANDS = [
   // T3o: a card's grant on its worker, and a provision whose claim expired (T3O-86).
   BoardCardRecordGrantCommand,
   BoardCardUndoProvisionCommand,
+  BoardCardRecordSetupCommand,
   // The review loop's server-only carry fields.
   BoardCardSetReviewCarryCommand,
   // The decision log and auto-planning.

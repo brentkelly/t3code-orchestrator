@@ -33,6 +33,11 @@ import {
   type BoardSyncCardsInput,
   type BoardSyncCardsResult,
   type BoardWorkerCapacitySnapshot,
+  type BoardCardSetupProgress,
+  type BoardWorkerCheckReadinessInput,
+  type BoardWorkerReadiness,
+  type BoardWorkerRunSetupInput,
+  type BoardWorkerSetupState,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -116,6 +121,18 @@ export interface WorkerGatewayRpcOf<E> {
   ) => Effect.Effect<BoardCapacityClaimResult, E>;
   readonly syncCards: (input: BoardSyncCardsInput) => Effect.Effect<BoardSyncCardsResult, E>;
   readonly subscribeCapacity: Stream.Stream<BoardWorkerCapacitySnapshot, E>;
+  /** T3o: a card's setup and a project's readiness on the worker (T3O-86, section 5). */
+  readonly runSetup: (input: BoardWorkerRunSetupInput) => Stream.Stream<BoardCardSetupProgress, E>;
+  readonly setupState: (worktreePath: string) => Effect.Effect<BoardWorkerSetupState, E>;
+  readonly cancelSetup: (worktreePath: string) => Effect.Effect<void, E>;
+  readonly readSetupLog: (worktreePath: string) => Effect.Effect<string, E>;
+  readonly checkReadiness: (
+    input: BoardWorkerCheckReadinessInput,
+  ) => Effect.Effect<BoardWorkerReadiness, E>;
+  readonly readinessOutput: (
+    repositoryKey: string | null,
+    path: string,
+  ) => Effect.Effect<string | null, E>;
 }
 
 export type WorkerGatewayRpc = WorkerGatewayRpcOf<WorkerGatewayCallError>;

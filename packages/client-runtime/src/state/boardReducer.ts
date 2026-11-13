@@ -94,6 +94,9 @@ function preserveAbsentShellFields(
     ...(planCount === undefined ? {} : { planCount }),
     ...(usage === undefined ? {} : { usage }),
     ...(carryQueuedBy ? { queuedBy: existing.queuedBy } : {}),
+    ...(carryQueuedBy && existing.queuedDetail !== undefined
+      ? { queuedDetail: existing.queuedDetail }
+      : {}),
     ...carried,
   };
 }
@@ -194,16 +197,18 @@ export function applyBoardShellStreamEvent(
           card.cardId !== event.cardId ||
           (card.queued === event.queued &&
             card.stepRunning === event.stepRunning &&
-            card.queuedBy === event.queuedBy)
+            card.queuedBy === event.queuedBy &&
+            JSON.stringify(card.queuedDetail) === JSON.stringify(event.queuedDetail))
         ) {
           return card;
         }
-        const { queuedBy: _previous, ...rest } = card;
+        const { queuedBy: _previous, queuedDetail: _previousDetail, ...rest } = card;
         return {
           ...rest,
           queued: event.queued,
           stepRunning: event.stepRunning,
           ...(event.queuedBy === undefined ? {} : { queuedBy: event.queuedBy }),
+          ...(event.queuedDetail === undefined ? {} : { queuedDetail: event.queuedDetail }),
         };
       });
       return { ...snapshot, cards: nextCards };

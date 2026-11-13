@@ -1181,6 +1181,10 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
         ...(event.payload.state.status === "queued" && event.payload.state.queuedBy !== null
           ? { queuedBy: event.payload.state.queuedBy }
           : {}),
+        // T3o: what it waits on (T3O-86).
+        ...(event.payload.state.status === "queued" && event.payload.state.queuedDetail !== null
+          ? { queuedDetail: event.payload.state.queuedDetail }
+          : {}),
       });
 
     case "board.card-step-recovered":
