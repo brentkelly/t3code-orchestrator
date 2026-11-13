@@ -34,15 +34,18 @@ import {
   type ProjectId,
   type ThreadId,
   assignBoardKeyPrefix,
+  boardCardEffectivePriority,
 } from "@t3tools/contracts";
 import {
   applyBoardCardPlacements,
   boardBuildQueue,
+  boardColumnSortsByPriority,
   boardRunningStepCount,
   boardThreadStateSourceWithSubagents,
   isBoardCardPlacementSettled,
   mergeBoardStageColumns,
   planBoardCardReorder,
+  snapBoardCardDropOrder,
   type BoardCardPlacement,
   type BoardStageColumns,
 } from "@t3tools/client-runtime/state/shell";
@@ -121,6 +124,16 @@ import { boardCardStageGoneNotes, boardPipelineColumns } from "./boardProjectPip
 import { BOARD_UTILITY_MENU_RESERVED_SPACE, BoardUtilityMenu } from "./BoardUtilityMenu";
 import { BoardSubBoardPlanStrip } from "./BoardSubBoardPlanStrip";
 import { BoardCardFilterField, BoardTopBar } from "./BoardTopBar";
+import { BoardWorkerFilterButton, BoardWorkerFilterStrip } from "./workers/BoardWorkerFilter";
+import {
+  BOARD_UNPLACED_FILTER,
+  boardShellPlacementTarget,
+  boardWorkerFilterLabel,
+  boardWorkerFilterStorageKey,
+  filterBoardColumnsByWorker,
+  parseBoardWorkerFilter,
+  serializeBoardWorkerFilter,
+} from "./workers/boardWorkerFilter";
 import { isBoardColumnCollapsed, useBoardUiStore } from "./boardUiStore";
 import { BoardCardCostFigure } from "./usage/BoardUsageFigure";
 import { BoardGroupUsageButton, BoardUsageChip } from "./usage/BoardUsagePopovers";
@@ -638,25 +651,6 @@ function useBoardPageModel({
   const parentShell =
     scope.kind === "sub-board" ? (findBoardCard(columns, scope.parentCardId)?.card ?? null) : null;
 
-  // ── Groups ────────────────────────────────────────────────
-  // A group card's face, folded once per board render over the shells the
-  // client already holds: no group adds a field to the wire.
-  const groupVmByCard = (() => {
-    const input = { shells: groupShells, stages: stageState, attentionFor };
-    const parents = new Set(
-      groupShells.flatMap((card) =>
-        card.parentCardId === undefined ? [] : [String(card.parentCardId)],
-      ),
-    );
-    const out = new Map<string, NonNullable<ReturnType<typeof boardGroupCardVm>>>();
-    for (const card of groupShells) {
-      if (card.group === undefined && !parents.has(String(card.cardId))) continue;
-      const vm = boardGroupCardVm(input, card);
-      if (vm !== null) out.set(String(card.cardId), vm);
-    }
-    return out;
-  })();
-  const groupFor = (card: BoardCardShell) => groupVmByCard.get(String(card.cardId)) ?? null;
   const parentGroup = parentShell === null ? null : boardShellGroup(groupShells, parentShell);
   // Where a new card lands by default: Planning inside a started group.
   const defaultCreateStageId = boardCreateDefaultStage(
@@ -715,6 +709,27 @@ function useBoardPageModel({
     }
     return info;
   })();
+
+  // ── Groups ────────────────────────────────────────────────
+  // A group card's face, folded once per board render over the shells the
+  // client already holds: no group adds a field to the wire.
+  const groupVmByCard = (() => {
+    const queueFor = (card: BoardCardShell) => queueSlots.get(String(card.cardId));
+    const input = { shells: groupShells, stages: stageState, attentionFor, queueFor };
+    const parents = new Set(
+      groupShells.flatMap((card) =>
+        card.parentCardId === undefined ? [] : [String(card.parentCardId)],
+      ),
+    );
+    const out = new Map<string, NonNullable<ReturnType<typeof boardGroupCardVm>>>();
+    for (const card of groupShells) {
+      if (card.group === undefined && !parents.has(String(card.cardId))) continue;
+      const vm = boardGroupCardVm(input, card);
+      if (vm !== null) out.set(String(card.cardId), vm);
+    }
+    return out;
+  })();
+  const groupFor = (card: BoardCardShell) => groupVmByCard.get(String(card.cardId)) ?? null;
 
   const toggleCardThreads = (cardId: string) => {
     setExpandedThreadCards((current) => {
@@ -844,7 +859,42 @@ function useBoardPageModel({
     ) as typeof scopedColumns;
   })();
   const setQuery = (next: string) => setBoardQuery(queryKey, next);
-  const visibleColumns = filterBoardColumnsByQuery(stalledColumns, query);
+  // T3o: the worker filter (T3O-87): the URL names it by worker id; with none there, this
+  // browser's last choice for the board. A removed worker's id is dropped.
+  const storageKey = boardWorkerFilterStorageKey(queryKey);
+  const remembered = (() => {
+    try {
+      return window.localStorage.getItem(storageKey) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  const workerFilter = parseBoardWorkerFilter(search.worker ?? remembered, cardWorkersState);
+  const setWorkerFilter = (selection: ReadonlyArray<string>) => {
+    const serialised = serializeBoardWorkerFilter(selection);
+    try {
+      if (serialised === undefined) window.localStorage.removeItem(storageKey);
+      else window.localStorage.setItem(storageKey, serialised);
+    } catch {
+      // Storage unavailable: the URL still carries it.
+    }
+    patchSearch(
+      (previous) => {
+        const { worker: _worker, ...rest } = previous;
+        return serialised === undefined ? rest : { ...rest, worker: serialised };
+      },
+      { replace: true },
+    );
+  };
+  const workerColumns = filterBoardColumnsByWorker(stalledColumns, new Set(workerFilter));
+  const workerCounts = new Map<string, number>();
+  for (const cards of Object.values(stalledColumns)) {
+    for (const card of cards) {
+      const target = boardShellPlacementTarget(card) ?? BOARD_UNPLACED_FILTER;
+      workerCounts.set(target, (workerCounts.get(target) ?? 0) + 1);
+    }
+  }
+  const visibleColumns = filterBoardColumnsByQuery(workerColumns, query);
   // Zero matches is a state the board has to SAY, or eight empty columns read
   // as a board that lost its cards.
   const noQueryMatches =
@@ -873,6 +923,11 @@ function useBoardPageModel({
     cardWorkersState,
     peekedColumns,
     query,
+    workerFilter,
+    setWorkerFilter,
+    workerCounts,
+    workerFilteredCount: countBoardColumnCards(workerColumns),
+    workerUnfilteredCount: countBoardColumnCards(stalledColumns),
     drag,
     setDrag,
     dragOver,
@@ -973,6 +1028,11 @@ function EnvironmentBoard({
     cardWorkersState,
     peekedColumns,
     query,
+    workerFilter,
+    setWorkerFilter,
+    workerCounts,
+    workerFilteredCount,
+    workerUnfilteredCount,
     drag,
     setDrag,
     dragOver,
@@ -1086,11 +1146,26 @@ function EnvironmentBoard({
   ) => {
     const cardId = source.card.cardId as string;
     const isMove = targetStage !== source.stage;
+    // A drag never changes priority: the drop snaps into the card's own level (not in Done,
+    // which ignores priority), and the no-op check compares that snapped order.
+    const targetCards = columns[targetStage] ?? EMPTY_CARDS;
+    const priorityByCardId = boardColumnSortsByPriority(targetStage)
+      ? new Map(
+          [...targetCards, source.card].map(
+            (card) => [card.cardId as string, boardCardEffectivePriority(card)] as const,
+          ),
+        )
+      : undefined;
+    const snappedIds = snapBoardCardDropOrder({
+      orderedCardIds: orderedIds,
+      movedCardId: cardId,
+      priorityByCardId,
+    });
     if (!isMove) {
-      const currentIds = (columns[targetStage] ?? EMPTY_CARDS).map((card) => card.cardId as string);
+      const currentIds = targetCards.map((card) => card.cardId as string);
       if (
-        orderedIds.length === currentIds.length &&
-        orderedIds.every((id, index) => id === currentIds[index])
+        snappedIds.length === currentIds.length &&
+        snappedIds.every((id, index) => id === currentIds[index])
       ) {
         return;
       }
@@ -1104,6 +1179,7 @@ function EnvironmentBoard({
       orderedCardIds: [...orderedIds],
       keysByCardId,
       movedCardId: cardId,
+      priorityByCardId,
     });
     if (assignments.length === 0) return;
 
@@ -1501,6 +1577,15 @@ function EnvironmentBoard({
             workers={cardWorkersState}
           />
           <BoardUsageChip inView={usageInView} />
+          {/* T3o: hidden on a board with no remote workers (T3O-87). */}
+          {cardWorkersState.workers.length === 0 ? null : (
+            <BoardWorkerFilterButton
+              counts={workerCounts}
+              onChange={setWorkerFilter}
+              selection={workerFilter}
+              state={cardWorkersState}
+            />
+          )}
           <BoardCardFilterField onQueryChange={setQuery} query={query} />
           {canCreate ? (
             <Button onClick={() => openCreate(defaultCreateStageId)} size="xs">
@@ -1510,6 +1595,14 @@ function EnvironmentBoard({
             </Button>
           ) : null}
         </BoardTopBar>
+        {workerFilter.length === 0 ? null : (
+          <BoardWorkerFilterStrip
+            label={boardWorkerFilterLabel(workerFilter, cardWorkersState)}
+            onClear={() => setWorkerFilter([])}
+            shown={workerFilteredCount}
+            total={workerUnfilteredCount}
+          />
+        )}
         <div className="flex shrink-0 items-center gap-3 px-3 py-2 sm:px-5">
           {scope.kind === "sub-board" ? (
             <>

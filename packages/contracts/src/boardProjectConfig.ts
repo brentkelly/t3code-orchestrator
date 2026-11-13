@@ -18,9 +18,12 @@ import {
   type BoardStageId,
   type BoardState,
 } from "./board.ts";
-import { EMPTY_BOARD_PROJECT_RESOURCES } from "./boardCapacity.ts";
+import { EMPTY_BOARD_PROJECT_RESOURCES, type BoardProjectResources } from "./boardCapacity.ts";
 
 const PROMPT_KEY = "prompt";
+/** Objects compared and kept whole: trimming one to its changed fields leaves a partial
+    that no longer decodes. */
+const WHOLE_VALUE_KEYS: ReadonlySet<string> = new Set(["model", "laterReviewModel"]);
 
 function sameValue(left: unknown, right: unknown): boolean {
   return canonicalJson(left) === canonicalJson(right);
@@ -37,7 +40,12 @@ function normalizePatch(
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined || !allowed.has(key)) continue;
     const base = global[key];
-    if (typeof value === "object" && value !== null && !Array.isArray(value) && key !== "model") {
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      !Array.isArray(value) &&
+      !WHOLE_VALUE_KEYS.has(key)
+    ) {
       const nested =
         typeof base === "object" && base !== null ? (base as Record<string, unknown>) : {};
       const inner: Record<string, unknown> = {};
@@ -131,10 +139,15 @@ export function boardProjectDeltasEqual(
   right: BoardProjectStageDelta,
 ): boolean {
   // `left` is the file's: one without `resources` leaves the project's own.
+  // T3o (T3O-87): a file carries neither what the board learned nor Pin declared.
+  const fileShaped = (resources: BoardProjectResources) => {
+    const { learned: _learned, pinDeclared: _pinned, ...rest } = resources;
+    return rest;
+  };
   const resources =
     left.resources === undefined ||
-    canonicalJson(left.resources) ===
-      canonicalJson(right.resources ?? EMPTY_BOARD_PROJECT_RESOURCES);
+    canonicalJson(fileShaped(left.resources)) ===
+      canonicalJson(fileShaped(right.resources ?? EMPTY_BOARD_PROJECT_RESOURCES));
   return (
     resources &&
     canonicalJson({

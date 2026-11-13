@@ -54,6 +54,7 @@ function makeCard(overrides: Partial<BoardCard> = {}): BoardCard {
     labels: [],
     stage: BoardStageId.make("building"),
     orderKey: "m",
+    priority: "normal",
     title: "Card",
     briefRef: null,
     dependsOn: [],
@@ -274,11 +275,43 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("card sizes", (it
       assert.deepStrictEqual(config?.resources, { ...resources, readinessPath: ".t3/ready.sh" });
       const refused = yield* decideFail(set("../outside.sh"), model);
       assert.include(String(refused), "inside the repository");
+
+      // T3O-87: the board's learned baseline lands without moving the version, and a human's
+      // later edit (or Pin declared) never overwrites it.
+      const dimension = { value: 9, samples: 6, history: [9] };
+      const learned = { computedAt: NOW, cpu: dimension, ram: dimension, disk: dimension };
+      const before = boardProjectStageConfig(model.board!, projectId)!.version;
+      for (const event of yield* decideEvents(
+        {
+          type: "board.project.record-learned",
+          commandId: CommandId.make("cmd-learned"),
+          projectId,
+          learned,
+          createdAt: NOW,
+        },
+        model,
+      )) {
+        model = yield* projectBoardEvent(model, { ...event, sequence: 2 } as never);
+      }
+      assert.strictEqual(boardProjectStageConfig(model.board!, projectId)?.version, before);
+      const pinned: BoardCommand = {
+        type: "board.project.set-resources",
+        commandId: CommandId.make("cmd-pin"),
+        projectId,
+        resources: { ...resources, readinessPath: null, pinDeclared: ["cpu"] },
+        createdAt: NOW,
+      };
+      for (const event of yield* decideEvents(pinned, model)) {
+        model = yield* projectBoardEvent(model, { ...event, sequence: 3 } as never);
+      }
+      const after = boardProjectStageConfig(model.board!, projectId)?.resources;
+      assert.deepStrictEqual(after?.learned, learned);
+      assert.deepStrictEqual(after?.pinDeclared, ["cpu"]);
     }),
   );
 
   it.effect(
-    "a provision records its grant before the worker is called; claim-expired undoes it",
+    "the placement records its grant before the worker is called; claim-expired undoes both",
     () =>
       Effect.gen(function* () {
         const branchOnly: BoardCardWorktree = {
@@ -286,27 +319,63 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("card sizes", (it
           path: null,
           status: "branch-only",
         };
-        const provision = (_card: BoardCard): BoardCommand => ({
+        const placeCommand: BoardCommand = {
+          type: "board.card.place",
+          commandId: CommandId.make("cmd-place"),
+          cardId,
+          workerId: workerA,
+          grantedProfile: { cpuCores: 2, ramGiB: 4, diskGB: 5 },
+          heavyGranted: true,
+          claimId: "card-1:1:0",
+          reason: "offered the most RAM among ready workers",
+          createdAt: NOW,
+        };
+        const provisionCommand: BoardCommand = {
           type: "board.card.provision-worktree",
           commandId: CommandId.make("cmd-provision"),
           cardId,
           branch: "board/card-1",
           baseRefName: "main",
-          grantedProfile: { cpuCores: 2, ramGiB: 4, diskGB: 5 },
-          heavyGranted: true,
-          claimId: "card-1:1:0",
           createdAt: NOW,
-        });
-        const before = makeCard({ worktree: branchOnly });
-        const provisioning = yield* cardAfter(
-          provision(before),
-          makeReadModel({ cards: [before] }),
+        };
+        // An unplaced card is never provisioned: the gate places it first.
+        const unplaced = makeCard({ worktree: branchOnly });
+        const refused = yield* Effect.exit(
+          decideEvents(provisionCommand, makeReadModel({ cards: [unplaced] })),
         );
+        assert.isTrue(refused._tag === "Failure");
+        const provision = (card: BoardCard) => ({
+          command: provisionCommand,
+          model: (model: BoardOrchestrationReadModel) =>
+            cardAfter(placeCommand, model).pipe(
+              Effect.map((placed) => ({
+                ...model,
+                board: {
+                  ...model.board!,
+                  cards: model.board!.cards.map((candidate) =>
+                    candidate.id === card.id ? placed : candidate,
+                  ),
+                },
+              })),
+            ),
+        });
+        const provisionAfter = (card: BoardCard, model: BoardOrchestrationReadModel) =>
+          Effect.flatMap(provision(card).model(model), (placed) =>
+            cardAfter(provisionCommand, placed),
+          );
+        const before = makeCard({ worktree: branchOnly });
+        const provisioning = yield* provisionAfter(before, makeReadModel({ cards: [before] }));
         assert.strictEqual(provisioning.worktree?.status, "provisioning");
+        // The provision keeps the gate's choice, never the pin or the default.
+        assert.strictEqual(provisioning.placedWorkerId, workerA);
         assert.deepInclude(provisioning.resources?.grant, { heavy: true, claimId: "card-1:1:0" });
+        assert.deepInclude(provisioning.resources?.placement, {
+          workerId: workerA,
+          reason: "offered the most RAM among ready workers",
+        });
         // A new worktree runs setup even when the last one ran it: the old result goes.
-        const recut = yield* cardAfter(
-          provision(before),
+        const recut = yield* provisionAfter(
+          before,
           makeReadModel({
             cards: [
               {
@@ -345,11 +414,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("card sizes", (it
         );
         assert.deepStrictEqual(restored.worktree, branchOnly);
         assert.isNull(restored.resources);
+        // The placement goes with the claim: the card is ranked again.
+        assert.isNull(restored.placedWorkerId);
         // With nothing before it, the record goes.
-        const fresh = yield* cardAfter(
-          provision(makeCard()),
-          makeReadModel({ cards: [makeCard()] }),
-        );
+        const fresh = yield* provisionAfter(makeCard(), makeReadModel({ cards: [makeCard()] }));
         const nulled = yield* cardAfter(undo(null), makeReadModel({ cards: [fresh] }));
         assert.isNull(nulled.worktree);
         // A provision that already landed is never undone.

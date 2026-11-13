@@ -3,6 +3,7 @@
  * and agents share one path. Workers join with a code through `BoardWorkerJoin`;
  * `remove` deletes nothing on the worker.
  */
+import * as FileSystem from "effect/FileSystem";
 import {
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
@@ -29,10 +30,14 @@ import {
   type BoardWorkersSetupProjectInput,
   type BoardWorkersState,
   type BoardWorkerId,
+  type BoardWorkerRemovalClassification,
+  boardCardHoldsWorktree,
   type BoardWorkerThreadAccess,
   type BoardWorkerView,
   type EnvironmentId,
   type ProjectCloneSnapshot,
+  type BoardCardId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -53,6 +58,7 @@ import { BoardWorkerJoinStore } from "../tunnel/BoardWorkerJoinStore.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { ProjectService } from "../../project/ProjectService.ts";
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
+import { BoardWorkspaces, type BoardCardWorkspace } from "../workspace/BoardWorkspace.ts";
 import { BoardEngine } from "../BoardEngine.ts";
 import { isBoardCommandInvariantError } from "../errors.ts";
 import { classifyCloneFailure, cloneDestination, cloneFailureMessage } from "./setupFailure.ts";
@@ -92,6 +98,9 @@ export interface BoardWorkersShape {
   readonly setupProject: (
     input: BoardWorkersSetupProjectInput,
   ) => Effect.Effect<BoardWorkerSetup, BoardWorkerActionError>;
+  /** T3o: clone a project into its folder on this server, only when the folder is missing or
+      empty, with this server's own git credentials (T3O-87). Planning needs the checkout. */
+  readonly cloneHere: (projectId: ProjectId) => Effect.Effect<void, BoardWorkerActionError>;
   readonly dismissSetup: (input: {
     readonly projectId: ProjectId;
     readonly workerId: EnvironmentId;
@@ -102,6 +111,8 @@ export interface BoardWorkersShape {
       status, snapshots, setups — subscribed atomically with the first read.
       Registry changes ride the board log. Each access subscribes. */
   readonly states: Stream.Stream<BoardWorkersState>;
+  /** T3o: workers mid-removal, which no card is placed on (T3O-87). */
+  readonly beingRemoved: Effect.Effect<ReadonlySet<BoardWorkerId>>;
 }
 
 export class BoardWorkers extends Context.Service<BoardWorkers, BoardWorkersShape>()(
@@ -114,6 +125,9 @@ const RELEASE_TIMEOUT = "5 seconds";
 /** How long Remove waits for the worker to stop each running step. */
 const STOP_TIMEOUT = "5 seconds";
 
+/** How many times, a second apart, Remove reads a stopped step's thread for its turn to end. */
+const TURN_END_CHECKS = 30;
+
 /** How long Set up waits for the worker to accept the clone. Starting one
     only checks the folder and spawns git, so this is generous. */
 const SETUP_START_TIMEOUT = "30 seconds";
@@ -123,6 +137,52 @@ const setupKey = (workerId: EnvironmentId, projectId: ProjectId) => `${workerId}
 const actionError = (code: BoardWorkerActionError["code"], message: string) =>
   new BoardWorkerActionError({ code, message });
 
+/**
+ * T3o: one worktree's fate when its worker is removed (T3O-87): pushed where the remote lacks
+ * commits, then `reclaimed` (branch kept) or `fresh` (nothing beyond its base, no remote
+ * branch), else `orphaned` for a human: dirty, unpushable, or the worker didn't answer.
+ */
+export const classifyRemovalWorktree = Effect.fn("BoardWorkers.classifyRemovalWorktree")(function* (
+  workspace: BoardCardWorkspace,
+  worktree: {
+    readonly worktreePath: string;
+    readonly branch: string;
+    readonly baseRefName: string;
+  },
+) {
+  const orphaned = "orphaned" as const;
+  const probe = yield* workspace
+    .probeWorktreeDurability({
+      ...worktree,
+      mergedPullRequestNumbers: [],
+      openPullRequestNumber: null,
+      baseAlreadyFetched: false,
+    })
+    .pipe(Effect.option);
+  if (Option.isNone(probe) || probe.value.hasWorkingTreeChanges) return orphaned;
+  // Read afresh each time: after a push it must see the branch the push just made.
+  const onRemote = Effect.suspend(() =>
+    workspace.remoteBranchTip({ branch: worktree.branch }),
+  ).pipe(
+    Effect.map((tip) => tip !== null),
+    Effect.orElseSucceed(() => null),
+  );
+  if (probe.value.unpushedCount === 0) {
+    const remote = yield* onRemote;
+    if (remote === null) return orphaned;
+    // Nothing beyond its base and no remote branch: the next placement cuts it fresh.
+    if (!remote) return probe.value.hasUpstream ? orphaned : ("fresh" as const);
+    return "reclaimed" as const;
+  }
+  // Commits the remote lacks: push the card's own branch, never forced. A worker too old to
+  // know the operation can't be pushed.
+  const pushed = yield* workspace
+    .pushCardBranch({ worktreePath: worktree.worktreePath, branch: worktree.branch })
+    .pipe(Effect.orElseSucceed(() => ({ pushed: false, detail: null })));
+  if (!pushed.pushed) return orphaned;
+  return (yield* onRemote) === true ? ("reclaimed" as const) : orphaned;
+});
+
 export const makeBoardWorkers = Effect.gen(function* () {
   const engine = yield* BoardEngine;
   const connections = yield* WorkerConnections;
@@ -130,6 +190,11 @@ export const makeBoardWorkers = Effect.gen(function* () {
   const environment = yield* ServerEnvironment;
   const projects = yield* ProjectService;
   const git = yield* GitVcsDriver;
+  // T3o: where removal probes and pushes a card's worktree (T3O-87). Absent in a harness.
+  const workspaces = yield* Effect.serviceOption(BoardWorkspaces);
+  /** Workers mid-removal: the gate and step spawns skip them. In memory only. */
+  const beingRemoved = new Set<BoardWorkerId>();
+  const fileSystem = yield* FileSystem.FileSystem;
   const crypto = yield* SecureRandom.SecureRandom;
   const relayStore = yield* BoardRelayStore;
   const join = yield* BoardWorkerJoin;
@@ -273,14 +338,11 @@ export const makeBoardWorkers = Effect.gen(function* () {
     Effect.map((model) => model.board ?? EMPTY_BOARD_STATE),
   );
 
-  /** The registered, non-default worker removal is about. */
+  /** The registered worker removal is about. The default worker is retired (T3O-87). */
   const removable = Effect.fn("BoardWorkers.removable")(function* (workerId: EnvironmentId) {
     const worker = (yield* registry).find((candidate) => candidate.id === workerId);
     if (worker === undefined) {
       return yield* actionError("not-found", "That worker isn't on this board.");
-    }
-    if ((yield* defaultWorkerId) === workerId) {
-      return yield* actionError("is-default", "Make another worker the default first.");
     }
     return worker;
   });
@@ -327,8 +389,8 @@ export const makeBoardWorkers = Effect.gen(function* () {
     },
   );
 
-  /** The threads of the steps running on a worker, which removal stops. */
-  const runningThreadsOn = (workerId: EnvironmentId) =>
+  /** The steps running on a worker, which removal parks and stops. */
+  const runningStepsOn = (workerId: EnvironmentId) =>
     readBoard.pipe(
       Effect.map((board) =>
         board.cards.flatMap((card) => {
@@ -338,59 +400,165 @@ export const makeBoardWorkers = Effect.gen(function* () {
           // Where its thread runs: the link says, else where the card runs.
           const link = card.threadLinks.find((candidate) => candidate.threadId === live.threadId);
           const runsOn =
-            link === undefined
-              ? boardCardEffectiveWorkerId(card, board.defaultWorkerId)
-              : boardThreadLinkWorkerId(link);
-          return runsOn === workerId ? [live.threadId] : [];
+            link === undefined ? boardCardEffectiveWorkerId(card) : boardThreadLinkWorkerId(link);
+          return runsOn === workerId
+            ? [{ cardId: card.id, stepId: live.stepId, threadId: live.threadId }]
+            : [];
         }),
       ),
     );
 
+  /**
+   * T3o: what removal does with each card on a reachable worker (T3O-87): a card with no
+   * worktree there is unplaced; a clean worktree is pushed where the remote lacks commits, then
+   * reclaimed with its branch kept, or cleared when it has nothing beyond its base; anything
+   * dirty or unpushable waits for a human. Nothing on the worker is deleted.
+   */
+  const classifyForRemoval = Effect.fn("BoardWorkers.classifyForRemoval")(function* (
+    workerId: EnvironmentId,
+    /** Cards whose step may still be writing to its worktree: never probed, a human decides. */
+    unsettled: ReadonlySet<BoardCardId>,
+  ) {
+    const board = yield* readBoard;
+    const classifications: Array<BoardWorkerRemovalClassification> = [];
+    for (const card of board.cards) {
+      if (card.placedWorkerId !== workerId && card.pinnedWorkerId !== workerId) continue;
+      if (card.placedWorkerId !== workerId || !boardCardHoldsWorktree(card)) {
+        classifications.push({ cardId: card.id, outcome: "unplaced" });
+        continue;
+      }
+      const worktree = card.worktree;
+      if (
+        Option.isNone(workspaces) ||
+        worktree === null ||
+        worktree.path === null ||
+        unsettled.has(card.id)
+      ) {
+        classifications.push({ cardId: card.id, outcome: "orphaned" });
+        continue;
+      }
+      const workspace = yield* workspaces.value.forWorker(workerId, card.projectId);
+      classifications.push({
+        cardId: card.id,
+        outcome: yield* classifyRemovalWorktree(workspace, {
+          worktreePath: worktree.path,
+          branch: worktree.branch,
+          baseRefName: worktree.baseRefName,
+        }),
+      });
+    }
+    return classifications;
+  });
+
+  /** Whether a stopped thread's turn has ended, read for up to TURN_END_CHECKS seconds. */
+  const turnEnded = Effect.fn("BoardWorkers.turnEnded")(function* (
+    gateway: WorkerRpc["gateway"],
+    threadId: ThreadId,
+  ) {
+    for (let check = 0; check < TURN_END_CHECKS; check += 1) {
+      const read = yield* gateway
+        .threadState(threadId)
+        .pipe(Effect.timeout(STOP_TIMEOUT), Effect.option);
+      if (Option.isNone(read)) return false;
+      const thread = read.value;
+      if (
+        thread === null ||
+        !thread.alive ||
+        (thread.activeTurnRef === null &&
+          thread.sessionStatus !== "running" &&
+          thread.sessionStatus !== "starting")
+      ) {
+        return true;
+      }
+      yield* Effect.sleep("1 second");
+    }
+    return false;
+  });
+
   const remove: BoardWorkersShape["remove"] = Effect.fn("BoardWorkers.remove")(
     function* (workerId) {
       yield* removable(workerId);
-      const running = yield* runningThreadsOn(workerId);
-      // The record goes first: a removal the decider refuses (a concurrent
-      // Make default, say) must leave the worker's session and token intact.
-      const rpc = yield* connections.get(workerId).pipe(Effect.option);
-      yield* engine
-        .dispatch({
-          type: "board.worker.remove",
-          commandId: yield* newCommandId,
-          workerId,
-          createdAt: yield* nowIso,
-        })
-        .pipe(Effect.mapError((cause) => actionError("internal", cause.message)));
-      // Stop what was running there, so it doesn't go on spending tokens for
-      // a board that no longer uses it. Best effort, and only while the
-      // worker answers; the supervisor stalls those steps and frees their
-      // slots off the removal event either way.
-      if (Option.isSome(rpc)) {
-        for (const threadId of running) {
-          yield* rpc.value.gateway
-            .stopSession({ commandId: yield* newCommandId, threadId })
-            .pipe(Effect.timeout(STOP_TIMEOUT), Effect.ignore);
-        }
-      }
-      // Then every session this board holds there goes back over the tunnel, before
-      // its listener closes in the sync below. Unreachable is fine: the tunnel
-      // credential is revoked here, and a worker coming back to a board that no longer
-      // knows it revokes the board's sessions itself.
-      const revoked = Option.isNone(rpc)
-        ? false
-        : yield* rpc.value.releaseAll.pipe(
-            Effect.timeout(RELEASE_TIMEOUT),
+      // T3o: no card is placed there, and no step starts there, while it is removed (T3O-87).
+      beingRemoved.add(workerId);
+      return yield* removeSequence(workerId).pipe(
+        Effect.ensuring(Effect.sync(() => beingRemoved.delete(workerId))),
+      );
+    },
+  );
+
+  const removeSequence = Effect.fn("BoardWorkers.removeSequence")(function* (
+    workerId: EnvironmentId,
+  ) {
+    const running = yield* runningStepsOn(workerId);
+    const rpc = yield* connections.get(workerId).pipe(Effect.option);
+    // T3o: park each running step the way a human Stop does, then stop its session, before
+    // anything is probed: a stop alone reads as an unattended turn ending, and the supervisor
+    // would put the agent back to work mid-probe (T3O-87).
+    // A step that wasn't parked, or whose turn didn't end, could still commit after its probe.
+    const unsettled = new Set<BoardCardId>();
+    if (Option.isSome(rpc)) {
+      const stopped: Array<{ readonly step: (typeof running)[number]; readonly paused: boolean }> =
+        [];
+      for (const step of running) {
+        const paused = yield* engine
+          .dispatch({
+            type: "board.card.pause-step",
+            commandId: yield* newCommandId,
+            cardId: step.cardId,
+            stepId: step.stepId,
+            createdAt: yield* nowIso,
+          })
+          .pipe(
             Effect.as(true),
             Effect.orElseSucceed(() => false),
           );
-      yield* joinStore.revokeCredentials({ workerId, at: yield* nowIso });
-      yield* secrets.remove(workerSecretName(workerId)).pipe(Effect.ignore);
-      yield* syncConnections;
-      yield* forgetSignalCursor(workerId);
-      yield* dropSetups(workerId);
-      return { revoked };
-    },
-  );
+        yield* rpc.value.gateway
+          .stopSession({ commandId: yield* newCommandId, threadId: step.threadId })
+          .pipe(Effect.timeout(STOP_TIMEOUT), Effect.ignore);
+        stopped.push({ step, paused });
+      }
+      // Every step is stopped before any is waited on, so the waits run side by side.
+      const ended = yield* Effect.forEach(
+        stopped,
+        ({ step }) => turnEnded(rpc.value.gateway, step.threadId),
+        { concurrency: "unbounded" },
+      );
+      stopped.forEach(({ step, paused }, index) => {
+        if (!paused || !ended[index]) unsettled.add(step.cardId);
+      });
+    }
+    const classifications = Option.isSome(rpc)
+      ? yield* classifyForRemoval(workerId, unsettled)
+      : [];
+    // The record goes after the sequence and before release: a removal the decider refuses
+    // must leave the worker's session and token intact.
+    yield* engine
+      .dispatch({
+        type: "board.worker.remove",
+        commandId: yield* newCommandId,
+        workerId,
+        ...(classifications.length === 0 ? {} : { classifications }),
+        createdAt: yield* nowIso,
+      })
+      .pipe(Effect.mapError((cause) => actionError("internal", cause.message)));
+    // Then every session this board holds there goes back over the tunnel, before
+    // its listener closes in the sync below. Unreachable is fine: the tunnel
+    // credential is revoked here, and a worker coming back to a board that no longer
+    // knows it revokes the board's sessions itself.
+    const revoked = Option.isNone(rpc)
+      ? false
+      : yield* rpc.value.releaseAll.pipe(
+          Effect.timeout(RELEASE_TIMEOUT),
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+    yield* joinStore.revokeCredentials({ workerId, at: yield* nowIso });
+    yield* secrets.remove(workerSecretName(workerId)).pipe(Effect.ignore);
+    yield* syncConnections;
+    yield* forgetSignalCursor(workerId);
+    yield* dropSetups(workerId);
+    return { revoked };
+  });
 
   const setDefault: BoardWorkersShape["setDefault"] = Effect.fn("BoardWorkers.setDefault")(
     function* (workerId) {
@@ -506,6 +674,59 @@ export const makeBoardWorkers = Effect.gen(function* () {
           : failed(input.workerLabel, log),
     });
   });
+
+  const cloneHere: BoardWorkersShape["cloneHere"] = Effect.fn("BoardWorkers.cloneHere")(
+    function* (projectId) {
+      const project = yield* projects.getShell(projectId).pipe(
+        Effect.map(Option.getOrNull),
+        Effect.orElseSucceed(() => null),
+      );
+      if (project === null) {
+        return yield* actionError("not-found", "That project isn't on this board server.");
+      }
+      const root = project.workspaceRoot;
+      const originUrl = yield* git
+        .readConfigValue(root, "remote.origin.url")
+        .pipe(Effect.orElseSucceed(() => null));
+      const remoteUrl = originUrl ?? project.repositoryIdentity?.locator.remoteUrl ?? null;
+      if (remoteUrl === null || remoteUrl.trim().length === 0) {
+        return yield* actionError(
+          "no-remote",
+          `${project.title} has no known git remote, so it can't be cloned here.`,
+        );
+      }
+      const entries = yield* fileSystem
+        .readDirectory(root)
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+      if (entries.length > 0) {
+        return yield* actionError(
+          "folder-exists",
+          `${root} already exists and isn't empty, so nothing was cloned into it.`,
+        );
+      }
+      yield* fileSystem
+        .makeDirectory(root, { recursive: true })
+        .pipe(
+          Effect.mapError(() => actionError("internal", `Couldn't create ${root} on this server.`)),
+        );
+      const cloned = yield* git
+        .execute({
+          operation: "board.workers.cloneHere",
+          cwd: root,
+          args: ["clone", "--", remoteUrl, "."],
+          allowNonZeroExit: true,
+          timeoutMs: null,
+        })
+        .pipe(Effect.orElseSucceed(() => null));
+      if (cloned === null || cloned.exitCode !== 0) {
+        const detail = (cloned?.stderr ?? "").trim().split("\n").slice(-3).join(" ");
+        return yield* actionError(
+          "internal",
+          `Cloning ${project.title} here failed${detail === "" ? "." : `: ${detail}`}`,
+        );
+      }
+    },
+  );
 
   const setupProject: BoardWorkersShape["setupProject"] = Effect.fn("BoardWorkers.setupProject")(
     function* (input) {
@@ -706,9 +927,11 @@ export const makeBoardWorkers = Effect.gen(function* () {
     removePreview,
     setDefault,
     setupProject,
+    cloneHere,
     dismissSetup,
     state,
     states,
+    beingRemoved: Effect.sync(() => new Set(beingRemoved) as ReadonlySet<BoardWorkerId>),
   } satisfies BoardWorkersShape;
 });
 

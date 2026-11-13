@@ -166,11 +166,20 @@ the machine the card is placed on, because that is where the agent reading them 
 Worktree creation runs `runOnWorktreeCreate`, which in a repo like this is `vp i` plus a dep-cache
 warm — minutes and gigabytes each. Two hundred planned cards must not mean two hundred worktrees.
 
-**Decision:** planning runs **read-only in the checkout of the card's project on the card's
-worker** with `worktreePath: null` and `ProviderSandboxMode: "read-only"`, emitting the plan through
-MCP. No branch, no worktree, no install. The card's branch and worktree are created lazily, **on the
-worker**, on entry to **Building**, and reclaimed there at archive. The central server needs no
-checkout of anything: its only view of a repo is through the worker that has one (D21).
+**Decision (rewritten by `T3O-87`):** planning runs **read-only on the board server**, in the board
+project's own checkout (its `workspaceRoot`), with `worktreePath: null` and
+`ProviderSandboxMode: "read-only"`, emitting the plan through MCP, pinned or not, after a fetch. No
+branch, no worktree, no install. The board server therefore needs, per project with cards, a
+checkout of its repository (amber "isn't a checkout", with **Clone here** for a missing or empty
+folder) and the step's provider signed in (violet). Its readiness script gates builds only, and
+planning is bounded by its agent caps, never by CPU or RAM. A planning thread already under way on a
+worker when this shipped carries on there: routing is per thread. The card's branch and worktree are
+created lazily, **on the worker the placement gate chooses** (D20), on entry to **Building**, and
+reclaimed there at archive.
+
+Rejected: planning on the card's pin or its default worker. A pin steers builds only, a default
+worker is gone (D20), and a plan written on whichever worker happened to be free would need that
+worker's checkout as much as the board server's.
 
 ### D7 — Shell/detail split, mirroring threads exactly
 
@@ -205,9 +214,10 @@ Bodies live in projected tables (`board_plans`), following the existing
 MCP tool → command → decider → event → projector → table, in one transaction. The table is a
 first-class queryable read surface; it is just never written through the back door.
 
-The **worker registry, the default worker, and each card's pin and placement** are in the read
-model, because transitions branch on them: removing the default worker is refused, placement
-decides where a step spawns, and a move is gated on it. A worker's **connection state** (online,
+The **worker registry and each card's pin and placement** are in the read model, because
+transitions branch on them: placement decides where a step spawns, a provision is refused without
+it, and a move is gated on it. `defaultWorkerId` stays in the schema, unread, since `T3O-87`
+retired the default worker. A worker's **connection state** (online,
 offline, unauthorized…) is not: it is supervisor runtime state, re-derived by dialing on every
 boot, and event-sourcing it would write a log entry for every network blip. The last providers and
 checkouts a worker reported are persisted beside the registry as a snapshot, so an offline worker
@@ -272,13 +282,31 @@ Rejected: the board limit, worker limit and per-worker provider caps this decisi
 Counting agents says nothing about whether a machine has room, a board can't see another board's
 load on a shared worker, and slots held on an offline worker leaked.
 
-The **Building column is the queue** — position is priority, drag to reprioritise, queued cards sit
-in Building flagged as queued (never in Ready, which would lie about their state). The card says
-what it is waiting on: room on a worker, an agent, quota, or a worker update.
+The **Building column is the queue** — the card's priority, then its position, decide its place;
+drag to reorder within a priority level. Queued cards sit in Building flagged as queued (never in
+Ready, which would lie about their state). The card says what it is waiting on: room on a worker,
+an agent, quota, or a worker update.
 
-Ordering rule, unchanged: **stage descending → started before unstarted → drag order.** Finishing
-beats starting; a nearly-merged card is never starved by new work. Preemption takes effect at the
+Ordering rule: **stage descending → started before unstarted → priority (Urgent, High, Normal, Low)
+→ drag order** (T3O-95). Finishing beats starting; a nearly-merged card is never starved by new
+work, and priority only decides between cards waiting at the same stage. Priority is per board
+(workers never see it), never ages, and never passes along dependencies; columns other than Done
+sort by priority then position, so the column still reads in run order. Preemption takes effect at the
 **next step boundary** — nothing in flight is wasted and the worktree is always left clean.
+
+**Holds replace the sibling card's strict order (`T3O-87`).** Cards are placed in queue order. A
+card no worker can take asks at once for a **hold** on up to two workers (its best hold candidates:
+every placement test but the CPU and RAM fit, the card's disk free now). A held worker refuses new
+placements from every board (`reserved`) but grants grow and force claims, and lets the held card
+**start early** once its disk and half (`hold.earlyStartFraction`) of its CPU and RAM are free,
+running the worker over its declared capacity until it is back within it. A board holds at most
+half its ready workers; a hold lapses unless refreshed every 20 s; after two hours
+(`hold.maxMinutes`) a hold ends as soon as another board is waiting, with a cool-off; a board that
+started early waits its turn. A placed card short of room holds its own worker to grow (finishing
+beats starting). Holds live in worker memory; nothing names or counts another board.
+
+Rejected: a waiting period before holding, which only delays the large card that can't fit, and the
+strict per-worker order, which let one large card stall every smaller card behind it.
 
 ### D12 — Groups nest; a group's stage is derived from its children
 
@@ -462,12 +490,12 @@ a human act unless listed below.
     answer on an unattended planning run turns Auto-plan off; a machine failure does not.
   - Auto-planning steers the card's current planning thread whatever its status; it never replaces
     it.
-- A card whose worker is removed while it has no worktree falls back to the default worker, with an
-  activity entry (D22).
+- A card whose worker is removed goes back to unplaced, or carries on from its pushed branch, as
+  D22's removal sequence classifies it, with an activity entry.
 
-Choosing a card's worker (pin, unpin) and **moving** a card to another worker are human acts, like
-every row of the table above. The board never re-places a card on its own except by the removal
-fallback just listed.
+Pinning a card and **moving** it to another worker are human acts, like every row of the table
+above. Choosing an unpinned card's worker at build start is the board's (D20), and it never
+re-places a card that has a worktree except after its worker is removed (D22).
 
 The Ready gate is the one that matters most in daily use: it exists so a planning session can queue
 up a dozen features without a single build starting. Planning is cheap, reversible and read-only
@@ -542,14 +570,25 @@ to be reachable).
 
 ### D20 — Placement: a pin, and where the card actually runs
 
-A card has a **pin** (a chosen worker, or null to follow the default worker) and a **placement**
-(where it actually runs). One worker is the **default**, initially `local`, changed with Make
-default; only online, compatible, paired workers can become it, and the default can't be removed.
+A card has a **pin** (a chosen worker, or null for "any ready worker") and a **placement** (where
+its worktree is). There is no default worker since `T3O-87`.
 
-- Placement is recorded when the card's first thread spawns. Planning runs read-only in that
-  worker's checkout (D6), and every later step runs on the same worker.
-- Changing the pin of a card with no worktree simply re-pins it. **Unpin** means "follow the default
-  worker"; changing the default only affects cards without a worktree.
+- **Placement is recorded only by the placement gate at build start**, on every path that creates a
+  card worktree (a build step, CI, Move, removal's re-provision). The gate ranks every eligible
+  worker (online, at the floor, ready for the project, provider signed in with quota room, not
+  closed, the whole profile fitting the snapshot less this pass's grants): **warm first** (one of
+  this board's cards finished a Building step for the same repository there in the last 24 hours,
+  most recent first), then the most room left after the card, then worker id. It runs the base
+  checks on the top candidate with no claim, claims, records the placement with its grant and why,
+  then provisions there. A card with a recorded branch starts from its remote branch when the
+  remote has it.
+- A pin restricts candidates, and holds, to the pinned worker; it steers builds only. The board
+  server is a candidate when it is ready and declares build capacity.
+- Anything that acts on a worktree reads the **placement target**, null until the card holds a
+  worktree; display reads the placement, else the pin, else the board server. "Placed but no
+  worktree" counts as unplaced and is ranked again.
+- Changing the pin of a card with no worktree simply re-pins it. **Unpin** leaves a placed card where
+  it is.
 - Changing the pin of a card with a worktree opens **Move**, allowed only when no step is running and
   the durability probe says the branch is pushed. The old worktree is retired and a new one is
   provisioned on the new worker from the remote branch.
@@ -559,9 +598,10 @@ default; only online, compatible, paired workers can become it, and the default 
   origin-preferring key in `board/boardRepository.ts`) matches. A worker without one offers **Set up
   on worker**, which clones the repo's remote on the worker.
 
-Placement is explicit in `T3O-60`. Automatic placement by load is a follow-up that only has to pick
-a pin; nothing here assumes a human made the choice beyond D18's rule that the board never
-re-places a card by itself today.
+The board never re-places a card that has a worktree, except after its worker is removed (D22).
+
+Rejected: placement at the first thread's spawn (`T3O-60`), which bound a card to wherever it was
+planned, and a default worker, which concentrated every unpinned card on one machine.
 
 ### D21 — Git runs on the worker, through named operations; the remote is the source of truth
 
@@ -571,9 +611,12 @@ base-branch sync, merge-conflict detection — runs **on the card's worker**, as
 inputs, a bounded effect and a test, where a shell passthrough would be remote code execution with
 extra steps.
 
-The central server needs no checkout, and merges stay on the forge. Between workers the **git
-remote is the source of truth**: base-staleness checks fetch, then read the remote ref, and moving
-a card requires its branch to be pushed. Nothing is ever copied worker to worker.
+Merges stay on the forge. The board server needs a checkout of each project now that planning runs
+there (D6); with no placement target, read-only checks (base staleness, conflict detection) run in
+it against the remote branch. Between workers the **git remote is the source of truth**:
+base-staleness checks fetch, then read the remote ref, and moving a card requires its branch to be
+pushed. Children of one group may be placed on different workers: each takes its base from the
+group's integration branch on the remote. Nothing is ever copied worker to worker.
 
 ### D22 — Offline, reconnect and removal
 
@@ -585,17 +628,27 @@ on a machine the board merely cannot see.
 **Reconnect.** The boot `reconcile`, scoped to that worker, runs before anything else acts on its
 cards. Threads match by id, so nothing is spawned twice.
 
-**Removal** is allowed for any worker except the default, behind a confirm dialog listing the
-affected cards:
+**Removal** (rewritten by `T3O-87`) is allowed for any worker, behind a confirm dialog listing the
+affected cards. On a reachable worker, `BoardWorkers.remove` runs a sequence before
+`board.worker.remove`, keeping the worker closed to placements and spawns meanwhile:
 
-- Cards with no worktree fall back to the default worker, with an activity entry (the one
-  board-driven placement change, D18).
-- Cards with a worktree or a running step hold with "Worker removed — move this card". A running
-  step is stopped on the worker if it is reachable, then stalled, and its reservation is released.
-- Nothing on the worker is deleted: worktrees, branches and thread history stay there.
-- **Force-move** continues from the remote branch, with an explicit choice to abandon unpushed
-  work. It is also offered for workers that are offline.
-- Re-joining a server with the same environment id reattaches its cards.
+1. Park each running step the way a human Stop does, then stop its session. Stopping first would
+   read as an unattended turn ending, and the supervisor would put the agent back to work.
+2. Probe each worktree (Move's probe and `remoteBranchTip`, never the reclaim decision, whose
+   "durable" also accepts a HEAD merely on the base branch).
+3. Push the card's own branch where the remote lacks commits (`pushCardBranch`, never forced).
+4. Classify each card, then `release` and revocation. The command carries the classifications, so
+   the decider stays pure.
+
+- A card with no worktree goes back to unplaced; its holds are withdrawn.
+- A clean worktree whose commits are all on its remote branch is marked reclaimed (branch kept) and
+  unplaced; one with nothing beyond its base and no remote branch is cleared. Either is placed
+  again when its next step starts.
+- Anything dirty or unpushable, or every card on an offline worker, holds with "Worker removed —
+  move this card". **Force-move** continues from the remote branch, with an explicit choice to
+  abandon unpushed work.
+- Nothing on the worker is deleted. Re-joining reattaches only cards still placed there; a provision
+  that finds this board's own marked worktree adopts it.
 
 **Unauthorized** is not terminal since `T3O-84`: the board drops that worker's tunnel, and the
 worker's next handshake hands over a fresh session.

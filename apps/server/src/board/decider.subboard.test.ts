@@ -64,6 +64,7 @@ function makeCard(
     autoMergeSetting: null,
     autoMergeHold: null,
     mergeStrategy: null,
+    priority: "normal",
     pinnedWorkerId: null,
     placedWorkerId: null,
     workerMove: null,
@@ -1010,6 +1011,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
             makeBoard({
               parent: {
                 stage: "review",
+                placedWorkerId: "local",
                 worktree: {
                   branch: "board/t3-190",
                   baseRefName: "main",

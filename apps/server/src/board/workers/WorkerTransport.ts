@@ -396,6 +396,8 @@ const makeLiveGatewayRpc = (
     readCiLog: (input) =>
       wireStream(client[M.readCiLog](input), "The worker's CI log read failed."),
     claimCapacity: (input) => call({ _tag: "claimCapacity", input }),
+    hold: (input) => call({ _tag: "hold", input }),
+    releaseHold: (cardId) => call({ _tag: "releaseHold", cardId }).pipe(Effect.asVoid),
     syncCards: (input) => call({ _tag: "syncCards", input }),
     subscribeCapacity: wireStream(
       client[M.subscribeCapacity]({}),
@@ -409,5 +411,6 @@ const makeLiveGatewayRpc = (
     checkReadiness: (input) => call({ _tag: "checkReadiness", input }),
     readinessOutput: (repositoryKey, path) =>
       call({ _tag: "readinessOutput", repositoryKey, path }),
+    actuals: (input) => call({ _tag: "actuals", input }),
   };
 };

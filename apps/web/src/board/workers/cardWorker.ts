@@ -20,6 +20,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 
+import { boardShellHoldsWorktree } from "./boardWorkerFilter";
 import { localWorkerLabel } from "./threadWorker";
 import { clockTime } from "./workerCopy";
 
@@ -34,37 +35,37 @@ export function boardWorkerLabel(workerId: BoardWorkerId, state: BoardWorkersSta
   return state.workers.find((worker) => worker.id === workerId)?.label ?? workerId;
 }
 
-/** Where a card runs, as its shell and the board's default say: its bound
-    worker (a pin, or where it holds a worktree), else the default. */
+/** Where a card runs, as its shell says: its bound worker (a pin, or where it holds a
+    worktree), else the board server. T3o: there is no default worker (T3O-87). */
 function boardCardWorker(
   card: Pick<BoardCardShell, "workerId">,
-  state: BoardWorkersState,
+  _state: BoardWorkersState,
 ): { readonly workerId: BoardWorkerId; readonly bound: boolean } {
   return card.workerId === undefined
-    ? { workerId: state.defaultWorkerId, bound: false }
+    ? { workerId: BOARD_LOCAL_WORKER_ID, bound: false }
     : { workerId: card.workerId, bound: true };
 }
 
 export interface BoardCardWorkerChip {
   readonly label: string;
-  /** Solid when the card is pinned or holds a worktree; dashed when it
-      follows the default and hasn't started. */
-  readonly bound: boolean;
+  /** T3o: a server icon once placed, a pin icon while only pinned (T3O-87). */
+  readonly kind: "placed" | "pinned";
   readonly tooltip: string;
 }
 
-/** The meta row's worker chip (prototype 4.4), or null on a one-worker board. */
+/** The meta row's worker chip, or null on a one-worker board or before the card is placed
+    or pinned. */
 export function boardCardWorkerChip(
-  card: Pick<BoardCardShell, "workerId">,
+  card: Pick<BoardCardShell, "workerId" | "worktreeReady" | "worktreeProvisioning">,
   state: BoardWorkersState,
 ): BoardCardWorkerChip | null {
-  if (!boardShowsWorkers(state)) return null;
-  const { workerId, bound } = boardCardWorker(card, state);
-  const name = boardWorkerLabel(workerId, state);
+  if (!boardShowsWorkers(state) || card.workerId === undefined) return null;
+  const name = boardWorkerLabel(card.workerId, state);
+  const placed = boardShellHoldsWorktree(card);
   return {
-    label: workerId === BOARD_LOCAL_WORKER_ID ? "local" : name,
-    bound,
-    tooltip: bound ? `Runs on ${name}` : `Follows the default worker (${name})`,
+    label: card.workerId === BOARD_LOCAL_WORKER_ID ? "local" : name,
+    kind: placed ? "placed" : "pinned",
+    tooltip: placed ? `Placed on ${name}` : `Pinned to ${name}: its builds run there`,
   };
 }
 
@@ -212,17 +213,37 @@ export function boardWorkerChoices(input: {
   return [local, ...rows];
 }
 
-/** The closed Worker field: "Follow default (This server)", or the pin. */
+/** T3o: the unpinned choice: the placement gate picks at build start (T3O-87). */
+export const BOARD_ANY_READY_WORKER_LABEL = "Any ready worker";
+
+/** The closed Worker field: "Any ready worker", or the pin. */
 export function boardWorkerFieldLabel(
   pinnedWorkerId: BoardWorkerId | null,
   state: BoardWorkersState,
 ): { readonly label: string; readonly pinned: boolean } {
   return pinnedWorkerId === null
-    ? {
-        label: `Follow default (${boardWorkerLabel(state.defaultWorkerId, state)})`,
-        pinned: false,
-      }
+    ? { label: BOARD_ANY_READY_WORKER_LABEL, pinned: false }
     : { label: boardWorkerLabel(pinnedWorkerId, state), pinned: true };
+}
+
+/**
+ * T3o: the card's placement line (T3O-87): where and when the gate placed it and why, or that
+ * it is chosen when the build starts.
+ */
+export function boardCardPlacementLine(
+  placement: {
+    readonly workerId: string;
+    readonly at: string;
+    readonly reason: string | null;
+  } | null,
+  holdsWorktree: boolean,
+  state: BoardWorkersState,
+): string {
+  if (placement === null || !holdsWorktree) return "Not placed yet: chosen when the build starts";
+  const worker = boardWorkerLabel(placement.workerId as BoardWorkerId, state);
+  return `${worker} · placed at ${clockTime(placement.at)}${
+    placement.reason === null ? "" : ` · ${placement.reason}`
+  }`;
 }
 
 /**
@@ -261,7 +282,20 @@ export type BoardQueueReason =
       readonly behind: string | null;
       /** Bigger than the worker declares: no room will ever free there. */
       readonly tooBig: boolean;
+      /** T3o: an unpinned card too big for every ready worker names none (T3O-87). */
+      readonly anyWorker: boolean;
     }
+  | { readonly kind: "no-ready-worker"; readonly project: string }
+  | {
+      readonly kind: "server-checkout";
+      readonly project: string;
+      readonly missing: boolean;
+    }
+  | { readonly kind: "server-sign-in"; readonly provider: string }
+  /** T3o: the card holds `worker` and starts there when room frees (T3O-87). */
+  | { readonly kind: "holding"; readonly worker: string }
+  /** T3o: `worker` isn't taking new cards: held for this board's `behind`, or not said why. */
+  | { readonly kind: "reserved"; readonly worker: string; readonly behind: string | null }
   | { readonly kind: "quota"; readonly worker: string }
   | { readonly kind: "agent-cap"; readonly worker: string }
   | { readonly kind: "needs-update"; readonly worker: string }
@@ -311,6 +345,28 @@ export function boardQueueReason(input: {
             ? null
             : (input.cardKeys.get(detail.behindCardId) ?? null),
         tooBig: detail?.tooBig === true,
+        anyWorker: detail?.tooBig === true && detail.workerId === undefined,
+      };
+    case "no-ready-worker":
+      return { kind: "no-ready-worker", project: input.projectName };
+    case "server-checkout":
+      return {
+        kind: "server-checkout",
+        project: input.projectName,
+        missing: detail?.serverCheckout === "missing",
+      };
+    case "server-sign-in":
+      return { kind: "server-sign-in", provider: detail?.providerInstanceId ?? "the provider" };
+    case "holding":
+      return { kind: "holding", worker };
+    case "reserved":
+      return {
+        kind: "reserved",
+        worker,
+        behind:
+          detail?.behindCardId === undefined
+            ? null
+            : (input.cardKeys.get(detail.behindCardId) ?? null),
       };
     case "quota":
       return { kind: "quota", worker };

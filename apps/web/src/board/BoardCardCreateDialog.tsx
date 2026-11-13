@@ -10,6 +10,7 @@ import {
   assignBoardKeyPrefix,
   boardStagesInOrder,
   resolveBoardStageExecution,
+  type BoardCardPriority,
   type BoardCardShell,
   type BoardStageDefinition,
   type BoardStageId,
@@ -72,9 +73,9 @@ import { boardCardCreateShortcutLabel, isBoardCardCreateShortcut } from "./board
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
 import { BoardWorkerPicker } from "./workers/BoardWorkerPicker";
 import {
+  BOARD_ANY_READY_WORKER_LABEL,
   boardWorkerCheckoutWarning,
   boardWorkerFieldLabel,
-  boardWorkerLabel,
 } from "./workers/cardWorker";
 import { useBoardWorkerChoices } from "./workers/useBoardWorkerChoices";
 import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
@@ -85,6 +86,9 @@ import { projectAccent, projectIconColorOf } from "./projectAccent";
 import { useBoardSettings, useUpdateBoardSettings } from "./useBoardEnvironmentId";
 import { BoardInput } from "./ui/BoardInput";
 import { BoardBriefEditor } from "./mentions/BoardBriefEditor";
+import { BoardCardPrioritySegmented } from "./BoardCardPriority";
+import { boardCardPriorityDialogRule, boardCardPriorityFromShortcut } from "./boardCardPriority";
+import { isEditableFocused } from "../lib/editableFocus";
 import { BoardButton } from "./ui/BoardButton";
 import { BoardDialogFooter, BoardDialogTitle } from "./ui/BoardDialog";
 import { BoardKbd } from "./ui/BoardKbd";
@@ -188,6 +192,7 @@ export function BoardCardCreateDialog({
   const workerField = useBoardWorkerChoices(environmentId, projectId);
   /** The card's scheduled start, null until the clock is touched. */
   const [scheduledStartAt, setScheduledStartAt] = useState<string | null>(null);
+  const [priority, setPriority] = useState<BoardCardPriority>("normal");
   const [stage, setStage] = useState<BoardStageId>(defaultStage);
   const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
@@ -282,6 +287,7 @@ export function BoardCardCreateDialog({
     setBaseBranch(null);
     setPinnedWorkerId(null);
     setScheduledStartAt(null);
+    setPriority("normal");
     setStage(defaultStage);
     setTitle("");
     setBrief("");
@@ -308,6 +314,7 @@ export function BoardCardCreateDialog({
     labelIds,
     dependsOn,
     scheduledStartAt,
+    priority,
     attachments: attachmentRefs,
   };
   const draftHasContent = boardCardDraftHasContent(draftFields);
@@ -351,6 +358,7 @@ export function BoardCardCreateDialog({
         setBaseBranch(fields.baseBranch);
         setPinnedWorkerId(null);
         setScheduledStartAt(fields.scheduledStartAt);
+        setPriority(fields.priority);
         setStage(fields.stage);
         setTitle(fields.title);
         setBrief(fields.brief);
@@ -473,6 +481,7 @@ export function BoardCardCreateDialog({
         // touched, which is nearly every card — and the reason the field is
         // key-optional on the command rather than a nullable one.
         ...(scheduledStartAt === null ? {} : { scheduledStartAt }),
+        ...(priority === "normal" ? {} : { priority }),
         // The child preset: a card created inside a drill-in is that
         // parent's child, exactly as if a plan had materialised it.
         ...(subBoardParentId === null ? {} : { parentCardId: subBoardParentId }),
@@ -529,6 +538,19 @@ export function BoardCardCreateDialog({
       <DialogPopup
         className="max-h-[86vh] w-[min(600px,100%)] max-w-[600px] overflow-hidden"
         onKeyDown={(event) => {
+          const pickedPriority = boardCardPriorityFromShortcut({
+            altKey: event.altKey,
+            ctrlKey: event.ctrlKey,
+            metaKey: event.metaKey,
+            code: event.code,
+            key: event.key,
+            editable: isEditableFocused(event.target),
+          });
+          if (pickedPriority !== null) {
+            event.preventDefault();
+            setPriority(pickedPriority);
+            return;
+          }
           if (
             !isBoardCardCreateShortcut({
               altKey: event.altKey,
@@ -726,7 +748,7 @@ export function BoardCardCreateDialog({
                 <BoardWorkerPicker
                   choices={workerField.choices}
                   className="h-8 w-full"
-                  followLabel={`Follow default (${boardWorkerLabel(workerField.workers.defaultWorkerId, workerField.workers)})`}
+                  followLabel={BOARD_ANY_READY_WORKER_LABEL}
                   onSelect={setPinnedWorkerId}
                   onSetUp={workerField.setUp}
                   pinnedWorkerId={pinnedWorkerId}
@@ -838,6 +860,16 @@ export function BoardCardCreateDialog({
               onDetach={null}
               state={briefAttachments}
             />
+          </div>
+
+          <div className="min-w-0">
+            <BoardSectionHeading className="mb-2">Priority</BoardSectionHeading>
+            <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2">
+              <BoardCardPrioritySegmented onChange={setPriority} value={priority} />
+              <span className="min-w-40 flex-1 text-board-11-5 leading-normal text-pretty text-muted-foreground">
+                {boardCardPriorityDialogRule(priority)}
+              </span>
+            </div>
           </div>
 
           <div className="min-w-0">

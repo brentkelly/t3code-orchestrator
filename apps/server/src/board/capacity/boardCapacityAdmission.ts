@@ -10,7 +10,6 @@ import {
   boardCardEffectiveWorkerId,
   boardCardRequestedProfile,
   boardProjectStageConfig,
-  boardResourceProfileOverflow,
   boardStageWithRole,
   type BoardCard,
   type BoardCardId,
@@ -97,7 +96,7 @@ export function desiredHeavy(input: {
 
 /** The worker a card's worktree is on, or would be cut on. */
 const cardWorkerOf = (board: BoardState, card: BoardCard): BoardWorkerId =>
-  boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+  boardCardEffectiveWorkerId(card);
 
 /** The card's reservation if it were placed now. */
 export const requestedProfileOf = (board: BoardState, card: BoardCard) =>
@@ -105,26 +104,6 @@ export const requestedProfileOf = (board: BoardState, card: BoardCard) =>
     card.resources,
     boardProjectStageConfig(board, card.projectId)?.resources ?? null,
   );
-
-/** Too big: a card with no worktree whose profile exceeds its worker's declared capacity. */
-export function tooBigDimension(
-  profile: BoardResourceProfile,
-  snapshot: BoardWorkerCapacitySnapshot | null,
-): BoardResourceDimension | null {
-  if (snapshot === null) return null;
-  return boardResourceProfileOverflow(profile, snapshot.declared);
-}
-
-/** What the local filter says before any claim: fits, or the dimension that doesn't. */
-export function headroomShortfall(
-  profile: BoardResourceProfile,
-  snapshot: BoardWorkerCapacitySnapshot | null,
-): BoardResourceDimension | null {
-  if (snapshot === null) return null;
-  if (snapshot.over.cpuRam) return "cpu";
-  if (snapshot.over.disk) return "disk";
-  return boardResourceProfileOverflow(profile, snapshot.headroom);
-}
 
 const isGroup = (card: BoardCard) => card.group !== null;
 
@@ -341,6 +320,10 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     workerId: BoardWorkerId,
     providerInstanceId: string | null,
     force: boolean,
+    /** T3o: the card holds this worker and starts early (T3O-87). */
+    hold = false,
+    /** T3o: a later card's hold here gives way if this claim is granted (T3O-87). */
+    replacesCardId: string | null = null,
   ) {
     if (isGroup(card)) return { kind: "none" } as PlacementDecision;
     if (!(yield* deps.client.synced(workerId)) && !(yield* syncWorker(workerId))) {
@@ -360,6 +343,8 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       profile,
       providerInstanceId,
       ...(force ? { force: true } : {}),
+      ...(hold && !force ? { hold: true } : {}),
+      ...(replacesCardId === null ? {} : { replacesCardId }),
     });
     if (answer.outcome === "unavailable") return { kind: "unavailable" } as PlacementDecision;
     if (answer.outcome === "denied") {
@@ -380,6 +365,8 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     card: BoardCard,
     providerInstanceId: string | null,
     force: boolean,
+    /** T3o: the card holds its worker for this grow: served at its early-start share (T3O-87). */
+    hold = false,
   ) {
     if (isGroup(card)) return null;
     const grant = card.resources?.grant ?? null;
@@ -403,6 +390,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       profile,
       providerInstanceId,
       ...(force ? { force: true } : {}),
+      ...(hold && !force ? { hold: true } : {}),
     });
     if (answer.outcome === "unavailable") {
       return {
@@ -671,8 +659,12 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
         board.cards.find((card) => card.id === first?.cardId) ??
         waitingCi.find((card) => (card.placedWorkerId ?? cardWorkerOf(board, card)) === workerId);
       if (firstCard === undefined) continue;
-      const need = firstCard.resources?.grant?.profile ?? requestedProfileOf(board, firstCard);
+      const full = firstCard.resources?.grant?.profile ?? requestedProfileOf(board, firstCard);
       const snapshot = yield* deps.client.latest(workerId);
+      // T3o: a step holding the worker needs only its early-start share free (T3O-87).
+      const fraction =
+        first?.queuedBy === "holding" ? (snapshot?.hold?.earlyStartFraction ?? 0.5) : 1;
+      const need = { ...full, cpuCores: full.cpuCores * fraction, ramGiB: full.ramGiB * fraction };
       const last = releasedAgainst.get(workerId);
       if (
         last !== undefined &&

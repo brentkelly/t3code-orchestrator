@@ -58,6 +58,9 @@ export interface BoardReviewLoopFinding {
   readonly retriageNote: string;
   readonly reverdict: BoardReviewVerdict | null;
   readonly reverdictNote: string;
+  /** The latest adjudication ruled this improvement below the round's raised bar: it no
+      longer blocks, though the reviewer's rating stands. */
+  readonly belowBar: boolean;
   /** The round this finding was first raised in, when a human carried it in
       as must-fix; null for the reviewer's own. */
   readonly carriedFrom: number | null;
@@ -149,9 +152,10 @@ export interface BoardReviewLoop {
   /** The stuck (or advanced-past) round's fixes no review has read; on a loop converged
       `settled`, the fixes only the adjudicator verified. */
   readonly unreviewedFixes: number;
-  /** Set when the adjudicator ended the loop (nothing new was raised), or when a settling
-      round's critical findings were all settled. */
-  readonly convergedBy: "adjudicator" | "settled" | null;
+  /** Set when the adjudicator ended the loop (nothing new was raised), when a settling
+      round's critical findings were all settled, or when a full round's remaining blocking
+      findings were all ruled below the bar. */
+  readonly convergedBy: "adjudicator" | "settled" | "below-bar" | null;
   /** The step id the loop halted `unreadable` on, null otherwise — the record
       the pane's Reopen sends back. */
   readonly unreadableStepId: string | null;
@@ -291,6 +295,7 @@ export function deriveBoardReviewLoop(
         retriageNote: redisposition?.note ?? "",
         reverdict: reverdict?.verdict ?? null,
         reverdictNote: reverdict?.note ?? "",
+        belowBar: (reverdict ?? verdict)?.belowBar === true,
         carriedFrom,
       };
     });

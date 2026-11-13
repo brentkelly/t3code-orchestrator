@@ -22,6 +22,8 @@ import {
 } from "./baseSchemas.ts";
 import {
   BoardCapacityClaimInput,
+  BoardCapacityHoldInput,
+  BoardCapacityHoldResult,
   BoardCapacityClaimResult,
   BoardSyncCardsInput,
   BoardSyncCardsResult,
@@ -32,6 +34,7 @@ import {
   BoardWorkerRunSetupInput,
   BoardWorkerSetupState,
 } from "./boardCapacity.ts";
+import { BoardStepReading, BoardWorkerActualsInput } from "./boardActuals.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { RepositoryIdentity } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
@@ -134,8 +137,16 @@ export const BoardGatewayTurnUsage = Schema.Struct({
   cacheCreationTokens: Schema.optional(NonNegativeInt),
   outputTokens: Schema.optional(NonNegativeInt),
   reasoningTokens: Schema.optional(NonNegativeInt),
+  /** Absent from workers that predate T3O-90. */
+  hasSubagents: Schema.optional(Schema.Boolean),
   otherUsage: Schema.optional(
-    Schema.Struct({ inputTokens: NonNegativeInt, outputTokens: NonNegativeInt }),
+    Schema.Struct({
+      inputTokens: NonNegativeInt,
+      outputTokens: NonNegativeInt,
+      /** The cache share of `inputTokens`; absent on legacy usage, which is split by ratio. */
+      cachedInputTokens: Schema.optional(NonNegativeInt),
+      cacheCreationTokens: Schema.optional(NonNegativeInt),
+    }),
   ),
 });
 export type BoardGatewayTurnUsage = typeof BoardGatewayTurnUsage.Type;
@@ -389,6 +400,9 @@ export const BoardGatewayCall = Schema.Union([
   Schema.TaggedStruct("todoLogHead", {}),
   // T3o: worker-owned capacity (T3O-86). The board is the calling session's.
   Schema.TaggedStruct("claimCapacity", { input: BoardCapacityClaimInput }),
+  // T3o: holds (T3O-87). An older worker refuses the tags: it is below the floor anyway.
+  Schema.TaggedStruct("hold", { input: BoardCapacityHoldInput }),
+  Schema.TaggedStruct("releaseHold", { cardId: TrimmedNonEmptyString }),
   Schema.TaggedStruct("syncCards", { input: BoardSyncCardsInput }),
   Schema.TaggedStruct("setupState", { worktreePath: Schema.String }),
   Schema.TaggedStruct("cancelSetup", { worktreePath: Schema.String }),
@@ -398,6 +412,8 @@ export const BoardGatewayCall = Schema.Union([
     repositoryKey: Schema.NullOr(Schema.String),
     path: Schema.String,
   }),
+  // T3o: a step's measured actuals (T3O-87). An older worker refuses the tag: not measured.
+  Schema.TaggedStruct("actuals", { input: BoardWorkerActualsInput }),
 ]);
 export type BoardGatewayCall = typeof BoardGatewayCall.Type;
 
@@ -426,12 +442,15 @@ export const BOARD_GATEWAY_CALL_RESULTS = {
   project: Schema.NullOr(BoardGatewayProjectDetail),
   todoLogHead: NonNegativeInt,
   claimCapacity: BoardCapacityClaimResult,
+  hold: BoardCapacityHoldResult,
+  releaseHold: Schema.Null,
   syncCards: BoardSyncCardsResult,
   setupState: BoardWorkerSetupState,
   cancelSetup: Schema.Null,
   readSetupLog: Schema.String,
   checkReadiness: BoardWorkerReadiness,
   readinessOutput: Schema.NullOr(Schema.String),
+  actuals: Schema.NullOr(BoardStepReading),
 } as const satisfies Record<BoardGatewayCall["_tag"], Schema.Top>;
 
 /**

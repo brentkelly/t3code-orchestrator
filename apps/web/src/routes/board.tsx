@@ -16,6 +16,8 @@ export interface BoardSearch {
   /** Show only stalled cards: the "find every stalled card"
       affordance. Absent / false means show everything. */
   readonly stalled?: boolean;
+  /** T3o: the worker filter, by worker id or `unplaced`, comma-separated (T3O-87). */
+  readonly worker?: string;
 }
 
 /** Shared with the sub-board route — the two scopes are the same
@@ -26,10 +28,12 @@ export function validateBoardSearch(search: Record<string, unknown>): BoardSearc
   const project = nonEmpty(search.project);
   const card = nonEmpty(search.card);
   const stalled = search.stalled === true || search.stalled === "true";
+  const worker = nonEmpty(search.worker);
   return {
     ...(project === undefined ? {} : { project }),
     ...(card === undefined ? {} : { card }),
     ...(stalled ? { stalled: true } : {}),
+    ...(worker === undefined ? {} : { worker }),
   };
 }
 

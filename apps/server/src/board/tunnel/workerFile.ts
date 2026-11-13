@@ -100,6 +100,23 @@ export const WORKER_CONFIG_KEYS: ReadonlyArray<{
         : { ok: false, message: "quotaThresholdPercent must be between 1 and 100." };
     },
   },
+  {
+    key: "hold.earlyStartFraction",
+    description:
+      "Share of a held card's CPU and RAM that must be free for it to start early (it needs all its disk). Default: 0.5.",
+    parse: (raw) => {
+      const value = Number(raw);
+      return Number.isFinite(value) && value > 0 && value <= 1
+        ? { ok: true, value }
+        : { ok: false, message: "hold.earlyStartFraction must be above 0 and at most 1." };
+    },
+  },
+  {
+    key: "hold.maxMinutes",
+    description:
+      "How long one board may hold this worker before another board's waiting card ends it. Default: 120.",
+    parse: positiveNumber("hold.maxMinutes"),
+  },
 ];
 
 /** The config entry a key belongs to, or undefined for an unknown key. */
@@ -121,6 +138,9 @@ export interface WorkerCapacitySettings {
   readonly maxAgents: number | null;
   readonly providerCaps: Readonly<Record<string, number>>;
   readonly quotaThresholdPercent: number;
+  /** T3o: holds (T3O-87). */
+  readonly holdEarlyStartFraction: number;
+  readonly holdMaxMinutes: number;
 }
 
 export function resolveWorkerCapacitySettings(
@@ -150,6 +170,8 @@ export function resolveWorkerCapacitySettings(
     providerCaps,
     quotaThresholdPercent:
       threshold === null ? DEFAULT_QUOTA_THRESHOLD_PERCENT : Math.min(100, threshold),
+    holdEarlyStartFraction: Math.min(1, read("hold.earlyStartFraction") ?? 0.5),
+    holdMaxMinutes: read("hold.maxMinutes") ?? 120,
   };
 }
 
@@ -188,6 +210,27 @@ const StatusProfile = Schema.Struct({
   diskGB: Schema.Number,
 });
 
+/** T3o: the hold `t3o-worker status` prints (T3O-87). Boards by id: this is the worker's own
+    view, which may name every board it serves. */
+export const WorkerHoldStatus = Schema.Struct({
+  placement: Schema.NullOr(
+    Schema.Struct({
+      boardEnvironmentId: Schema.String,
+      cardId: Schema.String,
+      since: Schema.String,
+      until: Schema.NullOr(Schema.String),
+    }),
+  ),
+  grows: Schema.Array(
+    Schema.Struct({
+      boardEnvironmentId: Schema.String,
+      cardId: Schema.String,
+      since: Schema.String,
+    }),
+  ),
+});
+export type WorkerHoldStatus = typeof WorkerHoldStatus.Type;
+
 /** The capacity section `t3o-worker status` prints (T3O-86). */
 export const WorkerCapacityStatus = Schema.Struct({
   updatedAt: Schema.String,
@@ -206,6 +249,8 @@ export const WorkerCapacityStatus = Schema.Struct({
       boardEnvironmentId: Schema.NullOr(Schema.String),
     }),
   ),
+  /** T3o: any hold on this worker (T3O-87). */
+  hold: Schema.optionalKey(WorkerHoldStatus),
 });
 export type WorkerCapacityStatus = typeof WorkerCapacityStatus.Type;
 

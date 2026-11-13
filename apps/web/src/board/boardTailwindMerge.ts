@@ -4,6 +4,7 @@ import { mergeConfigs, type Config } from "tailwind-merge";
     font size and `shadow-board-*` as a shadow rather than as colours. */
 export const BOARD_TAILWIND_MERGE_THEME = {
   text: [
+    "board-9",
     "board-9-5",
     "board-10",
     "board-10-5",
@@ -16,6 +17,7 @@ export const BOARD_TAILWIND_MERGE_THEME = {
     "board-15",
     "board-17",
     "board-21",
+    "board-22",
   ],
   leading: [
     "board-1-3",
@@ -27,6 +29,7 @@ export const BOARD_TAILWIND_MERGE_THEME = {
     "board-1-7",
   ],
   tracking: [
+    "board-n2",
     "board-n1-5",
     "board-n1",
     "board-2",
@@ -54,6 +57,7 @@ export const BOARD_TAILWIND_MERGE_THEME = {
     "board-card-attention-hover",
     "board-card-stack",
     "board-card-stack-hover",
+    "board-card-urgent",
     "board-menu",
     "board-menu-dark",
     "board-ring-border",

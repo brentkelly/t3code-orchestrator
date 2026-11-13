@@ -9,6 +9,8 @@ import {
   boardResourceProfileValue,
   ZERO_BOARD_RESOURCE_PROFILE,
   type BoardCapacityClaimInput,
+  type BoardCapacityHoldInput,
+  type BoardCapacityHoldResult,
   type BoardResourceProfile,
   type BoardSyncedCard,
   type BoardWorkerCapacitySnapshot,
@@ -41,6 +43,16 @@ export interface FakeCapacity {
   readonly unreachable: Set<BoardWorkerId>;
   /** A snapshot `latest` keeps answering for a worker, as one not yet pushed again would. */
   readonly frozen: Map<BoardWorkerId, BoardWorkerCapacitySnapshot>;
+  /** T3o: every hold asked, and every withdrawal (T3O-87). */
+  readonly holds: Array<BoardCapacityHoldInput & { readonly workerId: BoardWorkerId }>;
+  readonly releasedHolds: Array<{ readonly workerId: BoardWorkerId; readonly cardId: string }>;
+  /** The early-start share every worker reports. 1 (the default) needs the whole profile, so
+      a suite about queue order sees no early start. */
+  earlyStartFraction: number;
+  /** Run before the next hold is answered, once: a test parks a call mid-flight with it. */
+  beforeNextHold: Effect.Effect<void> | null;
+  /** How a worker answers a hold; by default it holds, short of nothing. */
+  holdAnswer: (workerId: BoardWorkerId, input: BoardCapacityHoldInput) => BoardCapacityHoldResult;
 }
 
 const fits = (need: BoardResourceProfile, room: BoardResourceProfile) =>
@@ -97,6 +109,11 @@ export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
     agentCap: null,
     unreachable: new Set(),
     frozen: new Map(),
+    holds: [],
+    releasedHolds: [],
+    earlyStartFraction: 1,
+    beforeNextHold: null,
+    holdAnswer: () => ({ outcome: "held", short: ZERO_BOARD_RESOURCE_PROFILE, until: null }),
     publish: (workerId) => PubSub.publish(pubsub, workerId).pipe(Effect.asVoid),
     client: {
       localBoardId: "env-board",
@@ -118,7 +135,13 @@ export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
                 }
               : input.profile;
           const room = headroomOf(workerId);
-          if (input.force !== true && !fits(need, room)) {
+          // T3o: a held card starts early at its share of CPU and RAM, as a worker does (T3O-87).
+          const share = fake.earlyStartFraction;
+          const asked =
+            input.hold === true
+              ? { ...need, cpuCores: need.cpuCores * share, ramGiB: need.ramGiB * share }
+              : need;
+          if (input.force !== true && !fits(asked, room)) {
             const dimension = short(need, room);
             return {
               outcome: "denied" as const,
@@ -132,6 +155,21 @@ export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
           return { outcome: "granted" as const };
         }),
       nextSeq: () => Effect.sync(() => ++seq),
+      hold: (workerId, input) =>
+        Effect.suspend(() => {
+          const before = fake.beforeNextHold ?? Effect.void;
+          fake.beforeNextHold = null;
+          return before;
+        }).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              fake.holds.push({ ...input, workerId });
+              return fake.holdAnswer(workerId, input);
+            }),
+          ),
+        ),
+      releaseHold: (workerId, cardId) =>
+        Effect.sync(() => void fake.releasedHolds.push({ workerId, cardId })),
       syncCards: (workerId, read) =>
         Effect.map(read, (cards) => {
           fake.syncs.push({ workerId, cards });
@@ -162,6 +200,12 @@ export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
             providers: [],
             readiness: [],
             heavyCards: [],
+            hold: {
+              closed: false,
+              until: null,
+              earlyStartFraction: fake.earlyStartFraction,
+              cardId: null,
+            },
           };
         }),
       all: Effect.sync(() => new Map()),

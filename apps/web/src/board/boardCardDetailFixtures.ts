@@ -54,6 +54,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     autoMergeSetting: null,
     autoMergeHold: null,
     mergeStrategy: null,
+    priority: "normal",
     pinnedWorkerId: null,
     placedWorkerId: null,
     workerMove: null,
@@ -108,6 +109,7 @@ export function detail(
     ciPasses: [],
     usage: edges?.usage ?? [],
     usageHistoryPartial: edges?.usageHistoryPartial ?? false,
+    actuals: [],
   };
 }
 

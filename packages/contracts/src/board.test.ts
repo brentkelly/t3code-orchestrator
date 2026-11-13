@@ -6,6 +6,9 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardCardEffectivePriority,
+  BoardStageExecution,
+  resolveBoardReviewTierModel,
   boardPullRequestPredatesCard,
   BoardCardStepState,
   BOARD_CARD_LABELS_MAX,
@@ -95,7 +98,7 @@ import {
   liveBoardCardDependents,
   makeBoardCardShell,
   unmetBoardCardDependencies,
-  type BoardCard,
+  BoardCard,
   type BoardPlan,
   type BoardState,
   BoardShellSnapshot,
@@ -115,6 +118,8 @@ const encodeShell = Schema.encodeUnknownSync(BoardCardShell);
 const decodeShell = Schema.decodeUnknownSync(BoardCardShell);
 const encodeSnapshot = Schema.encodeUnknownSync(BoardShellSnapshot);
 const decodeStepState = Schema.decodeUnknownSync(BoardCardStepState);
+const decodeCard = Schema.decodeUnknownSync(BoardCard);
+const encodeCard = Schema.encodeSync(BoardCard);
 
 const utf8Bytes = (value: unknown): number =>
   new TextEncoder().encode(JSON.stringify(value)).length;
@@ -124,7 +129,7 @@ const utf8Bytes = (value: unknown): number =>
  * to every card on every reconnect; raise it only for key-optional fields that cost an
  * ordinary card zero (the linear-growth test measures those).
  */
-const BOARD_CARD_SHELL_BYTE_BUDGET = 1472;
+const BOARD_CARD_SHELL_BYTE_BUDGET = 1488;
 
 /** Five UUID-length label ids: a card at exactly `BOARD_CARD_LABELS_MAX`,
     the worst case the shell must lay out for. */
@@ -169,6 +174,7 @@ const fullyPopulatedShell = {
   // scheduled, so the field is proven to fit in the worst case rather than
   // only in the absent-key case every unscheduled card sends.
   scheduledStartAt: "2026-01-01T00:00:00.000Z",
+  priority: "urgent",
   // Populated for the same reason: the budget is measured against a
   // card with every Automation toggle set, not only the inheriting case.
   autoPlanSetting: true,
@@ -214,6 +220,7 @@ const typicalCard = (index: number): BoardCard => ({
   autoMergeSetting: null,
   autoMergeHold: null,
   mergeStrategy: null,
+  priority: "normal",
   pinnedWorkerId: null,
   placedWorkerId: null,
   workerMove: null,
@@ -355,6 +362,22 @@ describe("BoardCardShell payload discipline", () => {
     const extra =
       utf8Bytes(encodeShell(sentBack)) - utf8Bytes(encodeShell(boardCardShellFromCard(base)));
     expect(extra).toBeLessThanOrEqual(BOARD_CI_SHELL_FINDING_MAX + 256);
+  });
+
+  it("a card's priority decodes to normal on older payloads and the shell omits normal", () => {
+    const { priority: _priority, ...legacy } = typicalCard(1);
+    const decoded = decodeCard(encodeCard(legacy as BoardCard));
+    expect(decoded.priority).toBe("normal");
+    expect("priority" in boardCardShellFromCard(decoded)).toBe(false);
+    expect(boardCardShellFromCard({ ...decoded, priority: "low" }).priority).toBe("low");
+  });
+
+  it("a group's effective priority is normal whatever it stores", () => {
+    expect(boardCardEffectivePriority({ priority: "urgent", group: null })).toBe("urgent");
+    expect(boardCardEffectivePriority({})).toBe("normal");
+    expect(boardCardEffectivePriority({ priority: "urgent", group: { target: "own" } })).toBe(
+      "normal",
+    );
   });
 
   it("stays under the fixed serialized byte budget at full population", () => {
@@ -1448,6 +1471,50 @@ describe("per-card merge strategy (T3O-80)", () => {
         stageStrategy: null,
       }),
     ).toEqual({ strategy: "squash", source: "board" });
+  });
+});
+
+const decodeStageExecution = Schema.decodeUnknownSync(BoardStageExecution);
+
+describe("resolveBoardReviewTierModel (T3O-94)", () => {
+  const fable = { instanceId: ProviderInstanceId.make("anthropic"), model: "claude-fable-5-2" };
+  const opus = { instanceId: ProviderInstanceId.make("anthropic"), model: "claude-opus-5-5" };
+  const decoded = decodeStageExecution({
+    kind: "review",
+    phases: { review: { model: fable } },
+  });
+  if (decoded.kind !== "review") throw new Error("expected the review member");
+  const withLater = (afterRound: number) => ({
+    ...decoded,
+    laterReviewModel: { afterRound, model: opus },
+  });
+
+  it("decodes settings without the key as off", () => {
+    expect(decoded.laterReviewModel).toBeNull();
+  });
+
+  it.each([
+    ["off", decoded, 1, fable],
+    ["off, a late round", decoded, 9, fable],
+    ["on, an early round", withLater(2), 1, fable],
+    ["on, the last early round", withLater(2), 2, fable],
+    ["on, the first later round", withLater(2), 3, opus],
+    ["on, a custom boundary", withLater(4), 4, fable],
+    ["on, past a custom boundary", withLater(4), 5, opus],
+  ] as const)("%s", (_name, review, round, expected) => {
+    expect(resolveBoardReviewTierModel(review, round)).toEqual(expected);
+  });
+
+  it("falls through to null when the phase has no model of its own", () => {
+    expect(
+      resolveBoardReviewTierModel(
+        {
+          ...decoded,
+          phases: { ...decoded.phases, review: { ...decoded.phases.review, model: null } },
+        },
+        1,
+      ),
+    ).toBeNull();
   });
 });
 

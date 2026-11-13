@@ -179,6 +179,31 @@ const settlingScenarios = [
     stopAfterRound: null,
     roundModes: { "4": { kind: "full" as const } },
   },
+  {
+    name: "a full round whose fixes were all ruled below the bar converges (T3O-92)",
+    completions: [
+      completion("review@5", { reviewedSha: reviewSha(5), findings: improvementsOf(5, 2) }),
+      completion("triage@5", {
+        fixedSha: "fix-5",
+        dispositions: improvementsOf(5, 2).map((f) => ({
+          findingId: f.id,
+          action: "fixed",
+          note: "",
+        })),
+      }),
+      completion("adjudicate@5", {
+        verdicts: improvementsOf(5, 2).map((f) => ({
+          findingId: f.id,
+          verdict: "fix-upheld",
+          note: "below the bar",
+          belowBar: true,
+        })),
+        anotherRound: true,
+      }),
+    ],
+    rounds: 6,
+    stopAfterRound: null,
+  },
 ];
 
 // ── Fixtures: binding adjudication, re-triage and the stuck stop ──
@@ -710,6 +735,69 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     expect(review2.kind).toBe("run");
     if (review2.kind !== "run") return;
     expect(review2.model).toEqual(roundHaiku);
+  });
+
+  it("the later-rounds model reviews every round past afterRound, below both overrides", () => {
+    const fable: BoardModelSelection = {
+      instanceId: ProviderInstanceId.make("anthropic"),
+      model: "claude-fable-5-2",
+    };
+    const opus: BoardModelSelection = {
+      instanceId: ProviderInstanceId.make("anthropic"),
+      model: "claude-opus-5-5",
+    };
+    const haiku: BoardModelSelection = {
+      instanceId: ProviderInstanceId.make("anthropic"),
+      model: "claude-haiku-5-5",
+    };
+    const exec = reviewExec({
+      rounds: 5,
+      laterReviewModel: { afterRound: 2, model: opus },
+      phases: {
+        ...DEFAULT_BOARD_REVIEW_STAGE_EXECUTION.phases,
+        review: { ...DEFAULT_BOARD_REVIEW_STAGE_EXECUTION.phases.review, model: fable },
+      },
+    });
+    const reviewModel = (
+      completions: ReadonlyArray<BoardStepCompletion>,
+      stepId: string,
+      roundOverrides: BoardCardReviewOverrides | null = null,
+      cardOverride: BoardCardStageModelOverride | null = null,
+    ) => {
+      const next = plan(completions, exec, roundOverrides, null, false, cardOverride);
+      expect(next.kind).toBe("run");
+      if (next.kind !== "run") throw new Error("expected a run");
+      expect(next.stepId).toBe(stepId);
+      return next.model;
+    };
+
+    expect(reviewModel(cappedRound(1), "review@2")).toEqual(fable);
+    expect(reviewModel([...cappedRound(1), ...cappedRound(2)], "review@3")).toEqual(opus);
+    // Triage keeps its own model whatever tier the round is on.
+    const triage3 = plan(
+      [
+        ...cappedRound(1),
+        ...cappedRound(2),
+        completion("review@3", reviewPayload([finding("critical", "f3")])),
+      ],
+      exec,
+    );
+    if (triage3.kind !== "run") throw new Error("expected a run");
+    expect(triage3.stepId).toBe("triage@3");
+    expect(triage3.model).toEqual(globalModel);
+    // A card's Review model replaces both tiers...
+    expect(reviewModel(cappedRound(1), "review@2", null, haiku)).toEqual(haiku);
+    expect(reviewModel([...cappedRound(1), ...cappedRound(2)], "review@3", null, haiku)).toEqual(
+      haiku,
+    );
+    // ...and a round the user escalated by hand beats the tier.
+    expect(
+      reviewModel(
+        [...cappedRound(1), ...cappedRound(2)],
+        "review@3",
+        overrides({ roundModels: { "3": fable } }),
+      ),
+    ).toEqual(fable);
   });
 
   it("t3o-29: the card override's access level applies, and its absence inherits", () => {
@@ -1538,7 +1626,7 @@ describe("settling rounds (T3O-64)", () => {
     expect(review.reviewRoundMode).toEqual({ round: 4, mode: settlingSince(reviewSha(3)) });
     expect(review.prompt).toContain("git diff c0ffee3..HEAD");
     // Settling off, or a round already recorded: nothing to record.
-    const off = runOf(plan(oneImprovementRounds(3), reviewExec({ settleAfterRound: null })));
+    const off = runOf(plan(oneImprovementRounds(3), reviewExec({ convergeAfterRound: null })));
     expect(off.reviewRoundMode).toBeUndefined();
     expect(off.prompt).not.toContain("settling round");
     const recorded = runOf(
@@ -1550,6 +1638,36 @@ describe("settling rounds (T3O-64)", () => {
     );
     expect(recorded.reviewRoundMode).toBeUndefined();
     expect(recorded.prompt).toContain("git diff x..HEAD");
+  });
+
+  it("T3O-92: raises the bar for a full round past convergeAfterRound, never a settling one", () => {
+    // Two improvements a round keep every round full.
+    const twoImprovementRounds = (through: number) =>
+      Array.from({ length: through }, (_, i) => fixedRound(i + 1, improvementsOf(i + 1, 2))).flat();
+    const execution = reviewExec({ rounds: 10 });
+    const round4 = runOf(plan(twoImprovementRounds(3), execution));
+    expect(round4.stepId).toBe("review@4");
+    expect(round4.prompt).toContain("raised bar (level 1)");
+    const round8 = runOf(plan(twoImprovementRounds(7), execution));
+    expect(round8.prompt).toContain("raised bar (level 3)");
+    expect(round8.prompt).toContain("where `severity` is `critical` or `nitpick`");
+    const adjudicate = runOf(
+      plan(
+        [
+          ...twoImprovementRounds(5),
+          completion("review@6", { reviewedSha: reviewSha(6), findings: improvementsOf(6, 1) }),
+          completion("triage@6", { fixedSha: "fix-6", dispositions: [] }),
+        ],
+        execution,
+      ),
+    );
+    expect(adjudicate.stepId).toBe("adjudicate@6");
+    expect(adjudicate.prompt).toContain("add `belowBar: true` to its verdict");
+    expect(
+      runOf(plan(twoImprovementRounds(3), reviewExec({ convergeAfterRound: null }))).prompt,
+    ).not.toContain("raised bar");
+    // A settling round's bar is already critical-only.
+    expect(runOf(plan(oneImprovementRounds(3))).prompt).not.toContain("raised bar");
   });
 
   it("plans a full round's review with nothing to record", () => {

@@ -105,6 +105,8 @@ import {
   cardUsageSummary,
   listCardUsageRows,
 } from "./usage/boardUsageStore.ts";
+// T3o: measured actuals (T3O-87).
+import { listCardActualsRows } from "./actuals/boardActualsStore.ts";
 import { makeBoardEventStore } from "./boardEventStore.ts";
 import {
   boardCardFromCreatedPayload,
@@ -177,6 +179,7 @@ const BoardCardDbRow = Schema.Struct({
   /** NULL before migration 057 and for every card that follows the default
       merge strategy — indistinguishable on purpose. */
   mergeStrategy: BoardCard.fields.mergeStrategy,
+  priority: BoardCard.fields.priority,
   /** NULL for every row written before migration 035, and for every card whose
       latest plan proposal was a single plan — indistinguishable on purpose, so
       replay equals rehydration (t3o card 11). Plain text, not JSON: one prose
@@ -222,7 +225,7 @@ const BoardCardDbRow = Schema.Struct({
   ciLastOutcome: Schema.NullOr(Schema.fromJsonString(BoardCardCiLastOutcome)),
   // CI failure round trips without a human.
   ciRoundTrips: Schema.Int,
-  /** T3o: migration 069, NULL until the card has a size, grant or setup (T3O-86). */
+  /** T3o: migration 071, NULL until the card has a size, grant or setup (T3O-86). */
   resources: Schema.NullOr(Schema.fromJsonString(BoardCardResources)),
   /** Migration 051: NULL `groupTarget` is a leaf. */
   groupTarget: Schema.NullOr(BoardCardGroupTarget),
@@ -524,7 +527,7 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULL for rows written before migration 048 and for any step not queued —
   // both read as plain "Queued".
   queuedBy: BoardCardStepState.fields.queuedBy,
-  /** T3o: migration 071, NULL on older rows (T3O-86). */
+  /** T3o: migration 073, NULL on older rows (T3O-86). */
   queuedDetail: Schema.NullOr(Schema.fromJsonString(BoardStepQueuedDetail)),
   startedAt: BoardCardStepState.fields.startedAt,
   updatedAt: BoardCardStepState.fields.updatedAt,
@@ -554,7 +557,7 @@ const BoardPlanDbRow = Schema.Struct({
   locked: Schema.Int,
   /** 0/1; migration 052 defaults every older row to 1 (planned). */
   planned: Schema.Int,
-  /** T3o: migration 069; NULL when the planner suggested no size (T3O-86). */
+  /** T3o: migration 071; NULL when the planner suggested no size (T3O-86). */
   sizing: Schema.NullOr(
     Schema.fromJsonString(
       Schema.Struct({
@@ -630,6 +633,7 @@ const BoardCardShellDbRow = Schema.Struct({
       the aggregate like `parentCardId`, so this snapshot and the JS delta path
       both carry it — or a scheduled card's pill would vanish on reconnect. */
   scheduledStartAt: BoardCard.fields.scheduledStartAt,
+  priority: BoardCard.fields.priority,
   /** The card's own Automation toggles and unattended-run flag. On
       the aggregate like `parentCardId`, so this snapshot and the JS delta path
       both carry them — or a card's Automation summary would change on
@@ -651,6 +655,7 @@ const BoardCardShellDbRow = Schema.Struct({
       reclaim kept it. Derived in SQL here and in JS on the delta path;
       `cardMetaShellFields.test.ts` pins the pair. */
   worktreeReady: Schema.Int,
+  worktreeProvisioning: Schema.Int,
   worktreeKeptReason: Schema.NullOr(Schema.String),
   /** The placement pair: the bound worker, and a move's status and
       target. Derived in SQL here and in JS on the delta path. */
@@ -739,6 +744,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     autoMergeSetting: settingToInt(card.autoMergeSetting),
     autoMergeHold: card.autoMergeHold,
     mergeStrategy: card.mergeStrategy,
+    priority: card.priority,
     pinnedWorkerId: card.pinnedWorkerId,
     placedWorkerId: card.placedWorkerId,
     workerMove: card.workerMove,
@@ -841,6 +847,7 @@ function rowToBoardCard(
     autoMergeSetting: settingFromInt(row.autoMergeSetting),
     autoMergeHold: row.autoMergeHold,
     mergeStrategy: row.mergeStrategy,
+    priority: row.priority,
     pinnedWorkerId: row.pinnedWorkerId,
     placedWorkerId: row.placedWorkerId,
     workerMove: row.workerMove,
@@ -918,6 +925,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_merge_setting,
         auto_merge_hold,
         merge_strategy,
+        priority,
         pinned_worker_id,
         placed_worker_id,
         worker_move,
@@ -971,6 +979,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.autoMergeSetting},
         ${row.autoMergeHold},
         ${row.mergeStrategy},
+        ${row.priority},
         ${row.pinnedWorkerId},
         ${row.placedWorkerId},
         ${row.workerMove},
@@ -1024,6 +1033,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_merge_setting = excluded.auto_merge_setting,
         auto_merge_hold = excluded.auto_merge_hold,
         merge_strategy = excluded.merge_strategy,
+        priority = excluded.priority,
         pinned_worker_id = excluded.pinned_worker_id,
         placed_worker_id = excluded.placed_worker_id,
         worker_move = excluded.worker_move,
@@ -1087,6 +1097,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_merge_setting AS "autoMergeSetting",
         auto_merge_hold AS "autoMergeHold",
         merge_strategy AS "mergeStrategy",
+        priority,
         pinned_worker_id AS "pinnedWorkerId",
         placed_worker_id AS "placedWorkerId",
         worker_move AS "workerMove",
@@ -1201,6 +1212,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ) AS "prNumber",
         parent_card_id AS "parentCardId",
         scheduled_start_at AS "scheduledStartAt",
+        priority,
         auto_plan_setting AS "autoPlanSetting",
         auto_build_setting AS "autoBuildSetting",
         auto_merge_setting AS "autoMergeSetting",
@@ -1237,6 +1249,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         -- path reads the same two facts off the aggregate's worktree.
         CASE WHEN json_extract(worktree, '$.status') = 'ready' THEN 1 ELSE 0 END
           AS "worktreeReady",
+        CASE WHEN json_extract(worktree, '$.status') = 'provisioning' THEN 1 ELSE 0 END
+          AS "worktreeProvisioning",
         json_extract(worktree, '$.reclaimBlockedReason') AS "worktreeKeptReason",
         -- The SECOND producer of the placement pair (T3O-65); the delta path
         -- reads it through boardCardBoundWorkerId: the placement while the
@@ -1302,6 +1316,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ) AS "prNumber",
         parent_card_id AS "parentCardId",
         scheduled_start_at AS "scheduledStartAt",
+        priority,
         auto_plan_setting AS "autoPlanSetting",
         auto_build_setting AS "autoBuildSetting",
         auto_merge_setting AS "autoMergeSetting",
@@ -1338,6 +1353,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         -- path reads the same two facts off the aggregate's worktree.
         CASE WHEN json_extract(worktree, '$.status') = 'ready' THEN 1 ELSE 0 END
           AS "worktreeReady",
+        CASE WHEN json_extract(worktree, '$.status') = 'provisioning' THEN 1 ELSE 0 END
+          AS "worktreeProvisioning",
         json_extract(worktree, '$.reclaimBlockedReason') AS "worktreeKeptReason",
         -- The SECOND producer of the placement pair (T3O-65); the delta path
         -- reads it through boardCardBoundWorkerId: the placement while the
@@ -1497,6 +1514,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_merge_setting AS "autoMergeSetting",
         auto_merge_hold AS "autoMergeHold",
         merge_strategy AS "mergeStrategy",
+        priority,
         pinned_worker_id AS "pinnedWorkerId",
         placed_worker_id AS "placedWorkerId",
         worker_move AS "workerMove",
@@ -2639,6 +2657,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardUsageSummaries: () => allCardUsageSummaries(sql),
     listBoardCardUsageRows: (cardId: BoardCardId) => listCardUsageRows(sql, cardId),
     findBoardCardUsageHistoryPartial: (cardId: BoardCardId) => cardUsageHistoryPartial(sql, cardId),
+    // T3o: a card's measured actuals (T3O-87), in their own store.
+    listBoardCardActualsRows: (cardId: BoardCardId) => listCardActualsRows(sql, cardId),
     upsertBoardCardRow,
     listBoardCardRows,
     listBoardCardThreadLinkRows,
@@ -4141,6 +4161,7 @@ function boardShellCards(
           // key; without it every child looks top-level after a reconnect.
           parentCardId: row.parentCardId,
           scheduledStartAt: row.scheduledStartAt,
+          priority: row.priority,
           autoPlanSetting: settingFromInt(row.autoPlanSetting),
           autoBuildSetting: settingFromInt(row.autoBuildSetting),
           autoMergeSetting: settingFromInt(row.autoMergeSetting),
@@ -4149,6 +4170,7 @@ function boardShellCards(
           autoMergeGaveUp: row.autoMergeGaveUp !== 0,
           prDraft: row.prDraft !== 0,
           worktreeReady: row.worktreeReady !== 0,
+          worktreeProvisioning: row.worktreeProvisioning !== 0,
           worktreeKeptReason: row.worktreeKeptReason,
           workerId: row.workerId,
           workerMove:
@@ -4233,6 +4255,7 @@ function boardArchivedShellCards(
             prNumber: row.prNumber,
             parentCardId: row.parentCardId,
             scheduledStartAt: row.scheduledStartAt,
+            priority: row.priority,
             autoPlanSetting: settingFromInt(row.autoPlanSetting),
             autoBuildSetting: settingFromInt(row.autoBuildSetting),
             autoMergeSetting: settingFromInt(row.autoMergeSetting),
@@ -4241,6 +4264,7 @@ function boardArchivedShellCards(
             autoMergeGaveUp: row.autoMergeGaveUp !== 0,
             prDraft: row.prDraft !== 0,
             worktreeReady: row.worktreeReady !== 0,
+            worktreeProvisioning: row.worktreeProvisioning !== 0,
             worktreeKeptReason: row.worktreeKeptReason,
             workerId: row.workerId,
             workerMove:
@@ -4415,6 +4439,7 @@ function makeBoardCardDetailLoader(
       queries.listBoardCiPassRowsForCard(cardId),
       queries.listBoardCardUsageRows(cardId),
       queries.findBoardCardUsageHistoryPartial(cardId),
+      queries.listBoardCardActualsRows(cardId),
     ]).pipe(
       Effect.map(
         ([
@@ -4435,6 +4460,7 @@ function makeBoardCardDetailLoader(
           ciPassRows,
           usageRows,
           usageHistoryPartial,
+          actualsRows,
         ]) => {
           if (Option.isNone(cardRow)) return null;
           const links = sortBoardCardThreadLinks(
@@ -4510,6 +4536,7 @@ function makeBoardCardDetailLoader(
             decisions: decisionRows,
             usage: usageRows,
             usageHistoryPartial,
+            actuals: actualsRows,
             // Filled below for a sub-board child; a top-level card has no
             // parent to inherit from and keeps the null.
             parentModelOverrides: null,

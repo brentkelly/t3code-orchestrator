@@ -27,6 +27,7 @@ import * as ServerConfig from "../../config.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
+import { BoardActualsMeter } from "../actuals/BoardActualsMeter.ts";
 import { LocalThreadGateway } from "../ThreadGateway.ts";
 import { readWorkerFile, resolveWorkerCapacitySettings } from "../tunnel/workerFile.ts";
 import { BoardRelayStore } from "../workers/BoardRelayStore.ts";
@@ -93,6 +94,8 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const local = yield* LocalThreadGateway;
   const relays = yield* BoardRelayStore;
+  // T3o: optional, so a harness without the meter sets up unmeasured (T3O-87).
+  const actualsMeter = yield* Effect.serviceOption(BoardActualsMeter);
   // The board on this server registers its own threads at start: the engine is built
   // above this layer (it needs the thread gateway this service sits beside).
   let ownBoardThreads: Effect.Effect<ReadonlySet<string>> = Effect.succeed(new Set());
@@ -266,6 +269,8 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
         env: projectScriptRuntimeEnv({ project: { cwd: project.workspaceRoot }, worktreePath }),
       };
     }),
+    // T3o: a setup run is measured in its own scope (T3O-87).
+    ...(Option.isSome(actualsMeter) ? { actuals: actualsMeter.value } : {}),
   });
 
   const ports: WorkerCapacityPorts = {

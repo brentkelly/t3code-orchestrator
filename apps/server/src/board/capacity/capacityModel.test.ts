@@ -182,7 +182,7 @@ describe("headroom", () => {
     expect(later.offered.ramGiB).toBe(20);
   });
 
-  it("offers nothing over declared CPU or RAM, and refuses only placements over disk", () => {
+  it("offers no CPU or RAM over declared CPU or RAM, and refuses only placements over disk", () => {
     const over: CapacityState = sync(EMPTY_CAPACITY_STATE, {
       seq: 1,
       cards: [entry({ grantedProfile: { cpuCores: 20, ramGiB: 8, diskGB: 20 } })],
@@ -195,7 +195,8 @@ describe("headroom", () => {
       now: 0,
     });
     expect(headroom.over.cpuRam).toBe(true);
-    expect(headroom.offered).toEqual({ cpuCores: 0, ramGiB: 0, diskGB: 0 });
+    // No CPU or RAM; its free disk still counts (T3O-87).
+    expect(headroom.offered).toEqual({ cpuCores: 0, ramGiB: 0, diskGB: 200 });
 
     let fullDisk = sync(EMPTY_CAPACITY_STATE, {
       seq: 1,

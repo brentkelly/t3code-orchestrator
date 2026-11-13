@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Card priority: levels, picker and queue order</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#fcfcfc; --fg:#27272a; --card:#ffffff; --popover:#ffffff;
+  --muted:#fafafa; --muted-fg:#71717a; --accent:#f4f4f5;
+  --border:#e4e4e7; --input:#d4d4d8;
+  --info:#3b82f6; --info-fg:#1d4ed8; --success:#10b981; --success-fg:#047857;
+  --urgent:#ef4444; --urgent-fg:#b91c1c;
+  --teal:#4fa8b6;
+  --shadow-xs:0 1px 2px rgb(0 0 0 / 5%);
+  --shadow-md:0 8px 24px -6px rgb(0 0 0 / 12%),0 2px 6px rgb(0 0 0 / 5%);
+  --font-sans:"DM Sans",-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+  --font-mono:"SF Mono","SFMono-Regular","JetBrains Mono",Consolas,Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font-sans);background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased}
+
+/* ---- priority icon: three bars, urgent is a filled square ---- */
+.pri{display:inline-flex;align-items:flex-end;gap:2px;width:14px;height:12px;flex:none}
+.pri i{display:block;width:3px;border-radius:1px;background:color-mix(in srgb,var(--fg) 18%,transparent)}
+.pri i:nth-child(1){height:5px}.pri i:nth-child(2){height:8px}.pri i:nth-child(3){height:12px}
+.pri.p1 i:nth-child(1){background:var(--muted-fg)}
+.pri.p2 i:nth-child(-n+2){background:var(--fg)}
+.pri.p3 i{background:var(--fg)}
+.urg{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:4px;background:var(--urgent);color:#fff;font:700 10px/1 var(--font-sans);flex:none}
+
+/* picker */
+.picker{width:440px;background:var(--popover);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-md);padding:12px;display:flex;flex-direction:column;gap:10px}
+.seg{display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:4px;padding:3px;background:var(--accent);border-radius:9px}
+.opt{display:flex;align-items:center;justify-content:center;gap:6px;height:30px;border-radius:7px;font:500 12.5px var(--font-sans);color:var(--muted-fg)}
+.opt.on{background:var(--card);color:var(--fg);box-shadow:var(--shadow-xs);border:1px solid var(--border)}
+.desc{margin:0;font:400 12.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty;padding:0 4px}
+.desc b{color:var(--fg);font-weight:600}
+.kbd{font:500 10.5px var(--font-mono);color:var(--muted-fg);border:1px solid var(--border);border-radius:4px;padding:1px 5px;background:var(--muted)}
+
+/* card */
+.kcard{width:248px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:13px 14px 12px;display:flex;flex-direction:column;gap:10px;box-shadow:var(--shadow-xs)}
+.kcard.urgent{border-color:color-mix(in srgb,var(--urgent) 45%,var(--border));box-shadow:0 0 0 3px color-mix(in srgb,var(--urgent) 10%,transparent)}
+.kcard.low .ptitle{color:var(--muted-fg)}
+.badge{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;background:var(--teal);color:#fff;font:600 12px var(--font-sans);letter-spacing:.02em}
+.ptitle{margin:0;font:500 14px/1.4 var(--font-sans);color:var(--fg);text-wrap:pretty}
+.meta{display:flex;align-items:center;gap:8px;font:400 11.5px var(--font-sans);color:var(--muted-fg)}
+.qpill{margin-left:auto;display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:99px;border:1px solid var(--border);font:500 11px var(--font-sans);color:var(--muted-fg);white-space:nowrap}
+
+/* queue */
+.slot{flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;border-radius:9px;background:color-mix(in srgb,var(--info) 9%,var(--card));border:1px solid color-mix(in srgb,var(--info) 30%,var(--border));font:500 12.5px var(--font-sans);color:var(--info-fg);white-space:nowrap;overflow:hidden}
+.qrow{display:grid;grid-template-columns:28px 22px 64px minmax(0,1fr) 150px;align-items:center;gap:10px;height:38px;padding:0 12px;border-bottom:1px solid var(--border);font:400 12.5px var(--font-sans)}
+.qrow:last-child{border-bottom:0}
+.qrow .n{font:500 11.5px var(--font-mono);color:var(--muted-fg)}
+.qrow .id{font:600 11.5px var(--font-mono);color:var(--fg)}
+.qrow .why{font:400 11.5px var(--font-sans);color:var(--muted-fg);text-align:right}
+.qrow.dim{color:var(--muted-fg);background:var(--muted)}
+.divider{display:flex;align-items:center;gap:10px;padding:6px 12px;font:500 11px var(--font-sans);color:var(--muted-fg);background:var(--muted);border-bottom:1px solid var(--border)}
+.divider::after{content:"";flex:1;height:1px;background:repeating-linear-gradient(90deg,var(--input) 0 4px,transparent 4px 8px)}
+
+.tag{font:600 11px var(--font-mono);border-radius:6px;padding:2px 7px;border:1px solid var(--border);color:var(--muted-fg)}
+.note{margin:0;font:400 12.5px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty}
+.h2{margin:0;font:600 15px var(--font-sans)}
+.cell{font:400 12px/1.5 var(--font-sans);color:var(--muted-fg)}
+.colhead{font:600 12px var(--font-sans);color:var(--fg);display:flex;align-items:center;gap:7px}
+.panel{padding:18px;border:1px solid var(--border);border-radius:12px;background:var(--card)}
+
+/* ---- app chrome: matches the current card modal and new card dialog ---- */
+.dlg{width:600px;background:var(--card);border:1px solid color-mix(in srgb,var(--fg) 10%,transparent);border-radius:18px;box-shadow:var(--shadow-md);overflow:hidden;display:flex;flex-direction:column}
+.cap{font:600 11px var(--font-sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg)}
+.cap small{font:500 11px var(--font-sans);letter-spacing:.04em;text-transform:none;color:var(--muted-fg);opacity:.8;margin-left:6px}
+.field{display:flex;align-items:center;gap:8px;height:34px;padding:0 11px;border:1px solid var(--input);border-radius:10px;background:var(--card);font:400 13px var(--font-sans);color:var(--fg);box-shadow:var(--shadow-xs)}
+.field .ph{color:var(--muted-fg)}
+.chev{margin-left:auto;color:var(--muted-fg);font-size:11px}
+.lbl{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;background:color-mix(in srgb,var(--info) 12%,transparent);color:var(--info-fg);font:600 10.5px var(--font-sans);letter-spacing:.04em}
+.stchip{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;background:var(--accent);font:500 12px var(--font-sans);color:var(--fg)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 13px;border-radius:9px;font:500 13px var(--font-sans)}
+.btn.primary{background:var(--info);color:#fff}
+.btn.ghost{color:var(--fg)}
+.side{width:330px;background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-xs)}
+.srow{display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid var(--border)}
+.sval{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font:500 12.5px var(--font-sans);color:var(--fg)}
+.sval .chev{margin-left:2px}
+.olist{display:flex;flex-direction:column;gap:2px;padding:0 10px 12px;border-bottom:1px solid var(--border)}
+.oitem{display:grid;grid-template-columns:18px minmax(0,1fr) 14px;gap:2px 9px;align-items:start;padding:8px 8px;border-radius:8px}
+.oitem.on{background:var(--accent)}
+.oitem .nm{font:500 12.5px var(--font-sans);color:var(--fg)}
+.oitem .rl{grid-column:2;font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty}
+.oitem .ico{padding-top:2px}
+.tick{font:600 12px var(--font-sans);color:var(--fg)}
+.hint{margin:0 10px 12px;padding:9px 10px;border-radius:8px;background:var(--muted);border:1px solid var(--border);font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty}
+.pop{width:300px;background:var(--popover);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-md);padding:6px}
+.pop .oitem{grid-template-columns:18px minmax(0,1fr) auto}
+</style>
+</helmet>
+
+<section style="padding:34px 40px 48px;display:flex;flex-direction:column;gap:40px">
+
+  <!-- Header -->
+  <div style="display:flex;flex-direction:column;gap:10px;max-width:1080px">
+    <div style="display:flex;align-items:baseline;gap:10px">
+      <span class="tag">PRIORITY</span>
+      <h1 style="margin:0;font:600 20px var(--font-sans)">Card priority: four levels, each one a scheduling rule</h1>
+    </div>
+    <p style="margin:0;max-width:780px;font:400 13.5px/1.65 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Today cards take worker slots in the order they were queued, with a one-off override. This adds a single priority field to every card, with four named levels and Normal as the default. The highest priority waiting card always gets the next free slot; within a level it stays first come, first served. It is a field, not labels, so a card can only have one priority and the queue can sort on it directly. It is named levels, not a 1–10 scale, because nobody can tell a 6 from a 7 and everything drifts upward. Each level is defined by what the scheduler does with it, and the picker says so.</p>
+  </div>
+
+  <!-- 1. Levels -->
+  <div style="display:flex;flex-direction:column;gap:16px;max-width:1000px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">1</span><span class="h2">The four levels</span></div>
+    <div class="panel" style="display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:12px 22px;align-items:start">
+      <span class="colhead"><span class="urg">!</span>Urgent</span>
+      <span class="colhead"><span class="pri p3"><i></i><i></i><i></i></span>High</span>
+      <span class="colhead"><span class="pri p2"><i></i><i></i><i></i></span>Normal <span class="kbd" style="font-weight:400">default</span></span>
+      <span class="colhead"><span class="pri p1"><i></i><i></i><i></i></span>Low</span>
+
+      <span class="cell">Takes the next free slot, ahead of everything else. Doesn’t stop work that is already running.</span>
+      <span class="cell">Goes ahead of every Normal and Low card.</span>
+      <span class="cell">First come, first served, as the board works today.</span>
+      <span class="cell">Only starts when no Normal or higher card is waiting. If the queue never empties, it never runs. For nice-to-haves.</span>
+    </div>
+    <p class="note">Stored as a small integer (Low 0, Normal 1, High 2, Urgent 3). The queue hands out cards ordered by priority, highest first, then by the time each card was queued, oldest first. The existing one-off override stays and moves a card to the front of its own level.</p>
+  </div>
+
+  <!-- 2. Picker -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">2</span><span class="h2">Picker: chips with the rule written underneath</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start">
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span class="cell">New card, default selected</span>
+        <div class="picker">
+          <div style="padding:0 4px"><span style="font:600 12.5px var(--font-sans)">Priority</span></div>
+          <div class="seg">
+            <span class="opt"><span class="pri p1"><i></i><i></i><i></i></span>Low</span>
+            <span class="opt on"><span class="pri p2"><i></i><i></i><i></i></span>Normal</span>
+            <span class="opt"><span class="pri p3"><i></i><i></i><i></i></span>High</span>
+            <span class="opt"><span class="urg">!</span>Urgent</span>
+          </div>
+          <p class="desc"><b>Normal.</b> Waits its turn behind High and Urgent cards, first come, first served.</p>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span class="cell">Low selected: the description is what stops people misreading it</span>
+        <div class="picker">
+          <div style="padding:0 4px"><span style="font:600 12.5px var(--font-sans)">Priority</span></div>
+          <div class="seg">
+            <span class="opt on"><span class="pri p1"><i></i><i></i><i></i></span>Low</span>
+            <span class="opt"><span class="pri p2"><i></i><i></i><i></i></span>Normal</span>
+            <span class="opt"><span class="pri p3"><i></i><i></i><i></i></span>High</span>
+            <span class="opt"><span class="urg">!</span>Urgent</span>
+          </div>
+          <p class="desc"><b>Low.</b> Only runs when a worker would otherwise sit idle. If the queue stays busy, this card keeps waiting.</p>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span class="cell">Urgent selected</span>
+        <div class="picker">
+          <div style="padding:0 4px"><span style="font:600 12.5px var(--font-sans)">Priority</span></div>
+          <div class="seg">
+            <span class="opt"><span class="pri p1"><i></i><i></i><i></i></span>Low</span>
+            <span class="opt"><span class="pri p2"><i></i><i></i><i></i></span>Normal</span>
+            <span class="opt"><span class="pri p3"><i></i><i></i><i></i></span>High</span>
+            <span class="opt on" style="color:var(--urgent-fg)"><span class="urg">!</span>Urgent</span>
+          </div>
+          <p class="desc"><b>Urgent.</b> Takes the next free worker, ahead of everything. Running work isn’t interrupted.</p>
+        </div>
+      </div>
+
+    </div>
+    <p class="note" style="max-width:780px">Ordered low to high, left to right, so it reads like a slider. The same choices appear in the new card dialog and in the open card’s side panel. Priority can’t be changed from the summary card on the board; open the card to change it.</p>
+  </div>
+
+  <!-- 3. On the board -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">3</span><span class="h2">On the card: only show what differs from the default</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">
+
+      <div class="kcard urgent">
+        <div style="display:flex;align-items:center;gap:8px"><span class="badge">WAL-31</span><span class="urg" title="Urgent">!</span></div>
+        <p class="ptitle">Hotfix: pad sync drops edits after reconnect</p>
+        <div class="meta"><span>Urgent</span><span class="qpill">Next up</span></div>
+      </div>
+
+      <div class="kcard">
+        <div style="display:flex;align-items:center;gap:8px"><span class="badge">WAL-27</span><span class="pri p3" title="High"><i></i><i></i><i></i></span></div>
+        <p class="ptitle">Ground-mesh tiling seams at chunk borders</p>
+        <div class="meta"><span>High</span><span class="qpill">Queued #2</span></div>
+      </div>
+
+      <div class="kcard">
+        <div style="display:flex;align-items:center;gap:8px"><span class="badge">WAL-22</span></div>
+        <p class="ptitle">Sight-line index for batter seams</p>
+        <div class="meta"><span>&nbsp;</span><span class="qpill">Queued #3</span></div>
+      </div>
+
+      <div class="kcard low">
+        <div style="display:flex;align-items:center;gap:8px"><span class="badge" style="opacity:.7">WAL-35</span><span class="pri p1" title="Low"><i></i><i></i><i></i></span></div>
+        <p class="ptitle">Tidy tool-key labels in the pad toolbar</p>
+        <div class="meta"><span>Low</span><span class="qpill">When idle</span></div>
+      </div>
+
+    </div>
+    <p class="note" style="max-width:780px">Normal cards carry no icon, so the board stays quiet and anything marked stands out. Urgent gets a red ring as well as the icon so overuse is obvious at a glance. Low cards are slightly dimmed and say “When idle” in place of a queue position, because they have no fixed place in line.</p>
+  </div>
+
+  <!-- 4. Queue -->
+  <div style="display:flex;flex-direction:column;gap:16px;max-width:860px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">4</span><span class="h2">How the queue hands out slots</span></div>
+    <div class="panel" style="display:flex;flex-direction:column;gap:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between"><span class="colhead">Workers (3 of 3 busy)</span><span class="cell">Next free slot goes to #1</span></div>
+      <div style="display:flex;gap:8px">
+        <span class="slot"><span style="width:7px;height:7px;border-radius:99px;background:var(--info)"></span>WAL-17 · building</span>
+        <span class="slot"><span style="width:7px;height:7px;border-radius:99px;background:var(--info)"></span>WAL-18 · building</span>
+        <span class="slot"><span style="width:7px;height:7px;border-radius:99px;background:var(--info)"></span>WAL-19 · code review</span>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
+        <div class="qrow"><span class="n">#1</span><span class="urg">!</span><span class="id">WAL-31</span><span>Hotfix: pad sync drops edits</span><span class="why">Urgent · queued 2 min ago</span></div>
+        <div class="qrow"><span class="n">#2</span><span class="pri p3"><i></i><i></i><i></i></span><span class="id">WAL-27</span><span>Ground-mesh tiling seams</span><span class="why">High · queued 1 h ago</span></div>
+        <div class="qrow"><span class="n">#3</span><span></span><span class="id">WAL-22</span><span>Sight-line index</span><span class="why">Normal · queued 3 h ago</span></div>
+        <div class="qrow"><span class="n">#4</span><span></span><span class="id">WAL-24</span><span>Step geometry follow-up</span><span class="why">Normal · queued 40 min ago</span></div>
+        <div class="divider">Only when nothing above is waiting</div>
+        <div class="qrow dim"><span class="n">–</span><span class="pri p1"><i></i><i></i><i></i></span><span class="id" style="color:var(--muted-fg)">WAL-35</span><span>Tidy tool-key labels</span><span class="why">Low · queued 2 days ago</span></div>
+        <div class="qrow dim"><span class="n">–</span><span class="pri p1"><i></i><i></i><i></i></span><span class="id" style="color:var(--muted-fg)">WAL-29</span><span>Rename legacy pad events</span><span class="why">Low · queued 5 days ago</span></div>
+      </div>
+    </div>
+    <p class="note">WAL-31 was queued last but goes first. WAL-22 beats WAL-24 because both are Normal and it has waited longer. The Low cards sit below a line rather than taking numbers: they are not behind anything specific, they wait for spare capacity.</p>
+  </div>
+
+  <!-- 5. Decisions -->
+  <div style="display:flex;flex-direction:column;gap:16px;max-width:1000px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">5</span><span class="h2">Decisions to make before building</span></div>
+    <div class="panel" style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:12px 22px;align-items:start">
+      <span class="colhead">Should Urgent interrupt running work?</span>
+      <span class="colhead">Should waiting cards move up over time?</span>
+      <span class="colhead">Should Urgent be limited?</span>
+      <span class="cell"><b style="color:var(--fg);font-weight:600">Recommended: no.</b> “Next free slot” is usually fast enough, and stopping an agent halfway is messy. A later option could keep one slot free for Urgent cards.</span>
+      <span class="cell"><b style="color:var(--fg);font-weight:600">Recommended: not yet.</b> Under heavy load, High cards can hold Normal cards back indefinitely. Low should never move up, since waiting is its point. Add a time-based bump for Normal only if cards actually get stuck.</span>
+      <span class="cell"><b style="color:var(--fg);font-weight:600">Recommended: no cap.</b> Make Urgent cards stand out on the board so overuse is visible to everyone, and revisit if it gets abused.</span>
+    </div>
+  </div>
+
+  <!-- 6. New card dialog -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">6</span><span class="h2">New card dialog: Priority sits above Dependencies</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start">
+
+      <div class="dlg">
+        <div style="display:flex;align-items:center;gap:10px;padding:20px 22px 12px">
+          <span style="font:600 19px var(--font-sans);letter-spacing:-0.01em">New card</span>
+          <span class="field" style="height:28px;padding:0 9px;font-size:12.5px">Planning <span class="chev">⌄</span></span>
+          <span style="flex:1"></span>
+          <span style="color:var(--muted-fg);font-size:15px">✕</span>
+        </div>
+        <div style="margin:0 22px 14px;padding:9px 12px;border-radius:9px;background:#fbf0e3;color:var(--warning-fg,#b45309);font:400 12.5px var(--font-sans);color:#b45309">Planning runs automatically: creating here starts an agent.</div>
+        <div style="border-top:1px solid var(--border);padding:18px 22px 6px;display:flex;flex-direction:column;gap:16px">
+          <div style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:14px">
+            <div style="display:flex;flex-direction:column;gap:7px"><span class="cap">Project</span><span class="field"><span style="width:7px;height:7px;border-radius:99px;background:#b8894a"></span>t3o<span class="chev">⌄</span></span></div>
+            <div style="display:flex;flex-direction:column;gap:7px"><span class="cap">Base branch<small>work branches off this</small></span><span class="field" style="font-family:var(--font-mono);font-size:12.5px">t3o<span class="chev">⌄</span></span></div>
+          </div>
+          <div style="display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:14px">
+            <div style="display:flex;flex-direction:column;gap:7px"><span class="cap">Title</span><span class="field"><span class="ph">What needs building?</span></span></div>
+            <div style="display:flex;flex-direction:column;gap:7px"><span class="cap">Label</span><span class="field"><span class="ph">Add labels</span><span class="chev">⌄</span></span></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:7px"><span class="cap">Brief</span><div class="field" style="height:74px;align-items:flex-start;padding-top:9px"><span class="ph">What’s the context? Paste screenshots (⌘V) or drop files in here.</span></div></div>
+
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <span class="cap">Priority</span>
+            <div style="display:flex;align-items:center;gap:14px">
+              <div class="seg" style="width:340px;flex:none">
+                <span class="opt"><span class="pri p1"><i></i><i></i><i></i></span>Low</span>
+                <span class="opt on"><span class="pri p2"><i></i><i></i><i></i></span>Normal</span>
+                <span class="opt"><span class="pri p3"><i></i><i></i><i></i></span>High</span>
+                <span class="opt"><span class="urg">!</span>Urgent</span>
+              </div>
+              <span class="cell" style="font-size:11.5px">Waits its turn behind High and Urgent cards.</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px"><span class="cap">Dependencies</span><span style="font:500 12.5px var(--font-sans)">+ Add</span><span class="cell" style="margin-left:auto">No dependencies.</span></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:14px;padding:14px 22px;border-top:1px solid var(--border);background:var(--muted)">
+          <span style="color:var(--muted-fg);font-size:14px">◷</span>
+          <span style="flex:1"></span>
+          <span class="btn ghost">Cancel</span>
+          <span class="btn primary">Create card <span class="kbd" style="background:rgb(255 255 255 / 18%);border-color:rgb(255 255 255 / 30%);color:#fff">Ctrl+↵</span></span>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px;max-width:340px">
+        <span class="colhead">Why here</span>
+        <p class="note">Priority isn’t used much, so it sits quietly near the bottom, above Dependencies, with no emphasis. It is easy to skip, but still in view before Create card. It is a full-width row rather than a dropdown beside Label so the four options and the rule for the chosen one are visible without opening anything.</p>
+        <p class="note">The rule text swaps as you pick: Low reads “Only runs when a worker would otherwise sit idle.” Urgent reads “Enters Building ahead of every waiting card.”</p>
+        <p class="note">Keyboard: with focus anywhere in the dialog, <span class="kbd">Alt</span>+<span class="kbd">1</span>–<span class="kbd">4</span> sets priority without leaving the title or brief.</p>
+        <p class="note">Creating from a column’s + uses the same dialog, so the default stays Normal there too.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 7. Existing card -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">7</span><span class="h2">Existing card: a Priority row in the side panel, and a chip in the header</span></div>
+
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <span class="cell">Header: a chip appears next to the stage only when the card isn’t Normal. Clicking it opens the same picker as the side panel.</span>
+      <div style="display:flex;flex-wrap:wrap;gap:20px">
+        <div class="panel" style="display:flex;align-items:center;gap:9px;padding:14px 18px">
+          <span style="font:500 13px var(--font-sans);color:var(--muted-fg)">T3O-95</span><span class="lbl">FEATURE</span><span class="stchip">Planning</span><span style="color:var(--muted-fg)">◷</span>
+          <span class="cell" style="margin-left:14px">Normal: nothing added</span>
+        </div>
+        <div class="panel" style="display:flex;align-items:center;gap:9px;padding:14px 18px">
+          <span style="font:500 13px var(--font-sans);color:var(--muted-fg)">T3O-95</span><span class="lbl">FEATURE</span><span class="stchip">Planning</span>
+          <span class="stchip" style="gap:6px;background:color-mix(in srgb,var(--urgent) 12%,transparent);color:var(--urgent-fg)"><span class="urg" style="width:13px;height:13px;font-size:9px">!</span>Urgent</span>
+          <span style="color:var(--muted-fg)">◷</span>
+        </div>
+        <div class="panel" style="display:flex;align-items:center;gap:9px;padding:14px 18px">
+          <span style="font:500 13px var(--font-sans);color:var(--muted-fg)">T3O-95</span><span class="lbl">FEATURE</span><span class="stchip">Planning</span>
+          <span class="stchip" style="gap:6px"><span class="pri p1"><i></i><i></i><i></i></span>Low</span>
+          <span style="color:var(--muted-fg)">◷</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start">
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span class="cell">Side panel, collapsed: between Automation and Stage</span>
+        <div class="side">
+          <div class="srow"><span class="cap">Activity</span><span class="sval">3 <span class="chev">⌄</span></span></div>
+          <div class="srow"><span class="cap">Automation</span><span class="sval">Off <span class="chev">⌄</span></span></div>
+          <div class="srow"><span class="cap">Priority</span><span class="sval"><span class="pri p2"><i></i><i></i><i></i></span>Normal <span class="chev">⌄</span></span></div>
+          <div class="srow"><span class="cap">Stage</span><span class="sval">Planning <span class="chev">⌄</span></span></div>
+          <div style="padding:14px 16px;font:400 12px/1.8 var(--font-sans);color:var(--muted-fg)">Project · <span style="color:var(--fg)">t3o</span><br>Created · 2m ago</div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span class="cell">Expanded: each option carries its rule, like the Plan review toggle</span>
+        <div class="side">
+          <div class="srow"><span class="cap">Automation</span><span class="sval">Off <span class="chev">⌄</span></span></div>
+          <div class="srow" style="border-bottom:0"><span class="cap">Priority</span><span class="sval"><span class="urg">!</span>Urgent <span class="chev">⌃</span></span></div>
+          <div class="olist">
+            <div class="oitem"><span class="ico"><span class="pri p1"><i></i><i></i><i></i></span></span><span class="nm">Low</span><span></span><span class="rl">Only runs when a worker would otherwise sit idle.</span></div>
+            <div class="oitem"><span class="ico"><span class="pri p2"><i></i><i></i><i></i></span></span><span class="nm">Normal</span><span></span><span class="rl">First come, first served.</span></div>
+            <div class="oitem"><span class="ico"><span class="pri p3"><i></i><i></i><i></i></span></span><span class="nm">High</span><span></span><span class="rl">Goes ahead of Normal and Low cards.</span></div>
+            <div class="oitem on"><span class="ico"><span class="urg">!</span></span><span class="nm">Urgent</span><span class="tick">✓</span><span class="rl">Enters Building ahead of every waiting card.</span></div>
+          </div>
+          <div class="srow"><span class="cap">Stage</span><span class="sval">Planning <span class="chev">⌄</span></span></div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span class="cell">Card already in the pipeline: say what priority can still do</span>
+        <div class="side">
+          <div class="srow" style="border-bottom:0"><span class="cap">Priority</span><span class="sval"><span class="pri p3"><i></i><i></i><i></i></span>High <span class="chev">⌃</span></span></div>
+          <div class="hint">This card is already in Code review, so it stays ahead of cards that haven’t started. Priority only decides between cards waiting at the same stage.</div>
+          <div class="olist" style="border-bottom:0">
+            <div class="oitem"><span class="ico"><span class="pri p1"><i></i><i></i><i></i></span></span><span class="nm">Low</span><span></span></div>
+            <div class="oitem"><span class="ico"><span class="pri p2"><i></i><i></i><i></i></span></span><span class="nm">Normal</span><span></span></div>
+            <div class="oitem on"><span class="ico"><span class="pri p3"><i></i><i></i><i></i></span></span><span class="nm">High</span><span class="tick">✓</span></div>
+            <div class="oitem"><span class="ico"><span class="urg">!</span></span><span class="nm">Urgent</span><span></span></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <p class="note" style="max-width:820px">The row uses the same pattern as Automation and Stage: label on the left, current value and chevron on the right, opening in place. Picking an option saves straight away and collapses the row. On a queued card the “Queued #n” on the board updates at once; nothing running is interrupted.</p>
+  </div>
+
+</section>
+</x-dc>
+</body>
+</html>

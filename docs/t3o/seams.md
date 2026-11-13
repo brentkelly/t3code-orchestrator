@@ -233,6 +233,33 @@ and run the normal checks for whatever the merge touched. Two things the root sc
 - A whole-tree `vp lint` does not report the repo's own JS-plugin rules (`t3code/*`) for
   `apps/web/src/board`; `vp lint apps/web` does. Run both.
 
+### Tests on a sync: the CI stage runs them
+
+> **Do not run `scripts/t3o-ci.ts` or `vp run t3o:test-full` yourself during a sync.** The sync
+> card's CI stage runs the full suite automatically once the card is reviewed (about 25–60
+> minutes, holding one board slot). In the turn, run only targeted tests for the conflicts you
+> resolved, plus the typechecks above.
+
+- The CI step picks **tier: full** because the branch's `git merge main` brings in more than 50
+  commits `t3o` lacks; `--full` or `T3O_CI_FULL=1` forces it. Before merging, check the card's CI
+  tab says **tier: full**. If it says tier B, run `node scripts/t3o-ci.ts full --full` in the
+  card's worktree by hand before merging. On tier full, `check:changed` runs with `--no-tests`
+  and the suite steps run the server, web and package tests; changed `apps/desktop`,
+  `apps/mobile` and `.github/scripts` tests are not run, so run those by hand if the sync
+  touched them.
+- A person's escape hatch: `node scripts/t3o-ci.ts full --full` (the full step alone), or
+  `vp run t3o:test-full` (every suite but mobile, desktop and marketing; writes
+  `.t3/test-full/summary.json`).
+- The CI stage lives in the committed `t3o.json`. The board never reads it at run time: after
+  editing it, re-import it via **Settings** → **Board** → the t3o project → **Import & export** →
+  **Import…**. Remote workers that build t3o cards need `pnpm`, Node and, for a sync card,
+  Playwright Chromium on the server's `PATH`; a cold pnpm store makes `install` take minutes.
+- A nightly scheduled task ("Nightly t3o full test run", 03:00 server time) runs
+  `t3o:test-full` on a fresh `origin/t3o` worktree. Failures go to one live card labelled
+  `nightly-red` ("Trunk red on t3o", or "Flaky tests on t3o" when a rerun passes), which it arms
+  for auto-plan and auto-build, never auto-merge. A run more than 10 minutes late (the machine slept) is skipped as
+  missed.
+
 Land the sync with a **merge commit, never a squash**: squashing a 1,500-file upstream merge
 destroys the ancestry the next `git merge main` relies on.
 
@@ -1130,6 +1157,8 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/git/GitManager.test.ts`                                        | `T3O-48`          | "Check again" gets past the failure backoff                                                                                                                                                                                        | fork test                                                                    |
 | `packages/contracts/src/project.ts`                                             | `T3O-23`          | `runOnWorktreeRemove` on a stored `ProjectScript`                                                                                                                                                                                  | one-line append (field)                                                      |
 | `packages/shared/src/projectScripts.ts`                                         | `T3O-23`          | `(teardown)` menu label, mirroring `(setup)` (moved from mobile `terminalMenu.ts`)                                                                                                                                                 | one-line append                                                              |
+| `packages/shared/src/AgentScope.ts`                                             | `T3O-87`          | Optional `controlGroup(threadId)` member, and its default answering null, so measured actuals can read a thread's own scope                                                                                                        | one optional member + one default line                                       |
+| `apps/server/src/process/agentScope.ts`                                         | `T3O-87`          | `controlGroup` delegates to `board/actuals/agentScopeControlGroup.ts` with the private `scopeByThread` entry; a shared (Codex) scope answers null                                                                                  | import + one delegating line                                                 |
 | `apps/web/src/components/ChatView.tsx`                                          | `t3o-05`          | Import `BoardModeTabs`                                                                                                                                                                                                             | one-line append (import)                                                     |
 | `apps/web/src/components/ChatView.tsx`                                          | `t3o-05`          | Threads/Board mode tabs before the breadcrumb (D1 shell tab)                                                                                                                                                                       | one-line append (delegating element)                                         |
 | `apps/web/src/components/ChatView.tsx`                                          | `t3o-06`          | `ChatViewChrome` type and `chrome` prop (default `"full"`); `"embedded"` for the card modal                                                                                                                                        | one type + one destructured default                                          |
@@ -1377,7 +1406,7 @@ reactor grows the same two seams by one merge line and one start line — it nev
 core-only diff audit is empty. This is the seam grammar paying off: the governor's whole surface lives
 in board-owned files. The admission policy (per-`providerInstanceId` `maxConcurrent` + global ceiling)
 and boot-time `restore` are in `BoardStepSlots.ts`; the pure ordering (stage desc → started before
-unstarted → drag order) and `resolveBoardConcurrencyLimit` are in `supervisor.ts`; the `schedule`
+unstarted → card priority → drag order; priority added by T3O-95) and `resolveBoardConcurrencyLimit` are in `supervisor.ts`; the `schedule`
 pass (offer candidates to `acquire` in priority order, queue the rest, run after every slot release
 for step-boundary preemption) and the `reschedule` boot decision are in `supervisorReactor.ts`. The
 one bit of governor state that reaches the column card — the `queued` flag on `BoardCardShell` — was
@@ -1503,6 +1532,16 @@ sources itself instead: `os` for cores and memory, `/proc/meminfo` for available
 agents slice's `memory.high` at the path `agentScope.ts` creates, and `du` for worktree disk. If
 upstream moves the agents slice, the RAM default falls back to total memory minus 8 GiB rather than
 failing; check that path on each sync.
+
+### Measured actuals read upstream's per-agent scopes (T3O-87)
+
+A thread's systemd unit lives in `scopeByThread`, private to `make` in `process/agentScope.ts`. The
+one seam is `AgentScope.controlGroup(threadId)`: optional on the interface (so upstream tests that
+build an `AgentScope` by hand need no edit), null by default, and one delegating line in
+`agentScope.ts`. Parsing and sampling live in `apps/server/src/board/actuals/`. CI passes and setup
+runs need no seam: the board wraps their commands with upstream's own `wrap` and reads the `unit` it
+returns. If upstream renames `scopeByThread` or changes what a shared scope means, re-check the
+delegating line on sync; a missing member only makes every agent step read "not measured".
 
 ## Inherited workflows
 

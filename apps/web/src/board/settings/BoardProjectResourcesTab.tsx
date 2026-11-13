@@ -6,8 +6,14 @@
 import {
   boardRepositoryGroupingKey,
   DEFAULT_BOARD_READINESS_SCRIPT_PATH,
+  BOARD_RESOURCE_PROFILE_KEYS,
+  EMPTY_BOARD_PROJECT_RESOURCES,
+  boardProjectResourcesWithoutLearned,
   resolveBoardProjectBaseline,
+  resolveBoardProjectDeclared,
   resolveBoardProjectResourceSettings,
+  type BoardProjectResources,
+  type BoardResourceDimension,
   type BoardWorkerCapacitySnapshot,
   type BoardWorkerId,
   type BoardWorkerReadinessState,
@@ -37,6 +43,7 @@ import {
   boardResourcesOf,
   type BoardResourcesDraft,
 } from "./boardProjectResources.logic";
+import { BoardProjectLearnedTable } from "./BoardProjectLearnedTable";
 import { useBoardSettingsContext, useBoardSettingsProjects } from "./BoardSettingsLayout";
 import type { BoardProjectConfigState } from "./useBoardProjectConfig";
 
@@ -94,28 +101,24 @@ export function BoardProjectResourcesTab(props: {
     projectId: props.projectId,
     readinessPath: settings.readinessPath,
   });
+  // T3o (T3O-87): the form edits the declared baseline; placements use it with learning.
+  const declaredBaseline = resolveBoardProjectDeclared(resources);
+  const withLearning = (next: BoardProjectResources): BoardProjectResources => ({
+    ...next,
+    ...(resources?.pinDeclared === undefined ? {} : { pinDeclared: resources.pinDeclared }),
+    ...(resources?.learned === undefined ? {} : { learned: resources.learned }),
+  });
   const hardToPlace = boardProjectHardToPlace(
-    "ok" in parsed ? resolveBoardProjectBaseline(parsed.ok) : settings.baseline,
+    "ok" in parsed ? resolveBoardProjectBaseline(withLearning(parsed.ok)) : settings.baseline,
     rows,
   );
 
-  const save = (confirmed: boolean) => {
-    if (!("ok" in parsed)) return;
-    const notice = boardBaselineSaveNotice(
-      placedCards,
-      settings.baseline,
-      resolveBoardProjectBaseline(parsed.ok),
-    );
-    if (notice !== null && !confirmed) {
-      setConfirming(notice);
-      return;
-    }
-    setConfirming(null);
+  const send = (next: BoardProjectResources, onSaved?: () => void) =>
     void setResources({
       environmentId,
       input: {
         projectId: props.projectId,
-        resources: parsed.ok,
+        resources: boardProjectResourcesWithoutLearned(next),
         expectedConfigVersion: shell.version,
       },
     }).then((result) => {
@@ -127,8 +130,37 @@ export function BoardProjectResourcesTab(props: {
         });
         return;
       }
-      setDraft(null);
+      onSaved?.();
     });
+  const current = resources ?? EMPTY_BOARD_PROJECT_RESOURCES;
+  const pin = (dimension: BoardResourceDimension, pinned: boolean) => {
+    const others = (current.pinDeclared ?? []).filter((entry) => entry !== dimension);
+    send({ ...current, pinDeclared: pinned ? [...others, dimension] : others });
+  };
+  // Use learned writes the decrease as the declared value, editable back by hand.
+  const applyLearned = (dimension: BoardResourceDimension, value: number) =>
+    send({
+      ...current,
+      baseline: {
+        ...declaredBaseline,
+        [BOARD_RESOURCE_PROFILE_KEYS[dimension]]: value,
+        setAtUpgrade: false,
+      },
+    });
+
+  const save = (confirmed: boolean) => {
+    if (!("ok" in parsed)) return;
+    const notice = boardBaselineSaveNotice(
+      placedCards,
+      declaredBaseline,
+      resolveBoardProjectDeclared(parsed.ok),
+    );
+    if (notice !== null && !confirmed) {
+      setConfirming(notice);
+      return;
+    }
+    setConfirming(null);
+    send(parsed.ok, () => setDraft(null));
   };
 
   const field = (key: string, label: string, unit: string, placeholder?: string) => (
@@ -164,10 +196,16 @@ export function BoardProjectResourcesTab(props: {
         <div className="flex flex-wrap gap-3">
           {BOARD_BASELINE_FIELDS.map((entry) => (
             <div key={entry.key}>
-              {field(entry.key, entry.label, entry.unit, String(settings.baseline[entry.key]))}
+              {field(entry.key, entry.label, entry.unit, String(declaredBaseline[entry.key]))}
             </div>
           ))}
         </div>
+        <BoardProjectLearnedTable
+          canWrite={canWrite}
+          onPin={pin}
+          onUseLearned={applyLearned}
+          resources={resources}
+        />
         {hardToPlace.length === 0 ? null : (
           <div className="flex flex-col gap-0.5 rounded-md bg-warning-surface px-3 py-2 text-board-12 text-warning-foreground">
             <span className="font-medium">Hard to place</span>

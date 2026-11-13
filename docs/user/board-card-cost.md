@@ -6,9 +6,11 @@ every review, triage and adjudicate round — and prices it. Work a thread hands
 
 ## Where to see it
 
-- **The card's Summary pane** has a **Usage** section at every stage. It opens to the total; open
-  it for a bar by stage, and a table you can switch between **By stage** (each round on its own
-  row) and **By model**. Whether it starts open is remembered on this device.
+- **The card's Summary pane** shows the total in its **Cost** tile at every stage, with a bar by
+  stage. Click the tile to open the **Usage** section: a table you can switch between **By stage**
+  (open a stage for each round on its own row) and **By model**. Input there is the uncached part;
+  hover it for the cached tokens. Like every Summary section, Usage starts closed on each card.
+  Opening a card from a group's cost breakdown lands straight on it.
 - **A card in Done** shows its total at the right of its footer. Before Done the face stays as it
   was; the figure leaves the face if the card is moved back out of Done.
 - **A group** in Done shows the total of everything under it, nested groups included. Click the

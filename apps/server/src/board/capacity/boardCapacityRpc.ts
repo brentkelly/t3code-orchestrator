@@ -172,7 +172,7 @@ export const boardCapacityAction = Effect.fn("BoardCapacityRpc.action")(function
       if (card === undefined || card.worktree?.path == null) {
         return yield* notFound("The card has no worktree.");
       }
-      const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+      const workerId = boardCardEffectiveWorkerId(card);
       return yield* client.readSetupLog(workerId, card.worktree.path);
     }
   }

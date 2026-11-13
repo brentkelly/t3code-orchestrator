@@ -5,13 +5,11 @@ import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import "../../index.css";
 
-import { useBoardUiStore } from "../boardUiStore";
 import { BoardCardUsageSection } from "./BoardCardUsageSection";
 import { deriveBoardUsageBreakdown } from "./boardUsageBreakdown";
 import { usageRow } from "./boardUsageFixtures";
 
 function setup() {
-  useBoardUiStore.setState({ usageSectionOpen: false });
   return deriveBoardUsageBreakdown({
     rows: [
       usageRow(),
@@ -36,17 +34,19 @@ function setup() {
 }
 
 describe("BoardCardUsageSection", () => {
-  it("opens from its total row, expands a stage into its rounds, and switches to By model", async () => {
+  it("lists stages with cached input in the Input tooltip, drills into rounds, and switches to By model", async () => {
     const breakdown = setup();
     await using screen = await render(<BoardCardUsageSection breakdown={breakdown} />);
-    const header = screen.getByRole("button", { name: "Usage" });
-    await expect.element(header).toHaveAttribute("aria-expanded", "false");
-    await expect.element(screen.getByText("≈$1.75")).toBeVisible();
-
-    await userEvent.click(header);
-    await expect.element(header).toHaveAttribute("aria-expanded", "true");
-    expect(useBoardUiStore.getState().usageSectionOpen).toBe(true);
+    const headings = Array.from(
+      screen.container.querySelectorAll(".uppercase > span"),
+      (cell) => cell.textContent,
+    );
+    expect(headings).toEqual(["Stage", "Models", "Input", "Output", "Cost"]);
+    await expect.element(screen.getByText("Code review (2 rounds)")).toBeVisible();
     expect(screen.container.querySelectorAll("[data-usage-line]")).toHaveLength(0);
+
+    await userEvent.hover(screen.getByText("3.6k"));
+    await expect.element(screen.getByText("12.0k cached")).toBeVisible();
 
     await userEvent.click(screen.getByRole("button", { name: /Code review/ }));
     await expect.element(screen.getByText("review@2")).toBeVisible();
@@ -66,7 +66,6 @@ describe("BoardCardUsageSection", () => {
   });
 
   it("counts a step with several causes once", async () => {
-    useBoardUiStore.setState({ usageSectionOpen: true });
     const breakdown = deriveBoardUsageBreakdown({
       rows: [usageRow({ turnsOverride: 0, turnsNoUsage: 1, turnsUnpriced: 1, turnsPartial: 1 })],
       historyPartial: false,

@@ -83,6 +83,7 @@ function makeCard(
     autoMergeSetting: null,
     autoMergeHold: null,
     mergeStrategy: null,
+    priority: "normal",
     pinnedWorkerId: null,
     placedWorkerId: null,
     workerMove: null,
@@ -2440,7 +2441,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
       // Worktree lifecycle fixtures: each succeeds and none emits a
       // move — worktree provisioning is gated on Building but never advances a
       // stage.
-      const buildingCard = makeCard({ id: "card-building", stage: "building" });
+      const buildingCard = makeCard({
+        id: "card-building",
+        stage: "building",
+        placedWorkerId: "local",
+      });
       const provisioningCard = makeCard({
         id: "card-provisioning",
         stage: "building",
@@ -3253,6 +3258,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
             readinessTimeoutSeconds: null,
           },
           actor: BOARD_SYSTEM_ACTOR,
+          createdAt: NOW,
+        },
+        "board.project.record-learned": {
+          type: "board.project.record-learned",
+          commandId: CommandId.make("cmd-project-learned"),
+          projectId: ProjectId.make("project-1"),
+          learned: {
+            computedAt: NOW,
+            cpu: { value: null, samples: 0, history: [] },
+            ram: { value: null, samples: 0, history: [] },
+            disk: { value: null, samples: 0, history: [] },
+          },
           createdAt: NOW,
         },
         "board.project.reset": {

@@ -83,6 +83,10 @@ const runGatewayCall = (
         return host.todoLogHead;
       case "claimCapacity":
         return host.claimCapacity(call.input, caller);
+      case "hold":
+        return host.hold(call.input, caller);
+      case "releaseHold":
+        return host.releaseHold(call.cardId, caller).pipe(Effect.as(null));
       case "syncCards":
         return host.syncCards(call.input, caller);
       case "setupState":
@@ -95,6 +99,8 @@ const runGatewayCall = (
         return host.checkReadiness(call.input, caller);
       case "readinessOutput":
         return host.readinessOutput(call.repositoryKey, call.path, caller);
+      case "actuals":
+        return host.actuals(call.input, caller);
     }
   };
   return answer().pipe(

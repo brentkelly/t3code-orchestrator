@@ -4,6 +4,7 @@
  * Run through the real seams, where the two producers meet.
  */
 import {
+  BOARD_LOCAL_WORKER_ID,
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
   boardBriefHasImage,
@@ -483,6 +484,13 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
       // Round one: a worktree, a merged pull request, then the reclaim that
       // settling the card at Done performs.
       yield* engine.dispatch({
+        type: "board.card.place",
+        commandId: CommandId.make("cmd-round-1-place"),
+        cardId: roundCardId,
+        workerId: BOARD_LOCAL_WORKER_ID,
+        createdAt,
+      });
+      yield* engine.dispatch({
         type: "board.card.provision-worktree",
         commandId: CommandId.make("cmd-round-1-provision"),
         cardId: roundCardId,
@@ -712,6 +720,43 @@ it.layer(makeTestLayer("t3o-card-schedule-"))("scheduled start, column to shell 
   );
 });
 
+it.layer(makeTestLayer("t3o-card-priority-"))("card priority, column to shell (T3O-95)", (it) => {
+  it.effect("survives the create → column → shell round trip and omits normal", () =>
+    Effect.gen(function* () {
+      const engine = yield* boardStackEngine;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
+      const modelPriority = Effect.map(
+        snapshotQuery.getCommandReadModel(),
+        (model) => model.board?.cards.find((card) => card.id === cardId)?.priority,
+      );
+      yield* engine.dispatch(createProject);
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-create-urgent"),
+        cardId,
+        projectId,
+        title: "An urgent card",
+        orderKey: "m",
+        priority: "urgent",
+        createdAt,
+      });
+      assert.strictEqual((yield* shellCard)?.priority, "urgent");
+      assert.strictEqual(yield* modelPriority, "urgent");
+
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-normal"),
+        cardId,
+        priority: "normal",
+        createdAt,
+      });
+      assert.strictEqual(yield* modelPriority, "normal");
+      const normal = yield* shellCard;
+      assert.isFalse(normal !== undefined && "priority" in normal);
+    }),
+  );
+});
+
 it.layer(makeTestLayer("t3o-card-unscheduled-"))("no scheduled start (T3O-19)", (it) => {
   it.effect("leaves an unscheduled card's shell without the key at all", () =>
     Effect.gen(function* () {
@@ -836,6 +881,13 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
           assert.isFalse(quiet !== undefined && "worktreeKeptReason" in quiet);
 
           yield* engine.dispatch({
+            type: "board.card.place",
+            commandId: CommandId.make("cmd-place"),
+            cardId,
+            workerId: BOARD_LOCAL_WORKER_ID,
+            createdAt,
+          });
+          yield* engine.dispatch({
             type: "board.card.provision-worktree",
             commandId: CommandId.make("cmd-provision"),
             cardId,
@@ -843,6 +895,18 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
             baseRefName: "main",
             createdAt,
           });
+          // T3O-87: while it is made, the shell still knows the card is placed.
+          const provisioning = yield* shellCard;
+          assert.strictEqual(provisioning?.worktreeProvisioning, true);
+          assert.isFalse(provisioning !== undefined && "worktreeReady" in provisioning);
+          const provisioningModel = yield* snapshotQuery.getCommandReadModel();
+          const provisioningAggregate = provisioningModel.board?.cards.find(
+            (entry) => entry.id === cardId,
+          );
+          assert.strictEqual(
+            boardCardShellFromCard(provisioningAggregate!).worktreeProvisioning,
+            true,
+          );
           yield* engine.dispatch({
             type: "board.card.record-worktree",
             commandId: CommandId.make("cmd-record"),
@@ -852,6 +916,7 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
           });
           const ready = yield* shellCard;
           assert.strictEqual(ready?.worktreeReady, true);
+          assert.isFalse(ready !== undefined && "worktreeProvisioning" in ready);
           assert.isFalse(ready !== undefined && "worktreeKeptReason" in ready);
 
           yield* engine.dispatch({
@@ -980,6 +1045,13 @@ it.layer(makeTestLayer("t3o-card-worker-shell-"))(
         assert.strictEqual(pinned.delta.workerId, worker);
 
         // A worktree cut there, then a move back to this server.
+        yield* engine.dispatch({
+          type: "board.card.place",
+          commandId: CommandId.make("cmd-place"),
+          cardId,
+          workerId: worker,
+          createdAt,
+        });
         yield* engine.dispatch({
           type: "board.card.provision-worktree",
           commandId: CommandId.make("cmd-provision"),

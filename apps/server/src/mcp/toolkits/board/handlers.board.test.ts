@@ -2788,6 +2788,30 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
     }),
   );
 
+  it.effect("create, update, read and list carry the card's priority (T3O-95)", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const urgent = yield* boardHandlers
+        .board_create_card({ projectId, title: "Hotfix", priority: "urgent" })
+        .pipe(withScope(orphanThread));
+      assert.strictEqual((yield* read(urgent.cardId)).priority, "urgent");
+      const plain = yield* boardHandlers
+        .board_create_card({ projectId, title: "Plain" })
+        .pipe(withScope(orphanThread));
+      assert.strictEqual((yield* read(plain.cardId)).priority, "normal");
+
+      // A priority-only update is a real change, not a refused empty edit.
+      yield* boardHandlers
+        .board_update_card({ cardId: plain.cardId, priority: "low" })
+        .pipe(withScope(orphanThread));
+      const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(orphanThread));
+      const priorityOf = (cardId: string) =>
+        listed.cards.find((card) => card.cardId === cardId)?.priority;
+      assert.strictEqual(priorityOf(plain.cardId), "low");
+      assert.strictEqual(priorityOf(urgent.cardId), "urgent");
+    }),
+  );
+
   it.effect("reads another card by key: brief, version, dependencies and plans", () =>
     Effect.gen(function* () {
       yield* seed();
@@ -3744,10 +3768,10 @@ it.layer(makeLayer("t3o-board-mcp-labels-test-"))("board mcp toolkit — labels 
 });
 
 it("board_propose_plans names a too-big size's dimension, worker and the largest that fits (T3O-86)", () => {
+  const baseline = { cpuCores: 12, ramGiB: 16, diskGB: 45 };
   const warnings = boardPlanSizeWarnings({
-    baseline: { cpuCores: 12, ramGiB: 16, diskGB: 45 },
-    declared: { cpuCores: 16, ramGiB: 64, diskGB: 500 },
-    workerLabel: "build-02",
+    baseline,
+    workers: [{ label: "build-02", declared: { cpuCores: 16, ramGiB: 64, diskGB: 500 } }],
     plans: [
       { key: "big", size: { cpu: "XL", ram: "M", disk: "M" } },
       { key: "fine", size: { cpu: "M", ram: "M", disk: "M" } },
@@ -3757,4 +3781,31 @@ it("board_propose_plans names a too-big size's dimension, worker and the largest
   assert.deepStrictEqual(warnings, [
     "Plan 'big': CPU XL needs 18 cores; build-02 has 16. The largest size that fits is L.",
   ]);
+  // An unbound card is measured against the largest worker ready for its project (T3O-87): a
+  // board server with no build capacity raises nothing when build-03 fits.
+  assert.deepStrictEqual(
+    boardPlanSizeWarnings({
+      baseline,
+      workers: [
+        { label: "this server", declared: { cpuCores: 0, ramGiB: 0, diskGB: 50 } },
+        { label: "build-03", declared: { cpuCores: 32, ramGiB: 128, diskGB: 500 } },
+      ],
+      plans: [{ key: "big", size: { cpu: "XL", ram: "M", disk: "M" } }],
+    }),
+    [],
+  );
+  // The cores on one worker and the RAM on another place nothing: the plan is still warned.
+  assert.deepStrictEqual(
+    boardPlanSizeWarnings({
+      baseline,
+      workers: [
+        { label: "cores", declared: { cpuCores: 32, ramGiB: 8, diskGB: 500 } },
+        { label: "memory", declared: { cpuCores: 4, ramGiB: 128, diskGB: 500 } },
+      ],
+      plans: [{ key: "split", size: { cpu: "XL", ram: "M", disk: "M" } }],
+    }),
+    [
+      "Plan 'split': no single worker has 18 cores, 16 GiB RAM and 45 GB disk together. Size it to fit one worker.",
+    ],
+  );
 });

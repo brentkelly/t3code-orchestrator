@@ -128,6 +128,34 @@ const DEFAULT_BOARD_SETUP_TIMEOUT_MINUTES = 30;
 export const DEFAULT_BOARD_READINESS_SCRIPT_PATH = ".t3/ready.sh";
 const DEFAULT_BOARD_READINESS_TIMEOUT_SECONDS = 120;
 
+// ── Learned baselines (T3O-87) ─────────────────────────────────────────
+
+/** A learned baseline needs this many card samples. */
+export const BOARD_LEARNED_MIN_SAMPLES = 5;
+/** Card samples older than this are not learned from. */
+export const BOARD_LEARNED_WINDOW_DAYS = 30;
+
+/** One dimension of a learned baseline, per M card. */
+export const BoardLearnedDimension = Schema.Struct({
+  /** The 90th percentile of the card samples, rounded up; null under the minimum. */
+  value: Schema.NullOr(NonNegativeNumber),
+  samples: Schema.Int,
+  /** The card samples, oldest first, for the sparkline. */
+  history: Schema.Array(NonNegativeNumber),
+  /** An increase that no ready worker could place at size M: shown, never applied. */
+  unplaceable: Schema.optionalKey(Schema.Boolean),
+});
+export type BoardLearnedDimension = typeof BoardLearnedDimension.Type;
+
+/** What the board learned of a project's cards: written by the board, never by a human. */
+export const BoardProjectLearned = Schema.Struct({
+  computedAt: IsoDateTime,
+  cpu: BoardLearnedDimension,
+  ram: BoardLearnedDimension,
+  disk: BoardLearnedDimension,
+});
+export type BoardProjectLearned = typeof BoardProjectLearned.Type;
+
 /** A project's Resources settings. Every field null follows its default. */
 export const BoardProjectResources = Schema.Struct({
   baseline: Schema.NullOr(BoardProjectBaseline).pipe(
@@ -142,8 +170,20 @@ export const BoardProjectResources = Schema.Struct({
   readinessTimeoutSeconds: Schema.NullOr(PositiveNumber).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** T3o (T3O-87): dimensions whose declared value ignores learning. Absent pins none. */
+  pinDeclared: Schema.optionalKey(Schema.Array(BoardResourceDimension)),
+  /** T3o (T3O-87): the learned baseline, the board's to write. Not in the config's version. */
+  learned: Schema.optionalKey(BoardProjectLearned),
 });
 export type BoardProjectResources = typeof BoardProjectResources.Type;
+
+/** The resources without what the board learned: what a version hashes and a file compares. */
+export function boardProjectResourcesWithoutLearned(
+  resources: BoardProjectResources,
+): BoardProjectResources {
+  const { learned: _learned, ...rest } = resources;
+  return rest;
+}
 
 export const EMPTY_BOARD_PROJECT_RESOURCES: BoardProjectResources = {
   baseline: null,
@@ -160,17 +200,92 @@ export function isEmptyBoardProjectResources(
     (resources.baseline === null &&
       resources.setupTimeoutMinutes === null &&
       resources.readinessPath === null &&
-      resources.readinessTimeoutSeconds === null)
+      resources.readinessTimeoutSeconds === null &&
+      (resources.pinDeclared ?? []).length === 0 &&
+      resources.learned === undefined)
   );
 }
 
-export function resolveBoardProjectBaseline(
+/** The declared baseline, ignoring learning. */
+export function resolveBoardProjectDeclared(
   resources: BoardProjectResources | null | undefined,
 ): BoardResourceProfile {
   const baseline = resources?.baseline;
   return baseline == null
     ? DEFAULT_BOARD_PROJECT_BASELINE
     : { cpuCores: baseline.cpuCores, ramGiB: baseline.ramGiB, diskGB: baseline.diskGB };
+}
+
+/** Where a declared value came from: a human, the 2/4/5 placeholder, or the upgrade. */
+export type BoardDeclaredSource = "declared" | "placeholder" | "upgrade";
+
+function boardDeclaredSource(
+  resources: BoardProjectResources | null | undefined,
+): BoardDeclaredSource {
+  const baseline = resources?.baseline;
+  if (baseline == null) return "placeholder";
+  return baseline.setAtUpgrade ? "upgrade" : "declared";
+}
+
+/** A learned value as it may apply: clamped to 0.5x–2x only against a human's declared value,
+    so a placeholder or upgrade value learns past 2x. */
+function boardLearnedCandidate(
+  declared: number,
+  source: BoardDeclaredSource,
+  learned: number,
+): number {
+  if (source !== "declared") return learned;
+  return Math.min(Math.max(learned, declared * 0.5), declared * 2);
+}
+
+/** The value in force for new placements in one dimension ("Planner uses"), and what learning
+    offers beside it. */
+export interface BoardPlannerUse {
+  readonly value: number;
+  readonly source: "learned" | BoardDeclaredSource;
+  readonly declared: number;
+  readonly declaredSource: BoardDeclaredSource;
+  readonly pinned: boolean;
+  /** A learned decrease, offered with Use learned; never applied by itself. */
+  readonly offeredDecrease: number | null;
+  /** A learned increase held back: no ready worker could place an M card with it. */
+  readonly heldIncrease: number | null;
+}
+
+export function boardPlannerUse(
+  resources: BoardProjectResources | null | undefined,
+  dimension: BoardResourceDimension,
+): BoardPlannerUse {
+  const declared = boardResourceProfileValue(resolveBoardProjectDeclared(resources), dimension);
+  const declaredSource = boardDeclaredSource(resources);
+  const pinned = (resources?.pinDeclared ?? []).includes(dimension);
+  const base: BoardPlannerUse = {
+    value: declared,
+    source: declaredSource,
+    declared,
+    declaredSource,
+    pinned,
+    offeredDecrease: null,
+    heldIncrease: null,
+  };
+  const learned = resources?.learned?.[dimension] ?? null;
+  if (pinned || learned === null || learned.value === null) return base;
+  const candidate = boardLearnedCandidate(declared, declaredSource, learned.value);
+  if (candidate < declared) return { ...base, offeredDecrease: candidate };
+  if (candidate === declared) return base;
+  if (learned.unplaceable === true) return { ...base, heldIncrease: candidate };
+  return { ...base, value: candidate, source: "learned" };
+}
+
+/** The baseline new placements use: per dimension a learned increase, or the declared value. */
+export function resolveBoardProjectBaseline(
+  resources: BoardProjectResources | null | undefined,
+): BoardResourceProfile {
+  return {
+    cpuCores: boardPlannerUse(resources, "cpu").value,
+    ramGiB: boardPlannerUse(resources, "ram").value,
+    diskGB: boardPlannerUse(resources, "disk").value,
+  };
 }
 
 /**
@@ -233,6 +348,14 @@ export const BoardCardSetupResult = Schema.Struct({
 });
 export type BoardCardSetupResult = typeof BoardCardSetupResult.Type;
 
+/** T3o: when and why the placement gate chose the card's worker (T3O-87). */
+export const BoardCardPlacementRecord = Schema.Struct({
+  workerId: TrimmedNonEmptyString,
+  at: IsoDateTime,
+  reason: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type BoardCardPlacementRecord = typeof BoardCardPlacementRecord.Type;
+
 /** A card's capacity state, in one column: its size, its grant, and its setup. */
 export const BoardCardResources = Schema.Struct({
   sizing: Schema.NullOr(BoardCardSizing).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -240,6 +363,8 @@ export const BoardCardResources = Schema.Struct({
   setup: Schema.NullOr(BoardCardSetupResult).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** A worktree was cut or moved since the last setup: it runs setup, even on a built card. */
   setupDue: Schema.optional(Schema.Boolean),
+  /** T3o: the placement on record (T3O-87); absent until the gate places the card. */
+  placement: Schema.optional(Schema.NullOr(BoardCardPlacementRecord)),
 });
 export type BoardCardResources = typeof BoardCardResources.Type;
 
@@ -269,7 +394,8 @@ const withSizing = (
     next.sizing.edit === null &&
     next.grant === null &&
     next.setup === null &&
-    next.setupDue !== true
+    next.setupDue !== true &&
+    (next.placement ?? null) === null
     ? null
     : next;
 };
@@ -312,8 +438,60 @@ export const BoardCapacityClaimInput = Schema.Struct({
   profile: BoardResourceProfile,
   providerInstanceId: Schema.NullOr(TrimmedNonEmptyString),
   force: Schema.optionalKey(Schema.Boolean),
+  /** T3o: the card holds this worker: start early at its early-start share (T3O-87). */
+  hold: Schema.optionalKey(Schema.Boolean),
+  /**
+   * T3o: a later card of this board holding the worker gives way (T3O-87): its placement hold
+   * passes to this card only if this request succeeds, so a refusal leaves it in place.
+   */
+  replacesCardId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type BoardCapacityClaimInput = typeof BoardCapacityClaimInput.Type;
+
+/** T3o: ask for, or refresh, a hold on a worker for a waiting card (T3O-87). Idempotent. */
+export const BoardCapacityHoldInput = Schema.Struct({
+  cardId: TrimmedNonEmptyString,
+  repositoryKey: Schema.NullOr(TrimmedNonEmptyString),
+  projectId: Schema.optionalKey(TrimmedNonEmptyString),
+  providerInstanceId: Schema.NullOr(TrimmedNonEmptyString),
+  profile: BoardResourceProfile,
+  kind: Schema.Literals(["placement", "grow"]),
+  /**
+   * T3o: a later card of this board holding the worker gives way (T3O-87): its placement hold
+   * passes to this card only if this request succeeds, so a refusal leaves it in place.
+   */
+  replacesCardId: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type BoardCapacityHoldInput = typeof BoardCapacityHoldInput.Type;
+
+export const BoardCapacityHoldResult = Schema.Union([
+  Schema.Struct({
+    outcome: Schema.Literal("held"),
+    /** What the card is still short of in each dimension now. */
+    short: BoardResourceProfile,
+    /** When the hold ends at the latest: only once someone else is waiting. */
+    until: Schema.NullOr(IsoDateTime),
+  }),
+  Schema.Struct({
+    outcome: Schema.Literal("refused"),
+    /** held, disk, too-big, not-eligible, cool-off or turn; an unknown one reads as refused. */
+    reason: TrimmedNonEmptyString,
+    until: Schema.NullOr(IsoDateTime),
+  }),
+]);
+export type BoardCapacityHoldResult = typeof BoardCapacityHoldResult.Type;
+
+/** T3o: what a board sees of the holds on a worker (T3O-87). Never another board's card. */
+export const BoardWorkerHoldView = Schema.Struct({
+  /** Not taking new placements: held for a card, or a grow hold is waiting. */
+  closed: Schema.Boolean,
+  /** Until when, once someone is waiting. */
+  until: Schema.NullOr(IsoDateTime),
+  earlyStartFraction: Schema.Finite,
+  /** This board's card the worker is held for, when the hold is this board's. */
+  cardId: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type BoardWorkerHoldView = typeof BoardWorkerHoldView.Type;
 
 export const BoardCapacityClaimResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("granted") }),
@@ -453,6 +631,8 @@ export const BoardWorkerCapacitySnapshot = Schema.Struct({
   readiness: Schema.Array(BoardWorkerReadiness),
   /** This board's cards the worker counts heavy because a turn is running there. */
   heavyCards: Schema.Array(TrimmedNonEmptyString),
+  /** T3o: the worker's holds as this board sees them (T3O-87). Absent from an older worker. */
+  hold: Schema.optionalKey(BoardWorkerHoldView),
 });
 export type BoardWorkerCapacitySnapshot = typeof BoardWorkerCapacitySnapshot.Type;
 
@@ -526,6 +706,8 @@ export const BoardCardCapacityView = Schema.Struct({
   granted: Schema.NullOr(Schema.Struct({ profile: BoardResourceProfile, heavy: Schema.Boolean })),
   /** The worker it runs on, or will. */
   workerId: TrimmedNonEmptyString,
+  /** T3o: where the placement gate put it, when and why; absent until its build starts (T3O-87). */
+  placement: Schema.optionalKey(BoardCardPlacementRecord),
   /** Why its step waits, when it does. */
   queuedBy: Schema.NullOr(TrimmedNonEmptyString),
   queuedDetail: Schema.NullOr(
@@ -555,6 +737,7 @@ export function boardCardCapacityView(input: {
     reservation: boardCardRequestedProfile(input.resources, input.projectResources),
     granted: grant === null ? null : { profile: grant.profile, heavy: grant.heavy },
     workerId: input.workerId,
+    ...(input.resources?.placement == null ? {} : { placement: input.resources.placement }),
     queuedBy: input.queuedBy,
     queuedDetail: input.queuedDetail,
   };

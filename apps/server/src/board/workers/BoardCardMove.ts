@@ -57,8 +57,7 @@ export interface BoardCardMoverShape {
     options?: BoardMoveForce,
   ) => Effect.Effect<BoardCardMoveCheck>;
   /** Check again, then start the move; the git work runs on after the answer.
-      A null worker is the human's Follow default: the board's default worker,
-      and the card lands unpinned. */
+      A null worker lands the card on the board server, unpinned. */
   readonly move: (
     cardId: BoardCardId,
     toWorkerId: BoardWorkerId | null,
@@ -145,10 +144,9 @@ const makeBoardCardMover = Effect.gen(function* () {
    */
   const unreachableSource = Effect.fn("BoardCardMover.unreachableSource")(function* (
     card: BoardCard,
-    defaultWorkerId: BoardWorkerId | undefined,
   ) {
     if (card.placementOrphaned !== null) return card.placementOrphaned.workerId;
-    const workerId = boardCardEffectiveWorkerId(card, defaultWorkerId);
+    const workerId = boardCardEffectiveWorkerId(card);
     if (workerId === BOARD_LOCAL_WORKER_ID) return null;
     const worker = (yield* placement.workers).workers.find(
       (candidate) => candidate.id === workerId,
@@ -199,9 +197,8 @@ const makeBoardCardMover = Effect.gen(function* () {
   const checkForced = Effect.fn("BoardCardMover.checkForced")(function* (
     card: BoardCard,
     toWorkerId: BoardWorkerId,
-    defaultWorkerId: BoardWorkerId | undefined,
   ) {
-    const from = yield* unreachableSource(card, defaultWorkerId);
+    const from = yield* unreachableSource(card);
     if (from === null) {
       return refused(
         "Force-move is only for a card whose worker is offline or removed. Move it instead.",
@@ -242,16 +239,15 @@ const makeBoardCardMover = Effect.gen(function* () {
         return refused("That worker is no longer on this board.");
       }
       if (card.workerMove?.status === "moving") return refused("This card is already moving.");
-      if (options.force === true)
-        return yield* checkForced(card, toWorkerId, board.defaultWorkerId);
+      if (options.force === true) return yield* checkForced(card, toWorkerId);
       const holds = boardCardHoldsWorktree(card);
       if (!holds && card.workerMove === null) return { outcome: "pin" } as const;
-      const from = holds ? boardCardEffectiveWorkerId(card, board.defaultWorkerId) : null;
+      const from = holds ? boardCardEffectiveWorkerId(card) : null;
       const live = boardCardStepState(board, card.id);
       if (live !== null && (live.status === "running" || live.status === "completing")) {
         return {
           outcome: "step-running",
-          workerId: from ?? boardCardEffectiveWorkerId(card, board.defaultWorkerId),
+          workerId: from ?? boardCardEffectiveWorkerId(card),
           threadId: live.threadId,
           stepLabel: live.stepLabel ?? live.stageLabel,
         } as const;
@@ -328,7 +324,7 @@ const makeBoardCardMover = Effect.gen(function* () {
         return yield* noRemoteBranch(
           card,
           worktree,
-          card.workerMove?.fromWorkerId ?? boardCardEffectiveWorkerId(card, board.defaultWorkerId),
+          card.workerMove?.fromWorkerId ?? boardCardEffectiveWorkerId(card),
         );
       }
       return { outcome: "ready", fromWorkerId: from, branch: worktree.branch, tip } as const;
@@ -605,7 +601,8 @@ const makeBoardCardMover = Effect.gen(function* () {
     options = {},
   ) {
     const followDefault = choice === null;
-    const toWorkerId = choice ?? (yield* readBoard).defaultWorkerId ?? BOARD_LOCAL_WORKER_ID;
+    // T3o: the default worker is retired (T3O-87): an unpinned move lands on the board server.
+    const toWorkerId = choice ?? BOARD_LOCAL_WORKER_ID;
     const force = options.force === true;
     const checked = yield* check(cardId, toWorkerId, options);
     // A force-moved card with no worktree just re-pins; the supervisor

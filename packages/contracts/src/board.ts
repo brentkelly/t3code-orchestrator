@@ -57,11 +57,14 @@ import {
   BoardCardSetupResult,
   BoardCardSize,
   BoardCardSizeEditor,
+  BoardProjectLearned,
   BoardProjectResources,
   BoardResourceDimension,
   BoardResourceProfile,
+  boardProjectResourcesWithoutLearned,
   isEmptyBoardProjectResources,
 } from "./boardCapacity.ts";
+import { BoardCardActualsRow } from "./boardActuals.ts";
 import {
   BOARD_WORKER_GIT_CALL_RPC_SCOPES,
   BOARD_WORKER_GIT_CALL_RPCS,
@@ -1150,6 +1153,34 @@ export const BoardMergeStrategy = PullRequestMergeMethod;
 export type BoardMergeStrategy = PullRequestMergeMethod;
 
 /**
+ * How soon a waiting card gets a worker slot. It only breaks ties between cards waiting at the
+ * same stage, never pre-empts started work, and is per board: workers never see it. A group has
+ * none (only leaves run), so readers go through `boardCardEffectivePriority`.
+ */
+export const BoardCardPriority = Schema.Literals(["low", "normal", "high", "urgent"]);
+export type BoardCardPriority = typeof BoardCardPriority.Type;
+
+const BOARD_CARD_PRIORITY_RANK: Record<BoardCardPriority, number> = {
+  low: 0,
+  normal: 1,
+  high: 2,
+  urgent: 3,
+};
+
+/** Higher runs first. */
+export function boardCardPriorityRank(priority: BoardCardPriority): number {
+  return BOARD_CARD_PRIORITY_RANK[priority];
+}
+
+/** A group sorts as Normal whatever it stores; absent (the shell's Normal) is Normal too. */
+export function boardCardEffectivePriority(card: {
+  readonly priority?: BoardCardPriority | undefined;
+  readonly group?: unknown;
+}): BoardCardPriority {
+  return card.group != null ? "normal" : (card.priority ?? "normal");
+}
+
+/**
  * Where a group's children merge: `own` cuts the group its own
  * integration branch, `inherit` passes the children through to whatever the
  * group itself lands on (its own parent's target, or trunk).
@@ -2126,6 +2157,9 @@ export const BoardCard = Schema.Struct({
   mergeStrategy: Schema.NullOr(BoardMergeStrategy).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Decodes to normal on older payloads, matching migration 069's column default. Always
+      normal on a group. */
+  priority: BoardCardPriority.pipe(Schema.withDecodingDefault(Effect.succeed("normal" as const))),
   /** The card's auto-plan request; absent on a card never
       auto-planned, matching migration 053's NULL column. */
   autoPlan: Schema.optionalKey(BoardCardAutoPlan),
@@ -2165,7 +2199,7 @@ export const BoardCard = Schema.Struct({
       human's move, Retry CI or Send back anyway starts it again. */
   ciRoundTrips: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   /** T3o: the card's size, what its worker granted, and its setup (T3O-86). Null until any is
-      set; decodes to null on older payloads, matching migration 069's NULL column. */
+      set; decodes to null on older payloads, matching migration 071's NULL column. */
   resources: Schema.NullOr(BoardCardResources).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -2402,6 +2436,17 @@ export const BoardStepQueuedBy = Schema.Literals([
   "quota",
   "agent-cap",
   "needs-update",
+  // T3o: no worker is online and ready for the project with the step's provider (T3O-87). Amber.
+  "no-ready-worker",
+  // T3o: planning runs on the board server (T3O-87): its folder for the project isn't a
+  // checkout (amber), or the step's provider isn't signed in there (violet).
+  "server-checkout",
+  "server-sign-in",
+  // T3o: holds (T3O-87). `holding`: the card holds `workerId` and starts there when room frees.
+  // `reserved`: the worker isn't taking new cards: held for this board's `behindCardId`, or
+  // for a reason the board isn't told.
+  "holding",
+  "reserved",
 ]);
 export type BoardStepQueuedBy = typeof BoardStepQueuedBy.Type;
 
@@ -2419,6 +2464,11 @@ export const BoardStepQueuedDetail = Schema.Struct({
   /** Which `setup` wait: the worker's readiness fails, it has no checkout, or the card's own
       setup script holds the agent. Absent: a checkout is on its way. */
   setupCause: Schema.optionalKey(Schema.Literals(["not-ready", "not-set-up", "card-setup"])),
+  /** T3o: why the board server can't plan (T3O-87): its project folder is missing or empty
+      (Clone here), or exists and isn't a checkout of the project's repository. */
+  serverCheckout: Schema.optionalKey(Schema.Literals(["missing", "not-a-checkout"])),
+  /** T3o: the provider to sign in to on the board server (T3O-87). */
+  providerInstanceId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type BoardStepQueuedDetail = typeof BoardStepQueuedDetail.Type;
 
@@ -2432,7 +2482,7 @@ export function boardStepWaitsForRoom(
   const detail = state.queuedDetail;
   return (
     state.status === "queued" &&
-    state.queuedBy === "capacity" &&
+    (state.queuedBy === "capacity" || state.queuedBy === "holding") &&
     detail?.workerId !== undefined &&
     detail.behindCardId === undefined &&
     detail.tooBig !== true
@@ -2816,7 +2866,9 @@ export const BoardCardActivityPayload = Schema.Struct({
   ),
   /** card-worker-removal: what the removal, or the re-add, did. The
       worker's label rides in `detail`, since a removed worker has none left. */
-  removalOutcome: Schema.optionalKey(Schema.Literals(["fallback", "orphaned", "reattached"])),
+  removalOutcome: Schema.optionalKey(
+    Schema.Literals(["fallback", "orphaned", "reattached", "reclaimed"]),
+  ),
   /** plan-review-started / -rounds-changed / -finished: the round limit, and what the
       agent reported. A null `roundsRun` is "rounds not reported". */
   planReviewRounds: Schema.optionalKey(PositiveInt),
@@ -2957,11 +3009,16 @@ export type BoardProjectStageDelta = Pick<
     Runs on every client, so no `crypto`. */
 export function boardProjectConfigVersion(delta: BoardProjectStageDelta): string {
   // Resources join the hash only when set, so every existing version stays as it was.
+  // T3o (T3O-87): what the board learned never moves the version a human's edit expects.
+  const resources =
+    delta.resources === undefined
+      ? undefined
+      : boardProjectResourcesWithoutLearned(delta.resources);
   const text = canonicalJson({
     stageSwitches: delta.stageSwitches,
     overrides: delta.overrides,
     ci: delta.ci,
-    ...(isEmptyBoardProjectResources(delta.resources) ? {} : { resources: delta.resources }),
+    ...(isEmptyBoardProjectResources(resources) ? {} : { resources }),
   });
   let a = 0x811c9dc5;
   let b = 0x01000193 ^ text.length;
@@ -4934,6 +4991,8 @@ export const BoardCardCreateCommand = Schema.Struct({
   pinnedWorkerId: Schema.optional(BoardWorkerId),
   /** The card's own merge strategy. Absent follows the default. */
   mergeStrategy: Schema.optional(BoardMergeStrategy),
+  /** Absent is normal. Refused on a heading, which has no priority. */
+  priority: Schema.optional(BoardCardPriority),
   /** The outside item this card tracks, such as a webhook's GitHub issue. The decider
       refuses one a live card already carries. */
   externalRef: Schema.optional(BoardCardExternalRef),
@@ -5095,6 +5154,8 @@ export const BoardCardUpdateCommand = Schema.Struct({
       the reverse state must always be reachable. A change clears any
       auto-merge hold, since the hold may be the forge refusing the old one. */
   mergeStrategy: Schema.optional(Schema.NullOr(BoardMergeStrategy)),
+  /** Absent leaves it unchanged. Refused on a group, which has no priority. */
+  priority: Schema.optional(BoardCardPriority),
   /** Append this text to the end of the brief, after a blank line.
       Applied by the decider against the brief as it stands when the command
       is decided, so an edit landing in between is kept rather than
@@ -5478,6 +5539,17 @@ export const BoardProjectSetResourcesCommand = Schema.Struct({
 });
 export type BoardProjectSetResourcesCommand = typeof BoardProjectSetResourcesCommand.Type;
 
+/** T3o: the board's learned baseline for a project (T3O-87). Server-internal: it never moves
+    the config's version, so a human's edit in flight still lands. */
+export const BoardProjectRecordLearnedCommand = Schema.Struct({
+  type: Schema.Literal("board.project.record-learned"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  learned: BoardProjectLearned,
+  createdAt: IsoDateTime,
+});
+export type BoardProjectRecordLearnedCommand = typeof BoardProjectRecordLearnedCommand.Type;
+
 /** The project's "Stop on failure" CI setting. It applies from the
     next pass; a running pass keeps the setting it started with. */
 export const BoardProjectSetCiStopOnFailureCommand = Schema.Struct({
@@ -5699,11 +5771,6 @@ export const BoardCardProvisionWorktreeCommand = Schema.Struct({
   /** Base ref the branch was cut from (default branch, or parent integration
       branch for a sub-board plan card). */
   baseRefName: TrimmedNonEmptyString,
-  /** T3o: what the worker granted, on record before it is called (T3O-86). Absent on an
-      older command, which granted nothing. */
-  grantedProfile: Schema.optionalKey(BoardResourceProfile),
-  heavyGranted: Schema.optionalKey(Schema.Boolean),
-  claimId: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 export type BoardCardProvisionWorktreeCommand = typeof BoardCardProvisionWorktreeCommand.Type;
@@ -5760,6 +5827,13 @@ export const BoardCardPlaceCommand = Schema.Struct({
   commandId: CommandId,
   cardId: BoardCardId,
   workerId: BoardWorkerId,
+  /** T3o: what the worker granted, on record before the provision is called (T3O-87, moved
+      from `provision-worktree`). Absent for a placement that took no claim. */
+  grantedProfile: Schema.optionalKey(BoardResourceProfile),
+  heavyGranted: Schema.optionalKey(Schema.Boolean),
+  claimId: Schema.optionalKey(TrimmedNonEmptyString),
+  /** T3o: why the gate chose this worker, for the card's Worker row (T3O-87). */
+  reason: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 export type BoardCardPlaceCommand = typeof BoardCardPlaceCommand.Type;
@@ -6412,6 +6486,8 @@ export const BoardCardCreatedPayload = Schema.Struct({
   mergeStrategy: Schema.optionalKey(BoardMergeStrategy),
   /** T3o: a split child's planner size, from its plan (T3O-86). Absent is none. */
   resources: Schema.optionalKey(BoardCardResources),
+  /** Absent is normal, migration 069's column default. */
+  priority: Schema.optionalKey(BoardCardPriority),
   /** Key-optional: absent is no reference, the null the column defaults to. */
   externalRef: Schema.optionalKey(BoardCardExternalRef),
   /** The decider has no SQL client, so the payload names the plan and the SQL projector
@@ -6792,7 +6868,9 @@ export const BoardCardWorkerRemovalPayload = Schema.Struct({
   cardId: BoardCardId,
   workerId: BoardWorkerId,
   workerLabel: TrimmedNonEmptyString,
-  outcome: Schema.Literals(["fallback", "orphaned", "reattached"]),
+  /** T3o: `reclaimed`: its worktree was retired with every commit on the remote, and it is
+      placed again when its next step starts (T3O-87). */
+  outcome: Schema.Literals(["fallback", "orphaned", "reattached", "reclaimed"]),
   card: BoardCard,
 });
 export type BoardCardWorkerRemovalPayload = typeof BoardCardWorkerRemovalPayload.Type;
@@ -7343,6 +7421,9 @@ export const BoardCardShell = Schema.Struct({
       budget. Card-aggregate data, so every card-carrying delta carries it: absent means
       unscheduled, with no absent-means-preserve rule. */
   scheduledStartAt: Schema.optionalKey(IsoDateTime),
+  /** Absent means normal (key-optional for the byte budget). Card-aggregate data like
+      `scheduledStartAt`, with no absent-means-preserve rule. */
+  priority: Schema.optionalKey(BoardCardPriority),
   /** The card's own Automation toggles, absent while inherited (key-optional for the byte
       budget). An explicit `false` overrides the group. Resolve with
       `resolveBoardCardAutomation`. */
@@ -7364,6 +7445,9 @@ export const BoardCardShell = Schema.Struct({
       kept" needs settings the SQL producer cannot see, so the client derives the flag
       (`boardCardWorktreeKept`). */
   worktreeReady: Schema.optionalKey(Schema.Boolean),
+  /** T3o: the worktree is being made on its placed worker, absent when not (T3O-87). With
+      `worktreeReady`, whether `workerId` is a placement rather than a pin. */
+  worktreeProvisioning: Schema.optionalKey(Schema.Boolean),
   /** Why the last reclaim kept the worktree (`reclaimBlockedReason`), absent
       when none has. */
   worktreeKeptReason: Schema.optionalKey(TrimmedNonEmptyString),
@@ -7724,6 +7808,8 @@ export function makeBoardCardShell(input: {
       the key is omitted for an unscheduled card to keep its shell
       byte-identical to a pre-schedule payload. */
   readonly scheduledStartAt?: IsoDateTime | null | undefined;
+  /** Omitted from the shell when normal. */
+  readonly priority?: BoardCardPriority | undefined;
   /** The card's own Automation toggles and its unattended-run flag.
       On the card aggregate, so both producers carry them; the keys
       are omitted while a toggle inherits. */
@@ -7743,6 +7829,7 @@ export function makeBoardCardShell(input: {
   /** The worktree pair. On the card aggregate like the auto-merge
       trio, so both producers carry it; `cardMetaShellFields.test.ts` pins it. */
   readonly worktreeReady?: boolean | null | undefined;
+  readonly worktreeProvisioning?: boolean | null | undefined;
   readonly worktreeKeptReason?: string | null | undefined;
   /** The worker the card is bound to, and its move. On the card
       aggregate, so both producers carry them; omitted when null so a
@@ -7827,6 +7914,9 @@ export function makeBoardCardShell(input: {
     // omitted when there is none, which keeps an unscheduled card's shell
     // exactly the size it was before this field existed.
     ...(input.scheduledStartAt == null ? {} : { scheduledStartAt: input.scheduledStartAt }),
+    ...(input.priority === undefined || input.priority === "normal"
+      ? {}
+      : { priority: input.priority }),
     // The Automation toggles: omitted while inheriting; an explicit
     // `false` is carried because it overrides the group.
     ...(input.autoPlanSetting == null ? {} : { autoPlanSetting: input.autoPlanSetting }),
@@ -7842,6 +7932,7 @@ export function makeBoardCardShell(input: {
     // The worktree pair: omitted when there is nothing on disk,
     // so a card without a worktree costs what it did before.
     ...(input.worktreeReady === true ? { worktreeReady: true } : {}),
+    ...(input.worktreeProvisioning === true ? { worktreeProvisioning: true } : {}),
     ...(input.worktreeReady === true && input.worktreeKeptReason != null
       ? { worktreeKeptReason: input.worktreeKeptReason }
       : {}),
@@ -7944,6 +8035,7 @@ export function boardCardShellFromCard(
     parentCardId: card.parentCardId,
     group: card.group,
     scheduledStartAt: card.scheduledStartAt,
+    priority: card.priority,
     autoPlanSetting: card.autoPlanSetting,
     autoBuildSetting: card.autoBuildSetting,
     autoMergeSetting: card.autoMergeSetting,
@@ -7952,6 +8044,7 @@ export function boardCardShellFromCard(
     autoMergeGaveUp: boardCardAutoMergeGaveUp(card.autoMergeHold),
     prDraft: boardCardPullRequestIsOpenDraft(card.pullRequest),
     worktreeReady: card.worktree?.status === "ready",
+    worktreeProvisioning: card.worktree?.status === "provisioning",
     worktreeKeptReason: card.worktree?.reclaimBlockedReason ?? null,
     workerId: boardCardBoundWorkerId(card),
     workerMove: card.workerMove,
@@ -8237,6 +8330,8 @@ const BOARD_INTERNAL_COMMANDS = [
   BoardCardRecordGrantCommand,
   BoardCardUndoProvisionCommand,
   BoardCardRecordSetupCommand,
+  // T3o: a project's learned baseline (T3O-87).
+  BoardProjectRecordLearnedCommand,
   // The review loop's server-only carry fields.
   BoardCardSetReviewCarryCommand,
   // The decision log and auto-planning.
@@ -9451,6 +9546,8 @@ export const BoardCardDetail = Schema.Struct({
   usage: Schema.Array(BoardCardUsageRow).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** The card ran on a worker before usage was tracked, so its rows are a lower bound. */
   usageHistoryPartial: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** T3o: the card's measured steps (T3O-87), oldest first. Decodes to `[]` on older payloads. */
+  actuals: Schema.Array(BoardCardActualsRow).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** The card's decision log, oldest first. Decodes to `[]` on
       legacy detail payloads. */
   decisions: Schema.Array(BoardCardDecision).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
@@ -9946,6 +10043,9 @@ export const BoardReviewFinding = Schema.Struct({
   line: Schema.NullOr(PositiveInt).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   title: TrimmedNonEmptyString,
   detail: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** Set by a raised-bar reviewer on a concern drawn from a human pull request comment,
+      which can never be ruled below the bar. */
+  source: Schema.optional(Schema.Literal("pr-comment")),
 });
 export type BoardReviewFinding = typeof BoardReviewFinding.Type;
 
@@ -10002,6 +10102,9 @@ export const BoardReviewAdjudication = Schema.Struct({
   findingId: TrimmedNonEmptyString,
   verdict: BoardReviewVerdict,
   note: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** The adjudicator ruled this improvement below the round's raised bar: convergence reads
+      it as a nitpick, while the reviewer's rating stays recorded. */
+  belowBar: Schema.optional(Schema.Boolean),
 });
 export type BoardReviewAdjudication = typeof BoardReviewAdjudication.Type;
 
@@ -10113,14 +10216,17 @@ export type BoardReviewFindingResolution = "open" | "fixed" | "rejected" | "disp
 
 /** Pass the LATEST disposition and verdict (re-triage and re-adjudicate over
     the first pass). An escalation — the adjudicator's verdict, or a
-    legacy re-triage action — reads `escalated`. */
+    legacy re-triage action — reads `escalated`. A finding ruled below the bar is never
+    disputed: it reads as triage left it. */
 export function boardReviewFindingResolution(
   disposition: { readonly action: BoardReviewRetriageAction } | undefined,
-  verdict: { readonly verdict: BoardReviewVerdict } | undefined,
+  verdict:
+    | { readonly verdict: BoardReviewVerdict; readonly belowBar?: boolean | undefined }
+    | undefined,
 ): BoardReviewFindingResolution {
   if (disposition === undefined) return "open";
   if (disposition.action === "escalated") return "escalated";
-  if (verdict !== undefined) {
+  if (verdict !== undefined && verdict.belowBar !== true) {
     if (verdict.verdict === "escalated") return "escalated";
     if (verdict.verdict === "fix-upheld") return "fixed";
     if (verdict.verdict === "rejection-justified") return "rejected";
@@ -10527,7 +10633,13 @@ export type BoardReviewRoundResolution =
   | { readonly kind: "converge"; readonly by: "clean" | "adjudicator" }
   /** A settling round's carried and critical findings all stand settled. `unreviewedFixes`
       counts the fixes it landed past the reviewed SHA, which only the adjudicator verified. */
-  | { readonly kind: "converge"; readonly by: "settled"; readonly unreviewedFixes: number }
+  | {
+      readonly kind: "converge";
+      /** `below-bar`: a full round whose surviving blocking findings were all ruled below the
+          raised bar; its fixes past the reviewed SHA no review has read. */
+      readonly by: "settled" | "below-bar";
+      readonly unreviewedFixes: number;
+    }
   | {
       readonly kind: "stuck";
       readonly findings: ReadonlyArray<BoardReviewStuckFinding>;
@@ -10627,6 +10739,11 @@ interface BoardReviewRoundVerdicts {
   readonly findings: ReadonlyArray<BoardReviewRoundFinding>;
   /** Carried, critical and improvement findings: the set triage and adjudication rule on. */
   readonly blocking: ReadonlyArray<BoardReviewRoundFinding>;
+  /** `blocking` less the findings whose latest verdict ruled them below the bar: the set that
+      can stick the round or force another one. */
+  readonly effectiveBlocking: ReadonlyArray<BoardReviewRoundFinding>;
+  /** The findings whose latest verdict ruled them below the bar. */
+  readonly belowBar: ReadonlyArray<BoardReviewRoundFinding>;
   readonly overruled: ReadonlyArray<BoardReviewRoundFinding>;
   readonly triage: BoardTriagePayload;
   readonly retriage: BoardRetriagePayload | null;
@@ -10717,9 +10834,14 @@ function boardReviewRoundVerdicts(input: {
   }
   const verdicts = new Map(adjudication.verdicts.map((v) => [v.findingId, v]));
 
+  // A finding ruled below the bar never goes back to triage: it no longer blocks.
   const overruled = blocking.filter((finding) => {
     const verdict = verdicts.get(finding.id);
-    return verdict !== undefined && BOARD_REVIEW_OVERRULING_VERDICTS.has(verdict.verdict);
+    return (
+      verdict !== undefined &&
+      verdict.belowBar !== true &&
+      BOARD_REVIEW_OVERRULING_VERDICTS.has(verdict.verdict)
+    );
   });
   let retriage: BoardRetriagePayload | null = null;
   let readjudication: BoardAdjudicatePayload | null = null;
@@ -10777,11 +10899,15 @@ function boardReviewRoundVerdicts(input: {
   }
 
   const retriagePayload = retriage;
+  const latestVerdict = (id: string) => reverdicts.get(id) ?? verdicts.get(id);
+  const belowBar = blocking.filter((finding) => latestVerdict(finding.id)?.belowBar === true);
   return {
     kind: "folded",
     reviewedSha: reviewPayload.value.reviewedSha,
     findings,
     blocking,
+    effectiveBlocking: blocking.filter((finding) => !belowBar.includes(finding)),
+    belowBar,
     overruled,
     triage,
     retriage,
@@ -10791,7 +10917,7 @@ function boardReviewRoundVerdicts(input: {
     finalAdjudication: readjudication ?? adjudication,
     // Each finding's latest word from each side.
     latestAction: (id) => redispositions.get(id)?.action ?? dispositions.get(id)?.action ?? null,
-    latestVerdict: (id) => reverdicts.get(id) ?? verdicts.get(id),
+    latestVerdict,
     latestFixedSha: (id) =>
       redispositions.has(id) && retriagePayload !== null
         ? retriagePayload.fixedSha
@@ -10800,14 +10926,17 @@ function boardReviewRoundVerdicts(input: {
 }
 
 /** The findings whose survival forces another round, in the round's mode: every blocking
-    finding in a full round, only carried and critical ones in a settling round. */
+    finding not ruled below the bar in a full round, only carried and critical ones in a
+    settling round. */
 function boardReviewForcingFindings(
   fold: BoardReviewRoundVerdicts,
   mode: BoardReviewRoundMode,
 ): ReadonlyArray<BoardReviewRoundFinding> {
   return mode.kind === "full"
-    ? fold.blocking
-    : fold.blocking.filter((finding) => finding.carried || finding.severity === "critical");
+    ? fold.effectiveBlocking
+    : fold.effectiveBlocking.filter(
+        (finding) => finding.carried || finding.severity === "critical",
+      );
 }
 
 /** Whether a finding stands settled: a justified rejection, or an upheld fix that committed
@@ -10837,7 +10966,7 @@ export function boardReviewRoundModeOf(
 
 /**
  * The mode round `round` runs in: its record when one exists, so a re-plan composes the same
- * prompt. Otherwise settling once past `settleAfterRound`, outside a gate round, after a round
+ * prompt. Otherwise settling once past `convergeAfterRound`, outside a gate round, after a round
  * with no surviving critical and fewer than `settleBelowFindings` forcing findings. Only the
  * executor asks this.
  */
@@ -10845,7 +10974,7 @@ export function boardReviewNextRoundMode(input: {
   readonly round: number;
   readonly completions: ReadonlyArray<BoardStepCompletion>;
   readonly review: {
-    readonly settleAfterRound: number | null;
+    readonly convergeAfterRound: number | null;
     readonly settleBelowFindings: number;
   };
   readonly overrides: BoardCardReviewOverrides | null;
@@ -10854,7 +10983,7 @@ export function boardReviewNextRoundMode(input: {
   const recorded = overrides?.roundModes[String(round)];
   if (recorded !== undefined) return recorded;
   const previous = round - 1;
-  if (review.settleAfterRound === null || previous < review.settleAfterRound) {
+  if (review.convergeAfterRound === null || previous < review.convergeAfterRound) {
     return BOARD_REVIEW_FULL_ROUND;
   }
   const done = succeededBoardReviewSteps(input.completions);
@@ -10883,6 +11012,22 @@ export function boardReviewNextRoundMode(input: {
   return forcing.length < review.settleBelowFindings
     ? { kind: "settling", sinceSha: reviewedSha }
     : BOARD_REVIEW_FULL_ROUND;
+}
+
+/** How far a full round raises the bar for an `improvement`: 0 (unchanged) through 3
+    (critical-only). Rises past `convergeAfterRound` every two rounds; a settling round is
+    always 0, because its bar is already critical-only. */
+export type BoardReviewBarTier = 0 | 1 | 2 | 3;
+
+export function boardReviewBarTier(input: {
+  readonly round: number;
+  readonly convergeAfterRound: number | null;
+  readonly mode: BoardReviewRoundMode;
+}): BoardReviewBarTier {
+  const { round, convergeAfterRound } = input;
+  if (input.mode.kind === "settling" || convergeAfterRound === null) return 0;
+  if (round <= convergeAfterRound) return 0;
+  return Math.min(3, Math.floor((round - convergeAfterRound - 1) / 2) + 1) as BoardReviewBarTier;
 }
 
 function succeededBoardReviewSteps(
@@ -10951,7 +11096,8 @@ export function boardReviewRoundResolution(input: {
   const { round } = input;
   const fold = boardReviewRoundVerdicts(input);
   if (fold.kind !== "folded") return fold;
-  const { blocking, findings, latestAction, latestVerdict, reverdicts, redispositions } = fold;
+  const { findings, latestAction, latestVerdict, reverdicts, redispositions } = fold;
+  const blocking = fold.effectiveBlocking;
 
   const stuck: BoardReviewStuckFinding[] = [];
   for (const finding of blocking) {
@@ -11008,8 +11154,17 @@ export function boardReviewRoundResolution(input: {
     };
   }
 
+  const unreviewed = fixedFindings.filter(
+    (finding) => !boardReviewShaMatches(fold.latestFixedSha(finding.id), fold.reviewedSha),
+  );
+  // Every blocking finding was ruled below the bar: nothing left forces a round.
+  if (fold.blocking.length > 0 && blocking.length === 0) {
+    return { kind: "converge", by: "below-bar", unreviewedFixes: unreviewed.length };
+  }
+
   // The adjudicator's early exit: honoured only when the round changed no
-  // blocking code and every blocking finding stands settled.
+  // blocking code and every blocking finding stands settled. Fixes to findings
+  // ruled below the bar don't count, but they are reported as unreviewed.
   const anotherRound = fold.finalAdjudication.anotherRound ?? true;
   if (!anotherRound) {
     const settled = blocking.every((finding) => boardReviewFindingSettled(fold, finding));
@@ -11020,7 +11175,11 @@ export function boardReviewRoundResolution(input: {
       (boardReviewShaMatches(fold.triage.fixedSha, fold.reviewedSha) &&
         (fold.retriage === null ||
           boardReviewShaMatches(fold.retriage.fixedSha, fold.reviewedSha)));
-    if (settled && shaCheckPasses) return { kind: "converge", by: "adjudicator" };
+    if (settled && shaCheckPasses) {
+      return unreviewed.some((finding) => fold.belowBar.includes(finding))
+        ? { kind: "converge", by: "below-bar", unreviewedFixes: unreviewed.length }
+        : { kind: "converge", by: "adjudicator" };
+    }
   }
   return { kind: "continue" };
 }
@@ -11145,6 +11304,13 @@ export function boardReviewCompletionDefect(input: {
   if (rejectionRuled.length > 0) {
     return `A human ordered ${listIds(rejectionRuled.map((v) => v.findingId))} fixed, so only fix-upheld, fix-incomplete or fix-absent apply to them. Complete the step again.`;
   }
+  const belowBarDefect = boardReviewBelowBarDefect({
+    verdicts: adjudication.verdicts,
+    review: done.get(reviewStepId("review", round)),
+    carriedIds,
+    listIds,
+  });
+  if (belowBarDefect !== null) return belowBarDefect;
   const escalations = adjudication.verdicts.filter((v) => v.verdict === "escalated");
   const unexplained = escalations.filter((v) => v.note.trim() === "");
   if (unexplained.length > 0) {
@@ -11178,6 +11344,48 @@ export function boardReviewCompletionDefect(input: {
     if (notBlocking.length > 0) {
       return `Only a rejected blocking finding can be escalated, and never one a human already ordered fixed; ${listIds(notBlocking.map((v) => v.findingId))} cannot be. Rule on them yourself and complete the step again.`;
     }
+  }
+  return null;
+}
+
+/** Why a verdict's `belowBar` is refused: only a non-carried finding the reviewer rated
+    `improvement`, not drawn from a human PR comment, can be ruled below the bar, and never
+    with `escalated`. Reads only the round's records, never settings, so a past round is
+    never re-judged. */
+function boardReviewBelowBarDefect(input: {
+  readonly verdicts: ReadonlyArray<BoardReviewAdjudication>;
+  readonly review: BoardStepCompletion | undefined;
+  readonly carriedIds: ReadonlySet<string>;
+  readonly listIds: (ids: ReadonlyArray<string>) => string;
+}): string | null {
+  const ruled = input.verdicts.filter((v) => v.belowBar === true);
+  if (ruled.length === 0) return null;
+  const escalated = ruled.filter((v) => v.verdict === "escalated");
+  if (escalated.length > 0) {
+    return `\`belowBar\` cannot go with an escalated verdict (${input.listIds(escalated.map((v) => v.findingId))}): a finding below the bar is never escalated. Rule it below the bar with a normal verdict, or drop \`belowBar\` and escalate, and complete the step again.`;
+  }
+  const carried = ruled.filter((v) => input.carriedIds.has(v.findingId));
+  if (carried.length > 0) {
+    return `A human ordered ${input.listIds(carried.map((v) => v.findingId))} fixed, so it cannot be ruled below the bar. Drop \`belowBar\` from those verdicts and complete the step again.`;
+  }
+  const decoded =
+    input.review === undefined
+      ? null
+      : Option.getOrNull(
+          decodeBoardReviewPayloadOption(parseBoardStepPayloadJson(input.review.payload)),
+        );
+  const reviewed = new Map((decoded?.findings ?? []).map((finding) => [finding.id, finding]));
+  const unknown = ruled.filter((v) => !reviewed.has(v.findingId));
+  if (unknown.length > 0) {
+    return `${input.listIds(unknown.map((v) => v.findingId))} is not a finding of this round's review, so it cannot be ruled below the bar. Drop \`belowBar\` from those verdicts and complete the step again.`;
+  }
+  const notImprovement = ruled.filter((v) => reviewed.get(v.findingId)?.severity !== "improvement");
+  if (notImprovement.length > 0) {
+    return `Only an \`improvement\` finding can be ruled below the bar; ${input.listIds(notImprovement.map((v) => v.findingId))} is not one. A critical always blocks and a nitpick never does. Drop \`belowBar\` from those verdicts and complete the step again.`;
+  }
+  const fromHuman = ruled.filter((v) => reviewed.get(v.findingId)?.source === "pr-comment");
+  if (fromHuman.length > 0) {
+    return `${input.listIds(fromHuman.map((v) => v.findingId))} came from a human pull request comment, so it cannot be ruled below the bar. Drop \`belowBar\` from those verdicts and complete the step again.`;
   }
   return null;
 }
@@ -11274,8 +11482,9 @@ export interface BoardReviewLoopWalk {
       round's fixes no review has read. On a walk converged `settled`, the fixes only the
       adjudicator verified. */
   readonly unreviewedFixes?: number;
-  /** Present only on a `converged` walk the adjudicator ended, or a settling round settled. */
-  readonly convergedBy?: "adjudicator" | "settled";
+  /** Present only on a `converged` walk the adjudicator ended, a settling round settled, or
+      a full round whose remaining blocking findings were ruled below the bar. */
+  readonly convergedBy?: "adjudicator" | "settled" | "below-bar";
 }
 
 /** Whether a stuck round has been passed by a human. */
@@ -11397,8 +11606,8 @@ export function boardReviewLoopWalk(input: {
           currentRound: round,
           unreadableStepId: null,
           ...(resolution.by === "adjudicator" ? { convergedBy: "adjudicator" as const } : {}),
-          ...(resolution.by === "settled"
-            ? { convergedBy: "settled" as const, unreviewedFixes: resolution.unreviewedFixes }
+          ...(resolution.by === "settled" || resolution.by === "below-bar"
+            ? { convergedBy: resolution.by, unreviewedFixes: resolution.unreviewedFixes }
             : {}),
         };
       }
@@ -11878,13 +12087,23 @@ export const BoardStageExecutionSimple = Schema.Struct({
 });
 export type BoardStageExecutionSimple = typeof BoardStageExecutionSimple.Type;
 
-export const DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND = 3;
+export const DEFAULT_BOARD_REVIEW_CONVERGE_AFTER_ROUND = 3;
 const DEFAULT_BOARD_REVIEW_SETTLE_BELOW_FINDINGS = 2;
 /** At least 2: a round with no forcing findings already converges, so 1 could never settle. */
 export const BOARD_REVIEW_SETTLE_BELOW_FINDINGS_MIN = 2;
 export const BoardReviewSettleBelowFindings = Schema.Int.check(
   Schema.isGreaterThanOrEqualTo(BOARD_REVIEW_SETTLE_BELOW_FINDINGS_MIN),
 );
+
+/** Seeded into `afterRound` when a user turns the later-rounds review model on. */
+export const DEFAULT_BOARD_REVIEW_LATER_MODEL_AFTER_ROUND = 2;
+
+/** The review phase runs `model` instead of its own on every round after `afterRound`. */
+export const BoardReviewLaterModel = Schema.Struct({
+  afterRound: PositiveInt,
+  model: BoardModelSelection,
+});
+export type BoardReviewLaterModel = typeof BoardReviewLaterModel.Type;
 
 /**
  * Carries every simple-member field so the reactor reads stages uniformly, plus `rounds` and
@@ -11919,8 +12138,8 @@ export const BoardStageExecutionReview = Schema.Struct({
   ),
   rounds: PositiveInt.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_ROUNDS))),
   /** Rounds after this one may settle (`boardReviewNextRoundMode`); null turns settling off. */
-  settleAfterRound: Schema.NullOr(PositiveInt).pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND)),
+  convergeAfterRound: Schema.NullOr(PositiveInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_CONVERGE_AFTER_ROUND)),
   ),
   /** A round with fewer forcing findings than this, and no surviving critical, makes the next
       round settle. */
@@ -11930,6 +12149,10 @@ export const BoardStageExecutionReview = Schema.Struct({
   /** The board marks the pull request ready when the card reaches the merge stage, so full CI
       runs once after review. Global, because a forge without drafts just gets a normal PR. */
   draftPullRequests: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Null runs the review phase's own model on every round. */
+  laterReviewModel: Schema.NullOr(BoardReviewLaterModel).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   phases: Schema.Struct({
     review: BoardReviewPhaseExecution.pipe(
       Schema.decodeTo(
@@ -11963,6 +12186,17 @@ export const BoardStageExecutionReview = Schema.Struct({
   }).pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_PHASES))),
 });
 export type BoardStageExecutionReview = typeof BoardStageExecutionReview.Type;
+
+/** The model the review phase's settings give `round` (1-based), before any card or round
+    override: the later-rounds model past its `afterRound`, else the phase's own model. */
+export function resolveBoardReviewTierModel(
+  review: Pick<BoardStageExecutionReview, "phases" | "laterReviewModel">,
+  round: number,
+): BoardModelSelection | null {
+  const later = review.laterReviewModel;
+  if (later !== null && round > later.afterRound) return later.model;
+  return review.phases.review.model;
+}
 
 /**
  * No rewriting: a force-push on a branch with an open PR strands the loop's inline comments,
@@ -12455,9 +12689,10 @@ export const BoardStageExecutionPatch = Schema.Struct({
     }),
   ),
   rounds: Schema.optionalKey(PositiveInt),
-  settleAfterRound: Schema.optionalKey(Schema.NullOr(PositiveInt)),
+  convergeAfterRound: Schema.optionalKey(Schema.NullOr(PositiveInt)),
   settleBelowFindings: Schema.optionalKey(BoardReviewSettleBelowFindings),
   draftPullRequests: Schema.optionalKey(Schema.Boolean),
+  laterReviewModel: Schema.optionalKey(Schema.NullOr(BoardReviewLaterModel)),
   phases: Schema.optionalKey(
     Schema.Struct({
       review: Schema.optionalKey(BoardStepExecutionPatch),
@@ -12501,9 +12736,10 @@ export const BOARD_STAGE_EXECUTION_PATCH_KEYS: Readonly<
   review: [
     ...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS,
     "rounds",
-    "settleAfterRound",
+    "convergeAfterRound",
     "settleBelowFindings",
     "draftPullRequests",
+    "laterReviewModel",
     "phases",
   ],
   merge: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "strategy", "autoMerge", "deleteBranchOnDone"],
@@ -12867,16 +13103,21 @@ export function boardCardHoldsWorktree(card: Pick<BoardCard, "worktree">): boole
 type BoardCardPlacementFields = Pick<BoardCard, "worktree" | "pinnedWorkerId" | "placedWorkerId">;
 
 /**
- * The worker a card's next thread runs on: where it is placed while it
- * holds a worktree, otherwise its pin, otherwise the board's default. So a
- * default change moves only cards with no checkout, and a card with one moves
- * only through Move.
+ * The worker to show for a card: where it is placed while it holds a worktree, otherwise its
+ * pin, otherwise the board server. Display only (T3O-87): anything that acts on a worktree
+ * reads `boardCardPlacementTarget`, and the placement gate chooses an unpinned card's worker.
  */
-export function boardCardEffectiveWorkerId(
-  card: BoardCardPlacementFields,
-  defaultWorkerId: BoardWorkerId | undefined,
-): BoardWorkerId {
-  return boardCardBoundWorkerId(card) ?? defaultWorkerId ?? BOARD_LOCAL_WORKER_ID;
+export function boardCardEffectiveWorkerId(card: BoardCardPlacementFields): BoardWorkerId {
+  return boardCardBoundWorkerId(card) ?? BOARD_LOCAL_WORKER_ID;
+}
+
+/**
+ * T3o: the worker a card's worktree is on, for anything that acts on it (CI, git writes, the
+ * MCP relay guard), or null until the placement gate has placed it and its worktree exists
+ * (T3O-87). "Placed but no worktree" counts as unplaced: it is ranked again.
+ */
+export function boardCardPlacementTarget(card: BoardCardPlacementFields): BoardWorkerId | null {
+  return boardCardHoldsWorktree(card) ? (card.placedWorkerId ?? BOARD_LOCAL_WORKER_ID) : null;
 }
 
 /**

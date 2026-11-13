@@ -199,6 +199,8 @@ export const makeBoardCard = (input: {
   readonly ciRoundTrips?: number;
   /** The card's own merge strategy. Absent follows the default. */
   readonly mergeStrategy?: BoardCard["mergeStrategy"];
+  /** Absent is normal. */
+  readonly priority?: BoardCard["priority"];
   /** The cards this one waits on. Absent is nothing. */
   readonly dependsOn?: ReadonlyArray<string>;
   /** The sub-board parent this card is a child of. Absent is
@@ -228,6 +230,7 @@ export const makeBoardCard = (input: {
   reviewOverrides: null,
   modelOverrides: null,
   mergeStrategy: input.mergeStrategy ?? null,
+  priority: input.priority ?? "normal",
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: (input.scheduledStartAt ?? null) as BoardCard["scheduledStartAt"],
@@ -1209,17 +1212,14 @@ export function withGovernor(
               instance: state.providerInstanceId,
               workerId:
                 link?.workerId ??
-                (card === undefined
-                  ? BOARD_LOCAL_WORKER_ID
-                  : boardCardEffectiveWorkerId(card, board?.defaultWorkerId)),
+                (card === undefined ? BOARD_LOCAL_WORKER_ID : boardCardEffectiveWorkerId(card)),
             });
           }
           for (const card of board?.cards ?? []) {
             if (card.ci?.phase !== "running") continue;
             entries.push({
               instance: HARNESS_CI_INSTANCE,
-              workerId:
-                card.placedWorkerId ?? boardCardEffectiveWorkerId(card, board?.defaultWorkerId),
+              workerId: card.placedWorkerId ?? boardCardEffectiveWorkerId(card),
             });
           }
           return entries;

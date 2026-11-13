@@ -26,6 +26,10 @@ import {
   type BoardWorkerReadiness,
   type BoardWorkerRunSetupInput,
   type BoardWorkerSetupState,
+  type BoardStepReading,
+  type BoardWorkerActualsInput,
+  type BoardCapacityHoldInput,
+  type BoardCapacityHoldResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -43,6 +47,7 @@ import * as ServerConfig from "../../config.ts";
 import { boardCardAttachmentsDir, resolveBoardCardAttachmentPath } from "../attachments.ts";
 import { LocalThreadGateway, type TodoLogEntry } from "../ThreadGateway.ts";
 import { BoardRelayStore } from "./BoardRelayStore.ts";
+import { BoardActualsMeter } from "../actuals/BoardActualsMeter.ts";
 import {
   toWireReadError,
   toWireSignal,
@@ -66,6 +71,8 @@ type CallerBound =
   | "subscribeMcpRelay"
   | "mcpRelayRespond"
   | "claimCapacity"
+  | "hold"
+  | "releaseHold"
   | "syncCards"
   | "subscribeCapacity"
   | "runSetup"
@@ -73,7 +80,8 @@ type CallerBound =
   | "cancelSetup"
   | "readSetupLog"
   | "checkReadiness"
-  | "readinessOutput";
+  | "readinessOutput"
+  | "actuals";
 
 /** Who is calling: the session, and the board its `t3o-board:<id>` subject names (T3O-86). */
 export interface GatewayCaller {
@@ -109,6 +117,15 @@ export type WorkerGatewayHostShape = Omit<
     input: BoardSyncCardsInput,
     caller: GatewayCaller,
   ) => Effect.Effect<BoardSyncCardsResult, BoardWorkerGatewayError>;
+  /** T3o: a hold for one of the calling board's cards (T3O-87). */
+  readonly hold: (
+    input: BoardCapacityHoldInput,
+    caller: GatewayCaller,
+  ) => Effect.Effect<BoardCapacityHoldResult, BoardWorkerGatewayError>;
+  readonly releaseHold: (
+    cardId: string,
+    caller: GatewayCaller,
+  ) => Effect.Effect<void, BoardWorkerGatewayError>;
   readonly subscribeCapacity: (
     caller: GatewayCaller,
   ) => Stream.Stream<BoardWorkerCapacitySnapshot, BoardWorkerGatewayError>;
@@ -137,6 +154,11 @@ export type WorkerGatewayHostShape = Omit<
     path: string,
     caller: GatewayCaller,
   ) => Effect.Effect<string | null, BoardWorkerGatewayError>;
+  /** T3o: a step's measured actuals, for a board's own session (T3O-87). */
+  readonly actuals: (
+    input: BoardWorkerActualsInput,
+    caller: GatewayCaller,
+  ) => Effect.Effect<BoardStepReading | null, BoardWorkerGatewayError>;
   readonly subscribeMcpRelay: (
     centralEnvironmentId: EnvironmentId,
     caller: AuthSessionId,
@@ -158,6 +180,8 @@ export const hostForSession = (
   subscribeMcpRelay: (central) => host.subscribeMcpRelay(central, caller.sessionId),
   mcpRelayRespond: (response) => host.mcpRelayRespond(response, caller.sessionId),
   claimCapacity: (input) => host.claimCapacity(input, caller),
+  hold: (input) => host.hold(input, caller),
+  releaseHold: (cardId) => host.releaseHold(cardId, caller),
   syncCards: (input) => host.syncCards(input, caller),
   subscribeCapacity: host.subscribeCapacity(caller),
   runSetup: (input) => host.runSetup(input, caller),
@@ -166,6 +190,7 @@ export const hostForSession = (
   readSetupLog: (path) => host.readSetupLog(path, caller),
   checkReadiness: (input) => host.checkReadiness(input, caller),
   readinessOutput: (key, path) => host.readinessOutput(key, path, caller),
+  actuals: (input) => host.actuals(input, caller),
 });
 
 export class WorkerGatewayHost extends Context.Service<WorkerGatewayHost, WorkerGatewayHostShape>()(
@@ -196,6 +221,8 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
   const ciRunner = yield* BoardCiRunner;
   // T3o: optional so a harness without capacity still serves threads (T3O-86).
   const capacity = yield* Effect.serviceOption(BoardWorkerCapacity);
+  // T3o: optional so a harness without the meter answers "nothing measured" (T3O-87).
+  const actualsMeter = yield* Effect.serviceOption(BoardActualsMeter);
 
   const noBoard = (operation: string) =>
     new BoardWorkerGatewayError({
@@ -380,6 +407,14 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
       capacityOf("claimCapacity", caller).pipe(
         Effect.flatMap(({ service, boardId }) => service.claim(boardId, input)),
       ),
+    hold: (input, caller) =>
+      capacityOf("hold", caller).pipe(
+        Effect.flatMap(({ service, boardId }) => service.hold(boardId, input)),
+      ),
+    releaseHold: (cardId, caller) =>
+      capacityOf("releaseHold", caller).pipe(
+        Effect.flatMap(({ service, boardId }) => service.releaseHold(boardId, cardId)),
+      ),
     syncCards: (input, caller) =>
       capacityOf("syncCards", caller).pipe(
         Effect.flatMap(({ service, boardId }) => service.syncCards(boardId, input)),
@@ -419,6 +454,12 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
           service.readinessOutput(boardId, repositoryKey, path),
         ),
       ),
+    actuals: (input, caller) =>
+      caller.boardId === null
+        ? Effect.fail(noBoard("actuals"))
+        : Option.isNone(actualsMeter)
+          ? Effect.succeed(null)
+          : actualsMeter.value.relay(input),
     interrupt: (input) => wireCommand(local.interrupt(input)),
     stopSession: (input) => wireCommand(local.stopSession(input)),
     settle: (input) => wireCommand(local.settle(input)),

@@ -21,6 +21,7 @@ import {
   boardWorkerCheckoutWarning,
   boardQueueReason,
   boardWorkerChoices,
+  boardCardPlacementLine,
   boardWorkerFieldLabel,
   boardWorkerLoadLabel,
 } from "./cardWorker";
@@ -99,18 +100,17 @@ describe("the worker chip (prototype 4.4)", () => {
     expect(boardCardWorkerChip({}, state([]))).toBeNull();
   });
 
-  it("is dashed while following the default, solid once bound, and says local for this server", () => {
+  it("is hidden until placed or pinned: a server icon once placed, a pin before (T3O-87)", () => {
     const board = state([worker(LINUX, "linux-box")]);
-    expect(boardCardWorkerChip({}, board)).toEqual({
-      label: "local",
-      bound: false,
-      tooltip: "Follows the default worker (This server)",
-    });
+    expect(boardCardWorkerChip({}, board)).toBeNull();
     expect(boardCardWorkerChip({ workerId: LINUX }, board)).toEqual({
       label: "linux-box",
-      bound: true,
-      tooltip: "Runs on linux-box",
+      kind: "pinned",
+      tooltip: "Pinned to linux-box: its builds run there",
     });
+    expect(
+      boardCardWorkerChip({ workerId: BOARD_LOCAL_WORKER_ID, worktreeReady: true }, board),
+    ).toEqual({ label: "local", kind: "placed", tooltip: "Placed on This server" });
   });
 });
 
@@ -198,10 +198,10 @@ describe("the worker picker (prototype 4.2)", () => {
 });
 
 describe("the worker field", () => {
-  it("reads Follow default ({worker}), or the pin", () => {
+  it("reads Any ready worker, or the pin; a default worker steers nothing (T3O-87)", () => {
     const board = state([worker(LINUX, "linux-box")], { defaultWorkerId: LINUX });
     expect(boardWorkerFieldLabel(null, board)).toEqual({
-      label: "Follow default (linux-box)",
+      label: "Any ready worker",
       pinned: false,
     });
     expect(boardWorkerFieldLabel(BOARD_LOCAL_WORKER_ID, board)).toEqual({
@@ -211,9 +211,21 @@ describe("the worker field", () => {
     // Renamed on the Workers page, the board server reads its new name everywhere.
     const renamed = { ...board, localLabel: "desk-01" };
     expect(boardWorkerFieldLabel(BOARD_LOCAL_WORKER_ID, renamed).label).toBe("desk-01");
-    expect(
-      boardWorkerFieldLabel(null, { ...renamed, defaultWorkerId: BOARD_LOCAL_WORKER_ID }).label,
-    ).toBe("Follow default (desk-01)");
+  });
+
+  it("the placement line: where, when and why, or chosen when the build starts (T3O-87)", () => {
+    const board = state([worker(LINUX, "linux-box")]);
+    expect(boardCardPlacementLine(null, false, board)).toBe(
+      "Not placed yet: chosen when the build starts",
+    );
+    const placed = { workerId: LINUX, at: "2026-01-01T18:31:00.000Z", reason: "pinned" };
+    expect(boardCardPlacementLine(placed, true, board)).toMatch(
+      /^linux-box · placed at .+ · pinned$/,
+    );
+    // A placement without a worktree is chosen again at the next build.
+    expect(boardCardPlacementLine(placed, false, board)).toBe(
+      "Not placed yet: chosen when the build starts",
+    );
   });
 
   it("warns in the create dialog when the default worker has no checkout", () => {
@@ -281,6 +293,7 @@ describe("queue reasons and move notices", () => {
       dimension: null,
       behind: "T3O-90",
       tooBig: false,
+      anyWorker: false,
     });
     // A board with no remote workers says it too: the worker is this server.
     expect(
@@ -541,13 +554,13 @@ describe("worker trouble (T3O-66)", () => {
         boardCardWorkerTrouble(card(), state([worker(GPU, "gpu-rig", { state: reconnecting })])),
       ).toBeNull();
     }
-    // A card following the default reads the default's state.
+    // An unplaced, unpinned card belongs to no worker: a default worker steers nothing (T3O-87).
     expect(
       boardCardWorkerTrouble(
         (({ workerId: _bound, ...following }) => following)(card()),
         state([worker(GPU, "gpu-rig", { state: "offline" })], { defaultWorkerId: GPU }),
-      )?.kind,
-    ).toBe("offline");
+      ),
+    ).toBeNull();
   });
 
   it("the header indicator counts workers and lists the cards each has paused", () => {

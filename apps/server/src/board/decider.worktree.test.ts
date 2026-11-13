@@ -4,6 +4,7 @@
  * retryable, and a reclaim that would lose work is refused with a reason.
  */
 import {
+  BOARD_LOCAL_WORKER_ID,
   BoardCardId,
   BoardStageId,
   CommandId,
@@ -59,8 +60,10 @@ function makeCard(
     autoMergeSetting: null,
     autoMergeHold: null,
     mergeStrategy: null,
+    priority: "normal",
     pinnedWorkerId: null,
-    placedWorkerId: null,
+    // The placement gate has placed it: a provision needs a placement (T3O-87).
+    placedWorkerId: BOARD_LOCAL_WORKER_ID,
     workerMove: null,
     placementOrphaned: null,
     ci: null,

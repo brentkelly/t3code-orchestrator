@@ -5,12 +5,14 @@
  */
 import {
   boardCardUsageSummaryFromRows,
+  boardCardActualsSummary,
   type BoardCardDetail,
   boardAppendOrderKey,
   boardBuildStepPayloadDefect,
   boardReviewBlockedOutcomeRefusal,
   boardReviewCompletionDefect,
   parseReviewStepId,
+  boardCardEffectivePriority,
   boardCardPlans,
   boardCardStepCompletions,
   boardCardStepState,
@@ -29,7 +31,9 @@ import {
   CommandId,
   EMPTY_BOARD_STATE,
   resolveBoardCardForThread,
+  boardCardBoundWorkerId,
   boardCardEffectiveWorkerId,
+  boardCardPlacementTarget,
   unwrapStringifiedBoardStepPayload,
   type BoardCardArchiveCommand,
   type BoardCardCreateCommand,
@@ -77,6 +81,7 @@ import {
   resolveBoardProjectBaseline,
   type BoardCardSize,
   type BoardResourceProfile,
+  type BoardWorkerId,
   BOARD_LOCAL_WORKER_ID,
   boardProjectStageConfig,
 } from "@t3tools/contracts";
@@ -179,7 +184,7 @@ const boardCardCapacityFor = (board: BoardState, card: BoardCard) => {
   return boardCardCapacityView({
     resources: card.resources,
     projectResources: boardProjectStageConfig(board, card.projectId)?.resources ?? null,
-    workerId: boardCardEffectiveWorkerId(card, board.defaultWorkerId),
+    workerId: boardCardPlacementTarget(card) ?? boardCardEffectiveWorkerId(card),
     queuedBy: queued ? (state.queuedBy ?? null) : null,
     queuedDetail: queued ? (state.queuedDetail ?? null) : null,
   });
@@ -189,13 +194,17 @@ const SIZE_UNITS = { cpu: "cores", ram: "GiB", disk: "GB" } as const;
 const SIZE_NAMES = { cpu: "CPU", ram: "RAM", disk: "Disk" } as const;
 
 /**
- * T3o: a planned size too big for the worker the card would run on, per dimension, naming the
- * largest size that fits (T3O-86). The size is still accepted. Empty with no capacity yet.
+ * T3o: a planned size no worker the card could run on can take whole: per dimension too big for
+ * the largest worker, naming it and the largest size that fits (T3O-86), or else a plan whose
+ * dimensions fit only on different workers (T3O-87). The size is still accepted. Empty with no
+ * capacity yet.
  */
 export function boardPlanSizeWarnings(input: {
   readonly baseline: BoardResourceProfile;
-  readonly declared: BoardResourceProfile;
-  readonly workerLabel: string;
+  readonly workers: ReadonlyArray<{
+    readonly label: string;
+    readonly declared: BoardResourceProfile;
+  }>;
   readonly plans: ReadonlyArray<{
     readonly key: string;
     readonly size?: BoardCardSize | undefined;
@@ -205,26 +214,54 @@ export function boardPlanSizeWarnings(input: {
   for (const plan of input.plans) {
     if (plan.size === undefined) continue;
     const profile = boardResourceProfile(input.baseline, plan.size);
+    const fitsOn = (declared: BoardResourceProfile) =>
+      BOARD_RESOURCE_DIMENSIONS.every(
+        (dimension) =>
+          boardResourceProfileValue(profile, dimension) <=
+          boardResourceProfileValue(declared, dimension),
+      );
+    if (input.workers.length === 0 || input.workers.some((worker) => fitsOn(worker.declared))) {
+      continue;
+    }
+    const before = warnings.length;
     for (const dimension of BOARD_RESOURCE_DIMENSIONS) {
+      const largest = input.workers.reduce<(typeof input.workers)[number] | null>(
+        (best, worker) =>
+          best === null ||
+          boardResourceProfileValue(worker.declared, dimension) >
+            boardResourceProfileValue(best.declared, dimension)
+            ? worker
+            : best,
+        null,
+      );
+      if (largest === null) continue;
       const need = boardResourceProfileValue(profile, dimension);
-      const has = boardResourceProfileValue(input.declared, dimension);
+      const has = boardResourceProfileValue(largest.declared, dimension);
       if (need <= has) continue;
       const base = boardResourceProfileValue(input.baseline, dimension);
       const fit = [...BOARD_CARD_SIZE_LETTERS]
         .reverse()
         .find((letter) => base * BOARD_CARD_SIZE_MULTIPLIERS[letter] <= has);
       warnings.push(
-        `Plan '${plan.key}': ${SIZE_NAMES[dimension]} ${plan.size[dimension]} needs ${need} ${SIZE_UNITS[dimension]}; ${input.workerLabel} has ${has}. ${
+        `Plan '${plan.key}': ${SIZE_NAMES[dimension]} ${plan.size[dimension]} needs ${need} ${SIZE_UNITS[dimension]}; ${largest.label} has ${has}. ${
           fit === undefined
             ? "No size fits: lower the project's baseline."
             : `The largest size that fits is ${fit}.`
         }`,
       );
     }
+    // Every dimension fits some worker, but no one worker has them all together.
+    if (warnings.length === before) {
+      warnings.push(
+        `Plan '${plan.key}': no single worker has ${profile.cpuCores} cores, ${profile.ramGiB} GiB RAM and ${profile.diskGB} GB disk together. Size it to fit one worker.`,
+      );
+    }
   }
   return warnings;
 }
 
+/** A card bound to a worker (pinned, or holding a worktree) is measured against that worker; an
+    unbound one against every worker ready for its project (T3O-87). */
 const planSizeWarnings = Effect.fn("board_propose_plans.sizeWarnings")(function* (
   board: BoardState,
   card: BoardCard,
@@ -232,19 +269,30 @@ const planSizeWarnings = Effect.fn("board_propose_plans.sizeWarnings")(function*
 ) {
   const client = yield* Effect.serviceOption(BoardCapacityClient);
   if (Option.isNone(client)) return [];
-  const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
-  const snapshot = yield* client.value.latest(workerId);
-  if (snapshot === null) return [];
-  const label =
+  const label = (workerId: BoardWorkerId) =>
     workerId === BOARD_LOCAL_WORKER_ID
       ? "this server"
       : ((board.workers ?? []).find((worker) => worker.id === workerId)?.label ?? workerId);
+  const bound = boardCardBoundWorkerId(card);
+  let candidates: ReadonlyArray<{
+    readonly workerId: BoardWorkerId;
+    readonly declared: BoardResourceProfile;
+  }>;
+  if (bound === null) {
+    const supervisor = yield* SupervisorReactor;
+    candidates = yield* supervisor.readyWorkerCapacity(card.projectId);
+  } else {
+    const snapshot = yield* client.value.latest(bound);
+    candidates = snapshot === null ? [] : [{ workerId: bound, declared: snapshot.declared }];
+  }
   return boardPlanSizeWarnings({
     baseline: resolveBoardProjectBaseline(
       boardProjectStageConfig(board, card.projectId)?.resources ?? null,
     ),
-    declared: snapshot.declared,
-    workerLabel: label,
+    workers: candidates.map((worker) => ({
+      label: label(worker.workerId),
+      declared: worker.declared,
+    })),
     plans,
   });
 });
@@ -479,7 +527,10 @@ const refuseOtherWorkersCard = Effect.fn("BoardToolkit.refuseOtherWorkersCard")(
   const relayed = yield* Effect.serviceOption(BoardRelayInvocation);
   if (Option.isNone(relayed)) return;
   if (resolveBoardCardForThread(board, scope.thread.threadId)?.id === card.id) return;
-  if (boardCardEffectiveWorkerId(card, board.defaultWorkerId) === relayed.value.workerId) return;
+  // T3o: only a card placed on another worker is refused; an unplaced card and every group
+  // card belong to no worker, so a build agent keeps write access to them (T3O-87).
+  const target = card.group !== null ? null : boardCardPlacementTarget(card);
+  if (target === null || target === relayed.value.workerId) return;
   return yield* new BoardToolError({
     code: "rejected",
     message: `'${card.key}' runs on another worker, so it cannot be changed from this one: ask a human to do it from the app.`,
@@ -1245,6 +1296,7 @@ export const boardHandlers = {
       baseBranch: card.baseBranch,
       mergeStrategy: card.mergeStrategy,
       effectiveMergeStrategy: yield* effectiveMergeStrategy(board, card),
+      priority: boardCardEffectivePriority(card),
       brief,
       briefVersion: boardBriefVersion(brief),
       dependencies: describeDependencies(board, card),
@@ -1265,6 +1317,10 @@ export const boardHandlers = {
         state: entry.state,
       })),
       usage: describeUsage(detail),
+      ...(() => {
+        const actuals = boardCardActualsSummary(detail?.actuals ?? []);
+        return actuals === null ? {} : { actuals };
+      })(),
     };
   }),
 
@@ -1301,6 +1357,7 @@ export const boardHandlers = {
         stage: card.stage,
         blocked: card.blocked,
         archived: card.archivedAt !== null,
+        priority: boardCardEffectivePriority(card),
         dependsOn: card.dependsOn.map((dependencyId) => ({
           cardId: dependencyId,
           key: board.cards.find((candidate) => candidate.id === dependencyId)?.key ?? dependencyId,
@@ -1377,6 +1434,7 @@ export const boardHandlers = {
         // stage's column, which is the only place that can see the
         // whole board — this tool's read model is filtered to one project.
         ...(input.mergeStrategy === undefined ? {} : { mergeStrategy: input.mergeStrategy }),
+        ...(input.priority === undefined ? {} : { priority: input.priority }),
         createdAt: yield* nowIso,
       },
     }).pipe(
@@ -1547,6 +1605,7 @@ export const boardHandlers = {
       input.removeLabels,
       input.externalRef,
       input.mergeStrategy,
+      input.priority,
       input.planReview,
       input.size,
     ].some((value) => value !== undefined);
@@ -1568,6 +1627,7 @@ export const boardHandlers = {
         removeLabels,
         externalRef: input.externalRef,
         mergeStrategy: input.mergeStrategy,
+        priority: input.priority,
         planReview: input.planReview,
         // T3o: an agent's size edit is the agent's, never a human override (T3O-86).
         ...(input.size === undefined ? {} : { size: input.size, sizeEditor: "agent" as const }),

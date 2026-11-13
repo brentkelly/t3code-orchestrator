@@ -15,6 +15,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
+// T3o: a thread's control group, for the board's measured actuals (T3O-87).
+import { threadControlGroup } from "../board/actuals/agentScopeControlGroup.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
@@ -424,6 +426,8 @@ export const make = Effect.gen(function* () {
     stop,
     kill,
     clear,
+    // T3o: the board's measured actuals read a thread's own scope (T3O-87).
+    controlGroup: (threadId) => threadControlGroup(scopeByThread.get(threadId), systemd, run),
   } satisfies AgentScopeShape;
 });
 

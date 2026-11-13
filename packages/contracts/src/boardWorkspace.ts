@@ -207,6 +207,8 @@ export const BOARD_WORKER_GIT_WS_METHODS = {
   deleteCardBranch: "boardWorker.git.deleteCardBranch",
   gitUserName: "boardWorker.git.gitUserName",
   remoteBranchTip: "boardWorker.git.remoteBranchTip",
+  // T3o: push a card's own branch before its worker is removed (T3O-87). Never forced.
+  pushCardBranch: "boardWorker.git.pushCardBranch",
   pullRequestByBranch: "boardWorker.git.pullRequestByBranch",
   getPullRequest: "boardWorker.git.getPullRequest",
   mergePullRequest: "boardWorker.git.mergePullRequest",
@@ -362,6 +364,11 @@ export const BOARD_WORKER_GIT_RPCS = [
     success: BoardWorkspaceRemoteBranchTip,
     error: gitError,
   }),
+  Rpc.make(M.pushCardBranch, {
+    payload: { ...onProject, worktreePath: path, branch: boardBranchName },
+    success: Schema.Struct({ pushed: Schema.Boolean, detail: Schema.NullOr(Schema.String) }),
+    error: gitError,
+  }),
   Rpc.make(M.pullRequestByBranch, {
     payload: {
       ...onProject,
@@ -440,6 +447,7 @@ export const BOARD_WORKER_GIT_RPC_SCOPES = {
   [M.deleteCardBranch]: AuthSourceControlWriteScope,
   [M.gitUserName]: AuthOrchestrationReadScope,
   [M.remoteBranchTip]: AuthSourceControlWriteScope,
+  [M.pushCardBranch]: AuthSourceControlWriteScope,
   [M.pullRequestByBranch]: AuthOrchestrationReadScope,
   [M.getPullRequest]: AuthOrchestrationReadScope,
   [M.mergePullRequest]: AuthSourceControlWriteScope,

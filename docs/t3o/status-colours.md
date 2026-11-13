@@ -141,6 +141,12 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   is violet, and only while the card is in Code review. Once a human advances the card past it, the
   loop reads `Advanced past stuck round N`: not green, because nothing was signed off, and not
   violet or amber, because nobody is waited on. An escalated finding is violet too.
+- **A group's sub-board chips split blue into solid and hatched (T3O-91).** Solid blue claims an
+  agent is on the child; a child at or past Building that is only queued for a slot wears blue
+  stripes over a faint blue tint instead, so a busy board doesn't read as four builds when two are
+  waiting. A card held by an offline worker is neither: no slot will start it, so its chip is
+  amber, matching the worker's own notice, but it is not counted or named as blocked, because the
+  card itself isn't. Violet, amber, green and grey keep their meanings, and no chip moves.
 - **The Summary pane's Heads-up tags and check tiles follow it too.** Plan change is violet (it
   waits on a human's read), Not done is amber, and Shortcut is neutral, never blue, because blue
   means running. A failing check tile is amber, not red.
@@ -170,6 +176,10 @@ would be a regression:
   Same argument: a checked control is UI state. The status surface for that feature — the card
   face's **Auto-start** chip — is neutral, because the card is not running.
 - The teal terminal-process indicator, which deliberately reads as "not agent work".
+- A card's **Urgent** priority marker (`--priority-urgent`): the red "!" icon, the tile's red-tinted
+  border and soft ring, and the header chip (T3O-95). It says how soon the card should get a slot,
+  not how its work is going, and it is not the red of a failed or stalled card. A status tone on the
+  tile wins over it.
 - A card's project colour — the key pill, legend and picker dots. It is the project's icon colour
   (T3O-4), chosen by the user from the full icon palette, so it can be green, blue or violet. It says
   which project a card belongs to, never how its work is going, and the status indicators beside it

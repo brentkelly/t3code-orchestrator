@@ -1,10 +1,10 @@
 /**
- * `BoardWorkspaces`: a card runs where it holds its worktree, else its pin, else
- * the default worker, on that worker's checkout of the same repository.
+ * `BoardWorkspaces`: a card's git work runs where it holds its worktree, else on this
+ * server (T3O-87), on that worker's checkout of the same repository.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
-  boardCardEffectiveWorkerId,
+  boardCardPlacementTarget,
   boardRepositoryGroupingKey,
   EMPTY_BOARD_STATE,
   resolveBoardWorkerCheckout,
@@ -292,8 +292,9 @@ export const BoardWorkspacesLive = Layer.effect(
         const board = (yield* engine.getReadModel).board ?? EMPTY_BOARD_STATE;
         const placed = board.cards.find((candidate) => candidate.id === card.id);
         if (placed === undefined) return null;
-        const workerId = boardCardEffectiveWorkerId(placed, board.defaultWorkerId);
-        if (workerId === BOARD_LOCAL_WORKER_ID) return null;
+        // T3o: an unplaced card's read-only checks run in the board server's checkout (T3O-87).
+        const workerId = boardCardPlacementTarget(placed);
+        if (workerId === null || workerId === BOARD_LOCAL_WORKER_ID) return null;
         return {
           workerId,
           projectId: (yield* workerProjectOf(workerId, card.projectId)) ?? card.projectId,

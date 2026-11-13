@@ -41,6 +41,12 @@ kebab menu, choose the models popover, and set the **Review** row. That applies 
 alone — the reviewer changes, the author and the adjudicator keep their own models — and it is
 reachable at any stage, Ready for merge included. Set it, then ask for the round.
 
+To save tokens on long loops, the review phase can switch to a cheaper model after the first few
+rounds: in Settings → Board → Code review, turn on **Use a different model for later rounds** under
+the Review phase and pick the round and the model. Every round after that one, including an extra
+round you ask for, reviews on the later model. A card's own **Review** model replaces both, and a
+model picked for one round in the Review pane still wins.
+
 ## Request review
 
 A card that reached Ready for merge without a review — through **Submit for merge — no review** —
@@ -117,9 +123,24 @@ but no reviewer re-read.
 The rule is checked again every round. A round that raised a critical finding, full or settling,
 always sends the next round back to a full review, however few findings it had. Otherwise, in a
 full round every blocking finding counts toward the threshold; in a settling round only findings you
-sent back do. Findings the adjudicator ruled not issues never count.
-**Another review round** always runs a full review.
+sent back do. Findings the adjudicator ruled not issues, or below the bar, never count.
+**Another review round** always reviews the whole branch.
 
-To change when settling starts, or to turn it off, go to **Settings → Board → Pipeline → Code review**. In
-a project's `t3o.json`, the review stage takes `settleAfterRound` (a round number, or `null` for
-off) and `settleBelowFindings` (2 or more).
+### The raised bar
+
+Large changes can keep turning up two or more small improvements every round, so they never settle.
+After round 3, full rounds also raise the bar for what counts as a blocking improvement, every two
+rounds: from round 4 it must be a real defect in the change, from round 6 one a user or operator
+would actually hit, and from round 8 only critical findings block. Every round takes the bar for its
+round number, including rounds you start yourself. With the default budget of 5 rounds only the
+first step is reached; the higher ones need a larger budget, or rounds started with **Run round N+1**.
+
+The adjudicator, not the reviewer, can also rule an improvement below the round's bar. That finding
+then no longer forces another round. The pane shows its severity crossed out, with the reviewer's
+rating kept, and a loop that ends this way says so, with how many fixes no reviewer re-read. Your
+own carried findings, CI failures and unresolved pull request comments are never held to the bar.
+
+To change when settling and the raised bar start, or to turn both off, go to **Settings → Board →
+Pipeline → Code review → Help long reviews converge**. In a project's `t3o.json`, the review stage
+takes `convergeAfterRound` (a round number, or `null` for off; it was `settleAfterRound` before, and
+an old key is ignored, so save the setting again) and `settleBelowFindings` (2 or more).
