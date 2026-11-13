@@ -52,10 +52,11 @@ export interface BoardCapacityClientShape {
   readonly nextSeq: (workerId: BoardWorkerId) => Effect.Effect<number>;
   /** Send the board's granted state for a worker when it changed, or when this connection
       has not been synced yet (that first sync is authoritative). Whether the worker holds
-      this state: acknowledged now, or unchanged since it last did. */
+      this state: acknowledged now, or unchanged since it last did. The seq is taken before
+      `read` runs, so a record a later-stamped call creates is never deleted by this sync. */
   readonly syncCards: (
     workerId: BoardWorkerId,
-    cards: ReadonlyArray<BoardSyncedCard>,
+    read: Effect.Effect<ReadonlyArray<BoardSyncedCard>>,
   ) => Effect.Effect<boolean>;
   /** Whether this connection's first sync was acknowledged: until then the board sends the
       worker no claim, provision or spawn. */
@@ -125,7 +126,10 @@ const makeBoardCapacityClient = Effect.gen(function* () {
   const lastSynced = new Map<BoardWorkerId, string>();
   const seqs = new Map<string, number>();
 
-  const nextSeq = Effect.fn("BoardCapacityClient.nextSeq")(function* (workerId: BoardWorkerId) {
+  /** The next `seq` in memory only: one never sent need not survive a restart. */
+  const reserveSeq = Effect.fn("BoardCapacityClient.reserveSeq")(function* (
+    workerId: BoardWorkerId,
+  ) {
     let current = seqs.get(workerId);
     if (current === undefined) {
       const rows = yield* sql<{ readonly seq: number }>`
@@ -135,10 +139,18 @@ const makeBoardCapacityClient = Effect.gen(function* () {
     }
     const next = current + 1;
     seqs.set(workerId, next);
-    yield* sql`
-      INSERT INTO board_capacity_seq (worker_id, seq) VALUES (${workerId}, ${next})
-      ON CONFLICT (worker_id) DO UPDATE SET seq = excluded.seq
+    return next;
+  });
+
+  const persistSeq = (workerId: BoardWorkerId, seq: number) =>
+    sql`
+      INSERT INTO board_capacity_seq (worker_id, seq) VALUES (${workerId}, ${seq})
+      ON CONFLICT (worker_id) DO UPDATE SET seq = MAX(seq, excluded.seq)
     `.pipe(Effect.ignore);
+
+  const nextSeq = Effect.fn("BoardCapacityClient.nextSeq")(function* (workerId: BoardWorkerId) {
+    const next = yield* reserveSeq(workerId);
+    yield* persistSeq(workerId, next);
     return next;
   });
 
@@ -179,12 +191,14 @@ const makeBoardCapacityClient = Effect.gen(function* () {
 
   const syncCards = Effect.fn("BoardCapacityClient.syncCards")(function* (
     workerId: BoardWorkerId,
-    cards: ReadonlyArray<BoardSyncedCard>,
+    read: Effect.Effect<ReadonlyArray<BoardSyncedCard>>,
   ) {
+    const seq = yield* reserveSeq(workerId);
+    const cards = yield* read;
     const payload = canonical(cards);
     const previous = lastSynced.get(workerId);
     if (previous === payload) return true;
-    const seq = yield* nextSeq(workerId);
+    yield* persistSeq(workerId, seq);
     const input = { seq, authoritative: previous === undefined, cards };
     let acked = false;
     if (workerId === BOARD_LOCAL_WORKER_ID) {

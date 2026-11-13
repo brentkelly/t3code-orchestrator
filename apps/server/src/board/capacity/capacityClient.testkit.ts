@@ -129,8 +129,8 @@ export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
           return { outcome: "granted" as const };
         }),
       nextSeq: () => Effect.sync(() => ++seq),
-      syncCards: (workerId, cards) =>
-        Effect.sync(() => {
+      syncCards: (workerId, read) =>
+        Effect.map(read, (cards) => {
           fake.syncs.push({ workerId, cards });
           if (fake.unreachable.has(workerId)) return false;
           synced.set(workerId, cards);

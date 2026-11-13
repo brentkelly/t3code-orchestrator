@@ -309,11 +309,13 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       Effect.gen(function* () {
         // A worker that just left a call unanswered isn't asked again until the backoff passes.
         if (yield* backingOff(workerId)) return yield* deps.client.synced(workerId);
-        const board = yield* deps.readBoard;
-        const keys = yield* repositoryKeys(board);
         const synced = yield* deps.client.syncCards(
           workerId,
-          syncEntriesFor({ board, workerId, repositoryKey: keys }),
+          Effect.gen(function* () {
+            const board = yield* deps.readBoard;
+            const keys = yield* repositoryKeys(board);
+            return syncEntriesFor({ board, workerId, repositoryKey: keys });
+          }),
         );
         // Unanswered, even by a worker synced before, costs the next passes nothing until the backoff.
         if (!synced) yield* noteReach(workerId, false);
