@@ -497,6 +497,8 @@ export const makeBoardWorkers = Effect.gen(function* () {
     // A step that wasn't parked, or whose turn didn't end, could still commit after its probe.
     const unsettled = new Set<BoardCardId>();
     if (Option.isSome(rpc)) {
+      const stopped: Array<{ readonly step: (typeof running)[number]; readonly paused: boolean }> =
+        [];
       for (const step of running) {
         const paused = yield* engine
           .dispatch({
@@ -513,9 +515,17 @@ export const makeBoardWorkers = Effect.gen(function* () {
         yield* rpc.value.gateway
           .stopSession({ commandId: yield* newCommandId, threadId: step.threadId })
           .pipe(Effect.timeout(STOP_TIMEOUT), Effect.ignore);
-        const ended = yield* turnEnded(rpc.value.gateway, step.threadId);
-        if (!paused || !ended) unsettled.add(step.cardId);
+        stopped.push({ step, paused });
       }
+      // Every step is stopped before any is waited on, so the waits run side by side.
+      const ended = yield* Effect.forEach(
+        stopped,
+        ({ step }) => turnEnded(rpc.value.gateway, step.threadId),
+        { concurrency: "unbounded" },
+      );
+      stopped.forEach(({ step, paused }, index) => {
+        if (!paused || !ended[index]) unsettled.add(step.cardId);
+      });
     }
     const classifications = Option.isSome(rpc)
       ? yield* classifyForRemoval(workerId, unsettled)
