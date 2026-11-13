@@ -34,37 +34,37 @@ export function boardWorkerLabel(workerId: BoardWorkerId, state: BoardWorkersSta
   return state.workers.find((worker) => worker.id === workerId)?.label ?? workerId;
 }
 
-/** Where a card runs, as its shell and the board's default say: its bound
-    worker (a pin, or where it holds a worktree), else the default. */
+/** Where a card runs, as its shell says: its bound worker (a pin, or where it holds a
+    worktree), else the board server. T3o: there is no default worker (T3O-87). */
 function boardCardWorker(
   card: Pick<BoardCardShell, "workerId">,
-  state: BoardWorkersState,
+  _state: BoardWorkersState,
 ): { readonly workerId: BoardWorkerId; readonly bound: boolean } {
   return card.workerId === undefined
-    ? { workerId: state.defaultWorkerId, bound: false }
+    ? { workerId: BOARD_LOCAL_WORKER_ID, bound: false }
     : { workerId: card.workerId, bound: true };
 }
 
 export interface BoardCardWorkerChip {
   readonly label: string;
-  /** Solid when the card is pinned or holds a worktree; dashed when it
-      follows the default and hasn't started. */
-  readonly bound: boolean;
+  /** T3o: a server icon once placed, a pin icon while only pinned (T3O-87). */
+  readonly kind: "placed" | "pinned";
   readonly tooltip: string;
 }
 
-/** The meta row's worker chip (prototype 4.4), or null on a one-worker board. */
+/** The meta row's worker chip, or null on a one-worker board or before the card is placed
+    or pinned. */
 export function boardCardWorkerChip(
-  card: Pick<BoardCardShell, "workerId">,
+  card: Pick<BoardCardShell, "workerId" | "worktreeReady">,
   state: BoardWorkersState,
 ): BoardCardWorkerChip | null {
-  if (!boardShowsWorkers(state)) return null;
-  const { workerId, bound } = boardCardWorker(card, state);
-  const name = boardWorkerLabel(workerId, state);
+  if (!boardShowsWorkers(state) || card.workerId === undefined) return null;
+  const name = boardWorkerLabel(card.workerId, state);
+  const placed = card.worktreeReady === true;
   return {
-    label: workerId === BOARD_LOCAL_WORKER_ID ? "local" : name,
-    bound,
-    tooltip: bound ? `Runs on ${name}` : `Follows the default worker (${name})`,
+    label: card.workerId === BOARD_LOCAL_WORKER_ID ? "local" : name,
+    kind: placed ? "placed" : "pinned",
+    tooltip: placed ? `Placed on ${name}` : `Pinned to ${name}: its builds run there`,
   };
 }
 

@@ -100,18 +100,17 @@ describe("the worker chip (prototype 4.4)", () => {
     expect(boardCardWorkerChip({}, state([]))).toBeNull();
   });
 
-  it("is dashed while following the default, solid once bound, and says local for this server", () => {
+  it("is hidden until placed or pinned: a server icon once placed, a pin before (T3O-87)", () => {
     const board = state([worker(LINUX, "linux-box")]);
-    expect(boardCardWorkerChip({}, board)).toEqual({
-      label: "local",
-      bound: false,
-      tooltip: "Follows the default worker (This server)",
-    });
+    expect(boardCardWorkerChip({}, board)).toBeNull();
     expect(boardCardWorkerChip({ workerId: LINUX }, board)).toEqual({
       label: "linux-box",
-      bound: true,
-      tooltip: "Runs on linux-box",
+      kind: "pinned",
+      tooltip: "Pinned to linux-box: its builds run there",
     });
+    expect(
+      boardCardWorkerChip({ workerId: BOARD_LOCAL_WORKER_ID, worktreeReady: true }, board),
+    ).toEqual({ label: "local", kind: "placed", tooltip: "Placed on This server" });
   });
 });
 
@@ -555,13 +554,13 @@ describe("worker trouble (T3O-66)", () => {
         boardCardWorkerTrouble(card(), state([worker(GPU, "gpu-rig", { state: reconnecting })])),
       ).toBeNull();
     }
-    // A card following the default reads the default's state.
+    // An unplaced, unpinned card belongs to no worker: a default worker steers nothing (T3O-87).
     expect(
       boardCardWorkerTrouble(
         (({ workerId: _bound, ...following }) => following)(card()),
         state([worker(GPU, "gpu-rig", { state: "offline" })], { defaultWorkerId: GPU }),
-      )?.kind,
-    ).toBe("offline");
+      ),
+    ).toBeNull();
   });
 
   it("the header indicator counts workers and lists the cards each has paused", () => {
