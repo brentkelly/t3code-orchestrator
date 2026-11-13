@@ -452,6 +452,15 @@ it("a denial's hold: capacity blocks the worker for placements only", () => {
   assert.isFalse(holdForDenial({ reason: "capacity" }, W1, "grow").blocksWorker);
   assert.strictEqual(holdForDenial({ reason: "quota" }, W1, "placement").queuedBy, "quota");
   assert.strictEqual(holdForDenial({ reason: "not-ready" }, W1, "placement").queuedBy, "setup");
+  // A failing readiness check needs a human; a check still running ends by itself.
+  assert.deepStrictEqual(
+    holdForDenial({ reason: "not-ready", detail: "not-ready" }, W1, "placement").detail,
+    { workerId: W1, setupCause: "not-ready" },
+  );
+  assert.deepStrictEqual(
+    holdForDenial({ reason: "not-ready", detail: "checking" }, W1, "placement").detail,
+    { workerId: W1 },
+  );
 });
 
 it("the upgrade's baseline keeps the old throttle: n builds still fit on each worker", () => {

@@ -2416,6 +2416,9 @@ export const BoardStepQueuedDetail = Schema.Struct({
   behindCardId: Schema.optionalKey(BoardCardId),
   /** The card's profile exceeds the worker's declared capacity: no room will ever free. */
   tooBig: Schema.optionalKey(Schema.Boolean),
+  /** Which `setup` wait: the worker's readiness fails, it has no checkout, or the card's own
+      setup script holds the agent. Absent: a checkout is on its way. */
+  setupCause: Schema.optionalKey(Schema.Literals(["not-ready", "not-set-up", "card-setup"])),
 });
 export type BoardStepQueuedDetail = typeof BoardStepQueuedDetail.Type;
 

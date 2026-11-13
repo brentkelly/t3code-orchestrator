@@ -55,7 +55,11 @@ const cardBuiltOnce = (board: BoardState, cardId: BoardCardId) => {
 export function setupHold(card: BoardCard, workerId: BoardWorkerId): CapacityHold | null {
   const setup = card.resources?.setup ?? null;
   if (setup === null || !setup.blocking || setup.status === "succeeded") return null;
-  return { queuedBy: "setup", detail: { workerId }, blocksWorker: false };
+  return {
+    queuedBy: "setup",
+    detail: { workerId, setupCause: "card-setup" },
+    blocksWorker: false,
+  };
 }
 
 /** How long a step waits for a new setup's first word before it is held instead. */
@@ -162,7 +166,11 @@ export const makeBoardCardSetup = (deps: BoardCardSetupDeps) => {
       const report = firstReports.get(card.id);
       if (report === undefined) return null;
       const first = yield* Deferred.await(report).pipe(Effect.timeoutOption(FIRST_REPORT_WAIT_MS));
-      const held = { queuedBy: "setup", detail: { workerId }, blocksWorker: false } as const;
+      const held = {
+        queuedBy: "setup",
+        detail: { workerId, setupCause: "card-setup" },
+        blocksWorker: false,
+      } as const;
       if (Option.isNone(first)) return held satisfies CapacityHold;
       if (first.value === null) return null;
       return first.value.blocking && first.value.status !== "succeeded" ? held : null;

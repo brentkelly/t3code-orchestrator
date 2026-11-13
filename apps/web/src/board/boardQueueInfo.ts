@@ -122,6 +122,32 @@ function withQueueReason(
         detail: `${reason.worker} runs an older T3o than this board needs. Run \`pnpm t3o-update\` there.`,
       };
     case "setup":
+      if (reason.cause === "card-setup") {
+        return {
+          ...base,
+          label: "Queued · setup running",
+          headline: "Waiting for this card's setup",
+          detail: `The project's setup script holds the agent until it finishes in this card's worktree on ${reason.worker}.`,
+        };
+      }
+      if (reason.cause === "not-ready" && !reason.cloning) {
+        return {
+          ...base,
+          blocked: true,
+          label: `Not ready on ${reason.worker}`,
+          headline: `${reason.worker} isn't ready for ${reason.project}`,
+          detail: `${reason.worker}'s readiness check for ${reason.project} fails. Fix it there, then Re-check it on the Workers page, or pick another worker.`,
+        };
+      }
+      if (reason.cause === "not-set-up" && !reason.cloning && !reason.failed) {
+        return {
+          ...base,
+          blocked: true,
+          label: `No checkout on ${reason.worker}`,
+          headline: `${reason.worker} has no checkout of ${reason.project}`,
+          detail: `Set ${reason.project} up on ${reason.worker} from the Workers page, or pick another worker.`,
+        };
+      }
       return {
         ...base,
         waitingForCheckout: true,

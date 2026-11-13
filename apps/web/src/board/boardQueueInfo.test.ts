@@ -90,15 +90,26 @@ describe("boardQueueInfo with worker capacity (T3O-86)", () => {
     expect(of("needs-update").detail).toContain("pnpm t3o-update");
   });
 
-  it("says a card waiting for a checkout is setting up while it clones", () => {
-    const cloning = boardQueueInfo({
-      slot: slot(1, 1),
-      running: 0,
-      reason: { kind: "setup", worker: "mbp", project: "advisor", cloning: true, failed: false },
-    })!;
+  it("tells a checkout on its way from a worker that needs a human, and the card's own setup", () => {
+    const setup = (cause: "not-ready" | "not-set-up" | "card-setup" | null, cloning = false) =>
+      boardQueueInfo({
+        slot: slot(1, 1),
+        running: 0,
+        reason: { kind: "setup", worker: "mbp", project: "advisor", cloning, failed: false, cause },
+      })!;
+    const cloning = setup(null, true);
     expect(cloning.label).toBe("Queued · setting up");
     expect(cloning.detail).toBe(
       "advisor is being cloned on mbp. This card starts once it's ready.",
     );
+    expect(cloning.blocked).not.toBe(true);
+    // Not ready and no checkout need a human: amber, saying what to do.
+    expect(setup("not-ready")).toMatchObject({ blocked: true, label: "Not ready on mbp" });
+    expect(setup("not-ready").detail).toContain("Re-check");
+    expect(setup("not-set-up")).toMatchObject({ blocked: true, label: "No checkout on mbp" });
+    // The card's own setup script runs: blue, and nothing to do.
+    const own = setup("card-setup");
+    expect(own.label).toBe("Queued · setup running");
+    expect(own.blocked).not.toBe(true);
   });
 });

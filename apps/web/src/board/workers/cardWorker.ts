@@ -273,6 +273,8 @@ export type BoardQueueReason =
           progress so its ticks don't re-render the board. */
       readonly cloning: boolean;
       readonly failed: boolean;
+      /** Why, when it isn't a checkout on its way: see `BoardStepQueuedDetail.setupCause`. */
+      readonly cause: "not-ready" | "not-set-up" | "card-setup" | null;
     };
 
 /**
@@ -324,6 +326,7 @@ export function boardQueueReason(input: {
         project: input.projectName,
         cloning: setup?.phase === "cloning",
         failed: setup?.phase === "failed",
+        cause: detail?.setupCause ?? null,
       };
     }
   }

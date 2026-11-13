@@ -169,6 +169,7 @@ export function holdForDenial(
   answer: {
     readonly reason: string;
     readonly dimension?: BoardResourceDimension;
+    readonly detail?: string;
   },
   workerId: BoardWorkerId,
   kind: "placement" | "grow",
@@ -177,7 +178,17 @@ export function holdForDenial(
     case "quota":
       return { queuedBy: "quota", detail: { workerId }, blocksWorker: false };
     case "not-ready":
-      return { queuedBy: "setup", detail: { workerId }, blocksWorker: false };
+      return {
+        queuedBy: "setup",
+        detail: {
+          workerId,
+          // Checking and cloning end by themselves; these two need a human.
+          ...(answer.detail === "not-ready" || answer.detail === "not-set-up"
+            ? { setupCause: answer.detail }
+            : {}),
+        },
+        blocksWorker: false,
+      };
     default:
       return {
         queuedBy: "capacity",
