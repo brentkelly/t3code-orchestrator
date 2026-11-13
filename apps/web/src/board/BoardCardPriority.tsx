@@ -3,11 +3,12 @@
  * segmented control (new card dialog). Copy lives in `boardCardPriority.ts`.
  */
 import type { BoardCardPriority } from "@t3tools/contracts";
+import { Toggle as TogglePrimitive } from "@base-ui/react/toggle";
+import { ToggleGroup as ToggleGroupPrimitive } from "@base-ui/react/toggle-group";
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Popover, PopoverTrigger } from "../components/ui/popover";
-import { Toggle, ToggleGroup } from "../components/ui/toggle-group";
 import { cn } from "../lib/utils";
 import {
   BOARD_CARD_PRIORITIES,
@@ -117,7 +118,10 @@ function BoardCardPriorityOptions({
   );
 }
 
-/** Low → Urgent, left to right, so it reads like a slider. */
+/**
+ * Low → Urgent, left to right, so it reads like a slider. A board-owned look (outlined track,
+ * filled selection), so it sits on the base-ui primitives rather than restyling `ToggleGroup`.
+ */
 export function BoardCardPrioritySegmented({
   value,
   onChange,
@@ -128,23 +132,26 @@ export function BoardCardPrioritySegmented({
   readonly className?: string;
 }) {
   return (
-    <ToggleGroup
+    <ToggleGroupPrimitive
       aria-label="Priority"
-      className={cn("*:flex-1", className)}
+      className={cn("flex w-fit gap-1 rounded-board-9 border border-border p-0.75", className)}
       onValueChange={(next) => {
         const picked = BOARD_CARD_PRIORITIES.find((priority) => priority === next[0]);
         if (picked !== undefined) onChange(picked);
       }}
-      size="sm"
       value={[value]}
     >
       {BOARD_CARD_PRIORITIES.map((priority) => (
-        <Toggle key={priority} value={priority}>
+        <TogglePrimitive
+          className="inline-flex h-7.5 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-board-7 px-3.5 text-board-12-5 font-medium whitespace-nowrap text-muted-foreground outline-none transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-pressed:bg-accent data-pressed:text-foreground"
+          key={priority}
+          value={priority}
+        >
           <BoardCardPriorityIcon priority={priority} />
           {BOARD_CARD_PRIORITY_NAME[priority]}
-        </Toggle>
+        </TogglePrimitive>
       ))}
-    </ToggleGroup>
+    </ToggleGroupPrimitive>
   );
 }
 

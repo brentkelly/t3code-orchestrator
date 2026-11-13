@@ -865,12 +865,8 @@ export function BoardCardCreateDialog({
           <div className="min-w-0">
             <BoardSectionHeading className="mb-2">Priority</BoardSectionHeading>
             <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2">
-              <BoardCardPrioritySegmented
-                className="w-[340px] max-w-full"
-                onChange={setPriority}
-                value={priority}
-              />
-              <span className="text-board-11-5 text-muted-foreground">
+              <BoardCardPrioritySegmented onChange={setPriority} value={priority} />
+              <span className="min-w-40 flex-1 text-board-11-5 leading-normal text-pretty text-muted-foreground">
                 {boardCardPriorityDialogRule(priority)}
               </span>
             </div>
