@@ -32,6 +32,7 @@ const ask = (
     readonly kind?: "placement" | "grow";
     readonly eligibility?: Partial<HoldEligibility>;
     readonly withinCapacity?: boolean;
+    readonly replacesCardId?: string;
   } = {},
 ) =>
   requestHold(state, {
@@ -43,6 +44,7 @@ const ask = (
     now,
     settings: DEFAULT_HOLD_SETTINGS,
     withinCapacity: options.withinCapacity ?? false,
+    replacesCardId: options.replacesCardId,
   });
 
 const claim = (
@@ -54,6 +56,7 @@ const claim = (
     readonly kind?: "placement" | "grow";
     readonly force?: boolean;
     readonly early?: boolean;
+    readonly replacesCardId?: string;
   } = {},
 ) =>
   holdClaimRefusal(state, {
@@ -65,6 +68,7 @@ const claim = (
     now,
     settings: DEFAULT_HOLD_SETTINGS,
     withinCapacity: false,
+    replacesCardId: options.replacesCardId,
   });
 
 const tick = (state: HoldState, now: number, withinCapacity = false) =>
@@ -107,6 +111,25 @@ describe("holds on a worker (T3O-87)", () => {
     expect(claim(held, "b", "x", 1, { kind: "grow" }).refusal).toBeNull();
     expect(claim(held, "b", "x", 1, { force: true }).refusal).toBeNull();
     expect(claim(held, "a", "c1", 1, { early: true }).refusal).toBeNull();
+  });
+
+  it("a later card's hold passes to an earlier card of its board only when that one may hold", () => {
+    const held = ask(EMPTY_HOLD_STATE, "a", "c9", 0).state;
+    const refused = ask(held, "a", "c1", 1_000, {
+      replacesCardId: "c9",
+      eligibility: { diskFits: false },
+    });
+    expect(refused.answer).toMatchObject({ outcome: "refused", reason: "disk" });
+    expect(refused.state.placement?.cardId).toBe("c9");
+    const swapped = ask(held, "a", "c1", 1_000, { replacesCardId: "c9" });
+    expect(swapped.answer).toMatchObject({ outcome: "held" });
+    expect(swapped.state.placement?.cardId).toBe("c1");
+    // Another board's card is never displaced, and a claim gives way only to the named card.
+    expect(ask(held, "b", "x", 1_000, { replacesCardId: "c9" }).answer).toMatchObject({
+      reason: "held",
+    });
+    expect(claim(held, "a", "c1", 1, { replacesCardId: "c9" }).refusal).toBeNull();
+    expect(claim(held, "a", "c1", 1, { replacesCardId: "c8" }).refusal).toBe("reserved");
   });
 
   it("lapses without a refresh, and goes when withdrawn or its board leaves", () => {

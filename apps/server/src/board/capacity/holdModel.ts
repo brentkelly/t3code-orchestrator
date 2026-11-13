@@ -203,6 +203,8 @@ export function requestHold(
     readonly now: number;
     readonly settings: HoldSettings;
     readonly withinCapacity: boolean;
+    /** This board's later card holding here, which gives way if this request succeeds. */
+    readonly replacesCardId?: string | undefined;
   },
 ): { readonly state: HoldState; readonly answer: HoldAnswer } {
   const { boardId, cardId, now } = input;
@@ -249,7 +251,11 @@ export function requestHold(
   if (coolOff !== undefined) return refuse(current, "cool-off", coolOff);
   const turn = current.turns.get(boardId);
   if (turn !== undefined) return refuse(current, "turn", turn + HOLD_TURN_MS);
-  if (current.placement !== null) {
+  const replaced =
+    current.placement !== null &&
+    current.placement.boardId === boardId &&
+    current.placement.cardId === input.replacesCardId;
+  if (current.placement !== null && !replaced) {
     const holder = current.placement.boardId;
     current = tickHolds(flagWaiting(current, boardId), input);
     // A refusal after the limit ends the hold at once: the slot may be free now.
@@ -317,6 +323,8 @@ export function holdClaimRefusal(
     readonly now: number;
     readonly settings: HoldSettings;
     readonly withinCapacity: boolean;
+    /** This board's later card holding here, which gives way to this claim. */
+    readonly replacesCardId?: string | undefined;
   },
 ): { readonly state: HoldState; readonly refusal: "reserved" | null } {
   if (input.force) return { state, refusal: null };
@@ -337,7 +345,13 @@ export function holdClaimRefusal(
   // than it: a hold that was there first still starts early.
   const growBlocking =
     state.grows.length > 0 && !(ownPlacement && input.early && !growBlocks(state, placement!));
-  if (!growBlocking && (placement === null || ownPlacement)) return { state, refusal: null };
+  const givesWay =
+    placement !== null &&
+    placement.boardId === input.boardId &&
+    placement.cardId === input.replacesCardId;
+  if (!growBlocking && (placement === null || ownPlacement || givesWay)) {
+    return { state, refusal: null };
+  }
   const flagged = tickHolds(flagWaiting(state, input.boardId), input);
   return { state: flagged, refusal: "reserved" };
 }

@@ -14,6 +14,7 @@ import {
   type BoardResourceProfile,
   type BoardState,
   type BoardWorkerId,
+  ZERO_BOARD_RESOURCE_PROFILE,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -582,12 +583,44 @@ describe("holds at build start (T3O-87)", () => {
           const stateOf = (id: string) =>
             Effect.map(h.board, (board) => boardCardStepState(board, BoardCardId.make(id)));
           assert.strictEqual((yield* stateOf("card-z"))?.queuedBy, "holding");
-          // An earlier card joins the queue: W1's hold moves to it.
+          // An earlier card joins the queue: W1's hold moves to it in one request.
           yield* h.pumpDomain(movedToBuilding(earlier, 2));
-          assert.deepInclude(capacity.releasedHolds, { workerId: W1, cardId: "card-z" });
+          assert.deepInclude(
+            capacity.holds.map(({ workerId, cardId, replacesCardId }) => ({
+              workerId,
+              cardId,
+              replacesCardId,
+            })),
+            { workerId: W1, cardId: "card-a", replacesCardId: "card-z" },
+          );
+          assert.notDeepInclude(capacity.releasedHolds, { workerId: W1, cardId: "card-z" });
           assert.strictEqual((yield* stateOf("card-a"))?.queuedBy, "holding");
           // card-z waits without a hold; W1 is no longer its.
           assert.strictEqual((yield* stateOf("card-z"))?.queuedBy, "capacity");
+        }),
+      );
+    }),
+  );
+
+  it.effect("a later card keeps its hold when the earlier card's request is refused", () =>
+    Effect.gen(function* () {
+      const capacity = yield* capacityOf([[W1, FULL]]);
+      capacity.external.set(W1, CPU_RAM_TAKEN);
+      const later = unplaced("card-z", "z");
+      const earlier = unplaced("card-a", "a");
+      capacity.holdAnswer = (_workerId, input) =>
+        input.cardId === "card-a"
+          ? { outcome: "refused", reason: "disk", until: null }
+          : { outcome: "held", short: ZERO_BOARD_RESOURCE_PROFILE, until: null };
+      yield* run({ cards: [earlier, later], capacity, git: newWorkerGit() }, (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(later, 1));
+          const stateOf = (id: string) =>
+            Effect.map(h.board, (board) => boardCardStepState(board, BoardCardId.make(id)));
+          yield* h.pumpDomain(movedToBuilding(earlier, 2));
+          assert.notDeepInclude(capacity.releasedHolds, { workerId: W1, cardId: "card-z" });
+          assert.strictEqual((yield* stateOf("card-z"))?.queuedBy, "holding");
+          assert.notStrictEqual((yield* stateOf("card-a"))?.queuedBy, "holding");
         }),
       );
     }),

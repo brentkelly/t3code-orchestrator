@@ -1453,8 +1453,8 @@ const make = Effect.gen(function* () {
           `The card's base branch '${baseRefName}' does not exist in ${cwd}, locally or on a remote, so there is nothing to cut the card's branch from.`,
         );
       }
-      // T3o: a later card's hold gives way to this earlier one (T3O-87).
-      yield* releaseLaterHold(card, candidate.workerId, pass);
+      // T3o: a later card's hold gives way to this earlier one if its claim is granted (T3O-87).
+      const laterHolder = laterHolderOn(card, candidate.workerId, pass);
       // T3o: the placement claim, on this candidate only once its base checks pass (T3O-86/87).
       const placement =
         Option.isNone(capacityAdmission) || card.group !== null
@@ -1466,7 +1466,11 @@ const make = Effect.gen(function* () {
               claimFor.force,
               // T3o: a held worker starts the card early (T3O-87).
               ranked.kind === "ranked" && ranked.heldByCard.has(candidate.workerId),
+              laterHolder,
             );
+      if (placement.kind === "granted" && laterHolder !== null) {
+        forgetHold(laterHolder, candidate.workerId);
+      }
       if (placement.kind === "held") {
         lastHold = placement.hold;
         notePlacementRejection(card.id, candidate.workerId, placement.hold.queuedBy, yield* nowIso);
@@ -1807,16 +1811,6 @@ const make = Effect.gen(function* () {
     const holder = placementHolderOn(card, workerId);
     return holder === null || pass.ahead.has(holder) ? null : holder;
   };
-  const releaseLaterHold = Effect.fn("board-supervisor-releaseLaterHold")(function* (
-    card: BoardCard,
-    workerId: BoardWorkerId,
-    pass: PlacementPass,
-  ) {
-    const holder = laterHolderOn(card, workerId, pass);
-    if (holder === null || Option.isNone(capacityClient)) return;
-    yield* capacityClient.value.releaseHold(workerId, holder);
-    forgetHold(holder, workerId);
-  });
 
   /** T3o: a placed card's grow hold on its own worker (T3O-87). Not counted in the limit. */
   const askGrowHold = Effect.fn("board-supervisor-askGrowHold")(function* (
@@ -1946,7 +1940,6 @@ const make = Effect.gen(function* () {
       closed,
       heldForOthers: new Set(heldForEarlier(card, pass).keys()),
     });
-    for (const workerId of ask) yield* releaseLaterHold(card, workerId, pass);
     const repositoryKey = yield* projectRepositoryKey(card.projectId);
     const input: BoardCapacityHoldInput = {
       cardId: card.id,
@@ -1958,7 +1951,12 @@ const make = Effect.gen(function* () {
     };
     const at = yield* nowIso;
     for (const workerId of [...ask, ...signal]) {
-      const answer = yield* client.hold(workerId, input);
+      // A later card's hold passes to this one only if this request succeeds.
+      const later = ask.includes(workerId) ? laterHolderOn(card, workerId, pass) : null;
+      const answer = yield* client.hold(
+        workerId,
+        later === null ? input : { ...input, replacesCardId: later },
+      );
       if (answer === null) continue;
       if (answer.outcome === "refused") {
         if (holding.has(workerId)) forgetHold(card.id, workerId);
@@ -1974,6 +1972,7 @@ const make = Effect.gen(function* () {
         yield* client.releaseHold(workerId, card.id);
         continue;
       }
+      if (later !== null) forgetHold(later, workerId);
       noteHold(card.id, workerId, { kind: "placement", input, until: answer.until });
     }
     // Holds that fell out of the card's top two go.

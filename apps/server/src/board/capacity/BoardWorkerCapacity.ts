@@ -471,6 +471,7 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
         now,
         settings: holdSettings,
         withinCapacity: within,
+        replacesCardId: input.replacesCardId,
       });
       holds = refused.state;
       if (refused.refusal !== null) {
@@ -502,6 +503,13 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     });
     if (decision.result.outcome === "granted") {
       if (early && input.kind === "placement") holds = noteEarlyStart(holds, boardId, now);
+      if (
+        input.kind === "placement" &&
+        holds.placement?.boardId === boardId &&
+        holds.placement.cardId === input.replacesCardId
+      ) {
+        holds = releaseHold(holds, boardId, input.replacesCardId);
+      }
       // A granted grow ends the card's grow hold: the sync that lists it heavy consumes it.
       if (input.kind === "grow") holds = releaseHold(holds, boardId, input.cardId);
     }
@@ -553,6 +561,7 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
           now,
           settings: holdSettings,
           withinCapacity: !headroom.over.cpuRam,
+          replacesCardId: input.replacesCardId,
         });
         holds = asked.state;
         const answer = asked.answer;

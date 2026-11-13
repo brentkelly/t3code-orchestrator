@@ -440,6 +440,11 @@ export const BoardCapacityClaimInput = Schema.Struct({
   force: Schema.optionalKey(Schema.Boolean),
   /** T3o: the card holds this worker: start early at its early-start share (T3O-87). */
   hold: Schema.optionalKey(Schema.Boolean),
+  /**
+   * T3o: a later card of this board holding the worker gives way (T3O-87): its placement hold
+   * passes to this card only if this request succeeds, so a refusal leaves it in place.
+   */
+  replacesCardId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type BoardCapacityClaimInput = typeof BoardCapacityClaimInput.Type;
 
@@ -451,6 +456,11 @@ export const BoardCapacityHoldInput = Schema.Struct({
   providerInstanceId: Schema.NullOr(TrimmedNonEmptyString),
   profile: BoardResourceProfile,
   kind: Schema.Literals(["placement", "grow"]),
+  /**
+   * T3o: a later card of this board holding the worker gives way (T3O-87): its placement hold
+   * passes to this card only if this request succeeds, so a refusal leaves it in place.
+   */
+  replacesCardId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type BoardCapacityHoldInput = typeof BoardCapacityHoldInput.Type;
 

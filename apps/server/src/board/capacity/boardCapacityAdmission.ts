@@ -322,6 +322,8 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     force: boolean,
     /** T3o: the card holds this worker and starts early (T3O-87). */
     hold = false,
+    /** T3o: a later card's hold here gives way if this claim is granted (T3O-87). */
+    replacesCardId: string | null = null,
   ) {
     if (isGroup(card)) return { kind: "none" } as PlacementDecision;
     if (!(yield* deps.client.synced(workerId)) && !(yield* syncWorker(workerId))) {
@@ -342,6 +344,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       providerInstanceId,
       ...(force ? { force: true } : {}),
       ...(hold && !force ? { hold: true } : {}),
+      ...(replacesCardId === null ? {} : { replacesCardId }),
     });
     if (answer.outcome === "unavailable") return { kind: "unavailable" } as PlacementDecision;
     if (answer.outcome === "denied") {

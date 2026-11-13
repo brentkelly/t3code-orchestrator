@@ -514,3 +514,43 @@ it.effect(
       );
     }).pipe(Effect.provide(TestClock.layer()), (effect) => withMachine(makeFakes())(effect)),
 );
+
+it.effect(
+  "a later card's hold gives way to its board's earlier card only on a grant (T3O-87)",
+  () =>
+    Effect.gen(function* () {
+      const fakes = makeFakes();
+      fakes.config = { ...fakes.config, "capacity.cpuCores": 18 };
+      const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+      yield* service.syncCards("board-a", {
+        seq: 1,
+        authoritative: true,
+        cards: [{ ...card("busy"), grantedProfile: { cpuCores: 12, ramGiB: 40, diskGB: 20 } }],
+      });
+      const held = yield* service.hold("board-a", {
+        cardId: "later",
+        repositoryKey: "github.com/acme/app",
+        providerInstanceId: null,
+        profile: { cpuCores: 8, ramGiB: 32, diskGB: 45 },
+        kind: "placement",
+      });
+      assert.strictEqual(held.outcome, "held");
+      const claim = (claimId: string, cpuCores: number) =>
+        service.claim("board-a", {
+          claimId,
+          seq: 2,
+          cardId: "earlier",
+          repositoryKey: "github.com/acme/app",
+          kind: "placement",
+          profile: { cpuCores, ramGiB: 4, diskGB: 5 },
+          providerInstanceId: null,
+          replacesCardId: "later",
+        });
+      // Refused for capacity: the later card keeps the worker.
+      assert.strictEqual((yield* claim("earlier:1", 18)).outcome, "denied");
+      assert.strictEqual((yield* service.snapshot("board-a")).hold?.cardId, "later");
+      // Granted: the later card's hold is gone with it.
+      assert.strictEqual((yield* claim("earlier:2", 2)).outcome, "granted");
+      assert.isNull((yield* service.snapshot("board-a")).hold?.cardId ?? null);
+    }).pipe(Effect.provide(TestClock.layer()), (effect) => withMachine(makeFakes())(effect)),
+);
