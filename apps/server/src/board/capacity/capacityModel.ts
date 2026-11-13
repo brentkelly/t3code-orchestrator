@@ -183,6 +183,13 @@ function pendingRamGiB(state: CapacityState, activity: CapacityActivity, now: nu
   return round2(pending);
 }
 
+/** The extra disk a grow takes: none for a settled or measured record, whose disk is never
+    regrown (see applySyncCards). */
+export const growDiskGB = (record: CapacityRecord, profile: BoardResourceProfile): number =>
+  record.settled || record.diskFromMeasurement
+    ? 0
+    : Math.max(0, profile.diskGB - record.profile.diskGB);
+
 export interface Headroom {
   readonly declared: BoardResourceProfile;
   readonly held: BoardResourceProfile;
@@ -377,10 +384,7 @@ export function decideClaim(
   const load: BoardResourceProfile = {
     cpuCores: Math.max(0, input.profile.cpuCores - (heavyNow ? record.profile.cpuCores : 0)),
     ramGiB: Math.max(0, input.profile.ramGiB - (heavyNow ? record.profile.ramGiB : 0)),
-    diskGB:
-      record.settled || record.diskFromMeasurement
-        ? 0
-        : Math.max(0, input.profile.diskGB - record.profile.diskGB),
+    diskGB: growDiskGB(record, input.profile),
   };
   if (input.force !== true) {
     if (headroom.over.cpuRam) {

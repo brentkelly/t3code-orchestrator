@@ -635,6 +635,36 @@ it.effect("a worker over on CPU refuses a hold whose disk isn't really free", ()
   }).pipe(Effect.provide(TestClock.layer()), withMachine(fakes));
 });
 
+it.effect("a settled card's grow hold isn't refused for disk its grow never takes", () => {
+  const fakes = makeFakes();
+  return Effect.gen(function* () {
+    const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+    yield* service.syncCards("board-a", {
+      seq: 1,
+      authoritative: true,
+      cards: [
+        { ...card("busy"), grantedProfile: { cpuCores: 20, ramGiB: 8, diskGB: 20 } },
+        {
+          ...card("settled"),
+          phase: "light",
+          settled: true,
+          grantedProfile: { cpuCores: 2, ramGiB: 4, diskGB: 20 },
+        },
+      ],
+    });
+    // Only 10 GB free: the learned 45 GB is more than the 25 extra, but a settled disk never grows.
+    fakes.freeDiskBytes = 10 * 1000 ** 3;
+    const asked = yield* service.hold("board-a", {
+      cardId: "settled",
+      repositoryKey: "github.com/acme/app",
+      providerInstanceId: null,
+      profile: { cpuCores: 2, ramGiB: 4, diskGB: 45 },
+      kind: "grow",
+    });
+    assert.strictEqual(asked.outcome, "held");
+  }).pipe(Effect.provide(TestClock.layer()), withMachine(fakes));
+});
+
 it.effect(
   "a later card's hold gives way to its board's earlier card only on a grant (T3O-87)",
   () =>

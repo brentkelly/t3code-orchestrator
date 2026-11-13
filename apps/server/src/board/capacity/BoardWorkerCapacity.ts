@@ -44,6 +44,7 @@ import {
   EMPTY_CAPACITY_STATE,
   firstShort,
   forgetBoard,
+  growDiskGB,
   PROVISION_TTL_MS,
   heldByBoard,
   recordIsHeavy,
@@ -597,11 +598,9 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
         const own = state.records.find(
           (record) => record.boardId === boardId && record.cardId === input.cardId,
         );
-        // A grow already holds its current disk: only the extra must be free.
-        const diskNeeded =
-          input.kind === "grow" && own !== undefined
-            ? Math.max(0, input.profile.diskGB - own.profile.diskGB)
-            : input.profile.diskGB;
+        // A grow already holds its current disk: only the extra must be free, as for its claim.
+        const grow = input.kind === "grow" && own !== undefined;
+        const diskNeeded = grow ? growDiskGB(own, input.profile) : input.profile.diskGB;
         const asked = requestHold(holds, {
           boardId,
           cardId: input.cardId,
@@ -611,7 +610,9 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
             eligible: notReady === null && !signedOut && quota === null,
             tooBig: firstShort(input.profile, total) !== null,
             // Over on CPU or RAM offers no CPU or RAM, but its offered disk is still real.
-            diskFits: !headroom.over.disk && diskNeeded <= headroom.offered.diskGB,
+            diskFits:
+              (grow && diskNeeded === 0) ||
+              (!headroom.over.disk && diskNeeded <= headroom.offered.diskGB),
             placedHere: own !== undefined,
           },
           now,
