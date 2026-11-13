@@ -3423,12 +3423,15 @@ const make = Effect.gen(function* () {
       readonly retry: Effect.Effect<void>;
       readonly workerId: BoardWorkerId;
       readonly hold: CapacityHold;
+      /** The pass a later segment waits on; null for a pass not yet started. */
+      readonly runId: string | null;
     }
   >();
   const waitForRoomInCi = Effect.fn("board-supervisor-waitForRoomInCi")(function* (
     card: BoardCard,
     hold: CapacityHold,
     retry: Effect.Effect<void, ThreadReadError>,
+    runId: string | null = null,
   ) {
     const waiting = ciWaitingForRoom.has(card.id);
     ciWaitingForRoom.set(card.id, {
@@ -3442,6 +3445,7 @@ const make = Effect.gen(function* () {
       ),
       workerId: hold.detail?.workerId ?? boardCardEffectiveWorkerId(card, undefined),
       hold,
+      runId,
     });
     if (!waiting) {
       yield* holdInCi(
@@ -3643,7 +3647,12 @@ const make = Effect.gen(function* () {
       }
       const worktree = yield* ensureWorktree(card);
       if (worktree.kind === "held") {
-        yield* waitForRoomInCi(card, worktree.hold, runCiSegment(cardId, runId, steps, from));
+        yield* waitForRoomInCi(
+          card,
+          worktree.hold,
+          runCiSegment(cardId, runId, steps, from),
+          runId,
+        );
         return;
       }
       ciWaitingForRoom.delete(card.id);
@@ -4161,6 +4170,8 @@ const make = Effect.gen(function* () {
     }
     if (ci.phase !== "running" && ci.phase !== "queued") return false;
     if (ciPasses.current(card.id) !== null) return false;
+    // A later segment waiting for room has the placement pass behind it (T3O-86).
+    if (ciWaitingForRoom.get(card.id)?.runId === ci.runId) return false;
     if (forgeSteps.get(String(card.id))?.runId === ci.runId) return false;
     const state = boardCardStepState(board, card.id);
     if (state !== null && !isBoardTerminalStepStatus(state.status)) {

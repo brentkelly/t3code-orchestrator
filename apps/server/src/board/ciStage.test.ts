@@ -675,7 +675,6 @@ it.effect("CI that must re-create its worktree waits for room, then starts by it
         );
         assert.lengthOf(notes, 1);
         assert.include(JSON.stringify(notes[0]), "waiting for room");
-
         capacity.external.delete(BOARD_LOCAL_WORKER_ID);
         yield* capacity.publish(BOARD_LOCAL_WORKER_ID);
         // The snapshot's pass runs after up to 2 s of jitter.
@@ -967,6 +966,66 @@ it.effect(
         }),
       ).pipe(Effect.provideService(BoardCiRunner, runner));
     }),
+);
+
+it.effect("a later segment that must re-create its worktree waits for room, not for a human", () =>
+  Effect.gen(function* () {
+    const { runner, calls } = yield* scriptedRunner([
+      { result: "passed", failedIndex: null },
+      { result: "passed", failedIndex: null },
+    ]);
+    const subject = card("agent-recut", review);
+    const agentStep: BoardCiStep = {
+      kind: "agent",
+      id: "audit",
+      name: "Audit",
+      parallel: false,
+      prompt: "Audit it.",
+      model: null,
+      timeoutMinutes: 30,
+    };
+    const board = boardWith([subject], mixedConfig([SCRIPT_A, agentStep, SCRIPT_B]));
+    const capacity = yield* makeFakeCapacity(roomForCards(1));
+    yield* withGovernor({ board, settings, capacity }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, subject, 1);
+        const stepId = boardCiAgentStepId((yield* live(h, subject.id)).ci!.runId, 1);
+        // The worktree is reclaimed while the agent step runs, and another board fills the worker.
+        yield* Ref.update(h.model, (model) => ({
+          ...model,
+          board: {
+            ...model.board!,
+            cards: model.board!.cards.map((existing) =>
+              existing.id === subject.id
+                ? {
+                    ...existing,
+                    worktree: { ...existing.worktree!, path: null, status: "reclaimed" as const },
+                  }
+                : existing,
+            ),
+          },
+        }));
+        capacity.external.set(BOARD_LOCAL_WORKER_ID, { cpuCores: 3, ramGiB: 0, diskGB: 0 });
+        yield* h.pumpDomain(
+          fixCompleted(subject.id, stepId, { verdict: "passed", summary: "ok" }, 2),
+        );
+        yield* h.reactor.drainCi;
+        assert.strictEqual(yield* calls, 1);
+        // The orphan sweep holds a pass on its second sighting; a wait for room is not one.
+        yield* h.reactor.sweep;
+        yield* h.reactor.sweep;
+        assert.notStrictEqual((yield* live(h, subject.id)).ci?.phase, "held");
+
+        capacity.external.delete(BOARD_LOCAL_WORKER_ID);
+        yield* capacity.publish(BOARD_LOCAL_WORKER_ID);
+        yield* TestClock.adjust(2_000);
+        yield* h.reactor.drain;
+        yield* h.reactor.drainCi;
+        assert.strictEqual(yield* calls, 2);
+        assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
 );
 
 it.effect("a failed agent verdict is the pass's failure: a fix agent gets it", () =>
