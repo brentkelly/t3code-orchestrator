@@ -605,7 +605,11 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
             // Without this a release under 5% would never reach the board, which filters on it.
             const drifted =
               now - lastAt >= SNAPSHOT_SETTLE_MS &&
-              JSON.stringify(last.headroom) !== JSON.stringify(next.headroom);
+              BOARD_RESOURCE_DIMENSIONS.some(
+                (dimension) =>
+                  boardResourceProfileValue(last!.headroom, dimension) !==
+                  boardResourceProfileValue(next.headroom, dimension),
+              );
             if (!drifted) return [] as const;
           }
           last = next;

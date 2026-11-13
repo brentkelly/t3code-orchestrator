@@ -1328,6 +1328,20 @@ const make = Effect.gen(function* () {
         `The card's base branch '${baseRefName}' does not exist in ${cwd}, locally or on a remote, so there is nothing to cut the card's branch from.`,
       );
     }
+    // T3o: until the one-time upgrade has run the board claims no new placement (T3O-86).
+    if (
+      Option.isSome(capacityAdmission) &&
+      card.group === null &&
+      !claimFor.force &&
+      !(yield* capacityUpgradeDone)
+    ) {
+      const hold: CapacityHold = {
+        queuedBy: "capacity",
+        detail: { workerId: workspace.workerId },
+        blocksWorker: false,
+      };
+      return { kind: "held", hold } as WorktreeOutcome;
+    }
     // T3o: the placement claim, immediately before the provision is dispatched (T3O-86).
     const placement = Option.isNone(capacityAdmission)
       ? ({ kind: "none" } as const)
@@ -2646,6 +2660,18 @@ const make = Effect.gen(function* () {
     // T3o: a parked or finished card's room reaches the queue now (T3O-86).
     if (Option.isSome(capacityAdmission)) yield* capacityAdmission.value.releaseForWaiting();
     yield* ciPasses.admitQueued;
+    for (const [cardId, waiting] of [...ciWaitingForRoom]) {
+      const card = (yield* readBoard).cards.find((candidate) => candidate.id === cardId);
+      if (
+        card === undefined ||
+        card.archivedAt !== null ||
+        card.stage !== BOARD_SEED_STAGE_IDS.ci
+      ) {
+        ciWaitingForRoom.delete(cardId);
+        continue;
+      }
+      yield* waiting.retry;
+    }
     const board = yield* readBoard;
     // Read once for the whole pass: every candidate is gated against the same
     // instant, so a long pass cannot admit one card and withhold its neighbour
@@ -2732,6 +2758,12 @@ const make = Effect.gen(function* () {
     // T3o: strict queue order per worker until holds exist (T3O-86): the first capacity
     // denial on a worker ends this board's placements there for the pass; grows go on.
     const blocked = new Map<BoardWorkerId, BoardCardId>();
+    // CI waiting for room went first, so a capacity denial there holds up the cards behind it.
+    for (const [cardId, waiting] of ciWaitingForRoom) {
+      if (waiting.hold.blocksWorker && !blocked.has(waiting.workerId)) {
+        blocked.set(waiting.workerId, cardId);
+      }
+    }
     for (const { entry } of [...forced, ...rest]) {
       if (entry !== undefined) yield* offerBuildCandidate({ ...entry, board, blocked });
     }
@@ -3375,6 +3407,45 @@ const make = Effect.gen(function* () {
   const withCiRetryHint = (detail: string) =>
     detail.includes("Retry CI") ? detail : `${detail} Retry CI, or Skip CI.`;
 
+  /**
+   * T3o: CI that needs its worktree re-created and was denied room (T3O-86). Each placement
+   * pass retries it ahead of build candidates, as queued CI already goes first; nothing
+   * waits on a human. The note is written once per wait, not on every pass.
+   */
+  const ciWaitingForRoom = new Map<
+    BoardCardId,
+    {
+      readonly retry: Effect.Effect<void>;
+      readonly workerId: BoardWorkerId;
+      readonly hold: CapacityHold;
+    }
+  >();
+  const waitForRoomInCi = Effect.fn("board-supervisor-waitForRoomInCi")(function* (
+    card: BoardCard,
+    hold: CapacityHold,
+    retry: Effect.Effect<void, ThreadReadError>,
+  ) {
+    const waiting = ciWaitingForRoom.has(card.id);
+    ciWaitingForRoom.set(card.id, {
+      retry: retry.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: CI waiting for room failed to retry", {
+            cardId: card.id,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      ),
+      workerId: hold.detail?.workerId ?? boardCardEffectiveWorkerId(card, undefined),
+      hold,
+    });
+    if (!waiting) {
+      yield* holdInCi(
+        card,
+        "CI is waiting for room on the card's worker to re-create its worktree; it starts when there is room.",
+      );
+    }
+  });
+
   /** Hold a card in CI with a reason on its rail: a human can Skip CI. */
   const holdInCi = Effect.fn("board-supervisor-holdInCi")(function* (
     card: BoardCard,
@@ -3391,7 +3462,10 @@ const make = Effect.gen(function* () {
   });
 
   /** Start a pass at the first step (entry, a fix, or a restart). */
-  const startCiPass = Effect.fn("board-supervisor-startCiPass")(function* (
+  const startCiPass: (
+    cardId: BoardCardId,
+    options: { readonly fixThreadId: ThreadId | null; readonly fresh?: boolean },
+  ) => Effect.Effect<void, ThreadReadError> = Effect.fn("board-supervisor-startCiPass")(function* (
     cardId: BoardCardId,
     options: { readonly fixThreadId: ThreadId | null; readonly fresh?: boolean },
   ) {
@@ -3438,6 +3512,11 @@ const make = Effect.gen(function* () {
       return;
     }
     const worktree = yield* ensureWorktree(card);
+    if (worktree.kind === "held") {
+      yield* waitForRoomInCi(card, worktree.hold, startCiPass(cardId, options));
+      return;
+    }
+    ciWaitingForRoom.delete(card.id);
     if (worktree.kind !== "ready") {
       yield* holdBeforeStart(card, "CI is waiting for the card's worktree, which is not ready.");
       return;
@@ -3558,6 +3637,11 @@ const make = Effect.gen(function* () {
         return;
       }
       const worktree = yield* ensureWorktree(card);
+      if (worktree.kind === "held") {
+        yield* waitForRoomInCi(card, worktree.hold, runCiSegment(cardId, runId, steps, from));
+        return;
+      }
+      ciWaitingForRoom.delete(card.id);
       if (worktree.kind !== "ready") {
         yield* holdCiPass(
           card,
@@ -11167,11 +11251,12 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             if (pending) return;
             const board = yield* readBoard;
-            const waiting = (board.stepStates ?? []).some(
-              (state) =>
-                state.status === "queued" &&
-                (state.queuedDetail?.workerId === workerId || state.queuedBy === "agent-cap"),
-            );
+            const waiting =
+              (board.stepStates ?? []).some(
+                (state) =>
+                  state.status === "queued" &&
+                  (state.queuedDetail?.workerId === workerId || state.queuedBy === "agent-cap"),
+              ) || [...ciWaitingForRoom.values()].some((ci) => ci.workerId === workerId);
             if (!waiting) return;
             pending = true;
             yield* Effect.sleep(Duration.millis(yield* Random.nextIntBetween(0, 2000)));

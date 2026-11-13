@@ -5,6 +5,7 @@
  * runs every step, Skip CI moves the card. Projects without CI are unchanged.
  */
 import {
+  BOARD_LOCAL_WORKER_ID,
   BOARD_SEED_STAGES,
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
@@ -31,6 +32,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   BoardCiRunner,
@@ -61,6 +63,7 @@ import {
   type HarnessCommand,
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
+import { makeFakeCapacity, roomForCards } from "./capacity/capacityClient.testkit.ts";
 
 const { ci, review, merge } = BOARD_SEED_STAGE_IDS;
 const STEPS: ReadonlyArray<BoardCiStepDefinition> = [
@@ -650,6 +653,38 @@ it.effect("a queued pass starts when an agent step frees its worker's room (T3O-
           assert.strictEqual(yield* calls, 1);
           assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
         }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("CI that must re-create its worktree waits for room, then starts by itself", () =>
+  Effect.gen(function* () {
+    const { runner, calls } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const subject = card("recut", review, {
+      worktree: { ...readyWorktree("recut"), path: null, status: "reclaimed" },
+    });
+    const capacity = yield* makeFakeCapacity(roomForCards(1));
+    // Another board holds every core on the worker.
+    capacity.external.set(BOARD_LOCAL_WORKER_ID, { cpuCores: 3, ramGiB: 0, diskGB: 0 });
+    yield* withGovernor({ board: boardWith([subject]), settings, capacity }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, subject, 1);
+        assert.strictEqual(yield* calls, 0);
+        const notes = (yield* h.commands).filter(
+          (command) => command.type === "board.card.record-note",
+        );
+        assert.lengthOf(notes, 1);
+        assert.include(JSON.stringify(notes[0]), "waiting for room");
+
+        capacity.external.delete(BOARD_LOCAL_WORKER_ID);
+        yield* capacity.publish(BOARD_LOCAL_WORKER_ID);
+        // The snapshot's pass runs after up to 2 s of jitter.
+        yield* TestClock.adjust(2_000);
+        yield* h.reactor.drain;
+        yield* h.reactor.drainCi;
+        assert.strictEqual(yield* calls, 1);
+        assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
+      }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
