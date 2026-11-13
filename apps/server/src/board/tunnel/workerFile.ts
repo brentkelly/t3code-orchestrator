@@ -27,19 +27,131 @@ export const WorkerBoardEntry = Schema.Struct({
 });
 export type WorkerBoardEntry = typeof WorkerBoardEntry.Type;
 
-/**
- * The worker's own settings, edited with `t3o-worker config`. Empty here; T3O-71 adds
- * capacity. Each key carries a description so `config --help` can list it.
- */
-export const WorkerConfig = Schema.Struct({});
-export type WorkerConfig = typeof WorkerConfig.Type;
+/** A `config set` value, or why it can't be one. */
+export type WorkerConfigParse =
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly message: string };
 
-/** Every `config` key, with what it does, for `config --help` and validation. */
+const positiveNumber =
+  (what: string) =>
+  (raw: string): WorkerConfigParse => {
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0
+      ? { ok: true, value }
+      : { ok: false, message: `${what} must be a number above 0.` };
+  };
+
+const positiveInt =
+  (what: string) =>
+  (raw: string): WorkerConfigParse => {
+    const value = Number(raw);
+    return Number.isInteger(value) && value > 0
+      ? { ok: true, value }
+      : { ok: false, message: `${what} must be a whole number above 0.` };
+  };
+
+/**
+ * Every `config` key (T3O-86), with what it does, for `config --help` and validation. A key
+ * with `prefix` names a family (`providerCaps.<providerInstanceId>`). Applied live.
+ */
 export const WORKER_CONFIG_KEYS: ReadonlyArray<{
   readonly key: string;
+  readonly prefix?: string;
   readonly description: string;
-  readonly parse: (raw: string) => unknown;
-}> = [];
+  readonly parse: (raw: string) => WorkerConfigParse;
+}> = [
+  {
+    key: "capacity.cpuCores",
+    description: "Cores this worker offers its boards. Default: every detected core.",
+    parse: positiveNumber("capacity.cpuCores"),
+  },
+  {
+    key: "capacity.ramGiB",
+    description:
+      "GiB of RAM this worker offers. Default: the agent slice's memory.high minus 2 GiB, else total minus 8 GiB (at least half).",
+    parse: positiveNumber("capacity.ramGiB"),
+  },
+  {
+    key: "capacity.diskGB",
+    description:
+      "GB of disk for card worktrees. Default: 90% of the free space on the worktree volume when first set, plus what board worktrees already use.",
+    parse: positiveNumber("capacity.diskGB"),
+  },
+  {
+    key: "maxAgents",
+    description:
+      "Most board-started threads running a turn at once, across every board. Default: no limit.",
+    parse: positiveInt("maxAgents"),
+  },
+  {
+    key: "providerCaps.<providerInstanceId>",
+    prefix: "providerCaps.",
+    description: "Most board-started threads running at once on one provider instance.",
+    parse: positiveInt("A provider cap"),
+  },
+  {
+    key: "quotaThresholdPercent",
+    description:
+      "Stop taking new cards for a provider once its session or weekly window is at this percent. Default: 95.",
+    parse: (raw) => {
+      const value = Number(raw);
+      return Number.isFinite(value) && value > 0 && value <= 100
+        ? { ok: true, value }
+        : { ok: false, message: "quotaThresholdPercent must be between 1 and 100." };
+    },
+  },
+];
+
+/** The config entry a key belongs to, or undefined for an unknown key. */
+export function findWorkerConfigKey(key: string) {
+  return WORKER_CONFIG_KEYS.find((entry) =>
+    entry.prefix === undefined
+      ? entry.key === key
+      : key.startsWith(entry.prefix) && key.length > entry.prefix.length,
+  );
+}
+
+export const DEFAULT_QUOTA_THRESHOLD_PERCENT = 95;
+
+/** The capacity settings `worker.json` declares; absent keys fall to the machine defaults. */
+export interface WorkerCapacitySettings {
+  readonly cpuCores: number | null;
+  readonly ramGiB: number | null;
+  readonly diskGB: number | null;
+  readonly maxAgents: number | null;
+  readonly providerCaps: Readonly<Record<string, number>>;
+  readonly quotaThresholdPercent: number;
+}
+
+export function resolveWorkerCapacitySettings(
+  config: Readonly<Record<string, unknown>>,
+): WorkerCapacitySettings {
+  const read = (key: string, integer = false): number | null => {
+    const value = config[key];
+    return typeof value === "number" && Number.isFinite(value) && value > 0
+      ? integer
+        ? Math.floor(value)
+        : value
+      : null;
+  };
+  const providerCaps: Record<string, number> = {};
+  for (const [key, value] of Object.entries(config)) {
+    if (!key.startsWith("providerCaps.") || key.length === "providerCaps.".length) continue;
+    if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+      providerCaps[key.slice("providerCaps.".length)] = value;
+    }
+  }
+  const threshold = read("quotaThresholdPercent");
+  return {
+    cpuCores: read("capacity.cpuCores"),
+    ramGiB: read("capacity.ramGiB"),
+    diskGB: read("capacity.diskGB"),
+    maxAgents: read("maxAgents", true),
+    providerCaps,
+    quotaThresholdPercent:
+      threshold === null ? DEFAULT_QUOTA_THRESHOLD_PERCENT : Math.min(100, threshold),
+  };
+}
 
 export const WorkerFile = Schema.Struct({
   boards: Schema.Array(WorkerBoardEntry),
@@ -59,10 +171,38 @@ export const WorkerBoardStatus = Schema.Struct({
 });
 export type WorkerBoardStatus = typeof WorkerBoardStatus.Type;
 
+const StatusProfile = Schema.Struct({
+  cpuCores: Schema.Number,
+  ramGiB: Schema.Number,
+  diskGB: Schema.Number,
+});
+
+/** The capacity section `t3o-worker status` prints (T3O-86). */
+export const WorkerCapacityStatus = Schema.Struct({
+  updatedAt: Schema.String,
+  declared: StatusProfile,
+  held: StatusProfile,
+  headroom: StatusProfile,
+  heldByBoard: Schema.Array(
+    Schema.Struct({ boardEnvironmentId: Schema.String, held: StatusProfile }),
+  ),
+  /** Board worktrees no board owns (a legacy marker no board listed), and worktrees of
+      boards this worker no longer serves, with their size. */
+  unowned: Schema.Array(
+    Schema.Struct({
+      path: Schema.String,
+      sizeGB: Schema.NullOr(Schema.Number),
+      boardEnvironmentId: Schema.NullOr(Schema.String),
+    }),
+  ),
+});
+export type WorkerCapacityStatus = typeof WorkerCapacityStatus.Type;
+
 export const WorkerStatusFile = Schema.Struct({
   updatedAt: Schema.String,
   pid: Schema.Number,
   boards: Schema.Array(WorkerBoardStatus),
+  capacity: Schema.optionalKey(WorkerCapacityStatus),
 });
 export type WorkerStatusFile = typeof WorkerStatusFile.Type;
 

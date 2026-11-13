@@ -29,6 +29,7 @@ import { BoardWorkersLive } from "./workers/BoardWorkers.ts";
 import { McpRelayHostLive } from "./workers/McpRelayHost.ts";
 import { WorkerConnectionsLive } from "./workers/WorkerConnections.ts";
 import { WorkerGatewayHostLive } from "./workers/WorkerGatewayHost.ts";
+import { BoardWorkerCapacityLive } from "./capacity/BoardWorkerCapacityLive.ts";
 import { WorkerSignalFeedLive } from "./workers/WorkerSignalFeed.ts";
 import { WorkerSnapshotStoreLive } from "./workers/WorkerSnapshotStore.ts";
 import { WorkerTransportLive } from "./workers/WorkerTransport.ts";
@@ -56,6 +57,8 @@ const WorkerConnectionsServerLive = WorkerConnectionsLive.pipe(
 const BoardThreadsLive = ThreadGatewayRouterLive.pipe(
   Layer.provideMerge(WorkerSignalFeedLive),
   Layer.provideMerge(WorkerGatewayHostLive),
+  // T3o: worker-owned capacity, which the gateway host answers claims from (T3O-86).
+  Layer.provideMerge(BoardWorkerCapacityLive),
   Layer.provideMerge(McpRelayHostLive),
   Layer.provideMerge(BoardRelayStoreLive),
   Layer.provideMerge(WorkerConnectionsServerLive),

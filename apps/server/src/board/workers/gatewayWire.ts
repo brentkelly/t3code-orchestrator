@@ -28,6 +28,11 @@ import {
   type EnvironmentId,
   type ProjectId,
   type ThreadId,
+  type BoardCapacityClaimInput,
+  type BoardCapacityClaimResult,
+  type BoardSyncCardsInput,
+  type BoardSyncCardsResult,
+  type BoardWorkerCapacitySnapshot,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -104,6 +109,13 @@ export interface WorkerGatewayRpcOf<E> {
   readonly runCi: (input: BoardWorkerRunCiInput) => Stream.Stream<BoardWorkerCiProgress, E>;
   /** Read, and optionally follow, one CI step's log on the worker. */
   readonly readCiLog: (input: BoardWorkerReadCiLogInput) => Stream.Stream<BoardCiLogItem, E>;
+  /** T3o: claim capacity for a card, keep the worker's card records in step, and read what
+      the worker offers this board (T3O-86). */
+  readonly claimCapacity: (
+    input: BoardCapacityClaimInput,
+  ) => Effect.Effect<BoardCapacityClaimResult, E>;
+  readonly syncCards: (input: BoardSyncCardsInput) => Effect.Effect<BoardSyncCardsResult, E>;
+  readonly subscribeCapacity: Stream.Stream<BoardWorkerCapacitySnapshot, E>;
 }
 
 export type WorkerGatewayRpc = WorkerGatewayRpcOf<WorkerGatewayCallError>;

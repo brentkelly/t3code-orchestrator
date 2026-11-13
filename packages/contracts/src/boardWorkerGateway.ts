@@ -20,6 +20,13 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import {
+  BoardCapacityClaimInput,
+  BoardCapacityClaimResult,
+  BoardSyncCardsInput,
+  BoardSyncCardsResult,
+  BoardWorkerCapacitySnapshot,
+} from "./boardCapacity.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { RepositoryIdentity } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
@@ -281,7 +288,7 @@ export class BoardWorkerGatewayError extends Schema.TaggedError<BoardWorkerGatew
     detail: Schema.String,
     /** A refusal's reason the supervisor acts on (T3O-74). Optional, so a peer
         on either side of the change reads the other as a plain refusal. */
-    reason: Schema.optional(Schema.Literal("provider-disabled")),
+    reason: Schema.optional(Schema.Literals(["provider-disabled", "agent-cap", "needs-update"])),
   },
 ) {}
 
@@ -375,6 +382,9 @@ export const BoardGatewayCall = Schema.Union([
   Schema.TaggedStruct("projects", {}),
   Schema.TaggedStruct("project", { projectId: ProjectId }),
   Schema.TaggedStruct("todoLogHead", {}),
+  // T3o: worker-owned capacity (T3O-86). The board is the calling session's.
+  Schema.TaggedStruct("claimCapacity", { input: BoardCapacityClaimInput }),
+  Schema.TaggedStruct("syncCards", { input: BoardSyncCardsInput }),
 ]);
 export type BoardGatewayCall = typeof BoardGatewayCall.Type;
 
@@ -402,6 +412,8 @@ export const BOARD_GATEWAY_CALL_RESULTS = {
   projects: Schema.Array(BoardGatewayProject),
   project: Schema.NullOr(BoardGatewayProjectDetail),
   todoLogHead: NonNegativeInt,
+  claimCapacity: BoardCapacityClaimResult,
+  syncCards: BoardSyncCardsResult,
 } as const satisfies Record<BoardGatewayCall["_tag"], Schema.Top>;
 
 /**
@@ -545,6 +557,8 @@ export const BOARD_WORKER_GATEWAY_WS_METHODS = {
   runCi: "boardWorker.gateway.runCi",
   /** Read, and optionally follow, one CI step's log. */
   readCiLog: "boardWorker.gateway.readCiLog",
+  /** What the worker offers this board, then each meaningful change (T3O-86). */
+  subscribeCapacity: "boardWorker.gateway.subscribeCapacity",
 } as const;
 
 const M = BOARD_WORKER_GATEWAY_WS_METHODS;
@@ -604,6 +618,12 @@ export const BOARD_WORKER_GATEWAY_RPCS = [
     error: failure,
     stream: true,
   }),
+  Rpc.make(M.subscribeCapacity, {
+    payload: Schema.Struct({}),
+    success: BoardWorkerCapacitySnapshot,
+    error: failure,
+    stream: true,
+  }),
 ] as const;
 
 /** Thread reads stream at the thread-shell tier. Calls start, steer and read
@@ -622,6 +642,8 @@ export const BOARD_WORKER_GATEWAY_RPC_SCOPES = {
   [M.runCi]: AuthOrchestrationOperateScope,
   // Reads a step's output, like the card's own CI log viewer does.
   [M.readCiLog]: AuthOrchestrationReadScope,
+  // What the worker offers the board: a read of the worker's load.
+  [M.subscribeCapacity]: AuthOrchestrationReadScope,
 } as const;
 
 /** How long a worker waits for the central server to answer a relayed call

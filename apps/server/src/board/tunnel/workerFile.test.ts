@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   boardUrlRefusal,
+  findWorkerConfigKey,
+  resolveWorkerCapacitySettings,
   findWorkerBoard,
   localTunnelTarget,
   readWorkerFile,
@@ -87,5 +89,30 @@ describe("board addresses", () => {
     expect(localTunnelTarget("0.0.0.0", 3773)).toEqual({ host: "127.0.0.1", port: 3773 });
     expect(localTunnelTarget("::", 3773)).toEqual({ host: "::1", port: 3773 });
     expect(localTunnelTarget("127.0.0.1", 3773)).toEqual({ host: "127.0.0.1", port: 3773 });
+  });
+
+  it("reads the capacity settings, ignoring bad values, and knows the provider-cap family", () => {
+    expect(
+      resolveWorkerCapacitySettings({
+        "capacity.cpuCores": 12,
+        "capacity.ramGiB": "lots",
+        maxAgents: 4,
+        "providerCaps.codex": 2,
+        "providerCaps.": 9,
+        quotaThresholdPercent: 90,
+      }),
+    ).toEqual({
+      cpuCores: 12,
+      ramGiB: null,
+      diskGB: null,
+      maxAgents: 4,
+      providerCaps: { codex: 2 },
+      quotaThresholdPercent: 90,
+    });
+    expect(resolveWorkerCapacitySettings({}).quotaThresholdPercent).toBe(95);
+    expect(findWorkerConfigKey("providerCaps.claude")?.parse("3")).toEqual({ ok: true, value: 3 });
+    expect(findWorkerConfigKey("providerCaps.")).toBeUndefined();
+    expect(findWorkerConfigKey("maxAgents")?.parse("1.5").ok).toBe(false);
+    expect(findWorkerConfigKey("capacity.gpus")).toBeUndefined();
   });
 });

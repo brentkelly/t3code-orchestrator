@@ -1,0 +1,301 @@
+/**
+ * The worker's capacity service with every machine and server reading faked, two boards
+ * below the RPC guard (T3O-86).
+ */
+import type { BoardSyncedCard, ServerProvider } from "@t3tools/contracts";
+import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+
+import { resolveWorkerCapacitySettings } from "../tunnel/workerFile.ts";
+import {
+  makeBoardWorkerCapacity,
+  providerQuota,
+  SNAPSHOT_INTERVAL_MS,
+  type CapacityThread,
+  type WorkerCapacityPorts,
+} from "./BoardWorkerCapacity.ts";
+import { EMPTY_CAPACITY_STATE, type CapacityRecord, type CapacityState } from "./capacityModel.ts";
+import { BoardMachine } from "./machine.ts";
+
+const GiB = 1024 ** 3;
+
+interface Fakes {
+  config: Record<string, unknown>;
+  threads: Array<CapacityThread>;
+  providers: Array<ServerProvider>;
+  refreshed: Array<string>;
+  saved: Map<string, { lastSeq: number | null; records: ReadonlyArray<CapacityRecord> }>;
+  freeDiskBytes: number;
+  availableBytes: number;
+}
+
+const makeFakes = (): Fakes => ({
+  config: { "capacity.cpuCores": 16, "capacity.ramGiB": 64, "capacity.diskGB": 200 },
+  threads: [],
+  providers: [],
+  refreshed: [],
+  saved: new Map(),
+  freeDiskBytes: 1000 * 1000 ** 3,
+  availableBytes: 500 * GiB,
+});
+
+const portsOver = (
+  fakes: Fakes,
+  initial: CapacityState = EMPTY_CAPACITY_STATE,
+): WorkerCapacityPorts => ({
+  settings: Effect.sync(() => resolveWorkerCapacitySettings(fakes.config)),
+  threads: Effect.sync(() => fakes.threads),
+  providers: Effect.sync(() => fakes.providers),
+  refreshProviderUsage: (instanceId) => Effect.sync(() => void fakes.refreshed.push(instanceId)),
+  notReady: () => Effect.succeed(null),
+  readiness: Effect.succeed([]),
+  worktreePresence: () => Effect.succeed("owned"),
+  worktreeVolume: "/w",
+  unownedWorktrees: () => Effect.succeed([]),
+  store: {
+    load: Effect.succeed(initial),
+    saveBoard: (boardId, lastSeq, records) =>
+      Effect.sync(() => void fakes.saved.set(boardId, { lastSeq, records })),
+    deleteBoard: (boardId) => Effect.sync(() => void fakes.saved.delete(boardId)),
+    setting: () => Effect.succeed(null),
+    saveSetting: () => Effect.void,
+  },
+});
+
+const withMachine = (fakes: Fakes) =>
+  Effect.provideService(BoardMachine, {
+    cpuCount: Effect.succeed(32),
+    totalMemoryBytes: Effect.succeed(128 * GiB),
+    availableMemoryBytes: Effect.sync(() => fakes.availableBytes),
+    agentSliceMemoryHighBytes: Effect.succeed(null),
+    freeDiskBytes: () => Effect.sync(() => fakes.freeDiskBytes),
+    diskUsageBytes: () => Effect.succeed(1000 ** 3),
+  });
+
+const card = (cardId: string, overrides: Partial<BoardSyncedCard> = {}): BoardSyncedCard => ({
+  cardId,
+  repositoryKey: "github.com/acme/app",
+  branch: `board/${cardId}`,
+  worktreePath: `/w/${cardId}`,
+  grantedProfile: { cpuCores: 4, ramGiB: 8, diskGB: 20 },
+  phase: "heavy",
+  settled: true,
+  ...overrides,
+});
+
+const provider = (
+  instanceId: string,
+  windows: ReadonlyArray<{ kind: string; label: string; usedPercent: number; resetsAt?: string }>,
+  checkedAt = "1970-01-01T00:00:00.000Z",
+) =>
+  ({
+    instanceId,
+    driver: "claudeAgent",
+    enabled: true,
+    auth: { status: "authenticated", email: "dev@example.com", label: "Max" },
+    usageLimits: {
+      checkedAt,
+      windows: windows.map((window, index) => ({ id: `w${index}`, ...window })),
+    },
+  }) as unknown as ServerProvider;
+
+const thread = (overrides: Partial<CapacityThread>): CapacityThread => ({
+  threadId: "t",
+  boardId: "board-a",
+  worktreePath: null,
+  running: true,
+  providerInstanceId: "claude",
+  ...overrides,
+});
+
+it.effect("the agent cap counts board-started running threads across every board", () =>
+  Effect.gen(function* () {
+    const fakes = makeFakes();
+    fakes.config = { ...fakes.config, maxAgents: 2, "providerCaps.codex": 1 };
+    const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+    fakes.threads = [
+      thread({ threadId: "a", boardId: "board-a" }),
+      // A human's own thread and an idle board thread don't count.
+      thread({ threadId: "h", boardId: null }),
+      thread({ threadId: "i", boardId: "board-b", running: false }),
+    ];
+    assert.isNull(yield* service.agentCapRefusal("claude"));
+    fakes.threads.push(thread({ threadId: "b", boardId: "board-b", providerInstanceId: "codex" }));
+    assert.include((yield* service.agentCapRefusal("claude")) ?? "", "at most 2 agents");
+    fakes.config = { ...fakes.config, maxAgents: 5 };
+    assert.include((yield* service.agentCapRefusal("codex")) ?? "", "at most 1 codex");
+    assert.isNull(yield* service.agentCapRefusal("claude"));
+  }).pipe(Effect.provide(TestClock.layer()), (effect) => withMachine(makeFakes())(effect)),
+);
+
+it("quota gates only account-wide session and weekly windows, until they reset", () => {
+  const now = Date.parse("2026-11-13T00:00:00.000Z");
+  const later = "2026-11-20T09:00:00.000Z";
+  const scoped = provider("claude", [
+    { kind: "weekly", label: "Weekly · Opus", usedPercent: 100, resetsAt: later },
+    { kind: "monthly", label: "Monthly spend", usedPercent: 100 },
+  ]);
+  assert.isFalse(providerQuota(scoped, 95, now).exhausted);
+  const weekly = provider("claude", [
+    { kind: "weekly", label: "Weekly", usedPercent: 96, resetsAt: later },
+  ]);
+  assert.deepInclude(providerQuota(weekly, 95, now), { exhausted: true, resetsAt: later });
+  const past = provider("claude", [
+    { kind: "session", label: "Session", usedPercent: 100, resetsAt: "2026-11-12T00:00:00.000Z" },
+  ]);
+  assert.isFalse(providerQuota(past, 95, now).exhausted);
+  assert.isFalse(providerQuota({ usageLimits: undefined }, 95, now).exhausted);
+});
+
+it.effect(
+  "a placement refreshes stale usage with no UI client connected, then refuses on quota",
+  () => {
+    const fakes = makeFakes();
+    return Effect.gen(function* () {
+      fakes.providers = [
+        provider("claude", [{ kind: "session", label: "Session", usedPercent: 99 }]),
+      ];
+      const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+      yield* TestClock.adjust(60 * 60_000);
+      const result = yield* service.claim("board-a", {
+        claimId: "c1",
+        seq: 1,
+        cardId: "card-1",
+        repositoryKey: null,
+        kind: "placement",
+        profile: { cpuCores: 1, ramGiB: 1, diskGB: 1 },
+        providerInstanceId: "claude",
+      });
+      assert.deepStrictEqual(fakes.refreshed, ["claude"]);
+      assert.strictEqual(result.outcome, "denied");
+      assert.strictEqual(result.outcome === "denied" ? result.reason : null, "quota");
+    }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
+  },
+);
+
+it.effect("the background refresh re-reads an exhausted provider every ten minutes", () => {
+  const fakes = makeFakes();
+  return Effect.gen(function* () {
+    fakes.providers = [provider("claude", [{ kind: "weekly", label: "Weekly", usedPercent: 100 }])];
+    const made = yield* makeBoardWorkerCapacity(portsOver(fakes));
+    const fiber = yield* Effect.forkChild(made.background);
+    yield* TestClock.adjust(1);
+    assert.deepStrictEqual(fakes.refreshed, ["claude"]);
+    yield* TestClock.adjust(10 * 60_000);
+    assert.deepStrictEqual(fakes.refreshed, ["claude", "claude"]);
+    yield* Fiber.interrupt(fiber);
+  }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
+});
+
+it.effect("a board's snapshot carries nothing about another board's cards", () => {
+  const fakes = makeFakes();
+  return Effect.gen(function* () {
+    const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+    yield* service.syncCards("board-a", {
+      seq: 1,
+      authoritative: true,
+      cards: [card("a-1", { phase: "light" })],
+    });
+    yield* service.syncCards("board-b", {
+      seq: 1,
+      authoritative: true,
+      cards: [card("b-1", { phase: "light" })],
+    });
+    // Both cards have a turn running, so both are counted heavy.
+    fakes.threads = [
+      thread({ threadId: "x", worktreePath: "/w/a-1" }),
+      thread({ threadId: "y", boardId: "board-b", worktreePath: "/w/b-1" }),
+    ];
+    const snapshot = yield* service.snapshot("board-a");
+    assert.deepStrictEqual(snapshot.heavyCards, ["a-1"]);
+    assert.notInclude(JSON.stringify(snapshot), "b-1");
+    assert.notInclude(JSON.stringify(snapshot), "board-b");
+    // The other board's heavy card still takes room from what this one is offered.
+    assert.strictEqual(snapshot.headroom.cpuCores, 8);
+  }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
+});
+
+it.effect("the snapshot stream pushes only meaningful changes, at most every 5 s", () => {
+  const fakes = makeFakes();
+  return Effect.gen(function* () {
+    const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+    const seen: Array<number> = [];
+    const fiber = yield* service.subscribe("board-a").pipe(
+      Stream.runForEach((snapshot) => Effect.sync(() => void seen.push(snapshot.headroom.ramGiB))),
+      Effect.forkChild,
+    );
+    yield* TestClock.adjust(1);
+    assert.deepStrictEqual(seen, [64]);
+    // 1 GiB less available RAM is under 5% of 64: not pushed.
+    fakes.availableBytes = 63 * GiB;
+    yield* TestClock.adjust(SNAPSHOT_INTERVAL_MS);
+    assert.deepStrictEqual(seen, [64]);
+    fakes.availableBytes = 40 * GiB;
+    yield* TestClock.adjust(SNAPSHOT_INTERVAL_MS);
+    assert.deepStrictEqual(seen, [64, 40]);
+    yield* Fiber.interrupt(fiber);
+  }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
+});
+
+it.effect("records and the last seq persist, reload, and go when the board is forgotten", () => {
+  const fakes = makeFakes();
+  return Effect.gen(function* () {
+    const first = yield* makeBoardWorkerCapacity(portsOver(fakes));
+    yield* first.service.syncCards("board-a", {
+      seq: 9,
+      authoritative: true,
+      cards: [card("a-1")],
+    });
+    const saved = fakes.saved.get("board-a");
+    assert.strictEqual(saved?.lastSeq, 9);
+    const reloaded = yield* makeBoardWorkerCapacity(
+      portsOver(fakes, {
+        ...EMPTY_CAPACITY_STATE,
+        records: saved?.records ?? [],
+        lastSeq: new Map([["board-a", 9]]),
+      }),
+    );
+    // A stale sync after the restart is still ignored.
+    const stale = yield* reloaded.service.syncCards("board-a", {
+      seq: 3,
+      authoritative: false,
+      cards: [],
+    });
+    assert.strictEqual(stale.lastSeq, 9);
+    assert.lengthOf(reloaded.state().records, 1);
+    yield* reloaded.service.forgetBoard("board-a");
+    assert.isFalse(fakes.saved.has("board-a"));
+    assert.lengthOf(reloaded.state().records, 0);
+  }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
+});
+
+it.effect("a provision whose claim expired is checked again as a fresh claim", () => {
+  const fakes = makeFakes();
+  return Effect.gen(function* () {
+    const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+    const claim = {
+      claimId: "c1",
+      seq: 1,
+      cardId: "card-1",
+      repositoryKey: null,
+      profile: { cpuCores: 10, ramGiB: 8, diskGB: 20 },
+      providerInstanceId: null,
+    };
+    assert.strictEqual(
+      (yield* service.claim("board-a", { ...claim, kind: "placement" })).outcome,
+      "granted",
+    );
+    yield* TestClock.adjust(61_000);
+    // Meanwhile another board took the room.
+    yield* service.syncCards("board-b", {
+      seq: 1,
+      authoritative: true,
+      cards: [card("b-1", { grantedProfile: { cpuCores: 10, ramGiB: 8, diskGB: 20 } })],
+    });
+    const late = yield* service.checkProvision("board-a", claim);
+    assert.deepInclude(late, { outcome: "denied", reason: "capacity" });
+  }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
+});

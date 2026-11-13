@@ -395,5 +395,11 @@ const makeLiveGatewayRpc = (
     runCi: (input) => wireStream(client[M.runCi](input), "The worker's CI run ended early."),
     readCiLog: (input) =>
       wireStream(client[M.readCiLog](input), "The worker's CI log read failed."),
+    claimCapacity: (input) => call({ _tag: "claimCapacity", input }),
+    syncCards: (input) => call({ _tag: "syncCards", input }),
+    subscribeCapacity: wireStream(
+      client[M.subscribeCapacity]({}),
+      "The worker's capacity stream ended.",
+    ),
   };
 };

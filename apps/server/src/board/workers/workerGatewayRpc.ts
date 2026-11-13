@@ -6,7 +6,6 @@
  */
 import {
   BOARD_WORKER_GATEWAY_RPC_SCOPES,
-  type AuthSessionId,
   BOARD_WORKER_GATEWAY_WS_METHODS as M,
   BoardWorkerGatewayError,
   EnvironmentAuthorizationError,
@@ -23,7 +22,11 @@ import * as Stream from "effect/Stream";
 
 import type { AuthenticatedSession } from "../../auth/EnvironmentAuth.ts";
 import { encodeGatewayCallResult } from "./gatewayWire.ts";
-import { WorkerGatewayHost, type WorkerGatewayHostShape } from "./WorkerGatewayHost.ts";
+import {
+  WorkerGatewayHost,
+  type GatewayCaller,
+  type WorkerGatewayHostShape,
+} from "./WorkerGatewayHost.ts";
 
 type Method = keyof typeof BOARD_WORKER_GATEWAY_RPC_SCOPES;
 
@@ -31,14 +34,14 @@ type Method = keyof typeof BOARD_WORKER_GATEWAY_RPC_SCOPES;
 const runGatewayCall = (
   host: WorkerGatewayHostShape,
   call: BoardGatewayCall,
-  caller: AuthSessionId,
+  caller: GatewayCaller,
 ): Effect.Effect<unknown, BoardWorkerGatewayError> => {
   const answer = (): Effect.Effect<unknown, BoardWorkerGatewayError> => {
     switch (call._tag) {
       case "spawn":
         return host.spawn(call.input, caller).pipe(Effect.as(null));
       case "send":
-        return host.send(call.input).pipe(Effect.as(null));
+        return host.send(call.input, caller).pipe(Effect.as(null));
       case "interrupt":
         return host.interrupt(call.input).pipe(Effect.as(null));
       case "stopSession":
@@ -77,6 +80,10 @@ const runGatewayCall = (
         return host.project(call.projectId);
       case "todoLogHead":
         return host.todoLogHead;
+      case "claimCapacity":
+        return host.claimCapacity(call.input, caller);
+      case "syncCards":
+        return host.syncCards(call.input, caller);
     }
   };
   return answer().pipe(
@@ -96,6 +103,11 @@ const runGatewayCall = (
 };
 
 export const workerGatewayRpcHandlers = (currentSession: AuthenticatedSession) => {
+  // T3o (T3O-86): the board is the session's subject, never anything a request says.
+  const caller: GatewayCaller = {
+    sessionId: currentSession.sessionId,
+    boardId: boardIdOfBoardSubject(currentSession.subject),
+  };
   const denied = (method: Method) => {
     const requiredScope = BOARD_WORKER_GATEWAY_RPC_SCOPES[method];
     return currentSession.scopes.includes(requiredScope)
@@ -131,9 +143,7 @@ export const workerGatewayRpcHandlers = (currentSession: AuthenticatedSession) =
   return {
     // The caller is the authenticated session, never anything the request
     // says about itself: it is what binds a board's relay (`McpRelayHost`).
-    [M.call]: call(M.call, (host, input: BoardGatewayCall) =>
-      runGatewayCall(host, input, currentSession.sessionId),
-    ),
+    [M.call]: call(M.call, (host, input: BoardGatewayCall) => runGatewayCall(host, input, caller)),
     [M.subscribeSignals]: stream(
       M.subscribeSignals,
       (host, input: { readonly afterSequence: number | null; readonly withUsage?: boolean }) =>
@@ -167,6 +177,9 @@ export const workerGatewayRpcHandlers = (currentSession: AuthenticatedSession) =
     [M.runCi]: stream(M.runCi, (host, input: BoardWorkerRunCiInput) => host.runCi(input)),
     [M.readCiLog]: stream(M.readCiLog, (host, input: BoardWorkerReadCiLogInput) =>
       host.readCiLog(input),
+    ),
+    [M.subscribeCapacity]: stream(M.subscribeCapacity, (host, _input: Record<string, never>) =>
+      host.subscribeCapacity(caller),
     ),
   };
 };

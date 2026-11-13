@@ -15,10 +15,17 @@ import {
   type BoardWorkerCiProgress,
   type BoardStageAttachmentsResult,
   type BoardCardId,
+  type BoardCapacityClaimInput,
+  type BoardCapacityClaimResult,
+  type BoardGatewaySendInput,
+  type BoardSyncCardsInput,
+  type BoardSyncCardsResult,
+  type BoardWorkerCapacitySnapshot,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -39,12 +46,29 @@ import {
   type WireTodoLogEntry,
   type WorkerGatewayRpcOf,
 } from "./gatewayWire.ts";
+import {
+  BoardWorkerCapacity,
+  type BoardWorkerCapacityShape,
+} from "../capacity/BoardWorkerCapacity.ts";
 import { McpRelayHost, type McpRelayRefused } from "./McpRelayHost.ts";
 import { BoardCiRunner, boardCiLogDir } from "../ci/BoardCiRunner.ts";
 import { toWireCiDone } from "../ci/remoteCiRunner.ts";
 import { isSafeBoardCiLogTarget, readBoardCiLogFile } from "../ci/ciLog.ts";
 
-type CallerBound = "spawn" | "subscribeMcpRelay" | "mcpRelayRespond";
+type CallerBound =
+  | "spawn"
+  | "send"
+  | "subscribeMcpRelay"
+  | "mcpRelayRespond"
+  | "claimCapacity"
+  | "syncCards"
+  | "subscribeCapacity";
+
+/** Who is calling: the session, and the board its `t3o-board:<id>` subject names (T3O-86). */
+export interface GatewayCaller {
+  readonly sessionId: AuthSessionId;
+  readonly boardId: string | null;
+}
 
 const withoutUsage = (entry: TodoLogEntry): WireTodoLogEntry =>
   entry.signal?.type === "usage-recorded"
@@ -60,8 +84,23 @@ export type WorkerGatewayHostShape = Omit<
 > & {
   readonly spawn: (
     input: BoardGatewaySpawnInput,
-    caller: AuthSessionId,
+    caller: GatewayCaller,
   ) => Effect.Effect<void, BoardWorkerGatewayError>;
+  readonly send: (
+    input: BoardGatewaySendInput,
+    caller: GatewayCaller,
+  ) => Effect.Effect<void, BoardWorkerGatewayError>;
+  readonly claimCapacity: (
+    input: BoardCapacityClaimInput,
+    caller: GatewayCaller,
+  ) => Effect.Effect<BoardCapacityClaimResult, BoardWorkerGatewayError>;
+  readonly syncCards: (
+    input: BoardSyncCardsInput,
+    caller: GatewayCaller,
+  ) => Effect.Effect<BoardSyncCardsResult, BoardWorkerGatewayError>;
+  readonly subscribeCapacity: (
+    caller: GatewayCaller,
+  ) => Stream.Stream<BoardWorkerCapacitySnapshot, BoardWorkerGatewayError>;
   readonly subscribeMcpRelay: (
     centralEnvironmentId: EnvironmentId,
     caller: AuthSessionId,
@@ -75,12 +114,16 @@ export type WorkerGatewayHostShape = Omit<
 /** The host as one session sees it: the in-process test transport's view. */
 export const hostForSession = (
   host: WorkerGatewayHostShape,
-  caller: AuthSessionId,
+  caller: GatewayCaller,
 ): WorkerGatewayRpcOf<BoardWorkerGatewayError> => ({
   ...host,
   spawn: (input) => host.spawn(input, caller),
-  subscribeMcpRelay: (central) => host.subscribeMcpRelay(central, caller),
-  mcpRelayRespond: (response) => host.mcpRelayRespond(response, caller),
+  send: (input) => host.send(input, caller),
+  subscribeMcpRelay: (central) => host.subscribeMcpRelay(central, caller.sessionId),
+  mcpRelayRespond: (response) => host.mcpRelayRespond(response, caller.sessionId),
+  claimCapacity: (input) => host.claimCapacity(input, caller),
+  syncCards: (input) => host.syncCards(input, caller),
+  subscribeCapacity: host.subscribeCapacity(caller),
 });
 
 export class WorkerGatewayHost extends Context.Service<WorkerGatewayHost, WorkerGatewayHostShape>()(
@@ -109,6 +152,61 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
   const path = yield* Path.Path;
   const digest = yield* Digest.Digest;
   const ciRunner = yield* BoardCiRunner;
+  // T3o: optional so a harness without capacity still serves threads (T3O-86).
+  const capacity = yield* Effect.serviceOption(BoardWorkerCapacity);
+
+  const noBoard = (operation: string) =>
+    new BoardWorkerGatewayError({
+      kind: "refused",
+      operation,
+      threadId: null,
+      detail: "Only a board's own session may call this on a worker.",
+    });
+  const capacityOf = (
+    operation: string,
+    caller: GatewayCaller,
+  ): Effect.Effect<
+    { readonly service: BoardWorkerCapacityShape; readonly boardId: string },
+    BoardWorkerGatewayError
+  > => {
+    if (caller.boardId === null) return Effect.fail(noBoard(operation));
+    if (Option.isNone(capacity)) {
+      return Effect.fail(
+        new BoardWorkerGatewayError({
+          kind: "failed",
+          operation,
+          threadId: null,
+          detail: "This worker has no capacity service.",
+        }),
+      );
+    }
+    return Effect.succeed({ service: capacity.value, boardId: caller.boardId });
+  };
+  /** A board's new turn waits while the worker is at its agent cap (`agent-cap`). */
+  const refuseOverAgentCap = (
+    operation: string,
+    threadId: string,
+    providerInstanceId: string | null,
+  ) =>
+    Option.match(capacity, {
+      onNone: () => Effect.void,
+      onSome: (service) =>
+        service.agentCapRefusal(providerInstanceId).pipe(
+          Effect.flatMap((refusal) =>
+            refusal === null
+              ? Effect.void
+              : Effect.fail(
+                  new BoardWorkerGatewayError({
+                    kind: "refused",
+                    operation,
+                    threadId,
+                    detail: refusal,
+                    reason: "agent-cap",
+                  }),
+                ),
+          ),
+        ),
+    });
 
   // A deleted thread makes no more board calls; its relay record goes too,
   // however it was deleted.
@@ -176,8 +274,9 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
       caller,
     ) {
       yield* relay
-        .claim(centralEnvironmentId, caller)
+        .claim(centralEnvironmentId, caller.sessionId)
         .pipe(Effect.mapError(refused("spawn", input.threadId)));
+      yield* refuseOverAgentCap("spawn", input.threadId, input.modelSelection.instanceId);
       // Recorded first: the agent's first tool call can arrive before the
       // spawn returns. A thread another board placed stays that board's.
       const recordFailed = (cause: { readonly cause?: unknown }) =>
@@ -203,7 +302,33 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
         .pipe(Effect.mapError(recordFailed));
       yield* wireCommand(local.spawn(input));
     }),
-    send: (input) => wireCommand(local.send(input)),
+    send: Effect.fn("WorkerGatewayHost.send")(function* (input, _caller) {
+      // A turn the board sends on an existing thread waits at the cap too, unless the thread
+      // is already running (a steer joins its turn).
+      const state = yield* local.threadState(input.threadId).pipe(Effect.orElseSucceed(() => null));
+      if (state === null || state.activeTurnRef === null) {
+        yield* refuseOverAgentCap(
+          "send",
+          input.threadId,
+          state?.modelSelection?.instanceId ?? null,
+        );
+      }
+      yield* wireCommand(local.send(input));
+    }),
+    claimCapacity: (input, caller) =>
+      capacityOf("claimCapacity", caller).pipe(
+        Effect.flatMap(({ service, boardId }) => service.claim(boardId, input)),
+      ),
+    syncCards: (input, caller) =>
+      capacityOf("syncCards", caller).pipe(
+        Effect.flatMap(({ service, boardId }) => service.syncCards(boardId, input)),
+      ),
+    subscribeCapacity: (caller) =>
+      Stream.unwrap(
+        capacityOf("subscribeCapacity", caller).pipe(
+          Effect.map(({ service, boardId }) => service.subscribe(boardId)),
+        ),
+      ),
     interrupt: (input) => wireCommand(local.interrupt(input)),
     stopSession: (input) => wireCommand(local.stopSession(input)),
     settle: (input) => wireCommand(local.settle(input)),

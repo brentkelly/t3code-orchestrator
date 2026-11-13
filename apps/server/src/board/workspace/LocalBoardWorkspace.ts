@@ -132,6 +132,35 @@ export const boardWorktreeOwner = (
     ),
   );
 
+/**
+ * Whether the worktree a board's `syncCards` lists is that board's here (T3O-86): `owned`
+ * with its marker (or, for this server's own board, none), `adopted` when a legacy marker
+ * is rewritten with the board's id, `foreign` when another board owns it, `missing` when
+ * there is no readable checkout. The first board to list a legacy worktree wins it.
+ */
+export const adoptBoardWorktree = Effect.fn("adoptBoardWorktree")(function* (
+  deps: Pick<LocalBoardWorkspaceDeps, "git" | "fileSystem" | "path">,
+  worktreePath: string,
+  owner: BoardWorktreeOwner,
+) {
+  if (!(yield* deps.fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => false)))) {
+    return "missing" as const;
+  }
+  const current = yield* boardWorktreeOwner(deps, worktreePath);
+  if (current === null) return "missing" as const;
+  if (current === owner) return "owned" as const;
+  if (current !== "legacy" || owner === "self") return "foreign" as const;
+  const dir = yield* worktreePrivateGitDir(deps.git, worktreePath);
+  if (dir === null) return "missing" as const;
+  const written = yield* deps.fileSystem
+    .writeFileString(deps.path.join(dir, CENTRAL_OWNER_MARKER), `${owner}\n`)
+    .pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+  return written ? ("adopted" as const) : ("missing" as const);
+});
+
 export function makeLocalBoardWorkspace(
   deps: LocalBoardWorkspaceDeps,
   owner: BoardWorktreeOwner = "self",

@@ -130,6 +130,9 @@ export const unsupportedGateway: WorkerGatewayRpc = (() => {
     stageAttachments: fail,
     runCi: failStream,
     readCiLog: failStream,
+    claimCapacity: fail,
+    syncCards: fail,
+    subscribeCapacity: Stream.fail(unsupported),
   };
 })();
 
@@ -189,6 +192,9 @@ const linkedGateway = (
     stageAttachments: (input) => guard(gateway.stageAttachments(input)),
     runCi: (input) => live(gateway.runCi(input)),
     readCiLog: (input) => live(gateway.readCiLog(input)),
+    claimCapacity: (input) => guard(gateway.claimCapacity(input)),
+    syncCards: (input) => guard(gateway.syncCards(input)),
+    subscribeCapacity: live(gateway.subscribeCapacity),
   };
 };
 

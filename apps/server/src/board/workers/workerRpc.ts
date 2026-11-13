@@ -34,6 +34,7 @@ import { EnvironmentAuth, type AuthenticatedSession } from "../../auth/Environme
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { ProjectService } from "../../project/ProjectService.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
+import { BoardWorkerCapacity } from "../capacity/BoardWorkerCapacity.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { BoardWorkers } from "./BoardWorkers.ts";
 import * as ManagedLimits from "../../policy/managedLimits.ts";
@@ -119,6 +120,14 @@ export const reconcileBoardUserSessions = Effect.fn("boardWorker.reconcileBoardU
     return revoked;
   },
 );
+
+const forgetReleasedBoard = (input: BoardWorkerReleaseInput, subject: string) => {
+  const boardId = boardIdOfBoardSubject(subject);
+  if (input.all !== true || boardId === null) return Effect.void;
+  return Effect.flatMap(Effect.serviceOption(BoardWorkerCapacity), (capacity) =>
+    capacity._tag === "Some" ? capacity.value.forgetBoard(boardId) : Effect.void,
+  );
+};
 
 const requestError = (message: string) => (cause: unknown) =>
   new BoardWorkerRequestError({ message, cause });
@@ -270,13 +279,22 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
       [BOARD_WORKER_WS_METHODS.release]: (input: BoardWorkerReleaseInput) =>
         authorized(
           BOARD_WORKER_WS_METHODS.release,
-          Effect.flatMap(auth, (service) =>
-            input.all === true
-              ? Effect.asVoid(
-                  revokeBoardSessions(service, boardIdOfBoardSubject(currentSession.subject) ?? ""),
-                )
-              : Effect.asVoid(service.revokeSession(currentSession.sessionId)),
-          ).pipe(Effect.delay(RELEASE_GRACE), Effect.ignore, Effect.forkDetach, Effect.asVoid),
+          // T3o: a board that removed this worker leaves its card records and claims behind
+          // it (T3O-86); a renewal's release keeps them.
+          forgetReleasedBoard(input, currentSession.subject).pipe(
+            Effect.andThen(
+              Effect.flatMap(auth, (service) =>
+                input.all === true
+                  ? Effect.asVoid(
+                      revokeBoardSessions(
+                        service,
+                        boardIdOfBoardSubject(currentSession.subject) ?? "",
+                      ),
+                    )
+                  : Effect.asVoid(service.revokeSession(currentSession.sessionId)),
+              ).pipe(Effect.delay(RELEASE_GRACE), Effect.ignore, Effect.forkDetach, Effect.asVoid),
+            ),
+          ),
         ),
       [BOARD_WORKER_WS_METHODS.mintUserSession]: (input: BoardWorkerMintUserSessionInput) =>
         authorized(

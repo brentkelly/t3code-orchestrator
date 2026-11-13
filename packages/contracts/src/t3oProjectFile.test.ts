@@ -334,7 +334,7 @@ describe("export", () => {
     expect(back.delta.warnings.join("\n")).toContain("resources.readiness.path");
     const file = buildT3oProjectFile({
       board: EMPTY_BOARD_STATE,
-      config: { stageSwitches: {}, overrides: {}, ci: { steps: [] }, ...back.delta },
+      config: back.delta,
     });
     expect(file.resources).toEqual({
       baseline: { cpuCores: 6, ramGiB: 16, diskGB: 45 },
@@ -342,14 +342,7 @@ describe("export", () => {
       readiness: { timeoutSeconds: 60 },
     });
     // A file without resources leaves the project's own, so it still matches.
-    expect(
-      boardProjectDeltasEqual(resolve({}).delta, {
-        stageSwitches: {},
-        overrides: {},
-        ci: { steps: [] },
-        ...back.delta,
-      }),
-    ).toBe(true);
+    expect(boardProjectDeltasEqual(resolve({}).delta, back.delta)).toBe(true);
   });
 
   it("round-trips Stop on failure: absent is Yes, and only No is written (T3O-57)", () => {

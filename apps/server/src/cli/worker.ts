@@ -34,6 +34,7 @@ import {
   tunnelCredentialSecretName,
   upsertWorkerBoard,
   WORKER_CONFIG_KEYS,
+  findWorkerConfigKey,
   workerFilePath,
   writeWorkerFile,
   type WorkerBoardEntry,
@@ -358,7 +359,7 @@ const boardsCommand = Command.make("boards", { ...authLocationFlags }).pipe(
   Command.withSubcommands([boardsRemoveCommand]),
 );
 
-/** `status` is a list of sections, so T3O-71 can add capacity beside the tunnels. */
+/** `status` is a list of sections: the service, each board's tunnel, then capacity. */
 const workerStatusSections: Array<(home: string) => ReadonlyArray<string>> = [
   (home) => {
     const status = readWorkerStatus(home);
@@ -393,6 +394,43 @@ const workerStatusSections: Array<(home: string) => ReadonlyArray<string>> = [
       }),
     ];
   },
+  (home) => {
+    const capacity = readWorkerStatus(home)?.capacity;
+    if (capacity === undefined) return [];
+    const profile = (value: { cpuCores: number; ramGiB: number; diskGB: number }) =>
+      `${value.cpuCores} cores, ${value.ramGiB} GiB RAM, ${value.diskGB} GB disk`;
+    let labels = new Map<string, string>();
+    try {
+      labels = new Map(
+        readWorkerFile(home).boards.map((board) => [board.boardEnvironmentId, board.boardLabel]),
+      );
+    } catch {
+      // Listed by id instead.
+    }
+    return [
+      `Capacity (as of ${capacity.updatedAt}):`,
+      `  declared  ${profile(capacity.declared)}`,
+      `  held      ${profile(capacity.held)}`,
+      `  headroom  ${profile(capacity.headroom)}`,
+      ...capacity.heldByBoard.map(
+        (entry) =>
+          `    ${labels.get(entry.boardEnvironmentId) ?? entry.boardEnvironmentId}: ${profile(entry.held)}`,
+      ),
+      ...(capacity.unowned.length === 0
+        ? []
+        : [
+            "  Worktrees no board here owns:",
+            ...capacity.unowned.map(
+              (entry) =>
+                `    ${entry.path}${entry.sizeGB === null ? "" : `  ${entry.sizeGB} GB`}${
+                  entry.boardEnvironmentId === null
+                    ? "  (no board)"
+                    : `  (board ${entry.boardEnvironmentId}, no longer served)`
+                }`,
+            ),
+          ]),
+    ];
+  },
 ];
 
 const statusCommand = Command.make("status", { ...authLocationFlags }).pipe(
@@ -404,10 +442,9 @@ const statusCommand = Command.make("status", { ...authLocationFlags }).pipe(
   ),
 );
 
-const configKeysHelp =
-  WORKER_CONFIG_KEYS.length === 0
-    ? "No settings yet."
-    : WORKER_CONFIG_KEYS.map((entry) => `${entry.key}: ${entry.description}`).join("\n");
+const configKeysHelp = WORKER_CONFIG_KEYS.map((entry) => `${entry.key}: ${entry.description}`).join(
+  "\n",
+);
 
 const configCommand = Command.make("config", {
   ...authLocationFlags,
@@ -434,7 +471,7 @@ const configCommand = Command.make("config", {
           );
           return;
         }
-        const known = WORKER_CONFIG_KEYS.find((entry) => entry.key === key);
+        const known = key === undefined ? undefined : findWorkerConfigKey(key);
         if (key === undefined || known === undefined) {
           return yield* fail(
             `Unknown setting${key === undefined ? "" : ` ${key}`}. ${configKeysHelp}`,
@@ -451,7 +488,9 @@ const configCommand = Command.make("config", {
           const raw = Option.getOrUndefined(flags.value);
           if (raw === undefined)
             return yield* fail(`Give a value: t3o-worker config set ${key} <value>`);
-          config[key] = known.parse(raw);
+          const parsed = known.parse(raw);
+          if (!parsed.ok) return yield* fail(parsed.message);
+          config[key] = parsed.value;
         }
         writeWorkerFile(home, { ...file, config });
       }),
