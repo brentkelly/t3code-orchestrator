@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { layer as BoardPullRequestGatewayLive } from "./BoardPullRequestGateway.ts";
-import { BoardStepSlotsLive } from "./BoardStepSlots.ts";
+import { BoardCapacityClientLive } from "./capacity/BoardCapacityClient.ts";
 import { BoardProjectFileLive } from "./projectConfig/BoardProjectFile.ts";
 import { BoardRuntimeLive } from "./runtimeLayer.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
@@ -81,7 +81,9 @@ export const BoardServerLive = BoardMcpRelayClientLive.pipe(
   Layer.provideMerge(BoardWebhookActionsLive),
   // Moving a card to another worker, for the Move dialog's RPCs.
   Layer.provideMerge(BoardCardMoverLive),
-  Layer.provide(BoardStepSlotsLive),
+  // T3o: the board's side of worker-owned capacity, which replaced its concurrency slots
+  // (T3O-86).
+  Layer.provideMerge(BoardCapacityClientLive),
   // T3o.json import/export from this server's checkout, for the
   // project config RPCs.
   Layer.provideMerge(BoardProjectFileLive),

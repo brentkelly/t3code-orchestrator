@@ -42,6 +42,9 @@ import {
   type BoardConcurrencySettings,
   type ServerSettings,
   SourceControlProviderKind,
+  BOARD_LOCAL_WORKER_ID,
+  boardCardEffectiveWorkerId,
+  type BoardWorkerId,
 } from "@t3tools/contracts";
 
 import type { BoardMergeState } from "./boardMergeState.ts";
@@ -57,7 +60,6 @@ import { BoardSetupScriptRunner } from "./ports/BoardSetupScriptRunner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { BoardStepSlots, BoardStepSlotsLive } from "./BoardStepSlots.ts";
 import {
   BoardPullRequestGateway,
   BoardPullRequestGatewayError,
@@ -83,6 +85,8 @@ import {
   type ThreadGatewayShape,
   type ThreadSignal,
 } from "./ThreadGateway.ts";
+import { BoardCapacityClient } from "./capacity/BoardCapacityClient.ts";
+import type { FakeCapacity } from "./capacity/capacityClient.testkit.ts";
 import { BoardPlacement, type BoardPlacementShape } from "./workers/BoardPlacement.ts";
 import {
   aliveThread,
@@ -427,8 +431,22 @@ export const settingsWith = (input: {
   workers: { boardAddress: null, localLabel: null },
 });
 
+/**
+ * Which steps hold their place on a worker, read off the board: a build step the decider
+ * admitted (`slotHeld`), and a running CI pass under the `board-ci` instance. The board's
+ * concurrency slots are gone (T3O-86); this is how tests still see a step admitted, parked
+ * or settled.
+ */
+export interface HarnessHeldSteps {
+  readonly heldTotal: Effect.Effect<number>;
+  readonly heldFor: (providerInstanceId: string, workerId?: BoardWorkerId) => Effect.Effect<number>;
+  readonly heldOnWorker: (workerId: BoardWorkerId) => Effect.Effect<number>;
+}
+
+export const HARNESS_CI_INSTANCE = "board-ci";
+
 export type Harness = {
-  readonly slots: BoardStepSlots["Service"];
+  readonly slots: HarnessHeldSteps;
   readonly reactor: SupervisorReactor["Service"];
   readonly model: Ref.Ref<BoardReadModel>;
   /** What the thread gateway answers for each thread. A spawned thread has no
@@ -668,6 +686,8 @@ export function withGovernor(
     readonly gateway?: (local: LocalThreadGatewayShape) => ThreadGatewayShape;
     /** Where the supervisor spawns each card's threads. */
     readonly placement?: BoardPlacementShape;
+    /** T3o: worker-owned capacity (T3O-86). Absent: every step runs once its worker is ready. */
+    readonly capacity?: FakeCapacity;
     /** Where cards' git runs, built from this harness's own local
         workspace services. By default every card is local. */
     readonly workspaces?: (local: LocalBoardWorkspaceDeps) => BoardWorkspacesShape;
@@ -1154,18 +1174,63 @@ export function withGovernor(
       Layer.succeed(BoardQueries, boardQueriesStub),
       Layer.succeed(ThreadGateway, gateway),
       input.placement === undefined ? Layer.empty : Layer.succeed(BoardPlacement, input.placement),
+      input.capacity === undefined
+        ? Layer.empty
+        : Layer.succeed(BoardCapacityClient, input.capacity.client),
       Layer.succeed(ServerSettingsService, settingsStub),
       gitLayer,
       Layer.succeed(BoardSetupScriptRunner, setupStub),
       Layer.succeed(BoardPullRequestGateway, pullRequestStub),
-      BoardStepSlotsLive,
       input.serverConfig ?? Layer.empty,
     );
 
     yield* Effect.scoped(
       Effect.gen(function* () {
         const reactor = yield* SupervisorReactor;
-        const slots = yield* BoardStepSlots;
+        const held = Effect.gen(function* () {
+          const board = (yield* Ref.get(model)).board;
+          const entries: Array<{ readonly instance: string; readonly workerId: BoardWorkerId }> =
+            [];
+          for (const state of board?.stepStates ?? []) {
+            if (!state.slotHeld) continue;
+            const card = board?.cards.find((candidate) => candidate.id === state.cardId);
+            if (card === undefined) continue;
+            const link = card?.threadLinks.find((entry) => entry.threadId === state.threadId);
+            entries.push({
+              instance: state.providerInstanceId,
+              workerId:
+                link?.workerId ??
+                (card === undefined
+                  ? BOARD_LOCAL_WORKER_ID
+                  : boardCardEffectiveWorkerId(card, board?.defaultWorkerId)),
+            });
+          }
+          for (const card of board?.cards ?? []) {
+            if (card.ci?.phase !== "running") continue;
+            entries.push({
+              instance: HARNESS_CI_INSTANCE,
+              workerId:
+                card.placedWorkerId ?? boardCardEffectiveWorkerId(card, board?.defaultWorkerId),
+            });
+          }
+          return entries;
+        });
+        const slots: HarnessHeldSteps = {
+          heldTotal: Effect.map(held, (entries) => entries.length),
+          heldFor: (instance, workerId = BOARD_LOCAL_WORKER_ID) =>
+            Effect.map(
+              held,
+              (entries) =>
+                entries.filter(
+                  (entry) => entry.instance === instance && entry.workerId === workerId,
+                ).length,
+            ),
+          heldOnWorker: (workerId) =>
+            Effect.map(
+              held,
+              (entries) => entries.filter((entry) => entry.workerId === workerId).length,
+            ),
+        };
         yield* reactor.start();
         // Buffered queue → published events are never lost to a late
         // subscriber; a cooperative yield lets the worker enqueue before we

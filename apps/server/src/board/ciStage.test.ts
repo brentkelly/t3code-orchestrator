@@ -38,7 +38,6 @@ import {
   type BoardCiRunnerShape,
   type BoardCiRunResult,
 } from "./ci/BoardCiRunner.ts";
-import { BOARD_CI_SLOT_INSTANCE } from "./ci/ciPasses.ts";
 import { BoardDiskSpace } from "./ci/diskSpace.ts";
 import { layerTest } from "../config.ts";
 import {
@@ -58,6 +57,7 @@ import {
   settingsWith,
   stepStatus,
   withGovernor,
+  HARNESS_CI_INSTANCE,
   type Harness,
   type HarnessCommand,
   type HarnessEvent,
@@ -624,7 +624,7 @@ it.effect("dragging a card back out of CI cancels its pass", () =>
         // The pass fiber is stopped and its slot freed; the move's own decision
         // settles the row (ciProjection.test.ts).
         yield* h.reactor.drainCi;
-        assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 0);
+        assert.strictEqual(yield* h.slots.heldFor(HARNESS_CI_INSTANCE), 0);
         assert.isNull((yield* live(h, subject.id)).ci);
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
@@ -673,13 +673,13 @@ it.effect("archiving a card in CI stops its pass, frees the slot and settles the
     yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
       Effect.gen(function* () {
         yield* enterCi(h, subject, 1);
-        assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 1);
+        assert.strictEqual(yield* h.slots.heldFor(HARNESS_CI_INSTANCE), 1);
         const runId = (yield* live(h, subject.id)).ci!.runId;
         const archived = { ...(yield* live(h, subject.id)), archivedAt: NOW };
         yield* setCard(h, subject.id, archived);
         yield* h.pumpDomain(cardArchived(archived, 2));
         yield* h.reactor.drainCi;
-        assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 0);
+        assert.strictEqual(yield* h.slots.heldFor(HARNESS_CI_INSTANCE), 0);
         const settled = ciRecords(yield* h.decided).flatMap((record) => record.payload.settled);
         assert.isTrue(
           settled.some((entry) => entry.runId === runId && entry.outcome === "cancelled"),
@@ -719,12 +719,12 @@ it.effect("deleting a card in CI stops its pass and frees the slot", () =>
     yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
       Effect.gen(function* () {
         yield* enterCi(h, subject, 1);
-        assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 1);
+        assert.strictEqual(yield* h.slots.heldFor(HARNESS_CI_INSTANCE), 1);
         const doomed = yield* live(h, subject.id);
         yield* setCard(h, subject.id, null);
         yield* h.pumpDomain(cardDeleted(doomed, 2, null));
         yield* h.reactor.drainCi;
-        assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 0);
+        assert.strictEqual(yield* h.slots.heldFor(HARNESS_CI_INSTANCE), 0);
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),

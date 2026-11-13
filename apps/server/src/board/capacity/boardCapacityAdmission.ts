@@ -1,0 +1,467 @@
+/**
+ * How the supervisor uses worker-owned capacity (T3O-86): a placement claim before a card's
+ * worktree is provisioned, a grow claim before a light card's step, the phase rule that
+ * releases a card's CPU and RAM, settling, and keeping each worker's records in step with
+ * `syncCards`. Pure decisions live in the exported helpers; the factory wires them to the
+ * supervisor's reads and commands.
+ */
+import {
+  BOARD_LOCAL_WORKER_ID,
+  boardCardEffectiveWorkerId,
+  boardCardRequestedProfile,
+  boardProjectStageConfig,
+  boardResourceProfileOverflow,
+  boardStageWithRole,
+  type BoardCard,
+  type BoardCardId,
+  type BoardCardStepState,
+  type BoardCommand,
+  type BoardResourceDimension,
+  type BoardResourceProfile,
+  type BoardState,
+  type BoardStepQueuedBy,
+  type BoardStepQueuedDetail,
+  type BoardSyncedCard,
+  type BoardWorkerCapacitySnapshot,
+  type BoardWorkerId,
+  type ProjectId,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+
+import type { BoardCapacityClientShape } from "./BoardCapacityClient.ts";
+
+/** A card stays heavy this long after its last activity ended. */
+export const HEAVY_TAIL_MS = 10 * 60_000;
+/** A grant settles this long after placement even if no heavy step has ended. */
+export const SETTLE_AFTER_MS = 2 * 60 * 60_000;
+
+/** Why a step waits, in the step's own terms. */
+export interface CapacityHold {
+  readonly queuedBy: BoardStepQueuedBy;
+  readonly detail: BoardStepQueuedDetail | null;
+  /** A capacity denial on this worker ends this board's placements there for the pass. */
+  readonly blocksWorker: boolean;
+}
+
+export type PlacementDecision =
+  | { readonly kind: "none" }
+  | {
+      readonly kind: "granted";
+      readonly claimId: string;
+      readonly profile: BoardResourceProfile;
+    }
+  | { readonly kind: "held"; readonly hold: CapacityHold }
+  | { readonly kind: "unavailable" };
+
+const DEFAULT_TIMESTAMP = 0;
+
+/** A step running or finishing in its worktree. Waiting on a human, paused or stalled is not;
+    a step waiting on its own background work stays `running`, so it counts. */
+export const stepActiveInWorktree = (state: BoardCardStepState | null) =>
+  state !== null &&
+  state.mode === "build" &&
+  (state.status === "running" || state.status === "completing");
+
+/** A build-mode step queued for its worktree: it keeps a granted heavy phase. */
+export const stepQueuedInWorktree = (state: BoardCardStepState | null) =>
+  state !== null &&
+  state.mode === "build" &&
+  (state.status === "queued" || state.status === "pending");
+
+export const ciActive = (card: BoardCard) =>
+  card.ci !== null && (card.ci.phase === "queued" || card.ci.phase === "running");
+
+/**
+ * Whether a card should hold its CPU and RAM: active (a step running in its worktree, a CI
+ * pass, a setup run), within ten minutes of the last activity, or queued while already heavy.
+ * A queued step never makes a light card heavy; only a grow does.
+ */
+export function desiredHeavy(input: {
+  readonly card: BoardCard;
+  readonly state: BoardCardStepState | null;
+  readonly active: boolean;
+  readonly lastActiveAt: number | null;
+  readonly now: number;
+}): boolean {
+  if (input.active) return true;
+  const heavy = input.card.resources?.grant?.heavy === true;
+  if (heavy && stepQueuedInWorktree(input.state)) return true;
+  return input.lastActiveAt !== null && input.now - input.lastActiveAt < HEAVY_TAIL_MS;
+}
+
+/** The worker a card's worktree is on, or would be cut on. */
+export const cardWorkerOf = (board: BoardState, card: BoardCard): BoardWorkerId =>
+  boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+
+/** The card's reservation if it were placed now. */
+export const requestedProfileOf = (board: BoardState, card: BoardCard) =>
+  boardCardRequestedProfile(
+    card.resources,
+    boardProjectStageConfig(board, card.projectId)?.resources ?? null,
+  );
+
+/** Too big: a card with no worktree whose profile exceeds its worker's declared capacity. */
+export function tooBigDimension(
+  profile: BoardResourceProfile,
+  snapshot: BoardWorkerCapacitySnapshot | null,
+): BoardResourceDimension | null {
+  if (snapshot === null) return null;
+  return boardResourceProfileOverflow(profile, snapshot.declared);
+}
+
+/** What the local filter says before any claim: fits, or the dimension that doesn't. */
+export function headroomShortfall(
+  profile: BoardResourceProfile,
+  snapshot: BoardWorkerCapacitySnapshot | null,
+): BoardResourceDimension | null {
+  if (snapshot === null) return null;
+  if (snapshot.over.cpuRam) return "cpu";
+  if (snapshot.over.disk) return "disk";
+  return boardResourceProfileOverflow(profile, snapshot.headroom);
+}
+
+const isGroup = (card: BoardCard) => card.group !== null;
+
+/** The board's granted state for one worker: every card with a worktree there that is
+    provisioning or ready and holds a grant. Group cards take no claim and send nothing. */
+export function syncEntriesFor(input: {
+  readonly board: BoardState;
+  readonly workerId: BoardWorkerId;
+  readonly repositoryKey: (projectId: ProjectId) => string | null;
+}): ReadonlyArray<BoardSyncedCard> {
+  const buildStage = boardStageWithRole(input.board, "build");
+  const entries: BoardSyncedCard[] = [];
+  for (const card of input.board.cards) {
+    if (isGroup(card) || card.worktree === null) continue;
+    if (card.worktree.status !== "provisioning" && card.worktree.status !== "ready") continue;
+    const grant = card.resources?.grant ?? null;
+    if (grant === null) continue;
+    const at = card.placedWorkerId ?? cardWorkerOf(input.board, card);
+    if (at !== input.workerId) continue;
+    const builtOnce =
+      buildStage !== null &&
+      (input.board.stepCompletions ?? []).some(
+        (completion) =>
+          completion.cardId === card.id &&
+          completion.stepId === buildStage.stageId &&
+          completion.outcome === "succeeded",
+      );
+    entries.push({
+      cardId: card.id,
+      repositoryKey: input.repositoryKey(card.projectId),
+      branch: card.worktree.branch,
+      worktreePath: card.worktree.path,
+      grantedProfile: grant.profile,
+      phase: grant.heavy ? "heavy" : "light",
+      settled: grant.settled,
+      ...(builtOnce ? { builtOnce: true } : {}),
+    });
+  }
+  return entries;
+}
+
+/** The hold a claim denial puts on a step. */
+export function holdForDenial(
+  answer: {
+    readonly reason: string;
+    readonly dimension?: BoardResourceDimension;
+  },
+  workerId: BoardWorkerId,
+  kind: "placement" | "grow",
+): CapacityHold {
+  switch (answer.reason) {
+    case "quota":
+      return { queuedBy: "quota", detail: { workerId }, blocksWorker: false };
+    case "not-ready":
+      return { queuedBy: "setup", detail: { workerId }, blocksWorker: false };
+    default:
+      return {
+        queuedBy: "capacity",
+        detail: {
+          workerId,
+          ...(answer.dimension === undefined ? {} : { dimension: answer.dimension }),
+        },
+        blocksWorker: kind === "placement" && answer.reason === "capacity",
+      };
+  }
+}
+
+export interface BoardCapacityAdmissionDeps {
+  readonly client: BoardCapacityClientShape;
+  readonly readBoard: Effect.Effect<BoardState>;
+  readonly dispatch: (command: BoardCommand) => Effect.Effect<boolean>;
+  readonly commandId: (tag: string) => Effect.Effect<BoardCommand["commandId"]>;
+  readonly nowIso: Effect.Effect<string>;
+  readonly repositoryKey: (projectId: ProjectId) => Effect.Effect<string | null>;
+  /** Whether a running step's thread is held on a permission prompt (thread shell). */
+  readonly awaitingPermission: (state: BoardCardStepState) => Effect.Effect<boolean>;
+}
+
+export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => {
+  /** When each card was last active; a card first seen idle starts its tail now. */
+  const lastActive = new Map<string, number>();
+  /** A fresh claim id per card after a definite denial; the same id on a retry. */
+  const claimNonce = new Map<string, number>();
+
+  const nowMs = Effect.map(deps.nowIso, (iso) => Date.parse(iso));
+
+  const claimIdFor = (card: BoardCard) => {
+    const attempt = (card.worktree?.attempts ?? 0) + 1;
+    return `${card.id}:${attempt}:${claimNonce.get(card.id) ?? 0}`;
+  };
+  const freshClaimId = (cardId: BoardCardId) =>
+    claimNonce.set(cardId, (claimNonce.get(cardId) ?? 0) + 1);
+
+  const repositoryKeys = Effect.fn("BoardCapacityAdmission.repositoryKeys")(function* (
+    board: BoardState,
+  ) {
+    const keys = new Map<string, string | null>();
+    for (const card of board.cards) {
+      if (!keys.has(card.projectId))
+        keys.set(card.projectId, yield* deps.repositoryKey(card.projectId));
+    }
+    return (projectId: ProjectId) => keys.get(projectId) ?? null;
+  });
+
+  /** Send each worker the board's granted state for it, when it changed. */
+  const syncWorker = Effect.fn("BoardCapacityAdmission.syncWorker")(function* (
+    workerId: BoardWorkerId,
+  ) {
+    const board = yield* deps.readBoard;
+    const keys = yield* repositoryKeys(board);
+    return yield* deps.client.syncCards(
+      workerId,
+      syncEntriesFor({ board, workerId, repositoryKey: keys }),
+    );
+  });
+
+  const workersOf = (board: BoardState): ReadonlyArray<BoardWorkerId> => [
+    BOARD_LOCAL_WORKER_ID,
+    ...(board.workers ?? []).map((worker) => worker.id),
+  ];
+
+  const syncAll = Effect.fn("BoardCapacityAdmission.syncAll")(function* () {
+    const board = yield* deps.readBoard;
+    for (const workerId of workersOf(board)) yield* syncWorker(workerId);
+  });
+
+  /** A placement claim, immediately before the card's provision is dispatched. */
+  const placementClaim = Effect.fn("BoardCapacityAdmission.placementClaim")(function* (
+    card: BoardCard,
+    workerId: BoardWorkerId,
+    providerInstanceId: string | null,
+    force: boolean,
+  ) {
+    if (isGroup(card)) return { kind: "none" } as PlacementDecision;
+    if (!(yield* deps.client.synced(workerId)) && !(yield* syncWorker(workerId))) {
+      return { kind: "unavailable" } as PlacementDecision;
+    }
+    const board = yield* deps.readBoard;
+    const profile = requestedProfileOf(board, card);
+    const claimId = claimIdFor(card);
+    const answer = yield* deps.client.claim(workerId, {
+      claimId,
+      cardId: card.id,
+      repositoryKey: yield* deps.repositoryKey(card.projectId),
+      kind: "placement",
+      profile,
+      providerInstanceId,
+      ...(force ? { force: true } : {}),
+    });
+    if (answer.outcome === "unavailable") return { kind: "unavailable" } as PlacementDecision;
+    if (answer.outcome === "denied") {
+      freshClaimId(card.id);
+      return {
+        kind: "held",
+        hold: holdForDenial(answer, workerId, "placement"),
+      } as PlacementDecision;
+    }
+    return { kind: "granted", claimId, profile } as PlacementDecision;
+  });
+
+  /**
+   * Before a step on a placed card: a heavy grant needs nothing; a light one takes a grow
+   * claim at the profile it was granted. Null when the step may go ahead, else its hold.
+   */
+  const ensureHeavy = Effect.fn("BoardCapacityAdmission.ensureHeavy")(function* (
+    card: BoardCard,
+    providerInstanceId: string | null,
+    force: boolean,
+  ) {
+    if (isGroup(card)) return null;
+    const grant = card.resources?.grant ?? null;
+    lastActive.set(card.id, yield* nowMs);
+    if (grant?.heavy === true) return null;
+    const board = yield* deps.readBoard;
+    const workerId = card.placedWorkerId ?? cardWorkerOf(board, card);
+    if (!(yield* deps.client.synced(workerId)) && !(yield* syncWorker(workerId))) {
+      return {
+        queuedBy: "worker-offline",
+        detail: { workerId },
+        blocksWorker: false,
+      } as CapacityHold;
+    }
+    const profile = grant?.profile ?? requestedProfileOf(board, card);
+    const answer = yield* deps.client.claim(workerId, {
+      claimId: `${card.id}:grow:${yield* nowMs}`,
+      cardId: card.id,
+      repositoryKey: yield* deps.repositoryKey(card.projectId),
+      kind: "grow",
+      profile,
+      providerInstanceId,
+      ...(force ? { force: true } : {}),
+    });
+    if (answer.outcome === "unavailable") {
+      return {
+        queuedBy: "worker-offline",
+        detail: { workerId },
+        blocksWorker: false,
+      } as CapacityHold;
+    }
+    if (answer.outcome === "denied") return holdForDenial(answer, workerId, "grow");
+    yield* deps.dispatch({
+      type: "board.card.record-grant",
+      commandId: yield* deps.commandId("grow"),
+      cardId: card.id,
+      profile,
+      heavy: true,
+      createdAt: yield* deps.nowIso,
+    });
+    // The sync that lists the card heavy consumes the grow.
+    yield* syncWorker(workerId);
+    return null;
+  });
+
+  /** A turn the board didn't start (a human's message, an answer, an approval, the engine's
+      own limit resume): the card is heavy with no claim, and may run over, visibly. */
+  const recordUnstartedTurn = Effect.fn("BoardCapacityAdmission.recordUnstartedTurn")(function* (
+    cardId: BoardCardId,
+  ) {
+    const board = yield* deps.readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined || isGroup(card)) return;
+    lastActive.set(card.id, yield* nowMs);
+    const grant = card.resources?.grant ?? null;
+    if (grant === null || grant.heavy) return;
+    yield* deps.dispatch({
+      type: "board.card.record-grant",
+      commandId: yield* deps.commandId("unstarted-turn"),
+      cardId: card.id,
+      heavy: true,
+      createdAt: yield* deps.nowIso,
+    });
+    yield* syncWorker(card.placedWorkerId ?? cardWorkerOf(board, card));
+  });
+
+  /** A step ended: the ten-minute tail starts, and a card's first heavy step settles it. */
+  const noteStepEnded = Effect.fn("BoardCapacityAdmission.noteStepEnded")(function* (
+    state: BoardCardStepState,
+  ) {
+    if (state.mode !== "build") return;
+    lastActive.set(state.cardId, yield* nowMs);
+    const board = yield* deps.readBoard;
+    const card = board.cards.find((candidate) => candidate.id === state.cardId);
+    const grant = card?.resources?.grant ?? null;
+    if (card === undefined || grant === null || grant.settled) return;
+    yield* deps.dispatch({
+      type: "board.card.record-grant",
+      commandId: yield* deps.commandId("settle"),
+      cardId: card.id,
+      settled: true,
+      createdAt: yield* deps.nowIso,
+    });
+  });
+
+  /**
+   * The periodic pass: settle grants two hours old, release the CPU and RAM of cards idle
+   * past their ten-minute tail, cut the tail short for idle cards on a worker one of this
+   * board's steps waits on for capacity, and keep every worker's records in step.
+   */
+  const sweep = Effect.fn("BoardCapacityAdmission.sweep")(function* () {
+    const board = yield* deps.readBoard;
+    const now = yield* nowMs;
+    const stateOf = (cardId: BoardCardId) =>
+      (board.stepStates ?? []).find((state) => state.cardId === cardId) ?? null;
+    const waitingWorkers = new Set(
+      (board.stepStates ?? [])
+        .filter(
+          (state) =>
+            state.status === "queued" &&
+            state.queuedBy === "capacity" &&
+            state.queuedDetail?.workerId !== undefined,
+        )
+        .map((state) => state.queuedDetail!.workerId!),
+    );
+    const idle: Array<{ readonly card: BoardCard; readonly since: number }> = [];
+    for (const card of board.cards) {
+      const grant = card.resources?.grant ?? null;
+      if (grant === null || card.archivedAt !== null) continue;
+      const state = stateOf(card.id);
+      let active = stepActiveInWorktree(state) || ciActive(card);
+      if (active && state !== null && state.status === "running") {
+        // Held on a permission prompt: the engine keeps the turn open, but nothing runs.
+        if (yield* deps.awaitingPermission(state)) active = false;
+      }
+      if (active) lastActive.set(card.id, now);
+      if (!lastActive.has(card.id)) lastActive.set(card.id, now);
+      if (!grant.settled && now - Date.parse(grant.grantedAt) >= SETTLE_AFTER_MS) {
+        yield* deps.dispatch({
+          type: "board.card.record-grant",
+          commandId: yield* deps.commandId("settle"),
+          cardId: card.id,
+          settled: true,
+          createdAt: yield* deps.nowIso,
+        });
+      }
+      if (!grant.heavy) continue;
+      const heavy = desiredHeavy({
+        card,
+        state,
+        active,
+        lastActiveAt: lastActive.get(card.id) ?? null,
+        now,
+      });
+      const nothingPending = !active && !stepQueuedInWorktree(state);
+      const workerId = card.placedWorkerId ?? cardWorkerOf(board, card);
+      if (!heavy) {
+        yield* release(card);
+      } else if (nothingPending && waitingWorkers.has(workerId)) {
+        idle.push({ card, since: lastActive.get(card.id) ?? now });
+      }
+    }
+    // Longest idle first; only idle cards, so two waiting cards never evict each other.
+    // One release per pass per worker: the snapshot that follows says whether it was enough.
+    const released = new Set<BoardWorkerId>();
+    for (const { card } of idle.sort((left, right) => left.since - right.since)) {
+      const workerId = card.placedWorkerId ?? cardWorkerOf(board, card);
+      if (released.has(workerId)) continue;
+      released.add(workerId);
+      yield* release(card);
+    }
+    yield* syncAll();
+  });
+
+  const release = Effect.fn("BoardCapacityAdmission.release")(function* (card: BoardCard) {
+    yield* deps.dispatch({
+      type: "board.card.record-grant",
+      commandId: yield* deps.commandId("release-heavy"),
+      cardId: card.id,
+      heavy: false,
+      createdAt: yield* deps.nowIso,
+    });
+  });
+
+  return {
+    placementClaim,
+    ensureHeavy,
+    recordUnstartedTurn,
+    noteStepEnded,
+    sweep,
+    syncWorker,
+    syncAll,
+    /** Test access: the tail's clock per card. */
+    lastActive: (cardId: BoardCardId) => lastActive.get(cardId) ?? DEFAULT_TIMESTAMP,
+  };
+};
+
+export type BoardCapacityAdmission = ReturnType<typeof makeBoardCapacityAdmission>;

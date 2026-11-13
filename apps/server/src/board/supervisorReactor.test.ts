@@ -27,7 +27,6 @@ import { BoardSetupScriptRunner } from "./ports/BoardSetupScriptRunner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { ServerActivation } from "../serverActivation.ts";
-import { BoardStepSlotsLive } from "./BoardStepSlots.ts";
 import {
   BoardPullRequestGateway,
   BoardPullRequestGatewayError,
@@ -281,7 +280,6 @@ function reconcileCommandObjects(input: {
             ),
         }),
       ),
-      BoardStepSlotsLive,
       Layer.succeed(
         ServerActivation,
         input.gateOnActivation === undefined

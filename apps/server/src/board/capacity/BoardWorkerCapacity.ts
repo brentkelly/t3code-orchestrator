@@ -369,9 +369,18 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
       }),
     );
 
+  /** A claim of nothing: a group card's worktree, which takes no claim and makes no record. */
+  const isEmptyClaim = (provisionClaim: BoardProvisionClaim) =>
+    provisionClaim.profile.cpuCores === 0 &&
+    provisionClaim.profile.ramGiB === 0 &&
+    provisionClaim.profile.diskGB === 0;
+
   const checkProvision: BoardWorkerCapacityShape["checkProvision"] = (boardId, provisionClaim) =>
     lock.withPermits(1)(
       Effect.gen(function* () {
+        if (isEmptyClaim(provisionClaim)) {
+          return { outcome: "granted" } satisfies BoardCapacityClaimResult;
+        }
         const now = yield* Clock.currentTimeMillis;
         const held =
           state.records.some(
@@ -399,6 +408,7 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
   ) =>
     lock.withPermits(1)(
       Effect.gen(function* () {
+        if (isEmptyClaim(provisionClaim)) return;
         const now = yield* Clock.currentTimeMillis;
         const result = consumePlacement(state, {
           boardId,

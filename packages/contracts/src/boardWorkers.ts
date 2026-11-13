@@ -28,23 +28,24 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 
 /**
  * Bump when the central server starts relying on a `boardWorker.*` call an older worker
- * lacks. 2 added `boardWorker.git.closePullRequest`, best-effort, so the floor stays at 1.
- * 3 sends `usage-recorded` signals when asked (`BOARD_WORKER_USAGE_PROTOCOL`).
+ * lacks. 2 added `boardWorker.git.closePullRequest`, best-effort. 3 sends `usage-recorded`
+ * signals when asked (`BOARD_WORKER_USAGE_PROTOCOL`). 4 is worker-owned capacity (T3O-86):
+ * claims, `syncCards`, the capacity stream, and provisions that carry a claim.
  */
-export const BOARD_WORKER_PROTOCOL_VERSION = 3;
+export const BOARD_WORKER_PROTOCOL_VERSION = 4;
 
 /** The first protocol whose workers report usage; an older one leaves its cards partial. */
 export const BOARD_WORKER_USAGE_PROTOCOL = 3;
 
-/** The oldest protocol a worker may speak and still be used. */
-export const BOARD_WORKER_PROTOCOL_FLOOR = 1;
+/** The oldest protocol a worker may speak and still be used: capacity needs 4 on both ends. */
+export const BOARD_WORKER_PROTOCOL_FLOOR = 4;
 
 /**
  * The T3o release that first spoke `BOARD_WORKER_PROTOCOL_FLOOR`, so the UI can
- * say "Needs T3o 0.0.45 or newer" rather than a protocol number nobody knows.
+ * say "Needs T3o 0.1.8.2 or newer" rather than a protocol number nobody knows.
  * Raise it together with the floor.
  */
-export const BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION = "0.0.45";
+export const BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION = "0.1.8.2";
 
 // ── Registry ───────────────────────────────────────────────────────────
 

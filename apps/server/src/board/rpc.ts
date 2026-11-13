@@ -84,6 +84,7 @@ import { BoardWorkers } from "./workers/BoardWorkers.ts";
 import { workerGatewayRpcHandlers } from "./workers/workerGatewayRpc.ts";
 import { boardWorkerRpcHandlers } from "./workers/workerRpc.ts";
 import { BoardWorkspaces, type BoardWorkspacesShape } from "./workspace/BoardWorkspace.ts";
+import { BoardWorkerCapacity } from "./capacity/BoardWorkerCapacity.ts";
 import { boardWorkerGitCallRpcHandlers } from "./workspace/workerGitRpc.ts";
 
 export interface BoardRpcHandlerDeps {
@@ -169,7 +170,12 @@ export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
     ...workerGatewayRpcHandlers(deps.currentSession),
     // The named git and forge operations, for a central server
     // whose cards run here.
-    ...boardWorkerGitCallRpcHandlers(deps.currentSession, workspaces),
+    ...boardWorkerGitCallRpcHandlers(
+      deps.currentSession,
+      workspaces,
+      // T3o: provisions consume a capacity claim (T3O-86).
+      Option.getOrUndefined(yield* Effect.serviceOption(BoardWorkerCapacity)),
+    ),
   });
 });
 

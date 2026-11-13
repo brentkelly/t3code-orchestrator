@@ -21,6 +21,7 @@ import {
   type BoardCardMoveCheck,
   type BoardMoveCardToWorkerResult,
   type BoardWorkerId,
+  type BoardProvisionClaim,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -29,11 +30,14 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { BoardEngine } from "../BoardEngine.ts";
 import type { BoardCommand } from "../decider.ts";
 import { ThreadGateway } from "../ThreadGateway.ts";
 import { BoardWorkspaces, type BoardCardWorkspace } from "../workspace/BoardWorkspace.ts";
+import { BoardCapacityClient } from "../capacity/BoardCapacityClient.ts";
+import { requestedProfileOf } from "../capacity/boardCapacityAdmission.ts";
 import { BoardPlacement, boardPlacementGate } from "./BoardPlacement.ts";
 
 /** Runs before each command the move dispatches — the RPC stamps the human. */
@@ -85,6 +89,9 @@ const makeBoardCardMover = Effect.gen(function* () {
   const placement = yield* BoardPlacement;
   const crypto = yield* SecureRandom.SecureRandom;
   const running = yield* FiberSet.make();
+  // T3o: a move takes a placement claim on its target first (T3O-86). Optional: a harness
+  // without capacity moves with no claim.
+  const capacity = yield* Effect.serviceOption(BoardCapacityClient);
 
   const commandId = (tag: string) =>
     crypto.uuidV4().pipe(
@@ -424,11 +431,57 @@ const makeBoardCardMover = Effect.gen(function* () {
   });
 
   /** Provision the new worktree from the remote branch, and record it. */
+  /**
+   * T3o: room for the card on the target, claimed before anything is retired on the source
+   * (T3O-86). Null with no capacity service or for a group card; a denial refuses the move.
+   */
+  const claimTarget = Effect.fn("BoardCardMover.claimTarget")(function* (
+    card: BoardCard,
+    toWorkerId: BoardWorkerId,
+  ) {
+    if (Option.isNone(capacity) || card.group !== null) return { kind: "none" } as const;
+    const board = yield* readBoard;
+    const profile = card.resources?.grant?.profile ?? requestedProfileOf(board, card);
+    const project = yield* threads.project(card.projectId).pipe(Effect.orElseSucceed(() => null));
+    const repositoryKey = boardRepositoryGroupingKey(project?.repositoryIdentity);
+    const claimId = `${card.id}:move:${yield* crypto.uuidV4().pipe(Effect.orDie)}`;
+    const answer = yield* capacity.value.claim(toWorkerId, {
+      claimId,
+      cardId: card.id,
+      repositoryKey,
+      kind: "placement",
+      profile,
+      providerInstanceId: null,
+    });
+    if (answer.outcome !== "granted") {
+      return {
+        kind: "refused",
+        detail: `No room on ${yield* workerName(toWorkerId)}${
+          answer.outcome === "denied" && answer.dimension !== undefined
+            ? ` (${answer.dimension})`
+            : ""
+        }.`,
+      } as const;
+    }
+    return {
+      kind: "granted",
+      claim: {
+        claimId,
+        seq: yield* capacity.value.nextSeq(toWorkerId),
+        cardId: card.id,
+        repositoryKey,
+        profile,
+        providerInstanceId: null,
+      } satisfies BoardProvisionClaim,
+    } as const;
+  });
+
   const provision = Effect.fn("BoardCardMover.provision")(function* (input: {
     readonly card: BoardCard;
     readonly toWorkerId: BoardWorkerId;
     readonly followDefault: boolean;
     readonly stamp: BoardMoveStamp;
+    readonly claim: BoardProvisionClaim | null;
   }) {
     const { card, stamp } = input;
     const worktree = card.worktree!;
@@ -437,8 +490,20 @@ const makeBoardCardMover = Effect.gen(function* () {
       .provisionWorktreeFromRemoteBranch({
         branch: worktree.branch,
         baseRefName: worktree.baseRefName,
+        ...(input.claim === null ? {} : { claim: input.claim }),
       })
       .pipe(Effect.result);
+    if (
+      provisioned._tag === "Success" &&
+      input.claim !== null &&
+      input.toWorkerId === BOARD_LOCAL_WORKER_ID &&
+      Option.isSome(capacity)
+    ) {
+      yield* capacity.value.recordLocalProvision(input.claim, {
+        branch: worktree.branch,
+        worktreePath: provisioned.success.path,
+      });
+    }
     if (provisioned._tag === "Failure") {
       const detail =
         provisioned.failure._tag === "WorkerUnavailable"
@@ -594,6 +659,12 @@ const makeBoardCardMover = Effect.gen(function* () {
       return { outcome: "started" } as const;
     }
     const card = (yield* readBoard).cards.find((candidate) => candidate.id === cardId)!;
+    const claimed = yield* claimTarget(card, toWorkerId);
+    if (claimed.kind === "refused") {
+      yield* record(cardId, { phase: "failed", error: claimed.detail }, stamp);
+      return refused(claimed.detail);
+    }
+    const claim = claimed.kind === "granted" ? claimed.claim : null;
     if (force) {
       // Nothing on the old worker is touched: its worktree stays there, and
       // the card stops using it.
@@ -605,7 +676,7 @@ const makeBoardCardMover = Effect.gen(function* () {
         );
         if (!abandoned) return refused("The move could not be recorded. See the server log.");
       }
-      yield* provision({ card, toWorkerId, followDefault, stamp }).pipe(
+      yield* provision({ card, toWorkerId, followDefault, stamp, claim }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("board move: failed", { cardId, cause: Cause.pretty(cause) }).pipe(
             Effect.andThen(
@@ -642,7 +713,7 @@ const makeBoardCardMover = Effect.gen(function* () {
       );
       if (refusal !== null) return refusal;
     }
-    yield* provision({ card, toWorkerId, followDefault, stamp }).pipe(
+    yield* provision({ card, toWorkerId, followDefault, stamp, claim }).pipe(
       Effect.catchCause(stopped),
       FiberSet.run(running),
     );
