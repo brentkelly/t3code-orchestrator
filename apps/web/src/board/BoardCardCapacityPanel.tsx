@@ -4,6 +4,7 @@
  * setup's stages with Retry, Cancel and its log. The lines come from `boardCardCapacity.ts`.
  */
 import {
+  boardCardEffectiveWorkerId,
   BOARD_CARD_SIZE_LETTERS,
   BOARD_RESOURCE_DIMENSIONS,
   type BoardCard,
@@ -201,7 +202,8 @@ export function BoardCardCapacityPanelHost(props: {
   const placed =
     card.worktree !== null &&
     (card.worktree.status === "ready" || card.worktree.status === "provisioning");
-  const workerId = card.placedWorkerId ?? card.pinnedWorkerId ?? props.workersState.defaultWorkerId;
+  // Where it holds a worktree, else its pin, else the default: never a stale placement.
+  const workerId = boardCardEffectiveWorkerId(card, props.workersState.defaultWorkerId);
   const capacityResult = useAtomValue(boardEnvironment.capacityAtom({ environmentId, input: {} }));
   const snapshot = AsyncResult.isSuccess(capacityResult)
     ? (capacityResult.value.get(workerId) ?? null)

@@ -3,6 +3,7 @@
  * pin picker and a queued card open, and the actions a human takes on readiness and setup.
  */
 import {
+  boardCardEffectiveWorkerId,
   boardReadinessIsFor,
   BOARD_LOCAL_WORKER_ID,
   BoardWorkerActionError,
@@ -171,7 +172,7 @@ export const boardCapacityAction = Effect.fn("BoardCapacityRpc.action")(function
       if (card === undefined || card.worktree?.path == null) {
         return yield* notFound("The card has no worktree.");
       }
-      const workerId = card.placedWorkerId ?? board.defaultWorkerId ?? BOARD_LOCAL_WORKER_ID;
+      const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
       return yield* client.readSetupLog(workerId, card.worktree.path);
     }
   }
