@@ -39,16 +39,19 @@ const layer = (answers: { hang: boolean }) =>
     ),
   );
 
-it.effect("a sync the worker leaves unanswered reports false, even after an earlier one landed", () => {
-  const answers = { hang: false };
-  return Effect.gen(function* () {
-    const client = yield* BoardCapacityClient;
-    assert.isTrue(yield* client.syncCards(W1, []));
-    answers.hang = true;
-    const pending = yield* client.syncCards(W1, [listed("a")]).pipe(Effect.forkChild);
-    yield* TestClock.adjust("5 seconds");
-    assert.isFalse(yield* Fiber.join(pending));
-    // The worker still holds the earlier sync's baseline.
-    assert.isTrue(yield* client.synced(W1));
-  }).pipe(Effect.provide(layer(answers)));
-});
+it.effect(
+  "a sync the worker leaves unanswered reports false, even after an earlier one landed",
+  () => {
+    const answers = { hang: false };
+    return Effect.gen(function* () {
+      const client = yield* BoardCapacityClient;
+      assert.isTrue(yield* client.syncCards(W1, []));
+      answers.hang = true;
+      const pending = yield* client.syncCards(W1, [listed("a")]).pipe(Effect.forkChild);
+      yield* TestClock.adjust("5 seconds");
+      assert.isFalse(yield* Fiber.join(pending));
+      // The worker still holds the earlier sync's baseline.
+      assert.isTrue(yield* client.synced(W1));
+    }).pipe(Effect.provide(layer(answers)));
+  },
+);

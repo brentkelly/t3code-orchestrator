@@ -279,23 +279,25 @@ it.effect("an unanswered claim costs a pass one timeout per worker, not one per 
   }),
 );
 
-it.effect("a synced worker that leaves a sync unanswered is not sent another until the backoff", () =>
-  Effect.gen(function* () {
-    const now = { ms: T0 };
-    const h = yield* harness(boardWith([granted("a")]), now);
-    yield* h.admission.syncAll();
-    h.fake.unreachable.add(BOARD_LOCAL_WORKER_ID);
-    yield* Ref.update(h.board, (board) => ({ ...board, cards: [...board.cards, granted("b")] }));
-    const syncs = h.fake.syncs.length;
-    yield* h.admission.syncAll();
-    assert.strictEqual(h.fake.syncs.length, syncs + 1);
-    yield* h.admission.syncAll();
-    assert.strictEqual(h.fake.syncs.length, syncs + 1);
-    h.fake.unreachable.clear();
-    now.ms += UNREACHABLE_BACKOFF_MS;
-    yield* h.admission.syncAll();
-    assert.strictEqual(h.fake.syncs.length, syncs + 2);
-  }),
+it.effect(
+  "a synced worker that leaves a sync unanswered is not sent another until the backoff",
+  () =>
+    Effect.gen(function* () {
+      const now = { ms: T0 };
+      const h = yield* harness(boardWith([granted("a")]), now);
+      yield* h.admission.syncAll();
+      h.fake.unreachable.add(BOARD_LOCAL_WORKER_ID);
+      yield* Ref.update(h.board, (board) => ({ ...board, cards: [...board.cards, granted("b")] }));
+      const syncs = h.fake.syncs.length;
+      yield* h.admission.syncAll();
+      assert.strictEqual(h.fake.syncs.length, syncs + 1);
+      yield* h.admission.syncAll();
+      assert.strictEqual(h.fake.syncs.length, syncs + 1);
+      h.fake.unreachable.clear();
+      now.ms += UNREACHABLE_BACKOFF_MS;
+      yield* h.admission.syncAll();
+      assert.strictEqual(h.fake.syncs.length, syncs + 2);
+    }),
 );
 
 it.effect("a grant settles when its first heavy step ends, or two hours after placement", () =>
