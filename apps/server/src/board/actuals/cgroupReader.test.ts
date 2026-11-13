@@ -3,8 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { assert, it } from "@effect/vitest";
-import { vi } from "vitest";
+import { assert, it, vi } from "@effect/vitest";
 
 import { BoardCgroupReader } from "./cgroupReader.ts";
 
