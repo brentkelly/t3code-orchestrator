@@ -26,7 +26,7 @@ export type BoardSummaryTone = "success" | "info" | "attention" | "warning" | "n
 
 export type BoardSummarySectionId = "notes" | "checks" | "built" | "decisions" | "usage";
 
-export const BOARD_SUMMARY_SECTION_NAMES: Record<BoardSummarySectionId, string> = {
+const BOARD_SUMMARY_SECTION_NAMES: Record<BoardSummarySectionId, string> = {
   notes: "Heads-up",
   checks: "Checks & review",
   built: "What was built",
@@ -402,7 +402,7 @@ export function deriveBoardSummaryOverview(input: {
       name: BOARD_SUMMARY_SECTION_NAMES.decisions,
       count: decisionLog.count,
       chips: chipsOf([
-        [important, `${important} important`, "info"],
+        [important, `${important} important`, "neutral"],
         [unclear, `${unclear} unclear`, "attention"],
       ]),
     });

@@ -171,7 +171,6 @@ import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
 import { boardCardMoveBlocked } from "./boardCardMoveGate";
 import { BoardHint } from "./BoardHint";
-import { BoardDecisionLog } from "./BoardDecisionLog";
 import { boardDecisionFollowUp, boardDecisionLogView } from "./boardDecisionLog";
 import { BOARD_DEFERRED_STAGE } from "./boardScope";
 import { BoardSplitGate } from "./BoardSplitGate";
@@ -761,6 +760,8 @@ export interface BoardCardDetailPanelProps extends BoardCardDetailViewProps {
       frame. Null means "whichever pane the card's stage makes current". */
   readonly paneChoice: BoardCardPane | null;
   readonly onSelectPane: (pane: BoardCardPane) => void;
+  /** A spend popover opened this card: its Summary pane starts on Usage. */
+  readonly usageRequested?: boolean;
 }
 
 const THREAD_STATE_LABEL: Record<BoardCardThreadState, string> = {
@@ -2782,8 +2783,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       })
     : null;
 
-  // The decision log. Null open state means "the default rule".
-  const [logOpen, setLogOpen] = useState<boolean | null>(null);
   const stagesState = stageStateOf(props.stages);
   const buildStage = boardStageWithRole(stagesState, "build");
   const pastBuild =
@@ -3149,40 +3148,34 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           ) : activePane === "summary" && workSummary !== null ? (
             <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
               <BoardCardSummaryPane
+                key={card.id}
                 onBackToThread={() => setPane("thread")}
                 onOpenChild={props.onOpenChildInSubBoard}
                 onOpenPullRequest={props.onOpenPullRequest}
                 onSelectReview={() => setPane("review")}
                 summary={workSummary}
                 buildPending={buildPending}
+                pastBuild={pastBuild}
+                integrates={integrates}
                 usage={usageBreakdown}
-                decisionLog={
-                  decisionLog === null ? null : (
-                    <BoardDecisionLog
-                      view={decisionLog}
-                      open={logOpen}
-                      onOpenChange={setLogOpen}
-                      onSendBack={
-                        buildStage === null
-                          ? undefined
-                          : () => {
-                              props.onMoveStage(buildStage.stageId);
-                              setPane("thread");
-                            }
+                initialOpen={props.usageRequested === true ? ["usage"] : []}
+                decisionLog={decisionLog}
+                onSendBack={
+                  buildStage === null
+                    ? undefined
+                    : () => {
+                        props.onMoveStage(buildStage.stageId);
+                        setPane("thread");
                       }
-                      onFollowUp={(() => {
-                        const create = props.onCreateFollowUp;
-                        const draft = boardDecisionFollowUp({
-                          cardKey: card.key,
-                          rows: decisionLog.rows,
-                        });
-                        return create === undefined || draft === null
-                          ? undefined
-                          : () => create(draft);
-                      })()}
-                    />
-                  )
                 }
+                onFollowUp={(() => {
+                  const create = props.onCreateFollowUp;
+                  const draft =
+                    decisionLog === null
+                      ? null
+                      : boardDecisionFollowUp({ cardKey: card.key, rows: decisionLog.rows });
+                  return create === undefined || draft === null ? undefined : () => create(draft);
+                })()}
               />
             </Suspense>
           ) : activePane === "ci" ? (
@@ -3489,6 +3482,8 @@ export function BoardCardDetailView(props: BoardCardDetailViewProps) {
   const [paneChoice, setPaneChoice] = useState<BoardCardPane | null>(
     summaryRequested ? "summary" : null,
   );
+  // Captured at mount: the effect below clears the store's request.
+  const [usageRequested] = useState(summaryRequested);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- consumes the one-shot store request at mount, so no close path or card step can leave it behind
   useEffect(() => {
     if (summaryRequested) setDetailSummaryCardId(null);
@@ -3513,6 +3508,7 @@ export function BoardCardDetailView(props: BoardCardDetailViewProps) {
           onSelectPane={setPaneChoice}
           onToggleMaximised={() => setMaximisedCardId(maximised ? null : cardId)}
           paneChoice={paneChoice}
+          usageRequested={usageRequested}
         />
       </BoardCardDetailPopup>
     </Dialog>

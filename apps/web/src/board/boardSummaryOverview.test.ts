@@ -279,7 +279,7 @@ describe("deriveBoardSummaryOverview", () => {
       decisionLog: logView(["unclear", "important", "important"], false),
     }).sections.find((entry) => entry.id === "decisions");
     expect(section?.chips).toEqual([
-      { label: "2 important", tone: "info" },
+      { label: "2 important", tone: "neutral" },
       { label: "1 unclear", tone: "attention" },
     ]);
   });
