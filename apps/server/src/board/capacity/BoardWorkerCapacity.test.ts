@@ -32,6 +32,7 @@ interface Fakes {
   freeDiskBytes: number;
   availableBytes: number;
   stored: Map<string, string>;
+  threadReads: number;
 }
 
 const makeFakes = (): Fakes => ({
@@ -43,6 +44,7 @@ const makeFakes = (): Fakes => ({
   freeDiskBytes: 1000 * 1000 ** 3,
   availableBytes: 500 * GiB,
   stored: new Map(),
+  threadReads: 0,
 });
 
 const portsOver = (
@@ -50,7 +52,10 @@ const portsOver = (
   initial: CapacityState = EMPTY_CAPACITY_STATE,
 ): WorkerCapacityPorts => ({
   settings: Effect.sync(() => resolveWorkerCapacitySettings(fakes.config)),
-  threads: Effect.sync(() => fakes.threads),
+  threads: Effect.sync(() => {
+    fakes.threadReads += 1;
+    return fakes.threads;
+  }),
   providers: Effect.sync(() => fakes.providers),
   refreshProviderUsage: (instanceId) => Effect.sync(() => void fakes.refreshed.push(instanceId)),
   notReady: () => Effect.succeed(null),
@@ -291,6 +296,10 @@ it.effect("a board's snapshot carries nothing about another board's cards", () =
     assert.notInclude(JSON.stringify(snapshot), "board-b");
     // The other board's heavy card still takes room from what this one is offered.
     assert.strictEqual(snapshot.headroom.cpuCores, 8);
+    // Each board's snapshot shares one reading of the threads.
+    const reads = fakes.threadReads;
+    yield* service.snapshot("board-b");
+    assert.strictEqual(fakes.threadReads, reads);
   }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
 });
 

@@ -54,6 +54,8 @@ export const SNAPSHOT_INTERVAL_MS = 5_000;
 const HYSTERESIS = 0.05;
 /** A small change held back by the hysteresis is still pushed once it has stood this long. */
 export const SNAPSHOT_SETTLE_MS = 30_000;
+const THREADS_SHARED_MS = 2_000;
+const UNOWNED_SHARED_MS = 60_000;
 /** An unsettled worktree is measured at most this often. */
 const MEASURE_INTERVAL_MS = 5 * 60_000;
 /** Usage is refreshed this often while a gating window is at the threshold, and on a
@@ -528,6 +530,30 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
       }),
     );
 
+  /**
+   * Reading every thread is the costly part of a snapshot: each board's stream and the status
+   * file share one reading for a few seconds. Claims and spawns read fresh, so the agent cap
+   * counts the turn that just started.
+   */
+  let sharedThreads: {
+    readonly at: number;
+    readonly threads: ReadonlyArray<CapacityThread>;
+  } | null = null;
+  const recentThreads = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    if (sharedThreads !== null && now - sharedThreads.at < THREADS_SHARED_MS) {
+      return sharedThreads.threads;
+    }
+    const threads = yield* ports.threads;
+    sharedThreads = { at: now, threads };
+    return threads;
+  });
+  /** Unowned worktrees cost a git call per project: the status file reads them once a minute. */
+  let sharedUnowned: {
+    readonly at: number;
+    readonly value: WorkerCapacityStatus["unowned"];
+  } | null = null;
+
   const agentCapRefusal: BoardWorkerCapacityShape["agentCapRefusal"] = Effect.fn(
     "BoardWorkerCapacity.agentCapRefusal",
   )(function* (providerInstanceId) {
@@ -552,7 +578,7 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     function* (boardId) {
       const now = yield* Clock.currentTimeMillis;
       const settings = yield* ports.settings;
-      const threads = yield* ports.threads;
+      const threads = yield* recentThreads;
       const activity = activityOf(threads);
       const headroom = computeHeadroom({
         state,
@@ -634,7 +660,7 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
   const status: BoardWorkerCapacityShape["status"] = Effect.fn("BoardWorkerCapacity.status")(
     function* (servedBoardIds) {
       const now = yield* Clock.currentTimeMillis;
-      const activity = activityOf(yield* ports.threads);
+      const activity = activityOf(yield* recentThreads);
       const headroom = computeHeadroom({
         state,
         declared: yield* declared,
@@ -651,7 +677,14 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
           boardEnvironmentId,
           held,
         })),
-        unowned: yield* ports.unownedWorktrees(servedBoardIds),
+        unowned: yield* Effect.gen(function* () {
+          if (sharedUnowned !== null && now - sharedUnowned.at < UNOWNED_SHARED_MS) {
+            return sharedUnowned.value;
+          }
+          const value = yield* ports.unownedWorktrees(servedBoardIds);
+          sharedUnowned = { at: now, value };
+          return value;
+        }),
       };
     },
   );
