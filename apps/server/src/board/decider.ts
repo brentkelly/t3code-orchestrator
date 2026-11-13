@@ -6155,6 +6155,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const reattached: PlannedBoardEvent[] = [];
       for (const card of command.mode === "rename" ? [] : board.cards) {
         if (card.placementOrphaned?.workerId !== worker.id) continue;
+        // T3o: only a card still placed there reattaches; one placed elsewhere since is the
+        // orphan sweep's (T3O-87).
+        if (card.placedWorkerId !== null && card.placedWorkerId !== worker.id) continue;
         reattached.push({
           ...(yield* makeBoardEventBase({
             cardId: card.id,
@@ -6198,12 +6201,60 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // step holds for a human. Archived cards too.
       const cardEvents: PlannedBoardEvent[] = [];
       const afterRemoval = new Map<BoardCardId, BoardCard>();
+      // T3o: the removal sequence classified each card it probed (T3O-87).
+      const classified = new Map(
+        (command.classifications ?? []).map((entry) => [entry.cardId, entry.outcome]),
+      );
+      const withoutWorker = (card: BoardCard): Pick<BoardCard, "pinnedWorkerId"> => ({
+        pinnedWorkerId: card.pinnedWorkerId === command.workerId ? null : card.pinnedWorkerId,
+      });
+      const unplacedResources = (card: BoardCard) =>
+        card.resources === null
+          ? null
+          : withoutEmptyResources({ ...card.resources, grant: null, placement: null });
       for (const card of board.cards) {
-        const outcome = boardCardWorkerRemovalOutcome(
+        const classification = classified.get(card.id);
+        if (classification === "reclaimed" || classification === "fresh") {
+          const nextCard: BoardCard = {
+            ...card,
+            ...withoutWorker(card),
+            placedWorkerId: null,
+            worktree:
+              classification === "fresh" || card.worktree === null
+                ? null
+                : { ...card.worktree, status: "reclaimed", path: null },
+            resources: unplacedResources(card),
+            updatedAt: command.createdAt,
+          };
+          afterRemoval.set(card.id, nextCard);
+          cardEvents.push({
+            ...(yield* makeBoardEventBase({
+              cardId: card.id,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            })),
+            type: "board.card-worker-removal",
+            payload: {
+              cardId: card.id,
+              workerId: command.workerId,
+              workerLabel: existing.label,
+              outcome: "reclaimed",
+              card: nextCard,
+            },
+          });
+          continue;
+        }
+        const derived = boardCardWorkerRemovalOutcome(
           card,
           boardCardStepState(board, card.id),
           command.workerId,
         );
+        const outcome =
+          classification === "orphaned"
+            ? "orphaned"
+            : classification === "unplaced" && derived !== null
+              ? "fallback"
+              : derived;
         if (outcome === null) continue;
         const nextCard: BoardCard =
           outcome === "orphaned"
@@ -6218,10 +6269,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               }
             : {
                 ...card,
-                pinnedWorkerId:
-                  card.pinnedWorkerId === command.workerId ? null : card.pinnedWorkerId,
+                ...withoutWorker(card),
                 placedWorkerId:
                   card.placedWorkerId === command.workerId ? null : card.placedWorkerId,
+                ...(card.placedWorkerId === command.workerId
+                  ? { resources: unplacedResources(card) }
+                  : {}),
                 updatedAt: command.createdAt,
               };
         afterRemoval.set(card.id, nextCard);

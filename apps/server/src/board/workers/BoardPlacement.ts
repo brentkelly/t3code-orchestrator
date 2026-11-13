@@ -71,6 +71,7 @@ export const BoardPlacementLive = Layer.effect(
   Effect.map(BoardWorkers, (workers) => ({
     workers: workers.state,
     changes: boardPlacementChanges(workers.states),
+    beingRemoved: workers.beingRemoved,
   })),
 );
 

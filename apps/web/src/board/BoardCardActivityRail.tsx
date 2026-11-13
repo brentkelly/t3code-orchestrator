@@ -538,7 +538,14 @@ function activitySentence(
       const worker = payload.detail ?? "Its worker";
       switch (payload.removalOutcome) {
         case "fallback":
-          return <>{worker} was removed from the board; the card now follows the default worker</>;
+          return <>{worker} was removed from the board; the card is placed again when it builds</>;
+        case "reclaimed":
+          return (
+            <>
+              {worker} was removed from the board; its pushed branch carries on wherever the card
+              builds next
+            </>
+          );
         case "orphaned":
           return <>{worker} was removed from the board while the card had work there</>;
         case "reattached":

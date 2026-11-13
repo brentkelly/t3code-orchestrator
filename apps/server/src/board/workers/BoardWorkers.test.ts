@@ -1,4 +1,5 @@
 import {
+  boardCardStepState,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthFilesystemReadScope,
@@ -614,6 +615,9 @@ describe("BoardWorkers", () => {
         const held = board.cards.find((card) => card.id === busy)!;
         assert.strictEqual(held.placementOrphaned?.workerId, WORKER_ID);
         assert.strictEqual(held.placementOrphaned?.workerLabel, "linux-box");
+        // T3o: parked before its session stopped, the way a human Stop does, so nothing
+        // recovers it mid-sequence (T3O-87).
+        assert.strictEqual(boardCardStepState(board, busy)?.status, "paused");
       }),
     ));
 

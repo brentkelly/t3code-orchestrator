@@ -137,11 +137,12 @@ function makeReadModel(input: {
   readonly cards: ReadonlyArray<BoardCard>;
   readonly stepStates?: ReadonlyArray<BoardCardStepState>;
   readonly defaultWorkerId?: BoardWorkerId;
+  readonly workers?: BoardState["workers"];
 }): BoardOrchestrationReadModel {
   const board: BoardState = {
     cards: input.cards,
     nextCardNumberByProject: {},
-    workers: [
+    workers: input.workers ?? [
       { id: workerA, label: "worker-a", url: "http://worker-a:3773", addedAt: NOW },
       { id: workerB, label: "worker-b", url: "http://worker-b:3773", addedAt: NOW },
     ],
@@ -255,6 +256,96 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         expect(fallback.payload.card.pinnedWorkerId).toBeNull();
         expect(fallback.payload.card.placedWorkerId).toBeNull();
         expect(fallback.payload.card.placementOrphaned).toBeNull();
+      }),
+    );
+
+    it.effect("removal applies the sequence's classification to each card (T3O-87)", () =>
+      Effect.gen(function* () {
+        const card = (id: string, overrides: Partial<BoardCard> = {}) =>
+          makeCard({ id: BoardCardId.make(id), placedWorkerId: workerA, ...overrides });
+        const granted = {
+          sizing: null,
+          grant: {
+            profile: { cpuCores: 2, ramGiB: 4, diskGB: 5 },
+            heavy: true,
+            claimId: "c:1:0",
+            grantedAt: NOW,
+            settled: false,
+          },
+          setup: null,
+          placement: { workerId: workerA, at: NOW, reason: "pinned" },
+        };
+        const model = yield* apply(
+          {
+            type: "board.worker.remove",
+            commandId: CommandId.make("cmd-remove"),
+            workerId: workerA,
+            classifications: [
+              { cardId: "on-remote", outcome: "reclaimed" },
+              { cardId: "fresh", outcome: "fresh" },
+              { cardId: "dirty", outcome: "orphaned" },
+              { cardId: "no-worktree", outcome: "unplaced" },
+            ],
+            createdAt: NOW,
+          },
+          makeReadModel({
+            cards: [
+              card("on-remote", {
+                worktree: readyWorktree,
+                resources: granted,
+                pinnedWorkerId: workerA,
+              }),
+              card("fresh", { worktree: readyWorktree, resources: granted }),
+              card("dirty", { worktree: readyWorktree }),
+              card("no-worktree", { pinnedWorkerId: workerA }),
+              // A card placed there that the sequence didn't cover waits for a human.
+              card("uncovered", { worktree: readyWorktree }),
+            ],
+          }),
+        );
+        const byId = (id: string) => model.board!.cards.find((candidate) => candidate.id === id)!;
+        const onRemote = byId("on-remote");
+        expect(onRemote.worktree?.status).toBe("reclaimed");
+        expect(onRemote.worktree?.branch).toBe(readyWorktree.branch);
+        expect(onRemote.placedWorkerId).toBeNull();
+        expect(onRemote.pinnedWorkerId).toBeNull();
+        expect(onRemote.resources).toBeNull();
+        expect(onRemote.placementOrphaned).toBeNull();
+        expect(byId("fresh").worktree).toBeNull();
+        expect(byId("fresh").placedWorkerId).toBeNull();
+        expect(byId("dirty").placementOrphaned?.workerId).toBe(workerA);
+        expect(byId("no-worktree").pinnedWorkerId).toBeNull();
+        expect(byId("uncovered").placementOrphaned?.workerId).toBe(workerA);
+      }),
+    );
+
+    it.effect("a re-join reattaches only cards still placed on the worker (T3O-87)", () =>
+      Effect.gen(function* () {
+        const orphan = { workerId: workerA, workerLabel: "worker-a", orphanedAt: NOW };
+        const model = yield* apply(
+          addWorker(workerA),
+          makeReadModel({
+            workers: [
+              { id: workerB, label: "worker-b", url: "http://worker-b:3773", addedAt: NOW },
+            ],
+            cards: [
+              makeCard({
+                placedWorkerId: workerA,
+                worktree: readyWorktree,
+                placementOrphaned: orphan,
+              }),
+              makeCard({
+                id: BoardCardId.make("card-2"),
+                placedWorkerId: workerB,
+                worktree: readyWorktree,
+                placementOrphaned: orphan,
+              }),
+            ],
+          }),
+        );
+        const byId = (id: string) => model.board!.cards.find((candidate) => candidate.id === id)!;
+        expect(byId("card-1").placementOrphaned).toBeNull();
+        expect(byId("card-2").placementOrphaned?.workerId).toBe(workerA);
       }),
     );
 

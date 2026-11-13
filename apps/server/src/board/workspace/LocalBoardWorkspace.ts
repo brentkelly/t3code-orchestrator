@@ -826,6 +826,27 @@ export function makeLocalBoardWorkspace(
       does not have it, or there is no remote. A remote that can't be asked
       fails instead: "not there" offers a restart from base, which
       forgets pushed work, so it must not be guessed from a network error. */
+  /** T3o: `git push -u <remote> <branch>` from the card's worktree, never forced (T3O-87). */
+  const pushCardBranch: BoardWorkspace["pushCardBranch"] = Effect.fn(
+    "LocalBoardWorkspace.pushCardBranch",
+  )(function* ({ projectId, worktreePath, branch }) {
+    const cwd = yield* rootOf("pushCardBranch", projectId);
+    const remoteName = yield* primaryRemote(cwd);
+    if (remoteName === null) return { pushed: false, detail: "The project has no git remote." };
+    const pushed = yield* git
+      .execute({
+        operation: "boardPushCardBranch.push",
+        cwd: worktreePath,
+        args: ["push", "-u", remoteName, `refs/heads/${branch}:refs/heads/${branch}`],
+        timeoutMs: 120_000,
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    if (pushed !== null && pushed.exitCode === 0) return { pushed: true, detail: null };
+    const detail = (pushed?.stderr ?? "").trim().split("\n").slice(-2).join(" ");
+    return { pushed: false, detail: detail === "" ? "git push failed." : detail };
+  });
+
   const remoteBranchTip: BoardWorkspace["remoteBranchTip"] = Effect.fn(
     "LocalBoardWorkspace.remoteBranchTip",
   )(function* ({ projectId, branch }) {
@@ -924,6 +945,7 @@ export function makeLocalBoardWorkspace(
     deleteCardBranch: deleteBranch,
     gitUserName,
     remoteBranchTip,
+    pushCardBranch,
     pullRequestByBranch,
     getPullRequest: ({ projectId, number, force }) =>
       pullRequests

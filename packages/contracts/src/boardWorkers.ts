@@ -398,10 +398,25 @@ export const BoardWorkerRegisterCommand = Schema.Struct({
 });
 
 /** Remove a worker from the registry. Refused for `local` and for the default. */
+/**
+ * T3o: what the removal sequence found for one card on the worker (T3O-87), so the decider
+ * stays pure. `unplaced`: no worktree there. `reclaimed`: a clean worktree whose commits are all
+ * on its remote branch; the branch is kept. `fresh`: clean, nothing beyond its base and no
+ * remote branch; the worktree record goes. `orphaned`: dirty, unpushable, or out of reach.
+ */
+export const BoardWorkerRemovalClassification = Schema.Struct({
+  cardId: TrimmedNonEmptyString,
+  outcome: Schema.Literals(["unplaced", "reclaimed", "fresh", "orphaned"]),
+});
+export type BoardWorkerRemovalClassification = typeof BoardWorkerRemovalClassification.Type;
+
 export const BoardWorkerRemoveCommand = Schema.Struct({
   type: Schema.Literal("board.worker.remove"),
   commandId: CommandId,
   workerId: EnvironmentId,
+  /** T3o: each card's classification (T3O-87). Absent on an older command: every card holding
+      work there waits for a human, as before. */
+  classifications: Schema.optionalKey(Schema.Array(BoardWorkerRemovalClassification)),
   createdAt: IsoDateTime,
 });
 

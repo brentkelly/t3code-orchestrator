@@ -2830,7 +2830,9 @@ export const BoardCardActivityPayload = Schema.Struct({
   ),
   /** card-worker-removal: what the removal, or the re-add, did. The
       worker's label rides in `detail`, since a removed worker has none left. */
-  removalOutcome: Schema.optionalKey(Schema.Literals(["fallback", "orphaned", "reattached"])),
+  removalOutcome: Schema.optionalKey(
+    Schema.Literals(["fallback", "orphaned", "reattached", "reclaimed"]),
+  ),
   /** plan-review-started / -rounds-changed / -finished: the round limit, and what the
       agent reported. A null `roundsRun` is "rounds not reported". */
   planReviewRounds: Schema.optionalKey(PositiveInt),
@@ -6824,7 +6826,9 @@ export const BoardCardWorkerRemovalPayload = Schema.Struct({
   cardId: BoardCardId,
   workerId: BoardWorkerId,
   workerLabel: TrimmedNonEmptyString,
-  outcome: Schema.Literals(["fallback", "orphaned", "reattached"]),
+  /** T3o: `reclaimed`: its worktree was retired with every commit on the remote, and it is
+      placed again when its next step starts (T3O-87). */
+  outcome: Schema.Literals(["fallback", "orphaned", "reattached", "reclaimed"]),
   card: BoardCard,
 });
 export type BoardCardWorkerRemovalPayload = typeof BoardCardWorkerRemovalPayload.Type;

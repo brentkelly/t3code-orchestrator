@@ -3065,6 +3065,8 @@ const make = Effect.gen(function* () {
       // step's provider instance. Ahead of the plan branch: a planning thread
       // needs the checkout as much as a build does.
       const placed = yield* placementFor(board, card, state);
+      // T3o: nothing starts on a worker mid-removal; its classification decides (T3O-87).
+      if ((yield* closedWorkersNow).has(placed.workerId)) continue;
       if (placed.gate.kind === "offline") {
         // Held, saying so: the card wears Worker offline until its
         // worker is back.

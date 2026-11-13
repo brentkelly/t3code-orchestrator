@@ -3,7 +3,11 @@
  * local-only board that refuses every worker operation. Its summary never
  * changes, so a board subscription under test sees exactly today's stream.
  */
-import { BoardWorkerActionError, EMPTY_BOARD_WORKERS_STATE } from "@t3tools/contracts";
+import {
+  BoardWorkerActionError,
+  EMPTY_BOARD_WORKERS_STATE,
+  type BoardWorkerId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -30,6 +34,7 @@ export const BoardWorkersLocalOnlyTest = Layer.succeed(BoardWorkers, {
   dismissSetup: () => Effect.void,
   state: Effect.succeed(EMPTY_BOARD_WORKERS_STATE),
   states: Stream.make(EMPTY_BOARD_WORKERS_STATE),
+  beingRemoved: Effect.succeed(new Set<BoardWorkerId>()),
 });
 
 /** No worker connections at all: every card is placed on this server. */

@@ -30,6 +30,8 @@ import {
   type BoardWorkersSetupProjectInput,
   type BoardWorkersState,
   type BoardWorkerId,
+  type BoardWorkerRemovalClassification,
+  boardCardHoldsWorktree,
   type BoardWorkerThreadAccess,
   type BoardWorkerView,
   type EnvironmentId,
@@ -54,6 +56,7 @@ import { BoardWorkerJoinStore } from "../tunnel/BoardWorkerJoinStore.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { ProjectService } from "../../project/ProjectService.ts";
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
+import { BoardWorkspaces, type BoardCardWorkspace } from "../workspace/BoardWorkspace.ts";
 import { BoardEngine } from "../BoardEngine.ts";
 import { isBoardCommandInvariantError } from "../errors.ts";
 import { classifyCloneFailure, cloneDestination, cloneFailureMessage } from "./setupFailure.ts";
@@ -106,6 +109,8 @@ export interface BoardWorkersShape {
       status, snapshots, setups — subscribed atomically with the first read.
       Registry changes ride the board log. Each access subscribes. */
   readonly states: Stream.Stream<BoardWorkersState>;
+  /** T3o: workers mid-removal, which no card is placed on (T3O-87). */
+  readonly beingRemoved: Effect.Effect<ReadonlySet<BoardWorkerId>>;
 }
 
 export class BoardWorkers extends Context.Service<BoardWorkers, BoardWorkersShape>()(
@@ -127,6 +132,52 @@ const setupKey = (workerId: EnvironmentId, projectId: ProjectId) => `${workerId}
 const actionError = (code: BoardWorkerActionError["code"], message: string) =>
   new BoardWorkerActionError({ code, message });
 
+/**
+ * T3o: one worktree's fate when its worker is removed (T3O-87): pushed where the remote lacks
+ * commits, then `reclaimed` (branch kept) or `fresh` (nothing beyond its base, no remote
+ * branch), else `orphaned` for a human: dirty, unpushable, or the worker didn't answer.
+ */
+export const classifyRemovalWorktree = Effect.fn("BoardWorkers.classifyRemovalWorktree")(function* (
+  workspace: BoardCardWorkspace,
+  worktree: {
+    readonly worktreePath: string;
+    readonly branch: string;
+    readonly baseRefName: string;
+  },
+) {
+  const orphaned = "orphaned" as const;
+  const probe = yield* workspace
+    .probeWorktreeDurability({
+      ...worktree,
+      mergedPullRequestNumbers: [],
+      openPullRequestNumber: null,
+      baseAlreadyFetched: false,
+    })
+    .pipe(Effect.option);
+  if (Option.isNone(probe) || probe.value.hasWorkingTreeChanges) return orphaned;
+  // Read afresh each time: after a push it must see the branch the push just made.
+  const onRemote = Effect.suspend(() =>
+    workspace.remoteBranchTip({ branch: worktree.branch }),
+  ).pipe(
+    Effect.map((tip) => tip !== null),
+    Effect.orElseSucceed(() => null),
+  );
+  if (probe.value.unpushedCount === 0) {
+    const remote = yield* onRemote;
+    if (remote === null) return orphaned;
+    // Nothing beyond its base and no remote branch: the next placement cuts it fresh.
+    if (!remote) return probe.value.hasUpstream ? orphaned : ("fresh" as const);
+    return "reclaimed" as const;
+  }
+  // Commits the remote lacks: push the card's own branch, never forced. A worker too old to
+  // know the operation can't be pushed.
+  const pushed = yield* workspace
+    .pushCardBranch({ worktreePath: worktree.worktreePath, branch: worktree.branch })
+    .pipe(Effect.orElseSucceed(() => ({ pushed: false, detail: null })));
+  if (!pushed.pushed) return orphaned;
+  return (yield* onRemote) === true ? ("reclaimed" as const) : orphaned;
+});
+
 export const makeBoardWorkers = Effect.gen(function* () {
   const engine = yield* BoardEngine;
   const connections = yield* WorkerConnections;
@@ -134,6 +185,10 @@ export const makeBoardWorkers = Effect.gen(function* () {
   const environment = yield* ServerEnvironment;
   const projects = yield* ProjectService;
   const git = yield* GitVcsDriver;
+  // T3o: where removal probes and pushes a card's worktree (T3O-87). Absent in a harness.
+  const workspaces = yield* Effect.serviceOption(BoardWorkspaces);
+  /** Workers mid-removal: the gate and step spawns skip them. In memory only. */
+  const beingRemoved = new Set<BoardWorkerId>();
   const fileSystem = yield* FileSystem.FileSystem;
   const crypto = yield* SecureRandom.SecureRandom;
   const relayStore = yield* BoardRelayStore;
@@ -329,8 +384,8 @@ export const makeBoardWorkers = Effect.gen(function* () {
     },
   );
 
-  /** The threads of the steps running on a worker, which removal stops. */
-  const runningThreadsOn = (workerId: EnvironmentId) =>
+  /** The steps running on a worker, which removal parks and stops. */
+  const runningStepsOn = (workerId: EnvironmentId) =>
     readBoard.pipe(
       Effect.map((board) =>
         board.cards.flatMap((card) => {
@@ -341,56 +396,113 @@ export const makeBoardWorkers = Effect.gen(function* () {
           const link = card.threadLinks.find((candidate) => candidate.threadId === live.threadId);
           const runsOn =
             link === undefined ? boardCardEffectiveWorkerId(card) : boardThreadLinkWorkerId(link);
-          return runsOn === workerId ? [live.threadId] : [];
+          return runsOn === workerId
+            ? [{ cardId: card.id, stepId: live.stepId, threadId: live.threadId }]
+            : [];
         }),
       ),
     );
 
+  /**
+   * T3o: what removal does with each card on a reachable worker (T3O-87): a card with no
+   * worktree there is unplaced; a clean worktree is pushed where the remote lacks commits, then
+   * reclaimed with its branch kept, or cleared when it has nothing beyond its base; anything
+   * dirty or unpushable waits for a human. Nothing on the worker is deleted.
+   */
+  const classifyForRemoval = Effect.fn("BoardWorkers.classifyForRemoval")(function* (
+    workerId: EnvironmentId,
+  ) {
+    const board = yield* readBoard;
+    const classifications: Array<BoardWorkerRemovalClassification> = [];
+    for (const card of board.cards) {
+      if (card.placedWorkerId !== workerId && card.pinnedWorkerId !== workerId) continue;
+      if (card.placedWorkerId !== workerId || !boardCardHoldsWorktree(card)) {
+        classifications.push({ cardId: card.id, outcome: "unplaced" });
+        continue;
+      }
+      const worktree = card.worktree;
+      if (Option.isNone(workspaces) || worktree === null || worktree.path === null) {
+        classifications.push({ cardId: card.id, outcome: "orphaned" });
+        continue;
+      }
+      const workspace = yield* workspaces.value.forWorker(workerId, card.projectId);
+      classifications.push({
+        cardId: card.id,
+        outcome: yield* classifyRemovalWorktree(workspace, {
+          worktreePath: worktree.path,
+          branch: worktree.branch,
+          baseRefName: worktree.baseRefName,
+        }),
+      });
+    }
+    return classifications;
+  });
+
   const remove: BoardWorkersShape["remove"] = Effect.fn("BoardWorkers.remove")(
     function* (workerId) {
       yield* removable(workerId);
-      const running = yield* runningThreadsOn(workerId);
-      // The record goes first: a removal the decider refuses (a concurrent
-      // Make default, say) must leave the worker's session and token intact.
-      const rpc = yield* connections.get(workerId).pipe(Effect.option);
-      yield* engine
-        .dispatch({
-          type: "board.worker.remove",
-          commandId: yield* newCommandId,
-          workerId,
-          createdAt: yield* nowIso,
-        })
-        .pipe(Effect.mapError((cause) => actionError("internal", cause.message)));
-      // Stop what was running there, so it doesn't go on spending tokens for
-      // a board that no longer uses it. Best effort, and only while the
-      // worker answers; the supervisor stalls those steps and frees their
-      // slots off the removal event either way.
-      if (Option.isSome(rpc)) {
-        for (const threadId of running) {
-          yield* rpc.value.gateway
-            .stopSession({ commandId: yield* newCommandId, threadId })
-            .pipe(Effect.timeout(STOP_TIMEOUT), Effect.ignore);
-        }
-      }
-      // Then every session this board holds there goes back over the tunnel, before
-      // its listener closes in the sync below. Unreachable is fine: the tunnel
-      // credential is revoked here, and a worker coming back to a board that no longer
-      // knows it revokes the board's sessions itself.
-      const revoked = Option.isNone(rpc)
-        ? false
-        : yield* rpc.value.releaseAll.pipe(
-            Effect.timeout(RELEASE_TIMEOUT),
-            Effect.as(true),
-            Effect.orElseSucceed(() => false),
-          );
-      yield* joinStore.revokeCredentials({ workerId, at: yield* nowIso });
-      yield* secrets.remove(workerSecretName(workerId)).pipe(Effect.ignore);
-      yield* syncConnections;
-      yield* forgetSignalCursor(workerId);
-      yield* dropSetups(workerId);
-      return { revoked };
+      // T3o: no card is placed there, and no step starts there, while it is removed (T3O-87).
+      beingRemoved.add(workerId);
+      return yield* removeSequence(workerId).pipe(
+        Effect.ensuring(Effect.sync(() => beingRemoved.delete(workerId))),
+      );
     },
   );
+
+  const removeSequence = Effect.fn("BoardWorkers.removeSequence")(function* (
+    workerId: EnvironmentId,
+  ) {
+    const running = yield* runningStepsOn(workerId);
+    const rpc = yield* connections.get(workerId).pipe(Effect.option);
+    // T3o: park each running step the way a human Stop does, then stop its session, before
+    // anything is probed: a stop alone reads as an unattended turn ending, and the supervisor
+    // would put the agent back to work mid-probe (T3O-87).
+    if (Option.isSome(rpc)) {
+      for (const step of running) {
+        yield* engine
+          .dispatch({
+            type: "board.card.pause-step",
+            commandId: yield* newCommandId,
+            cardId: step.cardId,
+            stepId: step.stepId,
+            createdAt: yield* nowIso,
+          })
+          .pipe(Effect.ignore);
+        yield* rpc.value.gateway
+          .stopSession({ commandId: yield* newCommandId, threadId: step.threadId })
+          .pipe(Effect.timeout(STOP_TIMEOUT), Effect.ignore);
+      }
+    }
+    const classifications = Option.isSome(rpc) ? yield* classifyForRemoval(workerId) : [];
+    // The record goes after the sequence and before release: a removal the decider refuses
+    // must leave the worker's session and token intact.
+    yield* engine
+      .dispatch({
+        type: "board.worker.remove",
+        commandId: yield* newCommandId,
+        workerId,
+        ...(classifications.length === 0 ? {} : { classifications }),
+        createdAt: yield* nowIso,
+      })
+      .pipe(Effect.mapError((cause) => actionError("internal", cause.message)));
+    // Then every session this board holds there goes back over the tunnel, before
+    // its listener closes in the sync below. Unreachable is fine: the tunnel
+    // credential is revoked here, and a worker coming back to a board that no longer
+    // knows it revokes the board's sessions itself.
+    const revoked = Option.isNone(rpc)
+      ? false
+      : yield* rpc.value.releaseAll.pipe(
+          Effect.timeout(RELEASE_TIMEOUT),
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+    yield* joinStore.revokeCredentials({ workerId, at: yield* nowIso });
+    yield* secrets.remove(workerSecretName(workerId)).pipe(Effect.ignore);
+    yield* syncConnections;
+    yield* forgetSignalCursor(workerId);
+    yield* dropSetups(workerId);
+    return { revoked };
+  });
 
   const setDefault: BoardWorkersShape["setDefault"] = Effect.fn("BoardWorkers.setDefault")(
     function* (workerId) {
@@ -763,6 +875,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
     dismissSetup,
     state,
     states,
+    beingRemoved: Effect.sync(() => new Set(beingRemoved) as ReadonlySet<BoardWorkerId>),
   } satisfies BoardWorkersShape;
 });
 
