@@ -69,6 +69,7 @@ function BoardCardCapacityPanel(props: {
   readonly projectId: string;
   readonly onSetSize: (size: BoardCardSize | null) => void;
   readonly onSetupAction: (action: "retry" | "cancel") => void;
+  /** The log's text, "" when it has none, or null when it couldn't be read. */
   readonly onReadSetupLog: () => Promise<string | null>;
 }) {
   const { capacity, setup } = props;
@@ -164,7 +165,9 @@ function BoardCardCapacityPanel(props: {
                 ) : null}
                 <Button
                   onClick={() => {
-                    void props.onReadSetupLog().then((text) => setLog(text ?? ""));
+                    void props
+                      .onReadSetupLog()
+                      .then((text) => setLog(text ?? "Couldn't read the log from the worker."));
                   }}
                   size="xs"
                   variant="ghost-muted"
@@ -224,7 +227,7 @@ export function BoardCardCapacityPanelHost(props: {
       capacity={capacity}
       onReadSetupLog={() =>
         capacityAction({ environmentId, input: { action: "setupLog", cardId: card.id } }).then(
-          (result) => (result._tag === "Success" ? result.value : null),
+          (result) => (result._tag === "Success" ? (result.value ?? "") : null),
         )
       }
       onSetSize={(size) => void updateCard({ environmentId, input: { cardId: card.id, size } })}

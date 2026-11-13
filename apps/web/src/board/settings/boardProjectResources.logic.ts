@@ -7,6 +7,8 @@ import {
   BOARD_RESOURCE_PROFILE_KEYS,
   boardResourceProfileOverflow,
   boardResourceProfileValue,
+  normalizeBoardReadinessPath,
+  type BoardProjectResources,
   type BoardResourceProfile,
   type BoardWorkerCapacitySnapshot,
   type BoardWorkerId,
@@ -89,3 +91,83 @@ export const BOARD_BASELINE_FIELDS = BOARD_RESOURCE_DIMENSIONS.map((dimension) =
   label: ({ cpu: "CPU", ram: "RAM", disk: "Disk" } as const)[dimension],
   unit: UNITS[dimension],
 }));
+
+/** The form's text, one string per field; blank leaves the setting undeclared. */
+export type BoardResourcesDraft = Readonly<Record<string, string>>;
+
+const declared = (value: number | null | undefined) => (value == null ? "" : String(value));
+
+/** The form as the settings declare it: an undeclared setting is blank, its default a placeholder. */
+export function boardResourcesDraftOf(
+  resources: BoardProjectResources | null,
+): BoardResourcesDraft {
+  return {
+    cpuCores: declared(resources?.baseline?.cpuCores),
+    ramGiB: declared(resources?.baseline?.ramGiB),
+    diskGB: declared(resources?.baseline?.diskGB),
+    setupTimeoutMinutes: declared(resources?.setupTimeoutMinutes),
+    readinessPath: resources?.readinessPath ?? "",
+    readinessTimeoutSeconds: declared(resources?.readinessTimeoutSeconds),
+  };
+}
+
+/**
+ * The draft as settings, or the first field that doesn't parse. Blank stays undeclared, so
+ * saving one field declares nothing else; an unchanged baseline keeps its set-at-upgrade mark.
+ */
+export function boardResourcesOf(
+  draft: BoardResourcesDraft,
+  previous: BoardProjectResources | null,
+): { readonly ok: BoardProjectResources } | { readonly error: string } {
+  const raw = BOARD_BASELINE_FIELDS.map((field) => (draft[field.key] ?? "").trim());
+  let baseline: BoardProjectResources["baseline"] = null;
+  if (raw.some((value) => value !== "")) {
+    const values: Record<string, number> = {};
+    for (const field of BOARD_BASELINE_FIELDS) {
+      const value = parseBoardBaselineField(draft[field.key] ?? "");
+      if (value === null) {
+        return {
+          error: `${field.label} must be a positive number, or clear all three for the default.`,
+        };
+      }
+      values[field.key] = value;
+    }
+    const before = previous?.baseline ?? null;
+    baseline = {
+      cpuCores: values.cpuCores!,
+      ramGiB: values.ramGiB!,
+      diskGB: values.diskGB!,
+      setAtUpgrade:
+        before !== null &&
+        before.setAtUpgrade &&
+        before.cpuCores === values.cpuCores &&
+        before.ramGiB === values.ramGiB &&
+        before.diskGB === values.diskGB,
+    };
+  }
+  const optional = (key: string) => {
+    const text = (draft[key] ?? "").trim();
+    return text === "" ? { value: null } : { value: parseBoardBaselineField(text) };
+  };
+  const setupTimeout = optional("setupTimeoutMinutes");
+  if (setupTimeout.value === null && (draft.setupTimeoutMinutes ?? "").trim() !== "") {
+    return { error: "The setup timeout must be positive." };
+  }
+  const readinessTimeout = optional("readinessTimeoutSeconds");
+  if (readinessTimeout.value === null && (draft.readinessTimeoutSeconds ?? "").trim() !== "") {
+    return { error: "The readiness timeout must be positive." };
+  }
+  const rawPath = (draft.readinessPath ?? "").trim();
+  const readinessPath = rawPath === "" ? null : normalizeBoardReadinessPath(rawPath);
+  if (rawPath !== "" && readinessPath === null) {
+    return { error: "The readiness script must be a path inside the repository." };
+  }
+  return {
+    ok: {
+      baseline,
+      setupTimeoutMinutes: setupTimeout.value,
+      readinessPath,
+      readinessTimeoutSeconds: readinessTimeout.value,
+    },
+  };
+}

@@ -3,9 +3,8 @@ import {
   BOARD_LOCAL_WORKER_ID,
   BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
   EnvironmentId,
-  PositiveInt,
   ProjectId,
-  type BoardConcurrencySettings,
+  type BoardWorkerCapacitySnapshot,
   type BoardWorkersState,
   type BoardWorkerView,
 } from "@t3tools/contracts";
@@ -24,7 +23,6 @@ import {
   boardWorkerChoices,
   boardWorkerFieldLabel,
   boardWorkerLoadLabel,
-  boardWorkerRunningCounts,
 } from "./cardWorker";
 
 const LINUX = EnvironmentId.make("env-linux-box");
@@ -81,14 +79,20 @@ const state = (
   ...extra,
 });
 
-const concurrency: BoardConcurrencySettings = {
-  perInstance: {},
-  globalMaxConcurrent: PositiveInt.make(8),
-  workers: {
-    local: { maxConcurrent: PositiveInt.make(4), perInstance: {} },
-    [LINUX]: { maxConcurrent: PositiveInt.make(4), perInstance: {} },
-  },
-};
+const snapshot = (
+  running: number,
+  extra: Partial<BoardWorkerCapacitySnapshot> = {},
+): BoardWorkerCapacitySnapshot => ({
+  at: NOW,
+  declared: { cpuCores: 16, ramGiB: 64, diskGB: 200 },
+  headroom: { cpuCores: 6, ramGiB: 24, diskGB: 120 },
+  over: { cpuRam: false, disk: false },
+  agents: { running, max: null },
+  providers: [],
+  readiness: [],
+  heavyCards: [],
+  ...extra,
+});
 
 describe("the worker chip (prototype 4.4)", () => {
   it("is absent on a board with one worker", () => {
@@ -119,24 +123,20 @@ describe("the worker picker (prototype 4.2)", () => {
       worker(EnvironmentId.make("env-ci"), "ci-runner-2", { state: "unauthorized" }),
       worker(EnvironmentId.make("env-old"), "old-mini", { state: "incompatible" }),
     ]);
-    const running = boardWorkerRunningCounts(
-      [
-        { stepRunning: true },
-        ...Array.from({ length: 4 }, () => ({ workerId: LINUX, stepRunning: true })),
-      ],
-      board,
-    );
+    const capacity = new Map<string, BoardWorkerCapacitySnapshot>([
+      [BOARD_LOCAL_WORKER_ID, snapshot(1)],
+      [LINUX, snapshot(4, { over: { cpuRam: true, disk: false } })],
+    ]);
     const rows = boardWorkerChoices({
       state: board,
       projectId,
       projectRepositoryKey: KEY,
       projectName: "advisor",
-      running,
-      concurrency,
+      capacity,
     });
     expect(rows.map((row) => [row.label, row.selectable, row.detail])).toEqual([
-      ["This server (local)", true, "1 of 4 busy"],
-      ["linux-box", true, "4 of 4 busy · will queue"],
+      ["This server (local)", true, "1 agent · 6 cores, 24 GiB free"],
+      ["linux-box", true, "Full · will queue"],
       ["mbp-brent", false, "No checkout of advisor"],
       ["gpu-rig", false, "Offline"],
       ["ci-runner-2", false, "Reconnecting"],
@@ -169,14 +169,31 @@ describe("the worker picker (prototype 4.2)", () => {
       projectId,
       projectRepositoryKey: KEY,
       projectName: "advisor",
-      running: new Map(),
-      concurrency,
+      capacity: new Map(),
     })[1]!;
     expect(row).toMatchObject({ selectable: true, cloning: true, detail: "Cloning advisor · 32%" });
   });
 
-  it("says the load with no limit plainly", () => {
-    expect(boardWorkerLoadLabel(2, null)).toBe("2 busy");
+  it("says a worker whose readiness check fails for the project will queue the card", () => {
+    const board = state([worker(LINUX, "linux-box")]);
+    const readiness = [
+      {
+        repositoryKey: KEY,
+        path: "t3o/ready.sh",
+        state: "not-ready" as const,
+        version: null,
+        checkedAt: NOW,
+      },
+    ];
+    const row = boardWorkerChoices({
+      state: board,
+      projectId,
+      projectRepositoryKey: KEY,
+      projectName: "advisor",
+      capacity: new Map([[LINUX, snapshot(0, { readiness })]]),
+    })[1]!;
+    expect(row).toMatchObject({ selectable: true, detail: "Not ready for advisor · will queue" });
+    expect(boardWorkerLoadLabel(undefined)).toBe("No capacity report yet");
   });
 });
 

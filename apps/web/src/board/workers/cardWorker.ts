@@ -6,12 +6,11 @@
 import {
   BOARD_LOCAL_WORKER_ID,
   BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
-  resolveBoardWorkerConcurrency,
   resolveBoardWorkerCheckout,
   type BoardCard,
   type BoardCardShell,
-  type BoardConcurrencySettings,
   type BoardStepQueuedBy,
+  type BoardWorkerCapacitySnapshot,
   type BoardWorkerId,
   type BoardWorkersState,
   type BoardWorkerSetup,
@@ -68,26 +67,16 @@ export function boardCardWorkerChip(
   };
 }
 
-/** Agents running on each worker, from the shells: the "1 of 4 busy" count. */
-export function boardWorkerRunningCounts(
-  cards: ReadonlyArray<Pick<BoardCardShell, "workerId" | "stepRunning">>,
-  state: BoardWorkersState,
-): ReadonlyMap<BoardWorkerId, number> {
-  const counts = new Map<BoardWorkerId, number>();
-  for (const card of cards) {
-    if (!card.stepRunning) continue;
-    const { workerId } = boardCardWorker(card, state);
-    counts.set(workerId, (counts.get(workerId) ?? 0) + 1);
-  }
-  return counts;
-}
+const round = (value: number) => Math.round(value * 10) / 10;
 
-/** "1 of 4 busy", "4 of 4 busy · will queue", or "2 busy" with no limit. */
-export function boardWorkerLoadLabel(running: number, limit: number | null): string {
-  if (limit === null) return `${running} busy`;
-  return running >= limit
-    ? `${running} of ${limit} busy · will queue`
-    : `${running} of ${limit} busy`;
+/** A worker's load as its latest capacity snapshot says: "2 agents · 6 cores, 24 GiB free". */
+export function boardWorkerLoadLabel(snapshot: BoardWorkerCapacitySnapshot | undefined): string {
+  if (snapshot === undefined) return "No capacity report yet";
+  if (snapshot.over.cpuRam) return "Full · will queue";
+  const { running } = snapshot.agents;
+  const cpu = round(Math.max(0, snapshot.headroom.cpuCores));
+  const ram = round(Math.max(0, snapshot.headroom.ramGiB));
+  return `${running} ${running === 1 ? "agent" : "agents"} · ${cpu} cores, ${ram} GiB free`;
 }
 
 export interface BoardWorkerChoice {
@@ -138,14 +127,10 @@ export function boardWorkerChoices(input: {
   readonly projectRepositoryKey: string | null;
   /** The project's short name, as the rows say it ("advisor"). */
   readonly projectName: string;
-  readonly running: ReadonlyMap<BoardWorkerId, number>;
-  readonly concurrency: BoardConcurrencySettings;
+  /** Each worker's latest capacity snapshot, from the capacity stream. */
+  readonly capacity: ReadonlyMap<string, BoardWorkerCapacitySnapshot>;
 }): ReadonlyArray<BoardWorkerChoice> {
-  const load = (workerId: BoardWorkerId) =>
-    boardWorkerLoadLabel(
-      input.running.get(workerId) ?? 0,
-      resolveBoardWorkerConcurrency(input.concurrency, workerId).maxConcurrent,
-    );
+  const load = (workerId: BoardWorkerId) => boardWorkerLoadLabel(input.capacity.get(workerId));
   const local: BoardWorkerChoice = {
     workerId: BOARD_LOCAL_WORKER_ID,
     label: `${localWorkerLabel(input.state)} (local)`,
@@ -185,7 +170,21 @@ export function boardWorkerChoices(input: {
     }
     const setup = setupOf(input.state, worker.id, input.projectId);
     if (boardWorkerHasCheckout(worker, input.projectRepositoryKey)) {
-      return { ...base, selectable: true, detail: load(worker.id), tooltip: null };
+      const notReady = input.capacity
+        .get(worker.id)
+        ?.readiness.some(
+          (entry) =>
+            entry.repositoryKey === input.projectRepositoryKey && entry.state === "not-ready",
+        );
+      // Like a clone in progress: the card can be pinned, and waits until the check passes.
+      return notReady === true
+        ? {
+            ...base,
+            selectable: true,
+            detail: `Not ready for ${input.projectName} · will queue`,
+            tooltip: `${worker.label}'s readiness check for ${input.projectName} fails. The card waits until it passes; re-check it on the Workers page.`,
+          }
+        : { ...base, selectable: true, detail: load(worker.id), tooltip: null };
     }
     if (setup?.phase === "cloning") {
       return {

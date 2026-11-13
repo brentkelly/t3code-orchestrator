@@ -1,7 +1,12 @@
 import type { BoardWorkerCapacitySnapshot, BoardWorkerId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { boardProjectWorkerRows, parseBoardBaselineField } from "./boardProjectResources.logic";
+import {
+  boardProjectWorkerRows,
+  boardResourcesDraftOf,
+  boardResourcesOf,
+  parseBoardBaselineField,
+} from "./boardProjectResources.logic";
 
 const snapshot = (
   declared: BoardWorkerCapacitySnapshot["declared"],
@@ -82,5 +87,47 @@ describe("parseBoardBaselineField", () => {
     expect(parseBoardBaselineField("0")).toBeNull();
     expect(parseBoardBaselineField("")).toBeNull();
     expect(parseBoardBaselineField("four")).toBeNull();
+  });
+});
+
+describe("the Resources form", () => {
+  it("saving one field declares nothing else and keeps the set-at-upgrade mark", () => {
+    const previous = {
+      baseline: { cpuCores: 2, ramGiB: 4, diskGB: 5, setAtUpgrade: true },
+      setupTimeoutMinutes: null,
+      readinessPath: null,
+      readinessTimeoutSeconds: null,
+    };
+    const draft = { ...boardResourcesDraftOf(previous), readinessPath: "./ci/ready.sh" };
+    expect(boardResourcesDraftOf(previous)["setupTimeoutMinutes"]).toBe("");
+    expect(boardResourcesOf(draft, previous)).toEqual({
+      ok: { ...previous, readinessPath: "ci/ready.sh" },
+    });
+    // From nothing declared, the defaults stay undeclared.
+    expect(boardResourcesOf(boardResourcesDraftOf(null), null)).toEqual({
+      ok: {
+        baseline: null,
+        setupTimeoutMinutes: null,
+        readinessPath: null,
+        readinessTimeoutSeconds: null,
+      },
+    });
+  });
+
+  it("an edited baseline drops the mark; a half-filled one is refused", () => {
+    const previous = {
+      baseline: { cpuCores: 2, ramGiB: 4, diskGB: 5, setAtUpgrade: true },
+      setupTimeoutMinutes: null,
+      readinessPath: null,
+      readinessTimeoutSeconds: null,
+    };
+    const edited = boardResourcesOf(
+      { ...boardResourcesDraftOf(previous), cpuCores: "3" },
+      previous,
+    );
+    expect("ok" in edited && edited.ok.baseline?.setAtUpgrade).toBe(false);
+    expect(
+      boardResourcesOf({ ...boardResourcesDraftOf(null), cpuCores: "3" }, null),
+    ).toHaveProperty("error");
   });
 });

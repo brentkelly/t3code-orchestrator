@@ -9901,7 +9901,7 @@ export const BoardWorkerPoolSettings = Schema.Struct({
   ),
 });
 export type BoardWorkerPoolSettings = typeof BoardWorkerPoolSettings.Type;
-export const DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT = 3;
+const DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT = 3;
 export const DEFAULT_BOARD_STEP_TIMEOUT_MS = 30 * 60 * 1000;
 /** Consecutive unproductive stalls per step (`stallCount`, reset on progress), not
     cumulative nudges. */
@@ -12351,25 +12351,6 @@ export const DEFAULT_BOARD_SETTINGS: BoardSettings = Schema.decodeSync(BoardSett
 // deleted. So clearing an override is a retained entry of nulls (`{ keyPrefix: null }`, a
 // `null` cap), which the resolvers read as "use the default", never an omitted key.
 
-export const BoardConcurrencySettingsPatch = Schema.Struct({
-  perInstance: Schema.optionalKey(Schema.Record(ProviderInstanceId, Schema.NullOr(PositiveInt))),
-  globalMaxConcurrent: Schema.optionalKey(PositiveInt),
-  /** Per-worker limits. Merged key by key like every other map here:
-      a cleared limit or cap is a retained `null`, never a deleted key. */
-  workers: Schema.optionalKey(
-    Schema.Record(
-      Schema.String,
-      Schema.Struct({
-        maxConcurrent: Schema.optionalKey(Schema.NullOr(PositiveInt)),
-        perInstance: Schema.optionalKey(
-          Schema.Record(ProviderInstanceId, Schema.NullOr(PositiveInt)),
-        ),
-      }),
-    ),
-  ),
-});
-export type BoardConcurrencySettingsPatch = typeof BoardConcurrencySettingsPatch.Type;
-
 export const BoardLifecycleSettingsPatch = Schema.Struct({
   reclaimWorktreeOnDone: Schema.optionalKey(Schema.Boolean),
   autoArchiveDone: Schema.optionalKey(Schema.Boolean),
@@ -12390,7 +12371,8 @@ export const BoardSettingsPatch = Schema.Struct({
       so this follows the same retained-null convention as a project override. */
   defaultModel: Schema.optionalKey(Schema.NullOr(BoardModelSelection)),
   pipeline: Schema.optionalKey(BoardPipeline),
-  concurrency: Schema.optionalKey(BoardConcurrencySettingsPatch),
+  // T3o: no `concurrency` (T3O-86): the board's own limits are gone; stored values are read
+  // once by the capacity upgrade and never written again.
   lifecycle: Schema.optionalKey(BoardLifecycleSettingsPatch),
   display: Schema.optionalKey(BoardDisplaySettingsPatch),
   /** A null address is retained and clears it. */

@@ -1114,7 +1114,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
   // T3o regression: board edits were refused at the write. The sparse strip
   // diffed these objects field-wise, and the partial (`{ maxAttempts: 6 }`, no
   // `kind`) failed the writer's validation, so the UI silently snapped back.
-  it.effect("persists a board pipeline / concurrency / lifecycle edit", () =>
+  it.effect("persists a board pipeline / lifecycle edit", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       const serverConfig = yield* ServerConfig.ServerConfig;
@@ -1133,7 +1133,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
               model: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "opus" },
             },
           },
-          concurrency: { globalMaxConcurrent: PositiveInt.make(7) },
           lifecycle: { reclaimWorktreeOnDone: false },
         },
       });
@@ -1143,20 +1142,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "opus",
       });
-      assert.equal(next.board.concurrency.globalMaxConcurrent, 7);
       assert.equal(next.board.lifecycle.reclaimWorktreeOnDone, false);
 
       // The file keeps only what differs, and every surviving object is whole
       // enough to decode on its own.
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
       const parsed = JSON.parse(raw) as { readonly board: Record<string, unknown> };
-      assert.deepEqual(Object.keys(parsed.board).sort(), ["concurrency", "lifecycle", "pipeline"]);
+      assert.deepEqual(Object.keys(parsed.board).sort(), ["lifecycle", "pipeline"]);
       assert.deepEqual(Object.keys(parsed.board.pipeline as object), ["building"]);
 
       // And it survives the restart the file exists for.
       const reloaded = yield* decodeServerSettings(parsed);
       assert.equal(reloaded.board.pipeline.building?.maxAttempts, 6);
-      assert.equal(reloaded.board.concurrency.globalMaxConcurrent, 7);
       assert.equal(reloaded.board.lifecycle.reclaimWorktreeOnDone, false);
 
       // T3o (T3O-77): a later lifecycle patch merges beside the earlier one, and

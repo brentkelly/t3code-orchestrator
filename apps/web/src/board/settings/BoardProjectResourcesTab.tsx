@@ -6,9 +6,7 @@
 import {
   boardRepositoryGroupingKey,
   DEFAULT_BOARD_READINESS_SCRIPT_PATH,
-  normalizeBoardReadinessPath,
   resolveBoardProjectResourceSettings,
-  type BoardProjectResources,
   type BoardWorkerCapacitySnapshot,
   type BoardWorkerId,
   type BoardWorkerReadinessState,
@@ -29,7 +27,9 @@ import { boardWorkerLabel } from "../workers/cardWorker";
 import {
   BOARD_BASELINE_FIELDS,
   boardProjectWorkerRows,
-  parseBoardBaselineField,
+  boardResourcesDraftOf,
+  boardResourcesOf,
+  type BoardResourcesDraft,
 } from "./boardProjectResources.logic";
 import { useBoardSettingsContext, useBoardSettingsProjects } from "./BoardSettingsLayout";
 import type { BoardProjectConfigState } from "./useBoardProjectConfig";
@@ -43,54 +43,6 @@ const STATE_LABELS: Readonly<Record<BoardWorkerReadinessState, string>> = {
 };
 
 const NO_SNAPSHOTS: ReadonlyMap<string, BoardWorkerCapacitySnapshot> = new Map();
-
-type Draft = Readonly<Record<string, string>>;
-
-const draftOf = (resources: BoardProjectResources | null): Draft => {
-  const resolved = resolveBoardProjectResourceSettings(resources);
-  return {
-    cpuCores: String(resolved.baseline.cpuCores),
-    ramGiB: String(resolved.baseline.ramGiB),
-    diskGB: String(resolved.baseline.diskGB),
-    setupTimeoutMinutes: String(resolved.setupTimeoutMinutes),
-    readinessPath: resources?.readinessPath ?? "",
-    readinessTimeoutSeconds: String(resolved.readinessTimeoutSeconds),
-  };
-};
-
-/** The draft as settings, or the first field that doesn't parse. */
-function resourcesOf(
-  draft: Draft,
-): { readonly ok: BoardProjectResources } | { readonly error: string } {
-  const baseline: Record<string, number> = {};
-  for (const field of BOARD_BASELINE_FIELDS) {
-    const value = parseBoardBaselineField(draft[field.key] ?? "");
-    if (value === null) return { error: `${field.label} must be a positive number.` };
-    baseline[field.key] = value;
-  }
-  const setupTimeoutMinutes = parseBoardBaselineField(draft.setupTimeoutMinutes ?? "");
-  if (setupTimeoutMinutes === null) return { error: "The setup timeout must be positive." };
-  const readinessTimeoutSeconds = parseBoardBaselineField(draft.readinessTimeoutSeconds ?? "");
-  if (readinessTimeoutSeconds === null) return { error: "The readiness timeout must be positive." };
-  const rawPath = (draft.readinessPath ?? "").trim();
-  const readinessPath = rawPath === "" ? null : normalizeBoardReadinessPath(rawPath);
-  if (rawPath !== "" && readinessPath === null) {
-    return { error: "The readiness script must be a path inside the repository." };
-  }
-  return {
-    ok: {
-      baseline: {
-        cpuCores: baseline.cpuCores!,
-        ramGiB: baseline.ramGiB!,
-        diskGB: baseline.diskGB!,
-        setAtUpgrade: false,
-      },
-      setupTimeoutMinutes,
-      readinessPath,
-      readinessTimeoutSeconds,
-    },
-  };
-}
 
 export function BoardProjectResourcesTab(props: {
   readonly projectId: ProjectId;
@@ -109,14 +61,12 @@ export function BoardProjectResourcesTab(props: {
     reportFailure: false,
   });
   const capacityAction = useAtomCommand(boardEnvironment.capacityAction);
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [draft, setDraft] = useState<BoardResourcesDraft | null>(null);
   const [output, setOutput] = useState<{ workerId: BoardWorkerId; text: string } | null>(null);
-  const shown = draft ?? draftOf(resources);
-  const parsed = resourcesOf(shown);
+  const shown = draft ?? boardResourcesDraftOf(resources);
+  const parsed = boardResourcesOf(shown, resources);
   const settings = resolveBoardProjectResourceSettings(resources);
-  const snapshots = AsyncResult.isSuccess(capacityResult)
-    ? capacityResult.value
-    : NO_SNAPSHOTS;
+  const snapshots = AsyncResult.isSuccess(capacityResult) ? capacityResult.value : NO_SNAPSHOTS;
   const rows = boardProjectWorkerRows({
     workers: [...snapshots.keys()].map((key) => {
       const workerId = key as BoardWorkerId;
@@ -177,26 +127,33 @@ export function BoardProjectResourcesTab(props: {
         </p>
         <div className="flex flex-wrap gap-3">
           {BOARD_BASELINE_FIELDS.map((entry) => (
-            <div key={entry.key}>{field(entry.key, entry.label, entry.unit)}</div>
+            <div key={entry.key}>
+              {field(entry.key, entry.label, entry.unit, String(settings.baseline[entry.key]))}
+            </div>
           ))}
         </div>
       </section>
       <section className="flex flex-col gap-2">
         <h3 className="text-board-13 font-medium">Setup and readiness</h3>
         <div className="flex flex-wrap gap-3">
-          {field("setupTimeoutMinutes", "Setup timeout", "minutes")}
           {field(
-            "readinessPath",
-            "Readiness script",
-            "",
-            DEFAULT_BOARD_READINESS_SCRIPT_PATH,
+            "setupTimeoutMinutes",
+            "Setup timeout",
+            "minutes",
+            String(settings.setupTimeoutMinutes),
           )}
-          {field("readinessTimeoutSeconds", "Readiness timeout", "seconds")}
+          {field("readinessPath", "Readiness script", "", DEFAULT_BOARD_READINESS_SCRIPT_PATH)}
+          {field(
+            "readinessTimeoutSeconds",
+            "Readiness timeout",
+            "seconds",
+            String(settings.readinessTimeoutSeconds),
+          )}
         </div>
         <p className="text-board-12 text-muted-foreground">
-          The readiness script runs from the default branch on each worker before cards are
-          placed there. Make it check the machine (tools, services, credentials), not files in
-          the repository. With no script, a checkout counts as ready.
+          The readiness script runs from the default branch on each worker before cards are placed
+          there. Make it check the machine (tools, services, credentials), not files in the
+          repository. With no script, a checkout counts as ready.
         </p>
       </section>
       {canWrite ? (
@@ -269,7 +226,10 @@ export function BoardProjectResourcesTab(props: {
                           }).then((result) =>
                             setOutput({
                               workerId: row.workerId,
-                              text: result._tag === "Success" ? (result.value ?? "") : "",
+                              text:
+                                result._tag === "Success"
+                                  ? (result.value ?? "")
+                                  : "Couldn't read the output from the worker.",
                             }),
                           )
                         }

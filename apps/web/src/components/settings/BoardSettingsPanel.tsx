@@ -5,7 +5,6 @@
  */
 import {
   DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
-  DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT,
   DEFAULT_BOARD_KEY_PREFIX,
   DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
   type BoardSettings,
@@ -27,10 +26,7 @@ import { environmentShell } from "../../state/shell";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
-import {
-  normalizeKeyPrefixInput,
-  setBoardProjectSetting,
-} from "./BoardSettingsPanel.logic";
+import { normalizeKeyPrefixInput, setBoardProjectSetting } from "./BoardSettingsPanel.logic";
 import { BoardPipelineSection, NumberStepper } from "./BoardPipelineSection";
 import { BoardSettingsCard, BoardSettingsCardRow } from "../../board/settings/boardSettingsCards";
 import { BoardImportNotices } from "../../board/settings/BoardImportNotice";
@@ -365,8 +361,7 @@ function LifecycleSection({ board, update }: { board: BoardSettings; update: Upd
       </BoardSettingsCard>
       <p className="px-3 text-xs text-muted-foreground/70 sm:px-4">
         Defaults: reclaim worktrees at Done {DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE ? "on" : "off"},
-        auto-archive off ({DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS} days when on), global concurrency{" "}
-        {DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT}.
+        auto-archive off ({DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS} days when on).
       </p>
     </SettingsSection>
   );
