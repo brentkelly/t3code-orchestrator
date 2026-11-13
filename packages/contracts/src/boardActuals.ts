@@ -74,7 +74,7 @@ export const BoardWorkerActualsInput = Schema.Struct({
   /** `read` returns the figures so far; `end` takes a last sample, measures the worktree and
       forgets the key. */
   op: Schema.Literals(["read", "end"]),
-  /** `thread:<id>`, `ci:<runId>` or `setup:<worktree>`. */
+  /** `thread:<id>`, `ci:<runId>` or `setup:<worktree>@<startedAt>`. */
   key: TrimmedNonEmptyString,
   /** An agent step's thread, whose scope the worker samples; begun on first read. */
   threadId: Schema.optionalKey(TrimmedNonEmptyString),
@@ -91,6 +91,7 @@ export type BoardActualsStepKind = typeof BoardActualsStepKind.Type;
 /** One measured step of a card, as the board stores it. It keeps the worker it ran on and the
     profile granted then, so a re-placed card never mixes one worker's peak with another's grant. */
 export const BoardCardActualsRow = Schema.Struct({
+  /** A resumed agent step's later runs are `thread:<id>#<n>`. */
   stepKey: TrimmedNonEmptyString,
   kind: BoardActualsStepKind,
   /** An agent step's thread link role (as Usage rows carry), for the linked hover. */

@@ -239,3 +239,76 @@ it.effect("a not-measured row is written once; a running one not yet measured st
     assert.include(h.calls.at(-1)?.input, { op: "end", key: "thread:t-claude" });
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
+
+// A pause ends the row and its meter entry; the resumed run starts its figures from 0.
+it.effect("a resumed agent step keeps the figures of its run before the pause", () =>
+  Effect.gen(function* () {
+    const running = step("claude-card", "claudeAgent", "t-claude");
+    const h = yield* harness({
+      cards: [card("claude-card")],
+      nextCardNumberByProject: {},
+      stepStates: [running],
+    });
+    h.answers.set("read:thread:t-claude", reading({ peakRamBytes: 9 * GiB }));
+    h.answers.set("end:thread:t-claude", reading({ running: false, peakRamBytes: 9 * GiB }));
+    yield* h.recorder.sweep();
+    h.state.board = { ...h.state.board, stepStates: [{ ...running, status: "paused" }] };
+    yield* h.recorder.sweep();
+    h.answers.set("read:thread:t-claude", reading({ peakRamBytes: 2 * GiB }));
+    h.state.board = { ...h.state.board, stepStates: [running] };
+    h.state.now = "2026-11-13T00:05:00.000Z";
+    yield* h.recorder.sweep();
+    yield* h.recorder.sweep();
+    const rows = yield* listCardActualsRows(h.sql, BoardCardId.make("claude-card"));
+    assert.deepStrictEqual(
+      rows.map((row) => [row.stepKey, row.reading.peakRamBytes, row.endedAt === null]),
+      [
+        ["thread:t-claude", 9 * GiB, false],
+        ["thread:t-claude#2", 2 * GiB, true],
+      ],
+    );
+    // The resumed run is read and ended under the thread's own key on its worker.
+    h.state.board = { ...h.state.board, stepStates: [] };
+    yield* h.recorder.sweep();
+    assert.include(h.calls.at(-1)?.input, {
+      op: "end",
+      key: "thread:t-claude",
+      threadId: "t-claude",
+    });
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.effect("a retried setup is measured apart, and ending the first run leaves the retry's", () =>
+  Effect.gen(function* () {
+    const setupAt = (startedAt: string) =>
+      card("c", {
+        worktree: {
+          path: "/w/c",
+          branch: "board/c",
+          status: "ready",
+        } as BoardCard["worktree"],
+        resources: {
+          ...card("c").resources!,
+          setup: { status: "running", startedAt, workerId: W1 } as never,
+        },
+      });
+    const first = "2026-11-13T00:00:00.000Z";
+    const retry = "2026-11-13T00:01:00.000Z";
+    const h = yield* harness({
+      cards: [setupAt(first)],
+      nextCardNumberByProject: {},
+      stepStates: [],
+    });
+    h.answers.set(`read:setup:/w/c@${first}`, reading());
+    yield* h.recorder.sweep();
+    h.state.board = { ...h.state.board, cards: [setupAt(retry)] };
+    h.answers.set(`read:setup:/w/c@${retry}`, reading());
+    yield* h.recorder.sweep();
+    const keys = h.calls.map((call) => `${call.input.op}:${call.input.key}`);
+    assert.deepStrictEqual(keys, [
+      `read:setup:/w/c@${first}`,
+      `read:setup:/w/c@${retry}`,
+      `end:setup:/w/c@${first}`,
+    ]);
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);

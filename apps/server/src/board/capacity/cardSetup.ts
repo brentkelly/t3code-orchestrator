@@ -52,8 +52,9 @@ export interface CardSetupDeps {
   readonly actuals?: Pick<BoardActualsMeterShape, "tap" | "finish">;
 }
 
-/** The meter key a card's setup run is measured under on its worker. */
-export const boardSetupActualsKey = (worktreePath: string) => `setup:${worktreePath}`;
+/** The meter key a card's setup run is measured under on its worker: one run, by its start. */
+export const boardSetupActualsKey = (worktreePath: string, startedAt: string) =>
+  `setup:${worktreePath}@${startedAt}`;
 
 const stagesWith = (
   current: BoardCardSetupStage,
@@ -79,7 +80,10 @@ const stagesWith = (
 
 export const makeCardSetup = (deps: CardSetupDeps) => {
   const runStep = deps.runStep ?? runBoardCiStep;
-  const running = new Map<string, Fiber.Fiber<unknown>>();
+  const running = new Map<
+    string,
+    { readonly fiber: Fiber.Fiber<unknown>; readonly startedAt: string }
+  >();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
   const markerPath = Effect.fn("CardSetup.markerPath")(function* (worktreePath: string) {
@@ -133,9 +137,12 @@ export const makeCardSetup = (deps: CardSetupDeps) => {
           );
         }
         // One script per worktree: a second request while one runs reports it, and starts none.
-        if (running.has(input.worktreePath) && input.markOnly !== true) {
+        const current = running.get(input.worktreePath);
+        if (current !== undefined && input.markOnly !== true) {
           return Stream.make({
             ...base,
+            // The run under way: its start is the key it is measured under.
+            startedAt: current.startedAt,
             status: "running",
             stage: "setup-script",
             stages: stagesWith("setup-script", "running", {}),
@@ -184,9 +191,11 @@ export const makeCardSetup = (deps: CardSetupDeps) => {
               : step.pipe(
                   Effect.provideService(
                     BoardActualsTap,
-                    deps.actuals.tap(boardSetupActualsKey(input.worktreePath)),
+                    deps.actuals.tap(boardSetupActualsKey(input.worktreePath, startedAt)),
                   ),
-                  Effect.ensuring(deps.actuals.finish(boardSetupActualsKey(input.worktreePath))),
+                  Effect.ensuring(
+                    deps.actuals.finish(boardSetupActualsKey(input.worktreePath, startedAt)),
+                  ),
                 ),
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
@@ -235,14 +244,14 @@ export const makeCardSetup = (deps: CardSetupDeps) => {
           ),
           Effect.forkDetach,
         );
-        running.set(input.worktreePath, fiber);
+        running.set(input.worktreePath, { fiber, startedAt });
         return Stream.fromQueue(queue);
       }),
     );
 
   const cancel = Effect.fn("CardSetup.cancel")(function* (worktreePath: string) {
-    const fiber = running.get(worktreePath);
-    if (fiber !== undefined) yield* Fiber.interrupt(fiber);
+    const current = running.get(worktreePath);
+    if (current !== undefined) yield* Fiber.interrupt(current.fiber);
   });
 
   /** The setup log's last 64 KB. */

@@ -50,6 +50,7 @@ import { WorkerConnections } from "../workers/WorkerConnections.ts";
 import { BoardActualsMeter } from "./BoardActualsMeter.ts";
 import {
   hasActualsRow,
+  listCardActualsRows,
   listEndedActualsRows,
   listOpenActualsRows,
   upsertActualsRow,
@@ -144,7 +145,7 @@ function activeSteps(board: BoardState): ReadonlyArray<ActiveStep> {
         stepId: null,
         label: "Setup",
         workerId: setup.workerId,
-        input: { op: "read", key: boardSetupActualsKey(worktreePath) },
+        input: { op: "read", key: boardSetupActualsKey(worktreePath, setup.startedAt) },
         skipReason: null,
       });
     }
@@ -152,11 +153,19 @@ function activeSteps(board: BoardState): ReadonlyArray<ActiveStep> {
   return steps;
 }
 
+/**
+ * A resumed agent step is a new run on its worker (a pause ended the last one), stored as a
+ * segment `thread:<id>#<n>` beside the first so neither overwrites the other.
+ */
+const baseStepKeyOf = (stepKey: string) => stepKey.replace(/#\d+$/, "");
+
 /** The worker key a stored row is read under. */
 function workerKeyOf(row: BoardStoredActualsRow, card: BoardCard | undefined): string | null {
-  if (row.kind !== "setup") return row.stepKey;
+  if (row.kind !== "setup") return baseStepKeyOf(row.stepKey);
   const worktreePath = card?.worktree?.path ?? null;
-  return worktreePath === null ? null : boardSetupActualsKey(worktreePath);
+  return worktreePath === null
+    ? null
+    : boardSetupActualsKey(worktreePath, row.stepKey.slice("setup:".length));
 }
 
 export const makeBoardActualsRecorder = (deps: BoardActualsRecorderDeps) => {
@@ -201,7 +210,10 @@ export const makeBoardActualsRecorder = (deps: BoardActualsRecorderDeps) => {
     const board = yield* deps.readBoard;
     const now = yield* deps.nowIso;
     const open = new Map(
-      (yield* listOpenActualsRows(deps.sql)).map((row) => [`${row.cardId}|${row.stepKey}`, row]),
+      (yield* listOpenActualsRows(deps.sql)).map((row) => [
+        `${row.cardId}|${baseStepKeyOf(row.stepKey)}`,
+        row,
+      ]),
     );
     const changed = new Set<BoardCardId>();
     const ended = new Set<ProjectId>();
@@ -222,9 +234,16 @@ export const makeBoardActualsRecorder = (deps: BoardActualsRecorderDeps) => {
           ? boardStepNotMeasured(step.skipReason)
           : yield* deps.relay(step.workerId, { ...step.input, ...(held ? { seen: true } : {}) });
       if (reading === "unreachable" || reading === null) continue;
+      let stepKey = held?.stepKey ?? step.stepKey;
+      if (held === undefined && step.kind === "agent") {
+        const earlier = (yield* listCardActualsRows(deps.sql, step.card.id)).filter(
+          (row) => baseStepKeyOf(row.stepKey) === step.stepKey,
+        ).length;
+        if (earlier > 0) stepKey = `${step.stepKey}#${earlier + 1}`;
+      }
       yield* upsertActualsRow(deps.sql, {
         cardId: step.card.id,
-        stepKey: step.stepKey,
+        stepKey,
         kind: step.kind,
         stepId: step.stepId,
         label: step.label,
@@ -252,7 +271,9 @@ export const makeBoardActualsRecorder = (deps: BoardActualsRecorderDeps) => {
               key,
               seen: true,
               ...(card?.worktree?.path == null ? {} : { worktreePath: card.worktree.path }),
-              ...(row.kind === "agent" ? { threadId: row.stepKey.slice("thread:".length) } : {}),
+              ...(row.kind === "agent"
+                ? { threadId: baseStepKeyOf(row.stepKey).slice("thread:".length) }
+                : {}),
             });
       if (
         answer === "unreachable" &&
