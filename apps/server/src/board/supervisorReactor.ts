@@ -1653,8 +1653,10 @@ const make = Effect.gen(function* () {
       const snapshot = Option.isSome(capacityClient)
         ? yield* capacityClient.value.latest(workerId)
         : null;
+      // A card pinned here still ranks here, so it reads as too big rather than no ready worker.
       if (
         workerId === BOARD_LOCAL_WORKER_ID &&
+        card.pinnedWorkerId !== BOARD_LOCAL_WORKER_ID &&
         !localIsBuildCandidate(snapshot?.declared ?? null)
       ) {
         continue;

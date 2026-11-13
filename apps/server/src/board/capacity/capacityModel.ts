@@ -18,6 +18,8 @@ import {
 
 /** How long an unconsumed claim holds its load. */
 export const CLAIM_TTL_MS = 60_000;
+/** How long a placement stays reserved once its provision starts, until it records or fails. */
+export const PROVISION_TTL_MS = 30 * 60_000;
 /** A card that went heavy this recently has not yet taken the RAM it reserved. */
 const RECENT_HEAVY_MS = 10 * 60_000;
 /** A planning thread's load while its turn runs. */
@@ -434,6 +436,39 @@ function physicalShortfall(
   return null;
 }
 
+const isPlacement = (reservation: Reservation, boardId: string, claimId: string) =>
+  reservation.boardId === boardId &&
+  reservation.claimId === claimId &&
+  reservation.kind === "placement";
+
+/** A provision under way keeps its placement reserved past the claim's TTL: cutting a large
+    worktree can take longer, and another board must not be granted the same room meanwhile. */
+export function extendPlacement(
+  state: CapacityState,
+  boardId: string,
+  claimId: string,
+  until: number,
+): CapacityState {
+  return {
+    ...state,
+    reservations: state.reservations.map((reservation) =>
+      isPlacement(reservation, boardId, claimId)
+        ? { ...reservation, expiresAt: Math.max(reservation.expiresAt, until) }
+        : reservation,
+    ),
+  };
+}
+
+/** A provision that failed gives its placement back. */
+export function dropPlacement(state: CapacityState, boardId: string, claimId: string) {
+  return {
+    ...state,
+    reservations: state.reservations.filter(
+      (reservation) => !isPlacement(reservation, boardId, claimId),
+    ),
+  };
+}
+
 /** A provision's claim becomes the card's record. checkProvision granted it before the worktree
     was cut, so a reservation that lapsed during a slow cut still records the claim's profile. */
 export function consumePlacement(
@@ -582,7 +617,8 @@ export function applySyncCards(
           : entry.grantedProfile,
         phase: entry.phase,
         settled: record.settled || entry.settled,
-        seq: raised ? input.seq : record.seq,
+        // An authoritative sync resets lastSeq, so the records it lists take its seq too.
+        seq: raised || input.authoritative ? input.seq : record.seq,
         heavySince: goesHeavy ? input.now : entry.phase === "light" ? null : record.heavySince,
       });
     } else {

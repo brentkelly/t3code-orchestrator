@@ -650,7 +650,14 @@ export function makeLocalBoardWorkspace(
         ? ["rev-list", "--count", "@{upstream}..HEAD"]
         : ["rev-list", "--count", "HEAD", "--not", "--remotes"],
     );
-    const unpushedCount = Number(count) || 0;
+    // `gitRef` reads a failure as "": an unknown count must not pass for nothing to push.
+    if (!/^\d+$/.test(count)) {
+      return yield* new BoardWorkerGitError({
+        operation: "probeWorktreeDurability",
+        detail: "couldn't count the worktree's unpushed commits",
+      });
+    }
+    const unpushedCount = Number(count);
     const listed =
       unpushedCount === 0
         ? ""

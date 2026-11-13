@@ -314,6 +314,33 @@ it.effect("a card no worker can take holds one, and a later card never lands on 
   ),
 );
 
+it.effect("a card pinned to a board server with no build capacity waits as too big there", () =>
+  Effect.flatMap(
+    makeFakeCapacity(new Map([[BOARD_LOCAL_WORKER_ID, { cpuCores: 0, ramGiB: 0, diskGB: 100 }]])),
+    (capacity) => {
+      const pinned = { ...unplaced("pinned", "a"), pinnedWorkerId: BOARD_LOCAL_WORKER_ID };
+      return withGovernor(
+        {
+          board: { cards: [pinned], nextCardNumberByProject: {} },
+          settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 9 }),
+          capacity,
+        },
+        ({ pumpDomain, board }) =>
+          Effect.gen(function* () {
+            yield* pumpDomain(movedToBuilding(pinned, 1));
+            const waiting = boardCardStepState(yield* board, BoardCardId.make("pinned"));
+            assert.strictEqual(waiting?.queuedBy, "capacity");
+            assert.deepStrictEqual(waiting?.queuedDetail, {
+              workerId: BOARD_LOCAL_WORKER_ID,
+              dimension: "cpu",
+              tooBig: true,
+            });
+          }),
+      );
+    },
+  ),
+);
+
 it.effect("a Too-big card at the head of the queue doesn't hold up the card behind it", () =>
   Effect.flatMap(
     makeFakeCapacity(

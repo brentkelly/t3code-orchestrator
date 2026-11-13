@@ -170,9 +170,11 @@ export const classifyRemovalWorktree = Effect.fn("BoardWorkers.classifyRemovalWo
   if (probe.value.unpushedCount === 0) {
     const remote = yield* onRemote;
     if (remote === null) return orphaned;
+    if (remote) return "reclaimed" as const;
+    if (probe.value.hasUpstream) return orphaned;
     // Nothing beyond its base and no remote branch: the next placement cuts it fresh.
-    if (!remote) return probe.value.hasUpstream ? orphaned : ("fresh" as const);
-    return "reclaimed" as const;
+    if (probe.value.unmergedCount === 0) return "fresh" as const;
+    // Commits beyond its base that no remote branch of its own holds: push them below.
   }
   // Commits the remote lacks: push the card's own branch, never forced. A worker too old to
   // know the operation can't be pushed.

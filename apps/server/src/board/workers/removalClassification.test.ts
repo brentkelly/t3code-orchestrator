@@ -77,6 +77,18 @@ describe("classifying a worktree for its worker's removal (T3O-87)", () => {
     }),
   );
 
+  it.effect("commits beyond its base read as none unpushed are pushed, not cut fresh", () =>
+    Effect.gen(function* () {
+      const { workspace, pushes } = fake({
+        probe: { ...clean, hasUpstream: false, unmergedCount: 2 },
+        onRemote: false,
+        push: "lands",
+      });
+      assert.strictEqual(yield* classify(workspace), "reclaimed");
+      assert.deepStrictEqual(pushes, [{ worktreePath: "/wt/card-1", branch: "board/card-1" }]);
+    }),
+  );
+
   it.effect("commits the remote lacks are pushed, the card's own branch only, then reclaimed", () =>
     Effect.gen(function* () {
       const { workspace, pushes } = fake({
