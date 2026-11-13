@@ -1139,6 +1139,34 @@ export const BoardMergeStrategy = PullRequestMergeMethod;
 export type BoardMergeStrategy = PullRequestMergeMethod;
 
 /**
+ * How soon a waiting card gets a worker slot. It only breaks ties between cards waiting at the
+ * same stage, never pre-empts started work, and is per board: workers never see it. A group has
+ * none (only leaves run), so readers go through `boardCardEffectivePriority`.
+ */
+export const BoardCardPriority = Schema.Literals(["low", "normal", "high", "urgent"]);
+export type BoardCardPriority = typeof BoardCardPriority.Type;
+
+const BOARD_CARD_PRIORITY_RANK: Record<BoardCardPriority, number> = {
+  low: 0,
+  normal: 1,
+  high: 2,
+  urgent: 3,
+};
+
+/** Higher runs first. */
+export function boardCardPriorityRank(priority: BoardCardPriority): number {
+  return BOARD_CARD_PRIORITY_RANK[priority];
+}
+
+/** A group sorts as Normal whatever it stores; absent (the shell's Normal) is Normal too. */
+export function boardCardEffectivePriority(card: {
+  readonly priority?: BoardCardPriority | undefined;
+  readonly group?: unknown;
+}): BoardCardPriority {
+  return card.group != null ? "normal" : (card.priority ?? "normal");
+}
+
+/**
  * Where a group's children merge: `own` cuts the group its own
  * integration branch, `inherit` passes the children through to whatever the
  * group itself lands on (its own parent's target, or trunk).
@@ -2115,6 +2143,9 @@ export const BoardCard = Schema.Struct({
   mergeStrategy: Schema.NullOr(BoardMergeStrategy).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Decodes to normal on older payloads, matching migration 069's column default. Always
+      normal on a group. */
+  priority: BoardCardPriority.pipe(Schema.withDecodingDefault(Effect.succeed("normal" as const))),
   /** The card's auto-plan request; absent on a card never
       auto-planned, matching migration 053's NULL column. */
   autoPlan: Schema.optionalKey(BoardCardAutoPlan),
@@ -4861,6 +4892,8 @@ export const BoardCardCreateCommand = Schema.Struct({
   pinnedWorkerId: Schema.optional(BoardWorkerId),
   /** The card's own merge strategy. Absent follows the default. */
   mergeStrategy: Schema.optional(BoardMergeStrategy),
+  /** Absent is normal. Refused on a heading, which has no priority. */
+  priority: Schema.optional(BoardCardPriority),
   /** The outside item this card tracks, such as a webhook's GitHub issue. The decider
       refuses one a live card already carries. */
   externalRef: Schema.optional(BoardCardExternalRef),
@@ -5022,6 +5055,8 @@ export const BoardCardUpdateCommand = Schema.Struct({
       the reverse state must always be reachable. A change clears any
       auto-merge hold, since the hold may be the forge refusing the old one. */
   mergeStrategy: Schema.optional(Schema.NullOr(BoardMergeStrategy)),
+  /** Absent leaves it unchanged. Refused on a group, which has no priority. */
+  priority: Schema.optional(BoardCardPriority),
   /** Append this text to the end of the brief, after a blank line.
       Applied by the decider against the brief as it stands when the command
       is decided, so an edit landing in between is kept rather than
@@ -6259,6 +6294,8 @@ export const BoardCardCreatedPayload = Schema.Struct({
   /** The card's merge strategy at birth. Absent follows the default,
       the same null migration 057's column defaults to. */
   mergeStrategy: Schema.optionalKey(BoardMergeStrategy),
+  /** Absent is normal, migration 069's column default. */
+  priority: Schema.optionalKey(BoardCardPriority),
   /** Key-optional: absent is no reference, the null the column defaults to. */
   externalRef: Schema.optionalKey(BoardCardExternalRef),
   /** The decider has no SQL client, so the payload names the plan and the SQL projector
@@ -7178,6 +7215,9 @@ export const BoardCardShell = Schema.Struct({
       budget. Card-aggregate data, so every card-carrying delta carries it: absent means
       unscheduled, with no absent-means-preserve rule. */
   scheduledStartAt: Schema.optionalKey(IsoDateTime),
+  /** Absent means normal (key-optional for the byte budget). Card-aggregate data like
+      `scheduledStartAt`, with no absent-means-preserve rule. */
+  priority: Schema.optionalKey(BoardCardPriority),
   /** The card's own Automation toggles, absent while inherited (key-optional for the byte
       budget). An explicit `false` overrides the group. Resolve with
       `resolveBoardCardAutomation`. */
@@ -7549,6 +7589,8 @@ export function makeBoardCardShell(input: {
       the key is omitted for an unscheduled card to keep its shell
       byte-identical to a pre-schedule payload. */
   readonly scheduledStartAt?: IsoDateTime | null | undefined;
+  /** Omitted from the shell when normal. */
+  readonly priority?: BoardCardPriority | undefined;
   /** The card's own Automation toggles and its unattended-run flag.
       On the card aggregate, so both producers carry them; the keys
       are omitted while a toggle inherits. */
@@ -7649,6 +7691,9 @@ export function makeBoardCardShell(input: {
     // omitted when there is none, which keeps an unscheduled card's shell
     // exactly the size it was before this field existed.
     ...(input.scheduledStartAt == null ? {} : { scheduledStartAt: input.scheduledStartAt }),
+    ...(input.priority === undefined || input.priority === "normal"
+      ? {}
+      : { priority: input.priority }),
     // The Automation toggles: omitted while inheriting; an explicit
     // `false` is carried because it overrides the group.
     ...(input.autoPlanSetting == null ? {} : { autoPlanSetting: input.autoPlanSetting }),
@@ -7754,6 +7799,7 @@ export function boardCardShellFromCard(
     parentCardId: card.parentCardId,
     group: card.group,
     scheduledStartAt: card.scheduledStartAt,
+    priority: card.priority,
     autoPlanSetting: card.autoPlanSetting,
     autoBuildSetting: card.autoBuildSetting,
     autoMergeSetting: card.autoMergeSetting,
