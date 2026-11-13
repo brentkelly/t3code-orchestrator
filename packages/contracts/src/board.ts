@@ -2411,6 +2411,11 @@ export const BoardStepQueuedBy = Schema.Literals([
   // checkout (amber), or the step's provider isn't signed in there (violet).
   "server-checkout",
   "server-sign-in",
+  // T3o: holds (T3O-87). `holding`: the card holds `workerId` and starts there when room frees.
+  // `reserved`: the worker isn't taking new cards: held for this board's `behindCardId`, or
+  // for a reason the board isn't told.
+  "holding",
+  "reserved",
 ]);
 export type BoardStepQueuedBy = typeof BoardStepQueuedBy.Type;
 
@@ -2446,7 +2451,7 @@ export function boardStepWaitsForRoom(
   const detail = state.queuedDetail;
   return (
     state.status === "queued" &&
-    state.queuedBy === "capacity" &&
+    (state.queuedBy === "capacity" || state.queuedBy === "holding") &&
     detail?.workerId !== undefined &&
     detail.behindCardId === undefined &&
     detail.tooBig !== true

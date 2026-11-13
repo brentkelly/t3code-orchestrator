@@ -40,6 +40,8 @@ import {
   type BoardWorkerReadiness,
   type BoardWorkerRunSetupInput,
   type BoardWorkerSetupState,
+  type BoardCapacityHoldInput,
+  type BoardCapacityHoldResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -122,6 +124,9 @@ export interface WorkerGatewayRpcOf<E> {
     input: BoardCapacityClaimInput,
   ) => Effect.Effect<BoardCapacityClaimResult, E>;
   readonly syncCards: (input: BoardSyncCardsInput) => Effect.Effect<BoardSyncCardsResult, E>;
+  /** T3o: hold this worker for a waiting card, or withdraw it (T3O-87). */
+  readonly hold: (input: BoardCapacityHoldInput) => Effect.Effect<BoardCapacityHoldResult, E>;
+  readonly releaseHold: (cardId: string) => Effect.Effect<void, E>;
   readonly subscribeCapacity: Stream.Stream<BoardWorkerCapacitySnapshot, E>;
   /** T3o: a card's setup and a project's readiness on the worker (T3O-86, section 5). */
   readonly runSetup: (input: BoardWorkerRunSetupInput) => Stream.Stream<BoardCardSetupProgress, E>;

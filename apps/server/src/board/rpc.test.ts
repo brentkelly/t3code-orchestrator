@@ -115,6 +115,7 @@ const supervisorStub: SupervisorReactorShape = {
   start: () => Effect.void,
   reconcile: Effect.void,
   sweep: Effect.void,
+  refreshHolds: Effect.void,
   fireSchedules: Effect.void,
   fireAutoArchives: Effect.void,
   startArmed: Effect.void,

@@ -166,6 +166,9 @@ import {
   type ProviderInstanceId,
   resolveBoardProjectResourceSettings,
   type BoardResourceProfile,
+  type BoardCapacityHoldInput,
+  resolveBoardProjectBaseline,
+  boardResourceProfileOverflow,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -222,6 +225,8 @@ import {
   stageBriefAttachmentsAsPending,
 } from "./attachments.ts";
 import { BoardPlacement, boardPlacementGate } from "./workers/BoardPlacement.ts";
+import { HOLD_REFRESH_MS } from "./capacity/holdModel.ts";
+import { boardHoldLimit, holdsToAsk, rankHoldCandidates } from "./placement/holdRanking.ts";
 import {
   boardBuildHistory,
   localIsBuildCandidate,
@@ -406,14 +411,11 @@ const TRANSIENT_PROVISION_FAILURE_LIMIT = 3;
 interface PlacementPass {
   /** Each grant this pass, subtracted from the worker's last snapshot. */
   readonly grants: Map<BoardWorkerId, BoardResourceProfile>;
-  /** Strict queue order per worker until holds exist (T3O-86): a capacity denial there ends
-      this board's placements on it for the pass. */
-  readonly blocked: Map<BoardWorkerId, BoardCardId>;
 }
-const freshPlacementPass = (): PlacementPass => ({ grants: new Map(), blocked: new Map() });
+const freshPlacementPass = (): PlacementPass => ({ grants: new Map() });
 
 /** T3o: the hold a card's step takes when no worker can be placed on now (T3O-87). */
-function placementHold(wait: PlacementWait, pass: PlacementPass): CapacityHold {
+function placementHold(wait: PlacementWait): CapacityHold {
   if (wait.kind === "no-ready-worker") {
     return { queuedBy: "no-ready-worker", detail: null, blocksWorker: false };
   }
@@ -431,24 +433,15 @@ function placementHold(wait: PlacementWait, pass: PlacementPass): CapacityHold {
   const worker = wait.workerId === null ? {} : { workerId: wait.workerId };
   switch (wait.reason) {
     case "capacity":
-    case "closed": {
-      const behind = wait.workerId === null ? undefined : pass.blocked.get(wait.workerId);
-      if (behind !== undefined) {
-        return {
-          queuedBy: "capacity",
-          detail: { ...worker, behindCardId: behind },
-          blocksWorker: false,
-        };
-      }
+    case "closed":
       return {
-        queuedBy: "capacity",
+        queuedBy: wait.reason === "closed" ? "reserved" : "capacity",
         detail: {
           ...worker,
           ...(wait.dimension === undefined ? {} : { dimension: wait.dimension }),
         },
-        blocksWorker: wait.reason === "capacity",
+        blocksWorker: false,
       };
-    }
     case "quota":
       return { queuedBy: "quota", detail: worker, blocksWorker: false };
     case "setting-up":
@@ -485,6 +478,8 @@ export interface SupervisorReactorShape {
   /** Reconcile persisted step state, then subscribe to board and thread
       events. Must run in a scope so worker fibers finalize on shutdown. */
   readonly start: () => Effect.Effect<void, never, Scope.Scope>;
+  /** T3o: refresh this board's holds now, as the 20 s fiber does (T3O-87). */
+  readonly refreshHolds: Effect.Effect<void>;
   /** Reconcile every non-terminal step against the live world (boot / test). */
   readonly reconcile: Effect.Effect<void>;
   /** One timeout-sweep pass over running unattended steps. In
@@ -1387,9 +1382,14 @@ const make = Effect.gen(function* () {
         ? {
             kind: "ranked" as const,
             ranked: [{ workerId: card.pinnedWorkerId ?? BOARD_LOCAL_WORKER_ID, reason: "group" }],
+            heldByCard: new Set<BoardWorkerId>(),
+            context: null,
           }
         : yield* rankCandidates(card, claimFor, pass);
-    if (ranked.kind === "wait") return { kind: "held", hold: ranked.hold } as WorktreeOutcome;
+    if (ranked.kind === "wait") {
+      const holding = yield* askHolds(card, claimFor, ranked.context);
+      return { kind: "held", hold: holding ?? ranked.hold } as WorktreeOutcome;
+    }
     let lastHold: CapacityHold | null = null;
     for (const candidate of ranked.ranked) {
       const workspace = yield* workspaces.forWorker(candidate.workerId, card.projectId);
@@ -1451,14 +1451,12 @@ const make = Effect.gen(function* () {
               candidate.workerId,
               claimFor.providerInstanceId,
               claimFor.force,
+              // T3o: a held worker starts the card early (T3O-87).
+              ranked.kind === "ranked" && ranked.heldByCard.has(candidate.workerId),
             );
       if (placement.kind === "held") {
         lastHold = placement.hold;
         notePlacementRejection(card.id, candidate.workerId, placement.hold.queuedBy, yield* nowIso);
-        // T3o: strict queue order per worker until holds exist (T3O-86).
-        if (placement.hold.blocksWorker && !pass.blocked.has(candidate.workerId)) {
-          pass.blocked.set(candidate.workerId, card.id);
-        }
         continue;
       }
       if (placement.kind === "unavailable") continue;
@@ -1512,6 +1510,8 @@ const make = Effect.gen(function* () {
       });
       if (!placed) return unreachable;
       placementRejections.delete(String(card.id));
+      // T3o: placed: its other holds go at once; the provision consumes this one (T3O-87).
+      yield* releaseCardHolds(String(card.id), candidate.workerId);
       // Observe the provision dispatch: a rejected command (e.g. the worktree is
       // not in a provisionable state) must abort BEFORE the git effect, or the
       // tree lands on disk untracked while `record-worktree` is then rejected too.
@@ -1543,7 +1543,11 @@ const make = Effect.gen(function* () {
         fromRemote,
       );
     }
-    return lastHold === null ? unreachable : ({ kind: "held", hold: lastHold } as WorktreeOutcome);
+    if (lastHold === null) return unreachable;
+    // Every candidate refused its claim: the card asks for holds as it would with none.
+    const holding =
+      ranked.context === null ? null : yield* askHolds(card, claimFor, ranked.context);
+    return { kind: "held", hold: holding ?? lastHold } as WorktreeOutcome;
   });
 
   /** Whether the remote has a card's branch, read from the candidate's checkout. */
@@ -1600,7 +1604,10 @@ const make = Effect.gen(function* () {
           projectId: String(card.projectId),
           providerInstanceId: claimFor.providerInstanceId,
           granted: pass.grants.get(workerId) ?? null,
-          closed: closedWorkers.has(workerId),
+          // T3o: closed when held for another card, or a grow hold waits there (T3O-87).
+          closed:
+            closedWorkers.has(workerId) ||
+            (snapshot?.hold?.closed === true && snapshot.hold.cardId !== String(card.id)),
         }),
       );
     }
@@ -1624,6 +1631,15 @@ const make = Effect.gen(function* () {
     const project = yield* threads
       .project(card.projectId)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    // T3o: never on a worker this board holds for another card (T3O-87).
+    const heldByCard = placementHoldsOf(card.id);
+    const heldForOthers = new Map<BoardWorkerId, BoardCardId>();
+    for (const [holder, byWorker] of boardHolds) {
+      if (holder === String(card.id)) continue;
+      for (const [workerId, entry] of byWorker) {
+        if (entry.kind === "placement") heldForOthers.set(workerId, holder as BoardCardId);
+      }
+    }
     const result = rankPlacement({
       workers: facts,
       profile,
@@ -1631,7 +1647,8 @@ const make = Effect.gen(function* () {
       pinnedWorkerId: card.pinnedWorkerId,
       repositoryLabel: project?.title ?? "this project",
       force: claimFor.force,
-      excluded: new Set(pass.blocked.keys()),
+      excluded: claimFor.force ? new Set() : new Set(heldForOthers.keys()),
+      heldByCard,
     });
     const at = yield* nowIso;
     for (const verdict of result.verdicts) {
@@ -1639,14 +1656,267 @@ const make = Effect.gen(function* () {
         notePlacementRejection(card.id, verdict.workerId, verdict.ineligible, at);
       }
     }
-    if (result.ranked.length > 0) return { kind: "ranked" as const, ranked: result.ranked };
+    const context = {
+      facts,
+      profile,
+      placementOrder: result.ranked.map((entry) => entry.workerId),
+    };
+    if (result.ranked.length > 0) {
+      return { kind: "ranked" as const, ranked: result.ranked, heldByCard, context };
+    }
+    const wait = placementWait({ verdicts: result.verdicts, pinned: card.pinnedWorkerId !== null });
+    // "build-01 is reserved for T3O-90": the worker that rules this card out is held for an
+    // earlier card of this board.
+    const reservedFor =
+      wait.kind === "queued" && wait.workerId !== null
+        ? heldForOthers.get(wait.workerId)
+        : undefined;
     return {
       kind: "wait" as const,
-      hold: placementHold(
-        placementWait({ verdicts: result.verdicts, pinned: card.pinnedWorkerId !== null }),
-        pass,
-      ),
+      hold:
+        reservedFor !== undefined && wait.kind === "queued" && wait.workerId !== null
+          ? ({
+              queuedBy: "reserved",
+              detail: { workerId: wait.workerId, behindCardId: reservedFor },
+              blocksWorker: false,
+            } satisfies CapacityHold)
+          : wait.kind === "queued" && wait.reason === "closed" && wait.workerId !== null
+            ? ({
+                queuedBy: "reserved",
+                detail: { workerId: wait.workerId },
+                blocksWorker: false,
+              } satisfies CapacityHold)
+            : placementHold(wait),
+      context,
     };
+  });
+
+  // ── Holds (T3O-87) ─────────────────────────────────────────────────
+
+  /** T3o: the holds this board asked for, per card and worker (T3O-87). In memory: after a
+      restart or reconnect, holds a snapshot shows as this board's are kept or released. */
+  const boardHolds = new Map<
+    string,
+    Map<
+      BoardWorkerId,
+      {
+        readonly kind: "placement" | "grow";
+        readonly input: BoardCapacityHoldInput;
+        readonly until: string | null;
+      }
+    >
+  >();
+  const placementHoldsOf = (cardId: BoardCardId): ReadonlySet<BoardWorkerId> =>
+    new Set(
+      [...(boardHolds.get(String(cardId)) ?? new Map())]
+        .filter(([, entry]) => entry.kind === "placement")
+        .map(([workerId]) => workerId),
+    );
+  const boardHoldingWorkers = (): ReadonlySet<BoardWorkerId> =>
+    new Set(
+      [...boardHolds.values()].flatMap((byWorker) =>
+        [...byWorker].filter(([, entry]) => entry.kind === "placement").map(([id]) => id),
+      ),
+    );
+  const forgetHold = (cardId: string, workerId: BoardWorkerId) => {
+    const byWorker = boardHolds.get(cardId);
+    byWorker?.delete(workerId);
+    if (byWorker !== undefined && byWorker.size === 0) boardHolds.delete(cardId);
+  };
+  const noteHold = (
+    cardId: string,
+    workerId: BoardWorkerId,
+    entry: {
+      readonly kind: "placement" | "grow";
+      readonly input: BoardCapacityHoldInput;
+      readonly until: string | null;
+    },
+  ) => {
+    let byWorker = boardHolds.get(cardId);
+    if (byWorker === undefined) {
+      byWorker = new Map();
+      boardHolds.set(cardId, byWorker);
+    }
+    byWorker.set(workerId, entry);
+  };
+  /** Withdraw a card's holds, except on `keep` (where a provision consumes it). */
+  const releaseCardHolds = Effect.fn("board-supervisor-releaseCardHolds")(function* (
+    cardId: string,
+    keep: BoardWorkerId | null = null,
+  ) {
+    const byWorker = boardHolds.get(cardId);
+    if (byWorker === undefined || Option.isNone(capacityClient)) return;
+    // A copy: entries are forgotten while it walks them.
+    for (const workerId of Array.from(byWorker.keys())) {
+      if (workerId === keep) continue;
+      yield* capacityClient.value.releaseHold(workerId, cardId);
+      forgetHold(cardId, workerId);
+    }
+    if (keep !== null) forgetHold(cardId, keep);
+  });
+
+  /** T3o: a placed card's grow hold on its own worker (T3O-87). Not counted in the limit. */
+  const askGrowHold = Effect.fn("board-supervisor-askGrowHold")(function* (
+    card: BoardCard,
+    workerId: BoardWorkerId,
+    providerInstanceId: string | null,
+  ) {
+    if (Option.isNone(capacityClient)) return false;
+    const board = yield* readBoard;
+    const repositoryKey = yield* projectRepositoryKey(card.projectId);
+    const input: BoardCapacityHoldInput = {
+      cardId: card.id,
+      repositoryKey,
+      ...(repositoryKey === null ? { projectId: String(card.projectId) } : {}),
+      providerInstanceId,
+      profile: card.resources?.grant?.profile ?? requestedProfileOf(board, card),
+      kind: "grow",
+    };
+    const answer = yield* capacityClient.value.hold(workerId, input);
+    if (answer === null || answer.outcome === "refused") {
+      forgetHold(String(card.id), workerId);
+      return false;
+    }
+    noteHold(String(card.id), workerId, { kind: "grow", input, until: answer.until });
+    return true;
+  });
+
+  /** Online workers ready for at least one of the board's projects that fit an M card of it. */
+  const readyWorkerCount = Effect.fn("board-supervisor-readyWorkerCount")(function* (
+    board: BoardState,
+  ) {
+    if (Option.isNone(capacityClient)) return 0;
+    const workersState = yield* workersNow;
+    const projects = [
+      ...new Set(board.cards.filter((c) => c.archivedAt === null).map((c) => c.projectId)),
+    ];
+    let count = 0;
+    for (const workerId of [BOARD_LOCAL_WORKER_ID, ...(board.workers ?? []).map((w) => w.id)]) {
+      const snapshot = yield* capacityClient.value.latest(workerId);
+      if (snapshot === null) continue;
+      if (workerId === BOARD_LOCAL_WORKER_ID && !localIsBuildCandidate(snapshot.declared)) continue;
+      for (const projectId of projects) {
+        const repositoryKey = yield* projectRepositoryKey(projectId);
+        const gate = boardPlacementGate({
+          workerId,
+          workers: workersState,
+          projectRepositoryKey: repositoryKey,
+          providerInstanceId: null,
+        });
+        const readiness = snapshot.readiness.find((entry) =>
+          boardReadinessIsFor(entry, repositoryKey, String(projectId)),
+        );
+        const baseline = resolveBoardProjectBaseline(
+          boardProjectStageConfig(board, projectId)?.resources ?? null,
+        );
+        if (
+          gate.kind === "ready" &&
+          (readiness === undefined || readiness.state === "ready") &&
+          boardResourceProfileOverflow(baseline, snapshot.declared) === null
+        ) {
+          count += 1;
+          break;
+        }
+      }
+    }
+    return count;
+  });
+
+  /**
+   * T3o: a card no worker can take now asks for holds straight away (T3O-87): its top two hold
+   * candidates, within the board's limit, plus a signal to a held one. Answers the `holding`
+   * reason when it holds any worker, else null.
+   */
+  const askHolds = Effect.fn("board-supervisor-askHolds")(function* (
+    card: BoardCard,
+    claimFor: { readonly providerInstanceId: string | null; readonly force: boolean },
+    context: {
+      readonly facts: ReadonlyArray<PlacementWorkerFacts>;
+      readonly profile: BoardResourceProfile;
+      readonly placementOrder: ReadonlyArray<BoardWorkerId>;
+    },
+  ) {
+    if (Option.isNone(capacityClient) || claimFor.force || card.group !== null) return null;
+    const client = capacityClient.value;
+    const board = yield* readBoard;
+    const fractions = new Map<BoardWorkerId, number>();
+    const closed = new Set<BoardWorkerId>();
+    for (const facts of context.facts) {
+      const snapshot = yield* client.latest(facts.workerId);
+      fractions.set(facts.workerId, snapshot?.hold?.earlyStartFraction ?? 0.5);
+      if (snapshot?.hold?.closed === true && snapshot.hold.cardId !== String(card.id)) {
+        closed.add(facts.workerId);
+      }
+    }
+    const ranked = rankHoldCandidates({
+      workers: context.facts,
+      profile: context.profile,
+      fractionOf: (workerId) => fractions.get(workerId) ?? 0.5,
+      placementOrder: context.placementOrder,
+      pinnedWorkerId: card.pinnedWorkerId,
+    });
+    const holding = placementHoldsOf(card.id);
+    const limit = boardHoldLimit(yield* readyWorkerCount(board));
+    const heldForOthers = new Set(
+      [...boardHolds]
+        .filter(([holder]) => holder !== String(card.id))
+        .flatMap(([, byWorker]) =>
+          [...byWorker].filter(([, entry]) => entry.kind === "placement").map(([id]) => id),
+        ),
+    );
+    const { ask, signal } = holdsToAsk({
+      ranked,
+      holding,
+      boardHolding: boardHoldingWorkers(),
+      limit,
+      closed,
+      heldForOthers,
+    });
+    const repositoryKey = yield* projectRepositoryKey(card.projectId);
+    const input: BoardCapacityHoldInput = {
+      cardId: card.id,
+      repositoryKey,
+      ...(repositoryKey === null ? { projectId: String(card.projectId) } : {}),
+      providerInstanceId: claimFor.providerInstanceId,
+      profile: context.profile,
+      kind: "placement",
+    };
+    const at = yield* nowIso;
+    for (const workerId of [...ask, ...signal]) {
+      const answer = yield* client.hold(workerId, input);
+      if (answer === null) continue;
+      if (answer.outcome === "refused") {
+        if (holding.has(workerId)) forgetHold(card.id, workerId);
+        notePlacementRejection(card.id, workerId, `hold:${answer.reason}`, at);
+        continue;
+      }
+      // A signal granted while the board is at its limit is released at once.
+      if (
+        signal.includes(workerId) &&
+        !boardHoldingWorkers().has(workerId) &&
+        boardHoldingWorkers().size >= limit
+      ) {
+        yield* client.releaseHold(workerId, card.id);
+        continue;
+      }
+      noteHold(card.id, workerId, { kind: "placement", input, until: answer.until });
+    }
+    // Holds that fell out of the card's top two go.
+    for (const workerId of holding) {
+      if (!ask.includes(workerId)) {
+        yield* client.releaseHold(workerId, card.id);
+        forgetHold(card.id, workerId);
+      }
+    }
+    const now = placementHoldsOf(card.id);
+    const first = ranked.find((workerId) => now.has(workerId)) ?? [...now][0];
+    return first === undefined
+      ? null
+      : ({
+          queuedBy: "holding",
+          detail: { workerId: first },
+          blocksWorker: false,
+        } satisfies CapacityHold);
   });
 
   /** T3o: the last reason each worker turned a queued card down, for its waiting popover. */
@@ -3119,15 +3389,9 @@ const make = Effect.gen(function* () {
     }));
     const forced = ordered.filter(({ entry }) => entry?.state.forceStart === true);
     const rest = ordered.filter(({ entry }) => entry?.state.forceStart !== true);
-    // T3o: strict queue order per worker until holds exist (T3O-86): the first capacity
-    // denial on a worker ends this board's placements there for the pass; grows go on.
+    // T3o: cards are placed in queue order; holds keep a later card off a worker held for an
+    // earlier one (T3O-87). Each grant this pass is subtracted from the worker's last snapshot.
     const pass = freshPlacementPass();
-    // CI waiting for room went first, so a capacity denial there holds up the cards behind it.
-    for (const [cardId, waiting] of ciWaitingForRoom) {
-      if (waiting.hold.blocksWorker && !pass.blocked.has(waiting.workerId)) {
-        pass.blocked.set(waiting.workerId, cardId);
-      }
-    }
     for (const { entry } of [...forced, ...rest]) {
       if (entry !== undefined) yield* offerBuildCandidate({ ...entry, pass });
     }
@@ -3173,26 +3437,32 @@ const make = Effect.gen(function* () {
         pass,
       );
       if (provisioned !== null && typeof provisioned === "object") {
-        const blockedWorker = provisioned.detail?.workerId;
-        if (
-          provisioned.blocksWorker &&
-          blockedWorker !== undefined &&
-          !pass.blocked.has(blockedWorker)
-        ) {
-          pass.blocked.set(blockedWorker, card.id);
-        }
         yield* holdQueued(state, provisioned.queuedBy, provisioned.detail);
         return;
       }
       worktreePath = provisioned;
     } else if (Option.isSome(capacityAdmission)) {
+      const placedOn = boardCardPlacementTarget(card);
+      const growHeld =
+        placedOn !== null && boardHolds.get(String(card.id))?.get(placedOn)?.kind === "grow";
       const hold = yield* capacityAdmission.value.ensureHeavy(
         card,
         state.providerInstanceId,
         state.forceStart,
+        growHeld,
       );
-      if (hold !== null) {
-        yield* holdQueued(state, hold.queuedBy, hold.detail);
+      if (hold === null) {
+        if (placedOn !== null) forgetHold(String(card.id), placedOn);
+      } else {
+        // T3o: finishing beats starting: a placed card short of room holds its own worker
+        // (T3O-87). It can go nowhere else.
+        const grown =
+          hold.queuedBy === "capacity" && placedOn !== null && Option.isSome(capacityClient)
+            ? yield* askGrowHold(card, placedOn, state.providerInstanceId)
+            : false;
+        yield* grown
+          ? holdQueued(state, "holding", { workerId: placedOn! })
+          : holdQueued(state, hold.queuedBy, hold.detail);
         return;
       }
     }
@@ -11317,6 +11587,78 @@ const make = Effect.gen(function* () {
     }
   }).pipe(Effect.ignoreCause);
 
+  /**
+   * T3o: refresh every hold this board asked for, and withdraw those whose card was placed or
+   * left the queue (T3O-87). After a restart or reconnect, a hold a snapshot shows as this
+   * board's is kept only if its card still waits and the limit allows; otherwise released.
+   */
+  const refreshHolds = Effect.gen(function* () {
+    if (Option.isNone(capacityClient)) return;
+    const client = capacityClient.value;
+    const board = yield* readBoard;
+    const waitingStep = (cardId: string) => {
+      const state = (board.stepStates ?? []).find((candidate) => candidate.cardId === cardId);
+      return state !== undefined && (state.status === "queued" || state.status === "pending")
+        ? state
+        : null;
+    };
+    const stillWaiting = (cardId: string, kind: "placement" | "grow") => {
+      const card = board.cards.find((candidate) => candidate.id === cardId);
+      if (card === undefined || card.archivedAt !== null || waitingStep(cardId) === null) {
+        return false;
+      }
+      return kind === "grow" || boardCardPlacementTarget(card) === null;
+    };
+    for (const [cardId, byWorker] of Array.from(boardHolds)) {
+      for (const [workerId, entry] of Array.from(byWorker)) {
+        if (!stillWaiting(cardId, entry.kind)) {
+          yield* client.releaseHold(workerId, cardId);
+          forgetHold(cardId, workerId);
+          continue;
+        }
+        const answer = yield* client.hold(workerId, entry.input);
+        if (answer === null) continue;
+        if (answer.outcome === "refused") forgetHold(cardId, workerId);
+        else noteHold(cardId, workerId, { ...entry, until: answer.until });
+      }
+    }
+    const limit = boardHoldLimit(yield* readyWorkerCount(board));
+    for (const workerId of [BOARD_LOCAL_WORKER_ID, ...(board.workers ?? []).map((w) => w.id)]) {
+      const heldCard = (yield* client.latest(workerId))?.hold?.cardId ?? null;
+      if (heldCard === null || boardHolds.get(heldCard)?.has(workerId) === true) continue;
+      const card = board.cards.find((candidate) => candidate.id === heldCard);
+      const state = waitingStep(heldCard);
+      const holding = boardHoldingWorkers();
+      if (
+        card === undefined ||
+        state === null ||
+        !stillWaiting(heldCard, "placement") ||
+        (!holding.has(workerId) && holding.size >= limit)
+      ) {
+        yield* client.releaseHold(workerId, heldCard);
+        continue;
+      }
+      const repositoryKey = yield* projectRepositoryKey(card.projectId);
+      noteHold(heldCard, workerId, {
+        kind: "placement",
+        input: {
+          cardId: card.id,
+          repositoryKey,
+          ...(repositoryKey === null ? { projectId: String(card.projectId) } : {}),
+          providerInstanceId: state.providerInstanceId,
+          profile: requestedProfileOf(board, card),
+          kind: "placement",
+        },
+        until: null,
+      });
+    }
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: hold refresh failed", { cause: Cause.pretty(cause) }),
+    ),
+    Effect.withSpan("board-supervisor-refreshHolds"),
+  );
+
   /** T3o: release idle cards' CPU and RAM, settle grants, keep workers' records in step, run
       the one-time upgrade until it has, then schedule what that freed (T3O-86). */
   const sweepCapacity = Effect.gen(function* () {
@@ -11662,6 +12004,14 @@ const make = Effect.gen(function* () {
         ),
       );
     }
+    // T3o: holds are refreshed every 20 s outside the supervisor queue (T3O-87).
+    if (Option.isSome(capacityClient)) {
+      yield* forkParked(
+        Effect.forever(
+          Effect.sleep(Duration.millis(HOLD_REFRESH_MS)).pipe(Effect.andThen(refreshHolds)),
+        ),
+      );
+    }
     // The server restarts mid-step: reconcile persisted step state, serialised
     // ahead of the live events now flowing into the same worker queue.
     yield* worker.enqueue({ source: "reconcile" });
@@ -11686,6 +12036,7 @@ const make = Effect.gen(function* () {
       // T3o: and worker capacity's phase rule and sync (T3O-86).
       Effect.andThen(sweepCapacity),
     ),
+    refreshHolds,
     fireSchedules: sweepSchedules,
     fireAutoArchives: sweepAutoArchives,
     startArmed: sweepArmedCards,

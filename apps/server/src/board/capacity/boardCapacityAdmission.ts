@@ -320,6 +320,8 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     workerId: BoardWorkerId,
     providerInstanceId: string | null,
     force: boolean,
+    /** T3o: the card holds this worker and starts early (T3O-87). */
+    hold = false,
   ) {
     if (isGroup(card)) return { kind: "none" } as PlacementDecision;
     if (!(yield* deps.client.synced(workerId)) && !(yield* syncWorker(workerId))) {
@@ -339,6 +341,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       profile,
       providerInstanceId,
       ...(force ? { force: true } : {}),
+      ...(hold && !force ? { hold: true } : {}),
     });
     if (answer.outcome === "unavailable") return { kind: "unavailable" } as PlacementDecision;
     if (answer.outcome === "denied") {
@@ -359,6 +362,8 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     card: BoardCard,
     providerInstanceId: string | null,
     force: boolean,
+    /** T3o: the card holds its worker for this grow: served at its early-start share (T3O-87). */
+    hold = false,
   ) {
     if (isGroup(card)) return null;
     const grant = card.resources?.grant ?? null;
@@ -382,6 +387,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       profile,
       providerInstanceId,
       ...(force ? { force: true } : {}),
+      ...(hold && !force ? { hold: true } : {}),
     });
     if (answer.outcome === "unavailable") {
       return {
@@ -650,8 +656,12 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
         board.cards.find((card) => card.id === first?.cardId) ??
         waitingCi.find((card) => (card.placedWorkerId ?? cardWorkerOf(board, card)) === workerId);
       if (firstCard === undefined) continue;
-      const need = firstCard.resources?.grant?.profile ?? requestedProfileOf(board, firstCard);
+      const full = firstCard.resources?.grant?.profile ?? requestedProfileOf(board, firstCard);
       const snapshot = yield* deps.client.latest(workerId);
+      // T3o: a step holding the worker needs only its early-start share free (T3O-87).
+      const fraction =
+        first?.queuedBy === "holding" ? (snapshot?.hold?.earlyStartFraction ?? 0.5) : 1;
+      const need = { ...full, cpuCores: full.cpuCores * fraction, ramGiB: full.ramGiB * fraction };
       const last = releasedAgainst.get(workerId);
       if (
         last !== undefined &&

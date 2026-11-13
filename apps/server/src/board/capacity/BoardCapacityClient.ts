@@ -16,6 +16,8 @@ import {
   type BoardWorkerCapacitySnapshot,
   type BoardWorkerId,
   type EnvironmentId,
+  type BoardCapacityHoldInput,
+  type BoardCapacityHoldResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -50,6 +52,14 @@ export interface BoardCapacityClientShape {
   ) => Effect.Effect<BoardClaimAnswer>;
   /** The next `seq` for a worker, persisted. */
   readonly nextSeq: (workerId: BoardWorkerId) => Effect.Effect<number>;
+  /** T3o: ask a worker to hold for a waiting card, or refresh it (T3O-87). Null when the worker
+      didn't answer. */
+  readonly hold: (
+    workerId: BoardWorkerId,
+    input: BoardCapacityHoldInput,
+  ) => Effect.Effect<BoardCapacityHoldResult | null>;
+  /** Withdraw a card's holds on a worker. Best effort: an unanswered one lapses there. */
+  readonly releaseHold: (workerId: BoardWorkerId, cardId: string) => Effect.Effect<void>;
   /** Send the board's granted state for a worker when it changed, or when this connection
       has not been synced yet (that first sync is authoritative). Whether the worker holds
       this state: acknowledged now, or unchanged since it last did. The seq is taken before
@@ -189,6 +199,32 @@ const makeBoardCapacityClient = Effect.gen(function* () {
     return yield* claimOnce(workerId, { ...input, seq });
   });
 
+  const hold = Effect.fn("BoardCapacityClient.hold")(function* (
+    workerId: BoardWorkerId,
+    input: BoardCapacityHoldInput,
+  ) {
+    if (workerId === BOARD_LOCAL_WORKER_ID) return yield* localCapacity.hold(localBoardId, input);
+    const gateway = yield* gatewayOf(workerId);
+    if (gateway === null) return null;
+    const answer = yield* gateway.hold(input).pipe(
+      Effect.timeoutOption(CLAIM_TIMEOUT),
+      Effect.orElseSucceed(() => Option.none<BoardCapacityHoldResult>()),
+    );
+    return Option.getOrNull(answer);
+  });
+
+  const releaseHold = Effect.fn("BoardCapacityClient.releaseHold")(function* (
+    workerId: BoardWorkerId,
+    cardId: string,
+  ) {
+    if (workerId === BOARD_LOCAL_WORKER_ID) {
+      return yield* localCapacity.releaseHold(localBoardId, cardId);
+    }
+    const gateway = yield* gatewayOf(workerId);
+    if (gateway === null) return;
+    yield* gateway.releaseHold(cardId).pipe(Effect.timeoutOption(CLAIM_TIMEOUT), Effect.ignore);
+  });
+
   const syncCards = Effect.fn("BoardCapacityClient.syncCards")(function* (
     workerId: BoardWorkerId,
     read: Effect.Effect<ReadonlyArray<BoardSyncedCard>>,
@@ -290,6 +326,8 @@ const makeBoardCapacityClient = Effect.gen(function* () {
     localBoardId,
     claim,
     nextSeq,
+    hold,
+    releaseHold,
     syncCards,
     synced: (workerId) => Effect.sync(() => lastSynced.has(workerId)),
     latest: (workerId) => Effect.sync(() => snapshots.get(workerId) ?? null),

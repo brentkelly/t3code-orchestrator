@@ -21,6 +21,8 @@ import {
   type BoardWorkerRunSetupInput,
   type BoardWorkerSetupState,
   type ServerProvider,
+  type BoardCapacityHoldInput,
+  type BoardCapacityHoldResult,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -37,6 +39,7 @@ import {
   consumePlacement,
   decideClaim,
   EMPTY_CAPACITY_STATE,
+  firstShort,
   forgetBoard,
   heldByBoard,
   recordIsHeavy,
@@ -44,8 +47,24 @@ import {
   type CapacityRecord,
   type CapacityState,
   type MachineReading,
+  type ClaimDecision,
   type WorktreePresence,
 } from "./capacityModel.ts";
+import {
+  DEFAULT_HOLD_SETTINGS,
+  EMPTY_HOLD_STATE,
+  holdClaimRefusal,
+  holdUntil,
+  holdView,
+  noteConsumed,
+  noteEarlyStart,
+  releaseBoardHolds,
+  releaseHold,
+  requestHold,
+  tickHolds,
+  type HoldSettings,
+  type HoldState,
+} from "./holdModel.ts";
 import { BoardMachine, bytesToGB, bytesToGiB, defaultRamGiB } from "./machine.ts";
 
 /** How often the snapshot is recomputed; it is pushed only on a meaningful change. */
@@ -136,6 +155,12 @@ export interface BoardWorkerCapacityShape {
   ) => Effect.Effect<void>;
   /** Why a board may not start another turn here now (`agent-cap`), or null. */
   readonly agentCapRefusal: (providerInstanceId: string | null) => Effect.Effect<string | null>;
+  /** T3o: ask for or refresh a hold, or withdraw one (T3O-87). */
+  readonly hold: (
+    boardId: string,
+    input: BoardCapacityHoldInput,
+  ) => Effect.Effect<BoardCapacityHoldResult>;
+  readonly releaseHold: (boardId: string, cardId: string) => Effect.Effect<void>;
   readonly snapshot: (boardId: string) => Effect.Effect<BoardWorkerCapacitySnapshot>;
   /** The snapshot now, then on every meaningful change, at most every 5 s. */
   readonly subscribe: (boardId: string) => Stream.Stream<BoardWorkerCapacitySnapshot>;
@@ -280,6 +305,7 @@ function snapshotChanged(
       })),
       readiness: snapshot.readiness,
       heavyCards: [...snapshot.heavyCards].sort(),
+      hold: snapshot.hold ?? null,
     });
   return stable(previous) !== stable(next);
 }
@@ -402,6 +428,24 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     yield* freshUsage(input.providerInstanceId, yield* Clock.currentTimeMillis);
   });
 
+  // T3o: holds live in worker memory (T3O-87): after a restart they return on the next refresh.
+  let holds: HoldState = EMPTY_HOLD_STATE;
+  const holdSettingsOf = (settings: WorkerCapacitySettings): HoldSettings => ({
+    earlyStartFraction: settings.holdEarlyStartFraction,
+    maxMinutes: settings.holdMaxMinutes,
+  });
+  const withinCapacity = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const headroom = computeHeadroom({
+      state,
+      declared: yield* declared,
+      activity: activityOf(yield* ports.threads),
+      machine: yield* machineReading,
+      now,
+    });
+    return !headroom.over.cpuRam;
+  });
+
   const decide = Effect.fn("BoardWorkerCapacity.decide")(function* (
     boardId: string,
     input: BoardCapacityClaimInput,
@@ -411,7 +455,43 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     const providers = yield* ports.providers;
     const threads = yield* ports.threads;
     const notReady = yield* ports.notReady(boardId, input.repositoryKey, input.projectId);
-    return decideClaim(state, input, {
+    const holdSettings = holdSettingsOf(settings);
+    const within = yield* withinCapacity;
+    holds = tickHolds(holds, { now, withinCapacity: within, settings: holdSettings });
+    const record = state.records.some(
+      (candidate) => candidate.boardId === boardId && candidate.cardId === input.cardId,
+    );
+    // A resumed provision resends its claim; the card's hold doesn't refuse its own record.
+    if (!(input.kind === "placement" && record)) {
+      const refused = holdClaimRefusal(holds, {
+        boardId,
+        cardId: input.cardId,
+        kind: input.kind,
+        force: input.force === true,
+        early: input.hold === true,
+        now,
+        settings: holdSettings,
+        withinCapacity: within,
+      });
+      holds = refused.state;
+      if (refused.refusal !== null) {
+        const until = holdUntil(holds, holds.placement?.boardId ?? boardId, holdSettings, now);
+        return {
+          result: {
+            outcome: "denied",
+            reason: "reserved",
+            ...(until === null ? {} : { resetsAt: nowIso(until) }),
+          },
+          state,
+        } satisfies ClaimDecision;
+      }
+    }
+    const early =
+      input.hold === true &&
+      (input.kind === "grow"
+        ? holds.grows.some((grow) => grow.boardId === boardId && grow.cardId === input.cardId)
+        : holds.placement?.boardId === boardId && holds.placement.cardId === input.cardId);
+    const decision = decideClaim(state, input, {
       boardId,
       declared: yield* declared,
       activity: activityOf(threads),
@@ -419,8 +499,93 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
       now,
       quotaExhausted: quotaFor(providers, settings, now),
       notReady: () => notReady,
+      ...(early ? { earlyStartFraction: holdSettings.earlyStartFraction } : {}),
     });
+    if (decision.result.outcome === "granted") {
+      if (early && input.kind === "placement") holds = noteEarlyStart(holds, boardId, now);
+      // A granted grow ends the card's grow hold: the sync that lists it heavy consumes it.
+      if (input.kind === "grow") holds = releaseHold(holds, boardId, input.cardId);
+    }
+    return decision;
   });
+
+  const hold: BoardWorkerCapacityShape["hold"] = (boardId, input) =>
+    lock.withPermits(1)(
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        const settings = yield* ports.settings;
+        const providers = yield* ports.providers;
+        const total = yield* declared;
+        const activity = activityOf(yield* ports.threads);
+        const headroom = computeHeadroom({
+          state,
+          declared: total,
+          activity,
+          machine: yield* machineReading,
+          now,
+        });
+        const notReady = yield* ports.notReady(boardId, input.repositoryKey, input.projectId);
+        const provider =
+          input.providerInstanceId === null
+            ? undefined
+            : providers.find((candidate) => candidate.instanceId === input.providerInstanceId);
+        const signedOut = provider !== undefined && accountOf(provider).status === "signed-out";
+        const quota = quotaFor(providers, settings, now)(input.providerInstanceId);
+        const holdSettings = holdSettingsOf(settings);
+        const asked = requestHold(holds, {
+          boardId,
+          cardId: input.cardId,
+          kind: input.kind,
+          profile: input.profile,
+          eligibility: {
+            eligible: notReady === null && !signedOut && quota === null,
+            tooBig: firstShort(input.profile, total) !== null,
+            // Over on CPU or RAM offers nothing, but the disk that is free still counts.
+            diskFits:
+              !headroom.over.disk &&
+              input.profile.diskGB <=
+                (headroom.over.cpuRam
+                  ? headroom.declared.diskGB - headroom.held.diskGB
+                  : headroom.offered.diskGB),
+            placedHere: state.records.some(
+              (record) => record.boardId === boardId && record.cardId === input.cardId,
+            ),
+          },
+          now,
+          settings: holdSettings,
+          withinCapacity: !headroom.over.cpuRam,
+        });
+        holds = asked.state;
+        const answer = asked.answer;
+        if (answer.outcome === "refused") {
+          return {
+            outcome: "refused",
+            reason: answer.reason,
+            until: answer.until === null ? null : nowIso(answer.until),
+          } satisfies BoardCapacityHoldResult;
+        }
+        const need =
+          input.kind === "grow"
+            ? input.profile
+            : {
+                cpuCores: input.profile.cpuCores * holdSettings.earlyStartFraction,
+                ramGiB: input.profile.ramGiB * holdSettings.earlyStartFraction,
+                diskGB: input.profile.diskGB,
+              };
+        return {
+          outcome: "held",
+          short: {
+            cpuCores: Math.max(0, need.cpuCores - headroom.offered.cpuCores),
+            ramGiB: Math.max(0, need.ramGiB - headroom.offered.ramGiB),
+            diskGB: Math.max(0, need.diskGB - headroom.offered.diskGB),
+          },
+          until: answer.until === null ? null : nowIso(answer.until),
+        } satisfies BoardCapacityHoldResult;
+      }),
+    );
+
+  const releaseHoldOf: BoardWorkerCapacityShape["releaseHold"] = (boardId, cardId) =>
+    lock.withPermits(1)(Effect.sync(() => void (holds = releaseHold(holds, boardId, cardId))));
 
   const claim: BoardWorkerCapacityShape["claim"] = (boardId, input) =>
     refreshBeforePlacement(input).pipe(
@@ -483,6 +648,8 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
       Effect.gen(function* () {
         if (isEmptyClaim(provisionClaim)) return;
         const now = yield* Clock.currentTimeMillis;
+        // T3o: the provision consumes the card's hold, and resets its board's clock (T3O-87).
+        holds = noteConsumed(holds, boardId, provisionClaim.cardId);
         const result = consumePlacement(state, {
           boardId,
           cardId: provisionClaim.cardId,
@@ -616,6 +783,19 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
               recordIsHeavy(record, activity),
           )
           .map((record) => record.cardId),
+        hold: (() => {
+          const view = holdView(
+            tickHolds(holds, {
+              now,
+              withinCapacity: !headroom.over.cpuRam,
+              settings: holdSettingsOf(settings),
+            }),
+            boardId,
+            holdSettingsOf(settings),
+            now,
+          );
+          return { ...view, until: view.until === null ? null : nowIso(view.until) };
+        })(),
       } satisfies BoardWorkerCapacitySnapshot;
     },
   );
@@ -653,6 +833,7 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     lock.withPermits(1)(
       Effect.gen(function* () {
         state = forgetBoard(state, boardId);
+        holds = releaseBoardHolds(holds, boardId);
         yield* ports.store.deleteBoard(boardId);
       }),
     );
@@ -677,6 +858,30 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
           boardEnvironmentId,
           held,
         })),
+        hold: {
+          placement:
+            holds.placement === null
+              ? null
+              : {
+                  boardEnvironmentId: holds.placement.boardId,
+                  cardId: holds.placement.cardId,
+                  since: nowIso(holds.placement.since),
+                  until: (() => {
+                    const until = holdUntil(
+                      holds,
+                      holds.placement.boardId,
+                      DEFAULT_HOLD_SETTINGS,
+                      now,
+                    );
+                    return until === null ? null : nowIso(until);
+                  })(),
+                },
+          grows: holds.grows.map((grow) => ({
+            boardEnvironmentId: grow.boardId,
+            cardId: grow.cardId,
+            since: nowIso(grow.since),
+          })),
+        },
         unowned: yield* Effect.gen(function* () {
           if (sharedUnowned !== null && now - sharedUnowned.at < UNOWNED_SHARED_MS) {
             return sharedUnowned.value;
@@ -739,6 +944,8 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
       checkProvision,
       recordProvision,
       agentCapRefusal,
+      hold,
+      releaseHold: releaseHoldOf,
       snapshot,
       subscribe,
       forgetBoard: forget,

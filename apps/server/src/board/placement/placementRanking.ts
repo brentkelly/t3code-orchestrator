@@ -150,6 +150,8 @@ export function rankPlacement(input: {
   readonly force?: boolean;
   /** Workers this pass may not place on (held for an earlier card, or denied this pass). */
   readonly excluded?: ReadonlySet<BoardWorkerId>;
+  /** Workers this card holds: no fit filter there; the claim starts early (T3O-87). */
+  readonly heldByCard?: ReadonlySet<BoardWorkerId>;
 }): {
   readonly ranked: ReadonlyArray<RankedPlacement>;
   readonly verdicts: ReadonlyArray<PlacementVerdict>;
@@ -161,7 +163,12 @@ export function rankPlacement(input: {
   const verdicts = pool.map((worker) =>
     input.excluded?.has(worker.workerId) === true
       ? { workerId: worker.workerId, ineligible: "closed" as const }
-      : placementVerdict(worker, input.profile, { force: input.force === true }),
+      : input.heldByCard?.has(worker.workerId) === true
+        ? placementVerdict({ ...worker, closed: false }, input.profile, {
+            force: input.force === true,
+            skipFit: true,
+          })
+        : placementVerdict(worker, input.profile, { force: input.force === true }),
   );
   const eligible = pool.filter((_, index) => verdicts[index]!.ineligible === null);
   const rooms = new Map(

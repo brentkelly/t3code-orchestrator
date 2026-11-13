@@ -147,6 +147,27 @@ function withQueueReason(
         headline: `Sign in to ${reason.provider} on the board server`,
         detail: `Planning runs on the board server. ${boardProviderLoginHint(reason.provider)}`,
       };
+    case "holding":
+      return {
+        ...base,
+        label: `Next on ${reason.worker}`,
+        headline: `Next on ${reason.worker}`,
+        detail: `This card holds ${reason.worker}: no new card starts there before it, and it starts as soon as enough is free. ${boardCapacityHint(reason.worker)}`,
+      };
+    case "reserved":
+      return reason.behind === null
+        ? {
+            ...base,
+            label: `Queued #${n} · ${reason.worker} not taking cards`,
+            headline: `${reason.worker} isn't taking new cards`,
+            detail: `${reason.worker} isn't taking new cards right now. This card starts on it, or another worker, when one has room. ${boardCapacityHint(reason.worker)}`,
+          }
+        : {
+            ...base,
+            label: `Queued #${n} · ${reason.worker} reserved`,
+            headline: `${reason.worker} is reserved for ${reason.behind}`,
+            detail: `${reason.worker} is held for ${reason.behind}, earlier in this board's queue. This card starts on another worker when one has room, or after ${reason.behind}.`,
+          };
     case "quota":
       return {
         ...base,

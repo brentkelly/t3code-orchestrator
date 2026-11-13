@@ -44,6 +44,8 @@ const W2 = EnvironmentId.make("env-w2");
 const FULL: BoardResourceProfile = { cpuCores: 16, ramGiB: 32, diskGB: 200 };
 const BIG: BoardResourceProfile = { cpuCores: 32, ramGiB: 64, diskGB: 200 };
 /** The board server declares no build capacity, so it is never a candidate here. */
+/** Another board's cards, holding a worker's CPU and RAM but no disk. */
+const CPU_RAM_TAKEN: BoardResourceProfile = { cpuCores: 16, ramGiB: 32, diskGB: 0 };
 const NO_BUILDS: BoardResourceProfile = { cpuCores: 0, ramGiB: 0, diskGB: 200 };
 
 interface WorkerGit {
@@ -449,5 +451,110 @@ describe("the placement gate (T3O-87)", () => {
           }),
       );
     }),
+  );
+});
+
+describe("holds at build start (T3O-87)", () => {
+  const W3 = EnvironmentId.make("env-w3");
+  const W4 = EnvironmentId.make("env-w4");
+  const workers = [W1, W2, W3, W4];
+  const fourWorkers = staticPlacement(workersState(workers.map((id) => workerView(id))));
+
+  it.effect(
+    "a card holds two workers, starts on whichever frees first and releases the other",
+    () =>
+      Effect.gen(function* () {
+        const capacity = yield* capacityOf(workers.map((id) => [id, FULL] as const));
+        // Every worker is taken by another board.
+        for (const id of workers) capacity.external.set(id, CPU_RAM_TAKEN);
+        const card = unplaced("card-1", "a");
+        yield* withGovernor(
+          {
+            board: { ...world([card]), workers: workers.map((id) => registeredWorker(id)) },
+            settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 9 }),
+            placement: fourWorkers,
+            capacity,
+            workspaces: loggingWorkspaces(newWorkerGit()),
+          },
+          (h) =>
+            Effect.gen(function* () {
+              yield* h.pumpDomain(movedToBuilding(card, 1));
+              const held = [...new Set(capacity.holds.map((hold) => hold.workerId))];
+              // Four ready workers allow a second hold.
+              assert.strictEqual(held.length, 2);
+              const waiting = boardCardStepState(yield* h.board, BoardCardId.make("card-1"));
+              assert.strictEqual(waiting?.queuedBy, "holding");
+              // Room frees on the second held worker.
+              capacity.external.delete(held[1]!);
+              yield* capacity.publish(held[1]!);
+              yield* h.reactor.refreshHolds;
+              yield* h.pumpDomain(movedToBuilding(unplaced("card-2", "z"), 2));
+              const placed = yield* cardIn(h, "card-1");
+              assert.strictEqual(placed.placedWorkerId, held[1]);
+              assert.isTrue(
+                capacity.claims.some((claim) => claim.cardId === "card-1" && claim.hold === true),
+              );
+              // The other hold goes at once.
+              assert.deepStrictEqual(
+                capacity.releasedHolds.filter((entry) => entry.cardId === "card-1"),
+                [{ workerId: held[0]!, cardId: "card-1" }],
+              );
+            }),
+        );
+      }),
+  );
+
+  it.effect("a hold goes when its card leaves the queue, and a lapsed refusal is forgotten", () =>
+    Effect.gen(function* () {
+      const capacity = yield* capacityOf([[W1, FULL]]);
+      capacity.external.set(W1, CPU_RAM_TAKEN);
+      const card = unplaced("card-1", "a");
+      yield* run({ cards: [card], capacity, git: newWorkerGit() }, (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(card, 1));
+          assert.strictEqual(
+            boardCardStepState(yield* h.board, BoardCardId.make("card-1"))?.queuedBy,
+            "holding",
+          );
+          // The card is archived: the next refresh withdraws its hold.
+          yield* Ref.update(h.model, (model) => ({
+            ...model,
+            board: {
+              ...model.board!,
+              cards: model.board!.cards.map((candidate) =>
+                candidate.id === card.id
+                  ? { ...candidate, archivedAt: "1970-01-01T00:00:00.000Z" }
+                  : candidate,
+              ),
+            },
+          }));
+          yield* h.reactor.refreshHolds;
+          assert.deepStrictEqual(capacity.releasedHolds, [{ workerId: W1, cardId: "card-1" }]);
+        }),
+      );
+    }),
+  );
+
+  it.effect(
+    "after a restart, a hold the snapshot shows is kept only for a card still waiting",
+    () =>
+      Effect.gen(function* () {
+        const capacity = yield* capacityOf([
+          [W1, FULL],
+          [W2, FULL],
+        ]);
+        const base = yield* capacity.client.latest(W1);
+        const snapshotHolding = (cardId: string) => ({
+          ...base!,
+          hold: { closed: true, until: null, earlyStartFraction: 0.5, cardId },
+        });
+        capacity.frozen.set(W1, snapshotHolding("gone-card"));
+        yield* run({ cards: [], capacity, git: newWorkerGit() }, (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.refreshHolds;
+            assert.deepStrictEqual(capacity.releasedHolds, [{ workerId: W1, cardId: "gone-card" }]);
+          }),
+        );
+      }),
   );
 });

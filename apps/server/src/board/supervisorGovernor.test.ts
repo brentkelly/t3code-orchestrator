@@ -70,11 +70,9 @@ it.effect("capacity runs two cards strictly in queue order on a worker with room
           assert.strictEqual(stepStatus(after, BoardCardId.make("card-a")), "running");
           assert.strictEqual(stepStatus(after, BoardCardId.make("card-b")), "queued");
           const waiting = boardCardStepState(after, BoardCardId.make("card-b"));
-          assert.strictEqual(waiting?.queuedBy, "capacity");
-          assert.deepStrictEqual(waiting?.queuedDetail, {
-            workerId: BOARD_LOCAL_WORKER_ID,
-            dimension: "cpu",
-          });
+          // T3o: placed and short of room, it holds its own worker to grow (T3O-87).
+          assert.strictEqual(waiting?.queuedBy, "holding");
+          assert.deepStrictEqual(waiting?.queuedDetail, { workerId: BOARD_LOCAL_WORKER_ID });
           // Both cards already hold a worktree with no grant: each asks to grow, and card-a's
           // grant is on record at its whole profile.
           const grant = after.cards.find((card) => card.id === "card-a")?.resources?.grant;
@@ -262,7 +260,7 @@ const unplaced = (id: string, orderKey: string, cpu: "S" | "M" | "L" | "XL" = "M
   } as const,
 });
 
-it.effect("after a capacity denial no later card is placed on that worker in the pass", () =>
+it.effect("a card no worker can take holds one, and a later card never lands on it (T3O-87)", () =>
   Effect.flatMap(
     makeFakeCapacity(new Map([[BOARD_LOCAL_WORKER_ID, { cpuCores: 4, ramGiB: 64, diskGB: 100 }]])),
     (capacity) => {
@@ -281,20 +279,34 @@ it.effect("after a capacity denial no later card is placed on that worker in the
             }
             const after = yield* board;
             assert.strictEqual(stepStatus(after, BoardCardId.make("a")), "running");
+            // b asks for a hold straight away, with no waiting period first.
+            assert.deepStrictEqual(boardCardStepState(after, BoardCardId.make("b"))?.queuedDetail, {
+              workerId: BOARD_LOCAL_WORKER_ID,
+            });
             assert.strictEqual(
               boardCardStepState(after, BoardCardId.make("b"))?.queuedBy,
-              "capacity",
+              "holding",
             );
+            // Each pass refreshes it (an idempotent upsert); c never asks for b's worker.
+            assert.deepStrictEqual(
+              [...new Set(capacity.holds.map((hold) => `${hold.cardId}@${hold.workerId}`))],
+              [`b@${BOARD_LOCAL_WORKER_ID}`],
+            );
+            // c would fit, but the worker is reserved for b.
             const behind = boardCardStepState(after, BoardCardId.make("c"));
             assert.strictEqual(behind?.status, "queued");
+            assert.strictEqual(behind?.queuedBy, "reserved");
             assert.deepStrictEqual(behind?.queuedDetail, {
               workerId: BOARD_LOCAL_WORKER_ID,
               behindCardId: BoardCardId.make("b"),
             });
-            // The local filter caught b: no claim was sent for b or c.
+            // b, holding, tries to start early on the held worker; c never claims there.
             assert.deepStrictEqual(
-              capacity.claims.map((claim) => claim.cardId),
-              ["a"],
+              capacity.claims.map((claim) => [claim.cardId, claim.hold === true]),
+              [
+                ["a", false],
+                ["b", true],
+              ],
             );
           }),
       );

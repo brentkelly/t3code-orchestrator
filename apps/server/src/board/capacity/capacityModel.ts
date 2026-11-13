@@ -221,7 +221,7 @@ export function computeHeadroom(input: {
   return { declared: input.declared, held, offered, over };
 }
 
-const firstShort = (
+export const firstShort = (
   need: BoardResourceProfile,
   offered: BoardResourceProfile,
   dimensions: ReadonlyArray<BoardResourceDimension> = BOARD_RESOURCE_DIMENSIONS,
@@ -243,6 +243,9 @@ export interface ClaimContext {
   ) => { readonly resetsAt: string | null } | null;
   /** Whether the worker is ready for the repository: null when ready, else why not. */
   readonly notReady: (repositoryKey: string | null) => string | null;
+  /** T3o: a held card starting early needs this share of its CPU and RAM free, and all its
+      disk (T3O-87). Absent: the whole profile, as for any claim. */
+  readonly earlyStartFraction?: number;
 }
 
 export interface ClaimDecision {
@@ -325,7 +328,13 @@ export function decideClaim(
       }
       if (headroom.over.disk)
         return { result: denied("capacity", { dimension: "disk" }), state: current };
-      const short = firstShort(input.profile, headroom.offered);
+      const fraction = context.earlyStartFraction ?? 1;
+      const need: BoardResourceProfile = {
+        cpuCores: input.profile.cpuCores * fraction,
+        ramGiB: input.profile.ramGiB * fraction,
+        diskGB: input.profile.diskGB,
+      };
+      const short = firstShort(need, headroom.offered);
       if (short !== null)
         return { result: denied("capacity", { dimension: short }), state: current };
     }
@@ -375,7 +384,12 @@ export function decideClaim(
     if (load.diskGB > 0 && headroom.over.disk) {
       return { result: denied("capacity", { dimension: "disk" }), state: current };
     }
-    const short = firstShort(load, headroom.offered);
+    // A held grow is served when half (the early-start share) of its extra is free.
+    const fraction = context.earlyStartFraction ?? 1;
+    const short = firstShort(
+      { cpuCores: load.cpuCores * fraction, ramGiB: load.ramGiB * fraction, diskGB: load.diskGB },
+      headroom.offered,
+    );
     if (short !== null) return { result: denied("capacity", { dimension: short }), state: current };
   }
   return {

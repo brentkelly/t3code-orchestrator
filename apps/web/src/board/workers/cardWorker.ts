@@ -271,6 +271,10 @@ export type BoardQueueReason =
       readonly missing: boolean;
     }
   | { readonly kind: "server-sign-in"; readonly provider: string }
+  /** T3o: the card holds `worker` and starts there when room frees (T3O-87). */
+  | { readonly kind: "holding"; readonly worker: string }
+  /** T3o: `worker` isn't taking new cards: held for this board's `behind`, or not said why. */
+  | { readonly kind: "reserved"; readonly worker: string; readonly behind: string | null }
   | { readonly kind: "quota"; readonly worker: string }
   | { readonly kind: "agent-cap"; readonly worker: string }
   | { readonly kind: "needs-update"; readonly worker: string }
@@ -332,6 +336,17 @@ export function boardQueueReason(input: {
       };
     case "server-sign-in":
       return { kind: "server-sign-in", provider: detail?.providerInstanceId ?? "the provider" };
+    case "holding":
+      return { kind: "holding", worker };
+    case "reserved":
+      return {
+        kind: "reserved",
+        worker,
+        behind:
+          detail?.behindCardId === undefined
+            ? null
+            : (input.cardKeys.get(detail.behindCardId) ?? null),
+      };
     case "quota":
       return { kind: "quota", worker };
     case "agent-cap":

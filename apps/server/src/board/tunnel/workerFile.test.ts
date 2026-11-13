@@ -107,6 +107,7 @@ describe("board addresses", () => {
         "providerCaps.codex": 2,
         "providerCaps.": 9,
         quotaThresholdPercent: 90,
+        "hold.earlyStartFraction": 0.6,
       }),
     ).toEqual({
       cpuCores: 12,
@@ -115,11 +116,16 @@ describe("board addresses", () => {
       maxAgents: 4,
       providerCaps: { codex: 2 },
       quotaThresholdPercent: 90,
+      holdEarlyStartFraction: 0.6,
+      holdMaxMinutes: 120,
     });
     expect(resolveWorkerCapacitySettings({}).quotaThresholdPercent).toBe(95);
     expect(findWorkerConfigKey("providerCaps.claude")?.parse("3")).toEqual({ ok: true, value: 3 });
     expect(findWorkerConfigKey("providerCaps.")).toBeUndefined();
     expect(findWorkerConfigKey("maxAgents")?.parse("1.5").ok).toBe(false);
     expect(findWorkerConfigKey("capacity.gpus")).toBeUndefined();
+    // T3o: holds (T3O-87).
+    expect(findWorkerConfigKey("hold.earlyStartFraction")?.parse("1.5").ok).toBe(false);
+    expect(findWorkerConfigKey("hold.maxMinutes")?.parse("90")).toEqual({ ok: true, value: 90 });
   });
 });

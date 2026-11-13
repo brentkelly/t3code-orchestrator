@@ -28,6 +28,8 @@ import {
   type BoardWorkerSetupState,
   type BoardStepReading,
   type BoardWorkerActualsInput,
+  type BoardCapacityHoldInput,
+  type BoardCapacityHoldResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -69,6 +71,8 @@ type CallerBound =
   | "subscribeMcpRelay"
   | "mcpRelayRespond"
   | "claimCapacity"
+  | "hold"
+  | "releaseHold"
   | "syncCards"
   | "subscribeCapacity"
   | "runSetup"
@@ -113,6 +117,15 @@ export type WorkerGatewayHostShape = Omit<
     input: BoardSyncCardsInput,
     caller: GatewayCaller,
   ) => Effect.Effect<BoardSyncCardsResult, BoardWorkerGatewayError>;
+  /** T3o: a hold for one of the calling board's cards (T3O-87). */
+  readonly hold: (
+    input: BoardCapacityHoldInput,
+    caller: GatewayCaller,
+  ) => Effect.Effect<BoardCapacityHoldResult, BoardWorkerGatewayError>;
+  readonly releaseHold: (
+    cardId: string,
+    caller: GatewayCaller,
+  ) => Effect.Effect<void, BoardWorkerGatewayError>;
   readonly subscribeCapacity: (
     caller: GatewayCaller,
   ) => Stream.Stream<BoardWorkerCapacitySnapshot, BoardWorkerGatewayError>;
@@ -167,6 +180,8 @@ export const hostForSession = (
   subscribeMcpRelay: (central) => host.subscribeMcpRelay(central, caller.sessionId),
   mcpRelayRespond: (response) => host.mcpRelayRespond(response, caller.sessionId),
   claimCapacity: (input) => host.claimCapacity(input, caller),
+  hold: (input) => host.hold(input, caller),
+  releaseHold: (cardId) => host.releaseHold(cardId, caller),
   syncCards: (input) => host.syncCards(input, caller),
   subscribeCapacity: host.subscribeCapacity(caller),
   runSetup: (input) => host.runSetup(input, caller),
@@ -391,6 +406,14 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     claimCapacity: (input, caller) =>
       capacityOf("claimCapacity", caller).pipe(
         Effect.flatMap(({ service, boardId }) => service.claim(boardId, input)),
+      ),
+    hold: (input, caller) =>
+      capacityOf("hold", caller).pipe(
+        Effect.flatMap(({ service, boardId }) => service.hold(boardId, input)),
+      ),
+    releaseHold: (cardId, caller) =>
+      capacityOf("releaseHold", caller).pipe(
+        Effect.flatMap(({ service, boardId }) => service.releaseHold(boardId, cardId)),
       ),
     syncCards: (input, caller) =>
       capacityOf("syncCards", caller).pipe(

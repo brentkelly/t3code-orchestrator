@@ -656,7 +656,8 @@ it.effect("a full worker queues its cards without holding up another worker's (T
           assert.strictEqual((yield* step(h, "card-a"))?.status, "running");
           const waiting = yield* step(h, "card-b");
           assert.strictEqual(waiting?.status, "queued");
-          assert.strictEqual(waiting?.queuedBy, "capacity");
+          // T3o: placed there and short of room, it holds W1 to grow (T3O-87).
+          assert.strictEqual(waiting?.queuedBy, "holding");
           assert.strictEqual(waiting?.queuedDetail?.workerId, W1);
           assert.strictEqual((yield* step(h, "card-c"))?.status, "running");
 
@@ -755,7 +756,7 @@ it.effect(
               capacity.syncs.find((sync) => sync.workerId === W1)?.cards.map((card) => card.phase),
               ["heavy"],
             );
-            assert.strictEqual((yield* step(h, "card-b"))?.queuedBy, "capacity");
+            assert.strictEqual((yield* step(h, "card-b"))?.queuedBy, "holding");
           }),
       );
     }),

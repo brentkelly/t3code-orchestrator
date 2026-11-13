@@ -295,6 +295,41 @@ it.effect("the cut-short releases once per snapshot, not again on the same stale
   }),
 );
 
+it.effect(
+  "the cut-short fires for a holding step, and stops at the early-start share (T3O-87)",
+  () =>
+    Effect.gen(function* () {
+      const now = { ms: T0 };
+      const mid = { profile: { cpuCores: 6, ramGiB: 6, diskGB: 5 } };
+      for (const [queuedBy, released] of [
+        ["holding", 1],
+        ["capacity", 2],
+      ] as const) {
+        const waiting = {
+          ...step("c", "queued"),
+          queuedBy,
+          queuedDetail: { workerId: BOARD_LOCAL_WORKER_ID },
+        };
+        // c needs 12 cores; held, half of that is enough to start.
+        const c = {
+          ...granted("c", { profile: { cpuCores: 12, ramGiB: 12, diskGB: 5 } }),
+          worktree: null,
+        };
+        const h = yield* harness(
+          boardWith([granted("a", mid), granted("b", mid), c], [waiting]),
+          now,
+        );
+        h.fake.earlyStartFraction = 0.5;
+        yield* h.admission.syncAll();
+        assert.isTrue(yield* h.admission.releaseForWaiting());
+        const light = [(yield* h.grantOf("a"))?.heavy, (yield* h.grantOf("b"))?.heavy].filter(
+          (heavy) => heavy === false,
+        ).length;
+        assert.strictEqual(light, released, queuedBy);
+      }
+    }),
+);
+
 it.effect("a Too-big card, or one queued behind another, evicts no idle card's tail", () =>
   Effect.gen(function* () {
     const now = { ms: T0 };

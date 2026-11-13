@@ -22,6 +22,8 @@ import {
 } from "./baseSchemas.ts";
 import {
   BoardCapacityClaimInput,
+  BoardCapacityHoldInput,
+  BoardCapacityHoldResult,
   BoardCapacityClaimResult,
   BoardSyncCardsInput,
   BoardSyncCardsResult,
@@ -390,6 +392,9 @@ export const BoardGatewayCall = Schema.Union([
   Schema.TaggedStruct("todoLogHead", {}),
   // T3o: worker-owned capacity (T3O-86). The board is the calling session's.
   Schema.TaggedStruct("claimCapacity", { input: BoardCapacityClaimInput }),
+  // T3o: holds (T3O-87). An older worker refuses the tags: it is below the floor anyway.
+  Schema.TaggedStruct("hold", { input: BoardCapacityHoldInput }),
+  Schema.TaggedStruct("releaseHold", { cardId: TrimmedNonEmptyString }),
   Schema.TaggedStruct("syncCards", { input: BoardSyncCardsInput }),
   Schema.TaggedStruct("setupState", { worktreePath: Schema.String }),
   Schema.TaggedStruct("cancelSetup", { worktreePath: Schema.String }),
@@ -429,6 +434,8 @@ export const BOARD_GATEWAY_CALL_RESULTS = {
   project: Schema.NullOr(BoardGatewayProjectDetail),
   todoLogHead: NonNegativeInt,
   claimCapacity: BoardCapacityClaimResult,
+  hold: BoardCapacityHoldResult,
+  releaseHold: Schema.Null,
   syncCards: BoardSyncCardsResult,
   setupState: BoardWorkerSetupState,
   cancelSetup: Schema.Null,

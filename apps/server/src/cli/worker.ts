@@ -416,6 +416,23 @@ const workerStatusSections: Array<(home: string) => ReadonlyArray<string>> = [
         (entry) =>
           `    ${labels.get(entry.boardEnvironmentId) ?? entry.boardEnvironmentId}: ${profile(entry.held)}`,
       ),
+      // T3o: the hold, if any (T3O-87).
+      ...(capacity.hold?.placement == null
+        ? []
+        : [
+            `  Held for ${capacity.hold.placement.cardId} on ${
+              labels.get(capacity.hold.placement.boardEnvironmentId) ??
+              capacity.hold.placement.boardEnvironmentId
+            } since ${capacity.hold.placement.since}${
+              capacity.hold.placement.until === null
+                ? ""
+                : ` · until ${capacity.hold.placement.until} at the latest`
+            }`,
+          ]),
+      ...(capacity.hold?.grows ?? []).map(
+        (grow) =>
+          `  Waiting to grow: ${grow.cardId} on ${labels.get(grow.boardEnvironmentId) ?? grow.boardEnvironmentId} since ${grow.since}`,
+      ),
       ...(capacity.unowned.length === 0
         ? []
         : [

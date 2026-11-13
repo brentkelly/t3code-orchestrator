@@ -438,8 +438,50 @@ export const BoardCapacityClaimInput = Schema.Struct({
   profile: BoardResourceProfile,
   providerInstanceId: Schema.NullOr(TrimmedNonEmptyString),
   force: Schema.optionalKey(Schema.Boolean),
+  /** T3o: the card holds this worker: start early at its early-start share (T3O-87). */
+  hold: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardCapacityClaimInput = typeof BoardCapacityClaimInput.Type;
+
+/** T3o: ask for, or refresh, a hold on a worker for a waiting card (T3O-87). Idempotent. */
+export const BoardCapacityHoldInput = Schema.Struct({
+  cardId: TrimmedNonEmptyString,
+  repositoryKey: Schema.NullOr(TrimmedNonEmptyString),
+  projectId: Schema.optionalKey(TrimmedNonEmptyString),
+  providerInstanceId: Schema.NullOr(TrimmedNonEmptyString),
+  profile: BoardResourceProfile,
+  kind: Schema.Literals(["placement", "grow"]),
+});
+export type BoardCapacityHoldInput = typeof BoardCapacityHoldInput.Type;
+
+export const BoardCapacityHoldResult = Schema.Union([
+  Schema.Struct({
+    outcome: Schema.Literal("held"),
+    /** What the card is still short of in each dimension now. */
+    short: BoardResourceProfile,
+    /** When the hold ends at the latest: only once someone else is waiting. */
+    until: Schema.NullOr(IsoDateTime),
+  }),
+  Schema.Struct({
+    outcome: Schema.Literal("refused"),
+    /** held, disk, too-big, not-eligible, cool-off or turn; an unknown one reads as refused. */
+    reason: TrimmedNonEmptyString,
+    until: Schema.NullOr(IsoDateTime),
+  }),
+]);
+export type BoardCapacityHoldResult = typeof BoardCapacityHoldResult.Type;
+
+/** T3o: what a board sees of the holds on a worker (T3O-87). Never another board's card. */
+export const BoardWorkerHoldView = Schema.Struct({
+  /** Not taking new placements: held for a card, or a grow hold is waiting. */
+  closed: Schema.Boolean,
+  /** Until when, once someone is waiting. */
+  until: Schema.NullOr(IsoDateTime),
+  earlyStartFraction: Schema.Finite,
+  /** This board's card the worker is held for, when the hold is this board's. */
+  cardId: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type BoardWorkerHoldView = typeof BoardWorkerHoldView.Type;
 
 export const BoardCapacityClaimResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("granted") }),
@@ -579,6 +621,8 @@ export const BoardWorkerCapacitySnapshot = Schema.Struct({
   readiness: Schema.Array(BoardWorkerReadiness),
   /** This board's cards the worker counts heavy because a turn is running there. */
   heavyCards: Schema.Array(TrimmedNonEmptyString),
+  /** T3o: the worker's holds as this board sees them (T3O-87). Absent from an older worker. */
+  hold: Schema.optionalKey(BoardWorkerHoldView),
 });
 export type BoardWorkerCapacitySnapshot = typeof BoardWorkerCapacitySnapshot.Type;
 
