@@ -530,6 +530,9 @@ export const BoardProvisionClaim = Schema.Struct({
   profile: BoardResourceProfile,
   providerInstanceId: Schema.NullOr(TrimmedNonEmptyString),
   force: Schema.optionalKey(Schema.Boolean),
+  /** As on the claim, so a lapsed claim is checked again as it was granted. */
+  projectId: Schema.optionalKey(TrimmedNonEmptyString),
+  hold: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardProvisionClaim = typeof BoardProvisionClaim.Type;
 

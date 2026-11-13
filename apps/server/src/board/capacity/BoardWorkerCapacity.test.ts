@@ -472,7 +472,9 @@ it.effect(
         (yield* service.claim("board-a", { ...claim, kind: "placement" })).outcome,
         "granted",
       );
-      assert.strictEqual((yield* service.checkProvision("board-a", claim)).outcome, "granted");
+      assert.deepStrictEqual(yield* service.checkProvision("board-a", claim), {
+        outcome: "granted",
+      });
       // The worktree takes longer to cut than a claim lives: board-b still finds no room.
       yield* TestClock.adjust(120_000);
       assert.deepInclude(yield* service.claim("board-b", rival), {
@@ -519,6 +521,48 @@ it.effect("a provision whose claim expired is checked again as a fresh claim", (
     });
     const late = yield* service.checkProvision("board-a", claim);
     assert.deepInclude(late, { outcome: "denied", reason: "capacity" });
+  }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
+});
+
+it.effect("a lapsed early start is checked again at its early-start share", () => {
+  const fakes = makeFakes();
+  fakes.config = { ...fakes.config, "capacity.cpuCores": 18 };
+  return Effect.gen(function* () {
+    const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+    yield* service.syncCards("board-b", {
+      seq: 1,
+      authoritative: true,
+      cards: [{ ...card("busy"), grantedProfile: { cpuCores: 12, ramGiB: 40, diskGB: 20 } }],
+    });
+    const big = { cpuCores: 8, ramGiB: 32, diskGB: 45 };
+    const holdInput = {
+      cardId: "card-1",
+      repositoryKey: "github.com/acme/app",
+      providerInstanceId: null,
+      profile: big,
+      kind: "placement" as const,
+    };
+    const held = yield* service.hold("board-a", holdInput);
+    assert.strictEqual(held.outcome, "held");
+    const claim = {
+      claimId: "card-1:1",
+      seq: 2,
+      cardId: "card-1",
+      repositoryKey: "github.com/acme/app",
+      profile: big,
+      providerInstanceId: null,
+      hold: true,
+    };
+    assert.strictEqual(
+      (yield* service.claim("board-a", { ...claim, kind: "placement" })).outcome,
+      "granted",
+    );
+    // The board refreshes its hold until the provision consumes it; the claim lapses.
+    yield* TestClock.adjust(40_000);
+    yield* service.hold("board-a", holdInput);
+    yield* TestClock.adjust(21_000);
+    // Only half the card fits, which is what its early start was granted on.
+    assert.deepStrictEqual(yield* service.checkProvision("board-a", claim), { outcome: "granted" });
   }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
 });
 

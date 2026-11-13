@@ -1469,6 +1469,8 @@ const make = Effect.gen(function* () {
       }
       // T3o: a later card's hold gives way to this earlier one if its claim is granted (T3O-87).
       const laterHolder = laterHolderOn(card, candidate.workerId, pass);
+      // T3o: a held worker starts the card early (T3O-87).
+      const startsEarly = ranked.kind === "ranked" && ranked.heldByCard.has(candidate.workerId);
       // T3o: the placement claim, on this candidate only once its base checks pass (T3O-86/87).
       const placement =
         Option.isNone(capacityAdmission) || card.group !== null
@@ -1478,8 +1480,7 @@ const make = Effect.gen(function* () {
               candidate.workerId,
               claimFor.providerInstanceId,
               claimFor.force,
-              // T3o: a held worker starts the card early (T3O-87).
-              ranked.kind === "ranked" && ranked.heldByCard.has(candidate.workerId),
+              startsEarly,
               laterHolder,
             );
       if (placement.kind === "granted" && laterHolder !== null) {
@@ -1501,16 +1502,19 @@ const make = Effect.gen(function* () {
         });
       };
       charge(1);
+      const repositoryKey = yield* projectRepositoryKey(card.projectId);
       const provisionClaim =
         placement.kind === "granted"
           ? {
               claimId: placement.claimId,
               seq: 0,
               cardId: card.id,
-              repositoryKey: yield* projectRepositoryKey(card.projectId),
+              repositoryKey,
+              ...(repositoryKey === null ? { projectId: String(card.projectId) } : {}),
               profile: placement.profile,
               providerInstanceId: claimFor.providerInstanceId,
               ...(claimFor.force ? { force: true } : {}),
+              ...(startsEarly ? { hold: true } : {}),
             }
           : card.group !== null && Option.isSome(capacityAdmission)
             ? // A group card takes no claim and creates no record: a claim of nothing.
