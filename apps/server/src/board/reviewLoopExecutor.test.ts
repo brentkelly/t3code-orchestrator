@@ -1538,7 +1538,7 @@ describe("settling rounds (T3O-64)", () => {
     expect(review.reviewRoundMode).toEqual({ round: 4, mode: settlingSince(reviewSha(3)) });
     expect(review.prompt).toContain("git diff c0ffee3..HEAD");
     // Settling off, or a round already recorded: nothing to record.
-    const off = runOf(plan(oneImprovementRounds(3), reviewExec({ settleAfterRound: null })));
+    const off = runOf(plan(oneImprovementRounds(3), reviewExec({ convergeAfterRound: null })));
     expect(off.reviewRoundMode).toBeUndefined();
     expect(off.prompt).not.toContain("settling round");
     const recorded = runOf(

@@ -10629,7 +10629,7 @@ export function boardReviewRoundModeOf(
 
 /**
  * The mode round `round` runs in: its record when one exists, so a re-plan composes the same
- * prompt. Otherwise settling once past `settleAfterRound`, outside a gate round, after a round
+ * prompt. Otherwise settling once past `convergeAfterRound`, outside a gate round, after a round
  * with no surviving critical and fewer than `settleBelowFindings` forcing findings. Only the
  * executor asks this.
  */
@@ -10637,7 +10637,7 @@ export function boardReviewNextRoundMode(input: {
   readonly round: number;
   readonly completions: ReadonlyArray<BoardStepCompletion>;
   readonly review: {
-    readonly settleAfterRound: number | null;
+    readonly convergeAfterRound: number | null;
     readonly settleBelowFindings: number;
   };
   readonly overrides: BoardCardReviewOverrides | null;
@@ -10646,7 +10646,7 @@ export function boardReviewNextRoundMode(input: {
   const recorded = overrides?.roundModes[String(round)];
   if (recorded !== undefined) return recorded;
   const previous = round - 1;
-  if (review.settleAfterRound === null || previous < review.settleAfterRound) {
+  if (review.convergeAfterRound === null || previous < review.convergeAfterRound) {
     return BOARD_REVIEW_FULL_ROUND;
   }
   const done = succeededBoardReviewSteps(input.completions);
@@ -11670,7 +11670,7 @@ export const BoardStageExecutionSimple = Schema.Struct({
 });
 export type BoardStageExecutionSimple = typeof BoardStageExecutionSimple.Type;
 
-export const DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND = 3;
+export const DEFAULT_BOARD_REVIEW_CONVERGE_AFTER_ROUND = 3;
 const DEFAULT_BOARD_REVIEW_SETTLE_BELOW_FINDINGS = 2;
 /** At least 2: a round with no forcing findings already converges, so 1 could never settle. */
 export const BOARD_REVIEW_SETTLE_BELOW_FINDINGS_MIN = 2;
@@ -11711,8 +11711,8 @@ export const BoardStageExecutionReview = Schema.Struct({
   ),
   rounds: PositiveInt.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_ROUNDS))),
   /** Rounds after this one may settle (`boardReviewNextRoundMode`); null turns settling off. */
-  settleAfterRound: Schema.NullOr(PositiveInt).pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND)),
+  convergeAfterRound: Schema.NullOr(PositiveInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_CONVERGE_AFTER_ROUND)),
   ),
   /** A round with fewer forcing findings than this, and no surviving critical, makes the next
       round settle. */
@@ -12265,7 +12265,7 @@ export const BoardStageExecutionPatch = Schema.Struct({
     }),
   ),
   rounds: Schema.optionalKey(PositiveInt),
-  settleAfterRound: Schema.optionalKey(Schema.NullOr(PositiveInt)),
+  convergeAfterRound: Schema.optionalKey(Schema.NullOr(PositiveInt)),
   settleBelowFindings: Schema.optionalKey(BoardReviewSettleBelowFindings),
   draftPullRequests: Schema.optionalKey(Schema.Boolean),
   phases: Schema.optionalKey(
@@ -12311,7 +12311,7 @@ export const BOARD_STAGE_EXECUTION_PATCH_KEYS: Readonly<
   review: [
     ...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS,
     "rounds",
-    "settleAfterRound",
+    "convergeAfterRound",
     "settleBelowFindings",
     "draftPullRequests",
     "phases",

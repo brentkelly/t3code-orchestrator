@@ -1649,7 +1649,7 @@ describe("T3O-51: a ruling binds inside its round", () => {
 });
 
 describe("T3O-64: settling rounds", () => {
-  const SETTLING = { settleAfterRound: 3, settleBelowFindings: 2 } as const;
+  const SETTLING = { convergeAfterRound: 3, settleBelowFindings: 2 } as const;
   const triage = (round: number, actions: Record<string, "fixed" | "rejected">, fixedSha: string) =>
     completion(`triage@${round}`, {
       fixedSha,
@@ -1703,7 +1703,7 @@ describe("T3O-64: settling rounds", () => {
     round: number,
     completions: ReadonlyArray<BoardStepCompletion>,
     cardOverrides: BoardCardReviewOverrides | null = null,
-    settings: { settleAfterRound: number | null; settleBelowFindings: number } = SETTLING,
+    settings: { convergeAfterRound: number | null; settleBelowFindings: number } = SETTLING,
   ) => boardReviewNextRoundMode({ round, completions, review: settings, overrides: cardOverrides });
   const settlingSince = (sha: string) => ({ kind: "settling" as const, sinceSha: sha });
   const walkModes = (
@@ -1739,7 +1739,7 @@ describe("T3O-64: settling rounds", () => {
       assert.deepStrictEqual(modeOf(4, critical), { kind: "full" });
       // Whatever the threshold says.
       assert.deepStrictEqual(
-        modeOf(4, critical, null, { settleAfterRound: 3, settleBelowFindings: 5 }),
+        modeOf(4, critical, null, { convergeAfterRound: 3, settleBelowFindings: 5 }),
         { kind: "full" },
       );
       // A critical ruled not an issue does not count.
@@ -1763,7 +1763,7 @@ describe("T3O-64: settling rounds", () => {
       assert.deepStrictEqual(modeOf(4, busy), { kind: "full" });
       // A higher bar settles the same round.
       assert.deepStrictEqual(
-        modeOf(4, busy, null, { settleAfterRound: 3, settleBelowFindings: 3 }),
+        modeOf(4, busy, null, { convergeAfterRound: 3, settleBelowFindings: 3 }),
         settlingSince(reviewSha(3)),
       );
     });
@@ -1835,7 +1835,7 @@ describe("T3O-64: settling rounds", () => {
       });
       assert.deepStrictEqual(
         modeOf(4, [], overrides({ "4": settlingSince("abc") }), {
-          settleAfterRound: null,
+          convergeAfterRound: null,
           settleBelowFindings: 2,
         }),
         settlingSince("abc"),
@@ -1844,7 +1844,7 @@ describe("T3O-64: settling rounds", () => {
 
     it("never settles with settling off", () => {
       assert.deepStrictEqual(
-        modeOf(4, firstThree, null, { settleAfterRound: null, settleBelowFindings: 2 }),
+        modeOf(4, firstThree, null, { convergeAfterRound: null, settleBelowFindings: 2 }),
         { kind: "full" },
       );
     });
@@ -2036,13 +2036,13 @@ describe("T3O-64: settling rounds", () => {
     it("decodes old overrides, stage config and review payloads", () => {
       assert.deepStrictEqual(decodeOverrides({ rounds: 5 }).roundModes, {});
       const stage = decodeReviewStage({ kind: "review" });
-      assert.strictEqual(stage.settleAfterRound, 3);
+      assert.strictEqual(stage.convergeAfterRound, 3);
       assert.strictEqual(stage.settleBelowFindings, 2);
       assert.strictEqual(
         decodeReviewStage({
           kind: "review",
-          settleAfterRound: null,
-        }).settleAfterRound,
+          convergeAfterRound: null,
+        }).convergeAfterRound,
         null,
       );
       assert.isUndefined(decodeReviewPayload({ reviewedSha: "a", findings: [] }).scope);

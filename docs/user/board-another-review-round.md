@@ -121,5 +121,5 @@ sent back do. Findings the adjudicator ruled not issues never count.
 **Another review round** always runs a full review.
 
 To change when settling starts, or to turn it off, go to **Settings → Board → Pipeline → Code review**. In
-a project's `t3o.json`, the review stage takes `settleAfterRound` (a round number, or `null` for
+a project's `t3o.json`, the review stage takes `convergeAfterRound` (a round number, or `null` for
 off) and `settleBelowFindings` (2 or more).

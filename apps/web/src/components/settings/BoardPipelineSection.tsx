@@ -25,7 +25,7 @@ import {
   boardDraftPullRequestLine,
   boardReviewPhasePreamble,
   BOARD_REVIEW_SETTLE_BELOW_FINDINGS_MIN,
-  DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND,
+  DEFAULT_BOARD_REVIEW_CONVERGE_AFTER_ROUND,
   boardReviewPhaseProtocol,
   reviewStepId,
   reviewStepLabel,
@@ -1852,7 +1852,7 @@ function ReviewStageBody(props: {
     set({ phases: { ...exec.phases, [phaseId]: { ...exec.phases[phaseId], ...patch } } });
   // Off writes null, so the chosen round lives here until the toggle comes back on.
   const lastSettleAfterRound = useRef(
-    exec.settleAfterRound ?? DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND,
+    exec.convergeAfterRound ?? DEFAULT_BOARD_REVIEW_CONVERGE_AFTER_ROUND,
   );
   // A phase with no model of its own runs on the review STAGE's model, and only
   // if that is unset on the workspace default (`resolvePhaseModel`). Name the
@@ -1894,26 +1894,26 @@ function ReviewStageBody(props: {
           <ToggleRow
             label="Settling rounds"
             hint="After this, each round reviews only the new changes and only critical findings start another round. Another review round always runs a full review."
-            checked={exec.settleAfterRound !== null}
+            checked={exec.convergeAfterRound !== null}
             ariaLabel="Settling rounds"
             onChange={(checked) => {
-              if (!checked && exec.settleAfterRound !== null) {
-                lastSettleAfterRound.current = exec.settleAfterRound;
+              if (!checked && exec.convergeAfterRound !== null) {
+                lastSettleAfterRound.current = exec.convergeAfterRound;
               }
-              set({ settleAfterRound: checked ? lastSettleAfterRound.current : null });
+              set({ convergeAfterRound: checked ? lastSettleAfterRound.current : null });
             }}
           />
-          {exec.settleAfterRound === null ? null : (
+          {exec.convergeAfterRound === null ? null : (
             <>
               <NumberRow
                 label="Settle after round"
                 stepper={
                   <NumberStepper
-                    value={exec.settleAfterRound}
+                    value={exec.convergeAfterRound}
                     min={1}
                     max={20}
                     ariaLabel="Settle after round"
-                    onChange={(settleAfterRound) => set({ settleAfterRound })}
+                    onChange={(convergeAfterRound) => set({ convergeAfterRound })}
                   />
                 }
               />
