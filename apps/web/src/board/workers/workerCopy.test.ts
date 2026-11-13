@@ -7,13 +7,12 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  addWorkerErrorCopy,
   checkoutCell,
-  looksLikePairingLink,
   remoteHost,
   SETUP_JUST_NOW_MS,
   workerLastSeen,
   workerLastSeenDeadlines,
+  workersNeedAttention,
   workerStatusPresentation,
 } from "./workerCopy";
 
@@ -23,7 +22,6 @@ const worker = (state: BoardWorkerView["status"]["state"], lastSeenAt: string | 
   ({
     id: EnvironmentId.make("env-linux-box"),
     label: "linux-box",
-    url: "https://linux-box:3773",
     addedAt: "2026-10-01T00:00:00.000Z",
     status: { state, lastSeenAt, t3oVersion: "0.0.45", protocolVersion: 1 },
     snapshot: null,
@@ -44,18 +42,31 @@ const setup = (patch: Partial<BoardWorkerSetup>): BoardWorkerSetup => ({
 });
 
 describe("worker status", () => {
-  it("keeps online grey, connecting blue, and every state needing a human amber", () => {
-    expect(workerStatusPresentation(worker("online"), "studio").tone).toBe("neutral");
-    expect(workerStatusPresentation(worker("connecting"), "studio").tone).toBe("running");
-    for (const state of ["offline", "unauthorized", "incompatible"] as const) {
-      expect(workerStatusPresentation(worker(state), "studio").tone).toBe("warning");
-    }
+  it("maps each connection state to its label and colour", () => {
+    const rows = (["online", "connecting", "unauthorized", "offline", "incompatible"] as const).map(
+      (state) => {
+        const status = workerStatusPresentation(worker(state), NOW);
+        return [state, status.label, status.tone];
+      },
+    );
+    expect(rows).toEqual([
+      ["online", "Connected", "neutral"],
+      ["connecting", "Reconnecting", "running"],
+      ["unauthorized", "Reconnecting", "running"],
+      ["offline", "Offline", "warning"],
+      ["incompatible", "Needs update", "warning"],
+    ]);
+    expect(workerStatusPresentation(worker("incompatible")).detail).toBe(
+      "Connected · taking no new cards",
+    );
   });
 
-  it("names the board's session in the revoked tooltip", () => {
-    const revoked = workerStatusPresentation(worker("unauthorized"), "studio");
-    expect(revoked.label).toBe("Access revoked");
-    expect(revoked.tooltip).toContain("“T3o board (studio)”");
+  it("says when an offline worker was last seen, and flags only blocked workers", () => {
+    const offline = worker("offline", "2026-10-21T09:10:00.000Z");
+    expect(workerStatusPresentation(offline, NOW).detail).toMatch(/^Last seen .+ · 50 min ago$/);
+    expect(workerStatusPresentation(worker("offline"), NOW).detail).toBe("Never connected");
+    expect(workersNeedAttention([worker("online"), worker("unauthorized")])).toBe(false);
+    expect(workersNeedAttention([worker("online"), worker("incompatible")])).toBe(true);
   });
 
   it("says when an offline worker was last seen", () => {
@@ -83,33 +94,6 @@ describe("worker status", () => {
   });
 });
 
-describe("add worker errors", () => {
-  it("tells the human which server a wrong link came from", () => {
-    expect(
-      addWorkerErrorCopy({
-        code: "different-server",
-        target: "studio-pc",
-        workerLabel: "ci-runner-3",
-        message: "",
-      }).body,
-    ).toBe(
-      "You're adding studio-pc, but this link is from ci-runner-3. Paste a link created on studio-pc, or go back and pick ci-runner-3.",
-    );
-  });
-
-  it("says the board SERVER can't reach the worker", () => {
-    expect(
-      addWorkerErrorCopy({ code: "unreachable", target: "mbp-brent", message: "" }).title,
-    ).toBe("Board server can't reach mbp-brent");
-  });
-
-  it("checks a pasted link's shape before sending it", () => {
-    expect(looksLikePairingLink("https://ci-runner-3.internal:3773/pair#token=9fXw")).toBe(true);
-    expect(looksLikePairingLink("ci-runner-3.internal:3773")).toBe(false);
-    expect(looksLikePairingLink("https://ci-runner-3.internal:3773/")).toBe(false);
-  });
-});
-
 describe("project checkout cells", () => {
   const base = { checkout: null, setup: null, projectHasRemote: true, nowMs: NOW };
   const checkout = {
@@ -130,10 +114,7 @@ describe("project checkout cells", () => {
     });
   });
 
-  it("asks for a re-pair or an update rather than guessing", () => {
-    expect(checkoutCell({ ...base, worker: worker("unauthorized"), checkout }).kind).toBe(
-      "re-pair-to-check",
-    );
+  it("asks for an update rather than guessing", () => {
     expect(checkoutCell({ ...base, worker: worker("incompatible") }).kind).toBe("update-to-check");
   });
 

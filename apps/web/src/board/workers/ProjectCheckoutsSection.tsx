@@ -109,11 +109,11 @@ export function ProjectCheckoutsSection(props: { readonly environmentId: Environ
               <th className="px-3 py-2 font-medium">
                 <div className="flex flex-col gap-0.5">
                   <span className="text-foreground">This server</span>
-                  <span>Online</span>
+                  <span>Connected</span>
                 </div>
               </th>
               {columns.map((worker) => {
-                const status = workerStatusPresentation(worker, "");
+                const status = workerStatusPresentation(worker);
                 return (
                   <th key={worker.id} className="px-3 py-2 font-medium">
                     <div className="flex flex-col items-start gap-0.5">
@@ -127,7 +127,7 @@ export function ProjectCheckoutsSection(props: { readonly environmentId: Environ
                               : "outline"
                         }
                       >
-                        {status.label === "Incompatible version" ? "Incompatible" : status.label}
+                        {status.label}
                       </Badge>
                     </div>
                   </th>
@@ -303,8 +303,6 @@ function Cell(props: {
           <span className="text-board-11 text-muted-foreground">Set up when online</span>
         </div>
       );
-    case "re-pair-to-check":
-      return <span className="text-warning-foreground">Re-pair to check</span>;
     case "update-to-check":
       return <span className="text-warning-foreground">Update T3o to check</span>;
   }

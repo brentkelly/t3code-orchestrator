@@ -35,7 +35,7 @@ import { Spinner } from "../../components/ui/spinner";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { boardWorkerLabel, type BoardWorkerChoice } from "./cardWorker";
-import { LOCAL_WORKER_LABEL } from "./threadWorker";
+import { localWorkerLabel } from "./threadWorker";
 
 /** "today 08:51", or "12 Mar 08:51" on another day. */
 function pushedAtLabel(iso: string): string {
@@ -81,7 +81,7 @@ export function BoardCardForceMoveDialog(props: {
       : [
           {
             workerId: BOARD_LOCAL_WORKER_ID,
-            label: `${LOCAL_WORKER_LABEL} (local)`,
+            label: `${localWorkerLabel(props.workers)} (local)`,
             selectable: true,
             detail: "",
             tooltip: null,

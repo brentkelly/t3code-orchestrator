@@ -154,28 +154,73 @@ it.effect("persists the snapshot, so a fresh manager starts from the last-known 
   ),
 );
 
-it.effect("a revoked session is unauthorized and is not redialed until re-paired", () =>
+it.effect("a revoked session drops the tunnel and heals on the next session handoff", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { kit, worker, connections } = yield* setup();
       yield* connections.sync([registered]);
       yield* waitFor(connections, "online");
 
-      // Revoked on the worker: the open socket closes and every dial is 401.
+      // Revoked on the worker: the open socket closes and the redial is 401.
       worker.mode = "unauthorized";
       yield* kit.fake.drop(worker);
       yield* TestClock.adjust("1 second");
       yield* waitFor(connections, "unauthorized");
-      yield* TestClock.adjust("1 minute");
+      // The board drops the tunnel so the worker's next hello hands over a session,
+      // and doesn't dial again until it has.
+      assert.deepStrictEqual(kit.tunnel.disconnected, [WORKER_ID]);
+      yield* TestClock.adjust("30 seconds");
       assert.strictEqual((yield* statusOf(connections))?.status.state, "unauthorized");
+      // No handoff within the grace: the worker is down or can't mint, so it reads offline.
+      yield* TestClock.adjust("1 minute");
+      yield* waitFor(connections, "offline");
       assert.strictEqual(worker.dialedTokens.length, 1);
 
-      // Re-pair: a new token, then a redial.
+      // The tunnel's handshake stored a fresh session and the tunnel is ready again.
       worker.mode = "ok";
       yield* kit.secrets.store.set(workerSecretName(WORKER_ID), encodeWorkerToken("token-2"));
-      yield* connections.restart(WORKER_ID);
+      yield* kit.tunnel.setPhase(WORKER_ID, "ready");
       yield* waitFor(connections, "online");
       assert.deepStrictEqual(worker.dialedTokens, ["token-1", "token-2"]);
+    }),
+  ),
+);
+
+it.effect("waits for the worker's tunnel, and goes offline when it drops", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { kit, worker, connections } = yield* setup();
+      yield* kit.tunnel.setPhase(WORKER_ID, "down");
+      yield* connections.sync([registered]);
+      // No tunnel yet: nothing is dialed, and after the boot grace it reads offline.
+      yield* TestClock.adjust("10 seconds");
+      yield* waitFor(connections, "offline");
+      assert.strictEqual(worker.dialedTokens.length, 0);
+
+      yield* kit.tunnel.setPhase(WORKER_ID, "ready");
+      yield* waitFor(connections, "online");
+
+      // The tunnel drops: the link with it, and no redial until it is back.
+      yield* kit.tunnel.setPhase(WORKER_ID, "down");
+      yield* kit.fake.drop(worker);
+      yield* waitFor(connections, "offline");
+      yield* TestClock.adjust("1 minute");
+      assert.strictEqual(worker.dialedTokens.length, 1);
+      yield* kit.tunnel.setPhase(WORKER_ID, "ready");
+      yield* waitFor(connections, "online");
+      assert.strictEqual(worker.dialedTokens.length, 2);
+    }),
+  ),
+);
+
+it.effect("closes a removed worker's tunnel endpoint", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { kit, connections } = yield* setup();
+      yield* connections.sync([registered]);
+      yield* waitFor(connections, "online");
+      yield* connections.sync([]);
+      assert.deepStrictEqual(kit.tunnel.closed, [WORKER_ID]);
     }),
   ),
 );

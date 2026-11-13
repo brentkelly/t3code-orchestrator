@@ -16,6 +16,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
+// T3o: keep a proxied environment's base path (T3O-84).
+import { joinEnvironmentPath } from "../environment/basePath.ts";
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
@@ -81,13 +83,9 @@ export const layerRemoteHttpClient = (
     HttpObservability.layer,
   );
 
-const remoteApiBaseUrl = (httpBaseUrl: string): string => {
-  const url = new URL(httpBaseUrl);
-  url.pathname = "/";
-  url.search = "";
-  url.hash = "";
-  return url.toString();
-};
+const remoteApiBaseUrl = (httpBaseUrl: string): string =>
+  // T3o: keep a proxied environment's base path (T3O-84).
+  joinEnvironmentPath(httpBaseUrl, "/").toString();
 
 export const makeEnvironmentHttpApiClient = (httpBaseUrl: string) =>
   HttpApiClient.make(EnvironmentHttpApi, {

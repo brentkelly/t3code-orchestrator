@@ -129,10 +129,10 @@ function WorkerConcurrencyBlock(props: {
   const workerLimit = resolved.maxConcurrent;
   const status =
     block.worker === null
-      ? { label: "Online", tone: "neutral" as const }
-      : workerStatusPresentation(block.worker, "this board");
+      ? { label: "Connected", tone: "neutral" as const }
+      : workerStatusPresentation(block.worker);
   const state = block.worker?.status.state ?? "online";
-  const configurable = state !== "unauthorized" && state !== "incompatible";
+  const configurable = state !== "incompatible";
   const open = expanded || !props.collapsible;
 
   return (
@@ -175,9 +175,7 @@ function WorkerConcurrencyBlock(props: {
       </div>
       {!configurable ? (
         <p className="pl-1 text-xs text-muted-foreground">
-          {state === "unauthorized"
-            ? "Re-pair to see its providers"
-            : `Update T3o to ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION} to configure`}
+          {`Update T3o to ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION} to configure`}
         </p>
       ) : !open ? (
         <p className="truncate pl-6 text-xs text-muted-foreground">
@@ -185,7 +183,7 @@ function WorkerConcurrencyBlock(props: {
         </p>
       ) : (
         <>
-          {state === "offline" || state === "connecting" ? (
+          {state === "offline" || state === "connecting" || state === "unauthorized" ? (
             <p className="pl-4 text-xs text-muted-foreground">
               Offline. Showing the last providers {block.label} reported; changes apply when it
               reconnects.

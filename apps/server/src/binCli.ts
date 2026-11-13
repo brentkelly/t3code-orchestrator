@@ -41,6 +41,8 @@ import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
 // T3o: `t3 import-threads` seeds a T3o home from upstream T3 Code (T3O-71).
 import { importThreadsCommand } from "./t3o/importThreads.ts";
+// T3o: `t3 worker …`, the outbound worker's CLI (T3O-84).
+import { workerCommand } from "./cli/worker.ts";
 import { connectCommand, statusCommand, upCommand } from "./cli/up.ts";
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer);
@@ -117,6 +119,8 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       triageCommand,
       // T3o: import-threads.
       importThreadsCommand,
+      // T3o: worker join/leave/boards/status/config (T3O-84).
+      workerCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );

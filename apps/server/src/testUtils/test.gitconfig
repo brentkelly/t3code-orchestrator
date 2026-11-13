@@ -1,0 +1,5 @@
+# T3o: the test git "global" config. Keeps the host's url.*.insteadOf and other
+# global settings out of fixture repos while giving commits an identity.
+[user]
+	name = T3 Test
+	email = test@test.invalid

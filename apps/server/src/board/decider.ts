@@ -118,6 +118,7 @@ import {
   type BoardCommand,
   type BoardEvent,
   type ProjectId,
+  BOARD_LOCAL_WORKER_ABBREVIATION,
   BOARD_LOCAL_WORKER_ID,
   boardCardBoundWorkerId,
   boardCardEffectiveWorkerId,
@@ -5878,13 +5879,48 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (command.mode === "add" && existing !== undefined) {
         return yield* invariant(command, `${existing.label} is already a worker.`);
       }
-      if (command.mode === "repair" && existing === undefined) {
+      if (command.mode !== "add" && existing === undefined) {
         return yield* invariant(command, `Worker '${command.worker.id}' is not registered.`);
       }
-      // A re-pair keeps the worker's label and when it was added; only where
-      // it is reached may change.
+      // T3o (T3O-84): an abbreviation is unique on the board, and `SRV` is the board server's.
+      const abbreviation =
+        command.mode === "rename"
+          ? command.worker.abbreviation
+          : (existing?.abbreviation ?? command.worker.abbreviation);
+      if (abbreviation !== undefined) {
+        if (abbreviation === BOARD_LOCAL_WORKER_ABBREVIATION) {
+          return yield* invariant(command, `${abbreviation} is reserved for the board server.`);
+        }
+        const holder = (board.workers ?? []).find(
+          (worker) => worker.id !== command.worker.id && worker.abbreviation === abbreviation,
+        );
+        if (holder !== undefined) {
+          return yield* invariant(command, `${holder.label} already uses ${abbreviation}.`);
+        }
+      }
+      // A re-join keeps the label, abbreviation and when it was added; it refreshes the
+      // release and join time, and drops a direct-dial URL. A rename changes only names.
+      const { url: _droppedUrl, ...existingWithoutUrl } = existing ?? command.worker;
       const worker =
-        existing === undefined ? command.worker : { ...existing, url: command.worker.url };
+        existing === undefined
+          ? command.worker
+          : command.mode === "rename"
+            ? {
+                ...existing,
+                label: command.worker.label,
+                ...(abbreviation === undefined ? {} : { abbreviation }),
+              }
+            : {
+                ...existingWithoutUrl,
+                ...(abbreviation === undefined ? {} : { abbreviation }),
+                ...(command.worker.url === undefined ? {} : { url: command.worker.url }),
+                ...(command.worker.t3oRelease === undefined
+                  ? {}
+                  : { t3oRelease: command.worker.t3oRelease }),
+                ...(command.worker.joinedAt === undefined
+                  ? {}
+                  : { joinedAt: command.worker.joinedAt }),
+              };
       const registered: PlannedBoardEvent = {
         ...(yield* makeBoardWorkerEventBase({
           workerId: worker.id,
@@ -5897,7 +5933,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // A server added back with the same environment id reattaches the cards
       // its removal left holding: they are placed there again.
       const reattached: PlannedBoardEvent[] = [];
-      for (const card of board.cards) {
+      for (const card of command.mode === "rename" ? [] : board.cards) {
         if (card.placementOrphaned?.workerId !== worker.id) continue;
         reattached.push({
           ...(yield* makeBoardEventBase({

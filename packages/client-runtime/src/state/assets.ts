@@ -26,6 +26,8 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { request } from "../rpc/client.ts";
 import type { ProjectFaviconCache, ProjectFaviconTarget } from "../projectFaviconCache.ts";
 import { createEnvironmentQueryAtomFamily } from "./runtime.ts";
+// T3o: keep a proxied environment's base path (T3O-84).
+import { joinEnvironmentPath } from "../environment/basePath.ts";
 
 const ASSET_URL_REFRESH_INTERVAL_MS = 30 * 60_000;
 const ASSET_URL_STALE_TIME_MS = 5 * 60_000;
@@ -60,6 +62,10 @@ function parseAssetCollectionKey(
 
 export function resolveAssetUrl(httpBaseUrl: string, relativeUrl: string): string | null {
   try {
+    // T3o: keep a proxied environment's base path (T3O-84).
+    if (relativeUrl.startsWith("/") && !relativeUrl.startsWith("//")) {
+      return joinEnvironmentPath(httpBaseUrl, relativeUrl).toString();
+    }
     return new URL(relativeUrl, httpBaseUrl).toString();
   } catch {
     return null;

@@ -16,6 +16,7 @@ import {
   credentialConnectionId,
   insertRoute,
   entryWithRoutes,
+  findRouteToSameAddress,
   mergeLearnedRoutes,
   pendingRouteOrder,
   removedWithRelay,
@@ -64,6 +65,19 @@ function learned(id: string, httpBaseUrl: string): ConnectionRoute {
 }
 
 describe("connection routes", () => {
+  // T3o: a board worker proxy's base path (T3O-84).
+  it("tells apart environments proxied under different paths of one origin", () => {
+    const w1 = direct("w1", "https://board.example/api/t3o/workers/w1/");
+    const w2 = direct("w2", "https://board.example/api/t3o/workers/w2/");
+    expect(findRouteToSameAddress([w1], w2)).toBeUndefined();
+    expect(
+      findRouteToSameAddress([w1], direct("again", "https://board.example/api/t3o/workers/w1")),
+    ).toBe(w1);
+    expect(findRouteToSameAddress([PUBLIC], direct("again", "https://desk.example.com"))).toBe(
+      PUBLIC,
+    );
+  });
+
   it("classifies direct routes by address", () => {
     expect(connectionRouteKind(LAN)).toBe("lan");
     // Tailscale, Cloudflare WARP and Mesh, and other VPNs share 100.64.0.0/10.

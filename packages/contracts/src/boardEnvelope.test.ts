@@ -719,6 +719,112 @@ describe("settling round prompts (T3O-64)", () => {
   });
 });
 
+describe("raised bar prompts (T3O-92)", () => {
+  const phases = ["review", "triage", "adjudicate"] as const;
+  const promptOf = (phase: (typeof phases)[number]) =>
+    phase === "review"
+      ? DEFAULT_BOARD_REVIEW_PHASE_PROMPT
+      : phase === "triage"
+        ? DEFAULT_BOARD_TRIAGE_PHASE_PROMPT
+        : DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT;
+  const compose = (phase: (typeof phases)[number], barTier: 0 | 1 | 2 | 3) =>
+    composeBoardReviewPhasePrompt({
+      phase,
+      round: 4 + barTier,
+      rounds: 9,
+      prompt: promptOf(phase),
+      barTier,
+    });
+  const followUp = (phase: "retriage" | "readjudicate", barTier: 0 | 1 | 2 | 3) =>
+    composeBoardReviewFollowUpPrompt({
+      phase,
+      round: 6,
+      rounds: 9,
+      prompt:
+        phase === "retriage"
+          ? DEFAULT_BOARD_TRIAGE_PHASE_PROMPT
+          : DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT,
+      findings: [],
+      barTier,
+    });
+
+  it("leaves tier 0 byte-identical for every phase", () => {
+    for (const phase of phases) {
+      const base = { phase, round: 4, rounds: 5, prompt: promptOf(phase) };
+      expect(composeBoardReviewPhasePrompt({ ...base, barTier: 0 })).toBe(
+        composeBoardReviewPhasePrompt(base),
+      );
+    }
+    for (const phase of ["retriage", "readjudicate"] as const) {
+      const base = {
+        phase,
+        round: 4,
+        rounds: 5,
+        prompt: DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT,
+        findings: [],
+      };
+      expect(composeBoardReviewFollowUpPrompt({ ...base, barTier: 0 })).toBe(
+        composeBoardReviewFollowUpPrompt(base),
+      );
+    }
+  });
+
+  it("raises the reviewer's bar after its prompt and before the protocol", () => {
+    const tier1 = compose("review", 1);
+    expect(tier1).toContain("round 5 of up to 9 · raised bar (level 1)");
+    expect(tier1).toContain("overrides the severity definitions above");
+    expect(tier1).toContain("must be a real defect in this change");
+    expect(tier1).toContain("Rate anything below it `nitpick`");
+    const bar = tier1.indexOf("the bar for `improvement` is raised");
+    expect(bar).toBeGreaterThan(
+      tier1.indexOf(DEFAULT_BOARD_REVIEW_PHASE_PROMPT.trim().slice(0, 40)),
+    );
+    expect(bar).toBeLessThan(tier1.indexOf("To finish this phase"));
+    expect(tier1).toContain("`critical`, `improvement` or `nitpick`");
+    expect(tier1).toContain('`source` is `"pr-comment"` on a finding drawn from a human');
+    expect(compose("review", 2)).toContain("a user or operator would actually hit in normal use");
+    const tier3 = compose("review", 3);
+    expect(tier3).toContain("there are no improvements");
+    expect(tier3).toContain("Never raise a finding to critical to get it past the bar");
+    expect(tier3).toContain("where `severity` is `critical` or `nitpick`");
+    expect(tier3).not.toContain("belowBar");
+    expect(tier3).not.toContain("the CI finding and concerns");
+  });
+
+  it("gives the adjudicators the bar and the below-bar ruling", () => {
+    for (const prompt of [compose("adjudicate", 2), followUp("readjudicate", 2)]) {
+      expect(prompt).toContain("raised bar (level 2)");
+      expect(prompt).toContain("a user or operator would actually hit in normal use");
+      expect(prompt).toContain("add `belowBar: true` to its verdict");
+      expect(prompt).toContain("Never escalate a finding that is below the bar");
+      expect(prompt).toContain('a finding the reviewer marked `source: "pr-comment"`');
+      expect(prompt).toContain("findingId, verdict, note, belowBar?");
+      expect(prompt).toContain("fixes to findings you ruled below the bar don't count");
+    }
+    expect(compose("adjudicate", 3)).toContain(
+      "Never raise a finding to critical to get it past the bar",
+    );
+  });
+
+  it("leaves triage's rubric alone", () => {
+    expect(compose("triage", 3)).toBe(compose("triage", 0).replace("round 4 of", "round 7 of"));
+    expect(followUp("retriage", 2)).toBe(followUp("retriage", 0));
+  });
+
+  it("takes no bar in a settling round", () => {
+    const settling = { kind: "settling" as const, sinceSha: "abc1234def5678" };
+    const base = {
+      phase: "review" as const,
+      round: 6,
+      rounds: 9,
+      prompt: "Intent.",
+      mode: settling,
+    };
+    // The executor passes tier 0 for a settling round; the composer adds nothing for it.
+    expect(composeBoardReviewPhasePrompt({ ...base, barTier: 0 })).not.toContain("raised bar");
+  });
+});
+
 describe("draft pull request lines (T3O-12)", () => {
   const compose = (phase: "review" | "triage" | "adjudicate", draftPullRequests?: boolean) =>
     composeBoardReviewPhasePrompt({

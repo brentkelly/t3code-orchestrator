@@ -118,8 +118,8 @@ export class ServerConfig extends Context.Service<
 }
 
 export const make = (config: ServerConfig["Service"]) => {
-  // T3o: point the gitenv module at this config's state dir (t3o-34).
-  initGitenv(config.stateDir);
+  // T3o: point the gitenv module at this config's state dir (t3o-34). Partial test configs have none.
+  if (config.stateDir !== undefined) initGitenv(config.stateDir);
   return ServerConfig.of(config);
 };
 

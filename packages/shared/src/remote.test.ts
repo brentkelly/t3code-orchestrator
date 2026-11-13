@@ -112,6 +112,38 @@ describe("remote", () => {
     });
   });
 
+  // T3o: a board worker proxy's base path (T3O-84).
+  it.each([
+    [{ pairingUrl: "https://board.example/api/t3o/workers/w1/pair#token=pairing-token" }],
+    [{ pairingUrl: "https://board.example/api/t3o/workers/w1/#token=pairing-token" }],
+    [{ host: "https://board.example/api/t3o/workers/w1", pairingCode: "pairing-token" }],
+    [
+      {
+        pairingUrl:
+          "https://app.t3.codes/pair?host=https%3A%2F%2Fboard.example%2Fapi%2Ft3o%2Fworkers%2Fw1%2F#token=pairing-token",
+      },
+    ],
+  ])("keeps a proxied environment's base path from %j", (input) => {
+    expect(resolveRemotePairingTarget(input)).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: "https://board.example/api/t3o/workers/w1/",
+      wsBaseUrl: "wss://board.example/api/t3o/workers/w1/",
+    });
+  });
+
+  // T3o: a board worker proxy's base path (T3O-84).
+  it.each([
+    [{ host: "https://myhost.ts.net/settings/connections", pairingCode: "pairing-token" }],
+    [{ pairingUrl: "https://myhost.ts.net/settings/pair#token=pairing-token" }],
+    [{ host: "https://myhost.ts.net/api/t3o/workers/", pairingCode: "pairing-token" }],
+  ])("resets any other path to the root from %j", (input) => {
+    expect(resolveRemotePairingTarget(input)).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: "https://myhost.ts.net/",
+      wsBaseUrl: "wss://myhost.ts.net/",
+    });
+  });
+
   it("rejects unsupported direct pairing URL protocols", () => {
     let pairingUrlError: unknown;
     try {
