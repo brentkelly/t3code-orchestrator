@@ -647,6 +647,7 @@ export const checkChangedCommand = Command.make(
     // T3o: scripts/t3o-ci.ts's full tier runs the suites itself (T3O-88).
     noTests: Flag.Boolean("no-tests").pipe(
       Flag.withDescription("Run every check except the test steps."),
+      Flag.withDefault(false),
     ),
   },
   (input) =>
