@@ -3,6 +3,7 @@
  * through `runMove`, which applies `planBoardListMove` and sends one `board.card.move-cards`.
  */
 import {
+  boardCardEffectivePriority,
   BoardCardId,
   boardProjectFirstStageId,
   boardStageWithRole,
@@ -62,6 +63,8 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { BoardDialogShell } from "./BoardDialogShell";
 import { BoardArchiveGroupDialog, BoardStartedParentDialog } from "./BoardGroupDialogs";
 import { BoardHint } from "./BoardHint";
+import { BoardCardPriorityIcon } from "./BoardCardPriority";
+import { BOARD_CARD_PRIORITY_NAME } from "./boardCardPriority";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import {
   boardGroupStats,
@@ -110,7 +113,7 @@ const INDENT_PX = 22;
 /** Below this many rows every row renders; above it, only the window. */
 const VIRTUALISE_FROM = 150;
 const OVERSCAN = 12;
-const GRID_COLUMNS = "grid-cols-[minmax(0,1fr)_124px_168px_130px_150px_70px_82px]";
+const GRID_COLUMNS = "grid-cols-[minmax(0,1fr)_124px_78px_168px_130px_150px_70px_82px]";
 
 const toggled = (current: ReadonlySet<string>, id: string): ReadonlySet<string> => {
   const next = new Set(current);
@@ -718,6 +721,13 @@ export function BoardListView(props: BoardListViewProps) {
       >
         <span>Name</span>
         <span>Stage</span>
+        <button
+          className={cn("text-left", sort?.key === "priority" && "text-foreground")}
+          onClick={() => sortBy("priority")}
+          type="button"
+        >
+          Priority{sortArrow("priority")}
+        </button>
         <span>Status</span>
         <span>Progress</span>
         <span>Merges into</span>
@@ -814,6 +824,7 @@ export function BoardListView(props: BoardListViewProps) {
               data-board-list-usage-total
             >
               <span className="pl-10.5">Total in view</span>
+              <span />
               <span />
               <span />
               <span />
@@ -1172,6 +1183,23 @@ const BoardListRowView = memo(function BoardListRowView(props: BoardListRowViewP
         >
           {props.stageLabel}
         </span>
+      </div>
+      <div className="flex min-w-0 items-center gap-1.5 text-board-11-5">
+        {props.isGroup ? null : (
+          <>
+            <BoardCardPriorityIcon priority={boardCardEffectivePriority(card)} />
+            <span
+              className={cn(
+                "truncate",
+                boardCardEffectivePriority(card) === "normal"
+                  ? "text-muted-foreground"
+                  : "text-foreground",
+              )}
+            >
+              {BOARD_CARD_PRIORITY_NAME[boardCardEffectivePriority(card)]}
+            </span>
+          </>
+        )}
       </div>
       <div className="flex min-w-0 items-center gap-2.5 overflow-hidden">
         {flags.map((flag) => (

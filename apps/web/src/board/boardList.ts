@@ -3,7 +3,10 @@
  * outdent, drop targets, and the one move path. The decider re-checks every
  * move; these only explain a refusal before sending.
  */
+import { boardColumnSortsByPriority } from "@t3tools/client-runtime/state/shell";
 import {
+  boardCardEffectivePriority,
+  boardCardPriorityRank,
   boardGroupRevertStage,
   boardStageIndex,
   isBoardDeferredStage,
@@ -56,6 +59,11 @@ function compareSiblings(stages: BoardState) {
   return (left: BoardCardShell, right: BoardCardShell): number => {
     const byStage = siblingRank(stages, left.stage) - siblingRank(stages, right.stage);
     if (byStage !== 0) return byStage;
+    // Priority before drag order, as the board's columns read (Done excepted).
+    if (boardColumnSortsByPriority(left.stage)) {
+      const byPriority = priorityRank(right) - priorityRank(left);
+      if (byPriority !== 0) return byPriority;
+    }
     if (left.orderKey !== right.orderKey) return left.orderKey < right.orderKey ? -1 : 1;
     return left.cardId < right.cardId ? -1 : left.cardId > right.cardId ? 1 : 0;
   };
@@ -135,15 +143,21 @@ function matchesFilter(card: BoardCardShell, filter: BoardListFilter, shells: Sh
     : usage?.partial === true || (usage !== null && usage.costKnown !== true);
 }
 
-/** T3o: sorting the List by tokens or cost (T3O-77). */
+const priorityRank = (card: BoardCardShell) =>
+  boardCardPriorityRank(boardCardEffectivePriority(card));
+
+/** T3o: sorting the List by tokens or cost (T3O-77), or priority (T3O-95). */
 export interface BoardListSort {
-  readonly key: "tokens" | "cost";
+  readonly key: "tokens" | "cost" | "priority";
   /** -1 is high to low. */
   readonly direction: 1 | -1;
 }
 
 /** The value a figure sorts by, or null for no known figure. */
-function sortValue(usage: BoardCardUsageSummary | null, sort: BoardListSort): number | null {
+function sortValue(
+  usage: BoardCardUsageSummary | null,
+  sort: BoardListSort & { readonly key: "tokens" | "cost" },
+): number | null {
   if (usage === null) return null;
   if (sort.key === "tokens") return usage.tokens;
   return usage.costKnown === true ? usage.costUsd : null;
@@ -156,8 +170,14 @@ function sortBoardListSiblings(
   sort: BoardListSort,
   figure: (card: BoardCardShell) => BoardCardUsageSummary | null,
 ): Shells {
+  if (sort.key === "priority") {
+    return cards.toSorted(
+      (left, right) => (priorityRank(left) - priorityRank(right)) * sort.direction,
+    );
+  }
+  const usageSort = { ...sort, key: sort.key };
   const values = new Map(
-    cards.map((card) => [card.cardId, sortValue(figure(card), sort)] as const),
+    cards.map((card) => [card.cardId, sortValue(figure(card), usageSort)] as const),
   );
   return cards.toSorted((left, right) => {
     const a = values.get(left.cardId) ?? null;

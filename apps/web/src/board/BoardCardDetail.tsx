@@ -51,6 +51,7 @@ import {
 } from "@t3tools/contracts";
 import {
   boardBuildQueue,
+  boardCardBlockedPriority,
   boardColumnAppendOrderKey,
   boardRunningStepCount,
   boardThreadStateSourceWithSubagents,
@@ -75,6 +76,7 @@ import { boardAttachmentLimits } from "./boardAttachmentUpload";
 import { boardConflictFix } from "./boardConflictFix";
 import { boardScheduleKind } from "./boardSchedule";
 import { boardQueueInfo } from "./boardQueueInfo";
+import { boardCardBlocksHint, boardCardPriorityStartedNote } from "./boardCardPriority";
 import { boardCardPlanReviewView, boardPlanStageExecution } from "./boardCardPlanReview";
 import { projectIconColorOf } from "./projectAccent";
 import { useEnvironment } from "../state/environments";
@@ -1147,6 +1149,19 @@ export function BoardCardDetail({
         stages={stageState}
       />
     );
+  // Priority (T3O-95): a group has none, so it gets no row or chip.
+  const priorityStartedNote = boardCardPriorityStartedNote({
+    stageId: card.stage,
+    running: cardShell?.stepRunning === true,
+    stages,
+  });
+  const priorityBlocksHint = boardCardBlocksHint(
+    card.priority,
+    boardCardBlockedPriority(
+      detail?.dependents ?? [],
+      new Map(groupShells.map((shell) => [shell.cardId as string, shell])),
+    ),
+  );
   const autoMergeArmed =
     boardShellAutoMergeArmedByCard({ shells: groupShells, boardWide: boardWideAutoMerge }).get(
       String(card.id),
@@ -1532,6 +1547,14 @@ export function BoardCardDetail({
       onSetMergeStrategy={(mergeStrategy) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, mergeStrategy } }))
       }
+      onSetPriority={
+        card.group !== null
+          ? undefined
+          : (priority) =>
+              runCommand(updateCard({ environmentId, input: { cardId: card.id, priority } }))
+      }
+      priorityStartedNote={priorityStartedNote}
+      priorityBlocksHint={priorityBlocksHint}
       resolveModelDisplayName={resolveModelDisplayName}
       // Queued counts as running: its model and authority are already frozen
       // onto the run row, so an edit lands on the run after it.

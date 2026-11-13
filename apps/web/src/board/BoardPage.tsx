@@ -34,15 +34,18 @@ import {
   type ProjectId,
   type ThreadId,
   assignBoardKeyPrefix,
+  boardCardEffectivePriority,
 } from "@t3tools/contracts";
 import {
   applyBoardCardPlacements,
   boardBuildQueue,
+  boardColumnSortsByPriority,
   boardRunningStepCount,
   boardThreadStateSourceWithSubagents,
   isBoardCardPlacementSettled,
   mergeBoardStageColumns,
   planBoardCardReorder,
+  snapBoardCardDropOrder,
   type BoardCardPlacement,
   type BoardStageColumns,
 } from "@t3tools/client-runtime/state/shell";
@@ -1089,11 +1092,26 @@ function EnvironmentBoard({
   ) => {
     const cardId = source.card.cardId as string;
     const isMove = targetStage !== source.stage;
+    // A drag never changes priority: the drop snaps into the card's own level (not in Done,
+    // which ignores priority), and the no-op check compares that snapped order.
+    const targetCards = columns[targetStage] ?? EMPTY_CARDS;
+    const priorityByCardId = boardColumnSortsByPriority(targetStage)
+      ? new Map(
+          [...targetCards, source.card].map(
+            (card) => [card.cardId as string, boardCardEffectivePriority(card)] as const,
+          ),
+        )
+      : undefined;
+    const snappedIds = snapBoardCardDropOrder({
+      orderedCardIds: orderedIds,
+      movedCardId: cardId,
+      priorityByCardId,
+    });
     if (!isMove) {
-      const currentIds = (columns[targetStage] ?? EMPTY_CARDS).map((card) => card.cardId as string);
+      const currentIds = targetCards.map((card) => card.cardId as string);
       if (
-        orderedIds.length === currentIds.length &&
-        orderedIds.every((id, index) => id === currentIds[index])
+        snappedIds.length === currentIds.length &&
+        snappedIds.every((id, index) => id === currentIds[index])
       ) {
         return;
       }
@@ -1107,6 +1125,7 @@ function EnvironmentBoard({
       orderedCardIds: [...orderedIds],
       keysByCardId,
       movedCardId: cardId,
+      priorityByCardId,
     });
     if (assignments.length === 0) return;
 

@@ -712,10 +712,13 @@ it.effect("a re-planned review round cuts no worktree on a card whose move faile
 it.effect("a full worker queues its cards without holding up another worker's", () =>
   Effect.gen(function* () {
     const { placement } = yield* makePlacement(workersState([workerView(W1)]));
+    // Priority (T3O-95): an Urgent card behind card-b takes W1's freed slot first, and a Low
+    // card still runs on a worker with room while Normal ones wait on W1.
     const cards = [
       placedBuildingCard("card-a", "a", W1),
       placedBuildingCard("card-b", "b", W1),
-      placedBuildingCard("card-c", "c", BOARD_LOCAL_WORKER_ID),
+      { ...placedBuildingCard("card-c", "c", BOARD_LOCAL_WORKER_ID), priority: "low" as const },
+      { ...placedBuildingCard("card-d", "d", W1), priority: "urgent" as const },
     ];
     yield* withGovernor(
       {
@@ -739,8 +742,13 @@ it.effect("a full worker queues its cards without holding up another worker's", 
           assert.strictEqual((yield* step(h, "card-c"))?.status, "running");
           assert.strictEqual(yield* h.slots.heldOnWorker(W1), 1);
 
-          // card-a finishes on W1: the slot it frees there goes to card-b.
+          assert.strictEqual((yield* step(h, "card-d"))?.status, "queued");
+
+          // card-a finishes on W1: the slot it frees there goes to the Urgent card-d, then card-b.
           yield* h.pumpDomain(stepCompleted(BoardCardId.make("card-a"), "succeeded", 9));
+          assert.strictEqual((yield* step(h, "card-d"))?.status, "running");
+          assert.strictEqual((yield* step(h, "card-b"))?.status, "queued");
+          yield* h.pumpDomain(stepCompleted(BoardCardId.make("card-d"), "succeeded", 10));
           assert.strictEqual((yield* step(h, "card-b"))?.status, "running");
         }),
     );

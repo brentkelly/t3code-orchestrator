@@ -40,6 +40,7 @@ import {
   type BoardLabelId,
   type BoardStageDefinition,
   type BoardCardModelOverrides,
+  type BoardCardPriority,
   type BoardMergeStrategy,
   type BoardCardStageModelOverride,
   type BoardSettings,
@@ -168,6 +169,7 @@ import {
   isBoardStageManuallySelectable,
   type BoardStageSecondaryAction,
 } from "./boardStageActions";
+import { BoardCardPriorityChip, BoardCardPrioritySection } from "./BoardCardPriority";
 import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
 import { boardCardMoveBlocked } from "./boardCardMoveGate";
@@ -363,6 +365,18 @@ function RailSections({
       )}
       {props.automation == null ? null : (
         <div className="border-t border-border p-3.5">{props.automation}</div>
+      )}
+      {props.onSetPriority === undefined ||
+      card.archivedAt !== null ||
+      boardCardIsDone(props.stages, card.stage) ? null : (
+        <div className="border-t border-border p-3.5">
+          <BoardCardPrioritySection
+            blocksHint={props.priorityBlocksHint ?? null}
+            onChange={props.onSetPriority}
+            startedNote={props.priorityStartedNote ?? null}
+            value={card.priority}
+          />
+        </div>
       )}
       {group === null ? (
         <BoardCollapsibleSection
@@ -661,6 +675,12 @@ export interface BoardCardDetailViewProps {
   /** Write this card's own merge strategy; null returns it to the default.
       Absent hides the control. */
   readonly onSetMergeStrategy?: ((next: BoardMergeStrategy | null) => void) | undefined;
+  /** Write the card's priority. Absent hides the row and the chip: a group has none. */
+  readonly onSetPriority?: ((next: BoardCardPriority) => void) | undefined;
+  /** The side panel's note when the card already outranks waiting work. */
+  readonly priorityStartedNote?: string | null | undefined;
+  /** "Blocks an Urgent card", worked out from the card's dependents. */
+  readonly priorityBlocksHint?: string | null | undefined;
   /** What the card's schedule control is offering, derived by the
       container from the card's live step — the copy has to be honest about
       whether setting a time will STOP an agent that is working right now. */
@@ -2882,6 +2902,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               ? "CI"
               : boardStageLabel(props.stages, card.stage)}
           </span>
+          {archived || done || props.onSetPriority === undefined ? null : (
+            <BoardCardPriorityChip onChange={props.onSetPriority} value={card.priority} />
+          )}
           {archived ? (
             <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-1.75 text-board-11 font-medium text-muted-foreground">
               Archived

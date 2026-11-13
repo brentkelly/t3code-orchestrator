@@ -159,6 +159,37 @@ describe("buildBoardListTree and boardListRows", () => {
   });
 });
 
+describe("the List's priority (T3O-95)", () => {
+  const shells = [
+    shell("normal", "building", { orderKey: "a" }),
+    shell("urgent", "building", { orderKey: "z", priority: "urgent" }),
+    shell("low", "building", { orderKey: "0", priority: "low" }),
+    shell("g", "building", { orderKey: "b", group: group(), priority: "urgent" }),
+    shell("done-urgent", "done", { orderKey: "z", priority: "urgent" }),
+    shell("done-normal", "done", { orderKey: "a" }),
+  ];
+
+  it("orders siblings by priority then column order, as the board does, except in Done", () => {
+    const rows = boardListRows({ tree: treeOf(shells), collapsed: new Set(), filter: NO_FILTER });
+    // A group sorts as Normal whatever it stores.
+    expect(ids(rows)).toEqual(["urgent", "normal", "g", "low", "done-normal", "done-urgent"]);
+  });
+
+  it("sorts by priority either way, keeping outline order within a level", () => {
+    const rows = (direction: 1 | -1) =>
+      ids(
+        boardListRows({
+          tree: treeOf(shells),
+          collapsed: new Set(),
+          filter: NO_FILTER,
+          sort: { key: "priority", direction },
+        }),
+      );
+    expect(rows(-1)).toEqual(["urgent", "done-urgent", "normal", "g", "done-normal", "low"]);
+    expect(rows(1)).toEqual(["low", "normal", "g", "done-normal", "urgent", "done-urgent"]);
+  });
+});
+
 describe("boardListIndent and boardListOutdent", () => {
   const shells = [
     shell("a", "backlog", { orderKey: "a" }),

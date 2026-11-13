@@ -4,6 +4,7 @@
  */
 import {
   BOARD_SEED_STAGE_IDS,
+  boardCardEffectivePriority,
   boardSplitProposedNote,
   boardCardChildRunningLabel,
   isBoardCardWorking,
@@ -44,6 +45,8 @@ import {
   type BoardTodoThreadState,
 } from "./boardCardProgressBlock";
 import { BoardCardCiFace } from "./BoardCardCiFace";
+import { BoardCardPriorityIcon } from "./BoardCardPriority";
+import { BOARD_CARD_PRIORITY_NAME } from "./boardCardPriority";
 import { boardCardAutoBuildChip } from "./boardCardAutomation";
 import { boardCardScheduleLabel } from "./boardCardScheduleLabel";
 import { boardCardFace } from "./boardCardFace";
@@ -455,6 +458,10 @@ export function BoardCardContent({
     now: faceNow,
   });
   const autoMergeHeld = !summary.muted && card.autoMergeHeldSince != null;
+  // Priority marks only what differs from Normal, and never a group or a Done card.
+  const priority = isGroup || summary.muted ? "normal" : boardCardEffectivePriority(card);
+  // A status tone or a selection outranks the Urgent marker: they say what is happening.
+  const urgentMarker = priority === "urgent" && !selected && tone === null;
   // A split parent wears the stack: the card reads as the top
   // sheet of a pile. Purely visual now — the drill-in affordance is the plan
   // row's chip — so it keys off `planTotal` alone and the drag ghost / archive
@@ -487,7 +494,13 @@ export function BoardCardContent({
         "flex cursor-pointer flex-col gap-1.5 rounded-board-10 border px-2.75 py-2.5 transition-[color,background-color,border-color,box-shadow] duration-120 ease-board",
         // One border class: competing `border-*` utilities resolve by
         // stylesheet order, so stacking them decides nothing.
-        selected ? "border-foreground/40" : tone === null ? "border-border" : TONE_BORDER[tone],
+        selected
+          ? "border-foreground/40"
+          : tone !== null
+            ? TONE_BORDER[tone]
+            : urgentMarker
+              ? "border-priority-urgent/45"
+              : "border-border",
         // `dark:bg-board-card-dark` lifts the card above the column; the stock dark
         // `--card` lands below the column's fill.
         tone === null
@@ -499,9 +512,11 @@ export function BoardCardContent({
         // with its own resting and hover shadow. `--sheet` tracks the card fill.
         wearsStack
           ? "mb-2 [--board-card-sheet:var(--card)] dark:[--board-card-sheet:var(--color-board-card-dark)] shadow-board-card-stack hover:shadow-board-card-stack-hover"
-          : tone === null
-            ? "shadow-xs/5 hover:shadow-board-card-hover"
-            : TONE_RING[tone],
+          : tone !== null
+            ? TONE_RING[tone]
+            : urgentMarker
+              ? "shadow-board-card-urgent hover:shadow-board-card-hover"
+              : "shadow-xs/5 hover:shadow-board-card-hover",
       )}
       data-board-card={card.cardId}
       data-board-card-stage={card.stage}
@@ -511,10 +526,16 @@ export function BoardCardContent({
           className={cn(
             "inline-flex h-4 shrink-0 items-center rounded px-1.5 text-board-10 font-semibold tracking-wide",
             accent.pill,
+            priority === "low" && "opacity-70",
           )}
         >
           {card.key}
         </span>
+        {priority === "normal" ? null : (
+          <BoardHint label={`${BOARD_CARD_PRIORITY_NAME[priority]} priority`}>
+            <BoardCardPriorityIcon priority={priority} />
+          </BoardHint>
+        )}
         {parentKey !== undefined ? (
           // Sub-board membership: a child card names its parent so a
           // mixed column still reads as a whole. The chip is informational —
@@ -631,7 +652,7 @@ export function BoardCardContent({
       <div
         className={cn(
           "text-board-13 leading-board-1-35 font-medium text-pretty",
-          summary.muted ? "text-muted-foreground" : "text-foreground",
+          summary.muted || priority === "low" ? "text-muted-foreground" : "text-foreground",
         )}
       >
         {card.title}

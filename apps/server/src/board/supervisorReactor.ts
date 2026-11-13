@@ -147,6 +147,7 @@ import {
   boardCardGroupOf,
   boardCardInheritedDependsOn,
   boardCardDisplayPullRequest,
+  boardCardEffectivePriority,
   boardCardIntegrationAncestor,
   boardCardLiveChildren,
   boardCardWorktreeIsCancelledWork,
@@ -2417,8 +2418,8 @@ const make = Effect.gen(function* () {
 
   // The governor's scheduling pass. Plan-mode steps spawn
   // immediately (no slot, no worktree). Build-mode steps waiting for a slot,
-  // whose worktree is ready, are ordered by the priority rule (stage desc →
-  // started before unstarted → drag order) and offered to the governor greedily.
+  // whose worktree is ready, are ordered by the queue rule (stage desc →
+  // started before unstarted → card priority → drag order) and offered to the governor greedily.
   const schedule = Effect.fn("board-supervisor-schedule")(function* () {
     // Queued CI passes go first: whatever freed a slot (a step settling, a
     // pass ending) runs this pass, and CI cards are later-stage than any step.
@@ -2519,6 +2520,7 @@ const make = Effect.gen(function* () {
         started:
           state.threadId !== null ||
           boardCardStepCompletions(board, card.id).some((c) => c.stepId === state.stepId),
+        priority: boardCardEffectivePriority(card),
         orderKey: card.orderKey,
       });
     }

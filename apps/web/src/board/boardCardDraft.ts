@@ -6,6 +6,7 @@
 import {
   BOARD_CARD_ATTACHMENTS_MAX,
   BoardCardId,
+  BoardCardPriority,
   BoardLabelId,
   BoardStageId,
   ProjectId,
@@ -13,6 +14,7 @@ import {
   type BoardStageDefinition,
   type EnvironmentId,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -49,6 +51,8 @@ export const BoardCardDraftSchema = Schema.Struct({
   labelIds: Schema.Array(BoardLabelId),
   dependsOn: Schema.Array(BoardCardId),
   scheduledStartAt: Schema.NullOr(Schema.String),
+  /** Decodes to normal on drafts saved before priority existed. */
+  priority: BoardCardPriority.pipe(Schema.withDecodingDefault(Effect.succeed("normal" as const))),
   attachments: Schema.Array(BoardCardDraftAttachmentSchema),
 });
 /** Exactly the dialog's own field state: the draft carries no clock of its
@@ -77,8 +81,8 @@ export function boardCardDraftKey(
 }
 
 /**
- * What makes a draft worth keeping. Project, stage, label, base branch and
- * schedule are all defaults the dialog opens with — counting them would mean
+ * What makes a draft worth keeping. Project, stage, label, base branch,
+ * schedule and priority are all defaults the dialog opens with — counting them would mean
  * merely opening the dialog leaves a draft that greets you forever.
  */
 export function boardCardDraftHasContent(
@@ -102,6 +106,7 @@ export function boardCardDraftContentEquals(left: BoardCardDraft, right: BoardCa
     left.projectId === right.projectId &&
     left.baseBranch === right.baseBranch &&
     left.scheduledStartAt === right.scheduledStartAt &&
+    left.priority === right.priority &&
     sameIds(left.labelIds, right.labelIds) &&
     sameIds(left.dependsOn, right.dependsOn) &&
     left.attachments.length === right.attachments.length &&
@@ -197,6 +202,7 @@ export function restoreBoardCardDraft(input: {
       // Kept verbatim even when it is now in the past: the user set it, and
       // Create treats a past time exactly as it always has.
       scheduledStartAt: draft.scheduledStartAt,
+      priority: draft.priority,
       attachments,
     },
     droppedAttachments: attachments.length < draft.attachments.length,

@@ -13,7 +13,8 @@ export interface BoardQueueInfo {
   readonly running: number;
   readonly cap: number;
   readonly startsNext: boolean;
-  /** The pill: `Next` at the front of the queue, `Queued #3` behind it. */
+  /** The pill: `Next up` at the front of the queue, `Queued #3` behind it, `After others`
+      for a Low card behind a higher-priority one. */
   readonly label: string;
   /** The banner's bold line. */
   readonly headline: string;
@@ -57,9 +58,17 @@ export function boardQueueInfo(input: {
     running: input.running,
     cap: input.cap,
     startsNext: slot.startsNext,
-    label: slot.startsNext ? "Next" : `Queued #${slot.position}`,
-    headline: slot.startsNext ? "Queued: starts next" : `Queued #${slot.position}`,
-    detail: `${describeAgents(input.running, input.cap)}${ahead}. It starts on its own when an agent frees up.`,
+    ...(slot.afterHigherPriority === true
+      ? {
+          label: "After others",
+          headline: `Queued #${slot.position} · low priority`,
+          detail: `${describeAgents(input.running, input.cap)}${ahead}. It starts on its own when an agent frees up and no higher-priority card is waiting.`,
+        }
+      : {
+          label: slot.startsNext ? "Next up" : `Queued #${slot.position}`,
+          headline: slot.startsNext ? "Queued: starts next" : `Queued #${slot.position}`,
+          detail: `${describeAgents(input.running, input.cap)}${ahead}. It starts on its own when an agent frees up.`,
+        }),
   };
 }
 

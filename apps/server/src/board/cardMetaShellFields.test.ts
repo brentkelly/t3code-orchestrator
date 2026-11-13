@@ -712,6 +712,43 @@ it.layer(makeTestLayer("t3o-card-schedule-"))("scheduled start, column to shell 
   );
 });
 
+it.layer(makeTestLayer("t3o-card-priority-"))("card priority, column to shell (T3O-95)", (it) => {
+  it.effect("survives the create → column → shell round trip and omits normal", () =>
+    Effect.gen(function* () {
+      const engine = yield* boardStackEngine;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
+      const modelPriority = Effect.map(
+        snapshotQuery.getCommandReadModel(),
+        (model) => model.board?.cards.find((card) => card.id === cardId)?.priority,
+      );
+      yield* engine.dispatch(createProject);
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-create-urgent"),
+        cardId,
+        projectId,
+        title: "An urgent card",
+        orderKey: "m",
+        priority: "urgent",
+        createdAt,
+      });
+      assert.strictEqual((yield* shellCard)?.priority, "urgent");
+      assert.strictEqual(yield* modelPriority, "urgent");
+
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-normal"),
+        cardId,
+        priority: "normal",
+        createdAt,
+      });
+      assert.strictEqual(yield* modelPriority, "normal");
+      const normal = yield* shellCard;
+      assert.isFalse(normal !== undefined && "priority" in normal);
+    }),
+  );
+});
+
 it.layer(makeTestLayer("t3o-card-unscheduled-"))("no scheduled start (T3O-19)", (it) => {
   it.effect("leaves an unscheduled card's shell without the key at all", () =>
     Effect.gen(function* () {

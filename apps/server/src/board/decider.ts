@@ -1487,6 +1487,8 @@ const groupConversionEvents = Effect.fn("groupConversionEvents")(function* (inpu
       autoBuild: resolved.autoBuild.value,
       autoMerge: resolved.autoBuild.value && boardCardMergesIntoIntegrationBranch(board, card),
     }),
+    // Only leaves run, so a group has no priority (T3O-95).
+    priority: "normal",
     autoPlanSetting: null,
     autoBuildSetting: null,
     updatedAt: command.createdAt,
@@ -1890,6 +1892,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           parentCardId: command.parentCardId ?? null,
           doneStageId: boardStageWithRole(board, "done")?.stageId ?? null,
         });
+      if (command.heading === true && command.priority !== undefined) {
+        return yield* invariant(command, "A group has no priority; set it on its cards.");
+      }
       // A heading is born a group and stays one while empty.
       const heading =
         command.heading === true
@@ -1940,6 +1945,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           // Key-optional like `baseBranch`: absent IS "follow the default".
           ...(pinnedWorkerId === null ? {} : { pinnedWorkerId }),
           ...(command.mergeStrategy === undefined ? {} : { mergeStrategy: command.mergeStrategy }),
+          ...(command.priority === undefined || command.priority === "normal"
+            ? {}
+            : { priority: command.priority }),
           ...(command.externalRef === undefined ? {} : { externalRef: command.externalRef }),
           ...(heading === null ? {} : { group: heading }),
           dependsOn,
@@ -2722,6 +2730,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         command.baseBranch === undefined &&
         command.scheduledStartAt === undefined &&
         command.mergeStrategy === undefined &&
+        command.priority === undefined &&
         command.briefAppend === undefined &&
         command.briefSection === undefined &&
         command.addDependsOn === undefined &&
@@ -2732,6 +2741,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
 
+      if (command.priority !== undefined && card.group !== null) {
+        return yield* invariant(
+          command,
+          `'${card.key}' is a group and has no priority; set it on its cards.`,
+        );
+      }
       const nextLabels = yield* resolveCardUpdateLabels({ board, card, command });
       // An unchanged reference re-sent is no new claim, even beside an older duplicate.
       if (
@@ -2873,6 +2888,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           command.scheduledStartAt === undefined ? card.scheduledStartAt : command.scheduledStartAt,
         autoMergeHold: mergeStrategyChanged ? null : card.autoMergeHold,
         mergeStrategy,
+        priority: command.priority ?? card.priority,
         updatedAt: command.createdAt,
       };
       const updated: PlannedBoardEvent = {
@@ -3362,7 +3378,11 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         board.cards.map((candidate) => {
           if (!restoredIds.has(candidate.id)) {
             if (!detach && !parentIsGroup && candidate.id === formerParent?.id) {
-              return { ...candidate, group: defaultBoardCardGroup(board, candidate) };
+              return {
+                ...candidate,
+                group: defaultBoardCardGroup(board, candidate),
+                priority: "normal" as const,
+              };
             }
             return candidate;
           }
@@ -3488,6 +3508,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           { stage: capped },
           { heading: true, prevStage: capped },
         ),
+        priority: "normal",
         ...retireBoardCardPullRequest(card),
         autoPlanSetting: null,
         autoBuildSetting: null,
@@ -4456,6 +4477,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             parentCardId: card.id,
             sourcePlanId: plan.planId,
             ...(inheritedPin === null ? {} : { pinnedWorkerId: inheritedPin }),
+            ...(card.priority === "normal" ? {} : { priority: card.priority }),
             stage,
             orderKey,
             createdAt: command.createdAt,
@@ -4473,6 +4495,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ...settings,
           started: card.stage === buildStage.stageId,
         }),
+        // Its children copied its priority above; a group has none.
+        priority: "normal",
         autoPlanSetting: null,
         autoBuildSetting: null,
         updatedAt: command.createdAt,
