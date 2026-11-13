@@ -85,12 +85,30 @@ export function pickClosest<C extends { readonly ahead: number }>(
 }
 
 const TEST_FILE = String.raw`[\w./@+-]+\.(?:browser\.)?test\.[cm]?[jt]sx?`;
-/** Test files vitest's default reporter names in its FAIL lines. */
-export function failedTestFiles(output: string): Array<string> {
-  const files = new Set<string>();
-  const pattern = new RegExp(String.raw`^\s*FAIL\s+(?:\|[^|]+\|\s+)?(${TEST_FILE})`, "gm");
-  for (const match of output.matchAll(pattern)) files.add(match[1]!);
-  return [...files];
+/** Repo paths of the test files vitest's FAIL lines name; a project label is mapped to its package. */
+export function failedTestFiles(
+  output: string,
+  packageDirs: () => ReadonlyArray<string> = () => readWorkspace().map((pkg) => pkg.dir),
+  exists: (path: string) => boolean = (path) => NodeFS.existsSync(NodePath.join(ROOT, path)),
+): Array<{ readonly name: string; readonly file?: string }> {
+  const found = new Map<string, { readonly name: string; readonly file?: string }>();
+  const pattern = new RegExp(String.raw`^\s*FAIL\s+(?:\|([^|]+)\|\s+)?(${TEST_FILE})`, "gm");
+  for (const [, label, path] of output.matchAll(pattern)) {
+    const key = `${label ?? ""}|${path}`;
+    if (found.has(key)) continue;
+    if (!label) {
+      found.set(key, { name: path!, file: path! });
+      continue;
+    }
+    const owners = packageDirs().filter((dir) => exists(`${dir}/${path}`));
+    found.set(
+      key,
+      owners.length === 1
+        ? { name: `${owners[0]}/${path}`, file: `${owners[0]}/${path}` }
+        : { name: `|${label}| ${path}` },
+    );
+  }
+  return [...found.values()];
 }
 
 const STEP_KINDS: ReadonlyArray<readonly [RegExp, string]> = [
@@ -116,7 +134,9 @@ export function checkChangedFailures(output: string): Array<Failure> {
     if (kind === "test") {
       const files = failedTestFiles(output);
       if (files.length > 0) {
-        for (const file of files) failures.push({ title: `[test] ${file}`, file });
+        for (const { name, file } of files) {
+          failures.push({ title: `[test] ${name}`, ...(file ? { file } : {}) });
+        }
         continue;
       }
     }
@@ -257,11 +277,19 @@ export async function runSuite(input: {
   }
   const infra = INFRA_OUTPUT.exec(result.output)?.[0];
   const ok = result.code === 0;
+  // A non-zero exit with no failed test (an unhandled error, a crashed worker) still names a failure.
   const failures =
-    parsed?.failures ??
-    (ok
-      ? []
-      : [{ file: input.dir, test: "(suite)", error: firstLine(result.output.slice(-2000)) }]);
+    parsed && parsed.failures.length > 0
+      ? parsed.failures
+      : ok
+        ? []
+        : [
+            {
+              file: input.dir,
+              test: "(suite)",
+              error: `exited ${result.code}: ${firstLine(result.output.slice(-2000))}`,
+            },
+          ];
   return {
     name: input.name,
     dir: input.dir,
@@ -278,10 +306,27 @@ function progress(message: string) {
   console.log(`::t3o-progress::${JSON.stringify({ message })}`);
 }
 
+// The board drops a result failure over these lengths (BoardCiFailureDetail), so clamp rather than lose it.
+const clamp = (text: string, max: number) =>
+  text.length > max ? `${text.slice(0, max - 1)}…` : text;
+export const clampFailure = (failure: Failure): Failure => ({
+  ...failure,
+  title: clamp(failure.title, 500),
+  ...(failure.detail !== undefined ? { detail: clamp(failure.detail, 4_000) } : {}),
+  ...(failure.file !== undefined ? { file: clamp(failure.file, 500) } : {}),
+});
+
 function writeResult(summary: string, failures: ReadonlyArray<Failure>) {
   const path = process.env.T3O_CI_RESULT;
   if (!path) return;
-  NodeFS.writeFileSync(path, JSON.stringify({ summary, failures }, null, 2));
+  NodeFS.writeFileSync(
+    path,
+    JSON.stringify(
+      { summary: clamp(summary, 1_000), failures: failures.map(clampFailure) },
+      null,
+      2,
+    ),
+  );
 }
 
 function fail(step: string, summary: string, failures: ReadonlyArray<Failure>, machine = false) {
@@ -292,7 +337,7 @@ function fail(step: string, summary: string, failures: ReadonlyArray<Failure>, m
   process.exitCode = 1;
 }
 
-const suiteFailures = (suites: ReadonlyArray<SuiteResult>): Array<Failure> =>
+export const suiteFailures = (suites: ReadonlyArray<SuiteResult>): Array<Failure> =>
   suites.flatMap((suite): Array<Failure> =>
     suite.status === "infra"
       ? [{ title: `[infra] ${suite.name}`, detail: suite.infraReason ?? "", machine: true }]
@@ -302,6 +347,10 @@ const suiteFailures = (suites: ReadonlyArray<SuiteResult>): Array<Failure> =>
           file: failure.file,
         })),
   );
+
+/** Only a failure list that is non-empty and wholly the machine's holds the card for a human. */
+export const isMachineFailure = (failures: ReadonlyArray<Failure>) =>
+  failures.length > 0 && failures.every((failure) => failure.machine === true);
 
 export interface Base {
   readonly ref: string;
@@ -481,12 +530,7 @@ async function suites(part: Part, tier: Tier, list: ReadonlyArray<Parameters<typ
   console.log(summary);
   if (results.every((result) => result.status === "pass")) return writeResult(summary, []);
   const failures = suiteFailures(results);
-  fail(
-    part,
-    summary,
-    failures,
-    failures.every((failure) => failure.machine === true),
-  );
+  fail(part, summary, failures, isMachineFailure(failures));
 }
 
 function packageSuites(base: Base) {

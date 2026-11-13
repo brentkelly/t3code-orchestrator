@@ -14,14 +14,18 @@ import {
 
 import {
   checkChangedFailures,
+  clampFailure,
   classifyInstallFailure,
   detectTier,
   failedTestFiles,
+  isMachineFailure,
   isPnpmExeOnlyChange,
   parseVitestJson,
   resolveBase,
   ROOT,
+  runSuite,
   stripPnpmExe,
+  suiteFailures,
 } from "./t3o-ci.ts";
 
 it("imports the committed t3o.json without warnings", () => {
@@ -115,16 +119,31 @@ describe("install failures", () => {
 });
 
 describe("failure parsing", () => {
-  it("names the failed test files from vitest's output", () => {
+  it("names the failed test files from vitest's output as repo paths", () => {
     const output = [
       " FAIL  |server| src/project/ProjectService.test.ts > ProjectService > retries",
       " FAIL  scripts/check-changed.test.ts > compares",
       " FAIL  |server| src/project/ProjectService.test.ts > ProjectService > other",
+      " FAIL  |unit| src/ambiguous.test.ts > a",
       " ✓ src/ok.test.ts",
     ].join("\n");
-    assert.deepStrictEqual(failedTestFiles(output), [
-      "src/project/ProjectService.test.ts",
-      "scripts/check-changed.test.ts",
+    const onDisk = new Set([
+      "apps/server/src/project/ProjectService.test.ts",
+      "apps/web/src/ambiguous.test.ts",
+      "packages/shared/src/ambiguous.test.ts",
+    ]);
+    const files = failedTestFiles(
+      output,
+      () => ["apps/server", "apps/web", "packages/shared"],
+      (path) => onDisk.has(path),
+    );
+    assert.deepStrictEqual(files, [
+      {
+        name: "apps/server/src/project/ProjectService.test.ts",
+        file: "apps/server/src/project/ProjectService.test.ts",
+      },
+      { name: "scripts/check-changed.test.ts", file: "scripts/check-changed.test.ts" },
+      { name: "|unit| src/ambiguous.test.ts" },
     ]);
   });
 
@@ -141,7 +160,7 @@ describe("failure parsing", () => {
     assert.deepStrictEqual(checkChangedFailures(output), [
       { title: "[lint] lint" },
       { title: "[typecheck] typecheck (3 packages)", detail: "timed out" },
-      { title: "[test] src/a.test.ts", file: "src/a.test.ts" },
+      { title: "[test] |server| src/a.test.ts" },
     ]);
   });
 
@@ -189,6 +208,49 @@ describe("failure parsing", () => {
         },
       ],
     });
+  });
+});
+
+describe("suite failures", () => {
+  it("names a failure when the suite exits non-zero with every test passing", async () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-fake-vitest-"));
+    try {
+      const script = NodePath.join(dir, "vitest.mjs");
+      NodeFS.writeFileSync(
+        script,
+        [
+          'import * as fs from "node:fs";',
+          'const out = process.argv.find((arg) => arg.startsWith("--outputFile.json="));',
+          'fs.writeFileSync(out.slice("--outputFile.json=".length), JSON.stringify({ numPassedTests: 2, numFailedTests: 0, testResults: [] }));',
+          'console.error("Unhandled Rejection: boom");',
+          "process.exit(1);",
+        ].join("\n"),
+      );
+      const result = await runSuite({ name: "fake", dir: "scripts", command: `node ${script}` });
+      assert.strictEqual(result.status, "fail");
+      const failures = suiteFailures([result]);
+      assert.strictEqual(failures.length, 1);
+      assert.strictEqual(failures[0]!.title, "[test] scripts > (suite)");
+      assert.match(failures[0]!.detail ?? "", /^exited 1: /);
+      assert.isFalse(isMachineFailure(failures));
+    } finally {
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("holds for a human only when every failure, and at least one, is the machine's", () => {
+    assert.isFalse(isMachineFailure([]));
+    assert.isTrue(isMachineFailure([{ title: "[infra] web", machine: true }]));
+    assert.isFalse(
+      isMachineFailure([{ title: "[infra] web", machine: true }, { title: "[test] a" }]),
+    );
+  });
+
+  it("clamps a failure to the lengths the board keeps", () => {
+    const clamped = clampFailure({ title: "t".repeat(600), detail: "d".repeat(5_000), file: "f" });
+    assert.strictEqual(clamped.title.length, 500);
+    assert.strictEqual(clamped.detail!.length, 4_000);
+    assert.strictEqual(clamped.file, "f");
   });
 });
 
