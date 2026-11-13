@@ -375,7 +375,7 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
       assert.deepStrictEqual(left, { rows: 0, keys: 0 });
     }),
   );
-  it.effect("migration 068 re-prices the usage the backfill can rebuild, and only that", () =>
+  it.effect("migration 068 re-prices the usage the backfill can rebuild, and drops the rest", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const { cardId, threadId, projectId } = yield* seedLinkedThread("reprice");
@@ -398,6 +398,8 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
       yield* writeTurn(child, "turn-reprice-child-1", "completed", { input: 500_000, output: 0 });
       const worker = ThreadId.make("thread-reprice-worker");
       const tombstoned = ThreadId.make("thread-reprice-tombstoned");
+      // Unlinked from the card after it booked usage: the backfill cannot credit it again.
+      const unlinked = yield* createThread(projectId, "thread-reprice-unlinked");
       yield* sql`
         INSERT INTO boards.board_card_thread_links
           (thread_id, card_id, role, linked_at, tombstoned_at, worker_id)
@@ -411,6 +413,7 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
         [child, "building"],
         [worker, "review@1"],
         [tombstoned, "planning"],
+        [unlinked, "building"],
       ] as const) {
         yield* sql`
           INSERT INTO boards.board_card_usage (
@@ -446,19 +449,21 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
       assert.deepStrictEqual(rows, [
         { threadId: "thread-reprice", uncached: 1_000_000, cost: 1_000_000, partial: 1 },
         { threadId: "thread-reprice-child", uncached: 500_000, cost: 500_000, partial: 0 },
-        { threadId: tombstoned, uncached: 83_000_000, cost: 83_000_000, partial: 0 },
         { threadId: worker, uncached: 83_000_000, cost: 83_000_000, partial: 0 },
       ]);
+      const [card] = yield* sql<{ readonly partial: number }>`
+        SELECT usage_history_partial AS partial FROM boards.board_cards WHERE card_id = ${cardId}
+      `;
+      assert.strictEqual(card?.partial, 1, "dropped rows leave the card a labelled lower bound");
       const ingested = yield* sql<{ readonly threadId: string; readonly turnId: string }>`
         SELECT thread_id AS "threadId", provider_turn_id AS "turnId"
         FROM boards.board_usage_ingested
-        WHERE thread_id IN (${threadId}, ${child}, ${worker}, ${tombstoned})
+        WHERE thread_id IN (${threadId}, ${child}, ${worker}, ${tombstoned}, ${unlinked})
         ORDER BY thread_id
       `;
       assert.deepStrictEqual(ingested, [
         { threadId: "thread-reprice", turnId: "turn-reprice-1" },
         { threadId: "thread-reprice-child", turnId: "turn-reprice-child-1" },
-        { threadId: tombstoned, turnId: `turn-${tombstoned}` },
         { threadId: worker, turnId: `turn-${worker}` },
       ]);
     }),
