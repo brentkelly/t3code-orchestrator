@@ -18,6 +18,7 @@ import {
   noop,
   splitShells,
 } from "./boardCardDetailFixtures";
+import { usageRow } from "./usage/boardUsageFixtures";
 
 // The real pane mounts a live chat; the pills only need the thread it shows
 // and a way to pick another.
@@ -234,5 +235,47 @@ describe("a spend popover's Summary request (T3O-77)", () => {
     close.element().dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(useBoardUiStore.getState().detailSummaryCardId).toBeNull();
+  });
+
+  it("opens the Summary pane with its Usage section expanded", async () => {
+    useBoardUiStore.getState().setDetailSummaryCardId(cardId);
+    await using _screen = await render(
+      <BoardCardDetailView
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building }, null, { usage: [usageRow()] })}
+        projectName="P"
+      />,
+    );
+    const usage = page.getByRole("button", { name: /^Usage/ });
+    await expect.element(usage).toHaveAttribute("aria-expanded", "true");
+    await expect.element(page.getByText("Card total")).toBeInTheDocument();
+    // The Summary pane opens without the request otherwise: every section starts closed.
+    expect(useBoardUiStore.getState().detailSummaryCardId).toBeNull();
+  });
+
+  it("keeps the sections as left across a pane switch, and does not re-open Usage", async () => {
+    useBoardUiStore.getState().setDetailSummaryCardId(cardId);
+    await using _screen = await render(
+      <BoardCardDetailView
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building }, null, { usage: [usageRow()] })}
+        projectName="P"
+      />,
+    );
+    // The sheet portals out of the render container behind Base UI's inert layer.
+    const click = (name: string | RegExp) =>
+      page
+        .getByRole("button", { name, exact: true })
+        .element()
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const usage = page.getByRole("button", { name: /^Usage/ });
+    await expect.element(usage).toHaveAttribute("aria-expanded", "true");
+    click(/^Usage/);
+    await expect.element(usage).toHaveAttribute("aria-expanded", "false");
+
+    click("Brief");
+    await expect.element(usage).not.toBeInTheDocument();
+    click("Summary");
+    await expect.element(usage).toHaveAttribute("aria-expanded", "false");
   });
 });

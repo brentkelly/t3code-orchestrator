@@ -25,7 +25,11 @@ import {
 
 import * as Option from "effect/Option";
 
-import { deriveBoardReviewLoop, hasBoardReviewSteps } from "./boardReviewLoop";
+import {
+  deriveBoardReviewLoop,
+  hasBoardReviewSteps,
+  type BoardReviewLoopStatus,
+} from "./boardReviewLoop";
 import type { BoardPlanRows } from "./boardPlanRows";
 
 export type BoardCardWorkSummaryTone = "success" | "info" | "attention" | "warning" | "muted";
@@ -53,6 +57,8 @@ export interface BoardCardWorkSummaryReview {
     readonly escalated: number;
   };
   readonly outstanding: ReadonlyArray<BoardCardWorkSummaryOutstandingFinding>;
+  /** The loop's chip ({@link reviewLoopChip}); can exist before any completion. */
+  readonly loop: BoardCardWorkSummaryVerdict | null;
 }
 
 export interface BoardCardWorkSummaryChild {
@@ -110,6 +116,7 @@ const EMPTY_REVIEW: BoardCardWorkSummaryReview = {
   maxRounds: DEFAULT_BOARD_REVIEW_ROUNDS,
   counts: { raised: 0, fixed: 0, rejected: 0, open: 0, disputed: 0, escalated: 0 },
   outstanding: [],
+  loop: null,
 };
 
 function stageStateOf(stages: ReadonlyArray<BoardStageDefinition>): BoardState {
@@ -169,13 +176,52 @@ function pickVerdict(
   return winner;
 }
 
+/**
+ * The review loop's chip: one source for the verdict chip, the Review tile and
+ * the review row, so they cannot disagree. Null when the loop says nothing.
+ */
+export function reviewLoopChip(input: {
+  readonly role: ReturnType<typeof effectiveBoardStageRole>;
+  readonly loopStatus: BoardReviewLoopStatus | null;
+  readonly reviewLive: boolean;
+  readonly reviewStalled: boolean;
+}): BoardCardWorkSummaryVerdict | null {
+  // At Done the loop is history: a held loop is not something to act on, so it
+  // must not paint a landed card amber (docs/t3o/status-colours.md).
+  if (input.role === "done") return null;
+  switch (input.loopStatus) {
+    case "stuck":
+      // Violet, and only in Code review: the one way out of that stage is a
+      // human's call.
+      return input.role === "review"
+        ? { label: boardReviewHeldLabel("stuck"), tone: "attention" }
+        : null;
+    case "advanced":
+      // A human advanced past a stuck round: neither a pass nor a call.
+      return { label: "Review advanced", tone: "muted" };
+    case "unreadable":
+    case "round-cap":
+    case "stopped":
+      return { label: boardReviewHeldLabel(input.loopStatus), tone: "warning" };
+    case "running":
+      if (input.role !== "review") return { label: "Review paused", tone: "muted" };
+      // Same order as the Review pane's statusPill: a stalled step is amber
+      // stopped, not violet waiting — nothing will run it until someone acts.
+      if (input.reviewStalled) return { label: "Review stopped", tone: "warning" };
+      if (input.reviewLive) return { label: "Review running", tone: "info" };
+      return { label: "Waiting to run", tone: "attention" };
+    case "converged":
+      return { label: "Review settled", tone: "success" };
+    default:
+      return null;
+  }
+}
+
 function deriveVerdict(input: {
   readonly role: ReturnType<typeof effectiveBoardStageRole>;
   readonly blocked: boolean;
   readonly mergeHeld: boolean;
-  readonly loopStatus: ReturnType<typeof deriveBoardReviewLoop>["status"] | null;
-  readonly reviewLive: boolean;
-  readonly reviewStalled: boolean;
+  readonly loop: BoardCardWorkSummaryVerdict | null;
   readonly prState: BoardCardPullRequestState | null;
   readonly prMissingAtMerge: boolean;
 }): BoardCardWorkSummaryVerdict {
@@ -183,44 +229,7 @@ function deriveVerdict(input: {
   if (input.blocked) candidates.push({ label: "Blocked", tone: "warning" });
   if (input.mergeHeld) candidates.push({ label: "Merge held", tone: "warning" });
   if (input.prMissingAtMerge) candidates.push({ label: "No pull request", tone: "warning" });
-
-  // At Done the loop is history: a held loop is not something to act on, so it
-  // must not paint a landed card amber (docs/t3o/status-colours.md). Merged /
-  // Done win; Blocked, pushed above, still outranks them.
-  if (input.role !== "done") {
-    if (input.loopStatus === "stuck") {
-      // Violet, and only in Code review: the one way out of that
-      // stage is a human's call.
-      if (input.role === "review") {
-        candidates.push({ label: boardReviewHeldLabel("stuck"), tone: "attention" });
-      }
-    } else if (input.loopStatus === "advanced") {
-      // A human advanced past a stuck round: neither a pass nor a call.
-      candidates.push({ label: "Review advanced", tone: "muted" });
-    } else if (input.loopStatus === "unreadable") {
-      candidates.push({ label: boardReviewHeldLabel("unreadable"), tone: "warning" });
-    } else if (input.loopStatus === "round-cap") {
-      candidates.push({ label: boardReviewHeldLabel("round-cap"), tone: "warning" });
-    } else if (input.loopStatus === "stopped") {
-      candidates.push({ label: boardReviewHeldLabel("stopped"), tone: "warning" });
-    } else if (input.loopStatus === "running") {
-      if (input.role === "review") {
-        // Same order as the Review pane's statusPill: a stalled step is amber
-        // stopped, not violet waiting — nothing will run it until someone acts.
-        if (input.reviewStalled) {
-          candidates.push({ label: "Review stopped", tone: "warning" });
-        } else if (input.reviewLive) {
-          candidates.push({ label: "Review running", tone: "info" });
-        } else {
-          candidates.push({ label: "Waiting to run", tone: "attention" });
-        }
-      } else {
-        candidates.push({ label: "Review paused", tone: "muted" });
-      }
-    } else if (input.loopStatus === "converged") {
-      candidates.push({ label: "Review settled", tone: "success" });
-    }
-  }
+  if (input.loop !== null) candidates.push(input.loop);
 
   if (input.prState === "merged") {
     candidates.push({ label: "Merged", tone: "success" });
@@ -243,7 +252,7 @@ function deriveReview(
   carry: Parameters<typeof deriveBoardReviewLoop>[4],
 ): {
   readonly recap: BoardCardWorkSummaryReview;
-  readonly status: ReturnType<typeof deriveBoardReviewLoop>["status"] | null;
+  readonly status: BoardReviewLoopStatus | null;
 } {
   if (!hasBoardReviewSteps(completions)) {
     return { recap: EMPTY_REVIEW, status: null };
@@ -284,6 +293,7 @@ function deriveReview(
       maxRounds: loop.maxRounds,
       counts: loop.totals,
       outstanding,
+      loop: null,
     },
   };
 }
@@ -393,7 +403,7 @@ export function deriveBoardCardWorkSummary(input: {
   const { card } = input.detail;
   const role = stageRoleOf(input.stages, card.stage);
   const maxRounds = input.maxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS;
-  const { recap: review, status: recordedStatus } = deriveReview(
+  const { recap, status: recordedStatus } = deriveReview(
     input.detail.stepCompletions,
     maxRounds,
     card.reviewOverrides?.stopAfterRound ?? null,
@@ -418,13 +428,18 @@ export function deriveBoardCardWorkSummary(input: {
   // Verdict reads the CURRENT round's pull request. Identity still uses the
   // display helper so a retired round stays reachable after leaving Done.
   const currentPr = card.pullRequest;
+  const loop = reviewLoopChip({
+    role,
+    loopStatus,
+    reviewLive: input.reviewLive === true,
+    reviewStalled: input.reviewStalled === true,
+  });
+  const review: BoardCardWorkSummaryReview = { ...recap, loop };
   const verdict = deriveVerdict({
     role,
     blocked: card.blocked,
     mergeHeld: card.autoMergeHold !== null,
-    loopStatus,
-    reviewLive: input.reviewLive === true,
-    reviewStalled: input.reviewStalled === true,
+    loop,
     prState: currentPr?.state ?? null,
     prMissingAtMerge: role === "merge" && currentPr === null,
   });
