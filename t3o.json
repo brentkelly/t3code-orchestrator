@@ -1,0 +1,65 @@
+{
+  "version": 2,
+  "stages": {
+    "settings": {
+      "ci": {
+        "prompt": "You are the CI fix agent for the t3o fork. Each failure title starts with its kind: [install], [fmt], [lint], [knip], [typecheck], [graphql], [test], [infra], or a setup failure. The result summary names the tier (\"tier: B\" per card, \"tier: full\" on an upstream sync).\n\nNever run `scripts/t3o-ci.ts`, `vp run t3o:test-full` or `vp run check:changed` yourself. Run only the checks and test files that failed. Merge, never rebase or force-push.\n\n1. A setup failure saying \"branch predates t3o CI\": merge `origin/t3o` into the card branch, push, and answer `fixed`.\n2. A step failing with \"left tracked changes\" on `routeTree.gen.ts` or another generated file: the card forgot to commit the regenerated file. Commit it, push, answer `fixed`.\n3. Machine failures (marked machine, or [infra]: install network or disk errors, a missing Playwright browser): change nothing; answer `cannot-fix` with the reason.\n4. Fix [fmt], [lint], [knip], [typecheck], [graphql] and [install] lockfile failures, and [test] failures this card clearly caused in its own files. Run only those checks and tests (`vp fmt <files>`, `vp lint <files>`, `vp test run <files>`, `vp run --filter '...<package>' typecheck`, `vp run knip:check`), commit, push, and answer `fixed`.\n5. Before blaming the card for a [test] failure, check whether it is trunk-red: `git worktree add` a scratch checkout of the card's base (usually `origin/t3o`) beside this worktree, run `pnpm install --frozen-lockfile --prefer-offline --yes` there (about 2s), run only that failing test file, then remove the worktree. Don't guess.\n6. If it also fails on the base, it is trunk-red and not this card's doing. First record it: if a live card with the `nightly-red` label exists, append the failure with `board_update_card` `briefSection` `{ heading: \"## CI <this card's key> <date>\", body }`; otherwise create one in Backlog titled \"Trunk red on t3o\" with that label and the failing file, test and first error line (do not set automation; the nightly run arms it). Then answer `cannot-fix`, saying it fails on trunk too.\n7. Anything else: answer `cannot-fix`, copying the failure lines.\n\n`cannot-fix` is all-or-nothing and stops CI for a human, so commit and push any partial fixes before answering it.",
+        "maxFixAttempts": 2
+      }
+    }
+  },
+  "ci": {
+    "enabled": true,
+    "stopOnFailure": false,
+    "steps": [
+      {
+        "kind": "script",
+        "id": "install",
+        "name": "Install",
+        "command": "test -f scripts/t3o-ci.ts || { echo '::t3o-failure::{\"step\":\"setup\",\"reason\":\"branch predates t3o CI; merge t3o into it\",\"machine\":false}'; exit 1; }; node scripts/t3o-ci.ts install",
+        "parallel": false,
+        "timeoutMinutes": 15
+      },
+      {
+        "kind": "script",
+        "id": "changed",
+        "name": "check:changed",
+        "command": "test -f scripts/t3o-ci.ts || { echo '::t3o-failure::{\"step\":\"setup\",\"reason\":\"branch predates t3o CI; merge t3o into it\",\"machine\":false}'; exit 1; }; node scripts/t3o-ci.ts changed",
+        "parallel": false,
+        "timeoutMinutes": 20
+      },
+      {
+        "kind": "script",
+        "id": "board",
+        "name": "Board tests",
+        "command": "test -f scripts/t3o-ci.ts || { echo '::t3o-failure::{\"step\":\"setup\",\"reason\":\"branch predates t3o CI; merge t3o into it\",\"machine\":false}'; exit 1; }; node scripts/t3o-ci.ts board",
+        "parallel": false,
+        "timeoutMinutes": 10
+      },
+      {
+        "kind": "script",
+        "id": "packages",
+        "name": "Package tests",
+        "command": "test -f scripts/t3o-ci.ts || { echo '::t3o-failure::{\"step\":\"setup\",\"reason\":\"branch predates t3o CI; merge t3o into it\",\"machine\":false}'; exit 1; }; node scripts/t3o-ci.ts packages",
+        "parallel": false,
+        "timeoutMinutes": 10
+      },
+      {
+        "kind": "script",
+        "id": "web",
+        "name": "Web unit tests",
+        "command": "test -f scripts/t3o-ci.ts || { echo '::t3o-failure::{\"step\":\"setup\",\"reason\":\"branch predates t3o CI; merge t3o into it\",\"machine\":false}'; exit 1; }; node scripts/t3o-ci.ts web",
+        "parallel": false,
+        "timeoutMinutes": 15
+      },
+      {
+        "kind": "script",
+        "id": "full",
+        "name": "Full suite (upstream syncs)",
+        "command": "test -f scripts/t3o-ci.ts || { echo '::t3o-failure::{\"step\":\"setup\",\"reason\":\"branch predates t3o CI; merge t3o into it\",\"machine\":false}'; exit 1; }; node scripts/t3o-ci.ts full",
+        "parallel": false,
+        "timeoutMinutes": 60
+      }
+    ]
+  }
+}
