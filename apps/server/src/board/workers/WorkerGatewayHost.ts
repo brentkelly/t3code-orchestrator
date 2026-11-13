@@ -306,17 +306,19 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     );
   /** Whether the caller's board placed this thread, by the record its spawn wrote. A thread no
       board placed is the worker's own, unless it is gone (a retried delete). */
-  const placedByCaller = (caller: GatewayCaller, threadId: ThreadId) =>
-    Effect.gen(function* () {
-      if (caller.boardId === null) return false;
-      const central = yield* store
-        .relayedThreadCentral(threadId)
-        .pipe(Effect.orElseSucceed(() => undefined));
-      if (central === undefined) return false;
-      if (central !== null) return central === caller.boardId;
-      const state = yield* local.threadState(threadId).pipe(Effect.orElseSucceed(() => null));
-      return state === null || state.deleted;
-    });
+  const placedByCaller = Effect.fn("WorkerGatewayHost.placedByCaller")(function* (
+    caller: GatewayCaller,
+    threadId: ThreadId,
+  ) {
+    if (caller.boardId === null) return false;
+    const central = yield* store
+      .relayedThreadCentral(threadId)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (central === undefined) return false;
+    if (central !== null) return central === caller.boardId;
+    const state = yield* local.threadState(threadId).pipe(Effect.orElseSucceed(() => null));
+    return state === null || state.deleted;
+  });
   const ownThread = (operation: string, caller: GatewayCaller, threadId: ThreadId) =>
     caller.boardId === null
       ? Effect.fail(noBoard(operation))
@@ -342,33 +344,33 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
   const ciRunBoards = new Map<string, string>();
   const MAX_CI_RUNS = 500;
   /** Null when a meter key isn't provably the caller's: the meter has nothing for it to say. */
-  const ownedActuals = (input: BoardWorkerActualsInput, caller: GatewayCaller) =>
-    Effect.gen(function* () {
-      const separator = input.key.indexOf(":");
-      const kind = input.key.slice(0, separator);
-      const rest = input.key.slice(separator + 1);
-      let owned = false;
-      if (kind === "thread") {
-        owned =
-          (input.threadId === undefined || input.threadId === rest) &&
-          (yield* placedByCaller(caller, rest as ThreadId));
-      } else if (kind === "ci") {
-        owned = input.threadId === undefined && ciRunBoards.get(rest) === caller.boardId;
-      } else if (kind === "setup") {
-        const at = rest.lastIndexOf("@");
-        owned =
-          input.threadId === undefined &&
-          at > 0 &&
-          (yield* holdsWorktree(caller, rest.slice(0, at)));
-      }
-      if (!owned) return null;
-      // Disk is measured only in this board's own worktree.
-      if (input.worktreePath !== undefined && !(yield* holdsWorktree(caller, input.worktreePath))) {
-        const { worktreePath: _dropped, ...kept } = input;
-        return kept;
-      }
-      return input;
-    });
+  const ownedActuals = Effect.fn("WorkerGatewayHost.ownedActuals")(function* (
+    input: BoardWorkerActualsInput,
+    caller: GatewayCaller,
+  ) {
+    const separator = input.key.indexOf(":");
+    const kind = input.key.slice(0, separator);
+    const rest = input.key.slice(separator + 1);
+    let owned = false;
+    if (kind === "thread") {
+      owned =
+        (input.threadId === undefined || input.threadId === rest) &&
+        (yield* placedByCaller(caller, rest as ThreadId));
+    } else if (kind === "ci") {
+      owned = input.threadId === undefined && ciRunBoards.get(rest) === caller.boardId;
+    } else if (kind === "setup") {
+      const at = rest.lastIndexOf("@");
+      owned =
+        input.threadId === undefined && at > 0 && (yield* holdsWorktree(caller, rest.slice(0, at)));
+    }
+    if (!owned) return null;
+    // Disk is measured only in this board's own worktree.
+    if (input.worktreePath !== undefined && !(yield* holdsWorktree(caller, input.worktreePath))) {
+      const { worktreePath: _dropped, ...kept } = input;
+      return kept;
+    }
+    return input;
+  });
   /**
    * A board's new turn waits while the worker is at its agent cap (`agent-cap`). Admitted, it
    * counts as running at once, so several boards' spawns can't all pass the same check.
