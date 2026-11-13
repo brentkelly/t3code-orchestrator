@@ -1400,7 +1400,7 @@ const make = Effect.gen(function* () {
             heldByCard: new Set<BoardWorkerId>(),
             context: null,
           }
-        : yield* rankCandidates(card, claimFor, pass);
+        : yield* rankCandidates(yield* withUnpushedHome(card), claimFor, pass);
     if (ranked.kind === "wait") {
       const holding = yield* askHolds(card, claimFor, ranked.context, pass);
       return { kind: "held", hold: holding ?? ranked.hold } as WorktreeOutcome;
@@ -1602,6 +1602,30 @@ const make = Effect.gen(function* () {
       Effect.map((tip) => tip !== null),
       Effect.catchCause(() => Effect.succeed(false)),
     );
+
+  /**
+   * T3o: a reclaimed card whose branch never reached the remote has its commits only on the
+   * worker it last ran on, so it ranks as pinned there; a human's pin, or a worker since
+   * removed, still wins.
+   */
+  const withUnpushedHome = Effect.fn("board-supervisor-withUnpushedHome")(function* (
+    card: BoardCard,
+  ) {
+    const last = card.placedWorkerId;
+    if (card.pinnedWorkerId !== null || last === null || card.worktree?.status !== "reclaimed") {
+      return card;
+    }
+    const board = yield* readBoard;
+    if (
+      last !== BOARD_LOCAL_WORKER_ID &&
+      !(board.workers ?? []).some((worker) => worker.id === last)
+    ) {
+      return card;
+    }
+    const workspace = yield* workspaces.forWorker(last, card.projectId);
+    if (yield* remoteHasBranch(workspace, card.worktree.branch)) return card;
+    return { ...card, pinnedWorkerId: last };
+  });
 
   /**
    * T3o: the workers a card may be placed on now, in order, or why it waits (T3O-87). Reads the

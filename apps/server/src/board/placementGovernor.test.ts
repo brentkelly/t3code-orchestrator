@@ -678,6 +678,31 @@ it.effect("a full worker queues its cards without holding up another worker's (T
   }),
 );
 
+it.effect("a reclaimed card whose branch the remote lacks goes back where its commits are", () =>
+  Effect.gen(function* () {
+    const { placement } = yield* makePlacement(workersState([workerView(W1)]));
+    // `local` has far more room, so an unbound card would rank there first.
+    const capacity = yield* w1RoomForOne();
+    const reclaimed: BoardCard = {
+      ...placedBuildingCard("card-a", "a", W1),
+      worktree: { ...readyWorktree("card-a"), status: "reclaimed", path: null },
+    };
+    yield* withGovernor(
+      {
+        board: { cards: [reclaimed], nextCardNumberByProject: {}, workers: registered },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 8 }),
+        placement,
+        capacity,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(reclaimed, 1));
+          assert.deepStrictEqual(yield* spawnsOn(h), [W1]);
+        }),
+    );
+  }),
+);
+
 it.effect("a grow hold goes when its card waits on something other than room (T3O-87)", () =>
   Effect.gen(function* () {
     const { placement } = yield* makePlacement(workersState([workerView(W1)]));
