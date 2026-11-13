@@ -207,6 +207,7 @@ export const makeBoardActualsMeter = Effect.gen(function* () {
       finalIds += 1;
       const finalId = `${finalIds}`;
       const trap = reader.finalSnapshot.script(finalId);
+      // In the agents' slice, deliberately: see docs/t3o/board-internals.md.
       const launch = yield* agentScope.wrap({
         command: "/bin/sh",
         args: ["-c", trap === null ? command : `${trap}\n${command}`],
