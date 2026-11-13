@@ -11,6 +11,7 @@ import {
   boardReviewBlockedOutcomeRefusal,
   boardReviewCompletionDefect,
   parseReviewStepId,
+  boardCardEffectivePriority,
   boardCardPlans,
   boardCardStepCompletions,
   boardCardStepState,
@@ -1154,6 +1155,7 @@ export const boardHandlers = {
       baseBranch: card.baseBranch,
       mergeStrategy: card.mergeStrategy,
       effectiveMergeStrategy: yield* effectiveMergeStrategy(board, card),
+      priority: boardCardEffectivePriority(card),
       brief,
       briefVersion: boardBriefVersion(brief),
       dependencies: describeDependencies(board, card),
@@ -1210,6 +1212,7 @@ export const boardHandlers = {
         stage: card.stage,
         blocked: card.blocked,
         archived: card.archivedAt !== null,
+        priority: boardCardEffectivePriority(card),
         dependsOn: card.dependsOn.map((dependencyId) => ({
           cardId: dependencyId,
           key: board.cards.find((candidate) => candidate.id === dependencyId)?.key ?? dependencyId,
@@ -1286,6 +1289,7 @@ export const boardHandlers = {
         // stage's column, which is the only place that can see the
         // whole board — this tool's read model is filtered to one project.
         ...(input.mergeStrategy === undefined ? {} : { mergeStrategy: input.mergeStrategy }),
+        ...(input.priority === undefined ? {} : { priority: input.priority }),
         createdAt: yield* nowIso,
       },
     }).pipe(
@@ -1456,6 +1460,7 @@ export const boardHandlers = {
       input.removeLabels,
       input.externalRef,
       input.mergeStrategy,
+      input.priority,
       input.planReview,
     ].some((value) => value !== undefined);
     if (updatesFields || input.pullRequest === undefined) {
@@ -1476,6 +1481,7 @@ export const boardHandlers = {
         removeLabels,
         externalRef: input.externalRef,
         mergeStrategy: input.mergeStrategy,
+        priority: input.priority,
         planReview: input.planReview,
         createdAt: yield* nowIso,
       };
