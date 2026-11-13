@@ -233,6 +233,33 @@ and run the normal checks for whatever the merge touched. Two things the root sc
 - A whole-tree `vp lint` does not report the repo's own JS-plugin rules (`t3code/*`) for
   `apps/web/src/board`; `vp lint apps/web` does. Run both.
 
+### Tests on a sync: the CI stage runs them
+
+> **Do not run `scripts/t3o-ci.ts` or `vp run t3o:test-full` yourself during a sync.** The sync
+> card's CI stage runs the full suite automatically once the card is reviewed (about 25–60
+> minutes, holding one board slot). In the turn, run only targeted tests for the conflicts you
+> resolved, plus the typechecks above.
+
+- The CI step picks **tier: full** because the branch's `git merge main` brings in more than 50
+  commits `t3o` lacks; `--full` or `T3O_CI_FULL=1` forces it. Before merging, check the card's CI
+  tab says **tier: full**. If it says tier B, run `node scripts/t3o-ci.ts full --full` in the
+  card's worktree by hand before merging. On tier full, `check:changed` runs with `--no-tests`
+  and the suite steps run the server, web and package tests; changed `apps/desktop`,
+  `apps/mobile` and `.github/scripts` tests are not run, so run those by hand if the sync
+  touched them.
+- A person's escape hatch: `node scripts/t3o-ci.ts full --full` (the full step alone), or
+  `vp run t3o:test-full` (every suite but mobile, desktop and marketing; writes
+  `.t3/test-full/summary.json`).
+- The CI stage lives in the committed `t3o.json`. The board never reads it at run time: after
+  editing it, re-import it via **Settings** → **Board** → the t3o project → **Import & export** →
+  **Import…**. Remote workers that build t3o cards need `pnpm`, Node and, for a sync card,
+  Playwright Chromium on the server's `PATH`; a cold pnpm store makes `install` take minutes.
+- A nightly scheduled task ("Nightly t3o full test run", 03:00 server time) runs
+  `t3o:test-full` on a fresh `origin/t3o` worktree. Failures go to one live card labelled
+  `nightly-red` ("Trunk red on t3o", or "Flaky tests on t3o" when a rerun passes), which it arms
+  for auto-plan and auto-build, never auto-merge. A run more than 10 minutes late (the machine slept) is skipped as
+  missed.
+
 Land the sync with a **merge commit, never a squash**: squashing a 1,500-file upstream merge
 destroys the ancestry the next `git merge main` relies on.
 

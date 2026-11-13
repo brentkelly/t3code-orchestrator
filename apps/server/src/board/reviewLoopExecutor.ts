@@ -5,6 +5,7 @@
  * completions never collide under the `(cardId, stepId)` idempotency key.
  */
 import {
+  boardReviewBarTier,
   boardReviewDismissals,
   boardReviewNextRoundMode,
   boardReviewRoundModeOf,
@@ -210,6 +211,11 @@ function reviewLoopDecision(input: {
         carried,
         dismissals: boardReviewDismissals(carriedFindings, round),
         mode,
+        barTier: boardReviewBarTier({
+          round,
+          convergeAfterRound: review.convergeAfterRound,
+          mode,
+        }),
       }),
       model: resolvePhaseModel({
         phase,
@@ -246,6 +252,7 @@ function reviewLoopDecision(input: {
   ): BoardStagePlan => {
     const basePhase: BoardReviewPhaseId = phase === "retriage" ? "triage" : "adjudicate";
     const phaseConfig = review.phases[basePhase];
+    const mode = boardReviewRoundModeOf(overrides, round);
     return {
       kind: "run",
       round,
@@ -259,7 +266,12 @@ function reviewLoopDecision(input: {
         findings,
         dismissals: boardReviewDismissals(carriedFindings, round),
         draftPullRequests: review.draftPullRequests,
-        mode: boardReviewRoundModeOf(overrides, round),
+        mode,
+        barTier: boardReviewBarTier({
+          round,
+          convergeAfterRound: review.convergeAfterRound,
+          mode,
+        }),
       }),
       model: resolvePhaseModel({
         phase: basePhase,

@@ -1,124 +1,127 @@
 /**
- * The Summary pane's decision log: every decision a planning session
- * recorded, unclear first. Unclear rows wear violet because they wait on a
- * human's review (docs/t3o/status-colours.md); important ones a neutral
- * outline.
+ * The Summary pane's decision log body, filterable to important or unclear. The
+ * pane's section row owns open and close. Unclear is violet (waits on a human);
+ * important is a neutral outline, since blue would claim it is running.
  */
-import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { useState } from "react";
 
 import { cn } from "../lib/utils";
-import type { BoardDecisionLogView } from "./boardDecisionLog";
+import type { BoardDecisionLogRow, BoardDecisionLogView } from "./boardDecisionLog";
 
 const ACTION_CLASS =
   "inline-flex h-7 items-center gap-1.5 rounded-lg border border-input bg-popover px-2.5 text-board-12 font-medium text-foreground shadow-xs hover:bg-accent";
 
+type Filter = "all" | "important" | "unclear";
+
+const FILTERS: ReadonlyArray<{
+  readonly id: Filter;
+  readonly label: string;
+  readonly matches: (row: BoardDecisionLogRow) => boolean;
+}> = [
+  { id: "all", label: "All", matches: () => true },
+  { id: "important", label: "Important", matches: (row) => row.flag === "important" },
+  { id: "unclear", label: "Unclear", matches: (row) => row.flag === "unclear" },
+];
+
 export function BoardDecisionLog({
   view,
-  open: openChoice,
-  onOpenChange,
   onSendBack,
   onFollowUp,
 }: {
   readonly view: BoardDecisionLogView;
-  /** The human's choice, or null for the default rule. */
-  readonly open: boolean | null;
-  readonly onOpenChange: (open: boolean) => void;
   readonly onSendBack?: (() => void) | undefined;
   readonly onFollowUp?: (() => void) | undefined;
 }) {
-  const open = openChoice ?? view.defaultOpen;
+  const [choice, setChoice] = useState<Filter>("all");
+  const filters = FILTERS.map((filter) => ({
+    ...filter,
+    count: view.rows.filter(filter.matches).length,
+  })).filter((filter) => filter.id === "all" || filter.count > 0);
+  // A filter whose rows went away falls back to All.
+  const active = filters.find((filter) => filter.id === choice) ?? filters[0]!;
+  const numbered = view.rows.map((row, index) => ({ row, number: index + 1 }));
+  const shown = numbered.filter((entry) => active.matches(entry.row));
   return (
-    <div className="flex flex-col gap-2.5">
-      <button
-        aria-expanded={open}
-        className="flex items-center gap-2 text-left"
-        onClick={() => onOpenChange(!open)}
-        type="button"
-      >
-        {open ? (
-          <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        )}
-        <span className="text-board-12 font-semibold text-foreground">Decision log</span>
-        <span className="text-board-11-5 text-muted-foreground">{view.count}</span>
-        {view.unclear === null ? null : (
-          <span className="text-board-11-5 font-medium text-attention-foreground">
-            {view.unclear}
-          </span>
-        )}
-        {view.unclear !== null && view.important !== null ? (
-          <span className="text-board-11-5 text-muted-foreground">·</span>
-        ) : null}
-        {view.important === null ? null : (
-          <span className="text-board-11-5 font-medium text-muted-foreground">
-            {view.important}
-          </span>
-        )}
-      </button>
-      {open ? (
-        <>
-          {view.autoPlanned ? (
-            <p className="text-board-12/normal text-pretty text-muted-foreground">
-              Auto-planned. The plan was approved without you, including any decisions marked
-              unclear.
-            </p>
-          ) : null}
-          <ul className="flex flex-col overflow-hidden rounded-board-10 border border-border">
-            {view.rows.map((row) => (
-              <li
-                className={cn(
-                  "flex flex-col gap-0.75 border-t border-border px-3 py-2.5 first:border-t-0",
-                  row.flag === "unclear" ? "bg-board-attention-tile" : "bg-card",
-                )}
-                data-flag={row.flag}
-                key={row.id}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 text-board-11-5 leading-board-1-45 text-pretty text-muted-foreground">
-                    {row.question}
-                  </span>
-                  {row.flag === "normal" ? null : (
-                    <span
-                      className={cn(
-                        "inline-flex h-[17px] shrink-0 items-center rounded-board-5 px-1.5 text-board-10 font-medium uppercase tracking-board-3",
-                        row.flag === "unclear"
-                          ? "bg-attention/16 text-attention-foreground"
-                          : "border border-input text-foreground",
-                      )}
-                    >
-                      {row.flag === "unclear" ? "Unclear" : "Important"}
-                    </span>
-                  )}
-                  <span className="shrink-0 text-board-10-5 font-medium text-muted-foreground">
-                    {row.who}
-                  </span>
-                </div>
-                <div className="text-board-13/normal font-medium text-pretty text-foreground">
-                  {row.decision}
-                </div>
-                <div className="text-board-12/normal text-pretty text-muted-foreground">
-                  {row.reason}
-                </div>
-              </li>
-            ))}
-          </ul>
-          {view.canAct && (onSendBack !== undefined || onFollowUp !== undefined) ? (
-            <div className="flex flex-wrap items-center gap-2">
-              {onSendBack === undefined ? null : (
-                <button className={ACTION_CLASS} onClick={onSendBack} type="button">
-                  Send back to build with changes
-                </button>
-              )}
-              {onFollowUp === undefined ? null : (
-                <button className={ACTION_CLASS} onClick={onFollowUp} type="button">
-                  Create follow-up card
-                </button>
-              )}
-            </div>
-          ) : null}
-        </>
+    <div className="flex flex-col gap-3">
+      {view.autoPlanned ? (
+        <p className="text-board-12/normal text-pretty text-muted-foreground">
+          Auto-planned. The plan was approved without you, including any decisions marked unclear.
+        </p>
       ) : null}
+      {view.canAct && (onSendBack !== undefined || onFollowUp !== undefined) ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {onSendBack === undefined ? null : (
+            <button className={ACTION_CLASS} onClick={onSendBack} type="button">
+              Send back to build with changes
+            </button>
+          )}
+          {onFollowUp === undefined ? null : (
+            <button className={ACTION_CLASS} onClick={onFollowUp} type="button">
+              Create follow-up card
+            </button>
+          )}
+        </div>
+      ) : null}
+      {filters.length > 1 ? (
+        <div className="flex gap-1 self-start rounded-lg bg-accent p-0.75">
+          {filters.map((filter) => (
+            <button
+              aria-pressed={filter.id === active.id}
+              className={cn(
+                "inline-flex h-6 items-center gap-1 rounded-md px-2.25 text-board-11-5 font-medium text-foreground",
+                filter.id === active.id ? "bg-card shadow-xs" : "hover:bg-card/60",
+              )}
+              key={filter.id}
+              onClick={() => setChoice(filter.id)}
+              type="button"
+            >
+              {filter.label}
+              <span className="font-normal text-muted-foreground">{filter.count}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <ol className="flex flex-col">
+        {shown.map(({ row, number }) => (
+          <li
+            className="grid grid-cols-[26px_minmax(0,1fr)_auto] items-baseline gap-2.5 border-t border-border py-2"
+            data-flag={row.flag}
+            key={row.id}
+          >
+            <span className="font-mono text-board-11-5 font-medium text-muted-foreground">
+              {number}
+            </span>
+            <div className="flex min-w-0 flex-col gap-0.75">
+              <span className="text-board-11-5 leading-board-1-45 text-pretty text-muted-foreground">
+                {row.question}
+              </span>
+              <span className="text-board-13/normal font-medium text-pretty text-foreground">
+                {row.decision}
+              </span>
+              <span className="text-board-12/normal text-pretty text-muted-foreground">
+                {row.reason}
+              </span>
+            </div>
+            <span className="flex items-center gap-1">
+              {row.flag === "normal" ? null : (
+                <span
+                  className={cn(
+                    "inline-flex items-center whitespace-nowrap rounded-md px-1.75 py-0.5 text-board-11 font-medium",
+                    row.flag === "unclear"
+                      ? "bg-attention/12 text-attention-foreground"
+                      : "border border-input text-foreground",
+                  )}
+                >
+                  {row.flag === "unclear" ? "Unclear" : "Important"}
+                </span>
+              )}
+              <span className="whitespace-nowrap text-board-10-5 font-medium text-muted-foreground">
+                {row.who}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

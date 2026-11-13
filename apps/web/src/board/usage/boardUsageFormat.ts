@@ -37,6 +37,24 @@ export interface BoardUsageMarks {
   readonly providers?: ReadonlyArray<unknown>;
 }
 
+// Grey shades by stage order: cost is plain ink, never a status hue.
+const STAGE_SHADES = [64, 48, 36, 26, 18, 12];
+
+/** The grey a stage wears in every cost bar and swatch, by its position. */
+export function boardUsageStageShade(index: number): string {
+  const percent = STAGE_SHADES[Math.min(index, STAGE_SHADES.length - 1)];
+  return `color-mix(in srgb, var(--foreground) ${percent}%, transparent)`;
+}
+
+/** `Code review (4 rounds)`: a review stage names how many rounds it spent. */
+export function boardUsageStageLabel(stage: {
+  readonly label: string;
+  readonly rounds: number;
+}): string {
+  if (stage.rounds === 0) return stage.label;
+  return `${stage.label} (${stage.rounds} ${stage.rounds === 1 ? "round" : "rounds"})`;
+}
+
 export function formatBoardUsd(costUsd: number): string {
   if (costUsd > 0 && costUsd < 0.005) return "<$0.01";
   return `$${costUsd.toFixed(2)}`;

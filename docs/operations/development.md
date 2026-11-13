@@ -194,6 +194,14 @@ for the security model.
 
 ## Checks
 
+<!-- T3o: fork note (T3O-88). -->
+
+> **T3o:** in this fork, agents do not run `check:changed` in their turns; they run scoped checks on
+> the files they touched (see `AGENTS.md` → Verifying), and the board's CI stage runs
+> `scripts/t3o-ci.ts` once per pass. Without a ref, `check:changed` compares against the closest of
+> each remote's `main` and default branch (`origin/HEAD`, here `origin/t3o`), so a card branch
+> checks only its own changes.
+
 `vp run check:changed` runs CI's fast checks for your branch's changes: format and lint of the
 changed files, `knip:check` when code or a manifest changes, the generated GraphQL checks, typecheck
 of the affected packages and their dependents, and the test files beside the changed files. It also

@@ -24,6 +24,9 @@ export const t3oServerTestProjects = [
       // Board agents share prod's cgroup; cap the one long-lived worker's heap. It peaks
       // ~1.0–1.15 GB RSS (712 MB isolated), the price of ~8x less CPU per full run.
       execArgv: ["--max-old-space-size=2048"],
+      // The slowest board file takes ~6s in all; a hung test should fail fast, not sit out 120s.
+      testTimeout: 20_000,
+      hookTimeout: 20_000,
       // vitest refuses a non-isolated project sharing a group with siblings
       // whose maxWorkers differ, which every repo-root run has.
       sequence: { groupOrder: 1 },

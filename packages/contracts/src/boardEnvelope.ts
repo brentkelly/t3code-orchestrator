@@ -9,6 +9,7 @@ import type {
   BoardReviewFollowUpFinding,
   BoardReviewFollowUpPhase,
   BoardReviewPhaseId,
+  BoardReviewBarTier,
   BoardReviewRoundMode,
   BoardStageRole,
 } from "./board.ts";
@@ -93,7 +94,7 @@ export const BOARD_ENVELOPE_PLAN_DELIVERABLE = [
     build without it. */
 export const BOARD_ENVELOPE_BUILD_DELIVERABLE = [
   `Complete a succeeded build with a JSON payload ${BOARD_BUILD_SUMMARY_PAYLOAD_SHAPE}, and put the same \`lead\` sentence in \`summary\`.`,
-  "`lead` is one sentence covering what was built, the branch, the commit count and whether it is pushed.",
+  "`lead` is one sentence saying what was built and what it now does; leave out the branch, commits and push state, which the board shows itself.",
   "`notes` holds every plan change, unfinished item and shortcut (`kind` is plan_change, not_done or shortcut, with optional `detail`), and these never go in `areas`.",
   "`checks` lists every check or test suite you ran or deliberately skipped, with `status` pass, not_run, fail_preexisting or fail; use fail_preexisting only for a failure this card did not cause, and say why in `detail`.",
   "`areas` groups what was built under names like Data, API, Site core, Panel or Docs, each item one short line.",
@@ -389,9 +390,10 @@ export function boardReviewPhasePreamble(input: {
   readonly round: number;
   readonly rounds: number;
   readonly mode?: BoardReviewRoundMode;
+  readonly barTier?: BoardReviewBarTier;
 }): string {
   const { phase, round, rounds } = input;
-  const header = `Code review, ${BOARD_REVIEW_PHASE_LABELS[phase]} phase, round ${round} of up to ${rounds}${boardReviewSettlingTag(input.mode)}.`;
+  const header = `Code review, ${BOARD_REVIEW_PHASE_LABELS[phase]} phase, round ${round} of up to ${rounds}${boardReviewSettlingTag(input.mode)}${boardReviewBarTag(phase, input.barTier)}.`;
   // The reviewer is fresh-eyes on every round: only triage and the
   // adjudicator read the history.
   const priorContext =
@@ -406,6 +408,62 @@ function boardReviewSettlingTag(mode: BoardReviewRoundMode | undefined): string 
   return mode?.kind === "settling"
     ? ` · settling round (changes since ${mode.sinceSha.slice(0, 7)})`
     : "";
+}
+
+/** The round header's raised-bar suffix, empty at tier 0 and for triage, whose rubric the
+    ladder leaves alone. */
+function boardReviewBarTag(
+  phase: BoardReviewPhaseId | BoardReviewFollowUpPhase,
+  tier: BoardReviewBarTier | undefined,
+): string {
+  return tier === undefined || tier === 0 || phase === "triage" || phase === "retriage"
+    ? ""
+    : ` · raised bar (level ${tier})`;
+}
+
+/** What still counts as an `improvement` at each raised level. */
+const BOARD_REVIEW_BAR_TEXT: Record<Exclude<BoardReviewBarTier, 0>, string> = {
+  1: "an `improvement` must be a real defect in this change: wrong behaviour on a path that can be reached, part of the card's brief left undone, or a data, security or concurrency fault. A missing test counts only when it is the sole proof that something the brief asks for works. Hardening ideas, guards for states that cannot happen, refactors, naming, docs, and test style or coverage of code that works are nitpicks",
+  2: "an `improvement` must be a defect a user or operator would actually hit in normal use, or one that breaks something the card's brief asks for. Edge cases that need an unusual setup, hardening ideas, refactors, naming, docs and tests of code that works are nitpicks",
+  3: "there are no improvements. Only `critical` blocks; anything short of an incident or broken existing behaviour is a nitpick",
+};
+
+const BOARD_REVIEW_STRICT_CRITICAL =
+  "`critical` keeps its strict meaning: it would cause an incident or break existing behaviour, and never covers a hardening idea, a missing test or a rare edge case. Never raise a finding to critical to get it past the bar.";
+
+/** The adjudicator's power to rule an improvement below the raised bar. */
+const BOARD_REVIEW_BELOW_BAR_RULING =
+  'For an `improvement` finding that does not meet this round\'s bar, add `belowBar: true` to its verdict and say why in the note; still give the normal verdict. It then counts as a nitpick: it does not force another round. Never set it on a critical, on a finding a human ordered fixed, on the CI finding, or on a finding the reviewer marked `source: "pr-comment"`, and never with `escalated`. Never escalate a finding that is below the bar; rule it `belowBar` instead.';
+
+/** The raised bar for a full round past `convergeAfterRound`, compiled in after the user's
+    prompt so it overrides that prompt's severity definitions. Empty at tier 0 and for triage. */
+function boardReviewBarBlock(input: {
+  readonly phase: BoardReviewPhaseId | BoardReviewFollowUpPhase;
+  readonly round: number;
+  readonly tier: BoardReviewBarTier | undefined;
+}): string {
+  const { tier } = input;
+  if (tier === undefined || tier === 0) return "";
+  const bar = `This is round ${input.round}; the bar for \`improvement\` is raised and overrides the severity definitions above: ${BOARD_REVIEW_BAR_TEXT[tier]}.`;
+  const strict = tier === 3 ? BOARD_REVIEW_STRICT_CRITICAL : "";
+  switch (input.phase) {
+    case "review":
+      return [
+        bar,
+        'Rate anything below it `nitpick`. The CI finding, findings a human ordered fixed, and concerns from unresolved human pull request comments keep their severity; add `source: "pr-comment"` to each finding drawn from a human pull request comment.',
+        strict,
+      ]
+        .filter((part) => part.length > 0)
+        .join(" ");
+    case "triage":
+    case "retriage":
+      return "";
+    case "adjudicate":
+    case "readjudicate":
+      return [bar, strict, BOARD_REVIEW_BELOW_BAR_RULING]
+        .filter((part) => part.length > 0)
+        .join(" ");
+  }
 }
 
 /** What a settling round asks of each phase, compiled in beside the machine contract so a
@@ -494,11 +552,17 @@ function boardReviewCarriedBlock(input: {
 export function boardReviewPhaseProtocol(input: {
   readonly phase: BoardReviewPhaseId;
   readonly round: number;
+  readonly barTier?: BoardReviewBarTier;
 }): string {
+  const raised = (input.barTier ?? 0) > 0;
   switch (input.phase) {
     case "review":
       return [
-        "To finish this phase, complete with a succeeded outcome and a JSON payload { reviewedSha, findings: [{ id, severity, file, line, title, detail }] }, where `severity` is `critical`, `improvement` or `nitpick`.",
+        input.barTier === 3
+          ? 'To finish this phase, complete with a succeeded outcome and a JSON payload { reviewedSha, findings: [{ id, severity, file, line, title, detail, source? }] }, where `severity` is `critical` or `nitpick`; only concerns from unresolved human pull request comments keep their own severity, which may be `improvement`, and carry `source: "pr-comment"`.'
+          : raised
+            ? 'To finish this phase, complete with a succeeded outcome and a JSON payload { reviewedSha, findings: [{ id, severity, file, line, title, detail, source? }] }, where `severity` is `critical`, `improvement` or `nitpick`, and `source` is `"pr-comment"` on a finding drawn from a human pull request comment.'
+            : "To finish this phase, complete with a succeeded outcome and a JSON payload { reviewedSha, findings: [{ id, severity, file, line, title, detail }] }, where `severity` is `critical`, `improvement` or `nitpick`.",
         "Critical and improvement findings are blocking; nitpicks never are. Whether the loop runs another round is decided by the system from the severities you record, never by you. Report what you found and stop.",
         "If you cannot produce a valid findings payload, complete with outcome failed instead. Never complete succeeded with an empty or malformed payload.",
       ].join(" ");
@@ -510,20 +574,35 @@ export function boardReviewPhaseProtocol(input: {
       ].join(" ");
     case "adjudicate":
       return [
-        "To finish this phase, complete with a succeeded outcome and a JSON payload { verdicts: [{ findingId, verdict, note }], anotherRound }, where `verdict` is one of fix-upheld, fix-incomplete, fix-absent, rejection-justified, rejection-unjustified, escalated.",
+        `To finish this phase, complete with a succeeded outcome and a JSON payload { verdicts: [{ ${boardReviewVerdictFields(raised)} }], anotherRound }, where \`verdict\` is one of fix-upheld, fix-incomplete, fix-absent, rejection-justified, rejection-unjustified, escalated.`,
         BOARD_REVIEW_ADJUDICATOR_CONSISTENCY,
-        "Set `anotherRound` to false only if this round raised nothing new beyond points already settled; otherwise true. The system ignores false if a blocking fix landed.",
+        `Set \`anotherRound\` to false only if this round raised nothing new beyond points already settled; otherwise true. ${boardReviewAnotherRoundIgnored(raised)}`,
         "A ruling against triage (rejection-unjustified, fix-absent or fix-incomplete) on a blocking finding sends it straight back to triage in this round for one more pass.",
         BOARD_REVIEW_ADJUDICATOR_ESCALATION,
       ].join(" ");
   }
 }
 
+function boardReviewVerdictFields(raised: boolean): string {
+  return raised ? "findingId, verdict, note, belowBar?" : "findingId, verdict, note";
+}
+
+function boardReviewAnotherRoundIgnored(raised: boolean): string {
+  return raised
+    ? "The system ignores false if a blocking fix landed; fixes to findings you ruled below the bar don't count."
+    : "The system ignores false if a blocking fix landed.";
+}
+
 /** A follow-up pass's forced machine contract. */
-function boardReviewFollowUpProtocol(phase: BoardReviewFollowUpPhase): string {
+function boardReviewFollowUpProtocol(
+  phase: BoardReviewFollowUpPhase,
+  barTier: BoardReviewBarTier | undefined,
+): string {
+  const raised = (barTier ?? 0) > 0;
+  const ignored = boardReviewAnotherRoundIgnored(raised);
   return phase === "retriage"
     ? `To finish this step, complete with a succeeded outcome and a JSON payload { fixedSha, dispositions: [{ findingId, action: "fixed" | "rejected", note }] }, with a disposition for every listed id. ${BOARD_REVIEW_TRIAGE_NEVER_ASKS}`
-    : `To finish this step, complete with a succeeded outcome and a JSON payload { verdicts: [{ findingId, verdict, note }], anotherRound }, with a verdict for every listed id, where \`verdict\` is one of fix-upheld, fix-incomplete, fix-absent, rejection-justified, rejection-unjustified, escalated. Set \`anotherRound\` to false only if this round raised nothing new beyond points already settled; the system ignores false if a blocking fix landed. ${BOARD_REVIEW_ADJUDICATOR_ESCALATION}`;
+    : `To finish this step, complete with a succeeded outcome and a JSON payload { verdicts: [{ ${boardReviewVerdictFields(raised)} }], anotherRound }, with a verdict for every listed id, where \`verdict\` is one of fix-upheld, fix-incomplete, fix-absent, rejection-justified, rejection-unjustified, escalated. Set \`anotherRound\` to false only if this round raised nothing new beyond points already settled; ${ignored.charAt(0).toLowerCase()}${ignored.slice(1)} ${BOARD_REVIEW_ADJUDICATOR_ESCALATION}`;
 }
 
 /** Triage's forced never-ask rule. It sits in the machine contract,
@@ -552,8 +631,10 @@ export function composeBoardReviewFollowUpPrompt(input: {
   readonly dismissals?: ReadonlyArray<BoardReviewCarriedFinding & { readonly round: number }>;
   readonly draftPullRequests?: boolean;
   readonly mode?: BoardReviewRoundMode;
+  /** The round's raised bar; absent is 0. */
+  readonly barTier?: BoardReviewBarTier;
 }): string {
-  const header = `Code review, ${BOARD_REVIEW_STEP_PHASE_LABELS[input.phase]} step, round ${input.round} of up to ${input.rounds}${boardReviewSettlingTag(input.mode)}.\nCall board_get_card_context first and read the \`steps\` payloads: they carry every prior phase's findings, dispositions and verdicts for this card.`;
+  const header = `Code review, ${BOARD_REVIEW_STEP_PHASE_LABELS[input.phase]} step, round ${input.round} of up to ${input.rounds}${boardReviewSettlingTag(input.mode)}${boardReviewBarTag(input.phase, input.barTier)}.\nCall board_get_card_context first and read the \`steps\` payloads: they carry every prior phase's findings, dispositions and verdicts for this card.`;
   const listed = input.findings.map((f) => {
     const lines = [boardReviewFindingLine(f.finding)];
     if (f.finding.carried) lines.push("  A human ordered this fixed.");
@@ -597,7 +678,8 @@ export function composeBoardReviewFollowUpPrompt(input: {
     input.prompt.trim(),
     input.draftPullRequests === true ? BOARD_DRAFT_PULL_REQUEST_KEEP : "",
     boardReviewSettlingBlock({ phase: input.phase, mode: input.mode }),
-    boardReviewFollowUpProtocol(input.phase),
+    boardReviewBarBlock({ phase: input.phase, round: input.round, tier: input.barTier }),
+    boardReviewFollowUpProtocol(input.phase, input.barTier),
   ]
     .filter((part) => part.trim().length > 0)
     .join("\n\n");
@@ -653,6 +735,8 @@ export function composeBoardReviewPhasePrompt(input: {
   readonly dismissals?: ReadonlyArray<BoardReviewCarriedFinding & { readonly round: number }>;
   /** The round's mode; absent is full. */
   readonly mode?: BoardReviewRoundMode;
+  /** The round's raised bar; absent is 0. */
+  readonly barTier?: BoardReviewBarTier;
 }): string {
   const ci =
     input.ciFinding == null || input.phase === "adjudicate"
@@ -672,6 +756,7 @@ export function composeBoardReviewPhasePrompt(input: {
       phase: input.phase,
     }) ?? "",
     boardReviewSettlingBlock({ phase: input.phase, mode: input.mode }),
+    boardReviewBarBlock({ phase: input.phase, round: input.round, tier: input.barTier }),
     boardReviewPhaseProtocol(input),
   ]
     .filter((part) => part.trim().length > 0)

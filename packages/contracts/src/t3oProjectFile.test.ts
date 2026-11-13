@@ -591,17 +591,19 @@ describe("resolveBoardStageExecution with a project config", () => {
   it("T3O-64: passes the settling keys through, an explicit null meaning off", () => {
     const { delta } = resolve({
       stages: {
-        settings: { review: { settleAfterRound: null, settleBelowFindings: 4 } },
+        settings: { review: { convergeAfterRound: null, settleBelowFindings: 4 } },
       },
     });
-    expect(delta.overrides).toEqual({ review: { settleAfterRound: null, settleBelowFindings: 4 } });
+    expect(delta.overrides).toEqual({
+      review: { convergeAfterRound: null, settleBelowFindings: 4 },
+    });
     const review = resolveBoardStageExecution(
       DEFAULT_BOARD_SETTINGS,
       BOARD_SEED_STAGE_IDS.review,
       delta,
     );
     if (!isBoardReviewStageExecution(review)) throw new Error("review member expected");
-    expect(review.settleAfterRound).toBeNull();
+    expect(review.convergeAfterRound).toBeNull();
     expect(review.settleBelowFindings).toBe(4);
     const { delta: invalid } = resolve({
       stages: { settings: { review: { settleBelowFindings: 1 } } },

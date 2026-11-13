@@ -66,7 +66,13 @@ const TurnTokenUsageCommonFields = {
   localCommand: Schema.optional(Schema.Boolean),
   // Provider-ledger counts beyond the main agent, such as native subagents and compaction.
   otherUsage: Schema.optional(
-    Schema.Struct({ inputTokens: NonNegativeInt, outputTokens: NonNegativeInt }),
+    Schema.Struct({
+      inputTokens: NonNegativeInt,
+      outputTokens: NonNegativeInt,
+      // T3o: the cache share of inputTokens; absent on usage recorded before T3O-90.
+      cachedInputTokens: Schema.optional(NonNegativeInt),
+      cacheCreationTokens: Schema.optional(NonNegativeInt),
+    }),
   ),
 };
 export const TurnTokenUsage = Schema.Union([

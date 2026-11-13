@@ -53,6 +53,21 @@ describe("a card's usage breakdown", () => {
     expect(breakdown.stages[1]?.models).toBe("3 threads · 3 models");
   });
 
+  it("counts a review stage's rounds across every loop phase, not only review@N", () => {
+    expect(breakdown.stages.map((stage) => stage.rounds)).toEqual([0, 1]);
+    const later = deriveBoardUsageBreakdown({
+      rows: [
+        usageRow({ stepId: "review@1", threadId: ThreadId.make("t-r1") }),
+        usageRow({ stepId: "retriage@2", threadId: ThreadId.make("t-t2") }),
+        usageRow({ stepId: "sync@3", threadId: ThreadId.make("t-s3") }),
+      ],
+      historyPartial: false,
+      stages: STAGES,
+      runningThreadId: null,
+    });
+    expect(later.stages[0]?.rounds).toBe(3);
+  });
+
   it("splits input from cache reads, counting cache writes as input", () => {
     expect(breakdown.stages[0]).toMatchObject({ input: 1200, cached: 4000, output: 300 });
   });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A real socket server verifies the HTTP wire format.
@@ -552,6 +552,20 @@ describe("GitHubRest", () => {
 });
 
 describe("GitHubCredentials", () => {
+  // T3o: a host GH_TOKEN (the live server's environment) would answer before gh is asked.
+  beforeEach(() => {
+    for (const name of [
+      "GH_TOKEN",
+      "GITHUB_TOKEN",
+      "GH_ENTERPRISE_TOKEN",
+      "GITHUB_ENTERPRISE_TOKEN",
+    ]) {
+      vi.stubEnv(name, "");
+    }
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
   const unexpectedHttp = HttpClient.make((request) =>
     Effect.die(`Unexpected request to ${request.url}`),
   );
