@@ -48,7 +48,10 @@ const collect = (stream: Stream.Stream<BoardCardSetupProgress>) =>
 
 it.effect("runs the setup script once per worktree, and only the script on Retry", () =>
   Effect.gen(function* () {
-    const { setup, gitDir, commands } = harness([{ status: "passed", exitCode: 0 }]);
+    const { setup, gitDir, commands } = harness([
+      { status: "passed", exitCode: 0 },
+      { status: "failed", exitCode: 1 },
+    ]);
     const first = yield* collect(setup.run(input));
     const last = first.at(-1)!;
     assert.strictEqual(last.status, "succeeded");
@@ -67,9 +70,10 @@ it.effect("runs the setup script once per worktree, and only the script on Retry
     yield* collect(setup.run(input));
     assert.lengthOf(commands, 1);
     assert.strictEqual(yield* setup.state(input.worktreePath), "done");
-    // Retry runs the script again, and only the script.
+    // Retry runs the script again, and only the script; its failure is what the state reads.
     yield* collect(setup.run({ ...input, retry: true }));
     assert.lengthOf(commands, 2);
+    assert.strictEqual(yield* setup.state(input.worktreePath), "failed");
   }),
 );
 

@@ -159,6 +159,14 @@ export const makeCardSetup = (deps: CardSetupDeps) => {
           yield* writeMarker(paths.marker);
           return Stream.make(finished("succeeded", { detail: "The project has no setup script." }));
         }
+        // A re-run's outcome replaces the last one's: a failed Retry must not still read done.
+        yield* Effect.sync(() => {
+          try {
+            NodeFS.rmSync(paths.marker, { force: true });
+          } catch {
+            // A marker that can't be removed reads done until the next run that passes.
+          }
+        });
         const queue = yield* Queue.unbounded<BoardCardSetupProgress, Cause.Done>();
         const tail = new BoardCiTail(BOARD_CARD_SETUP_TAIL_LINES);
         const progress = (
