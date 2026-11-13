@@ -14,6 +14,7 @@ import {
   makeBoardWorkerCapacity,
   providerQuota,
   SNAPSHOT_INTERVAL_MS,
+  SNAPSHOT_SETTLE_MS,
   type CapacityThread,
   type WorkerCapacityPorts,
 } from "./BoardWorkerCapacity.ts";
@@ -311,6 +312,12 @@ it.effect("the snapshot stream pushes only meaningful changes, at most every 5 s
     fakes.availableBytes = 40 * GiB;
     yield* TestClock.adjust(SNAPSHOT_INTERVAL_MS);
     assert.deepStrictEqual(seen, [64, 40]);
+    // A small release is held back, but pushed once it has stood for a while.
+    fakes.availableBytes = 41 * GiB;
+    yield* TestClock.adjust(SNAPSHOT_INTERVAL_MS);
+    assert.deepStrictEqual(seen, [64, 40]);
+    yield* TestClock.adjust(SNAPSHOT_SETTLE_MS);
+    assert.deepStrictEqual(seen, [64, 40, 41]);
     yield* Fiber.interrupt(fiber);
   }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
 });

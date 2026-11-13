@@ -52,6 +52,8 @@ import { BoardMachine, bytesToGB, bytesToGiB, defaultRamGiB } from "./machine.ts
 export const SNAPSHOT_INTERVAL_MS = 5_000;
 /** A headroom change smaller than this share of declared capacity is not pushed. */
 const HYSTERESIS = 0.05;
+/** A small change held back by the hysteresis is still pushed once it has stood this long. */
+export const SNAPSHOT_SETTLE_MS = 30_000;
 /** An unsettled worktree is measured at most this often. */
 const MEASURE_INTERVAL_MS = 5 * 60_000;
 /** Usage is refreshed this often while a gating window is at the threshold, and on a
@@ -595,13 +597,21 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     Stream.unwrap(
       Effect.sync(() => {
         let last: BoardWorkerCapacitySnapshot | null = null;
-        const tick = snapshot(boardId).pipe(
-          Effect.map((next) => {
-            if (last !== null && !snapshotChanged(last, next)) return [] as const;
-            last = next;
-            return [next] as const;
-          }),
-        );
+        let lastAt = 0;
+        const tick = Effect.gen(function* () {
+          const next = yield* snapshot(boardId);
+          const now = yield* Clock.currentTimeMillis;
+          if (last !== null && !snapshotChanged(last, next)) {
+            // Without this a release under 5% would never reach the board, which filters on it.
+            const drifted =
+              now - lastAt >= SNAPSHOT_SETTLE_MS &&
+              JSON.stringify(last.headroom) !== JSON.stringify(next.headroom);
+            if (!drifted) return [] as const;
+          }
+          last = next;
+          lastAt = now;
+          return [next] as const;
+        });
         return Stream.fromEffectSchedule(tick, Schedule.spaced(SNAPSHOT_INTERVAL_MS)).pipe(
           Stream.flatMap((items) => Stream.fromIterable(items)),
         );
