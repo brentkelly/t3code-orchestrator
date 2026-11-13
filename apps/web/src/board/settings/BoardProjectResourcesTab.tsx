@@ -6,7 +6,7 @@
 import {
   boardRepositoryGroupingKey,
   DEFAULT_BOARD_READINESS_SCRIPT_PATH,
-  BOARD_RESOURCE_PROFILE_KEYS,
+  boardBaselineWithLearned,
   EMPTY_BOARD_PROJECT_RESOURCES,
   boardProjectResourcesWithoutLearned,
   resolveBoardProjectBaseline,
