@@ -603,9 +603,9 @@ it.effect("a learned increase reaches a placed card only as a background grow cl
       ...board,
       projectStageConfigs: {
         [projectId]: {
-          ...board.projectStageConfigs[projectId]!,
+          ...board.projectStageConfigs![projectId]!,
           resources: {
-            ...board.projectStageConfigs[projectId]!.resources!,
+            ...board.projectStageConfigs![projectId]!.resources!,
             learned: {
               computedAt: iso(T0),
               cpu: learned(40),
