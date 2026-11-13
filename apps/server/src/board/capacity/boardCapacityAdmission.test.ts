@@ -234,6 +234,31 @@ it.effect("the tail is cut short for an idle card when this board waits on capac
   }),
 );
 
+it.effect("the cut-short frees a card whose step is held on a permission prompt", () =>
+  Effect.gen(function* () {
+    const now = { ms: T0 };
+    const waiting = {
+      ...step("b", "queued"),
+      queuedBy: "capacity" as const,
+      queuedDetail: { workerId: BOARD_LOCAL_WORKER_ID },
+    };
+    const board = boardWith(
+      [
+        granted("a", { profile: { cpuCores: 16, ramGiB: 64, diskGB: 5 } }),
+        { ...buildingCard("b", "b"), worktree: null },
+      ],
+      [step("a", "running"), waiting],
+    );
+    const held = yield* harness(board, now, true);
+    assert.isTrue(yield* held.admission.releaseForWaiting());
+    assert.isFalse((yield* held.grantOf("a"))?.heavy);
+    // A step that is really running is never evicted.
+    const running = yield* harness(board, now);
+    assert.isFalse(yield* running.admission.releaseForWaiting());
+    assert.isTrue((yield* running.grantOf("a"))?.heavy);
+  }),
+);
+
 it.effect("a Too-big card, or one queued behind another, evicts no idle card's tail", () =>
   Effect.gen(function* () {
     const now = { ms: T0 };

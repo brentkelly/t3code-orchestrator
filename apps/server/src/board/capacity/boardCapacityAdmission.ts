@@ -234,6 +234,23 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     return false;
   };
 
+  /** Whether the card is doing work; a step held on a permission prompt waits on a human. */
+  // Untraced: runs per card on every pass, inside the sweep's own span.
+  const cardActive = Effect.fnUntraced(function* (
+    card: BoardCard,
+    state: BoardCardStepState | null,
+    now: number,
+  ) {
+    if (ciActive(card) || busyOutsideStep(card, now)) return true;
+    if (!stepActiveInWorktree(state)) return false;
+    // The engine keeps the turn open on a permission prompt, but nothing runs.
+    return !(
+      state !== null &&
+      state.status === "running" &&
+      (yield* deps.awaitingPermission(state))
+    );
+  });
+
   const nowMs = Effect.map(deps.nowIso, (iso) => Date.parse(iso));
   // A worker that just left a claim unanswered costs the serial pass one timeout, not one
   // per candidate: until the backoff passes, its claims answer unavailable at once.
@@ -488,8 +505,8 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
         }
       }
       // A light card holds no CPU or RAM, so a larger CPU or RAM is what its next grow claims.
-      // It does hold disk, kept at its grant until the card is heavy and a grow is granted; a grow
-      // judges CPU and RAM only, so the larger disk is then recorded without a disk check.
+      // It does hold disk, kept at its grant until the card is heavy and a grow, which judges an
+      // unsettled card's larger disk too, is granted.
       const next = grows && !grant.heavy ? { ...want, diskGB: shrunk.diskGB } : shrunk;
       if (
         BOARD_RESOURCE_DIMENSIONS.every(
@@ -560,11 +577,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       const grant = card.resources?.grant ?? null;
       if (grant === null || card.archivedAt !== null) continue;
       const state = stateOf(card.id);
-      let active = stepActiveInWorktree(state) || ciActive(card) || busyOutsideStep(card, now);
-      if (active && state !== null && state.status === "running") {
-        // Held on a permission prompt: the engine keeps the turn open, but nothing runs.
-        if (yield* deps.awaitingPermission(state)) active = false;
-      }
+      const active = yield* cardActive(card, state, now);
       if (active) lastActive.set(card.id, now);
       if (!lastActive.has(card.id)) lastActive.set(card.id, now);
       if (!grant.settled && now - Date.parse(grant.grantedAt) >= SETTLE_AFTER_MS) {
@@ -636,14 +649,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       const workerId = card.placedWorkerId ?? cardWorkerOf(board, card);
       if (!waiting.has(workerId)) continue;
       const state = states.find((candidate) => candidate.cardId === card.id) ?? null;
-      if (
-        stepActiveInWorktree(state) ||
-        stepQueuedInWorktree(state) ||
-        ciActive(card) ||
-        busyOutsideStep(card, now)
-      ) {
-        continue;
-      }
+      if (stepQueuedInWorktree(state) || (yield* cardActive(card, state, now))) continue;
       idle.push({ card, since: lastActive.get(card.id) ?? now });
     }
     // Per worker, release until the first waiting step's profile fits what is offered.
