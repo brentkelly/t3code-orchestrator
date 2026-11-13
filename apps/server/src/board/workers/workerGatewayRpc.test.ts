@@ -309,6 +309,38 @@ it.effect("a shared worker lets a board act only on the threads and worktrees it
         steps: [{ name: "test", command: "true", timeoutMinutes: 1 }],
       }).pipe(Stream.runCollect, onHost, Effect.flip);
       assert.strictEqual(ci._tag, "BoardWorkerGatewayError");
+
+      // Nor may it spawn a thread in another board's name, which would take that board's relay.
+      const forged = ThreadId.make("thread-forged-for-a");
+      assert.strictEqual(
+        yield* refusedFor(other, {
+          _tag: "spawn",
+          input: {
+            commandId: CommandId.make("server:board-spawn:forged"),
+            threadId: forged,
+            projectId: ProjectId.make("worker-project"),
+            title: "Forged",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: "/home/worker/repo",
+            text: "",
+            attachments: [],
+            centralEnvironmentId: CENTRAL,
+          },
+        }),
+        "refused",
+      );
+      assert.isNull(yield* env.relayStore.store.relayedThreadCentral(forged));
+      const owned = yield* owner["boardWorker.subscribeMcpRelay"]({
+        centralEnvironmentId: CENTRAL,
+      }).pipe(Stream.runDrain, onHost, Effect.forkScoped);
+      yield* env.relayHost.connected.pipe(
+        Stream.filter((boards) => boards.has(CENTRAL)),
+        Stream.runHead,
+      );
+      yield* Fiber.interrupt(owned);
     }),
   ),
 );

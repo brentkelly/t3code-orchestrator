@@ -507,6 +507,15 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
       { centralEnvironmentId, ...input },
       caller,
     ) {
+      if (caller.boardId === null) return yield* noBoard("spawn");
+      if (caller.boardId !== centralEnvironmentId) {
+        return yield* new BoardWorkerGatewayError({
+          kind: "refused",
+          operation: "spawn",
+          threadId: input.threadId,
+          detail: "A board may spawn only for itself.",
+        });
+      }
       yield* relay
         .claim(centralEnvironmentId, caller.sessionId)
         .pipe(Effect.mapError(refused("spawn", input.threadId)));
