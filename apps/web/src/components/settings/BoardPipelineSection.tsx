@@ -1840,7 +1840,8 @@ function SubmitStepBlock(props: {
 }
 
 /** The review phase's later-rounds model. It is stored only once it names a model, so turning it
-    on with nothing to seed it from holds the toggle locally until one is picked. */
+    on holds the toggle locally until one is picked: seeding it from the early model would save a
+    setting that changes nothing. */
 function LaterReviewModelRows(props: {
   exec: BoardStageExecutionReview;
   instanceEntries: InstanceEntries;
@@ -1877,9 +1878,7 @@ function LaterReviewModelRows(props: {
             }
             return;
           }
-          const seed = exec.phases.review.model ?? exec.model;
-          if (seed === null) setPendingOn(true);
-          else setLater(seed);
+          setPendingOn(true);
         }}
       />
       {on ? (

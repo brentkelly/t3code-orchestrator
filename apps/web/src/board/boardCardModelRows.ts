@@ -100,6 +100,11 @@ export function boardCardModelRows(input: {
 /** Where a review round with no model of its own gets one. */
 export type BoardReviewRoundModelSource = "card" | "parent" | "later" | "stage";
 
+export interface BoardReviewRoundInheritedModel {
+  readonly model: BoardModelSelection | null;
+  readonly source: BoardReviewRoundModelSource;
+}
+
 /** The model a review round with no per-round override runs on, from the review row and the
     card's own Review override. Null model means the workspace default. Mirrors the
     executor's ladder below the round override. */
@@ -107,7 +112,7 @@ export function boardReviewRoundInheritedModel(input: {
   readonly row: BoardCardModelRowSpec;
   readonly cardOverride: BoardCardStageModelOverride | null | undefined;
   readonly round: number;
-}): { readonly model: BoardModelSelection | null; readonly source: BoardReviewRoundModelSource } {
+}): BoardReviewRoundInheritedModel {
   const { row, cardOverride, round } = input;
   if (cardOverride != null) {
     return {

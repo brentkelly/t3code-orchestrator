@@ -41,7 +41,15 @@ function placeholderFor(
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance,
   instanceEntries: InstanceEntries,
 ): string {
-  if (row.inheritedModel === null) return "Default (unset in Settings)";
+  const later =
+    row.laterRounds === null
+      ? null
+      : boardModelDisplayName(row.laterRounds.model, getModelOptions, instanceEntries);
+  if (row.inheritedModel === null) {
+    return row.laterRounds === null
+      ? "Default (unset in Settings)"
+      : `Default (rounds 1–${row.laterRounds.afterRound}), then ${later}`;
+  }
   const name = boardModelDisplayName(row.inheritedModel, getModelOptions, instanceEntries);
   if (row.inheritedFromCardKey !== null) {
     return row.laterRounds === null
@@ -49,7 +57,6 @@ function placeholderFor(
       : `${name} for every round (from ${row.inheritedFromCardKey})`;
   }
   if (row.laterRounds === null) return `${name} (default)`;
-  const later = boardModelDisplayName(row.laterRounds.model, getModelOptions, instanceEntries);
   return `${name} (rounds 1–${row.laterRounds.afterRound}), then ${later}`;
 }
 

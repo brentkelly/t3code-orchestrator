@@ -28,11 +28,9 @@ import { getCustomModelOptionsByInstance } from "../modelSelection";
 import { ModelRow, type ActiveModel } from "../components/settings/BoardModelRow";
 import { boardModelDisplayName } from "../components/settings/boardModelDisplayName";
 import type {
+  BoardReviewRoundInheritedModel,
   BoardReviewRoundModelSource,
-  boardReviewRoundInheritedModel,
 } from "./boardCardModelRows";
-
-type BoardReviewRoundInheritedModel = ReturnType<typeof boardReviewRoundInheritedModel>;
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardSectionHeading as SectionHeading } from "./BoardCardFields";
