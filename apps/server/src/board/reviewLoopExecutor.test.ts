@@ -737,6 +737,69 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     expect(review2.model).toEqual(roundHaiku);
   });
 
+  it("the later-rounds model reviews every round past afterRound, below both overrides", () => {
+    const fable: BoardModelSelection = {
+      instanceId: ProviderInstanceId.make("anthropic"),
+      model: "claude-fable-5-2",
+    };
+    const opus: BoardModelSelection = {
+      instanceId: ProviderInstanceId.make("anthropic"),
+      model: "claude-opus-5-5",
+    };
+    const haiku: BoardModelSelection = {
+      instanceId: ProviderInstanceId.make("anthropic"),
+      model: "claude-haiku-5-5",
+    };
+    const exec = reviewExec({
+      rounds: 5,
+      laterReviewModel: { afterRound: 2, model: opus },
+      phases: {
+        ...DEFAULT_BOARD_REVIEW_STAGE_EXECUTION.phases,
+        review: { ...DEFAULT_BOARD_REVIEW_STAGE_EXECUTION.phases.review, model: fable },
+      },
+    });
+    const reviewModel = (
+      completions: ReadonlyArray<BoardStepCompletion>,
+      stepId: string,
+      roundOverrides: BoardCardReviewOverrides | null = null,
+      cardOverride: BoardCardStageModelOverride | null = null,
+    ) => {
+      const next = plan(completions, exec, roundOverrides, null, false, cardOverride);
+      expect(next.kind).toBe("run");
+      if (next.kind !== "run") throw new Error("expected a run");
+      expect(next.stepId).toBe(stepId);
+      return next.model;
+    };
+
+    expect(reviewModel(cappedRound(1), "review@2")).toEqual(fable);
+    expect(reviewModel([...cappedRound(1), ...cappedRound(2)], "review@3")).toEqual(opus);
+    // Triage keeps its own model whatever tier the round is on.
+    const triage3 = plan(
+      [
+        ...cappedRound(1),
+        ...cappedRound(2),
+        completion("review@3", reviewPayload([finding("critical", "f3")])),
+      ],
+      exec,
+    );
+    if (triage3.kind !== "run") throw new Error("expected a run");
+    expect(triage3.stepId).toBe("triage@3");
+    expect(triage3.model).toEqual(globalModel);
+    // A card's Review model replaces both tiers...
+    expect(reviewModel(cappedRound(1), "review@2", null, haiku)).toEqual(haiku);
+    expect(reviewModel([...cappedRound(1), ...cappedRound(2)], "review@3", null, haiku)).toEqual(
+      haiku,
+    );
+    // ...and a round the user escalated by hand beats the tier.
+    expect(
+      reviewModel(
+        [...cappedRound(1), ...cappedRound(2)],
+        "review@3",
+        overrides({ roundModels: { "3": fable } }),
+      ),
+    ).toEqual(fable);
+  });
+
   it("t3o-29: the card override's access level applies, and its absence inherits", () => {
     const base: BoardCardStageModelOverride = {
       instanceId: ProviderInstanceId.make("anthropic"),

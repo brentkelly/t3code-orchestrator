@@ -20,6 +20,9 @@ import {
 } from "./board.ts";
 
 const PROMPT_KEY = "prompt";
+/** Objects compared and kept whole: trimming one to its changed fields leaves a partial
+    that no longer decodes. */
+const WHOLE_VALUE_KEYS: ReadonlySet<string> = new Set(["model", "laterReviewModel"]);
 
 function sameValue(left: unknown, right: unknown): boolean {
   return canonicalJson(left) === canonicalJson(right);
@@ -36,7 +39,12 @@ function normalizePatch(
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined || !allowed.has(key)) continue;
     const base = global[key];
-    if (typeof value === "object" && value !== null && !Array.isArray(value) && key !== "model") {
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      !Array.isArray(value) &&
+      !WHOLE_VALUE_KEYS.has(key)
+    ) {
       const nested =
         typeof base === "object" && base !== null ? (base as Record<string, unknown>) : {};
       const inner: Record<string, unknown> = {};

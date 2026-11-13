@@ -6,10 +6,13 @@ import {
   effectiveBoardStageRole,
   effectiveBoardRuntimeMode,
   isBoardReviewStageExecution,
+  resolveBoardReviewTierModel,
   resolveBoardStageExecution,
   type BoardCard,
+  type BoardCardStageModelOverride,
   type BoardCardModelOverrides,
   type BoardModelSelection,
+  type BoardReviewLaterModel,
   type BoardSettings,
   type BoardStageDefinition,
   type BoardStageId,
@@ -30,6 +33,9 @@ export interface BoardCardModelRowSpec {
       rather than the workspace, so the row can say so. */
   readonly inheritedFromCardKey: string | null;
   readonly inheritedRuntimeMode: RuntimeMode;
+  /** The review row only: the later-rounds model Settings runs after `afterRound`, which any
+      card or parent Review override replaces. `inheritedModel` is then the early rounds' model. */
+  readonly laterRounds: BoardReviewLaterModel | null;
 }
 
 /** The label and note each role's row carries, from the prototype. */
@@ -65,7 +71,7 @@ export function boardCardModelRows(input: {
     );
     const review = isBoardReviewStageExecution(exec) ? exec : null;
     const workspaceModel =
-      review === null ? exec.model : (review.phases.review.model ?? review.model);
+      review === null ? exec.model : (resolveBoardReviewTierModel(review, 1) ?? review.model);
     const workspaceRuntimeMode =
       review === null
         ? exec.runtimeMode
@@ -85,9 +91,40 @@ export function boardCardModelRows(input: {
           : { instanceId: inherited.instanceId, model: inherited.model },
       inheritedFromCardKey: inherited === undefined ? null : (input.parentCard?.key ?? null),
       inheritedRuntimeMode: inherited?.runtimeMode ?? workspaceRuntimeMode,
+      laterRounds: review?.laterReviewModel ?? null,
     });
   }
   return rows;
+}
+
+/** Where a review round with no model of its own gets one. */
+export type BoardReviewRoundModelSource = "card" | "parent" | "later" | "stage";
+
+export interface BoardReviewRoundInheritedModel {
+  readonly model: BoardModelSelection | null;
+  readonly source: BoardReviewRoundModelSource;
+}
+
+/** The model a review round with no per-round override runs on, from the review row and the
+    card's own Review override. Null model means the workspace default. Mirrors the
+    executor's ladder below the round override. */
+export function boardReviewRoundInheritedModel(input: {
+  readonly row: BoardCardModelRowSpec;
+  readonly cardOverride: BoardCardStageModelOverride | null | undefined;
+  readonly round: number;
+}): BoardReviewRoundInheritedModel {
+  const { row, cardOverride, round } = input;
+  if (cardOverride != null) {
+    return {
+      model: { instanceId: cardOverride.instanceId, model: cardOverride.model },
+      source: "card",
+    };
+  }
+  if (row.inheritedFromCardKey !== null) return { model: row.inheritedModel, source: "parent" };
+  if (row.laterRounds !== null && round > row.laterRounds.afterRound) {
+    return { model: row.laterRounds.model, source: "later" };
+  }
+  return { model: row.inheritedModel, source: "stage" };
 }
 
 /** The kebab item's right-aligned summary: which of the rows this card has
