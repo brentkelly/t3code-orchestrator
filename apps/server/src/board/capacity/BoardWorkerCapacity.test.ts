@@ -382,9 +382,14 @@ it.effect("records and the last seq persist, reload, and go when the board is fo
     });
     assert.strictEqual(stale.lastSeq, 9);
     assert.lengthOf(reloaded.state().records, 1);
+    // A board with no cards here is still one to forget when it leaves.
+    yield* reloaded.service.syncCards("board-b", { seq: 1, authoritative: true, cards: [] });
+    assert.sameMembers([...(yield* reloaded.service.boardIds)], ["board-a", "board-b"]);
     yield* reloaded.service.forgetBoard("board-a");
+    yield* reloaded.service.forgetBoard("board-b");
     assert.isFalse(fakes.saved.has("board-a"));
     assert.lengthOf(reloaded.state().records, 0);
+    assert.lengthOf(yield* reloaded.service.boardIds, 0);
   }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
 });
 

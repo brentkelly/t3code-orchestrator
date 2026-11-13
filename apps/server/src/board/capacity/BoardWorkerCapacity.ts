@@ -177,6 +177,7 @@ export interface BoardWorkerCapacityShape {
   readonly subscribe: (boardId: string) => Stream.Stream<BoardWorkerCapacitySnapshot>;
   /** A board left: its records and claims go. */
   readonly forgetBoard: (boardId: string) => Effect.Effect<void>;
+  /** Every board this worker holds anything for: records, a sequence, or readiness. */
   readonly boardIds: Effect.Effect<ReadonlyArray<string>>;
   /** The section `t3o-worker status` prints. */
   readonly status: (servedBoardIds: ReadonlySet<string>) => Effect.Effect<WorkerCapacityStatus>;
@@ -1012,7 +1013,9 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
       snapshot,
       subscribe,
       forgetBoard: forget,
-      boardIds: Effect.sync(() => [...new Set(state.records.map((record) => record.boardId))]),
+      boardIds: Effect.sync(() => [
+        ...new Set([...state.records.map((record) => record.boardId), ...state.lastSeq.keys()]),
+      ]),
       boardHoldsWorktree: (boardId: string, worktreePath: string) =>
         Effect.sync(() =>
           state.records.some(

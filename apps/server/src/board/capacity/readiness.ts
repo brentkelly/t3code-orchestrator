@@ -289,6 +289,8 @@ export const makeReadiness = (deps: {
     },
     output: (repositoryKey: string | null, projectId: string | undefined, path: string) =>
       entries.get(keyOf(repositoryKey, projectId, path))?.output ?? null,
+    /** The boards that asked about a project here. */
+    boards: (): ReadonlyArray<string> => [...asked.keys()],
     forgetBoard: (boardId: string) => {
       for (const key of asked.get(boardId)?.values() ?? []) release(boardId, key);
       asked.delete(boardId);

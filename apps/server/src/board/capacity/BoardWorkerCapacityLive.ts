@@ -392,6 +392,9 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
           ? null
           : readiness.output(repositoryKey, entry.projectId, scriptPath);
       }),
+    boardIds: made.service.boardIds.pipe(
+      Effect.map((recorded) => [...new Set([...recorded, ...readiness.boards()])]),
+    ),
     forgetBoard: (boardId) =>
       made.service
         .forgetBoard(boardId)

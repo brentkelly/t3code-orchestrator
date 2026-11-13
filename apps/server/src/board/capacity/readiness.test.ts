@@ -184,7 +184,9 @@ it.effect(
       // A board that left gates nothing.
       state.exits.push({ status: "failed", exitCode: 1 });
       yield* readiness.check("board-c", { ...input, path: "c/ready.sh" });
+      assert.include(readiness.boards(), "board-c");
       readiness.forgetBoard("board-c");
+      assert.notInclude(readiness.boards(), "board-c");
       assert.isNull(readiness.notReady("board-c", input.repositoryKey, undefined));
       // Two projects with no remote are two entries: one's failure never gates the other.
       const local = { ...input, repositoryKey: null };
