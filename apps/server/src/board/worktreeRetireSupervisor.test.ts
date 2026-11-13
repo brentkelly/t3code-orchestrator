@@ -167,8 +167,9 @@ describe("card delete (T3O-23)", () => {
           cards: [buildingCard("doomed", "m"), buildingCard("waiting", "n")],
           nextCardNumberByProject: {},
         },
-        // One slot: `waiting` can only start once the delete releases it.
+        // Room for one card: `waiting` can only start once the delete gives it back.
         settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+        capacityFor: 1,
         worktreeRetirer: blockingRetirer,
       },
       (h) =>
@@ -192,6 +193,7 @@ describe("card delete (T3O-23)", () => {
           );
           // The handler finished while the hook is still running: the freed slot
           // already went to the waiting card, and nothing was removed yet.
+          yield* h.reactor.drainScheduling;
           assert.equal(
             boardCardStepState(yield* h.board, BoardCardId.make("waiting"))?.status,
             "running",

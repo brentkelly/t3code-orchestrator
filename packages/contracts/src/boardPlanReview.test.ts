@@ -54,7 +54,7 @@ describe("composePlanReviewInstructions", () => {
       humanInLoop: false,
     });
     expect(unattended).toContain("ask nothing");
-    expect(unattended).not.toContain("sign-off");
+    expect(unattended).not.toContain("wait for the human's sign-off");
   });
 });
 

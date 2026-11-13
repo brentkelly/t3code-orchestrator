@@ -97,6 +97,7 @@ const stepState = (input: {
     slotHeld: false,
     forceStart: false,
     queuedBy: null,
+    queuedDetail: null,
     startedAt: null,
     updatedAt: NOW,
   }) as unknown as BoardCardStepState;

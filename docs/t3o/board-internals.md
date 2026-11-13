@@ -77,3 +77,15 @@ workers is a local one, so reading the remote would mistake a base that is merel
 movement. A board with workers fetches and reads the remote base (bounded by
 `BASE_TIP_FETCH_TIMEOUT_MS`, falling back to the last-fetched ref), so a merge landed from another
 worker counts.
+
+### Measured CI and setup run in the agents' slice
+
+To be measured, a CI step or setup script runs in a systemd scope of its own (`BoardActualsMeter`
+`tap.wrap`), and `AgentScope.wrap` puts that scope in the agents' slice: low `CPUWeight` and
+`IOWeight`, and the agents' raised `oom_score_adj`. Under load a CI pass therefore yields CPU to the
+server, competes evenly with the agents, and is among the first killed when memory runs out, the same
+as the agent whose work it checks. That is deliberate: a runaway test suite must not take the server
+down with it. Where systemd scopes are unavailable the step runs unwrapped in the server's own group,
+as it did before measurement. The scope's group is removed the moment its command exits, so the
+wrapped shell copies its stat files out from an `EXIT` trap and the meter reads that copy as the
+step's last sample.

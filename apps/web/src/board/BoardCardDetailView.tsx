@@ -6,6 +6,7 @@
 import {
   DEFAULT_BOARD_REVIEW_ROUNDS,
   activeBoardCardThreadId,
+  BOARD_LOCAL_WORKER_ID,
   BOARD_SEED_STAGE_IDS,
   isBoardCardAwaitingPermission,
   BOARD_AUTO_MERGE_MAX_ATTEMPTS,
@@ -122,6 +123,8 @@ import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
 import { BoardBaseBranchConfirmDialog } from "./BoardBaseBranchConfirmDialog";
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
 import { BoardCardWorkerRow } from "./workers/BoardCardWorkerRow";
+import { useBoardWorkersState } from "./workers/BoardWorkersContext";
+import { boardActualsFooterText, boardActualsLines } from "./actuals/boardActualsView";
 import { BoardBriefEditor } from "./mentions/BoardBriefEditor";
 import { BoardBriefView } from "./mentions/BoardBriefView";
 import { BoardCardProjectConfirmDialog } from "./BoardCardProjectConfirmDialog";
@@ -675,6 +678,8 @@ export interface BoardCardDetailViewProps {
   /** Write this card's own merge strategy; null returns it to the default.
       Absent hides the control. */
   readonly onSetMergeStrategy?: ((next: BoardMergeStrategy | null) => void) | undefined;
+  /** T3o: the card's size and setup, under its title in both layouts (T3O-86). */
+  readonly capacityPanel?: React.ReactNode;
   /** Write the card's priority. Absent hides the row and the chip: a group has none. */
   readonly onSetPriority?: ((next: BoardCardPriority) => void) | undefined;
   /** The side panel's note when the card already outranks waiting work. */
@@ -2761,8 +2766,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // planning inherits as context.
   // T3o: a card's spend lives in its Summary pane at any stage (T3O-77).
   const hasUsage = props.detail.usage.length > 0 || props.detail.usageHistoryPartial;
+  // T3o: measured actuals sit beside Usage (T3O-87).
+  const hasActuals = props.detail.actuals.length > 0;
+  const workersForActuals = useBoardWorkersState();
   const hasSummary =
     hasUsage ||
+    hasActuals ||
     (!integrates
       ? props.detail.decisions.length > 0
       : boardCardHasSummaryPane({
@@ -2835,6 +2844,20 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           runningThreadId:
             props.threadLinks.find((link) => link.threadState === "working")?.threadId ?? null,
         })
+      : null;
+  const measured =
+    summaryShown && hasActuals
+      ? {
+          lines: boardActualsLines(props.detail.actuals, workersForActuals),
+          footer:
+            card.resources?.grant == null
+              ? null
+              : boardActualsFooterText({
+                  rows: props.detail.actuals,
+                  workerId: card.placedWorkerId ?? BOARD_LOCAL_WORKER_ID,
+                  reservation: card.resources.grant.profile,
+                }),
+        }
       : null;
   const decisionLog = summaryShown
     ? boardDecisionLogView({
@@ -2946,7 +2969,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               docs/t3o/status-colours.md. */}
           {props.queueInfo != null ? (
             <BoardHint label={props.queueInfo.detail}>
-              <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-1.75 text-board-11 font-medium text-muted-foreground">
+              <span
+                className={cn(
+                  "inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md px-1.75 text-board-11 font-medium",
+                  props.queueInfo.blocked === true
+                    ? "bg-warning/14 text-board-amber-text"
+                    : props.queueInfo.attention === true
+                      ? "bg-attention/12 text-attention-foreground"
+                      : "bg-muted text-muted-foreground",
+                )}
+              >
                 <ClockIcon className="size-2.5" />
                 {props.queueInfo.label}
               </span>
@@ -3126,6 +3158,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       </div>
 
       <TitleBody done={done} onSave={props.onSaveTitle} title={card.title} />
+      {props.capacityPanel ?? null}
 
       {/* One insertion above the layout split covers both forms. Only
           the wide one offers `View thread`: the narrow layout has no thread
@@ -3199,6 +3232,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 pastBuild={pastBuild}
                 integrates={integrates}
                 usage={usageBreakdown}
+                measured={measured}
                 initialOpen={props.usageRequested === true ? ["usage"] : []}
                 savedOpen={summaryOpen}
                 onOpenChange={setSummaryOpen}

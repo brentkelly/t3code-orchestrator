@@ -81,6 +81,11 @@ import Migration067 from "./067_BoardStepReopenedAt.ts";
 import Migration068 from "./068_BoardWorkerJoin.ts";
 import Migration069 from "./069_BoardRepriceUsage.ts";
 import Migration070 from "./070_BoardCardsPriority.ts";
+import Migration071 from "./071_BoardCardResources.ts";
+import Migration072 from "./072_BoardWorkerCapacity.ts";
+import Migration073 from "./073_BoardCapacityClaims.ts";
+import Migration074 from "./074_BoardCardPlacementAtBuild.ts";
+import Migration075 from "./075_BoardCardActuals.ts";
 
 /** Ledger table for the board migration lineage, independent of upstream. */
 export const BOARD_MIGRATION_TABLE = "t3o_sql_migrations";
@@ -172,6 +177,11 @@ export const BOARD_MIGRATIONS = [
   [68, "BoardWorkerJoin", Migration068],
   [69, "BoardRepriceUsage", Migration069],
   [70, "BoardCardsPriority", Migration070],
+  [71, "BoardCardResources", Migration071],
+  [72, "BoardWorkerCapacity", Migration072],
+  [73, "BoardCapacityClaims", Migration073],
+  [74, "BoardCardPlacementAtBuild", Migration074],
+  [75, "BoardCardActuals", Migration075],
 ] as const;
 
 const boardLoader = Migrator.fromRecord(

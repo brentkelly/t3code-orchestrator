@@ -62,6 +62,7 @@ const settledStep = (stepId: string, baseTipAtRoundStart = "main"): BoardCardSte
   slotHeld: false,
   forceStart: false,
   queuedBy: null,
+  queuedDetail: null,
   startedAt: null,
   updatedAt: NOW,
 });

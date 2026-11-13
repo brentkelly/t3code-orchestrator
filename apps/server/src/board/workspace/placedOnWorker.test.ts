@@ -32,6 +32,12 @@ import {
   TEST_WORKER_ID,
   type InProcessWorker,
 } from "./inProcessWorker.testkit.ts";
+import {
+  registeredWorker,
+  staticPlacement,
+  workersState,
+  workerView,
+} from "../workers/placement.testkit.ts";
 import type { LocalBoardWorkspaceDeps } from "./LocalBoardWorkspace.ts";
 import { makeBoardWorkspaces } from "./workspaceLayer.ts";
 
@@ -87,7 +93,10 @@ const placeCardOnWorker = (options: { readonly reachable?: boolean } = {}): Plac
                 ? Effect.succeed(privateGitDir)
                 : local.fileSystem.makeTempDirectory({ prefix: "t3o-worker-gitdir-" }).pipe(
                     Effect.tap((dir) =>
-                      local.fileSystem.writeFileString(`${dir}/t3o-board-owner`, "central\n"),
+                      local.fileSystem.writeFileString(
+                        `${dir}/t3o-board-owner`,
+                        "board:env-board\n",
+                      ),
                     ),
                     Effect.tap((dir) => Effect.sync(() => void (privateGitDir = dir))),
                     Effect.orDie,
@@ -137,7 +146,20 @@ const worktreeFailures = (events: ReadonlyArray<HarnessEvent>) =>
       String(event.payload.cardId) === String(placedId),
   );
 
-const building = (id: string): BoardCard => makeBoardCard({ id, stage: BUILDING, orderKey: "m" });
+const building = (id: string): BoardCard =>
+  makeBoardCard({
+    id,
+    stage: BUILDING,
+    orderKey: "m",
+    // The placement gate places `card-1` on its pin (T3O-87).
+    ...(id === String(placedId) ? { pinnedWorkerId: TEST_WORKER_ID } : {}),
+  });
+
+/** The board's registry and live summary with the in-process worker online. */
+const onlineWorker = {
+  workers: [registeredWorker(TEST_WORKER_ID)],
+  placement: staticPlacement(workersState([workerView(TEST_WORKER_ID)])),
+};
 
 const openPr: VcsStatusChangeRequest = {
   number: 501,
@@ -163,7 +185,12 @@ describe("a card placed on a worker (T3O-64)", () => {
     const placement = placeCardOnWorker();
     return withGovernor(
       {
-        board: { cards: [building("card-1")], nextCardNumberByProject: {} },
+        board: {
+          cards: [building("card-1")],
+          nextCardNumberByProject: {},
+          workers: onlineWorker.workers,
+        },
+        placement: onlineWorker.placement,
         settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 4 }),
         registeredWorktrees: workerWorktrees(["/tmp/worktrees/board/card-1", "board/card-1"]),
         workspaces: placement.workspaces,
@@ -281,7 +308,9 @@ describe("a worker the board cannot reach (T3O-64)", () => {
           board: {
             cards: [building("card-1"), building("other-1"), building("other-2")],
             nextCardNumberByProject: {},
+            workers: onlineWorker.workers,
           },
+          placement: onlineWorker.placement,
           settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 4 }),
           registeredWorktrees: workerWorktrees(["/tmp/worktrees/board/card-1", "board/card-1"]),
           workspaces: placement.workspaces,
@@ -319,7 +348,9 @@ describe("a worker the board cannot reach (T3O-64)", () => {
         board: {
           cards: [building("card-1"), building("other-1")],
           nextCardNumberByProject: {},
+          workers: onlineWorker.workers,
         },
+        placement: onlineWorker.placement,
         settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 4 }),
         registeredWorktrees: workerWorktrees(["/tmp/worktrees/board/card-1", "board/card-1"]),
         workspaces: (local) => {
@@ -346,6 +377,35 @@ describe("a worker the board cannot reach (T3O-64)", () => {
           assert.strictEqual(resumed.worktree?.status, "ready");
           assert.strictEqual(resumed.worktree?.attempts, 1);
           assert.strictEqual(worktreeFailures(yield* h.decided).length, 0);
+        }),
+    );
+  });
+
+  it.effect("a provision a board restart cut off resumes on its slice at boot", () => {
+    const placement = placeCardOnWorker();
+    const cutOff = makeBoardCard({
+      id: "card-1",
+      stage: BUILDING,
+      orderKey: "m",
+      worktree: { ...readyWorktree("card-1"), path: null, status: "provisioning" },
+      placedWorkerId: TEST_WORKER_ID,
+    });
+    return withGovernor(
+      {
+        board: { cards: [cutOff], nextCardNumberByProject: {}, workers: onlineWorker.workers },
+        placement: onlineWorker.placement,
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 4 }),
+        registeredWorktrees: workerWorktrees(["/tmp/worktrees/board/card-1", "board/card-1"]),
+        workspaces: placement.workspaces,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(cutOff, 1));
+          const commands = yield* h.commands;
+          assert.strictEqual(commandsOf(commands, "board.card.provision-worktree").length, 0);
+          assert.strictEqual(commandsOf(commands, "board.card.record-worktree").length, 1);
+          const resumed = (yield* h.board).cards.find((entry) => entry.id === placedId)!;
+          assert.strictEqual(resumed.worktree?.status, "ready");
         }),
     );
   });

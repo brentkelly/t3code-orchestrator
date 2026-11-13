@@ -130,6 +130,18 @@ export const unsupportedGateway: WorkerGatewayRpc = (() => {
     stageAttachments: fail,
     runCi: failStream,
     readCiLog: failStream,
+    claimCapacity: fail,
+    hold: fail,
+    releaseHold: fail,
+    syncCards: fail,
+    subscribeCapacity: Stream.fail(unsupported),
+    runSetup: failStream,
+    setupState: fail,
+    cancelSetup: fail,
+    readSetupLog: fail,
+    checkReadiness: fail,
+    readinessOutput: fail,
+    actuals: fail,
   };
 })();
 
@@ -189,6 +201,18 @@ const linkedGateway = (
     stageAttachments: (input) => guard(gateway.stageAttachments(input)),
     runCi: (input) => live(gateway.runCi(input)),
     readCiLog: (input) => live(gateway.readCiLog(input)),
+    claimCapacity: (input) => guard(gateway.claimCapacity(input)),
+    hold: (input) => guard(gateway.hold(input)),
+    releaseHold: (cardId) => guard(gateway.releaseHold(cardId)),
+    syncCards: (input) => guard(gateway.syncCards(input)),
+    subscribeCapacity: live(gateway.subscribeCapacity),
+    runSetup: (input) => live(gateway.runSetup(input)),
+    setupState: (path) => guard(gateway.setupState(path)),
+    cancelSetup: (path) => guard(gateway.cancelSetup(path)),
+    readSetupLog: (path) => guard(gateway.readSetupLog(path)),
+    checkReadiness: (input) => guard(gateway.checkReadiness(input)),
+    readinessOutput: (key, path) => guard(gateway.readinessOutput(key, path)),
+    actuals: (input) => guard(gateway.actuals(input)),
   };
 };
 

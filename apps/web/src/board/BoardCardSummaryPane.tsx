@@ -24,6 +24,8 @@ import {
   type BoardSummaryTile,
   type BoardSummaryTone,
 } from "./boardSummaryOverview";
+import { BoardCardMeasuredSection } from "./actuals/BoardCardMeasuredSection";
+import type { BoardActualsLine } from "./actuals/boardActualsView";
 import { BoardCardUsageSection } from "./usage/BoardCardUsageSection";
 import type { BoardUsageBreakdown } from "./usage/boardUsageBreakdown";
 import { boardUsageStageShade } from "./usage/boardUsageFormat";
@@ -310,6 +312,7 @@ export function BoardCardSummaryPane({
   onSendBack,
   onFollowUp,
   usage = null,
+  measured = null,
   buildPending = false,
   pastBuild = false,
   integrates = true,
@@ -320,6 +323,14 @@ export function BoardCardSummaryPane({
   readonly summary: BoardCardWorkSummary;
   /** The card's usage, when anything about it is known (T3O-77). */
   readonly usage?: BoardUsageBreakdown | null | undefined;
+  /** The card's measured steps (T3O-87), when any ran; shown under Usage. */
+  readonly measured?:
+    | {
+        readonly lines: ReadonlyArray<BoardActualsLine>;
+        readonly footer: { readonly reservation: string; readonly share: string | null } | null;
+      }
+    | null
+    | undefined;
   /** The card's decision log, when it has one. */
   readonly decisionLog?: BoardDecisionLogView | null | undefined;
   readonly onSendBack?: (() => void) | undefined;
@@ -355,6 +366,7 @@ export function BoardCardSummaryPane({
     setOpenState(next);
     onOpenChange?.(next);
   };
+  const [hoveredStepId, setHoveredStepId] = useState<string | null>(null);
   const columnRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<BoardSummarySectionId, HTMLButtonElement>());
   const idPrefix = useId();
@@ -561,7 +573,22 @@ export function BoardCardSummaryPane({
           <BoardDecisionLog onFollowUp={onFollowUp} onSendBack={onSendBack} view={decisionLog} />
         );
       case "usage":
-        return usage === null ? null : <BoardCardUsageSection breakdown={usage} />;
+        return usage === null ? null : (
+          <>
+            <BoardCardUsageSection
+              breakdown={usage}
+              hover={{ stepId: hoveredStepId, onHover: setHoveredStepId }}
+            />
+            {measured === null || measured.lines.length === 0 ? null : (
+              <BoardCardMeasuredSection
+                footer={measured.footer}
+                hoveredStepId={hoveredStepId}
+                lines={measured.lines}
+                onHoverStep={setHoveredStepId}
+              />
+            )}
+          </>
+        );
     }
   };
 

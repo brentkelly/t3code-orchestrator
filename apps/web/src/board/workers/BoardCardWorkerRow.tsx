@@ -22,7 +22,13 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { BoardCardForceMoveDialog } from "./BoardCardForceMoveDialog";
 import { BoardCardMoveDialog } from "./BoardCardMoveDialog";
 import { BoardWorkerPicker } from "./BoardWorkerPicker";
-import { boardCardWorkerTrouble, boardWorkerFieldLabel, boardWorkerLabel } from "./cardWorker";
+import {
+  BOARD_ANY_READY_WORKER_LABEL,
+  boardCardPlacementLine,
+  boardCardWorkerTrouble,
+  boardWorkerFieldLabel,
+  boardWorkerLabel,
+} from "./cardWorker";
 import { useBoardWorkerChoices } from "./useBoardWorkerChoices";
 
 export function BoardCardWorkerRow(props: {
@@ -71,7 +77,7 @@ export function BoardCardWorkerRow(props: {
   const value =
     holds && card.pinnedWorkerId === null
       ? {
-          label: `${boardWorkerLabel(bound ?? BOARD_LOCAL_WORKER_ID, workers)} · follows default`,
+          label: `${boardWorkerLabel(bound ?? BOARD_LOCAL_WORKER_ID, workers)} · placed`,
           pinned: false,
         }
       : boardWorkerFieldLabel(card.pinnedWorkerId, workers);
@@ -79,20 +85,21 @@ export function BoardCardWorkerRow(props: {
     // A worktree (or a move that retired one) means the card's work has to
     // travel: that is a Move, which checks it is pushed first. Choosing the
     // worker the worktree is already on moves nothing, so it is just a pin.
-    const staysPut = holds && move === null && (workerId ?? workers.defaultWorkerId) === bound;
+    // T3o: Unpin leaves a placed card where it is (T3O-87).
+    const staysPut = holds && move === null && (workerId === null || workerId === bound);
     // Off a worker the board can't reach, the only move is a force-move.
     if (trouble !== null && holds && !staysPut) {
       setForcing(true);
       return;
     }
-    if ((holds || move !== null) && !staysPut) {
-      setFollowDefault(workerId === null);
-      setMoveTo(workerId ?? workers.defaultWorkerId);
+    if ((holds || move !== null) && !staysPut && workerId !== null) {
+      setFollowDefault(false);
+      setMoveTo(workerId);
       return;
     }
     void pin({ environmentId, input: { cardId: card.id, workerId } });
   };
-  const runsOn = boardWorkerLabel(bound ?? workers.defaultWorkerId, workers);
+  const runsOn = boardWorkerLabel(bound ?? BOARD_LOCAL_WORKER_ID, workers);
   const stuckOn = card.placementOrphaned?.workerId ?? trouble?.workerId ?? null;
 
   return (
@@ -116,7 +123,7 @@ export function BoardCardWorkerRow(props: {
           <BoardWorkerPicker
             choices={field.choices}
             className="h-6 flex-1 text-board-11-5"
-            followLabel={`Follow default (${boardWorkerLabel(workers.defaultWorkerId, workers)})`}
+            followLabel={BOARD_ANY_READY_WORKER_LABEL}
             onSelect={select}
             onSetUp={field.setUp}
             pinnedWorkerId={card.pinnedWorkerId}
@@ -125,6 +132,11 @@ export function BoardCardWorkerRow(props: {
           />
         </div>
       )}
+      {field.shown ? (
+        <span className="text-board-11 leading-board-1-45">
+          {boardCardPlacementLine(card.resources?.placement ?? null, holds, workers)}
+        </span>
+      ) : null}
       {holds && move === null ? (
         <span className="text-board-11 leading-board-1-45">
           Worktree is on {runsOn}. Choosing another worker moves the card.
@@ -153,10 +165,7 @@ export function BoardCardWorkerRow(props: {
           <span className="flex gap-1.5">
             <Button
               onClick={() => {
-                // A following card retrying to the default keeps following.
-                setFollowDefault(
-                  card.pinnedWorkerId === null && move.toWorkerId === workers.defaultWorkerId,
-                );
+                setFollowDefault(false);
                 setMoveTo(move.toWorkerId);
               }}
               size="xs"

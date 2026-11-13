@@ -85,11 +85,13 @@ function StageRows({
   shade,
   open,
   onToggle,
+  hover,
 }: {
   readonly stage: BoardUsageStageGroup;
   readonly shade: string;
   readonly open: boolean;
   readonly onToggle: () => void;
+  readonly hover: BoardUsageStepHover | undefined;
 }) {
   const figure = formatBoardUsageCost(stage.summary);
   return (
@@ -130,9 +132,12 @@ function StageRows({
               className={cn(
                 GRID,
                 "items-start border-t border-border/60 bg-foreground/2 px-3 pb-1.75 pt-1.5",
+                hover?.stepId === line.stepId && "bg-accent",
               )}
               data-usage-line={line.stepId}
               key={line.key}
+              onMouseEnter={() => hover?.onHover(line.stepId)}
+              onMouseLeave={() => hover?.onHover(null)}
             >
               <span className="flex min-w-0 items-center gap-1.5 pl-4.25 pt-px">
                 {line.running ? (
@@ -173,7 +178,19 @@ function StageRows({
   );
 }
 
-export function BoardCardUsageSection({ breakdown }: { readonly breakdown: BoardUsageBreakdown }) {
+/** T3o (T3O-87): the step hovered here or in the Measured table beside it. */
+export interface BoardUsageStepHover {
+  readonly stepId: string | null;
+  readonly onHover: (stepId: string | null) => void;
+}
+
+export function BoardCardUsageSection({
+  breakdown,
+  hover,
+}: {
+  readonly breakdown: BoardUsageBreakdown;
+  readonly hover?: BoardUsageStepHover | undefined;
+}) {
   const [view, setView] = useState<"stage" | "model">("stage");
   const [openStages, setOpenStages] = useState<ReadonlySet<string>>(new Set());
   const figure = formatBoardUsageCost(breakdown.summary, {
@@ -262,6 +279,7 @@ export function BoardCardUsageSection({ breakdown }: { readonly breakdown: Board
         {view === "stage"
           ? breakdown.stages.map((stage, index) => (
               <StageRows
+                hover={hover}
                 key={stage.stageId}
                 onToggle={() =>
                   setOpenStages((current) => {

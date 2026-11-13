@@ -83,6 +83,7 @@ function makeCard(overrides: Partial<BoardCard> = {}): BoardCard {
     ci: null,
     ciLastOutcome: null,
     ciRoundTrips: 0,
+    resources: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -124,6 +125,7 @@ function makeStep(status: BoardCardStepState["status"]): BoardCardStepState {
     slotHeld: false,
     forceStart: false,
     queuedBy: null,
+    queuedDetail: null,
     startedAt: null,
     updatedAt: NOW,
   };
@@ -211,31 +213,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   (it) => {
     // ── Placement resolution ─────────────────────────────────────────────
 
-    it("resolves pin, then default; a worktree binds the card where it was placed", () => {
-      expect(boardCardEffectiveWorkerId(makeCard(), undefined)).toBe(BOARD_LOCAL_WORKER_ID);
-      expect(boardCardEffectiveWorkerId(makeCard(), workerA)).toBe(workerA);
-      expect(boardCardEffectiveWorkerId(makeCard({ pinnedWorkerId: workerB }), workerA)).toBe(
-        workerB,
+    it("shows the placement while a worktree binds it, else the pin, else this server", () => {
+      // The default worker is retired (T3O-87): an unpinned, unplaced card shows this server.
+      expect(boardCardEffectiveWorkerId(makeCard())).toBe(BOARD_LOCAL_WORKER_ID);
+      expect(boardCardEffectiveWorkerId(makeCard({ pinnedWorkerId: workerB }))).toBe(workerB);
+      // Placed on A without a checkout: nothing binds it.
+      expect(boardCardEffectiveWorkerId(makeCard({ placedWorkerId: workerA }))).toBe(
+        BOARD_LOCAL_WORKER_ID,
       );
-      // Placed on A without a checkout: nothing binds it, so it follows its pin
-      // or the default on its next spawn.
-      expect(boardCardEffectiveWorkerId(makeCard({ placedWorkerId: workerA }), workerB)).toBe(
-        workerB,
-      );
-      // With a worktree on A, a default change does not move it.
       expect(
         boardCardEffectiveWorkerId(
-          makeCard({ placedWorkerId: workerA, worktree: readyWorktree }),
-          workerB,
+          makeCard({ placedWorkerId: workerA, pinnedWorkerId: workerB, worktree: readyWorktree }),
         ),
       ).toBe(workerA);
       // A worktree from before workers existed is this server's.
-      expect(boardCardEffectiveWorkerId(makeCard({ worktree: readyWorktree }), workerB)).toBe(
+      expect(boardCardEffectiveWorkerId(makeCard({ worktree: readyWorktree }))).toBe(
         BOARD_LOCAL_WORKER_ID,
       );
     });
 
-    it.effect("provisioning a worktree records the placement it is cut on", () =>
+    it.effect("a provision keeps the gate's placement, never the pin or the default (T3O-87)", () =>
       Effect.gen(function* () {
         const provision: BoardCommand = {
           type: "board.card.provision-worktree",
@@ -245,19 +242,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           baseRefName: "main",
           createdAt: NOW,
         };
-        const byDefault = yield* cardAfter(
+        const unplaced = yield* decideFail(
           provision,
           makeReadModel({ cards: [makeCard()], defaultWorkerId: workerA }),
         );
-        expect(byDefault.placedWorkerId).toBe(workerA);
-        const byPin = yield* cardAfter(
+        expect(String(unplaced)).toContain("has no placement");
+        // An unpinned card the gate placed on a remote worker is still there once its worktree
+        // starts provisioning.
+        const placed = yield* cardAfter(
+          provision,
+          makeReadModel({ cards: [makeCard({ placedWorkerId: workerB })] }),
+        );
+        expect(placed.placedWorkerId).toBe(workerB);
+        const notThePin = yield* cardAfter(
           provision,
           makeReadModel({
-            cards: [makeCard({ pinnedWorkerId: workerB, placedWorkerId: workerA })],
+            cards: [makeCard({ pinnedWorkerId: workerA, placedWorkerId: workerB })],
             defaultWorkerId: workerA,
           }),
         );
-        expect(byPin.placedWorkerId).toBe(workerB);
+        expect(notThePin.placedWorkerId).toBe(workerB);
       }),
     );
 
@@ -430,12 +434,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
+    it.effect("refuses to place a pinned card anywhere but its pin", () =>
+      Effect.gen(function* () {
+        const pinned = makeReadModel({ cards: [makeCard({ pinnedWorkerId: workerA })] });
+        const failure = yield* decideFail(place(workerB), pinned);
+        expect(String(failure)).toContain("is pinned to worker");
+        expect((yield* cardAfter(place(workerA), pinned)).placedWorkerId).toBe(workerA);
+      }),
+    );
+
     // ── Move ─────────────────────────────────────────────────────────────
 
     it.effect("a move runs start → retired → done and lands the card on the new worker", () =>
       Effect.gen(function* () {
         let model = makeReadModel({
-          cards: [makeCard({ placedWorkerId: workerA, worktree: readyWorktree })],
+          cards: [
+            makeCard({
+              placedWorkerId: workerA,
+              worktree: readyWorktree,
+              resources: {
+                sizing: null,
+                grant: null,
+                setup: null,
+                placement: { workerId: workerA, at: NOW, reason: "pinned" },
+              },
+            }),
+          ],
           stepStates: [makeStep("succeeded")],
         });
         const steps = [
@@ -461,12 +485,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         expect(retired!.worktree?.status).toBe("reclaimed");
         expect(retired!.worktree?.path).toBeNull();
         expect(retired!.placedWorkerId).toBeNull();
+        expect(retired!.resources?.placement ?? null).toBeNull();
         // Done: the new worktree, pinned and placed on B, the move cleared.
         expect(done!.worktree?.status).toBe("ready");
         expect(done!.worktree?.path).toBe("/worker-b/worktrees/card-1");
         expect(done!.worktree?.branch).toBe("board/card-1");
         expect(done!.pinnedWorkerId).toBe(workerB);
         expect(done!.placedWorkerId).toBe(workerB);
+        expect(done!.resources?.placement?.workerId).toBe(workerB);
         expect(done!.workerMove).toBeNull();
       }),
     );

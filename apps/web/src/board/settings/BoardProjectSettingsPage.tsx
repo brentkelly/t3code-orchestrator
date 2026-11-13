@@ -1,7 +1,7 @@
 /**
  * T3o: Settings → Board → Projects → <project>: the project's
- * differences from the global pipeline, in three deep-linkable tabs —
- * Pipeline (switches and overrides), CI (steps and fix agent) and Import &
+ * differences from the global pipeline, in four deep-linkable tabs —
+ * Pipeline (switches and overrides), CI (steps and fix agent), Resources and Import &
  * export (`t3o.json`). Controls need the settings-write scope.
  */
 import {
@@ -22,6 +22,7 @@ import { BoardImportNoticeForProject, useBoardImportCandidates } from "./BoardIm
 import { BoardProjectCiTab } from "./BoardProjectCiTab";
 import { BoardProjectImportTab } from "./BoardProjectImportTab";
 import { BoardProjectPipelineTab } from "./BoardProjectPipelineTab";
+import { BoardProjectResourcesTab } from "./BoardProjectResourcesTab";
 import {
   BOARD_PROJECT_SETTINGS_TABS,
   parseBoardProjectSettingsTab,
@@ -34,6 +35,7 @@ import { projectAccent, projectIconColorOf } from "../projectAccent";
 const TAB_LABELS: Readonly<Record<BoardProjectSettingsTab, string>> = {
   pipeline: "Pipeline",
   ci: "CI",
+  resources: "Resources",
   import: "Import & export",
 };
 
@@ -54,6 +56,7 @@ export function BoardProjectSettingsPage(props: {
     pipeline:
       Object.keys(config.shell.stageSwitches).length + Object.keys(config.shell.overrides).length,
     ci: config.shell.ciSteps.length,
+    resources: 0,
     import: 0,
   };
   if (project === undefined) {
@@ -108,6 +111,12 @@ export function BoardProjectSettingsPage(props: {
         />
       ) : tab === "ci" ? (
         <BoardProjectCiTab config={config} projectId={projectId} projectTitle={project.title} />
+      ) : tab === "resources" ? (
+        <BoardProjectResourcesTab
+          config={config}
+          projectId={projectId}
+          projectTitle={project.title}
+        />
       ) : (
         <BoardProjectImportTab
           config={config.shell}

@@ -1157,6 +1157,8 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/git/GitManager.test.ts`                                        | `T3O-48`          | "Check again" gets past the failure backoff                                                                                                                                                                                        | fork test                                                                    |
 | `packages/contracts/src/project.ts`                                             | `T3O-23`          | `runOnWorktreeRemove` on a stored `ProjectScript`                                                                                                                                                                                  | one-line append (field)                                                      |
 | `packages/shared/src/projectScripts.ts`                                         | `T3O-23`          | `(teardown)` menu label, mirroring `(setup)` (moved from mobile `terminalMenu.ts`)                                                                                                                                                 | one-line append                                                              |
+| `packages/shared/src/AgentScope.ts`                                             | `T3O-87`          | Optional `controlGroup(threadId)` member, and its default answering null, so measured actuals can read a thread's own scope                                                                                                        | one optional member + one default line                                       |
+| `apps/server/src/process/agentScope.ts`                                         | `T3O-87`          | `controlGroup` delegates to `board/actuals/agentScopeControlGroup.ts` with the private `scopeByThread` entry; a shared (Codex) scope answers null                                                                                  | import + one delegating line                                                 |
 | `apps/web/src/components/ChatView.tsx`                                          | `t3o-05`          | Import `BoardModeTabs`                                                                                                                                                                                                             | one-line append (import)                                                     |
 | `apps/web/src/components/ChatView.tsx`                                          | `t3o-05`          | Threads/Board mode tabs before the breadcrumb (D1 shell tab)                                                                                                                                                                       | one-line append (delegating element)                                         |
 | `apps/web/src/components/ChatView.tsx`                                          | `t3o-06`          | `ChatViewChrome` type and `chrome` prop (default `"full"`); `"embedded"` for the card modal                                                                                                                                        | one type + one destructured default                                          |
@@ -1520,6 +1522,26 @@ This is a candidate to send upstream: path-prefixed reverse proxies are a genera
 seam shrinks to nothing if upstream adopts it.
 
 ---
+
+### Worker capacity reads the machine without touching upstream (T3O-86)
+
+Worker capacity needs the machine's cores, memory and disk, and the RAM T3 Code allows its agents.
+Upstream has `HostResources` and `process/agentScope.ts` for exactly this, but exporting from them
+would be a new seam in an upstream file. `apps/server/src/board/capacity/machine.ts` reads the same
+sources itself instead: `os` for cores and memory, `/proc/meminfo` for available memory, the
+agents slice's `memory.high` at the path `agentScope.ts` creates, and `du` for worktree disk. If
+upstream moves the agents slice, the RAM default falls back to total memory minus 8 GiB rather than
+failing; check that path on each sync.
+
+### Measured actuals read upstream's per-agent scopes (T3O-87)
+
+A thread's systemd unit lives in `scopeByThread`, private to `make` in `process/agentScope.ts`. The
+one seam is `AgentScope.controlGroup(threadId)`: optional on the interface (so upstream tests that
+build an `AgentScope` by hand need no edit), null by default, and one delegating line in
+`agentScope.ts`. Parsing and sampling live in `apps/server/src/board/actuals/`. CI passes and setup
+runs need no seam: the board wraps their commands with upstream's own `wrap` and reads the `unit` it
+returns. If upstream renames `scopeByThread` or changes what a shared scope means, re-check the
+delegating line on sync; a missing member only makes every agent step read "not measured".
 
 ## Inherited workflows
 

@@ -1,28 +1,20 @@
 /**
  * A CI pass whose run dies still reports, so the card never sits in
- * CI "running" with nothing behind it, and its slot comes back.
+ * CI "running" with nothing behind it.
  */
-import {
-  BOARD_LOCAL_WORKER_ID,
-  BoardCardId,
-  EnvironmentId,
-  CommandId,
-  ProviderInstanceId,
-} from "@t3tools/contracts";
+import { BOARD_LOCAL_WORKER_ID, BoardCardId, EnvironmentId, CommandId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 
-import { BoardStepSlots, BoardStepSlotsLive } from "../BoardStepSlots.ts";
 import { makeBoardCiPasses, type BoardCiPassFinished } from "./ciPasses.ts";
 
-it.effect("a runner defect still reports the pass, as unavailable, and frees its slot", () =>
+it.effect("a runner defect still reports the pass, as unavailable", () =>
   Effect.gen(function* () {
-    const slots = yield* BoardStepSlots;
     const finished: BoardCiPassFinished[] = [];
     const passes = yield* makeBoardCiPasses({
       runner: { run: () => Effect.die(new Error("mkdir exploded")) },
-      slots,
+      admit: () => Effect.succeed(true),
       dispatch: () => Effect.void,
       commandId: (tag) => Effect.succeed(CommandId.make(tag)),
       nowIso: Effect.succeed("2026-01-01T00:00:00.000Z"),
@@ -34,20 +26,20 @@ it.effect("a runner defect still reports the pass, as unavailable, and frees its
       worktreePath: "/tmp/nowhere",
       workerId: BOARD_LOCAL_WORKER_ID,
       steps: [{ name: "Lint", command: "vp lint", timeoutMinutes: 1 }],
-      limits: { global: 1, worker: null, perInstance: null },
     });
     assert.isTrue(started);
     yield* passes.awaitIdle;
     assert.lengthOf(finished, 1);
     assert.strictEqual(finished[0]!.outcome.result, "unavailable");
-    assert.strictEqual(yield* slots.heldTotal, 0);
-  }).pipe(Effect.scoped, Effect.provide(BoardStepSlotsLive)),
+    assert.isFalse(passes.busy());
+  }).pipe(Effect.scoped),
 );
 
-it.effect("admitting queued passes skips one whose worker is full and starts the next", () =>
+it.effect("a pass whose card has no room queues, and admitting starts the ones that now do", () =>
   Effect.gen(function* () {
-    const slots = yield* BoardStepSlots;
     const release = yield* Deferred.make<void>();
+    // T3O-86: a light card's pass takes a grow claim first; worker A has no room yet.
+    const room = new Set<string>(["worker-b"]);
     const passes = yield* makeBoardCiPasses({
       runner: {
         run: () =>
@@ -55,7 +47,7 @@ it.effect("admitting queued passes skips one whose worker is full and starts the
             Effect.as({ result: "passed" as const, failedIndex: null, ranAll: true }),
           ),
       },
-      slots,
+      admit: (request) => Effect.sync(() => room.has(request.workerId)),
       dispatch: () => Effect.void,
       commandId: (tag) => Effect.succeed(CommandId.make(tag)),
       nowIso: Effect.succeed("2026-01-01T00:00:00.000Z"),
@@ -63,34 +55,22 @@ it.effect("admitting queued passes skips one whose worker is full and starts the
     });
     const workerA = EnvironmentId.make("worker-a");
     const workerB = EnvironmentId.make("worker-b");
-    const limits = { global: 2, worker: 1, perInstance: null };
     const request = (card: string, workerId: EnvironmentId) => ({
       cardId: BoardCardId.make(card),
       runId: `run-${card}`,
       worktreePath: "/tmp/nowhere",
       workerId,
       steps: [{ name: "Lint", command: "vp lint", timeoutMinutes: 1 }],
-      limits,
     });
-    // An agent step on a third worker holds the board's other slot.
-    const other = {
-      workerId: EnvironmentId.make("worker-c"),
-      providerInstanceId: ProviderInstanceId.make("codex"),
-    };
-    assert.isTrue((yield* slots.acquire(other, limits)).admitted);
-
-    assert.isTrue(yield* passes.start(request("a1", workerA)));
-    assert.isFalse(yield* passes.start(request("a2", workerA)));
-    assert.isFalse(yield* passes.start(request("b1", workerB)));
-
-    yield* slots.release(other);
+    assert.isFalse(yield* passes.start(request("a1", workerA)));
+    assert.isTrue(yield* passes.start(request("b1", workerB)));
+    assert.strictEqual(passes.current(BoardCardId.make("a1")), "run-a1");
+    room.add("worker-a");
     yield* passes.admitQueued;
-
-    assert.strictEqual(yield* slots.heldOnWorker(workerB), 1);
-    assert.strictEqual(yield* slots.heldOnWorker(workerA), 1);
+    assert.isTrue(passes.busy());
     yield* Deferred.succeed(release, undefined);
     yield* passes.awaitIdle;
-  }).pipe(Effect.scoped, Effect.provide(BoardStepSlotsLive)),
+  }).pipe(Effect.scoped),
 );
 
 const passesWith = (
@@ -98,16 +78,15 @@ const passesWith = (
   finished: BoardCiPassFinished[],
 ) =>
   Effect.gen(function* () {
-    const slots = yield* BoardStepSlots;
     const passes = yield* makeBoardCiPasses({
       runner,
-      slots,
+      admit: () => Effect.succeed(true),
       dispatch: () => Effect.void,
       commandId: (tag) => Effect.succeed(CommandId.make(tag)),
       nowIso: Effect.succeed("2026-01-01T00:00:00.000Z"),
       onFinished: (done) => Effect.sync(() => finished.push(done)),
     });
-    return { passes, slots };
+    return { passes };
   });
 
 const lintPass = (runId = "run-1") => ({
@@ -116,13 +95,12 @@ const lintPass = (runId = "run-1") => ({
   worktreePath: "/tmp/nowhere",
   workerId: BOARD_LOCAL_WORKER_ID,
   steps: [{ name: "Lint", command: "vp lint", timeoutMinutes: 1 }],
-  limits: { global: 1, worker: null, perInstance: null },
 });
 
 it.effect("a finished pass stays current until its result is claimed, once, and settled", () =>
   Effect.gen(function* () {
     const finished: BoardCiPassFinished[] = [];
-    const { passes, slots } = yield* passesWith(
+    const { passes } = yield* passesWith(
       {
         run: () => Effect.succeed({ result: "failed", failedIndex: 0, ranAll: false, exitCode: 2 }),
       },
@@ -133,10 +111,9 @@ it.effect("a finished pass stays current until its result is claimed, once, and 
     yield* passes.awaitIdle;
     assert.lengthOf(finished, 1);
     const token = finished[0]!.token;
-    // The fiber is gone and its slot is free, but the pass is not idle: its
-    // result is still on its way to the reactor.
+    // The fiber is gone, but the pass is not idle: its result is still on its way to the
+    // reactor.
     assert.isFalse(passes.busy());
-    assert.strictEqual(yield* slots.heldTotal, 0);
     assert.strictEqual(passes.current(card), "run-1");
     // A duplicate report, or one for another launch, claims nothing.
     assert.isFalse(passes.claim(card, token + 1));
@@ -144,7 +121,7 @@ it.effect("a finished pass stays current until its result is claimed, once, and 
     assert.isFalse(passes.claim(card, token));
     passes.settle(card, token);
     assert.isNull(passes.current(card));
-  }).pipe(Effect.scoped, Effect.provide(BoardStepSlotsLive)),
+  }).pipe(Effect.scoped),
 );
 
 it.effect("settling an old launch leaves the next segment's entry, which shares its run id", () =>
@@ -176,7 +153,7 @@ it.effect("settling an old launch leaves the next segment's entry, which shares 
     yield* Deferred.succeed(release, undefined);
     yield* passes.awaitIdle;
     assert.isTrue(passes.claim(card, finished[1]!.token));
-  }).pipe(Effect.scoped, Effect.provide(BoardStepSlotsLive)),
+  }).pipe(Effect.scoped),
 );
 
 it.effect(
@@ -184,7 +161,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const finished: BoardCiPassFinished[] = [];
-      const { passes, slots } = yield* passesWith(
+      const { passes } = yield* passesWith(
         // What a worker client's closing scope does to the stream in flight.
         { run: () => Effect.interrupt },
         finished,
@@ -197,7 +174,6 @@ it.effect(
         failedIndex: null,
         detail: "The worker connection closed mid-run. Retry CI.",
       });
-      assert.strictEqual(yield* slots.heldTotal, 0);
 
       const hung: BoardCiPassFinished[] = [];
       const { passes: hanging } = yield* passesWith({ run: () => Effect.never }, hung);
@@ -205,13 +181,13 @@ it.effect(
       assert.strictEqual(yield* hanging.cancel(BoardCardId.make("card-1")), "run-2");
       yield* hanging.awaitIdle;
       assert.lengthOf(hung, 0);
-    }).pipe(Effect.scoped, Effect.provide(BoardStepSlotsLive)),
+    }).pipe(Effect.scoped),
 );
 
-it.effect("cancel never waits on the pass's fiber, and frees its slot at once", () =>
+it.effect("cancel never waits on the pass's fiber", () =>
   Effect.gen(function* () {
     const gate = yield* Deferred.make<void>();
-    const { passes, slots } = yield* passesWith(
+    const { passes } = yield* passesWith(
       // A run whose teardown blocks, as a remote stream's close can.
       { run: () => Effect.never.pipe(Effect.onInterrupt(() => Deferred.await(gate))) },
       [],
@@ -219,9 +195,8 @@ it.effect("cancel never waits on the pass's fiber, and frees its slot at once", 
     yield* passes.start(lintPass());
     yield* Effect.yieldNow;
     assert.strictEqual(yield* passes.cancel(BoardCardId.make("card-1")), "run-1");
-    assert.strictEqual(yield* slots.heldTotal, 0);
     assert.isNull(passes.current(BoardCardId.make("card-1")));
     yield* Deferred.succeed(gate, undefined);
     yield* passes.awaitIdle;
-  }).pipe(Effect.scoped, Effect.provide(BoardStepSlotsLive)),
+  }).pipe(Effect.scoped),
 );

@@ -18,6 +18,7 @@ import {
   type BoardStageId,
   type BoardState,
 } from "./board.ts";
+import { EMPTY_BOARD_PROJECT_RESOURCES, type BoardProjectResources } from "./boardCapacity.ts";
 
 const PROMPT_KEY = "prompt";
 /** Objects compared and kept whole: trimming one to its changed fields leaves a partial
@@ -137,19 +138,32 @@ export function boardProjectDeltasEqual(
   left: BoardProjectStageDelta,
   right: BoardProjectStageDelta,
 ): boolean {
+  // `left` is the file's: one without `resources` leaves the project's own.
+  // T3o (T3O-87): a file carries neither what the board learned, Pin declared, nor who set the baseline.
+  const fileShaped = (resources: BoardProjectResources) => {
+    const { learned: _learned, pinDeclared: _pinned, ...rest } = resources;
+    if (rest.baseline == null) return rest;
+    const { setAtUpgrade: _setAtUpgrade, ...baseline } = rest.baseline;
+    return { ...rest, baseline };
+  };
+  const resources =
+    left.resources === undefined ||
+    canonicalJson(fileShaped(left.resources)) ===
+      canonicalJson(fileShaped(right.resources ?? EMPTY_BOARD_PROJECT_RESOURCES));
   return (
+    resources &&
     canonicalJson({
       stageSwitches: left.stageSwitches,
       overrides: left.overrides,
       steps: withoutStepIds(left.ci.steps),
       stopOnFailure: boardCiStopsOnFailure(left.ci),
     }) ===
-    canonicalJson({
-      stageSwitches: right.stageSwitches,
-      overrides: right.overrides,
-      steps: withoutStepIds(right.ci.steps),
-      stopOnFailure: boardCiStopsOnFailure(right.ci),
-    })
+      canonicalJson({
+        stageSwitches: right.stageSwitches,
+        overrides: right.overrides,
+        steps: withoutStepIds(right.ci.steps),
+        stopOnFailure: boardCiStopsOnFailure(right.ci),
+      })
   );
 }
 

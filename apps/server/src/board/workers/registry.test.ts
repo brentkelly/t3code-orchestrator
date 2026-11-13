@@ -141,18 +141,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board worker reg
     }),
   );
 
-  it.effect("refuses removing the default worker, and allows it once another is default", () =>
+  it.effect("removes a worker recorded as the default: the default is retired (T3O-87)", () =>
     Effect.gen(function* () {
       let next = yield* apply(model(), register(worker("env-a", "linux-box")));
       next = yield* apply(next, setDefault("env-a"));
-      assert.strictEqual(next.board?.defaultWorkerId, "env-a");
-      assert.include(
-        yield* refusal(next, remove("env-a")),
-        "Make another worker the default first",
-      );
-      next = yield* apply(next, setDefault(BOARD_LOCAL_WORKER_ID));
-      // `local` is the absent default.
-      assert.isUndefined(next.board?.defaultWorkerId);
       next = yield* apply(next, remove("env-a"));
       assert.isUndefined(next.board?.workers);
     }),

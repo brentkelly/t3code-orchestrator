@@ -1,19 +1,28 @@
 /**
  * Governor end-to-end: the live reactor against a stateful engine double, so `schedule` sees
- * its own selects, admits and settles as in production. The load-bearing case is the no-leak
- * sweep: a leaked slot halves throughput forever, so every release path must return the held
- * count to baseline.
+ * its own selects, admits and settles as in production. Every release path must leave no step
+ * admitted; capacity (T3O-86) holds a card its worker has no room for.
  */
-import { BoardCardId, boardCardStepState, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  BOARD_LOCAL_WORKER_ID,
+  BoardCardId,
+  boardCardStepState,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/sql/SqlClient";
 
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+
+import { makeFakeCapacity } from "./capacity/capacityClient.testkit.ts";
 import {
   buildingCard,
   cardArchived,
   cardDeleted,
   codexStep,
   forceStartRequested,
+  makeBoardCard,
   movedToBuilding,
   settingsWith,
   stepCompleted,
@@ -41,41 +50,78 @@ it.effect("admits a card's build step and holds one slot, then releases it on su
   ),
 );
 
-it.effect("maxConcurrent 1 runs two same-instance cards strictly sequentially", () =>
-  withGovernor(
-    {
-      board: {
-        cards: [buildingCard("card-a", "a"), buildingCard("card-b", "b")],
-        nextCardNumberByProject: {},
-      },
-      settings: settingsWith({
-        building: [codexStep],
-        globalMaxConcurrent: 5,
-        perInstance: { codex: 1 },
-      }),
-    },
-    ({ slots, pumpDomain, board }) =>
-      Effect.gen(function* () {
-        yield* pumpDomain(movedToBuilding(buildingCard("card-a", "a"), 1));
-        yield* pumpDomain(movedToBuilding(buildingCard("card-b", "b"), 2));
-        // Only one codex slot: card-a runs, card-b holds in the queue.
-        assert.strictEqual(yield* slots.heldFor(ProviderInstanceId.make("codex")), 1);
-        const after = yield* board;
-        assert.strictEqual(stepStatus(after, BoardCardId.make("card-a")), "running");
-        assert.strictEqual(stepStatus(after, BoardCardId.make("card-b")), "queued");
+/** `local` with room for one default-sized card (2 cores of the 2/4/5 placeholder). */
+const oneCardOfRoom = () =>
+  makeFakeCapacity(new Map([[BOARD_LOCAL_WORKER_ID, { cpuCores: 3, ramGiB: 16, diskGB: 100 }]]));
 
-        // card-a finishes → the freed slot goes to the queued card-b.
-        yield* pumpDomain(stepCompleted(BoardCardId.make("card-a"), "succeeded", 3));
-        const promoted = yield* board;
-        assert.strictEqual(stepStatus(promoted, BoardCardId.make("card-b")), "running");
-        assert.strictEqual(yield* slots.heldFor(ProviderInstanceId.make("codex")), 1);
-      }),
+it.effect("capacity runs two cards strictly in queue order on a worker with room for one", () =>
+  Effect.flatMap(oneCardOfRoom(), (capacity) =>
+    withGovernor(
+      {
+        board: {
+          cards: [buildingCard("card-a", "a"), buildingCard("card-b", "b")],
+          nextCardNumberByProject: {},
+        },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 5 }),
+        capacity,
+      },
+      ({ pumpDomain, board, reactor }) =>
+        Effect.gen(function* () {
+          yield* pumpDomain(movedToBuilding(buildingCard("card-a", "a"), 1));
+          yield* pumpDomain(movedToBuilding(buildingCard("card-b", "b"), 2));
+          const after = yield* board;
+          assert.strictEqual(stepStatus(after, BoardCardId.make("card-a")), "running");
+          assert.strictEqual(stepStatus(after, BoardCardId.make("card-b")), "queued");
+          const waiting = boardCardStepState(after, BoardCardId.make("card-b"));
+          // T3o: placed and short of room, it holds its own worker to grow (T3O-87).
+          assert.strictEqual(waiting?.queuedBy, "holding");
+          assert.deepStrictEqual(waiting?.queuedDetail, { workerId: BOARD_LOCAL_WORKER_ID });
+          // Both cards already hold a worktree with no grant: each asks to grow, and card-a's
+          // grant is on record at its whole profile.
+          const grant = after.cards.find((card) => card.id === "card-a")?.resources?.grant;
+          assert.deepStrictEqual(grant?.profile, { cpuCores: 2, ramGiB: 4, diskGB: 5 });
+          assert.isTrue(grant?.heavy);
+          assert.deepStrictEqual(
+            capacity.claims.map((claim) => [claim.cardId, claim.kind]),
+            [
+              ["card-a", "grow"],
+              ["card-b", "grow"],
+            ],
+          );
+
+          // card-a's step ends; the capacity sweep releases it (card-b waits on that worker)
+          // and places card-b.
+          yield* pumpDomain(stepCompleted(BoardCardId.make("card-a"), "succeeded", 3));
+          yield* reactor.sweep;
+          assert.strictEqual(stepStatus(yield* board, BoardCardId.make("card-b")), "running");
+        }),
+    ),
   ),
 );
 
-it.effect(
-  "a force start runs a queued card over the cap, and releases its slot once (t3o-33)",
-  () =>
+it.effect("a restart after the capacity upgrade places at once, before the first sweep", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE board_capacity_upgrade (id TEXT PRIMARY KEY, completed_at TEXT)`;
+    yield* sql`INSERT INTO board_capacity_upgrade (id, completed_at) VALUES ('t3o-86', 'then')`;
+    const capacity = yield* oneCardOfRoom();
+    yield* withGovernor(
+      {
+        board: { cards: [unplaced("card-a", "a")], nextCardNumberByProject: {} },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 5 }),
+        capacity,
+      },
+      ({ pumpDomain, board }) =>
+        Effect.gen(function* () {
+          yield* pumpDomain(movedToBuilding(unplaced("card-a", "a"), 1));
+          assert.strictEqual(stepStatus(yield* board, BoardCardId.make("card-a")), "running");
+        }),
+    );
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.effect("a force start places a queued card over capacity", () =>
+  Effect.flatMap(oneCardOfRoom(), (capacity) =>
     withGovernor(
       {
         board: {
@@ -83,39 +129,28 @@ it.effect(
           nextCardNumberByProject: {},
         },
         settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+        capacity,
       },
-      ({ slots, pumpDomain, board }) =>
+      ({ pumpDomain, board }) =>
         Effect.gen(function* () {
           yield* pumpDomain(movedToBuilding(buildingCard("card-a", "b"), 1));
           yield* pumpDomain(movedToBuilding(buildingCard("card-b", "c"), 2));
           const queued = yield* board;
           assert.strictEqual(stepStatus(queued, BoardCardId.make("card-b")), "queued");
-          assert.strictEqual(yield* slots.heldTotal, 1);
-
-          // The whole point: the ceiling is full, and the card starts anyway.
           const held = boardCardStepState(queued, BoardCardId.make("card-b"));
-          assert.isNotNull(held);
           yield* pumpDomain(forceStartRequested(held!, 3));
           const forced = yield* board;
           assert.strictEqual(stepStatus(forced, BoardCardId.make("card-b")), "running");
-          assert.strictEqual(yield* slots.heldTotal, 2);
-          // Spent on admission, so the card's NEXT step is governed normally.
+          assert.isTrue(capacity.claims.some((claim) => claim.cardId === "card-b" && claim.force));
+          // Spent on admission, so the card's NEXT step waits normally.
           assert.strictEqual(
             boardCardStepState(forced, BoardCardId.make("card-b"))?.forceStart,
             false,
           );
-
-          // The over-cap slot is an ordinary slot: one release, and the count
-          // comes back under the ceiling by itself.
-          yield* pumpDomain(stepCompleted(BoardCardId.make("card-b"), "succeeded", 4));
-          assert.strictEqual(yield* slots.heldTotal, 1);
         }),
     ),
+  ),
 );
-
-// "An idle provider is not blocked by a saturated one" is unit-tested in
-// BoardStepSlots.test.ts: every Building card here resolves the same single-stage recipe,
-// so it cannot be reproduced at the reactor level.
 
 it.effect("no slot leaks across success, failure, crash/death, and abandonment", () =>
   withGovernor(
@@ -186,7 +221,7 @@ it.effect("no slot leaks across success, failure, crash/death, and abandonment",
   ),
 );
 
-it.effect("a card DELETE releases the running step's slot and deletes its threads", () =>
+it.effect("a card DELETE deletes the running step's threads", () =>
   withGovernor(
     {
       board: { cards: [buildingCard("doomed", "m")], nextCardNumberByProject: {} },
@@ -200,14 +235,11 @@ it.effect("a card DELETE releases the running step's slot and deletes its thread
         assert.strictEqual(running?.status, "running");
         const spawned = running!.threadId!;
 
-        // The card and its step-state row left the read model with the event, so the slot
-        // release must come from the payload: the count is in-memory and no read could recover it.
         const deleted = (yield* board).cards.find(
           (card) => card.id === BoardCardId.make("doomed"),
         )!;
         yield* pumpDomain(cardDeleted(deleted, 2, running!));
 
-        assert.strictEqual(yield* slots.heldTotal, 0);
         const dispatched = yield* commands;
         assert.deepStrictEqual(
           dispatched
@@ -240,4 +272,136 @@ it.effect(
           assert.strictEqual(stepStatus(yield* board, BoardCardId.make("asks")), "awaiting-input");
         }),
     ),
+);
+
+/** A card in Building with no worktree yet, of the given CPU size. */
+const unplaced = (id: string, orderKey: string, cpu: "S" | "M" | "L" | "XL" = "M") => ({
+  ...makeBoardCard({ id, stage: "building", orderKey, worktree: null }),
+  resources: {
+    sizing: { planner: null, edit: { size: { cpu, ram: "M", disk: "M" }, by: "human" } },
+    grant: null,
+    setup: null,
+  } as const,
+});
+
+it.effect("a card no worker can take holds one, and a later card never lands on it (T3O-87)", () =>
+  Effect.flatMap(
+    makeFakeCapacity(new Map([[BOARD_LOCAL_WORKER_ID, { cpuCores: 4, ramGiB: 64, diskGB: 100 }]])),
+    (capacity) => {
+      // a takes 2 cores, b (XL, 3 cores) doesn't fit the 2 left, and c (S, 1.5) would.
+      const cards = [unplaced("a", "a"), unplaced("b", "b", "XL"), unplaced("c", "c", "S")];
+      return withGovernor(
+        {
+          board: { cards, nextCardNumberByProject: {} },
+          settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 9 }),
+          capacity,
+        },
+        ({ pumpDomain, board }) =>
+          Effect.gen(function* () {
+            for (const [index, card] of cards.entries()) {
+              yield* pumpDomain(movedToBuilding(card, index + 1));
+            }
+            const after = yield* board;
+            assert.strictEqual(stepStatus(after, BoardCardId.make("a")), "running");
+            // b asks for a hold straight away, with no waiting period first.
+            assert.deepStrictEqual(boardCardStepState(after, BoardCardId.make("b"))?.queuedDetail, {
+              workerId: BOARD_LOCAL_WORKER_ID,
+            });
+            assert.strictEqual(
+              boardCardStepState(after, BoardCardId.make("b"))?.queuedBy,
+              "holding",
+            );
+            // Each pass refreshes it (an idempotent upsert); c never asks for b's worker.
+            assert.deepStrictEqual(
+              [...new Set(capacity.holds.map((hold) => `${hold.cardId}@${hold.workerId}`))],
+              [`b@${BOARD_LOCAL_WORKER_ID}`],
+            );
+            // c would fit, but the worker is reserved for b.
+            const behind = boardCardStepState(after, BoardCardId.make("c"));
+            assert.strictEqual(behind?.status, "queued");
+            assert.strictEqual(behind?.queuedBy, "reserved");
+            assert.deepStrictEqual(behind?.queuedDetail, {
+              workerId: BOARD_LOCAL_WORKER_ID,
+              behindCardId: BoardCardId.make("b"),
+            });
+            // b, holding, tries to start early on the held worker; c never claims there.
+            assert.deepStrictEqual(
+              capacity.claims.map((claim) => [claim.cardId, claim.hold === true]),
+              [
+                ["a", false],
+                ["b", true],
+              ],
+            );
+          }),
+      );
+    },
+  ),
+);
+
+it.effect("a card pinned to a board server with no build capacity waits as too big there", () =>
+  Effect.flatMap(
+    makeFakeCapacity(new Map([[BOARD_LOCAL_WORKER_ID, { cpuCores: 0, ramGiB: 0, diskGB: 100 }]])),
+    (capacity) => {
+      const pinned = { ...unplaced("pinned", "a"), pinnedWorkerId: BOARD_LOCAL_WORKER_ID };
+      return withGovernor(
+        {
+          board: { cards: [pinned], nextCardNumberByProject: {} },
+          settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 9 }),
+          capacity,
+        },
+        ({ pumpDomain, board }) =>
+          Effect.gen(function* () {
+            yield* pumpDomain(movedToBuilding(pinned, 1));
+            const waiting = boardCardStepState(yield* board, BoardCardId.make("pinned"));
+            assert.strictEqual(waiting?.queuedBy, "capacity");
+            assert.deepStrictEqual(waiting?.queuedDetail, {
+              workerId: BOARD_LOCAL_WORKER_ID,
+              dimension: "cpu",
+              tooBig: true,
+            });
+          }),
+      );
+    },
+  ),
+);
+
+it.effect("a Too-big card at the head of the queue doesn't hold up the card behind it", () =>
+  Effect.flatMap(
+    makeFakeCapacity(
+      new Map([[BOARD_LOCAL_WORKER_ID, { cpuCores: 2.5, ramGiB: 64, diskGB: 100 }]]),
+    ),
+    (capacity) => {
+      const cards = [
+        unplaced("big", "a", "XL"),
+        { ...unplaced("pinned", "b", "XL"), pinnedWorkerId: BOARD_LOCAL_WORKER_ID },
+        unplaced("small", "c"),
+      ];
+      return withGovernor(
+        {
+          board: { cards, nextCardNumberByProject: {} },
+          settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 9 }),
+          capacity,
+        },
+        ({ pumpDomain, board }) =>
+          Effect.gen(function* () {
+            for (const [index, card] of cards.entries()) {
+              yield* pumpDomain(movedToBuilding(card, index + 1));
+            }
+            const after = yield* board;
+            // Unpinned: too big for any worker ready for the project, so it names none (T3O-87).
+            assert.deepStrictEqual(
+              boardCardStepState(after, BoardCardId.make("big"))?.queuedDetail,
+              { dimension: "cpu", tooBig: true },
+            );
+            // Pinned: too big for its pin.
+            assert.deepStrictEqual(
+              boardCardStepState(after, BoardCardId.make("pinned"))?.queuedDetail,
+              { workerId: BOARD_LOCAL_WORKER_ID, dimension: "cpu", tooBig: true },
+            );
+            assert.strictEqual(stepStatus(after, BoardCardId.make("small")), "running");
+            assert.isNull(after.cards.find((card) => card.id === "big")?.worktree ?? null);
+          }),
+      );
+    },
+  ),
 );

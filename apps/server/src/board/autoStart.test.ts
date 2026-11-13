@@ -398,6 +398,8 @@ it.effect("an auto-started card with no free slot queues honestly", () =>
         makeBoardCard({ id: "hog", stage: BUILDING, orderKey: "a" }),
       ]),
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+      // T3o: room for one card on `local` (T3O-86).
+      capacityFor: 1,
     },
     (h) =>
       Effect.gen(function* () {

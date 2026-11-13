@@ -34,6 +34,8 @@ export interface AgentScopeShape {
    * it, even when the next session runs without one (Cursor, OpenCode).
    */
   readonly clear: (threadId: string) => Effect.Effect<void>;
+  // T3o: the thread's own scope's control group, for the board's measured actuals (T3O-87).
+  readonly controlGroup?: (threadId: string) => Effect.Effect<string | null>;
 }
 
 export interface AgentScopeCommand {
@@ -50,6 +52,8 @@ export const AgentScope = Context.Reference<AgentScopeShape>("@t3tools/shared/Ag
     stop: () => Effect.void,
     kill: () => Effect.succeed(false),
     clear: () => Effect.void,
+    // T3o: no scopes, so no control group (T3O-87).
+    controlGroup: () => Effect.succeed(null),
   }),
 });
 

@@ -30,6 +30,8 @@ const STREAM_METHODS: ReadonlySet<string> = new Set([
   BOARD_WORKER_GATEWAY_WS_METHODS.subscribeMcpRelay,
   BOARD_WORKER_GATEWAY_WS_METHODS.runCi,
   BOARD_WORKER_GATEWAY_WS_METHODS.readCiLog,
+  BOARD_WORKER_GATEWAY_WS_METHODS.subscribeCapacity,
+  BOARD_WORKER_GATEWAY_WS_METHODS.runSetup,
 ]);
 
 /** Null when the subject may call the method; otherwise why not. */

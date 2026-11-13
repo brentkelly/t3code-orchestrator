@@ -25,6 +25,8 @@ export interface BoardPlacementShape {
       subscribes. A worker that drops and returns before the supervisor gets
       to the change is still seen to have dropped. */
   readonly changes: Stream.Stream<BoardWorkersState>;
+  /** T3o: workers in the middle of their removal; no card is placed there (T3O-87). */
+  readonly beingRemoved?: Effect.Effect<ReadonlySet<BoardWorkerId>>;
 }
 
 export class BoardPlacement extends Context.Service<BoardPlacement, BoardPlacementShape>()(
@@ -69,6 +71,7 @@ export const BoardPlacementLive = Layer.effect(
   Effect.map(BoardWorkers, (workers) => ({
     workers: workers.state,
     changes: boardPlacementChanges(workers.states),
+    beingRemoved: workers.beingRemoved,
   })),
 );
 
@@ -80,6 +83,8 @@ export const BoardPlacementLive = Layer.effect(
 export type BoardPlacementGate =
   | { readonly kind: "ready"; readonly workerProjectId: ProjectId | null }
   | { readonly kind: "offline" }
+  // T3o: the worker is below the protocol floor (T3O-86): it runs what it has, starts nothing.
+  | { readonly kind: "needs-update" }
   | { readonly kind: "no-checkout" }
   | { readonly kind: "provider-missing" };
 
@@ -93,6 +98,7 @@ export function boardPlacementGate(input: {
 }): BoardPlacementGate {
   if (input.workerId === BOARD_LOCAL_WORKER_ID) return { kind: "ready", workerProjectId: null };
   const worker = input.workers.workers.find((candidate) => candidate.id === input.workerId);
+  if (worker?.status.state === "incompatible") return { kind: "needs-update" };
   if (worker === undefined || worker.status.state !== "online") return { kind: "offline" };
   const checkout = resolveBoardWorkerCheckout(
     input.projectRepositoryKey,

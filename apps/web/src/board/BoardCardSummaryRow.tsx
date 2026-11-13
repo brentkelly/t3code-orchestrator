@@ -22,6 +22,8 @@ import {
   MessageSquareIcon,
   PaperclipIcon,
   type LucideIcon,
+  PinIcon,
+  ServerIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -469,17 +471,18 @@ export function BoardCardMetaRow({
         </BoardHint>
       ) : null}
       {worker == null ? null : (
-        // Never a status colour: worker trouble goes in the notice
-        // slot. Solid when the card is bound to its worker, dashed while it
-        // follows the default and hasn't started.
+        // Never a status colour: worker trouble goes in the notice slot. A server icon once
+        // placed, a pin icon while only pinned.
         <BoardHint label={worker.tooltip}>
           <span
             aria-label={worker.tooltip}
-            className={cn(
-              "inline-flex h-4 max-w-[110px] shrink-0 items-center rounded border px-1.5 text-board-10 font-medium text-muted-foreground",
-              worker.bound ? "border-border" : "border-dashed border-border",
-            )}
+            className="inline-flex h-4 max-w-[110px] shrink-0 items-center gap-0.5 rounded border border-border px-1.5 text-board-10 font-medium text-muted-foreground"
           >
+            {worker.kind === "placed" ? (
+              <ServerIcon aria-hidden="true" className="size-2.5 shrink-0" />
+            ) : (
+              <PinIcon aria-hidden="true" className="size-2.5 shrink-0" />
+            )}
             <span className="truncate">{worker.label}</span>
           </span>
         </BoardHint>

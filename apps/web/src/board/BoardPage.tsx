@@ -124,6 +124,16 @@ import { boardCardStageGoneNotes, boardPipelineColumns } from "./boardProjectPip
 import { BOARD_UTILITY_MENU_RESERVED_SPACE, BoardUtilityMenu } from "./BoardUtilityMenu";
 import { BoardSubBoardPlanStrip } from "./BoardSubBoardPlanStrip";
 import { BoardCardFilterField, BoardTopBar } from "./BoardTopBar";
+import { BoardWorkerFilterButton, BoardWorkerFilterStrip } from "./workers/BoardWorkerFilter";
+import {
+  BOARD_UNPLACED_FILTER,
+  boardShellPlacementTarget,
+  boardWorkerFilterLabel,
+  boardWorkerFilterStorageKey,
+  filterBoardColumnsByWorker,
+  parseBoardWorkerFilter,
+  serializeBoardWorkerFilter,
+} from "./workers/boardWorkerFilter";
 import { isBoardColumnCollapsed, useBoardUiStore } from "./boardUiStore";
 import { BoardCardCostFigure } from "./usage/BoardUsageFigure";
 import { BoardGroupUsageButton, BoardUsageChip } from "./usage/BoardUsagePopovers";
@@ -677,7 +687,7 @@ function useBoardPageModel({
     );
     if (queue.size === 0) return EMPTY_QUEUE_INFO;
     const running = boardRunningStepCount(everyCard);
-    const cap = boardSettings.concurrency.globalMaxConcurrent;
+    const cardKeys = new Map(everyCard.map((card) => [String(card.cardId), card.key] as const));
     const cardsById = new Map(everyCard.map((card) => [card.cardId, card] as const));
     const projectNames = new Map(
       allProjects.map((project) => [project.id, project.title] as const),
@@ -691,11 +701,10 @@ function useBoardPageModel({
           : boardQueueReason({
               card,
               state: cardWorkersState,
-              cards: everyCard,
-              concurrency: boardSettings.concurrency,
+              cardKeys,
               projectName: projectNames.get(card.projectId) ?? "this project",
             });
-      const resolved = boardQueueInfo({ slot, running, cap, reason });
+      const resolved = boardQueueInfo({ slot, running, reason });
       if (resolved !== null) info.set(cardId, resolved);
     }
     return info;
@@ -850,7 +859,42 @@ function useBoardPageModel({
     ) as typeof scopedColumns;
   })();
   const setQuery = (next: string) => setBoardQuery(queryKey, next);
-  const visibleColumns = filterBoardColumnsByQuery(stalledColumns, query);
+  // T3o: the worker filter (T3O-87): the URL names it by worker id; with none there, this
+  // browser's last choice for the board. A removed worker's id is dropped.
+  const storageKey = boardWorkerFilterStorageKey(queryKey);
+  const remembered = (() => {
+    try {
+      return window.localStorage.getItem(storageKey) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  const workerFilter = parseBoardWorkerFilter(search.worker ?? remembered, cardWorkersState);
+  const setWorkerFilter = (selection: ReadonlyArray<string>) => {
+    const serialised = serializeBoardWorkerFilter(selection);
+    try {
+      if (serialised === undefined) window.localStorage.removeItem(storageKey);
+      else window.localStorage.setItem(storageKey, serialised);
+    } catch {
+      // Storage unavailable: the URL still carries it.
+    }
+    patchSearch(
+      (previous) => {
+        const { worker: _worker, ...rest } = previous;
+        return serialised === undefined ? rest : { ...rest, worker: serialised };
+      },
+      { replace: true },
+    );
+  };
+  const workerColumns = filterBoardColumnsByWorker(stalledColumns, new Set(workerFilter));
+  const workerCounts = new Map<string, number>();
+  for (const cards of Object.values(stalledColumns)) {
+    for (const card of cards) {
+      const target = boardShellPlacementTarget(card) ?? BOARD_UNPLACED_FILTER;
+      workerCounts.set(target, (workerCounts.get(target) ?? 0) + 1);
+    }
+  }
+  const visibleColumns = filterBoardColumnsByQuery(workerColumns, query);
   // Zero matches is a state the board has to SAY, or eight empty columns read
   // as a board that lost its cards.
   const noQueryMatches =
@@ -879,6 +923,11 @@ function useBoardPageModel({
     cardWorkersState,
     peekedColumns,
     query,
+    workerFilter,
+    setWorkerFilter,
+    workerCounts,
+    workerFilteredCount: countBoardColumnCards(workerColumns),
+    workerUnfilteredCount: countBoardColumnCards(stalledColumns),
     drag,
     setDrag,
     dragOver,
@@ -979,6 +1028,11 @@ function EnvironmentBoard({
     cardWorkersState,
     peekedColumns,
     query,
+    workerFilter,
+    setWorkerFilter,
+    workerCounts,
+    workerFilteredCount,
+    workerUnfilteredCount,
     drag,
     setDrag,
     dragOver,
@@ -1523,6 +1577,15 @@ function EnvironmentBoard({
             workers={cardWorkersState}
           />
           <BoardUsageChip inView={usageInView} />
+          {/* T3o: hidden on a board with no remote workers (T3O-87). */}
+          {cardWorkersState.workers.length === 0 ? null : (
+            <BoardWorkerFilterButton
+              counts={workerCounts}
+              onChange={setWorkerFilter}
+              selection={workerFilter}
+              state={cardWorkersState}
+            />
+          )}
           <BoardCardFilterField onQueryChange={setQuery} query={query} />
           {canCreate ? (
             <Button onClick={() => openCreate(defaultCreateStageId)} size="xs">
@@ -1532,6 +1595,14 @@ function EnvironmentBoard({
             </Button>
           ) : null}
         </BoardTopBar>
+        {workerFilter.length === 0 ? null : (
+          <BoardWorkerFilterStrip
+            label={boardWorkerFilterLabel(workerFilter, cardWorkersState)}
+            onClear={() => setWorkerFilter([])}
+            shown={workerFilteredCount}
+            total={workerUnfilteredCount}
+          />
+        )}
         <div className="flex shrink-0 items-center gap-3 px-3 py-2 sm:px-5">
           {scope.kind === "sub-board" ? (
             <>

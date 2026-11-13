@@ -8,26 +8,22 @@ import {
   BOARD_LOCAL_WORKER_ABBREVIATION,
   BOARD_LOCAL_WORKER_ID,
   BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
-  canBeDefaultBoardWorker,
   type BoardWorkerId,
   type BoardWorkerJoinCodeCreated,
   type BoardWorkerView,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { EllipsisIcon, PlusIcon } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
+import { useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
-import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "../../components/ui/select";
 import { toastManager } from "../../components/ui/toast";
+import { cn } from "../../lib/utils";
 import { boardEnvironment } from "../../state/board";
 import { useEnvironment } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -47,6 +43,7 @@ import {
   type WorkerStatusPresentation,
   type WorkerTone,
 } from "./workerCopy";
+import { boardWorkerCapacityLines, boardWorkerHoldLine } from "./workerCapacity";
 import { CopyCommand, WorkerAbbreviationBadge } from "./workerUi";
 
 const TONE_BADGE: Record<WorkerTone, "outline" | "info" | "warning" | "success"> = {
@@ -148,7 +145,6 @@ export function WorkersSection(props: {
   const { environmentId, workers, addWorker } = props;
   const boardServer = useEnvironment(environmentId);
   const localVersion = boardServer?.serverConfig?.environment.serverVersion ?? null;
-  const setDefault = useAtomCommand(boardEnvironment.setDefaultWorker, { reportFailure: false });
   const removeWorker = useAtomCommand(boardEnvironment.removeWorker, { reportFailure: false });
   const cancelJoinCode = useAtomCommand(boardEnvironment.cancelWorkerJoinCode, {
     reportFailure: false,
@@ -162,13 +158,6 @@ export function WorkersSection(props: {
     ...state.joinCodes.map((code) => Date.parse(code.expiresAt)),
   ]);
   const openCodes = openJoinCodes(state, nowMs);
-
-  const runDefault = async (workerId: BoardWorkerId) => {
-    const result = await setDefault({ environmentId, input: { workerId } });
-    if (result._tag !== "Success") {
-      toastManager.add({ type: "error", title: describeBoardCommandFailure(result) });
-    }
-  };
 
   const confirmRemove = async (worker: BoardWorkerView) => {
     setRemoving(null);
@@ -197,10 +186,6 @@ export function WorkersSection(props: {
     }
   };
 
-  const defaultItems: ReadonlyArray<{ readonly value: BoardWorkerId; readonly label: string }> = [
-    { value: BOARD_LOCAL_WORKER_ID, label: `${localWorkerLabel(state)} (local)` },
-    ...state.workers.map((worker) => ({ value: worker.id, label: worker.label })),
-  ];
   const firstExpiry = openCodes
     .map((code) => code.expiresAt)
     .toSorted()
@@ -230,9 +215,16 @@ export function WorkersSection(props: {
           name={`${localWorkerLabel(state)} (local)`}
           abbreviation={BOARD_LOCAL_WORKER_ABBREVIATION}
           tags={<Badge variant="secondary">Board</Badge>}
-          isDefault={state.defaultWorkerId === BOARD_LOCAL_WORKER_ID}
           subline={`${localVersion === null ? "" : `T3o ${localVersion} · `}runs planning`}
           status={{ label: "Connected", detail: null, tone: "neutral", tooltip: null }}
+          extra={
+            <WorkerCapacity
+              environmentId={environmentId}
+              workerId={BOARD_LOCAL_WORKER_ID}
+              name={localWorkerLabel(state)}
+              live
+            />
+          }
           actions={
             <>
               <BoardHint label="The server hosting the board can't be removed.">
@@ -249,7 +241,6 @@ export function WorkersSection(props: {
           }
         />
         {state.workers.map((worker) => {
-          const isDefault = state.defaultWorkerId === worker.id;
           const release = worker.t3oRelease ?? worker.status.t3oVersion;
           const joined = worker.joinedAt ?? worker.addedAt;
           return (
@@ -258,7 +249,6 @@ export function WorkersSection(props: {
               id={`board-worker-${worker.id}`}
               name={worker.label}
               abbreviation={worker.abbreviation ?? null}
-              isDefault={isDefault}
               subline={`${release === null ? "" : `T3o ${release} · `}joined ${joinedDate(joined)}`}
               status={workerStatusPresentation(worker, nowMs)}
               extra={
@@ -270,14 +260,19 @@ export function WorkersSection(props: {
                     </span>
                     <CopyCommand command={T3O_UPDATE_COMMAND} target="update command" />
                   </div>
-                ) : null
+                ) : (
+                  <WorkerCapacity
+                    environmentId={environmentId}
+                    workerId={worker.id}
+                    name={worker.label}
+                    live={worker.status.state === "online"}
+                  />
+                )
               }
               actions={
                 <WorkerMenu
                   worker={worker}
-                  isDefault={isDefault}
                   onRename={() => setRenaming(worker)}
-                  onMakeDefault={() => void runDefault(worker.id)}
                   onRemove={() => setRemoving(worker)}
                 />
               }
@@ -294,39 +289,6 @@ export function WorkersSection(props: {
           </div>
         ) : null}
       </div>
-
-      {state.workers.length === 0 ? null : (
-        <div className="mx-3 mt-2 flex items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-3 shadow-xs sm:mx-4">
-          <div className="flex min-w-0 flex-col">
-            <span className="text-board-13-5 text-foreground">Default worker</span>
-            <span className="max-w-md text-xs text-muted-foreground">
-              Where unpinned cards run. Changing it only affects cards that don't have a worktree
-              yet; cards already working stay where they are.
-            </span>
-          </div>
-          <Select<BoardWorkerId>
-            value={state.defaultWorkerId}
-            onValueChange={(value) => {
-              if (value !== null && value !== state.defaultWorkerId) void runDefault(value);
-            }}
-            items={defaultItems}
-          >
-            <SelectTrigger size="sm" className="w-48" aria-label="Default worker">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem
-                value={BOARD_LOCAL_WORKER_ID}
-              >{`${localWorkerLabel(state)} (local)`}</SelectItem>
-              {state.workers.filter(canBeDefaultBoardWorker).map((worker) => (
-                <SelectItem key={worker.id} value={worker.id}>
-                  {worker.label}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        </div>
-      )}
 
       <AddWorkerDialog
         environmentId={environmentId}
@@ -351,12 +313,129 @@ export function WorkersSection(props: {
   );
 }
 
+/** A worker's free capacity, agents, quota and readiness, from its latest snapshot. */
+function WorkerCapacity(props: {
+  readonly environmentId: EnvironmentId;
+  readonly workerId: BoardWorkerId;
+  readonly name: string;
+  readonly live: boolean;
+}) {
+  const result = useAtomValue(
+    boardEnvironment.capacityAtom({ environmentId: props.environmentId, input: {} }),
+  );
+  const capacityAction = useAtomCommand(boardEnvironment.capacityAction);
+  const cardsByProject = useAtomValue(boardEnvironment.cardsByProjectAtom(props.environmentId));
+  const snapshot = AsyncResult.isSuccess(result) ? result.value.get(props.workerId) : undefined;
+  if (snapshot === undefined) return null;
+  const lines = boardWorkerCapacityLines(snapshot, clockTime, props.name, props.live);
+  const holdLine = boardWorkerHoldLine(
+    snapshot.hold,
+    (cardId) =>
+      [...cardsByProject.values()]
+        .flatMap((columns) => Object.values(columns).flat())
+        .find((card) => card.cardId === cardId)?.key ?? null,
+    clockTime,
+  );
+  return (
+    <div
+      className={cn(
+        "flex w-full max-w-72 flex-col gap-1 text-board-11-5 text-muted-foreground",
+        lines.stale !== null && "opacity-60",
+      )}
+    >
+      {lines.stale === null ? null : <span>{lines.stale}</span>}
+      {holdLine === null ? null : (
+        <span className="font-medium text-info-foreground">{holdLine}</span>
+      )}
+      {lines.bars.map((bar) => (
+        <div key={bar.label} className="grid grid-cols-[2.5rem_1fr] items-center gap-2">
+          <span>{bar.label}</span>
+          <BoardHint label={bar.tooltip}>
+            <MeterBar used={bar.used} amber={bar.used >= 1} label={bar.text} />
+          </BoardHint>
+        </div>
+      ))}
+      <span>{lines.agents}</span>
+      {lines.over === null ? null : <span className="text-warning-foreground">{lines.over}</span>}
+      {lines.providers.map((provider) => (
+        <div key={provider.title} className="flex flex-col gap-1 pt-1">
+          <span className="truncate text-foreground">{provider.title}</span>
+          {provider.signedOut === null ? null : (
+            <span className="text-attention-foreground">{provider.signedOut}</span>
+          )}
+          {provider.windows.map((window) => (
+            <div key={window.label} className="grid grid-cols-[6rem_1fr] items-center gap-2">
+              <span className="truncate">{window.label}</span>
+              <BoardHint label={window.text}>
+                <MeterBar used={window.used} amber={window.nearLimit} label={window.text} />
+              </BoardHint>
+            </div>
+          ))}
+          {provider.nearLimit === null ? null : (
+            <span className="text-warning-foreground">{provider.nearLimit}</span>
+          )}
+        </div>
+      ))}
+      {lines.readiness === null ? null : (
+        <span className="flex items-center gap-2">
+          <span className={lines.notReady > 0 ? "text-warning-foreground" : undefined}>
+            {lines.readiness}
+          </span>
+          <Button
+            disabled={lines.stale !== null}
+            size="xs"
+            variant="ghost"
+            onClick={() =>
+              void capacityAction({
+                environmentId: props.environmentId,
+                input: { action: "recheck", workerId: props.workerId, projectId: null },
+              })
+            }
+          >
+            Re-check all
+          </Button>
+        </span>
+      )}
+      {lines.projects.map((line) => (
+        <span key={line} className="truncate pl-2 text-warning-foreground">
+          {line}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** A read-only fill bar: amber when it refuses new work. */
+function MeterBar(props: {
+  readonly used: number;
+  readonly amber: boolean;
+  readonly label: string;
+}) {
+  return (
+    <span
+      className="block h-1.5 overflow-hidden rounded-full bg-accent"
+      role="meter"
+      aria-label={props.label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(props.used * 100)}
+    >
+      <span
+        className={cn(
+          "block h-full rounded-full",
+          props.amber ? "bg-warning" : "bg-muted-foreground",
+        )}
+        style={{ width: `${Math.round(props.used * 100)}%` }}
+      />
+    </span>
+  );
+}
+
 function WorkerRow(props: {
   readonly id: string;
   readonly name: string;
   readonly abbreviation: string | null;
   readonly tags?: ReactNode;
-  readonly isDefault: boolean;
   readonly subline: string;
   readonly status: WorkerStatusPresentation;
   readonly extra?: ReactNode;
@@ -374,7 +453,6 @@ function WorkerRow(props: {
             <WorkerAbbreviationBadge abbreviation={props.abbreviation} />
           )}
           {props.tags}
-          {props.isDefault ? <Badge variant="outline">Default</Badge> : null}
         </span>
         <span className="truncate font-mono text-board-11-5 text-muted-foreground">
           {props.subline}
@@ -398,11 +476,10 @@ function WorkerRow(props: {
 
 function WorkerMenu(props: {
   readonly worker: BoardWorkerView;
-  readonly isDefault: boolean;
   readonly onRename: () => void;
-  readonly onMakeDefault: () => void;
   readonly onRemove: () => void;
 }) {
+  const navigate = useNavigate();
   return (
     <Menu>
       <MenuTrigger
@@ -419,24 +496,16 @@ function WorkerMenu(props: {
       </MenuTrigger>
       <MenuPopup align="end">
         <MenuItem onClick={props.onRename}>Rename…</MenuItem>
+        {/* T3o: the board's worker filter, set to this worker (T3O-87). */}
         <MenuItem
-          disabled={props.isDefault || !canBeDefaultBoardWorker(props.worker)}
-          onClick={props.onMakeDefault}
+          onClick={() => void navigate({ to: "/board", search: { worker: props.worker.id } })}
         >
-          Make default
+          Show cards on this worker
         </MenuItem>
         <MenuSeparator />
-        {props.isDefault ? (
-          <BoardHint label="Make another worker the default first." side="left">
-            <MenuItem variant="destructive" disabled>
-              Remove worker…
-            </MenuItem>
-          </BoardHint>
-        ) : (
-          <MenuItem variant="destructive" onClick={props.onRemove}>
-            Remove worker…
-          </MenuItem>
-        )}
+        <MenuItem variant="destructive" onClick={props.onRemove}>
+          Remove worker…
+        </MenuItem>
       </MenuPopup>
     </Menu>
   );

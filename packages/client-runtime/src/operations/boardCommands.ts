@@ -46,6 +46,7 @@ export type SetBoardCardGroupSettingsInput = CommandInput<"board.card.set-group-
 export type SetBoardCardAutomationInput = CommandInput<"board.card.set-automation">;
 export type CancelBoardCardWorkInput = CommandInput<"board.card.cancel-work">;
 export type UpdateBoardCardInput = CommandInput<"board.card.update">;
+export type BoardCardSetupActionInput = CommandInput<"board.card.setup-action">;
 export type SetBoardCardProjectInput = CommandInput<"board.card.set-project">;
 export type PinBoardCardWorkerInput = CommandInput<"board.card.pin-worker">;
 export type ForceStartBoardCardStepInput = CommandInput<"board.card.force-start-step">;
@@ -84,6 +85,7 @@ export type SetBoardProjectCiEnabledInput = SettingsCommandInput<"board.project.
 export type SetBoardProjectCiStopOnFailureInput =
   SettingsCommandInput<"board.project.set-ci-stop-on-failure">;
 export type ResetBoardProjectInput = SettingsCommandInput<"board.project.reset">;
+export type SetBoardProjectResourcesInput = SettingsCommandInput<"board.project.set-resources">;
 export type DismissBoardProjectImportInput = SettingsCommandInput<"board.project.dismiss-import">;
 export type StartBoardStageThreadInput = CommandInput<"board.card.start-stage-thread">;
 export type ApproveBoardPlansInput = CommandInput<"board.plans.approve">;
@@ -268,6 +270,19 @@ export const updateBoardCard: (input: UpdateBoardCardInput) => CommandEffect = E
   return yield* dispatch({
     ...input,
     type: "board.card.update",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+/** T3o: Retry or Cancel a card's setup (T3O-86). */
+export const boardCardSetupAction: (input: BoardCardSetupActionInput) => CommandEffect = Effect.fn(
+  "BoardCommands.boardCardSetupAction",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.card.setup-action",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });
@@ -523,6 +538,11 @@ export const setBoardProjectCiStopOnFailure = dispatchSettings(
   "setBoardProjectCiStopOnFailure",
 );
 export const resetBoardProject = dispatchSettings("board.project.reset", "resetBoardProject");
+/** T3o: the project's Resources settings, whole (T3O-86). */
+export const setBoardProjectResources = dispatchSettings(
+  "board.project.set-resources",
+  "setBoardProjectResources",
+);
 export const dismissBoardProjectImport = dispatchSettings(
   "board.project.dismiss-import",
   "dismissBoardProjectImport",

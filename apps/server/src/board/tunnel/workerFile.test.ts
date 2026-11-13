@@ -7,6 +7,9 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   boardUrlRefusal,
+  departedCapacityBoards,
+  findWorkerConfigKey,
+  resolveWorkerCapacitySettings,
   findWorkerBoard,
   localTunnelTarget,
   readWorkerFile,
@@ -53,6 +56,12 @@ describe("worker.json", () => {
     expect(() => readWorkerFile(home)).toThrow(WorkerFileInvalidError);
   });
 
+  it("names the boards whose records outlived them, never this server's own", () => {
+    const file = { boards: [entry("b1", "https://b1.example")], config: {} };
+    // b2 was removed while the server was stopped: its records go at the next reconcile.
+    expect(departedCapacityBoards(["b1", "b2", "self"], file, "self")).toEqual(["b2"]);
+  });
+
   it("finds a board by id, label or address, and removes it", () => {
     const file = upsertWorkerBoard(
       upsertWorkerBoard({ boards: [], config: {} }, entry("a", "https://a.example")),
@@ -87,5 +96,44 @@ describe("board addresses", () => {
     expect(localTunnelTarget("0.0.0.0", 3773)).toEqual({ host: "127.0.0.1", port: 3773 });
     expect(localTunnelTarget("::", 3773)).toEqual({ host: "::1", port: 3773 });
     expect(localTunnelTarget("127.0.0.1", 3773)).toEqual({ host: "127.0.0.1", port: 3773 });
+  });
+
+  it("reads the capacity settings, ignoring bad values, and knows the provider-cap family", () => {
+    expect(
+      resolveWorkerCapacitySettings({
+        "capacity.cpuCores": 12,
+        "capacity.ramGiB": "lots",
+        maxAgents: 4,
+        "providerCaps.codex": 2,
+        "providerCaps.": 9,
+        quotaThresholdPercent: 90,
+        "hold.earlyStartFraction": 0.6,
+      }),
+    ).toEqual({
+      cpuCores: 12,
+      ramGiB: null,
+      diskGB: null,
+      maxAgents: 4,
+      providerCaps: { codex: 2 },
+      quotaThresholdPercent: 90,
+      holdEarlyStartFraction: 0.6,
+      holdMaxMinutes: 120,
+    });
+    expect(resolveWorkerCapacitySettings({}).quotaThresholdPercent).toBe(95);
+    expect(findWorkerConfigKey("providerCaps.claude")?.parse("3")).toEqual({ ok: true, value: 3 });
+    expect(findWorkerConfigKey("providerCaps.")).toBeUndefined();
+    expect(findWorkerConfigKey("maxAgents")?.parse("1.5").ok).toBe(false);
+    expect(findWorkerConfigKey("quotaThresholdPercent")?.parse("0.5").ok).toBe(false);
+    expect(findWorkerConfigKey("quotaThresholdPercent")?.parse("1")).toEqual({
+      ok: true,
+      value: 1,
+    });
+    expect(
+      resolveWorkerCapacitySettings({ quotaThresholdPercent: 0.5 }).quotaThresholdPercent,
+    ).toBe(1);
+    expect(findWorkerConfigKey("capacity.gpus")).toBeUndefined();
+    // T3o: holds (T3O-87).
+    expect(findWorkerConfigKey("hold.earlyStartFraction")?.parse("1.5").ok).toBe(false);
+    expect(findWorkerConfigKey("hold.maxMinutes")?.parse("90")).toEqual({ ok: true, value: 90 });
   });
 });
