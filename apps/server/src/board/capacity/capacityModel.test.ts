@@ -451,6 +451,24 @@ describe("syncCards", () => {
     }
   });
 
+  it("never takes a path from the board for a worktree that isn't this board's", () => {
+    const state = placed(EMPTY_CAPACITY_STATE, "board-a", "card-1");
+    const moved = sync(state, {
+      seq: 2,
+      cards: [entry({ worktreePath: "/w/other-board" })],
+      presence: "foreign",
+    });
+    expect(moved.state.records[0]?.worktreePath).toBe("/w/card-1");
+    // A placement's entry, too: no path until the worktree there carries this board's marker.
+    const granted = decideClaim(EMPTY_CAPACITY_STATE, claim(), context());
+    const aimed = sync(granted.state, {
+      seq: 2,
+      cards: [entry({ worktreePath: "/w/other-board" })],
+      presence: "foreign",
+    });
+    expect(aimed.state.records[0]?.worktreePath).toBeNull();
+  });
+
   it("ignores a stale seq, and never lowers or deletes a record a later call stamped", () => {
     let state = placed(EMPTY_CAPACITY_STATE, "board-a", "card-1");
     state = sync(state, {

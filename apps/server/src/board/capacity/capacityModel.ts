@@ -520,6 +520,13 @@ export function applySyncCards(
   const mine = (record: CapacityRecord) => record.boardId === input.boardId;
   // An authoritative sync (a new connection) speaks for every record of this board.
   const stampedBelow = (record: CapacityRecord) => input.authoritative || record.seq < input.seq;
+  // A path is taken from the board only when that worktree carries this board's marker: the
+  // setup RPCs authorise on a record's path, so a board must not aim one at another's worktree.
+  const verifiedPath = (entry: BoardSyncCardsInput["cards"][number], current: string | null) => {
+    if (entry.worktreePath === null || entry.worktreePath === current) return current;
+    const presence = input.presence(entry);
+    return presence === "owned" || presence === "adopted" ? entry.worktreePath : current;
+  };
 
   for (const record of state.records) {
     if (!mine(record)) {
@@ -543,7 +550,7 @@ export function applySyncCards(
         ...record,
         repositoryKey: entry.repositoryKey,
         branch: entry.branch,
-        worktreePath: entry.worktreePath ?? record.worktreePath,
+        worktreePath: verifiedPath(entry, record.worktreePath),
         // A settled record's disk is never regrown: its worktree already exists.
         profile: record.settled
           ? { ...entry.grantedProfile, diskGB: record.profile.diskGB }
@@ -585,7 +592,7 @@ export function applySyncCards(
         cardId: entry.cardId,
         repositoryKey: entry.repositoryKey,
         branch: entry.branch,
-        worktreePath: entry.worktreePath,
+        worktreePath: verifiedPath(entry, null),
         profile: placement.profile,
         phase: entry.phase,
         settled: entry.settled,

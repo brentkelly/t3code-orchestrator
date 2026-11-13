@@ -481,15 +481,17 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     lock.withPermits(1)(
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
-        // Presence is read before the pure step: it may adopt a legacy marker on disk.
-        const known = new Set(
+        // Presence is read before the pure step: it may adopt a legacy marker on disk. A known
+        // card is checked only when the board names a new path for it.
+        const known = new Map(
           state.records
             .filter((record) => record.boardId === boardId)
-            .map((record) => record.cardId),
+            .map((record) => [record.cardId, record.worktreePath] as const),
         );
         const presence = new Map<string, WorktreePresence>();
         for (const entry of input.cards) {
-          if (known.has(entry.cardId)) continue;
+          if (known.has(entry.cardId) && known.get(entry.cardId) === entry.worktreePath) continue;
+          if (known.has(entry.cardId) && entry.worktreePath === null) continue;
           presence.set(entry.cardId, yield* ports.worktreePresence(boardId, entry));
         }
         const result = applySyncCards(state, {
