@@ -291,11 +291,22 @@ it.effect("a turn the board didn't start makes a light card heavy with no claim"
   Effect.gen(function* () {
     const now = { ms: T0 };
     const h = yield* harness(boardWith([granted("a", { heavy: false })]), now);
-    yield* h.admission.recordUnstartedTurn(BoardCardId.make("a"));
+    yield* h.admission.recordUnstartedTurn(BoardCardId.make("a"), "thread-h");
     assert.isTrue((yield* h.grantOf("a"))?.heavy);
     assert.deepStrictEqual(h.fake.claims, []);
     // And the worker hears of it at once.
     assert.strictEqual(h.fake.syncs.at(-1)?.cards[0]?.phase, "heavy");
+    // Still heavy while the turn runs, however long; the tail starts when it ends.
+    now.ms += HEAVY_TAIL_MS * 2;
+    yield* h.admission.sweep();
+    assert.isTrue((yield* h.grantOf("a"))?.heavy);
+    yield* h.admission.noteTurnEnded("thread-h");
+    now.ms += HEAVY_TAIL_MS - 1;
+    yield* h.admission.sweep();
+    assert.isTrue((yield* h.grantOf("a"))?.heavy);
+    now.ms += 1;
+    yield* h.admission.sweep();
+    assert.isFalse((yield* h.grantOf("a"))?.heavy);
   }),
 );
 

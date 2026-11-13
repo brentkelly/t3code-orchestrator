@@ -10872,6 +10872,9 @@ const make = Effect.gen(function* () {
     signal: ThreadSignal,
   ) {
     if (Option.isNone(capacityAdmission)) return;
+    if (signal.type === "turn-ended" || signal.type === "turn-start-failed") {
+      return yield* capacityAdmission.value.noteTurnEnded(signal.threadId);
+    }
     const unstarted =
       (signal.type === "turn-requested" && !signal.byBoard) ||
       (signal.type === "input-resolved" && signal.answered && signal.byBoard !== true) ||
@@ -10887,7 +10890,7 @@ const make = Effect.gen(function* () {
     if (card === undefined) return;
     const state = boardCardStepState(board, card.id);
     if (state?.threadId === signal.threadId && state.mode !== "build") return;
-    yield* capacityAdmission.value.recordUnstartedTurn(card.id);
+    yield* capacityAdmission.value.recordUnstartedTurn(card.id, signal.threadId);
   });
 
   /**

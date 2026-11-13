@@ -30,6 +30,7 @@ import type { BoardCapacityClientShape, BoardClaimAnswer } from "./BoardCapacity
 
 /** After a claim goes unanswered, the worker's other claims skip it this long. */
 export const UNREACHABLE_BACKOFF_MS = 30_000;
+const UNSTARTED_TURN_LAPSE_MS = 6 * 60 * 60_000;
 
 /** A card stays heavy this long after its last activity ended. */
 export const HEAVY_TAIL_MS = 10 * 60_000;
@@ -203,6 +204,21 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
   const lastActive = new Map<string, number>();
   /** A fresh claim id per card after a definite denial; the same id on a retry. */
   const claimNonce = new Map<string, number>();
+  /** Turns the board didn't start, by thread, until they end. */
+  const unstartedTurns = new Map<
+    string,
+    { readonly cardId: BoardCardId; readonly since: number }
+  >();
+  /** A turn or a setup running in the card's worktree outside its step keeps it active. */
+  const busyOutsideStep = (card: BoardCard, now: number) => {
+    if (card.resources?.setup?.status === "running") return true;
+    for (const [threadId, turn] of unstartedTurns) {
+      // A turn whose end never reached the board (a deleted thread) lapses.
+      if (now - turn.since >= UNSTARTED_TURN_LAPSE_MS) unstartedTurns.delete(threadId);
+      else if (turn.cardId === card.id) return true;
+    }
+    return false;
+  };
 
   const nowMs = Effect.map(deps.nowIso, (iso) => Date.parse(iso));
   // A worker that just left a claim unanswered costs the serial pass one timeout, not one
@@ -360,11 +376,14 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       own limit resume): the card is heavy with no claim, and may run over, visibly. */
   const recordUnstartedTurn = Effect.fn("BoardCapacityAdmission.recordUnstartedTurn")(function* (
     cardId: BoardCardId,
+    threadId: string,
   ) {
     const board = yield* deps.readBoard;
     const card = board.cards.find((candidate) => candidate.id === cardId);
     if (card === undefined || isGroup(card)) return;
-    lastActive.set(card.id, yield* nowMs);
+    const now = yield* nowMs;
+    lastActive.set(card.id, now);
+    unstartedTurns.set(threadId, { cardId: card.id, since: now });
     const grant = card.resources?.grant ?? null;
     if (grant === null || grant.heavy) return;
     yield* deps.dispatch({
@@ -375,6 +394,16 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       createdAt: yield* deps.nowIso,
     });
     yield* syncWorker(card.placedWorkerId ?? cardWorkerOf(board, card));
+  });
+
+  /** A turn the board didn't start ended: the card's ten-minute tail starts now. */
+  const noteTurnEnded = Effect.fn("BoardCapacityAdmission.noteTurnEnded")(function* (
+    threadId: string,
+  ) {
+    const turn = unstartedTurns.get(threadId);
+    if (turn === undefined) return;
+    unstartedTurns.delete(threadId);
+    lastActive.set(turn.cardId, yield* nowMs);
   });
 
   /** A step ended: the ten-minute tail starts, and a card's first heavy step settles it. */
@@ -416,7 +445,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       const grant = card.resources?.grant ?? null;
       if (grant === null || card.archivedAt !== null) continue;
       const state = stateOf(card.id);
-      let active = stepActiveInWorktree(state) || ciActive(card);
+      let active = stepActiveInWorktree(state) || ciActive(card) || busyOutsideStep(card, now);
       if (active && state !== null && state.status === "running") {
         // Held on a permission prompt: the engine keeps the turn open, but nothing runs.
         if (yield* deps.awaitingPermission(state)) active = false;
@@ -492,7 +521,14 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       const workerId = card.placedWorkerId ?? cardWorkerOf(board, card);
       if (!waiting.has(workerId)) continue;
       const state = states.find((candidate) => candidate.cardId === card.id) ?? null;
-      if (stepActiveInWorktree(state) || stepQueuedInWorktree(state) || ciActive(card)) continue;
+      if (
+        stepActiveInWorktree(state) ||
+        stepQueuedInWorktree(state) ||
+        ciActive(card) ||
+        busyOutsideStep(card, now)
+      ) {
+        continue;
+      }
       idle.push({ card, since: lastActive.get(card.id) ?? now });
     }
     // Per worker, release until the first waiting step's profile fits what is offered.
@@ -538,6 +574,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     placementClaim,
     ensureHeavy,
     recordUnstartedTurn,
+    noteTurnEnded,
     noteStepEnded,
     sweep,
     releaseForWaiting,
