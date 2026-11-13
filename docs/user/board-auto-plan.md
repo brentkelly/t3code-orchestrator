@@ -31,7 +31,7 @@ You can turn them on before the card gets there. A card in Backlog with Auto-pla
 unattended as soon as it reaches Planning.
 
 Turning Auto-plan on mid-interview hands the rest of the interview to the agent in the same thread:
-it is told to stop asking and finish, and a question it is waiting on is answered with that
+it is told to stop asking and decide the rest itself, still running any plan review to the end, and a question it is waiting on is answered with that
 instruction. Turning it off mid-run tells the agent you are back.
 
 - With Auto-build on, the plan is approved even when some decisions are marked unclear. The Summary

@@ -43,7 +43,7 @@ export const BOARD_ENVELOPE_DECISION_LOG =
     into a live planning thread, followed by what happens to the plan — use
     `boardAutoPlanInstruction`. */
 export const BOARD_AUTO_PLAN_INSTRUCTION =
-  "Auto-plan: stop interviewing and do not ask any more questions. Decide every remaining question yourself, record each decision with board_record_decisions (flag any you are unsure of as unclear), propose the plan with board_propose_plans, then call board_complete_step.";
+  "Auto-plan: stop interviewing and do not ask any more questions. Decide every remaining question yourself, record each decision with board_record_decisions (flag any you are unsure of as unclear), propose the plan with board_propose_plans, run any plan review this card has to the end, then call board_complete_step.";
 
 /** Appended when turning Auto-plan on reopened a planning step the agent had
     already marked finished, so its next completion is the real finish. */
@@ -341,7 +341,7 @@ export function planReviewInstructionsClosing(input: {
     "- Patch plan changes in place with board_edit_plan. Re-propose with board_propose_plans only if titles, summaries or the set of plans changed; if you only edited bodies, do not re-propose (re-proposing does not start another review). If board_edit_plan or board_propose_plans refuses because the plans are frozen, stop reviewing and summarise.",
     "- When you call board_complete_step, add `planReview: { roundsRun, converged }` to the payload.",
     `- ${finish}`,
-    "- If an auto-plan instruction arrives during the review, it overrides this text: stop asking and finish.",
+    "- If an auto-plan instruction arrives during the review, it overrides the human-in-the-loop rules above but not the review itself: run the remaining rounds as normal. Ask the user nothing further and never wait on them for any reason. Make every remaining decision yourself and record it with board_record_decisions, flagging a contentious or uncertain one as unclear. When the review is done, summarise the final plan in the thread and call board_complete_step without waiting for sign-off.",
   ].join("\n");
 }
 
