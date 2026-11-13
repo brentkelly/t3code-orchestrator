@@ -16,7 +16,9 @@ import {
   type BoardWorkerId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 
 import { makeFakeCapacity, type FakeCapacity } from "../capacity/capacityClient.testkit.ts";
@@ -568,6 +570,40 @@ describe("holds at build start (T3O-87)", () => {
           }));
           yield* h.reactor.refreshHolds;
           assert.deepStrictEqual(capacity.releasedHolds, [{ workerId: W1, cardId: "card-1" }]);
+        }),
+      );
+    }),
+  );
+
+  it.effect("a hold refresh that answers after its card was placed doesn't hold again", () =>
+    Effect.gen(function* () {
+      const capacity = yield* capacityOf([[W1, FULL]]);
+      capacity.external.set(W1, CPU_RAM_TAKEN);
+      const card = unplaced("card-1", "a");
+      yield* run({ cards: [card], capacity, git: newWorkerGit() }, (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(card, 1));
+          assert.strictEqual(
+            boardCardStepState(yield* h.board, BoardCardId.make("card-1"))?.queuedBy,
+            "holding",
+          );
+          // The refresh asks W1 again, and W1 is slow to answer.
+          const asked = yield* Deferred.make<void>();
+          const answer = yield* Deferred.make<void>();
+          capacity.beforeNextHold = Deferred.succeed(asked, undefined).pipe(
+            Effect.andThen(Deferred.await(answer)),
+          );
+          const refresh = yield* h.reactor.refreshHolds.pipe(Effect.forkChild);
+          yield* Deferred.await(asked);
+          // Meanwhile room frees and card-1 is placed on W1, consuming its hold.
+          capacity.external.delete(W1);
+          yield* capacity.publish(W1);
+          yield* h.pumpDomain(movedToBuilding(unplaced("card-2", "z"), 2));
+          assert.strictEqual((yield* cardIn(h, "card-1")).placedWorkerId, W1);
+          yield* Deferred.succeed(answer, undefined);
+          yield* Fiber.join(refresh);
+          // The late grant is withdrawn, not kept for a card that no longer waits.
+          assert.deepInclude(capacity.releasedHolds, { workerId: W1, cardId: "card-1" });
         }),
       );
     }),

@@ -11607,44 +11607,54 @@ const make = Effect.gen(function* () {
   const refreshHolds = Effect.gen(function* () {
     if (Option.isNone(capacityClient)) return;
     const client = capacityClient.value;
-    const board = yield* readBoard;
-    const waitingStep = (cardId: string) => {
+    const waitingStep = (board: BoardState, cardId: string) => {
       const state = (board.stepStates ?? []).find((candidate) => candidate.cardId === cardId);
       return state !== undefined && (state.status === "queued" || state.status === "pending")
         ? state
         : null;
     };
-    const stillWaiting = (cardId: string, kind: "placement" | "grow") => {
+    const stillWaiting = (board: BoardState, cardId: string, kind: "placement" | "grow") => {
       const card = board.cards.find((candidate) => candidate.id === cardId);
-      if (card === undefined || card.archivedAt !== null || waitingStep(cardId) === null) {
+      if (card === undefined || card.archivedAt !== null || waitingStep(board, cardId) === null) {
         return false;
       }
       return kind === "grow" || boardCardPlacementTarget(card) === null;
     };
+    // Outside the supervisor queue: each entry is read afresh, and one placement released or
+    // consumed while its worker answered is not granted again.
     for (const [cardId, byWorker] of Array.from(boardHolds)) {
       for (const [workerId, entry] of Array.from(byWorker)) {
-        if (!stillWaiting(cardId, entry.kind)) {
+        if (boardHolds.get(cardId)?.get(workerId) !== entry) continue;
+        if (!stillWaiting(yield* readBoard, cardId, entry.kind)) {
           yield* client.releaseHold(workerId, cardId);
           forgetHold(cardId, workerId);
           continue;
         }
         const answer = yield* client.hold(workerId, entry.input);
+        const current = boardHolds.get(cardId)?.get(workerId);
+        if (current !== entry) {
+          if (current === undefined && answer !== null && answer.outcome !== "refused") {
+            yield* client.releaseHold(workerId, cardId);
+          }
+          continue;
+        }
         if (answer === null) continue;
         if (answer.outcome === "refused") forgetHold(cardId, workerId);
         else noteHold(cardId, workerId, { ...entry, until: answer.until });
       }
     }
+    const board = yield* readBoard;
     const limit = boardHoldLimit(yield* readyWorkerCount(board));
     for (const workerId of [BOARD_LOCAL_WORKER_ID, ...(board.workers ?? []).map((w) => w.id)]) {
       const heldCard = (yield* client.latest(workerId))?.hold?.cardId ?? null;
       if (heldCard === null || boardHolds.get(heldCard)?.has(workerId) === true) continue;
       const card = board.cards.find((candidate) => candidate.id === heldCard);
-      const state = waitingStep(heldCard);
+      const state = waitingStep(board, heldCard);
       const holding = boardHoldingWorkers();
       if (
         card === undefined ||
         state === null ||
-        !stillWaiting(heldCard, "placement") ||
+        !stillWaiting(board, heldCard, "placement") ||
         (!holding.has(workerId) && holding.size >= limit)
       ) {
         yield* client.releaseHold(workerId, heldCard);

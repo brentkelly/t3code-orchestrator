@@ -49,6 +49,8 @@ export interface FakeCapacity {
   /** The early-start share every worker reports. 1 (the default) needs the whole profile, so
       a suite about queue order sees no early start. */
   earlyStartFraction: number;
+  /** Run before the next hold is answered, once: a test parks a call mid-flight with it. */
+  beforeNextHold: Effect.Effect<void> | null;
   /** How a worker answers a hold; by default it holds, short of nothing. */
   holdAnswer: (workerId: BoardWorkerId, input: BoardCapacityHoldInput) => BoardCapacityHoldResult;
 }
@@ -110,6 +112,7 @@ export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
     holds: [],
     releasedHolds: [],
     earlyStartFraction: 1,
+    beforeNextHold: null,
     holdAnswer: () => ({ outcome: "held", short: ZERO_BOARD_RESOURCE_PROFILE, until: null }),
     publish: (workerId) => PubSub.publish(pubsub, workerId).pipe(Effect.asVoid),
     client: {
@@ -153,10 +156,18 @@ export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
         }),
       nextSeq: () => Effect.sync(() => ++seq),
       hold: (workerId, input) =>
-        Effect.sync(() => {
-          fake.holds.push({ ...input, workerId });
-          return fake.holdAnswer(workerId, input);
-        }),
+        Effect.suspend(() => {
+          const before = fake.beforeNextHold ?? Effect.void;
+          fake.beforeNextHold = null;
+          return before;
+        }).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              fake.holds.push({ ...input, workerId });
+              return fake.holdAnswer(workerId, input);
+            }),
+          ),
+        ),
       releaseHold: (workerId, cardId) =>
         Effect.sync(() => void fake.releasedHolds.push({ workerId, cardId })),
       syncCards: (workerId, read) =>
