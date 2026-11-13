@@ -253,21 +253,18 @@ export function boardCardPlacementLine(
  */
 export function boardWorkerCheckoutWarning(input: {
   readonly state: BoardWorkersState;
-  /** The card's pin; null follows the default. */
+  /** The card's pin; null goes to any ready worker, so nothing to warn about. */
   readonly pinnedWorkerId?: BoardWorkerId | null;
   readonly projectRepositoryKey: string | null;
   readonly projectName: string;
 }): string | null {
-  const { state } = input;
-  const workerId = input.pinnedWorkerId ?? state.defaultWorkerId;
-  if (workerId === BOARD_LOCAL_WORKER_ID) return null;
-  const worker = state.workers.find((candidate) => candidate.id === workerId);
+  const workerId = input.pinnedWorkerId ?? null;
+  if (workerId === null || workerId === BOARD_LOCAL_WORKER_ID) return null;
+  const worker = input.state.workers.find((candidate) => candidate.id === workerId);
   if (worker === undefined || boardWorkerHasCheckout(worker, input.projectRepositoryKey)) {
     return null;
   }
-  return (input.pinnedWorkerId ?? null) === null
-    ? `${worker.label} has no checkout of ${input.projectName}. Set up on worker or pin another.`
-    : `${worker.label} has no checkout of ${input.projectName}. The card waits until it is set up there. Set up on worker or pick another.`;
+  return `${worker.label} has no checkout of ${input.projectName}. The card waits until it is set up there. Set up on worker or pick another.`;
 }
 
 // ── Queue reasons (prototype notice copy) ─────────────────────────

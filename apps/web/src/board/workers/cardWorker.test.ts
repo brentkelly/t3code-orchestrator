@@ -228,7 +228,7 @@ describe("the worker field", () => {
     );
   });
 
-  it("warns in the create dialog when the default worker has no checkout", () => {
+  it("doesn't warn for an unpinned card, even when a pre-upgrade default has no checkout", () => {
     const board = state([worker(LINUX, "linux-box", { checkout: false })], {
       defaultWorkerId: LINUX,
     });
@@ -238,7 +238,7 @@ describe("the worker field", () => {
         projectRepositoryKey: KEY,
         projectName: "advisor",
       }),
-    ).toBe("linux-box has no checkout of advisor. Set up on worker or pin another.");
+    ).toBeNull();
     expect(
       boardWorkerCheckoutWarning({
         state: state([worker(LINUX, "linux-box")], { defaultWorkerId: LINUX }),
