@@ -8,6 +8,7 @@
 // runs the full test suites and the jobs listed in the summary.
 //
 //   vp run check:changed                  compare against the closest merge base with any remote main
+//                                         or remote default branch (T3o: origin/HEAD, e.g. t3o)
 //   vp run check:changed <ref>            compare against the merge base with <ref>
 //   vp run check:changed --concurrency 1  run the steps one at a time
 //
@@ -40,6 +41,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { decide, readWorkspace } from "../.github/scripts/ci-changes.cjs";
 import { vitePlusCommand } from "./check-changed-command.ts";
+// T3o: fork comparison candidates (T3O-88).
+import { remoteCandidates } from "./t3o-check-changed-base.ts";
 
 const GiB = 1024 ** 3;
 
@@ -156,10 +159,8 @@ export const comparisonBase = Effect.fn("checkChanged.comparisonBase")(function*
 ) {
   const candidates = Option.isSome(explicitRef)
     ? [{ ref: explicitRef.value, rev: explicitRef.value }]
-    : (yield* gitLines(root, ["remote"])).map((name) => ({
-        ref: name + "/main",
-        rev: "refs/remotes/" + name + "/main",
-      }));
+    : // T3o: a fork compares against its remote's default branch too (T3O-88).
+      yield* remoteCandidates(root, git);
   let closest: { ref: string; base: string; ahead: number } | undefined;
   for (const { ref, rev } of candidates) {
     const base = yield* git(root, ["merge-base", "HEAD", rev]).pipe(
@@ -218,6 +219,8 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   readonly ref: Option.Option<string>;
   readonly concurrency: Option.Option<number>;
   readonly timeout: Option.Option<number>;
+  // T3o: the full CI tier runs every suite itself, so it asks for every check but the tests.
+  readonly noTests?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -305,7 +308,12 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     return hash.digest("hex");
   });
   const key = yield* inputKey;
-  const cachePath = inRoot("node_modules/.cache/check-changed.json");
+  const cachePath = inRoot(
+    // T3o: a pass without tests must not answer for a full one.
+    input.noTests === true
+      ? "node_modules/.cache/check-changed-no-tests.json"
+      : "node_modules/.cache/check-changed.json",
+  );
   // A missing or unreadable cache is a miss, never a failure.
   const cached = yield* fs
     .readFileString(cachePath)
@@ -507,7 +515,8 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
         ]
       : []),
     // From the repo root, the root vite.config.ts hands each file to its package's config.
-    ...(vitestTests.length > 0
+    // T3o: --no-tests skips the three test steps.
+    ...(input.noTests !== true && vitestTests.length > 0
       ? [
           {
             ...command(`test (${vitestTests.length} files)`, [
@@ -520,7 +529,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
           },
         ]
       : []),
-    ...(nodeTests.length > 0
+    ...(input.noTests !== true && nodeTests.length > 0
       ? [
           command(`node --test (${nodeTests.length} files)`, [
             "exec",
@@ -530,7 +539,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
           ]),
         ]
       : []),
-    ...(compilerApps.length > 0
+    ...(input.noTests !== true && compilerApps.length > 0
       ? [
           {
             ...command(`react compiler (${compilerFiles} files)`, [
@@ -603,6 +612,11 @@ export const checkChangedCommand = Command.make(
         "Seconds before a step is killed; also CHECK_CHANGED_TIMEOUT. Defaults to 900.",
       ),
       Flag.optional,
+    ),
+    // T3o: scripts/t3o-ci.ts's full tier runs the suites itself (T3O-88).
+    noTests: Flag.Boolean("no-tests").pipe(
+      Flag.withDescription("Run every check except the test steps."),
+      Flag.withDefault(false),
     ),
   },
   (input) =>
