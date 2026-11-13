@@ -5,6 +5,7 @@
  */
 import {
   BOARD_WORKERS_WS_METHODS,
+  type BoardResourceProfile,
   type BoardWorkerCapacitySnapshot,
   type BoardWorkersCapacityActionInput,
 } from "@t3tools/contracts";
@@ -13,7 +14,12 @@ import * as Stream from "effect/Stream";
 
 import { request, subscribeDynamic } from "../rpc/client.ts";
 
-export type BoardCapacityView = ReadonlyMap<string, BoardWorkerCapacitySnapshot>;
+/** A worker's snapshot, with what this board's own cards hold there when the board knows. */
+export type BoardWorkerCapacityView = BoardWorkerCapacitySnapshot & {
+  readonly held?: BoardResourceProfile;
+};
+
+export type BoardCapacityView = ReadonlyMap<string, BoardWorkerCapacityView>;
 
 const EMPTY_BOARD_CAPACITY_VIEW: BoardCapacityView = new Map();
 
@@ -22,7 +28,11 @@ export const boardCapacityViewStream = () =>
   subscribeDynamic(BOARD_WORKERS_WS_METHODS.subscribeCapacity, () => Effect.succeed({})).pipe(
     Stream.scan(
       (): BoardCapacityView => EMPTY_BOARD_CAPACITY_VIEW,
-      (view, item): BoardCapacityView => new Map(view).set(item.workerId, item.snapshot),
+      (view, item): BoardCapacityView =>
+        new Map(view).set(
+          item.workerId,
+          item.held === undefined ? item.snapshot : { ...item.snapshot, held: item.held },
+        ),
     ),
   );
 

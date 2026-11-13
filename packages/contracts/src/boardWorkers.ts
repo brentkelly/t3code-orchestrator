@@ -21,7 +21,7 @@ import {
   ProjectId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { BoardWorkerCapacitySnapshot } from "./boardCapacity.ts";
+import { BoardResourceProfile, BoardWorkerCapacitySnapshot } from "./boardCapacity.ts";
 import { RepositoryIdentity, repositoryGroupingKeyOf } from "./environment.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -633,6 +633,8 @@ export const BOARD_WORKERS_WS_METHODS = {
 export const BoardWorkerCapacityItem = Schema.Struct({
   workerId: BoardWorkerId,
   snapshot: BoardWorkerCapacitySnapshot,
+  /** What this board's own placed cards hold there, from the board's grants, not the worker. */
+  held: Schema.optionalKey(BoardResourceProfile),
 });
 export type BoardWorkerCapacityItem = typeof BoardWorkerCapacityItem.Type;
 

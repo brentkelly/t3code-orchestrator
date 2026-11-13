@@ -238,7 +238,12 @@ export function WorkersSection(props: {
           subline={`${localVersion === null ? "" : `T3o ${localVersion} · `}runs planning`}
           status={{ label: "Connected", detail: null, tone: "neutral", tooltip: null }}
           extra={
-            <WorkerCapacity environmentId={environmentId} workerId={BOARD_LOCAL_WORKER_ID} live />
+            <WorkerCapacity
+              environmentId={environmentId}
+              workerId={BOARD_LOCAL_WORKER_ID}
+              name={localWorkerLabel(state)}
+              live
+            />
           }
           actions={
             <>
@@ -281,6 +286,7 @@ export function WorkersSection(props: {
                   <WorkerCapacity
                     environmentId={environmentId}
                     workerId={worker.id}
+                    name={worker.label}
                     live={worker.status.state === "online"}
                   />
                 )
@@ -368,6 +374,7 @@ export function WorkersSection(props: {
 function WorkerCapacity(props: {
   readonly environmentId: EnvironmentId;
   readonly workerId: BoardWorkerId;
+  readonly name: string;
   readonly live: boolean;
 }) {
   const result = useAtomValue(
@@ -376,7 +383,7 @@ function WorkerCapacity(props: {
   const capacityAction = useAtomCommand(boardEnvironment.capacityAction);
   const snapshot = AsyncResult.isSuccess(result) ? result.value.get(props.workerId) : undefined;
   if (snapshot === undefined) return null;
-  const lines = boardWorkerCapacityLines(snapshot, clockTime, props.live);
+  const lines = boardWorkerCapacityLines(snapshot, clockTime, props.name, props.live);
   return (
     <div
       className={cn(
@@ -388,33 +395,31 @@ function WorkerCapacity(props: {
       {lines.bars.map((bar) => (
         <div key={bar.label} className="grid grid-cols-[2.5rem_1fr] items-center gap-2">
           <span>{bar.label}</span>
-          <BoardHint label={bar.text}>
-            <span className="h-1.5 overflow-hidden rounded-full bg-accent" aria-label={bar.text}>
-              <span
-                className={cn(
-                  "block h-full rounded-full",
-                  bar.used >= 1 ? "bg-warning" : "bg-muted-foreground",
-                )}
-                style={{ width: `${Math.round(bar.used * 100)}%` }}
-              />
-            </span>
+          <BoardHint label={bar.tooltip}>
+            <MeterBar used={bar.used} amber={bar.used >= 1} label={bar.text} />
           </BoardHint>
         </div>
       ))}
       <span>{lines.agents}</span>
       {lines.over === null ? null : <span className="text-warning-foreground">{lines.over}</span>}
-      {lines.accounts.map((line) => (
-        <span key={line}>{line}</span>
-      ))}
-      {lines.signedOut.map((line) => (
-        <span key={line} className="text-warning-foreground">
-          {line}
-        </span>
-      ))}
-      {lines.quota.map((line) => (
-        <span key={line} className="text-warning-foreground">
-          {line}
-        </span>
+      {lines.providers.map((provider) => (
+        <div key={provider.title} className="flex flex-col gap-1 pt-1">
+          <span className="truncate text-foreground">{provider.title}</span>
+          {provider.signedOut === null ? null : (
+            <span className="text-attention-foreground">{provider.signedOut}</span>
+          )}
+          {provider.windows.map((window) => (
+            <div key={window.label} className="grid grid-cols-[6rem_1fr] items-center gap-2">
+              <span className="truncate">{window.label}</span>
+              <BoardHint label={window.text}>
+                <MeterBar used={window.used} amber={window.nearLimit} label={window.text} />
+              </BoardHint>
+            </div>
+          ))}
+          {provider.nearLimit === null ? null : (
+            <span className="text-warning-foreground">{provider.nearLimit}</span>
+          )}
+        </div>
       ))}
       {lines.readiness === null ? null : (
         <span className="flex items-center gap-2">
@@ -442,6 +447,32 @@ function WorkerCapacity(props: {
         </span>
       ))}
     </div>
+  );
+}
+
+/** A read-only fill bar: amber when it refuses new work. */
+function MeterBar(props: {
+  readonly used: number;
+  readonly amber: boolean;
+  readonly label: string;
+}) {
+  return (
+    <span
+      className="block h-1.5 overflow-hidden rounded-full bg-accent"
+      role="meter"
+      aria-label={props.label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(props.used * 100)}
+    >
+      <span
+        className={cn(
+          "block h-full rounded-full",
+          props.amber ? "bg-warning" : "bg-muted-foreground",
+        )}
+        style={{ width: `${Math.round(props.used * 100)}%` }}
+      />
+    </span>
   );
 }
 

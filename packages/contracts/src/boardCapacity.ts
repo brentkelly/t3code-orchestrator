@@ -414,6 +414,8 @@ export const BoardWorkerProviderCapacity = Schema.Struct({
         usedPercent: Schema.Finite,
         resetsAt: Schema.NullOr(IsoDateTime),
         gating: Schema.Boolean,
+        /** At or above the worker's quota threshold, and so refusing placements. */
+        nearLimit: Schema.optionalKey(Schema.Boolean),
       }),
     ),
   }),

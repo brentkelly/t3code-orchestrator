@@ -157,6 +157,15 @@ it("quota gates only account-wide session and weekly windows, until they reset",
     { kind: "weekly", label: "Weekly · all models", usedPercent: 100, id: "seven_day" },
   ]);
   assert.isTrue(providerQuota(relabelled, 95, now).exhausted);
+  // Only the windows that refuse placement are drawn at their limit.
+  assert.deepStrictEqual(
+    providerQuota(scoped, 95, now).windows.map((window) => window.nearLimit),
+    [false, false],
+  );
+  assert.deepStrictEqual(
+    providerQuota(relabelled, 95, now).windows.map((window) => window.nearLimit),
+    [true],
+  );
   // …and every Antigravity window is one model family's.
   const family = provider(
     "ag",

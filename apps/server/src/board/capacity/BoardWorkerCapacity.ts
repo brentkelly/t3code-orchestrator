@@ -202,20 +202,20 @@ export function providerQuota(
     return { exhausted: false, checkedAt: null, resetsAt: null, windows: [] };
   }
   const windows = limits.windows.map((window) => {
-    const reset = window.resetsAt === undefined ? null : window.resetsAt;
+    const resetsAt = window.resetsAt === undefined ? null : window.resetsAt;
+    const gating = isGatingWindow(provider.driver, window);
     return {
       label: window.label,
       usedPercent: window.usedPercent,
-      resetsAt: reset,
-      gating: isGatingWindow(provider.driver, window),
+      resetsAt,
+      gating,
+      nearLimit:
+        gating &&
+        window.usedPercent >= thresholdPercent &&
+        (resetsAt === null || Date.parse(resetsAt) > now),
     };
   });
-  const exhausting = windows.filter(
-    (window) =>
-      window.gating &&
-      window.usedPercent >= thresholdPercent &&
-      (window.resetsAt === null || Date.parse(window.resetsAt) > now),
-  );
+  const exhausting = windows.filter((window) => window.nearLimit);
   const resetsAt =
     exhausting
       .map((window) => window.resetsAt)

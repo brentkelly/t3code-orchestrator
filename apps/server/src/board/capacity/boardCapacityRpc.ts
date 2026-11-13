@@ -5,11 +5,16 @@
 import {
   BOARD_LOCAL_WORKER_ID,
   BoardWorkerActionError,
+  boardCardBoundWorkerId,
+  boardCardHoldsWorktree,
   boardProjectStageConfig,
   boardRepositoryGroupingKey,
   EMPTY_BOARD_STATE,
   resolveBoardProjectResourceSettings,
+  type BoardCard,
+  type BoardResourceProfile,
   type BoardWorkerCapacityItem,
+  type BoardWorkerCapacitySnapshot,
   type BoardWorkerId,
   type BoardWorkersCapacityActionInput,
   type ProjectId,
@@ -22,23 +27,71 @@ import { ThreadGateway } from "../ThreadGateway.ts";
 import { BoardWorkspaces } from "../workspace/BoardWorkspace.ts";
 import { BoardCapacityClient } from "./BoardCapacityClient.ts";
 
-/** Every worker's snapshot now, then each change. */
+/**
+ * What this board's own placed cards hold on a worker, from their grants: disk always, CPU and
+ * RAM while the grant is heavy or the worker reports a turn running. Mirrors the worker's count.
+ */
+export function boardCardsHeldOnWorker(
+  cards: ReadonlyArray<
+    Pick<
+      BoardCard,
+      "id" | "worktree" | "pinnedWorkerId" | "placedWorkerId" | "archivedAt" | "resources"
+    >
+  >,
+  workerId: BoardWorkerId,
+  heavyCards: ReadonlyArray<string>,
+): BoardResourceProfile {
+  const heavy = new Set(heavyCards);
+  let held = { cpuCores: 0, ramGiB: 0, diskGB: 0 };
+  for (const card of cards) {
+    const grant = card.resources?.grant ?? null;
+    if (grant === null || card.archivedAt !== null || !boardCardHoldsWorktree(card)) continue;
+    if (boardCardBoundWorkerId(card) !== workerId) continue;
+    const counted = grant.heavy || heavy.has(card.id);
+    held = {
+      cpuCores: held.cpuCores + (counted ? grant.profile.cpuCores : 0),
+      ramGiB: held.ramGiB + (counted ? grant.profile.ramGiB : 0),
+      diskGB: held.diskGB + grant.profile.diskGB,
+    };
+  }
+  return held;
+}
+
+/** Every worker's snapshot now, then each change, with what this board's cards hold there. */
 export const boardCapacityStream: Stream.Stream<
   BoardWorkerCapacityItem,
   never,
-  BoardCapacityClient
+  BoardCapacityClient | BoardEngine
 > = Stream.unwrap(
   Effect.gen(function* () {
     const client = yield* BoardCapacityClient;
-    const initial = [...(yield* client.all)].map(([workerId, snapshot]) => ({
-      workerId,
-      snapshot,
-    }));
+    const engine = yield* BoardEngine;
+    const item = (workerId: BoardWorkerId, snapshot: BoardWorkerCapacitySnapshot) =>
+      engine.getReadModel.pipe(
+        Effect.map((model): BoardWorkerCapacityItem => ({
+          workerId,
+          snapshot,
+          held: boardCardsHeldOnWorker(
+            (model.board ?? EMPTY_BOARD_STATE).cards,
+            workerId,
+            snapshot.heavyCards,
+          ),
+        })),
+      );
+    const initial = yield* Effect.forEach([...(yield* client.all)], ([workerId, snapshot]) =>
+      item(workerId, snapshot),
+    );
     const changes = client.changes.pipe(
       Stream.mapEffect((workerId) =>
         client
           .latest(workerId)
-          .pipe(Effect.map((snapshot) => (snapshot === null ? [] : [{ workerId, snapshot }]))),
+          .pipe(
+            Effect.flatMap((snapshot) =>
+              snapshot === null
+                ? Effect.succeed([])
+                : Effect.map(item(workerId, snapshot), (one) => [one]),
+            ),
+          ),
       ),
       Stream.flatMap((items) => Stream.fromIterable(items)),
     );
