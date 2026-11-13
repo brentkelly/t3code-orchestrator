@@ -185,6 +185,7 @@ export const makeReadiness = (deps: {
       tail,
       logPath,
       resultPath: NodePath.join(dir, "ready.result.json"),
+      ciEnvironment: false,
     }).pipe(
       // The full output is the log's last 64 KB, read before the directory goes.
       Effect.map((exit) => ({ exit, full: readLogTail(logPath) })),

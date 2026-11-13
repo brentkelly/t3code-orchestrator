@@ -177,6 +177,7 @@ export const makeCardSetup = (deps: CardSetupDeps) => {
           tail,
           logPath: NodePath.join(paths.dir, SETUP_LOG),
           resultPath: NodePath.join(paths.dir, SETUP_RESULT),
+          ciEnvironment: false,
         }).pipe(
           Effect.flatMap((exit) =>
             Effect.gen(function* () {

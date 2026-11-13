@@ -322,6 +322,8 @@ interface BoardCiStepInput {
   /** Every chunk of output, as it arrives. Must not block. */
   readonly onOutput?: (text: string) => void;
   readonly timing?: BoardCiStepTiming;
+  /** False for a script that isn't a CI step (card setup, readiness): no `CI` or result file. */
+  readonly ciEnvironment?: boolean;
 }
 
 const runStepWithEnv = (
@@ -349,7 +351,10 @@ const runStepWithEnv = (
       shell: true,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...hostEnv, CI: hostEnv.CI ?? "1", T3O_CI_RESULT: input.resultPath },
+      env:
+        input.ciEnvironment === false
+          ? hostEnv
+          : { ...hostEnv, CI: hostEnv.CI ?? "1", T3O_CI_RESULT: input.resultPath },
     });
     // Per-stream decoders keep a multi-byte character split across chunks whole.
     child.stdout?.setEncoding("utf8");
