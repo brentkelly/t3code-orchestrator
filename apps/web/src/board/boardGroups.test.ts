@@ -166,7 +166,12 @@ describe("boardGroupCardVm", () => {
     ];
     const tooltips = (queueFor?: Parameters<typeof boardGroupCardVm>[0]["queueFor"]) =>
       boardGroupCardVm(
-        { shells: cards, stages: STAGES, attentionFor: noAttention, queueFor },
+        {
+          shells: cards,
+          stages: STAGES,
+          attentionFor: noAttention,
+          ...(queueFor === undefined ? {} : { queueFor }),
+        },
         parent,
       )!.pips.map((pip) => pip.tooltip);
     expect(tooltips()).toEqual([
