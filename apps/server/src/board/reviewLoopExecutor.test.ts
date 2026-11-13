@@ -179,6 +179,31 @@ const settlingScenarios = [
     stopAfterRound: null,
     roundModes: { "4": { kind: "full" as const } },
   },
+  {
+    name: "a full round whose fixes were all ruled below the bar converges (T3O-92)",
+    completions: [
+      completion("review@5", { reviewedSha: reviewSha(5), findings: improvementsOf(5, 2) }),
+      completion("triage@5", {
+        fixedSha: "fix-5",
+        dispositions: improvementsOf(5, 2).map((f) => ({
+          findingId: f.id,
+          action: "fixed",
+          note: "",
+        })),
+      }),
+      completion("adjudicate@5", {
+        verdicts: improvementsOf(5, 2).map((f) => ({
+          findingId: f.id,
+          verdict: "fix-upheld",
+          note: "below the bar",
+          belowBar: true,
+        })),
+        anotherRound: true,
+      }),
+    ],
+    rounds: 6,
+    stopAfterRound: null,
+  },
 ];
 
 // ── Fixtures: binding adjudication, re-triage and the stuck stop ──
@@ -1550,6 +1575,35 @@ describe("settling rounds (T3O-64)", () => {
     );
     expect(recorded.reviewRoundMode).toBeUndefined();
     expect(recorded.prompt).toContain("git diff x..HEAD");
+  });
+
+  it("T3O-92: raises the bar for a full round past convergeAfterRound, never a settling one", () => {
+    // Two improvements a round keep every round full.
+    const twoImprovementRounds = (through: number) =>
+      Array.from({ length: through }, (_, i) => fixedRound(i + 1, improvementsOf(i + 1, 2))).flat();
+    const execution = reviewExec({ rounds: 10 });
+    const round4 = runOf(plan(twoImprovementRounds(3), execution));
+    expect(round4.stepId).toBe("review@4");
+    expect(round4.prompt).toContain("raised bar (level 1)");
+    const round8 = runOf(plan(twoImprovementRounds(7), execution));
+    expect(round8.prompt).toContain("raised bar (level 3)");
+    expect(round8.prompt).toContain("where `severity` is `critical` or `nitpick`");
+    const adjudicate = runOf(
+      plan(
+        [
+          ...twoImprovementRounds(5),
+          completion("review@6", { reviewedSha: reviewSha(6), findings: improvementsOf(6, 1) }),
+          completion("triage@6", { fixedSha: "fix-6", dispositions: [] }),
+        ],
+        execution,
+      ),
+    );
+    expect(adjudicate.stepId).toBe("adjudicate@6");
+    expect(adjudicate.prompt).toContain("add `belowBar: true` to its verdict");
+    expect(runOf(plan(twoImprovementRounds(3), reviewExec({ convergeAfterRound: null }))).prompt)
+      .not.toContain("raised bar");
+    // A settling round's bar is already critical-only.
+    expect(runOf(plan(oneImprovementRounds(3))).prompt).not.toContain("raised bar");
   });
 
   it("plans a full round's review with nothing to record", () => {
