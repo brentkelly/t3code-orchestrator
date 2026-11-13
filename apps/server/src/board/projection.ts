@@ -10,6 +10,8 @@ import {
   BoardCardPlacementOrphan,
   BoardCardCi,
   BoardCardCiLastOutcome,
+  BoardCardResources,
+  BoardCardSize,
   BoardCiPass,
   BoardCiStepList,
   BoardCiPassSettle,
@@ -219,6 +221,8 @@ const BoardCardDbRow = Schema.Struct({
   ciLastOutcome: Schema.NullOr(Schema.fromJsonString(BoardCardCiLastOutcome)),
   // CI failure round trips without a human.
   ciRoundTrips: Schema.Int,
+  /** T3o: migration 069, NULL until the card has a size, grant or setup (T3O-86). */
+  resources: Schema.NullOr(Schema.fromJsonString(BoardCardResources)),
   /** Migration 051: NULL `groupTarget` is a leaf. */
   groupTarget: Schema.NullOr(BoardCardGroupTarget),
   groupAutoBuild: Schema.Int,
@@ -547,6 +551,15 @@ const BoardPlanDbRow = Schema.Struct({
   locked: Schema.Int,
   /** 0/1; migration 052 defaults every older row to 1 (planned). */
   planned: Schema.Int,
+  /** T3o: migration 069; NULL when the planner suggested no size (T3O-86). */
+  sizing: Schema.NullOr(
+    Schema.fromJsonString(
+      Schema.Struct({
+        size: BoardCardSize,
+        reason: Schema.optionalKey(BoardPlan.fields.title),
+      }),
+    ),
+  ),
   body: Schema.String,
   createdAt: BoardPlan.fields.createdAt,
   updatedAt: BoardPlan.fields.updatedAt,
@@ -566,6 +579,8 @@ function rowToBoardPlan(row: BoardPlanDbRow): BoardPlan {
     ordinal: row.ordinal,
     locked: row.locked !== 0,
     ...(row.planned === 0 ? { planned: false } : {}),
+    ...(row.sizing === null ? {} : { size: row.sizing.size }),
+    ...(row.sizing?.reason === undefined ? {} : { sizeReason: row.sizing.reason }),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -726,6 +741,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     ci: card.ci,
     ciLastOutcome: card.ciLastOutcome,
     ciRoundTrips: card.ciRoundTrips,
+    resources: card.resources,
     groupTarget: card.group?.target ?? null,
     groupAutoBuild: card.group?.autoBuild === true ? 1 : 0,
     groupAutoMerge: card.group?.autoMerge === true ? 1 : 0,
@@ -827,6 +843,7 @@ function rowToBoardCard(
     ci: row.ci,
     ciLastOutcome: row.ciLastOutcome,
     ciRoundTrips: row.ciRoundTrips,
+    resources: row.resources,
     group: boardCardGroupFromRow(row),
     blocked: row.blocked !== 0,
     threadLinks,
@@ -903,6 +920,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ci,
         ci_last_outcome,
         ci_round_trips,
+        resources,
         group_target,
         group_auto_build,
         group_auto_merge,
@@ -955,6 +973,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.ci},
         ${row.ciLastOutcome},
         ${row.ciRoundTrips},
+        ${row.resources},
         ${row.groupTarget},
         ${row.groupAutoBuild},
         ${row.groupAutoMerge},
@@ -1007,6 +1026,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ci = excluded.ci,
         ci_last_outcome = excluded.ci_last_outcome,
         ci_round_trips = excluded.ci_round_trips,
+        resources = excluded.resources,
         group_target = excluded.group_target,
         group_auto_build = excluded.group_auto_build,
         group_auto_merge = excluded.group_auto_merge,
@@ -1069,6 +1089,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ci,
         ci_last_outcome AS "ciLastOutcome",
         ci_round_trips AS "ciRoundTrips",
+        resources,
         group_target AS "groupTarget",
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
@@ -1476,6 +1497,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ci,
         ci_last_outcome AS "ciLastOutcome",
         ci_round_trips AS "ciRoundTrips",
+        resources,
         group_target AS "groupTarget",
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
@@ -2497,13 +2519,13 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     Request: BoardPlanDbRow,
     execute: (row) => sql`
       INSERT INTO board_plans (
-        plan_id, card_id, title, summary, depends_on, ordinal, locked, planned, body,
+        plan_id, card_id, title, summary, depends_on, ordinal, locked, planned, sizing, body,
         created_at, updated_at
       )
       VALUES (
         ${row.planId}, ${row.cardId}, ${row.title}, ${row.summary}, ${row.dependsOn},
-        ${row.ordinal}, ${row.locked}, ${row.planned}, ${row.body}, ${row.createdAt},
-        ${row.updatedAt}
+        ${row.ordinal}, ${row.locked}, ${row.planned}, ${row.sizing}, ${row.body},
+        ${row.createdAt}, ${row.updatedAt}
       )
       ON CONFLICT (plan_id)
       DO UPDATE SET
@@ -2514,6 +2536,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ordinal = excluded.ordinal,
         locked = excluded.locked,
         planned = excluded.planned,
+        sizing = excluded.sizing,
         body = excluded.body,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at
@@ -2547,6 +2570,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ordinal,
         locked,
         planned,
+        sizing,
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2570,6 +2594,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ordinal,
         locked,
         planned,
+        sizing,
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2591,6 +2616,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ordinal,
         locked,
         planned,
+        sizing,
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -3038,6 +3064,13 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           ordinal: plan.ordinal,
           locked: plan.locked ? 1 : 0,
           planned: plan.planned === false ? 0 : 1,
+          sizing:
+            plan.size === undefined
+              ? null
+              : {
+                  size: plan.size,
+                  ...(plan.sizeReason === undefined ? {} : { reason: plan.sizeReason }),
+                },
           body: plan.body,
           createdAt: plan.createdAt,
           updatedAt: plan.updatedAt,
@@ -3118,6 +3151,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
                   ...copy,
                   locked: 0,
                   planned: 1,
+                  sizing: planRow.value.sizing,
                   body: planRow.value.body,
                 })
                 .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.plans:query")));
@@ -3302,6 +3336,8 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
       // same thing. The reactor rails the refusal ONCE, through
       // `card-merge-refused`, at the moment the ladder actually stops.
       case "board.card-auto-merge-hold-recorded":
+      // T3o: a card's size, grant or setup (T3O-86): the column only, no rail row.
+      case "board.card-resources-recorded":
       // Worktree lifecycle: every payload carries the whole card, so
       // the persisted projection is the same idempotent upsert — the worktree
       // column rides `board_cards` with the rest of the aggregate.

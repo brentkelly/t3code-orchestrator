@@ -111,6 +111,7 @@ const makeCard = (overrides: Partial<BoardCard> = {}): BoardCard => ({
   ci: null,
   ciLastOutcome: null,
   ciRoundTrips: 0,
+  resources: null,
   worktree: readyWorktree,
   pullRequest: null,
   pullRequestHistory: [],

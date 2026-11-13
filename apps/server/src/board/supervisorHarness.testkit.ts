@@ -236,6 +236,7 @@ export const makeBoardCard = (input: {
   ci: input.ci ?? null,
   ciLastOutcome: input.ciLastOutcome ?? null,
   ciRoundTrips: input.ciRoundTrips ?? 0,
+  resources: null,
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
   pullRequestHistory: input.pullRequestHistory ?? [],

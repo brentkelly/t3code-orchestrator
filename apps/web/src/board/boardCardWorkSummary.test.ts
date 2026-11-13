@@ -61,6 +61,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     ci: null,
     ciLastOutcome: null,
     ciRoundTrips: 0,
+    resources: null,
     worktree: null,
     blocked: false,
     archivedAt: null,

@@ -6,6 +6,9 @@
  */
 import {
   BOARD_SEED_STAGE_IDS,
+  canonicalJson,
+  withBoardCardPlannerSize,
+  withBoardCardSizeEdit,
   BOARD_DECISIONS_PER_CALL_MAX,
   isBoardCardAutoPlanPending,
   BOARD_CARD_BRIEF_BODY_KIND,
@@ -526,6 +529,46 @@ const makeBoardEventBase = Effect.fn("makeBoardEventBase")(function* (input: {
     correlationId: input.commandId,
     metadata: {},
   };
+});
+
+/** T3o: a card's resources changed (T3O-86), carrying the whole card. */
+export const cardResourcesRecordedEvent = Effect.fn("cardResourcesRecordedEvent")(
+  function* (input: {
+    readonly card: BoardCard;
+    readonly resources: BoardCard["resources"];
+    readonly command: Pick<BoardCommand, "commandId" | "createdAt">;
+  }) {
+    const card: BoardCard = { ...input.card, resources: input.resources };
+    return {
+      ...(yield* makeBoardEventBase({
+        cardId: card.id,
+        occurredAt: input.command.createdAt,
+        commandId: input.command.commandId,
+      })),
+      type: "board.card-resources-recorded" as const,
+      payload: { cardId: card.id, card },
+    } satisfies PlannedBoardEvent;
+  },
+);
+
+/** The planner's size for a card proposed one plan, or null when nothing changes. A split's
+    sizes reach each child at approval instead. */
+const plannerSizeRecorded = Effect.fn("plannerSizeRecorded")(function* (input: {
+  readonly board: BoardState;
+  readonly command: Pick<BoardCommand, "commandId" | "createdAt">;
+  readonly card: BoardCard;
+  readonly plans: ReadonlyArray<Pick<BoardPlan, "size" | "sizeReason">>;
+}) {
+  const only = input.plans.length === 1 ? input.plans[0]! : null;
+  const planner =
+    only?.size === undefined ? null : { size: only.size, reason: only.sizeReason ?? null };
+  const current = input.card.resources?.sizing?.planner ?? null;
+  if (canonicalJson(current) === canonicalJson(planner)) return null;
+  return yield* cardResourcesRecordedEvent({
+    card: input.card,
+    resources: withBoardCardPlannerSize(input.card.resources, planner),
+    command: input.command,
+  });
 });
 
 /**
@@ -2727,7 +2770,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         command.addDependsOn === undefined &&
         command.removeDependsOn === undefined &&
         command.addLabels === undefined &&
-        command.removeLabels === undefined
+        command.removeLabels === undefined &&
+        command.size === undefined
       ) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
@@ -2873,6 +2917,16 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           command.scheduledStartAt === undefined ? card.scheduledStartAt : command.scheduledStartAt,
         autoMergeHold: mergeStrategyChanged ? null : card.autoMergeHold,
         mergeStrategy,
+        // T3o: a size edit (T3O-86); null drops it, back to the planner's.
+        resources:
+          command.size === undefined
+            ? card.resources
+            : withBoardCardSizeEdit(
+                card.resources,
+                command.size === null
+                  ? null
+                  : { size: command.size, by: command.sizeEditor ?? "human" },
+              ),
         updatedAt: command.createdAt,
       };
       const updated: PlannedBoardEvent = {
@@ -4199,6 +4253,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           // Only a split's plans carry the flag; a single plan is the card's
           // own, which is planned by definition.
           ...(command.plans.length >= 2 && plan.planned === false ? { planned: false } : {}),
+          ...(plan.size === undefined ? {} : { size: plan.size }),
+          ...(plan.sizeReason === undefined ? {} : { sizeReason: plan.sizeReason }),
           createdAt: prior?.createdAt ?? command.createdAt,
           updatedAt: command.createdAt,
           body: plan.body,
@@ -4240,9 +4296,15 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         command.planReview?.enabled === true && plans.length > 0
           ? livePlanReviewStep(board, command.cardId)
           : null;
-      if (reviewStep === null || reviewStep.planReviewStartedAt !== undefined) return proposed;
+      // T3o: a single plan's size is the card's own planner size (T3O-86); a split's
+      // reaches each child at approval.
+      const sized = yield* plannerSizeRecorded({ board, command, card: proposalCard, plans });
+      if (reviewStep === null || reviewStep.planReviewStartedAt !== undefined) {
+        return sized === null ? proposed : [proposed, sized];
+      }
       return [
         proposed,
+        ...(sized === null ? [] : [sized]),
         yield* planReviewStartedEvent({
           command,
           state: reviewStep,
@@ -4456,6 +4518,18 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             parentCardId: card.id,
             sourcePlanId: plan.planId,
             ...(inheritedPin === null ? {} : { pinnedWorkerId: inheritedPin }),
+            ...(plan.size === undefined
+              ? {}
+              : {
+                  resources: {
+                    sizing: {
+                      planner: { size: plan.size, reason: plan.sizeReason ?? null },
+                      edit: null,
+                    },
+                    grant: null,
+                    setup: null,
+                  },
+                }),
             stage,
             orderKey,
             createdAt: command.createdAt,
@@ -5866,6 +5940,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     case "board.project.set-ci-steps":
     case "board.project.set-ci-enabled":
     case "board.project.set-ci-stop-on-failure":
+    case "board.project.set-resources":
     case "board.project.reset":
     case "board.project.import-file":
     case "board.project.dismiss-import":

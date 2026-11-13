@@ -52,6 +52,13 @@ import {
   BoardCiLogItem,
 } from "./boardWorkerGateway.ts";
 import {
+  BoardCardResources,
+  BoardCardSize,
+  BoardCardSizeEditor,
+  BoardProjectResources,
+  isEmptyBoardProjectResources,
+} from "./boardCapacity.ts";
+import {
   BOARD_WORKER_GIT_CALL_RPC_SCOPES,
   BOARD_WORKER_GIT_CALL_RPCS,
   BoardWorkspaceRemoteBranchTip,
@@ -2153,6 +2160,11 @@ export const BoardCard = Schema.Struct({
       and returns from Ready for merge for conflicts or failing checks. A
       human's move, Retry CI or Send back anyway starts it again. */
   ciRoundTrips: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  /** T3o: the card's size, what its worker granted, and its setup (T3O-86). Null until any is
+      set; decodes to null on older payloads, matching migration 069's NULL column. */
+  resources: Schema.NullOr(BoardCardResources).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** Derived from unmet dependencies at Ready and beyond, recorded by
       the decider at each move / dependency edit / unarchive. */
   blocked: Schema.Boolean,
@@ -2534,6 +2546,9 @@ export const BoardPlan = Schema.Struct({
       to build; false when it is a brief that still needs planning. Absent means
       planned. */
   planned: Schema.optionalKey(Schema.Boolean),
+  /** T3o: the planner's suggested size and why (T3O-86); absent is M on every dimension. */
+  size: Schema.optionalKey(BoardCardSize),
+  sizeReason: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -2825,6 +2840,8 @@ const BoardProjectStageConfigV2 = Schema.Struct({
   lastChangedBy: Schema.NullOr(BoardProjectConfigChange).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** T3o: the project's Resources settings (T3O-86); absent follows every default. */
+  resources: Schema.optionalKey(BoardProjectResources),
 });
 
 /** The legacy shape: a config resolved from a committed `t3o.json`. */
@@ -2883,15 +2900,17 @@ export type BoardProjectStageConfig = typeof BoardProjectStageConfigV2.Type;
 export type BoardProjectStageDelta = Pick<
   BoardProjectStageConfig,
   "stageSwitches" | "overrides" | "ci"
->;
+> & { readonly resources?: BoardProjectResources | undefined };
 
 /** A short, stable hash of a delta (FNV-1a over canonical JSON, two lanes).
     Runs on every client, so no `crypto`. */
 export function boardProjectConfigVersion(delta: BoardProjectStageDelta): string {
+  // Resources join the hash only when set, so every existing version stays as it was.
   const text = canonicalJson({
     stageSwitches: delta.stageSwitches,
     overrides: delta.overrides,
     ci: delta.ci,
+    ...(isEmptyBoardProjectResources(delta.resources) ? {} : { resources: delta.resources }),
   });
   let a = 0x811c9dc5;
   let b = 0x01000193 ^ text.length;
@@ -5054,6 +5073,10 @@ export const BoardCardUpdateCommand = Schema.Struct({
       carry is a no-op; a tombstoned label can be removed. Mutually exclusive
       with `labels`. */
   removeLabels: Schema.optional(Schema.Array(BoardLabelId)),
+  /** T3o: the card's size (T3O-86). Absent leaves it; null drops the edit, back to the
+      planner's; `sizeEditor` says whose edit it is, a human's unless an agent's tool says so. */
+  size: Schema.optional(Schema.NullOr(BoardCardSize)),
+  sizeEditor: Schema.optional(BoardCardSizeEditor),
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;
@@ -5388,6 +5411,19 @@ export const BoardProjectSetCiEnabledCommand = Schema.Struct({
 });
 export type BoardProjectSetCiEnabledCommand = typeof BoardProjectSetCiEnabledCommand.Type;
 
+/** T3o: the project's Resources settings, whole (T3O-86). A human's edit to the baseline
+    clears its "set at upgrade" mark. */
+export const BoardProjectSetResourcesCommand = Schema.Struct({
+  type: Schema.Literal("board.project.set-resources"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  resources: BoardProjectResources,
+  expectedConfigVersion: BoardExpectedConfigVersion,
+  actor: BoardSettingsActor,
+  createdAt: IsoDateTime,
+});
+export type BoardProjectSetResourcesCommand = typeof BoardProjectSetResourcesCommand.Type;
+
 /** The project's "Stop on failure" CI setting. It applies from the
     next pass; a running pass keeps the setting it started with. */
 export const BoardProjectSetCiStopOnFailureCommand = Schema.Struct({
@@ -5428,6 +5464,8 @@ export const BoardProjectImportDelta = Schema.Struct({
     stopOnFailure: Schema.optionalKey(Schema.Boolean),
   }),
   warnings: Schema.Array(Schema.String),
+  /** T3o: the file's `resources` (T3O-86); absent leaves the project's own. */
+  resources: Schema.optionalKey(BoardProjectResources),
 });
 export type BoardProjectImportDelta = typeof BoardProjectImportDelta.Type;
 
@@ -5536,6 +5574,9 @@ export const BoardProposedPlanInput = Schema.Struct({
       and the child lands ready to build. False: the body is a brief, and the
       child lands in the first stage to be planned on its own. */
   planned: Schema.optionalKey(Schema.Boolean),
+  /** T3o: the planner's suggested size per dimension, and why (T3O-86). */
+  size: Schema.optionalKey(BoardCardSize),
+  sizeReason: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type BoardProposedPlanInput = typeof BoardProposedPlanInput.Type;
 
@@ -6259,6 +6300,8 @@ export const BoardCardCreatedPayload = Schema.Struct({
   /** The card's merge strategy at birth. Absent follows the default,
       the same null migration 057's column defaults to. */
   mergeStrategy: Schema.optionalKey(BoardMergeStrategy),
+  /** T3o: a split child's planner size, from its plan (T3O-86). Absent is none. */
+  resources: Schema.optionalKey(BoardCardResources),
   /** Key-optional: absent is no reference, the null the column defaults to. */
   externalRef: Schema.optionalKey(BoardCardExternalRef),
   /** The decider has no SQL client, so the payload names the plan and the SQL projector
@@ -6665,6 +6708,8 @@ export const BoardProjectStageConfigSetPayload = Schema.Struct({
       "dismiss-import",
       "stage-deleted",
       "stage-created",
+      // T3o: the project's Resources settings (T3O-86).
+      "resources",
     ]),
   ),
 });
@@ -6771,6 +6816,14 @@ export const BoardCardAutoMergeHoldRecordedPayload = Schema.Struct({
 });
 export type BoardCardAutoMergeHoldRecordedPayload =
   typeof BoardCardAutoMergeHoldRecordedPayload.Type;
+
+/** T3o: a card's capacity state changed (T3O-86): its size, grant or setup. Carries the
+    whole post-change card, like the other card records. */
+export const BoardCardResourcesRecordedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  card: BoardCard,
+});
+export type BoardCardResourcesRecordedPayload = typeof BoardCardResourcesRecordedPayload.Type;
 
 /** A pass row change: only the keys present are written. */
 export const BoardCiPassSettle = Schema.Struct({
@@ -8089,6 +8142,7 @@ const BOARD_SETTINGS_COMMANDS = [
   BoardProjectSetCiStepsCommand,
   BoardProjectSetCiEnabledCommand,
   BoardProjectSetCiStopOnFailureCommand,
+  BoardProjectSetResourcesCommand,
   BoardProjectResetCommand,
   BoardProjectImportFileCommand,
   BoardProjectDismissImportCommand,
@@ -8157,6 +8211,8 @@ export const BOARD_EVENT_TYPES = [
   "board.card-pull-request-recorded",
   "board.card-note-recorded",
   "board.card-auto-merge-hold-recorded",
+  // T3o: a card's size, grant or setup (T3O-86).
+  "board.card-resources-recorded",
   // Planning decisions on a card's decision log.
   "board.card-decisions-recorded",
   "board.card-step-selected",
@@ -8447,6 +8503,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-ci-recorded"),
       payload: BoardCardCiRecordedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-resources-recorded"),
+      payload: BoardCardResourcesRecordedPayload,
     }),
     Schema.Struct({
       ...base,
