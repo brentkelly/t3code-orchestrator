@@ -343,6 +343,20 @@ describe("export", () => {
     });
     // A file without resources leaves the project's own, so it still matches.
     expect(boardProjectDeltasEqual(resolve({}).delta, back.delta)).toBe(true);
+    // A baseline the capacity upgrade set still matches the file exported from it.
+    const upgraded = {
+      ...back.delta,
+      resources: {
+        ...back.delta.resources!,
+        baseline: { ...back.delta.resources!.baseline!, setAtUpgrade: true },
+      },
+    };
+    const exported = resolve(
+      JSON.parse(
+        JSON.stringify(buildT3oProjectFile({ board: EMPTY_BOARD_STATE, config: upgraded })),
+      ),
+    );
+    expect(boardProjectDeltasEqual(exported.delta, upgraded)).toBe(true);
   });
 
   it("round-trips Stop on failure: absent is Yes, and only No is written (T3O-57)", () => {

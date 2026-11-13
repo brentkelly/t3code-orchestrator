@@ -139,10 +139,12 @@ export function boardProjectDeltasEqual(
   right: BoardProjectStageDelta,
 ): boolean {
   // `left` is the file's: one without `resources` leaves the project's own.
-  // T3o (T3O-87): a file carries neither what the board learned nor Pin declared.
+  // T3o (T3O-87): a file carries neither what the board learned, Pin declared, nor who set the baseline.
   const fileShaped = (resources: BoardProjectResources) => {
     const { learned: _learned, pinDeclared: _pinned, ...rest } = resources;
-    return rest;
+    if (rest.baseline == null) return rest;
+    const { setAtUpgrade: _setAtUpgrade, ...baseline } = rest.baseline;
+    return { ...rest, baseline };
   };
   const resources =
     left.resources === undefined ||
