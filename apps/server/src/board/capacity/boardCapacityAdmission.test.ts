@@ -260,6 +260,10 @@ it.effect("an unanswered claim costs a pass one timeout per worker, not one per 
     assert.strictEqual((yield* claim("a")).kind, "unavailable");
     assert.strictEqual((yield* claim("b")).kind, "unavailable");
     assert.strictEqual(h.fake.claims.length, 1);
+    // Nor is it sent the board's cards: a sync would cost the pass another timeout.
+    const syncs = h.fake.syncs.length;
+    yield* h.admission.syncAll();
+    assert.strictEqual(h.fake.syncs.length, syncs);
     // Once the backoff passes, the worker is asked again.
     h.fake.unreachable.clear();
     now.ms += UNREACHABLE_BACKOFF_MS;

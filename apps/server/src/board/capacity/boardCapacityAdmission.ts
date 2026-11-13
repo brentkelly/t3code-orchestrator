@@ -247,12 +247,16 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
   const syncWorker = Effect.fn("BoardCapacityAdmission.syncWorker")(function* (
     workerId: BoardWorkerId,
   ) {
+    // A worker that just left a call unanswered isn't asked again until the backoff passes.
+    if (yield* backingOff(workerId)) return yield* deps.client.synced(workerId);
     const board = yield* deps.readBoard;
     const keys = yield* repositoryKeys(board);
-    return yield* deps.client.syncCards(
+    const synced = yield* deps.client.syncCards(
       workerId,
       syncEntriesFor({ board, workerId, repositoryKey: keys }),
     );
+    if (!synced) yield* noteReach(workerId, false);
+    return synced;
   });
 
   const workersOf = (board: BoardState): ReadonlyArray<BoardWorkerId> => [
