@@ -67,10 +67,10 @@ import {
   boardGroupStats,
   boardGroupTargetLabel,
   boardShellGroup,
-  type BoardGroupChildState,
   type BoardGroupStats,
   type BoardGroupStatsInput,
 } from "./boardGroups";
+import { BOARD_GROUP_PIP_CLASS } from "./boardGroupPips";
 import {
   boardListDragBlocked,
   boardListDropRequest,
@@ -111,14 +111,6 @@ const INDENT_PX = 22;
 const VIRTUALISE_FROM = 150;
 const OVERSCAN = 12;
 const GRID_COLUMNS = "grid-cols-[minmax(0,1fr)_124px_168px_130px_150px_70px_82px]";
-
-const PIP_CLASS: Record<BoardGroupChildState, string> = {
-  done: "bg-success",
-  waiting: "bg-attention",
-  blocked: "bg-warning",
-  running: "bg-info/65",
-  idle: "bg-foreground/13",
-};
 
 const toggled = (current: ReadonlySet<string>, id: string): ReadonlySet<string> => {
   const next = new Set(current);
@@ -1196,7 +1188,10 @@ const BoardListRowView = memo(function BoardListRowView(props: BoardListRowViewP
                 const state = stats.states[index]!;
                 return (
                   <span
-                    className={cn("h-1 max-w-3 min-w-1 flex-1 rounded-xs", PIP_CLASS[state])}
+                    className={cn(
+                      "h-1.5 max-w-3 min-w-1 flex-1 rounded-xs",
+                      BOARD_GROUP_PIP_CLASS[state],
+                    )}
                     data-state={state}
                     key={child.key}
                   />
