@@ -5,6 +5,7 @@
  */
 import {
   boardRepositoryGroupingKey,
+  normalizeBoardReadinessPath,
   type ProjectId,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -242,10 +243,7 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
         scriptPath: string,
       ) {
         const ref = yield* defaultRef(checkout);
-        const version = (yield* gitRead(checkout, ["rev-parse", `${ref}:${scriptPath}`]))?.trim();
-        if (version === undefined || version === "") return null;
-        const text = yield* gitRead(checkout, ["show", `${ref}:${scriptPath}`]);
-        return text === null ? null : { version, text };
+        return yield* committedReadinessScript((args) => gitRead(checkout, args), ref, scriptPath);
       }),
     },
   });
@@ -409,4 +407,25 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
 export const BoardWorkerCapacityLive = Layer.effect(
   BoardWorkerCapacity,
   makeBoardWorkerCapacityLive,
+);
+
+/**
+ * The readiness script at `ref:path`, or null. The board normalises the path too, but the
+ * worker is what runs it: only a file inside the repository, never a tree's listing.
+ */
+export const committedReadinessScript = Effect.fn("BoardWorkerCapacity.committedReadinessScript")(
+  function* (
+    read: (args: ReadonlyArray<string>) => Effect.Effect<string | null>,
+    ref: string,
+    path: string,
+  ) {
+    const normalized = normalizeBoardReadinessPath(path);
+    if (normalized === null) return null;
+    const object = `${ref}:${normalized}`;
+    if ((yield* read(["cat-file", "-t", object]))?.trim() !== "blob") return null;
+    const version = (yield* read(["rev-parse", object]))?.trim();
+    if (version === undefined || version === "") return null;
+    const text = yield* read(["show", object]);
+    return text === null ? null : { version, text };
+  },
 );
