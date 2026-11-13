@@ -625,6 +625,9 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
    * active or queued) go light, longest idle first, so a parked or finished card's room
    * reaches the queue within a beat rather than ten minutes later.
    */
+  // Per worker, the snapshot the last cut-short was sized against: until a newer one shows the
+  // release, a pass reading the same headroom would release more idle cards than needed.
+  const releasedAgainst = new Map<BoardWorkerId, BoardWorkerCapacitySnapshot | null>();
   const releaseForWaiting = Effect.fn("BoardCapacityAdmission.releaseForWaiting")(function* () {
     const board = yield* deps.readBoard;
     const states = board.stepStates ?? [];
@@ -664,6 +667,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       if (firstCard === undefined) continue;
       const need = firstCard.resources?.grant?.profile ?? requestedProfileOf(board, firstCard);
       const snapshot = yield* deps.client.latest(workerId);
+      if (releasedAgainst.has(workerId) && releasedAgainst.get(workerId) === snapshot) continue;
       let freeCpu = snapshot?.headroom.cpuCores ?? 0;
       let freeRam = snapshot?.headroom.ramGiB ?? 0;
       const onWorker = idle
@@ -673,6 +677,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
         if (freeCpu >= need.cpuCores && freeRam >= need.ramGiB) break;
         const profile = card.resources!.grant!.profile;
         yield* release(card);
+        releasedAgainst.set(workerId, snapshot);
         released += 1;
         freeCpu += profile.cpuCores;
         freeRam += profile.ramGiB;

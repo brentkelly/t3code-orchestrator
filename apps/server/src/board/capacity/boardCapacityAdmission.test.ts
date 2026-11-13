@@ -259,6 +259,36 @@ it.effect("the cut-short frees a card whose step is held on a permission prompt"
   }),
 );
 
+it.effect("the cut-short releases once per snapshot, not again on the same stale headroom", () =>
+  Effect.gen(function* () {
+    const now = { ms: T0 };
+    const waiting = {
+      ...step("c", "queued"),
+      queuedBy: "capacity" as const,
+      queuedDetail: { workerId: BOARD_LOCAL_WORKER_ID },
+    };
+    const big = { profile: { cpuCores: 8, ramGiB: 8, diskGB: 5 } };
+    const h = yield* harness(
+      boardWith(
+        [granted("a", big), granted("b", big), { ...buildingCard("c", "c"), worktree: null }],
+        [waiting],
+      ),
+      now,
+    );
+    yield* h.admission.syncAll();
+    h.fake.frozen.set(BOARD_LOCAL_WORKER_ID, (yield* h.fake.client.latest(BOARD_LOCAL_WORKER_ID))!);
+    assert.isTrue(yield* h.admission.releaseForWaiting());
+    const stillHeavy = Effect.gen(function* () {
+      return [(yield* h.grantOf("a"))?.heavy, (yield* h.grantOf("b"))?.heavy].filter(Boolean)
+        .length;
+    });
+    assert.strictEqual(yield* stillHeavy, 1);
+    // The next pass reads the same snapshot, which doesn't show the release yet.
+    assert.isFalse(yield* h.admission.releaseForWaiting());
+    assert.strictEqual(yield* stillHeavy, 1);
+  }),
+);
+
 it.effect("a Too-big card, or one queued behind another, evicts no idle card's tail", () =>
   Effect.gen(function* () {
     const now = { ms: T0 };

@@ -39,6 +39,8 @@ export interface FakeCapacity {
   agentCap: string | null;
   /** Workers whose claims go unanswered, as a timed-out RPC would. */
   readonly unreachable: Set<BoardWorkerId>;
+  /** A snapshot `latest` keeps answering for a worker, as one not yet pushed again would. */
+  readonly frozen: Map<BoardWorkerId, BoardWorkerCapacitySnapshot>;
 }
 
 const fits = (need: BoardResourceProfile, room: BoardResourceProfile) =>
@@ -94,6 +96,7 @@ export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
     headroomOf,
     agentCap: null,
     unreachable: new Set(),
+    frozen: new Map(),
     publish: (workerId) => PubSub.publish(pubsub, workerId).pipe(Effect.asVoid),
     client: {
       localBoardId: "env-board",
@@ -141,6 +144,8 @@ export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
       synced: (workerId) => Effect.sync(() => synced.has(workerId)),
       latest: (workerId) =>
         Effect.sync((): BoardWorkerCapacitySnapshot | null => {
+          const frozen = fake.frozen.get(workerId);
+          if (frozen !== undefined) return frozen;
           const total = declared.get(workerId);
           if (total === undefined) return null;
           const room = headroomOf(workerId);
