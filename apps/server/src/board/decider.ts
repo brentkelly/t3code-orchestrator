@@ -6213,7 +6213,14 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ? null
           : withoutEmptyResources({ ...card.resources, grant: null, placement: null });
       for (const card of board.cards) {
-        const classification = classified.get(card.id);
+        // A worktree outcome stands only while the card still has its worktree there: a Move
+        // that landed since the probe keeps its new one.
+        const probed = classified.get(card.id);
+        const classification =
+          probed === "unplaced" ||
+          (card.placedWorkerId === command.workerId && boardCardHoldsWorktree(card))
+            ? probed
+            : undefined;
         if (classification === "reclaimed" || classification === "fresh") {
           const nextCard: BoardCard = {
             ...card,

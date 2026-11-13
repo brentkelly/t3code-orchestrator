@@ -285,6 +285,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
               { cardId: "fresh", outcome: "fresh" },
               { cardId: "dirty", outcome: "orphaned" },
               { cardId: "no-worktree", outcome: "unplaced" },
+              { cardId: "moved-away", outcome: "reclaimed" },
             ],
             createdAt: NOW,
           },
@@ -300,6 +301,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
               card("no-worktree", { pinnedWorkerId: workerA }),
               // A card placed there that the sequence didn't cover waits for a human.
               card("uncovered", { worktree: readyWorktree }),
+              // A Move that landed on worker B after the probe: its new worktree stays.
+              card("moved-away", { placedWorkerId: workerB, worktree: readyWorktree }),
             ],
           }),
         );
@@ -316,6 +319,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         expect(byId("dirty").placementOrphaned?.workerId).toBe(workerA);
         expect(byId("no-worktree").pinnedWorkerId).toBeNull();
         expect(byId("uncovered").placementOrphaned?.workerId).toBe(workerA);
+        expect(byId("moved-away").placedWorkerId).toBe(workerB);
+        expect(byId("moved-away").worktree).toEqual(readyWorktree);
       }),
     );
 
