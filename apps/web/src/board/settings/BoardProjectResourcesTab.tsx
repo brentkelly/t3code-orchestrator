@@ -6,6 +6,7 @@
 import {
   boardRepositoryGroupingKey,
   DEFAULT_BOARD_READINESS_SCRIPT_PATH,
+  resolveBoardProjectBaseline,
   resolveBoardProjectResourceSettings,
   type BoardWorkerCapacitySnapshot,
   type BoardWorkerId,
@@ -14,10 +15,12 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -26,6 +29,9 @@ import { boardToast } from "../boardToast";
 import { boardWorkerLabel } from "../workers/cardWorker";
 import {
   BOARD_BASELINE_FIELDS,
+  BOARD_READINESS_STARTER_SCRIPT,
+  boardBaselineSaveNotice,
+  boardProjectHardToPlace,
   boardProjectWorkerRows,
   boardResourcesDraftOf,
   boardResourcesOf,
@@ -57,6 +63,17 @@ export function BoardProjectResourcesTab(props: {
   );
   const workersState = useAtomValue(boardEnvironment.workersAtom(environmentId));
   const capacityResult = useAtomValue(boardEnvironment.capacityAtom({ environmentId, input: {} }));
+  const columns = useAtomValue(boardEnvironment.cardsByProjectAtom(environmentId)).get(
+    props.projectId,
+  );
+  const placedCards =
+    columns === undefined
+      ? 0
+      : Object.values(columns)
+          .flat()
+          .filter((card) => card.archivedAt === null && card.worktreeReady === true).length;
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const starter = useCopyToClipboard({ target: "starter script" });
   const setResources = useAtomCommand(boardEnvironment.setProjectResources, {
     reportFailure: false,
   });
@@ -75,11 +92,24 @@ export function BoardProjectResourcesTab(props: {
     snapshots,
     repositoryKey: boardRepositoryGroupingKey(project?.repositoryIdentity),
     readinessPath: settings.readinessPath,
-    baseline: settings.baseline,
   });
+  const hardToPlace = boardProjectHardToPlace(
+    "ok" in parsed ? resolveBoardProjectBaseline(parsed.ok) : settings.baseline,
+    rows,
+  );
 
-  const save = () => {
+  const save = (confirmed: boolean) => {
     if (!("ok" in parsed)) return;
+    const notice = boardBaselineSaveNotice(
+      placedCards,
+      settings.baseline,
+      resolveBoardProjectBaseline(parsed.ok),
+    );
+    if (notice !== null && !confirmed) {
+      setConfirming(notice);
+      return;
+    }
+    setConfirming(null);
     void setResources({
       environmentId,
       input: {
@@ -108,7 +138,10 @@ export function BoardProjectResourcesTab(props: {
           aria-label={label}
           className="w-28"
           disabled={!canWrite}
-          onChange={(event) => setDraft({ ...shown, [key]: event.target.value })}
+          onChange={(event) => {
+            setDraft({ ...shown, [key]: event.target.value });
+            setConfirming(null);
+          }}
           placeholder={placeholder}
           value={shown[key] ?? ""}
         />
@@ -123,7 +156,9 @@ export function BoardProjectResourcesTab(props: {
         <h3 className="text-board-13 font-medium">Baseline</h3>
         <p className="text-board-12 text-muted-foreground">
           What one M card of {props.projectTitle} reserves on its worker. S, L and XL scale it.
-          {resources?.baseline?.setAtUpgrade === true ? " Declared · set at upgrade." : ""}
+          {resources?.baseline?.setAtUpgrade === true
+            ? " Declared · set at upgrade: check it against your workers."
+            : ""}
         </p>
         <div className="flex flex-wrap gap-3">
           {BOARD_BASELINE_FIELDS.map((entry) => (
@@ -132,6 +167,14 @@ export function BoardProjectResourcesTab(props: {
             </div>
           ))}
         </div>
+        {hardToPlace.length === 0 ? null : (
+          <div className="flex flex-col gap-0.5 rounded-md bg-warning-surface px-3 py-2 text-board-12 text-warning-foreground">
+            <span className="font-medium">Hard to place</span>
+            {hardToPlace.map((line) => (
+              <span key={line}>{line}</span>
+            ))}
+          </div>
+        )}
       </section>
       <section className="flex flex-col gap-2">
         <h3 className="text-board-13 font-medium">Setup and readiness</h3>
@@ -153,18 +196,49 @@ export function BoardProjectResourcesTab(props: {
         <p className="text-board-12 text-muted-foreground">
           The readiness script runs from the default branch on each worker before cards are placed
           there. Make it check the machine (tools, services, credentials), not files in the
-          repository. With no script, a checkout counts as ready.
+          repository: the checkout may be at an older commit. With no script, a checkout counts as
+          ready. The script runs with T3O_READY_CHECKOUT set to the checkout's path.
         </p>
+        <details className="text-board-12">
+          <summary className="cursor-pointer text-muted-foreground">Starter script</summary>
+          <div className="mt-2 flex flex-col items-start gap-2">
+            <pre className="w-full overflow-auto rounded-md bg-muted p-2 font-mono text-board-11 whitespace-pre">
+              {BOARD_READINESS_STARTER_SCRIPT}
+            </pre>
+            <Button
+              onClick={() => starter.copyToClipboard(BOARD_READINESS_STARTER_SCRIPT)}
+              size="xs"
+              variant="outline"
+            >
+              {starter.isCopied ? <CheckIcon /> : <CopyIcon />}
+              {starter.isCopied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+        </details>
       </section>
       {canWrite ? (
         <div className="flex items-center gap-2">
-          <Button disabled={draft === null || !("ok" in parsed)} onClick={save} size="sm">
-            Save
+          <Button
+            disabled={draft === null || !("ok" in parsed)}
+            onClick={() => save(confirming !== null)}
+            size="sm"
+          >
+            {confirming === null ? "Save" : "Save anyway"}
           </Button>
           {draft === null ? null : (
-            <Button onClick={() => setDraft(null)} size="sm" variant="ghost-muted">
+            <Button
+              onClick={() => {
+                setDraft(null);
+                setConfirming(null);
+              }}
+              size="sm"
+              variant="ghost-muted"
+            >
               Discard
             </Button>
+          )}
+          {confirming === null ? null : (
+            <span className="text-board-12 text-muted-foreground">{confirming}</span>
           )}
           {"error" in parsed ? (
             <span className="text-board-12 text-warning-foreground">{parsed.error}</span>
@@ -241,9 +315,6 @@ export function BoardProjectResourcesTab(props: {
                     ) : null}
                   </span>
                 </div>
-                {row.hardToPlace === null ? null : (
-                  <p className="text-warning-foreground">Hard to place. {row.hardToPlace}</p>
-                )}
                 {output?.workerId === row.workerId ? (
                   <pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 font-mono text-board-11 whitespace-pre-wrap">
                     {output.text.length === 0 ? "No output." : output.text}

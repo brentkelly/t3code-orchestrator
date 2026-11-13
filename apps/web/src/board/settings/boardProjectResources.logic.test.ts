@@ -2,6 +2,8 @@ import type { BoardWorkerCapacitySnapshot, BoardWorkerId } from "@t3tools/contra
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardBaselineSaveNotice,
+  boardProjectHardToPlace,
   boardProjectWorkerRows,
   boardResourcesDraftOf,
   boardResourcesOf,
@@ -26,7 +28,7 @@ const local = "local" as BoardWorkerId;
 const small = "small" as BoardWorkerId;
 
 describe("boardProjectWorkerRows", () => {
-  it("reads this project's readiness off each worker and flags a worker an M card can't fit", () => {
+  it("reads this project's readiness off each worker", () => {
     const rows = boardProjectWorkerRows({
       workers: [
         { workerId: local, label: "This server" },
@@ -60,7 +62,6 @@ describe("boardProjectWorkerRows", () => {
       ]),
       repositoryKey: "github.com/acme/app",
       readinessPath: ".t3/ready.sh",
-      baseline: { cpuCores: 2, ramGiB: 12, diskGB: 5 },
     });
     expect(rows).toEqual([
       {
@@ -68,16 +69,58 @@ describe("boardProjectWorkerRows", () => {
         label: "This server",
         state: "not-ready",
         detail: "Exit 1 · missing docker",
-        hardToPlace: null,
+        declared: { cpuCores: 16, ramGiB: 64, diskGB: 500 },
       },
       {
         workerId: small,
         label: "build-02",
         state: null,
         detail: null,
-        hardToPlace: "An M card needs 12 GiB of RAM; build-02 declares 8.",
+        declared: { cpuCores: 8, ramGiB: 8, diskGB: 500 },
       },
     ]);
+  });
+});
+
+describe("boardProjectHardToPlace", () => {
+  const worker = (label: string, cpuCores: number, state: "ready" | "not-ready" = "ready") => ({
+    label,
+    state,
+    declared: { cpuCores, ramGiB: 64, diskGB: 500 },
+  });
+  const baseline = (cpuCores: number) => ({ cpuCores, ramGiB: 4, diskGB: 5 });
+
+  it("warns per dimension, against only the workers ready for the project", () => {
+    const workers = [worker("build-01", 16), worker("build-02", 8), worker("big", 64, "not-ready")];
+    expect(boardProjectHardToPlace(baseline(20), workers)).toEqual([
+      "CPU: an M card needs 20 cores; the largest ready worker declares 16. No card can be placed.",
+    ]);
+    expect(boardProjectHardToPlace(baseline(14), workers)).toEqual([
+      "CPU: L and XL cards can't be placed; the largest ready worker declares 16 cores.",
+    ]);
+    expect(boardProjectHardToPlace(baseline(10), workers)).toEqual([
+      "CPU: only build-01 fits an M card, so cards will queue behind each other.",
+    ]);
+    expect(boardProjectHardToPlace(baseline(4), workers)).toEqual([]);
+  });
+
+  it("doesn't call a lone worker the only one that fits, and says nothing with none ready", () => {
+    expect(boardProjectHardToPlace(baseline(10), [worker("This server", 16)])).toEqual([]);
+    expect(boardProjectHardToPlace(baseline(99), [worker("x", 16, "not-ready")])).toEqual([]);
+  });
+});
+
+describe("boardBaselineSaveNotice", () => {
+  const before = { cpuCores: 2, ramGiB: 4, diskGB: 5 };
+  it("names the placed cards a changed baseline won't reach", () => {
+    expect(boardBaselineSaveNotice(7, before, { ...before, cpuCores: 4 })).toBe(
+      "7 placed cards keep their current reservation.",
+    );
+    expect(boardBaselineSaveNotice(1, before, { ...before, diskGB: 9 })).toBe(
+      "1 placed card keeps its current reservation.",
+    );
+    expect(boardBaselineSaveNotice(7, before, before)).toBeNull();
+    expect(boardBaselineSaveNotice(0, before, { ...before, cpuCores: 4 })).toBeNull();
   });
 });
 
