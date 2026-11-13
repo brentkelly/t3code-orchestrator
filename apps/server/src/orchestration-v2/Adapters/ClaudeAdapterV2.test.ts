@@ -8520,7 +8520,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           maxOutputTokens: 32_000,
         },
       });
-      const restored = { input: 1_000_000, output: 50_000, cacheRead: 5_000_000, cacheWrite: 200_000 };
+      const restored = {
+        input: 1_000_000,
+        output: 50_000,
+        cacheRead: 5_000_000,
+        cacheWrite: 200_000,
+      };
       const lastTurnTokenUsage = () => {
         const updated = harness.events.findLast((event) => event.type === "provider_turn.updated");
         return updated?.type === "provider_turn.updated"
@@ -8585,7 +8590,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, IdAllocator.layer, McpProviderSessions.layer),
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+        ),
       ),
     ),
   );

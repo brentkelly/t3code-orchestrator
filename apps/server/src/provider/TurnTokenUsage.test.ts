@@ -255,7 +255,12 @@ describe("billable native turn usage", () => {
       normalizeClaudeTurnTokenUsage(result, true, "completed", [], { ledger: ledger(140) }),
     ).toMatchObject({
       usageStatus: "complete",
-      otherUsage: { inputTokens: 45, outputTokens: 7, cachedInputTokens: 40, cacheCreationTokens: 2 },
+      otherUsage: {
+        inputTokens: 45,
+        outputTokens: 7,
+        cachedInputTokens: 40,
+        cacheCreationTokens: 2,
+      },
     });
     // A field below the main agent's own count means the ledger cannot be trusted.
     const shrunk = normalizeClaudeTurnTokenUsage(result, false, "completed", [], {

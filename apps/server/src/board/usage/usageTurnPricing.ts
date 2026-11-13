@@ -35,13 +35,9 @@ const ZERO: UsageTokenTotals = {
 
 type OtherUsage = NonNullable<BoardGatewayTurnUsage["otherUsage"]>;
 
-/**
- * `otherUsage` split into the board's columns. Legacy `otherUsage` (no cache fields: turns
- * stored before T3O-90, or an old worker) folded cache into input. With no subagents it was a
- * resumed process's restored totals or compaction, so it is dropped; otherwise its input is
- * split by the main turn's own cache ratios. Either guess makes the turn partial, except a
- * split known to have subagents.
- */
+/** Legacy `otherUsage` (no cache fields, pre-T3O-90) folded cache into input. Without subagents
+    it was restored session totals or compaction, so it is dropped; otherwise it is split by the
+    main turn's cache ratios. A guess marks the turn partial, unless subagents are known. */
 function otherUsageTotals(
   usage: BoardGatewayTurnUsage,
   other: OtherUsage,
@@ -64,13 +60,15 @@ function otherUsageTotals(
     return { totals: ZERO, partial: other.inputTokens + other.outputTokens > 0 };
   }
   const mainInput = usage.inputTokens ?? 0;
-  const cachedRatio = mainInput === 0 ? 0 : Math.min(usage.cachedInputTokens ?? 0, mainInput) / mainInput;
+  const cachedRatio =
+    mainInput === 0 ? 0 : Math.min(usage.cachedInputTokens ?? 0, mainInput) / mainInput;
   const creationRatio =
-    mainInput === 0
-      ? 0
-      : Math.min(usage.cacheCreationTokens ?? 0, mainInput) / mainInput;
+    mainInput === 0 ? 0 : Math.min(usage.cacheCreationTokens ?? 0, mainInput) / mainInput;
   const cached = Math.round(other.inputTokens * cachedRatio);
-  const creation = Math.min(Math.round(other.inputTokens * creationRatio), other.inputTokens - cached);
+  const creation = Math.min(
+    Math.round(other.inputTokens * creationRatio),
+    other.inputTokens - cached,
+  );
   return {
     totals: {
       ...ZERO,
