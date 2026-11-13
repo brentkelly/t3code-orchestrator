@@ -36,6 +36,8 @@ import {
   type BoardWorkerView,
   type EnvironmentId,
   type ProjectCloneSnapshot,
+  type BoardCardId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -122,6 +124,9 @@ const RELEASE_TIMEOUT = "5 seconds";
 
 /** How long Remove waits for the worker to stop each running step. */
 const STOP_TIMEOUT = "5 seconds";
+
+/** How many times, a second apart, Remove reads a stopped step's thread for its turn to end. */
+const TURN_END_CHECKS = 30;
 
 /** How long Set up waits for the worker to accept the clone. Starting one
     only checks the folder and spawns git, so this is generous. */
@@ -411,6 +416,8 @@ export const makeBoardWorkers = Effect.gen(function* () {
    */
   const classifyForRemoval = Effect.fn("BoardWorkers.classifyForRemoval")(function* (
     workerId: EnvironmentId,
+    /** Cards whose step may still be writing to its worktree: never probed, a human decides. */
+    unsettled: ReadonlySet<BoardCardId>,
   ) {
     const board = yield* readBoard;
     const classifications: Array<BoardWorkerRemovalClassification> = [];
@@ -421,7 +428,12 @@ export const makeBoardWorkers = Effect.gen(function* () {
         continue;
       }
       const worktree = card.worktree;
-      if (Option.isNone(workspaces) || worktree === null || worktree.path === null) {
+      if (
+        Option.isNone(workspaces) ||
+        worktree === null ||
+        worktree.path === null ||
+        unsettled.has(card.id)
+      ) {
         classifications.push({ cardId: card.id, outcome: "orphaned" });
         continue;
       }
@@ -436,6 +448,31 @@ export const makeBoardWorkers = Effect.gen(function* () {
       });
     }
     return classifications;
+  });
+
+  /** Whether a stopped thread's turn has ended, read for up to TURN_END_CHECKS seconds. */
+  const turnEnded = Effect.fn("BoardWorkers.turnEnded")(function* (
+    gateway: WorkerRpc["gateway"],
+    threadId: ThreadId,
+  ) {
+    for (let check = 0; check < TURN_END_CHECKS; check += 1) {
+      const read = yield* gateway
+        .threadState(threadId)
+        .pipe(Effect.timeout(STOP_TIMEOUT), Effect.option);
+      if (Option.isNone(read)) return false;
+      const thread = read.value;
+      if (
+        thread === null ||
+        !thread.alive ||
+        (thread.activeTurnRef === null &&
+          thread.sessionStatus !== "running" &&
+          thread.sessionStatus !== "starting")
+      ) {
+        return true;
+      }
+      yield* Effect.sleep("1 second");
+    }
+    return false;
   });
 
   const remove: BoardWorkersShape["remove"] = Effect.fn("BoardWorkers.remove")(
@@ -457,9 +494,11 @@ export const makeBoardWorkers = Effect.gen(function* () {
     // T3o: park each running step the way a human Stop does, then stop its session, before
     // anything is probed: a stop alone reads as an unattended turn ending, and the supervisor
     // would put the agent back to work mid-probe (T3O-87).
+    // A step that wasn't parked, or whose turn didn't end, could still commit after its probe.
+    const unsettled = new Set<BoardCardId>();
     if (Option.isSome(rpc)) {
       for (const step of running) {
-        yield* engine
+        const paused = yield* engine
           .dispatch({
             type: "board.card.pause-step",
             commandId: yield* newCommandId,
@@ -467,13 +506,20 @@ export const makeBoardWorkers = Effect.gen(function* () {
             stepId: step.stepId,
             createdAt: yield* nowIso,
           })
-          .pipe(Effect.ignore);
+          .pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          );
         yield* rpc.value.gateway
           .stopSession({ commandId: yield* newCommandId, threadId: step.threadId })
           .pipe(Effect.timeout(STOP_TIMEOUT), Effect.ignore);
+        const ended = yield* turnEnded(rpc.value.gateway, step.threadId);
+        if (!paused || !ended) unsettled.add(step.cardId);
       }
     }
-    const classifications = Option.isSome(rpc) ? yield* classifyForRemoval(workerId) : [];
+    const classifications = Option.isSome(rpc)
+      ? yield* classifyForRemoval(workerId, unsettled)
+      : [];
     // The record goes after the sequence and before release: a removal the decider refuses
     // must leave the worker's session and token intact.
     yield* engine
