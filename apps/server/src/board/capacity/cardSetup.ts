@@ -7,7 +7,6 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import {
-  BOARD_CAPACITY_LOG_MAX_BYTES,
   BOARD_CARD_SETUP_STAGES,
   BOARD_CARD_SETUP_TAIL_LINES,
   type BoardCardSetupProgress,
@@ -24,6 +23,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import { BoardCiTail, runBoardCiStep } from "../ci/BoardCiRunner.ts";
+import { readLogTail } from "./logTail.ts";
 
 export const SETUP_DONE_MARKER = "t3o-setup-done";
 const SETUP_LOG = "t3o-setup.log";
@@ -239,16 +239,7 @@ export const makeCardSetup = (deps: CardSetupDeps) => {
   const readLog = Effect.fn("CardSetup.readLog")(function* (worktreePath: string) {
     const paths = yield* markerPath(worktreePath);
     if (paths === null) return "";
-    return yield* Effect.sync(() => {
-      try {
-        const text = NodeFS.readFileSync(NodePath.join(paths.dir, SETUP_LOG), "utf8");
-        return text.length > BOARD_CAPACITY_LOG_MAX_BYTES
-          ? text.slice(-BOARD_CAPACITY_LOG_MAX_BYTES)
-          : text;
-      } catch {
-        return "";
-      }
-    });
+    return yield* Effect.sync(() => readLogTail(NodePath.join(paths.dir, SETUP_LOG)) ?? "");
   });
 
   return { run, state, cancel, readLog };

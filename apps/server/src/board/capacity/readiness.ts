@@ -8,7 +8,6 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
-  BOARD_CAPACITY_LOG_MAX_BYTES,
   normalizeBoardReadinessPath,
   type BoardWorkerCheckReadinessInput,
   type BoardWorkerReadiness,
@@ -19,6 +18,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 
 import { BoardCiTail, runBoardCiStep } from "../ci/BoardCiRunner.ts";
+import { readLogTail } from "./logTail.ts";
 
 /** A result asked for within this long of the last one is that one. */
 const REUSE_MS = 30_000;
@@ -54,24 +54,6 @@ interface Entry {
   /** Boards that asked about this one, so a board sees only its own projects. */
   readonly boards: Set<string>;
 }
-
-/** A log file's last `BOARD_CAPACITY_LOG_MAX_BYTES`, or null when it can't be read. */
-const readLogTail = (logPath: string): string | null => {
-  try {
-    const size = NodeFS.statSync(logPath).size;
-    const length = Math.min(size, BOARD_CAPACITY_LOG_MAX_BYTES);
-    const buffer = Buffer.alloc(length);
-    const fd = NodeFS.openSync(logPath, "r");
-    try {
-      NodeFS.readSync(fd, buffer, 0, length, size - length);
-    } finally {
-      NodeFS.closeSync(fd);
-    }
-    return buffer.toString("utf8");
-  } catch {
-    return null;
-  }
-};
 
 /** A repository by its key; with no remote, the project is the repository. */
 export const repositoryIdentity = (repositoryKey: string | null, projectId: string | undefined) =>
