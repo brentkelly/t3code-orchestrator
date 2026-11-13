@@ -1392,14 +1392,15 @@ const make = Effect.gen(function* () {
       return { kind: "held", hold: holding ?? ranked.hold } as WorktreeOutcome;
     }
     let lastHold: CapacityHold | null = null;
+    const folderless: Array<BoardCardWorkspace> = [];
     for (const candidate of ranked.ranked) {
       const workspace = yield* workspaces.forWorker(candidate.workerId, card.projectId);
       const cwd = workspace.checkoutPath;
       // Pre-flight failures report onto the card, not the server log: the card is where the
       // human is looking.
       if (cwd === null) {
-        if (ranked.ranked.length > 1) continue;
-        return yield* stuck(noWorkspaceFolderReason(workspace));
+        folderless.push(workspace);
+        continue;
       }
       const resolved = yield* resolveDefaultBranch(workspace);
       if (resolved.unavailable) continue;
@@ -1461,14 +1462,17 @@ const make = Effect.gen(function* () {
         continue;
       }
       if (placement.kind === "unavailable") continue;
-      if (placement.kind === "granted") {
+      // This pass's grants on the worker, with this one added (1) or taken back (-1).
+      const charge = (sign: 1 | -1) => {
+        if (placement.kind !== "granted") return;
         const before = pass.grants.get(candidate.workerId) ?? ZERO_BOARD_RESOURCE_PROFILE;
         pass.grants.set(candidate.workerId, {
-          cpuCores: before.cpuCores + placement.profile.cpuCores,
-          ramGiB: before.ramGiB + placement.profile.ramGiB,
-          diskGB: before.diskGB + placement.profile.diskGB,
+          cpuCores: before.cpuCores + sign * placement.profile.cpuCores,
+          ramGiB: before.ramGiB + sign * placement.profile.ramGiB,
+          diskGB: before.diskGB + sign * placement.profile.diskGB,
         });
-      }
+      };
+      charge(1);
       const provisionClaim =
         placement.kind === "granted"
           ? {
@@ -1509,7 +1513,11 @@ const make = Effect.gen(function* () {
           : {}),
         createdAt: yield* nowIso,
       });
-      if (!placed) return unreachable;
+      if (!placed) {
+        // Its claim lapses unused on the worker; the next candidate may still take the card.
+        charge(-1);
+        continue;
+      }
       placementRejections.delete(String(card.id));
       // T3o: placed: its other holds go at once; the provision consumes this one (T3O-87).
       yield* releaseCardHolds(String(card.id), candidate.workerId);
@@ -1534,7 +1542,10 @@ const make = Effect.gen(function* () {
             }).pipe(Effect.as(false)),
           ),
         );
-      if (!provisionAccepted) return unreachable;
+      if (!provisionAccepted) {
+        charge(-1);
+        return unreachable;
+      }
       return yield* provisionOnWorkspace(
         card,
         workspace,
@@ -1543,6 +1554,15 @@ const make = Effect.gen(function* () {
         card.worktree,
         fromRemote,
       );
+    }
+    // No candidate has a checkout of the project: say so, rather than wait without a reason.
+    const [firstFolderless] = folderless;
+    if (
+      lastHold === null &&
+      firstFolderless !== undefined &&
+      folderless.length === ranked.ranked.length
+    ) {
+      return yield* stuck(noWorkspaceFolderReason(firstFolderless));
     }
     if (lastHold === null) return unreachable;
     // Every candidate refused its claim: the card asks for holds as it would with none.

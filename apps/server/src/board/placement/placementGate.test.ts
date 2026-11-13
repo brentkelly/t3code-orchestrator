@@ -62,6 +62,8 @@ interface WorkerGit {
   readonly remoteBranches: Set<string>;
   /** Workers that refuse a provision whose claim expired. */
   readonly claimExpired: Set<BoardWorkerId>;
+  /** Workers with no checkout of the project. */
+  readonly noCheckout: Set<BoardWorkerId>;
 }
 
 const newWorkerGit = (): WorkerGit => ({
@@ -70,6 +72,7 @@ const newWorkerGit = (): WorkerGit => ({
   missingBase: new Set(),
   remoteBranches: new Set(),
   claimExpired: new Set(),
+  noCheckout: new Set(),
 });
 
 /** Every worker runs over the harness's own local git, logging what it was asked. */
@@ -122,7 +125,7 @@ const loggingWorkspaces = (git: WorkerGit) => (local: LocalBoardWorkspaceDeps) =
         bindBoardWorkspace({
           workspace: on(placement.workerId),
           projectId: placement.projectId,
-          checkoutPath,
+          checkoutPath: git.noCheckout.has(placement.workerId) ? null : checkoutPath,
         }),
       ),
     workerProjectOf: (_workerId, projectId) => Effect.succeed(projectId),
@@ -395,6 +398,29 @@ describe("the placement gate (T3O-87)", () => {
           }),
         );
       }),
+  );
+
+  it.effect("when no candidate has a checkout, the card says so instead of waiting", () =>
+    Effect.gen(function* () {
+      const capacity = yield* capacityOf([
+        [W1, FULL],
+        [W2, BIG],
+      ]);
+      const git = newWorkerGit();
+      git.noCheckout.add(W1);
+      git.noCheckout.add(W2);
+      const card = unplaced("card-1", "a");
+      yield* run({ cards: [card], capacity, git }, (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(card, 1));
+          const failed = (yield* h.commands).find(
+            (command) => command.type === "board.card.fail-worktree",
+          );
+          assert.ok(failed?.type === "board.card.fail-worktree");
+          assert.include(failed.error, "no checkout");
+        }),
+      );
+    }),
   );
 
   it.effect("a card with a worktree isn't re-placed while its worker exists", () =>
