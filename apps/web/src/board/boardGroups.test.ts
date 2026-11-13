@@ -100,7 +100,7 @@ describe("boardGroupCardVm", () => {
     expect(vm.pips[2]!.tooltip).toBe("C-1 · Card c-1 (needs you)");
   });
 
-  it("orders pips done, running, needs you, blocked, queued, not started, keeping child order within a state", () => {
+  it("orders pips done, running, needs you, blocked, held, queued, not started, keeping child order within a state", () => {
     const sorted = shell("g-4", "building", { group: group() });
     const cards = [
       sorted,
@@ -113,7 +113,7 @@ describe("boardGroupCardVm", () => {
       child("s-5", "done", "g-4"),
       child("s-6", "planning", "g-4"),
       child("s-7", "building", "g-4", { queued: true, queuedBy: "board" }),
-      // Held by an offline worker: no slot will start it, so amber, not hatched or solid.
+      // Held by an offline worker: amber like blocked, but not counted or named as blocked.
       child("s-8", "building", "g-4", { queued: true, queuedBy: "worker-offline" }),
       child("s-9", "review", "g-4", { queued: true }),
     ];
@@ -148,12 +148,16 @@ describe("boardGroupCardVm", () => {
       "running",
       "waiting",
       "blocked",
-      "blocked",
+      "held",
       "queued",
       "queued",
       "idle",
       "idle",
     ]);
+    expect(sortedVm.blocked).toBe("1 blocked");
+    expect(sortedVm.pips.find((pip) => pip.state === "held")!.tooltip).toBe(
+      "S-8 · Card s-8 (worker offline)",
+    );
   });
 
   it("names a queued pip's place in line when the page knows it", () => {

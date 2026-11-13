@@ -162,7 +162,14 @@ export function isBoardShellStarted(
 
 // ── Stats and the card face ─────────────────────────────────────────────
 
-export type BoardGroupChildState = "done" | "waiting" | "blocked" | "running" | "queued" | "idle";
+export type BoardGroupChildState =
+  | "done"
+  | "waiting"
+  | "blocked"
+  | "held"
+  | "running"
+  | "queued"
+  | "idle";
 
 export interface BoardGroupStats {
   readonly all: Shells;
@@ -172,6 +179,8 @@ export interface BoardGroupStats {
   readonly done: number;
   readonly waiting: number;
   readonly blocked: number;
+  /** Held by an offline worker: amber like blocked, but not counted as blocked. */
+  readonly held: number;
   readonly running: number;
   readonly queued: number;
   readonly deferred: number;
@@ -188,7 +197,6 @@ export interface BoardGroupStatsInput {
   ) => Pick<BoardQueueInfo, "position" | "startsNext"> | undefined;
 }
 
-/** Held by a worker the board can't reach: amber, as the worker's own notice is. */
 function isWorkerHeld(card: BoardCardShell): boolean {
   return card.queued && card.queuedBy === "worker-offline";
 }
@@ -225,12 +233,14 @@ function statsWithMemo(
       const inner = statsWithMemo(input, childId, memo, visiting);
       if (inner.waiting > 0) return "waiting";
       if (inner.blocked > 0) return "blocked";
+      if (inner.held > 0) return "held";
       if (inner.running > 0) return "running";
       return inner.queued > 0 ? "queued" : "idle";
     }
     const attention = input.attentionFor(child);
     if (attention?.tone === "attention") return "waiting";
-    if (child.blocked || attention?.tone === "warning" || isWorkerHeld(child)) return "blocked";
+    if (child.blocked || attention?.tone === "warning") return "blocked";
+    if (isWorkerHeld(child)) return "held";
     if (!isBoardStageAtOrAfterBuild(input.stages, child.stage)) return "idle";
     return child.queued ? "queued" : "running";
   };
@@ -243,6 +253,7 @@ function statsWithMemo(
     done: count("done"),
     waiting: count("waiting"),
     blocked: count("blocked"),
+    held: count("held"),
     running: count("running"),
     queued: count("queued"),
     deferred: all.length - active.length,
@@ -256,6 +267,7 @@ const CHILD_STATE_NAME: Record<BoardGroupChildState, string> = {
   done: "done",
   waiting: "needs you",
   blocked: "blocked",
+  held: "worker offline",
   running: "running",
   queued: "queued",
   idle: "not started",
@@ -267,8 +279,9 @@ const PIP_ORDER: Record<BoardGroupChildState, number> = {
   running: 1,
   waiting: 2,
   blocked: 3,
-  queued: 4,
-  idle: 5,
+  held: 4,
+  queued: 5,
+  idle: 6,
 };
 
 export interface BoardGroupCardVm {
