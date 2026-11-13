@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardCardRequestedProfile,
+  boardBaselineWithLearned,
   boardPlannerUse,
   boardProjectConfigVersion,
   boardResourceProfile,
@@ -140,6 +141,18 @@ describe("boardPlannerUse", () => {
         "disk",
       ).value,
     ).toBe(30);
+  });
+
+  it("Use learned leaves the planner's value in the dimensions it doesn't touch", () => {
+    // Placeholder RAM 4 has learned 10; once declared, 4 would cap learning at 8.
+    const resources = resourcesWith({ baseline: null, learned: { cpu: 1, ram: 10 } });
+    const baseline = boardBaselineWithLearned(resources, "cpu", 1);
+    expect(baseline).toEqual({ cpuCores: 1, ramGiB: 10, diskGB: 5, setAtUpgrade: false });
+    expect(resolveBoardProjectBaseline({ ...resources, baseline })).toEqual({
+      cpuCores: 1,
+      ramGiB: 10,
+      diskGB: 5,
+    });
   });
 
   it("ignores learning altogether while pinned", () => {

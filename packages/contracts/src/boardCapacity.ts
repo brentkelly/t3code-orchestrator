@@ -288,6 +288,20 @@ export function resolveBoardProjectBaseline(
   };
 }
 
+/** The baseline Use learned writes: `value` in `dimension`, and in the others the value the
+    planner already uses there, so they don't move once they count as a human's. */
+export function boardBaselineWithLearned(
+  resources: BoardProjectResources | null | undefined,
+  dimension: BoardResourceDimension,
+  value: number,
+): BoardProjectBaseline {
+  return {
+    ...resolveBoardProjectBaseline(resources),
+    [BOARD_RESOURCE_PROFILE_KEYS[dimension]]: value,
+    setAtUpgrade: false,
+  };
+}
+
 /**
  * A readiness path is relative and stays inside the repository: no absolute path, no `..`
  * segment, no backslash. Null when it is unusable.
