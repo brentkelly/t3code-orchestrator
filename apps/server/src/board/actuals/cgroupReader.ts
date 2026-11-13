@@ -41,13 +41,46 @@ export interface CgroupFinalSnapshot {
 
 const SNAPSHOT_FILES = ["cpu.stat", "memory.stat", "io.stat"] as const;
 
+const FINAL_DIR_PREFIX = "t3o-actuals-";
+
+const processAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
+/** Folders a crashed or killed server left: named for their owner's pid, which is gone. */
+const sweepStaleFinalDirs = () => {
+  let names: ReadonlyArray<string>;
+  try {
+    names = NodeFS.readdirSync(NodeOS.tmpdir());
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const pid = Number(/^t3o-actuals-(\d+)-/.exec(name)?.[1]);
+    if (!Number.isSafeInteger(pid) || pid <= 0 || processAlive(pid)) continue;
+    try {
+      NodeFS.rmSync(NodePath.join(NodeOS.tmpdir(), name), { recursive: true, force: true });
+    } catch {
+      // Another user's, or already gone.
+    }
+  }
+};
+
 /** A private folder (mkdtemp: unguessable, mode 0700), made on first use and removed at exit:
     the trap writes into it, so nobody else may plant links there. Null when it can't be made. */
 let finalDir: string | null | undefined;
 const finalDirOf = (): string | null => {
   if (finalDir !== undefined) return finalDir;
+  sweepStaleFinalDirs();
   try {
-    const made = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-actuals-"));
+    const made = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), `${FINAL_DIR_PREFIX}${process.pid}-`),
+    );
     process.once("exit", () => NodeFS.rmSync(made, { recursive: true, force: true }));
     finalDir = made;
   } catch {
