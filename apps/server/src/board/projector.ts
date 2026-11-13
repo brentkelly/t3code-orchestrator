@@ -520,8 +520,14 @@ function upsertWorker<M extends BoardReadModel>(model: M, worker: BoardWorker): 
 function removeWorker<M extends BoardReadModel>(model: M, workerId: EnvironmentId): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const remaining = (board.workers ?? []).filter((existing) => existing.id !== workerId);
-  const { workers: _dropped, ...rest } = board;
-  return { ...model, board: remaining.length === 0 ? rest : { ...board, workers: remaining } };
+  // A removed default reads as `local` again, its absent value.
+  const { workers: _dropped, defaultWorkerId, ...rest } = board;
+  const kept =
+    defaultWorkerId === undefined || defaultWorkerId === workerId ? {} : { defaultWorkerId };
+  return {
+    ...model,
+    board: { ...rest, ...kept, ...(remaining.length === 0 ? {} : { workers: remaining }) },
+  };
 }
 
 /** Record the default worker. `local` is the absent default, so choosing it

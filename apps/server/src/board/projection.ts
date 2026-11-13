@@ -2348,6 +2348,14 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // A removed default reads as `local` again: no row.
+  const clearBoardDefaultWorkerRowFor = SqlSchema.void({
+    Request: Schema.String,
+    execute: (workerId) => sql`
+      DELETE FROM board_default_worker WHERE worker_id = ${workerId}
+    `,
+  });
+
   const listBoardWorkerRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: BoardWorkerDbRow,
@@ -2715,6 +2723,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardStepStateRows,
     upsertBoardWorkerRow,
     deleteBoardWorkerRow,
+    clearBoardDefaultWorkerRowFor,
     listBoardWorkerRows,
     upsertBoardProjectStageConfigRow,
     listBoardProjectStageConfigRows,
@@ -3051,7 +3060,10 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
   const deleteWorker = (workerId: EnvironmentId) =>
     queries
       .deleteBoardWorkerRow(workerId)
-      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.workerDelete:query")));
+      .pipe(
+        Effect.andThen(queries.clearBoardDefaultWorkerRowFor(workerId)),
+        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.workerDelete:query")),
+      );
 
   const writeDefaultWorker = (workerId: BoardWorkerId) =>
     queries

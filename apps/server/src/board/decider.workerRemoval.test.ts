@@ -406,6 +406,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
+    it.effect("removing the default worker leaves the default as this server", () =>
+      Effect.gen(function* () {
+        const removed = yield* apply(
+          removeWorker(workerA),
+          makeReadModel({ cards: [], defaultWorkerId: workerA }),
+        );
+        expect(removed.board?.defaultWorkerId).toBeUndefined();
+        const other = yield* apply(
+          removeWorker(workerB),
+          makeReadModel({ cards: [], defaultWorkerId: workerA }),
+        );
+        expect(other.board?.defaultWorkerId).toBe(workerA);
+      }),
+    );
+
     it.effect("a re-join of a worker with no abbreviation keeps the one it was given", () =>
       Effect.gen(function* () {
         const rejoined = yield* apply(

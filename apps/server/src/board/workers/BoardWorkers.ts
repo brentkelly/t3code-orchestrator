@@ -374,7 +374,11 @@ export const makeBoardWorkers = Effect.gen(function* () {
         };
         (outcome === "fallback" ? toDefault : byHand).push(row);
       }
-      const fallbackTo = board.defaultWorkerId ?? BOARD_LOCAL_WORKER_ID;
+      // Removing the default itself leaves this server as the default.
+      const fallbackTo =
+        board.defaultWorkerId === undefined || board.defaultWorkerId === workerId
+          ? BOARD_LOCAL_WORKER_ID
+          : board.defaultWorkerId;
       return {
         workerId,
         workerLabel: worker.label,
