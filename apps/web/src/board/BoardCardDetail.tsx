@@ -1540,7 +1540,7 @@ export function BoardCardDetail({
             card={card}
             environmentId={environmentId}
             projectResources={projectExecutionConfig?.resources ?? null}
-            stepRunning={cardShell?.stepRunning === true}
+            stepFailed={cardShell?.stalled === true}
             workersState={workersState}
           />
         )

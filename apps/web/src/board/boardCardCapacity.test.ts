@@ -99,33 +99,33 @@ describe("boardCardSetupView", () => {
 
   it("reads Preparing n/4 while it runs, and collapses to one line once it succeeded", () => {
     expect(
-      boardCardSetupView({ setup: setup({}), workerLabel: "build-01", stepRunning: true }).face,
+      boardCardSetupView({ setup: setup({}), workerLabel: "build-01", stepFailed: false }).face,
     ).toBe("Preparing · 3/4");
     const done = boardCardSetupView({
       setup: setup({ status: "succeeded", durationMs: 372_000 }),
       workerLabel: "build-01",
-      stepRunning: true,
+      stepFailed: false,
     });
     expect(done.face).toBeNull();
     expect(done.collapsed).toBe("Setup · build-01 · 6m 12s");
   });
 
-  it("a failure is amber when setup holds the agent, or once the step it ran beside ended", () => {
+  it("a failure is amber when setup holds the agent, or once its step ended without success", () => {
     const failed = setup({ status: "failed", exitCode: 2 });
     expect(
       boardCardSetupView({
         setup: { ...failed, blocking: true },
         workerLabel: "b",
-        stepRunning: false,
+        stepFailed: false,
       }).face,
     ).toBe("Setup failed · 3/4");
-    // async: true and the step is still running: not amber, but the detail says so.
-    const running = boardCardSetupView({ setup: failed, workerLabel: "b", stepRunning: true });
+    // async: true and the step is running, or ended well: not amber, but the detail says so.
+    const running = boardCardSetupView({ setup: failed, workerLabel: "b", stepFailed: false });
     expect(running.face).toBeNull();
     expect(running.failure).toBe("Setup script failed (exit 2).");
     expect(running.stages.at(-1)?.status).toBe("failed");
     expect(running.canRetry).toBe(true);
-    expect(boardCardSetupView({ setup: failed, workerLabel: "b", stepRunning: false }).face).toBe(
+    expect(boardCardSetupView({ setup: failed, workerLabel: "b", stepFailed: true }).face).toBe(
       "Setup failed · 3/4",
     );
   });

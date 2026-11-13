@@ -195,7 +195,7 @@ export function BoardCardCapacityPanelHost(props: {
   readonly card: BoardCard;
   readonly projectResources: BoardProjectResources | null;
   readonly workersState: BoardWorkersState;
-  readonly stepRunning: boolean;
+  readonly stepFailed: boolean;
 }) {
   const { card, environmentId } = props;
   const placed =
@@ -220,7 +220,7 @@ export function BoardCardCapacityPanelHost(props: {
   const setup = boardCardSetupView({
     setup: card.resources?.setup ?? null,
     workerLabel,
-    stepRunning: props.stepRunning,
+    stepFailed: props.stepFailed,
   });
   return (
     <BoardCardCapacityPanel

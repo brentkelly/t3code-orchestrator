@@ -157,7 +157,8 @@ export interface BoardCardSetupView {
 export function boardCardSetupView(input: {
   readonly setup: BoardCardSetupResult | null;
   readonly workerLabel: string;
-  readonly stepRunning: boolean;
+  /** The step setup ran beside ended without success (it stalled for a human). */
+  readonly stepFailed: boolean;
 }): BoardCardSetupView {
   const setup = input.setup;
   if (setup === null) {
@@ -188,7 +189,7 @@ export function boardCardSetupView(input: {
             : ("skipped" as const),
   }));
   const failed = setup.status === "failed" || setup.status === "cancelled";
-  const amber = failed && (setup.blocking || !input.stepRunning);
+  const amber = failed && (setup.blocking || input.stepFailed);
   return {
     face:
       setup.status === "running"
@@ -220,7 +221,7 @@ export function boardCardSetupView(input: {
 /** A card face's setup line: Preparing n/4 (blue) or Setup failed n/4 (amber), or nothing. */
 export function boardCardSetupFace(
   setup: Pick<BoardCardSetupResult, "status" | "stage" | "blocking"> | undefined,
-  stepRunning: boolean,
+  stepFailed: boolean,
 ): { readonly label: string; readonly tone: "running" | "blocked"; readonly done: number } | null {
   if (setup === undefined) return null;
   const view = boardCardSetupView({
@@ -233,7 +234,7 @@ export function boardCardSetupFace(
       detail: null,
     },
     workerLabel: "",
-    stepRunning,
+    stepFailed,
   });
   return view.face === null || view.faceTone === null
     ? null

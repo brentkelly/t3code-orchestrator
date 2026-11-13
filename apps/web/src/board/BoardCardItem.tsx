@@ -844,7 +844,7 @@ export function DraggableBoardCard({
 
 /** T3o: a card's setup on its face: Preparing n/4 with a stepped bar, or Setup failed (T3O-86). */
 function BoardCardSetupFace({ card }: { readonly card: BoardCardShell }) {
-  const face = boardCardSetupFace(card.setup, card.stepRunning === true);
+  const face = boardCardSetupFace(card.setup, card.stalled === true);
   if (face === null) return null;
   return (
     <div className="flex items-center gap-2 text-board-11-5">
