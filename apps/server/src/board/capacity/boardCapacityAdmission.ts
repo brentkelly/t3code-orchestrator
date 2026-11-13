@@ -72,7 +72,7 @@ export const stepQueuedInWorktree = (state: BoardCardStepState | null) =>
   state.mode === "build" &&
   (state.status === "queued" || state.status === "pending");
 
-const ciActive = (card: BoardCard) =>
+export const ciActive = (card: BoardCard) =>
   card.ci !== null && (card.ci.phase === "queued" || card.ci.phase === "running");
 
 /**

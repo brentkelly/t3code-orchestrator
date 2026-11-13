@@ -27,6 +27,7 @@ import * as Stream from "effect/Stream";
 
 import type { BoardCapacityClientShape } from "./BoardCapacityClient.ts";
 import {
+  ciActive,
   requestedProfileOf,
   stepActiveInWorktree,
   stepQueuedInWorktree,
@@ -120,17 +121,21 @@ export const runBoardCapacityUpgrade = Effect.fn("runBoardCapacityUpgrade")(func
   const projects = new Set<ProjectId>(
     board.cards.filter((card) => card.archivedAt === null).map((card) => card.projectId),
   );
+  // A command that didn't land leaves the marker unwritten: the next pass finishes the job,
+  // skipping what did land.
+  let landed = true;
   for (const projectId of projects) {
     const config = boardProjectStageConfig(board, projectId);
     const resources = config?.resources ?? EMPTY_BOARD_PROJECT_RESOURCES;
     if (resources.baseline !== null || baseline === null) continue;
-    yield* deps.dispatch({
+    const set = yield* deps.dispatch({
       type: "board.project.set-resources",
       commandId: yield* deps.commandId("upgrade-baseline"),
       projectId,
       resources: { ...resources, baseline: { ...baseline, setAtUpgrade: true } },
       createdAt: yield* deps.nowIso,
     });
+    landed = landed && set;
   }
 
   // 2. Every card holding a worktree is granted baseline x its size, heavy by the phase rule.
@@ -140,17 +145,19 @@ export const runBoardCapacityUpgrade = Effect.fn("runBoardCapacityUpgrade")(func
     if (card.worktree.status !== "provisioning" && card.worktree.status !== "ready") continue;
     if (card.resources?.grant != null) continue;
     const state = boardCardStepState(after, card.id);
-    yield* deps.dispatch({
+    const recorded = yield* deps.dispatch({
       type: "board.card.record-grant",
       commandId: yield* deps.commandId("upgrade-backfill"),
       cardId: card.id,
       profile: requestedProfileOf(after, card),
-      heavy: stepActiveInWorktree(state) || stepQueuedInWorktree(state),
+      heavy: stepActiveInWorktree(state) || stepQueuedInWorktree(state) || ciActive(card),
       settled: true,
       createdAt: yield* deps.nowIso,
     });
+    landed = landed && recorded;
   }
 
+  if (!landed) return false;
   yield* deps.sql`
     INSERT INTO board_capacity_upgrade (id, completed_at) VALUES (${UPGRADE_ID}, ${yield* deps.nowIso})
     ON CONFLICT (id) DO NOTHING
