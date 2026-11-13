@@ -224,6 +224,11 @@ describe("build deliverable (T3O-21)", () => {
     const build = boardStepPostamble({ humanInLoop: false, role: "build", step: stepOf(null) });
     expect(build).toContain(BOARD_ENVELOPE_BUILD_DELIVERABLE);
     expect(build).toContain("{ lead, notes: [{ kind, text, detail? }]");
+    // The board shows the branch and PR itself; the lead no longer asks for them.
+    expect(BOARD_ENVELOPE_BUILD_DELIVERABLE).toContain(
+      "leave out the branch, commits and push state",
+    );
+    expect(BOARD_ENVELOPE_BUILD_DELIVERABLE).not.toMatch(/commit count|whether it is pushed/);
     expect(build.indexOf(BOARD_ENVELOPE_BUILD_DELIVERABLE)).toBeLessThan(
       build.indexOf(BOARD_ENVELOPE_MOVE_GUARD),
     );

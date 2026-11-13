@@ -20,6 +20,8 @@ import {
 } from "@t3tools/contracts";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
 
+import type { BoardQueueInfo } from "./boardQueueInfo";
+
 type Shells = ReadonlyArray<BoardCardShell>;
 
 /** The name trunk goes by on the client, which never sees a project's default
@@ -160,7 +162,14 @@ export function isBoardShellStarted(
 
 // ── Stats and the card face ─────────────────────────────────────────────
 
-export type BoardGroupChildState = "done" | "waiting" | "blocked" | "running" | "idle";
+export type BoardGroupChildState =
+  | "done"
+  | "waiting"
+  | "blocked"
+  | "held"
+  | "running"
+  | "queued"
+  | "idle";
 
 export interface BoardGroupStats {
   readonly all: Shells;
@@ -170,7 +179,10 @@ export interface BoardGroupStats {
   readonly done: number;
   readonly waiting: number;
   readonly blocked: number;
+  /** Held by an offline worker: amber like blocked, but not counted as blocked. */
+  readonly held: number;
   readonly running: number;
+  readonly queued: number;
   readonly deferred: number;
 }
 
@@ -179,6 +191,14 @@ export interface BoardGroupStatsInput {
   readonly stages: BoardState;
   /** The page's attention resolver, so "needs you" agrees with the leaf face. */
   readonly attentionFor: (card: BoardCardShell) => BoardCardAttention | null;
+  /** A queued card's place in line, for its pip's tooltip. */
+  readonly queueFor?: (
+    card: BoardCardShell,
+  ) => Pick<BoardQueueInfo, "position" | "startsNext"> | undefined;
+}
+
+function isWorkerHeld(card: BoardCardShell): boolean {
+  return card.queued && card.queuedBy === "worker-offline";
 }
 
 // One memo per input object, so a page building every group's face from one
@@ -213,12 +233,16 @@ function statsWithMemo(
       const inner = statsWithMemo(input, childId, memo, visiting);
       if (inner.waiting > 0) return "waiting";
       if (inner.blocked > 0) return "blocked";
-      return inner.running > 0 ? "running" : "idle";
+      if (inner.held > 0) return "held";
+      if (inner.running > 0) return "running";
+      return inner.queued > 0 ? "queued" : "idle";
     }
     const attention = input.attentionFor(child);
     if (attention?.tone === "attention") return "waiting";
     if (child.blocked || attention?.tone === "warning") return "blocked";
-    return isBoardStageAtOrAfterBuild(input.stages, child.stage) ? "running" : "idle";
+    if (isWorkerHeld(child)) return "held";
+    if (!isBoardStageAtOrAfterBuild(input.stages, child.stage)) return "idle";
+    return child.queued ? "queued" : "running";
   };
   const states = active.map(stateOf);
   const count = (state: BoardGroupChildState) => states.filter((s) => s === state).length;
@@ -229,7 +253,9 @@ function statsWithMemo(
     done: count("done"),
     waiting: count("waiting"),
     blocked: count("blocked"),
+    held: count("held"),
     running: count("running"),
+    queued: count("queued"),
     deferred: all.length - active.length,
   };
   visiting.delete(cardId);
@@ -241,7 +267,9 @@ const CHILD_STATE_NAME: Record<BoardGroupChildState, string> = {
   done: "done",
   waiting: "needs you",
   blocked: "blocked",
+  held: "worker offline",
   running: "running",
+  queued: "queued",
   idle: "not started",
 };
 
@@ -251,7 +279,9 @@ const PIP_ORDER: Record<BoardGroupChildState, number> = {
   running: 1,
   waiting: 2,
   blocked: 3,
-  idle: 4,
+  held: 4,
+  queued: 5,
+  idle: 6,
 };
 
 export interface BoardGroupCardVm {
@@ -281,10 +311,17 @@ export function boardGroupCardVm(
   const stats = boardGroupStats(input, String(card.cardId));
   return {
     pips: stats.active
-      .map((child, index) => ({
-        state: stats.states[index]!,
-        tooltip: `${child.key} · ${child.title} (${CHILD_STATE_NAME[stats.states[index]!]})`,
-      }))
+      .map((child, index) => {
+        const state = stats.states[index]!;
+        const slot = state === "queued" ? input.queueFor?.(child) : undefined;
+        const name =
+          slot === undefined
+            ? CHILD_STATE_NAME[state]
+            : slot.startsNext
+              ? "queued, next"
+              : `queued #${slot.position}`;
+        return { state, tooltip: `${child.key} · ${child.title} (${name})` };
+      })
       .toSorted((a, b) => PIP_ORDER[a.state] - PIP_ORDER[b.state]),
     doneLabel: stats.active.length > 0 ? `${stats.done}/${stats.active.length}` : "0",
     needs: stats.waiting > 0 ? `${stats.waiting} need${stats.waiting === 1 ? "s" : ""} you` : null,

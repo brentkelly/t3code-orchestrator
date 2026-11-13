@@ -6,6 +6,7 @@
 import {
   boardCardUsageSummaryFromRows,
   boardUsageStageOfStep,
+  parseReviewStepId,
   type BoardCardUsageRow,
   type BoardCardUsageSummary,
   type ThreadId,
@@ -43,6 +44,8 @@ export interface BoardUsageLine extends BoardUsageColumns {
 export interface BoardUsageStageGroup extends BoardUsageColumns {
   readonly stageId: string;
   readonly label: string;
+  /** Distinct review rounds among the stage's steps; 0 outside the review loop. */
+  readonly rounds: number;
   readonly summary: BoardCardUsageSummary;
   readonly running: boolean;
   /** `3 threads · 2 models`, or the one model. */
@@ -160,9 +163,13 @@ export function deriveBoardUsageBreakdown(input: {
   const stages = [...byStage.entries()]
     .map(([stageId, stageLines]): BoardUsageStageGroup => {
       const models = uniqueInOrder(stageLines.map((line) => line.model));
+      const rounds = new Set(
+        stageLines.flatMap((line) => parseReviewStepId(line.stepId)?.round ?? []),
+      ).size;
       return {
         stageId,
         label: labels.get(stageId) ?? STAGE_FALLBACK_LABELS[stageId] ?? stageId,
+        rounds,
         summary: boardCardUsageSummaryFromRows(
           stageLines.map((line) => line.row),
           false,

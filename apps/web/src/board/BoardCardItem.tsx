@@ -67,17 +67,8 @@ import { useBoardWorkersState } from "./workers/BoardWorkersContext";
 import { boardCardWorkerChip } from "./workers/cardWorker";
 import { BoardHint } from "./BoardHint";
 import type { BoardQueueInfo } from "./boardQueueInfo";
-import type { BoardGroupCardVm, BoardGroupChildState } from "./boardGroups";
-
-/** A group's progress pips in the fixed status vocabulary: green is
-    done and only done, violet needs you, amber blocked, blue running. */
-const PIP_CLASS: Record<BoardGroupChildState, string> = {
-  done: "bg-success",
-  waiting: "bg-attention",
-  blocked: "bg-warning",
-  running: "bg-info/65",
-  idle: "bg-foreground/13",
-};
+import type { BoardGroupCardVm } from "./boardGroups";
+import { BOARD_GROUP_PIP_CLASS } from "./boardGroupPips";
 
 /** The group card's body: pips, `n/m`, who needs you, what is
     blocked, the drill-in, and a meta line. Stats truncate; the Board button
@@ -99,7 +90,7 @@ function BoardGroupBlock({
             <BoardHint key={pip.tooltip} label={pip.tooltip}>
               <span
                 aria-label={pip.tooltip}
-                className={cn("h-1 min-w-1 flex-1 rounded-xs", PIP_CLASS[pip.state])}
+                className={cn("h-1.5 min-w-1 flex-1 rounded-xs", BOARD_GROUP_PIP_CLASS[pip.state])}
                 data-state={pip.state}
                 role="img"
               />

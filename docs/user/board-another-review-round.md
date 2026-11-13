@@ -41,6 +41,12 @@ kebab menu, choose the models popover, and set the **Review** row. That applies 
 alone — the reviewer changes, the author and the adjudicator keep their own models — and it is
 reachable at any stage, Ready for merge included. Set it, then ask for the round.
 
+To save tokens on long loops, the review phase can switch to a cheaper model after the first few
+rounds: in Settings → Board → Code review, turn on **Use a different model for later rounds** under
+the Review phase and pick the round and the model. Every round after that one, including an extra
+round you ask for, reviews on the later model. A card's own **Review** model replaces both, and a
+model picked for one round in the Review pane still wins.
+
 ## Request review
 
 A card that reached Ready for merge without a review — through **Submit for merge — no review** —
