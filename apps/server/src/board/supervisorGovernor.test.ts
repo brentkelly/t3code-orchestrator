@@ -11,6 +11,9 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/sql/SqlClient";
+
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { makeFakeCapacity } from "./capacity/capacityClient.testkit.ts";
 import {
@@ -94,6 +97,27 @@ it.effect("capacity runs two cards strictly in queue order on a worker with room
         }),
     ),
   ),
+);
+
+it.effect("a restart after the capacity upgrade places at once, before the first sweep", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE board_capacity_upgrade (id TEXT PRIMARY KEY, completed_at TEXT)`;
+    yield* sql`INSERT INTO board_capacity_upgrade (id, completed_at) VALUES ('t3o-86', 'then')`;
+    const capacity = yield* oneCardOfRoom();
+    yield* withGovernor(
+      {
+        board: { cards: [unplaced("card-a", "a")], nextCardNumberByProject: {} },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 5 }),
+        capacity,
+      },
+      ({ pumpDomain, board }) =>
+        Effect.gen(function* () {
+          yield* pumpDomain(movedToBuilding(unplaced("card-a", "a"), 1));
+          assert.strictEqual(stepStatus(yield* board, BoardCardId.make("card-a")), "running");
+        }),
+    );
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 
 it.effect("a force start places a queued card over capacity", () =>

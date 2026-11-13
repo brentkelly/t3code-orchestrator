@@ -12207,6 +12207,8 @@ const make = Effect.gen(function* () {
     // The server restarts mid-step: reconcile persisted step state, serialised
     // ahead of the live events now flowing into the same worker queue.
     yield* worker.enqueue({ source: "reconcile" });
+    // T3o: an upgrade already recorded unblocks placement now, not at the first sweep.
+    if (Option.isSome(capacityAdmission)) yield* forkParked(startCapacityUpgrade);
     // Periodic timeout sweep: rides the worker so it never races the
     // event handlers. 30s granularity is plenty against minutes-scale timeouts.
     yield* forkParked(
