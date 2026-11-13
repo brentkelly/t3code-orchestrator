@@ -574,7 +574,12 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     const idle: Array<{ readonly card: BoardCard; readonly since: number }> = [];
     for (const card of board.cards) {
       const grant = card.resources?.grant ?? null;
-      if (grant === null || card.archivedAt !== null) continue;
+      if (grant === null) continue;
+      // An archived card runs nothing; a worktree its reclaim left behind keeps only its disk.
+      if (card.archivedAt !== null) {
+        if (grant.heavy) yield* release(card);
+        continue;
+      }
       const state = stateOf(card.id);
       const active = yield* cardActive(card, state, now);
       if (active) lastActive.set(card.id, now);

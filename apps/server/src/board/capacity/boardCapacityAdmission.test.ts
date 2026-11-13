@@ -193,6 +193,17 @@ it.effect(
     }),
 );
 
+// Its worktree can survive the archive (dirty or unpushed), and its record with it.
+it.effect("an archived card's CPU and RAM go at the next sweep", () =>
+  Effect.gen(function* () {
+    const now = { ms: T0 };
+    const archived = { ...granted("a"), archivedAt: iso(T0) };
+    const h = yield* harness(boardWith([archived]), now);
+    yield* h.admission.sweep();
+    assert.isFalse((yield* h.grantOf("a"))?.heavy);
+  }),
+);
+
 it.effect(
   "a running step stays heavy past ten minutes; one held on a permission prompt goes light",
   () =>
