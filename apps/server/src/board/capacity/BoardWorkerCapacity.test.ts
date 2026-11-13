@@ -429,7 +429,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const fakes = makeFakes();
-      fakes.config = { ...fakes.config, "capacity.cpuCores": 18 };
+      fakes.config = { ...fakes.config, "capacity.cpuCores": 18, "hold.maxMinutes": 30 };
       const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
       // Board A fills 12 of 18 cores and 40 of 64 GiB.
       yield* service.syncCards("board-a", {
@@ -463,6 +463,11 @@ it.effect(
       const refused = yield* claim("board-a", "small");
       assert.isTrue(refused.outcome === "denied" && refused.reason === "reserved");
       assert.strictEqual((yield* claim("board-a", "forced", { force: true })).outcome, "granted");
+      // Someone waits: the worker's status shows the hold ending at its own 30-minute limit.
+      assert.strictEqual(
+        (yield* service.status([])).hold.placement?.until,
+        "1970-01-01T00:30:00.000Z",
+      );
       // Board A sees the worker closed, with no card named; board B sees its own card.
       const seenByA = yield* service.snapshot("board-a");
       assert.deepStrictEqual(

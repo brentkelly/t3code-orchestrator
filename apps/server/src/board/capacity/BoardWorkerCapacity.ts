@@ -51,7 +51,6 @@ import {
   type WorktreePresence,
 } from "./capacityModel.ts";
 import {
-  DEFAULT_HOLD_SETTINGS,
   EMPTY_HOLD_STATE,
   holdClaimRefusal,
   holdUntil,
@@ -849,6 +848,13 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
         machine: yield* machineReading,
         now,
       });
+      // As a claim would see them now: lapsed holds gone, `until` at this worker's own limit.
+      const holdSettings = holdSettingsOf(yield* ports.settings);
+      const current = tickHolds(holds, {
+        now,
+        withinCapacity: !headroom.over.cpuRam,
+        settings: holdSettings,
+      });
       return {
         updatedAt: nowIso(now),
         declared: headroom.declared,
@@ -860,23 +866,18 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
         })),
         hold: {
           placement:
-            holds.placement === null
+            current.placement === null
               ? null
               : {
-                  boardEnvironmentId: holds.placement.boardId,
-                  cardId: holds.placement.cardId,
-                  since: nowIso(holds.placement.since),
+                  boardEnvironmentId: current.placement.boardId,
+                  cardId: current.placement.cardId,
+                  since: nowIso(current.placement.since),
                   until: (() => {
-                    const until = holdUntil(
-                      holds,
-                      holds.placement.boardId,
-                      DEFAULT_HOLD_SETTINGS,
-                      now,
-                    );
+                    const until = holdUntil(current, current.placement.boardId, holdSettings, now);
                     return until === null ? null : nowIso(until);
                   })(),
                 },
-          grows: holds.grows.map((grow) => ({
+          grows: current.grows.map((grow) => ({
             boardEnvironmentId: grow.boardId,
             cardId: grow.cardId,
             since: nowIso(grow.since),
