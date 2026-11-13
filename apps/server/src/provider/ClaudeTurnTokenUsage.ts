@@ -50,29 +50,39 @@ function withEarlierSegmentUsage(
 }
 
 /** Per-model totals from the SDK's `modelUsage`, which grows for the life of one CLI process. */
-export type ClaudeModelLedger = ReadonlyMap<
-  string,
-  { readonly input: number; readonly output: number }
->;
-
+// T3o: cache reads and writes kept apart so subagent spend prices at cache rates (T3O-90).
 export interface ClaudeLedgerUsage {
-  readonly inputTokens: number;
+  readonly uncachedInputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly cacheCreationTokens: number;
   readonly outputTokens: number;
 }
+
+export type ClaudeModelLedger = ReadonlyMap<string, ClaudeLedgerUsage>;
+
+const LEDGER_FIELDS = [
+  "uncachedInputTokens",
+  "cachedInputTokens",
+  "cacheCreationTokens",
+  "outputTokens",
+] as const;
 
 /** Unknown when absent or empty: a process that did model work never reports an empty ledger. */
 export function claudeModelLedger(modelUsage: unknown): ClaudeModelLedger | undefined {
   if (typeof modelUsage !== "object" || modelUsage === null) return undefined;
   if (Object.keys(modelUsage).length === 0) return undefined;
-  const ledger = new Map<string, { readonly input: number; readonly output: number }>();
+  const ledger = new Map<string, ClaudeLedgerUsage>();
   for (const [model, entry] of Object.entries(modelUsage as Record<string, unknown>)) {
     const fields = (entry ?? {}) as Record<string, unknown>;
     const input = finiteNonNegativeInteger(fields.inputTokens);
     const output = finiteNonNegativeInteger(fields.outputTokens);
     if (input === undefined || output === undefined) return undefined;
-    const cacheRead = finiteNonNegativeInteger(fields.cacheReadInputTokens) ?? 0;
-    const cacheWrite = finiteNonNegativeInteger(fields.cacheCreationInputTokens) ?? 0;
-    ledger.set(model, { input: input + cacheRead + cacheWrite, output });
+    ledger.set(model, {
+      uncachedInputTokens: input,
+      cachedInputTokens: finiteNonNegativeInteger(fields.cacheReadInputTokens) ?? 0,
+      cacheCreationTokens: finiteNonNegativeInteger(fields.cacheCreationInputTokens) ?? 0,
+      outputTokens: output,
+    });
   }
   return ledger;
 }
@@ -96,20 +106,23 @@ export function claudeLedgerDelta(
   current: ClaudeModelLedger | undefined,
 ): ClaudeLedgerUsage | undefined {
   if (previous === undefined || current === undefined) return undefined;
-  let inputTokens = 0;
-  let outputTokens = 0;
   for (const [model, before] of previous) {
     const after = current.get(model);
-    if (after === undefined || after.input < before.input || after.output < before.output) {
+    if (after === undefined || LEDGER_FIELDS.some((field) => after[field] < before[field])) {
       return undefined;
     }
   }
+  const growth = {
+    uncachedInputTokens: 0,
+    cachedInputTokens: 0,
+    cacheCreationTokens: 0,
+    outputTokens: 0,
+  };
   for (const [model, after] of current) {
     const before = previous.get(model);
-    inputTokens += after.input - (before?.input ?? 0);
-    outputTokens += after.output - (before?.output ?? 0);
+    for (const field of LEDGER_FIELDS) growth[field] += after[field] - (before?.[field] ?? 0);
   }
-  return { inputTokens, outputTokens };
+  return growth;
 }
 
 export function addClaudeLedgerUsage(
@@ -119,7 +132,9 @@ export function addClaudeLedgerUsage(
   return left === undefined || right === undefined
     ? undefined
     : {
-        inputTokens: left.inputTokens + right.inputTokens,
+        uncachedInputTokens: left.uncachedInputTokens + right.uncachedInputTokens,
+        cachedInputTokens: left.cachedInputTokens + right.cachedInputTokens,
+        cacheCreationTokens: left.cacheCreationTokens + right.cacheCreationTokens,
         outputTokens: left.outputTokens + right.outputTokens,
       };
 }
@@ -191,15 +206,37 @@ export function normalizeClaudeTurnTokenUsage(
   }
 
   // The result omits subagent and compaction work that the process-wide ledger records.
+  // T3o: split per field so cache reads and writes keep their own rates (T3O-90).
+  const otherUncached =
+    observed.ledger === undefined || uncachedInputTokens === undefined
+      ? undefined
+      : observed.ledger.uncachedInputTokens - uncachedInputTokens;
+  const otherCached =
+    observed.ledger === undefined || cachedInputContribution === undefined
+      ? undefined
+      : observed.ledger.cachedInputTokens - cachedInputContribution;
+  const otherCreation =
+    observed.ledger === undefined || cacheCreationContribution === undefined
+      ? undefined
+      : observed.ledger.cacheCreationTokens - cacheCreationContribution;
+  const otherOutput =
+    observed.ledger === undefined || rawOutputTokens === undefined
+      ? undefined
+      : observed.ledger.outputTokens - rawOutputTokens;
   const otherUsage =
-    observed.ledger !== undefined &&
-    inputTokens !== undefined &&
-    rawOutputTokens !== undefined &&
-    observed.ledger.inputTokens >= inputTokens &&
-    observed.ledger.outputTokens >= rawOutputTokens
+    otherUncached !== undefined &&
+    otherCached !== undefined &&
+    otherCreation !== undefined &&
+    otherOutput !== undefined &&
+    otherUncached >= 0 &&
+    otherCached >= 0 &&
+    otherCreation >= 0 &&
+    otherOutput >= 0
       ? {
-          inputTokens: observed.ledger.inputTokens - inputTokens,
-          outputTokens: observed.ledger.outputTokens - rawOutputTokens,
+          inputTokens: otherUncached + otherCached + otherCreation,
+          outputTokens: otherOutput,
+          cachedInputTokens: otherCached,
+          cacheCreationTokens: otherCreation,
         }
       : undefined;
   const commonUsage = {
@@ -216,6 +253,8 @@ export function normalizeClaudeTurnTokenUsage(
   if (
     terminalStatus === "completed" &&
     result?.subtype === "success" &&
+    // T3o: subagents ran but their spend is unknown, so the main counts are a lower bound (T3O-90).
+    !(hasSubagents && otherUsage === undefined) &&
     finiteNonNegativeInteger(finalUsage?.input_tokens) !== undefined &&
     finiteNonNegativeInteger(finalUsage?.output_tokens) !== undefined &&
     inputTokens !== undefined &&

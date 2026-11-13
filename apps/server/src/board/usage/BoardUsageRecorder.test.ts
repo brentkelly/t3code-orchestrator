@@ -26,6 +26,7 @@ import { createOverrideRateTable, parseRateTable } from "../../usage/usagePricin
 import { BoardQueries } from "../BoardQueries.ts";
 import { boardStackEngine, makeBoardStackTestLayerWithoutTail } from "../boardStack.testkit.ts";
 import { BoardThreadTail, BoardThreadTailLive } from "../boardThreadTail.ts";
+import { BOARD_MIGRATIONS } from "../migrations/index.ts";
 import { BoardUsagePricing } from "../ports/BoardUsagePricing.ts";
 import type { UsageSignal } from "../ThreadGateway.ts";
 import {
@@ -128,6 +129,8 @@ const writeTurn = (
     readonly input: number;
     readonly output: number;
     readonly usageStatus?: "complete" | "partial";
+    readonly hasSubagents?: boolean;
+    readonly otherUsage?: { readonly inputTokens: number; readonly outputTokens: number };
   } | null,
 ) =>
   Effect.gen(function* () {
@@ -158,7 +161,8 @@ const writeTurn = (
                       usageStatus: usage.usageStatus ?? "complete",
                       inputTokens: usage.input,
                       outputTokens: usage.output,
-                      hasSubagents: false,
+                      hasSubagents: usage.hasSubagents ?? false,
+                      ...(usage.otherUsage === undefined ? {} : { otherUsage: usage.otherUsage }),
                     },
                   }),
             },
@@ -369,6 +373,99 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
           (SELECT COUNT(*) FROM boards.board_card_usage WHERE card_id = ${cardId}) AS rows,
           (SELECT COUNT(*) FROM boards.board_usage_ingested WHERE thread_id = ${threadId}) AS keys`;
       assert.deepStrictEqual(left, { rows: 0, keys: 0 });
+    }),
+  );
+  it.effect("migration 069 re-prices the usage the backfill can rebuild, and drops the rest", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const { cardId, threadId, projectId } = yield* seedLinkedThread("reprice");
+      const child = yield* createThread(projectId, "thread-reprice-child");
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_subagents (
+          subagent_id, thread_id, parent_node_id, provider, child_thread_id, origin, status,
+          updated_at, payload_json
+        ) VALUES (
+          'subagent-reprice', ${threadId}, 'node-reprice', 'codex', ${child}, 'app_owned',
+          'completed', ${t0}, '{}'
+        )
+      `;
+      // A resumed process booked its restored session totals as this turn's otherUsage.
+      yield* writeTurn(threadId, "turn-reprice-1", "completed", {
+        input: 1_000_000,
+        output: 0,
+        otherUsage: { inputTokens: 82_000_000, outputTokens: 0 },
+      });
+      yield* writeTurn(child, "turn-reprice-child-1", "completed", { input: 500_000, output: 0 });
+      const worker = ThreadId.make("thread-reprice-worker");
+      const tombstoned = ThreadId.make("thread-reprice-tombstoned");
+      // Unlinked from the card after it booked usage: the backfill cannot credit it again.
+      const unlinked = yield* createThread(projectId, "thread-reprice-unlinked");
+      yield* sql`
+        INSERT INTO boards.board_card_thread_links
+          (thread_id, card_id, role, linked_at, tombstoned_at, worker_id)
+        VALUES
+          (${worker}, ${cardId}, 'review@1', ${t0}, NULL, 'worker-1'),
+          (${tombstoned}, ${cardId}, 'planning', ${t0}, ${t0}, NULL)
+      `;
+      // What the old pricing stored for each thread, with every turn already ingested.
+      for (const [thread, step] of [
+        [threadId, "building"],
+        [child, "building"],
+        [worker, "review@1"],
+        [tombstoned, "planning"],
+        [unlinked, "building"],
+      ] as const) {
+        yield* sql`
+          INSERT INTO boards.board_card_usage (
+            card_id, step_id, thread_id, provider, model, uncached_input, cost_micro_usd,
+            turns_list_priced, updated_at
+          ) VALUES (${cardId}, ${step}, ${thread}, 'codex', 'gpt-5-codex', 83000000, 83000000, 1, ${t0})
+        `;
+        yield* sql`
+          INSERT INTO boards.board_usage_ingested (thread_id, provider_turn_id)
+          VALUES (${thread}, ${`turn-${thread}`})
+        `;
+      }
+      yield* sql`
+        INSERT OR REPLACE INTO boards.projection_state (projector, last_applied_sequence, updated_at)
+        VALUES (${BOARD_USAGE_BACKFILL_MARKER}, 1, ${t0})
+      `;
+
+      const migration = BOARD_MIGRATIONS.find(([id]) => id === 69);
+      assert.ok(migration, "migration 069 is registered in the lineage");
+      yield* migration[2];
+      yield* withRecorder(Effect.flatMap(BoardUsageRecorder, (recorder) => recorder.backfill));
+
+      const rows = yield* sql<{
+        readonly threadId: string;
+        readonly uncached: number;
+        readonly cost: number;
+        readonly partial: number;
+      }>`
+        SELECT thread_id AS "threadId", uncached_input AS uncached, cost_micro_usd AS cost,
+          turns_partial AS partial
+        FROM boards.board_card_usage WHERE card_id = ${cardId} ORDER BY thread_id
+      `;
+      assert.deepStrictEqual(rows, [
+        { threadId: "thread-reprice", uncached: 1_000_000, cost: 1_000_000, partial: 1 },
+        { threadId: "thread-reprice-child", uncached: 500_000, cost: 500_000, partial: 0 },
+        { threadId: worker, uncached: 83_000_000, cost: 83_000_000, partial: 0 },
+      ]);
+      const [card] = yield* sql<{ readonly partial: number }>`
+        SELECT usage_history_partial AS partial FROM boards.board_cards WHERE card_id = ${cardId}
+      `;
+      assert.strictEqual(card?.partial, 1, "dropped rows leave the card a labelled lower bound");
+      const ingested = yield* sql<{ readonly threadId: string; readonly turnId: string }>`
+        SELECT thread_id AS "threadId", provider_turn_id AS "turnId"
+        FROM boards.board_usage_ingested
+        WHERE thread_id IN (${threadId}, ${child}, ${worker}, ${tombstoned}, ${unlinked})
+        ORDER BY thread_id
+      `;
+      assert.deepStrictEqual(ingested, [
+        { threadId: "thread-reprice", turnId: "turn-reprice-1" },
+        { threadId: "thread-reprice-child", turnId: "turn-reprice-child-1" },
+        { threadId: worker, turnId: `turn-${worker}` },
+      ]);
     }),
   );
 });
