@@ -13,6 +13,7 @@ import {
   boardCardActualsSample,
   boardCardEffectiveSize,
   boardCardEffectiveWorkerId,
+  boardCardPlacementTarget,
   boardProjectLearned,
   boardProjectLearnedEqual,
   boardProjectStageConfig,
@@ -86,8 +87,8 @@ interface ActiveStep {
   readonly skipReason: string | null;
 }
 
-const workerOf = (board: BoardState, card: BoardCard): string =>
-  card.placedWorkerId ?? boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+const workerOf = (_board: BoardState, card: BoardCard): string =>
+  boardCardPlacementTarget(card) ?? card.placedWorkerId ?? boardCardEffectiveWorkerId(card);
 
 function activeSteps(board: BoardState): ReadonlyArray<ActiveStep> {
   const steps: Array<ActiveStep> = [];
