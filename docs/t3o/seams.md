@@ -1494,6 +1494,16 @@ seam shrinks to nothing if upstream adopts it.
 
 ---
 
+### Worker capacity reads the machine without touching upstream (T3O-86)
+
+Worker capacity needs the machine's cores, memory and disk, and the RAM T3 Code allows its agents.
+Upstream has `HostResources` and `process/agentScope.ts` for exactly this, but exporting from them
+would be a new seam in an upstream file. `apps/server/src/board/capacity/machine.ts` reads the same
+sources itself instead: `os` for cores and memory, `/proc/meminfo` for available memory, the
+agents slice's `memory.high` at the path `agentScope.ts` creates, and `du` for worktree disk. If
+upstream moves the agents slice, the RAM default falls back to total memory minus 8 GiB rather than
+failing; check that path on each sync.
+
 ## Inherited workflows
 
 These are upstream's CI, inherited by the fork. They are switched off **from the GitHub Actions UI**

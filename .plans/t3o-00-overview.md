@@ -247,25 +247,34 @@ stage added to the board later reaches every project unless that project switche
 writes (`board.dispatchSettingsCommand`), never `board.dispatchCommand`. CI is snapshotted at each
 pass start, the same freeze rule as stage entry.
 
-### D11 — Concurrency is a board limit, a worker limit, and per-worker provider caps
+### D11 — Workers own their capacity; the board claims room before it places a card
 
 There is no concurrency limit anywhere in the T3 server today; a human's typing speed is the
 throttle. T3o removes that throttle.
 
-**Decision:** three ceilings, all of which must have room before a step starts:
+**Decision (rewritten by `T3O-86`):** each worker owns its capacity, and the board has no ceilings
+of its own.
 
-- a **board limit**: agents running across every worker;
-- a **worker limit** for each worker: agents running on that machine;
-- **provider-instance caps** for each worker, because an instance id on one machine is a different
-  account and a different CPU from the same id on another.
+- A worker **declares** CPU cores, RAM and disk (`pnpm t3o-worker config`, defaulting from the
+  machine), an optional `maxAgents` and per-provider-instance caps, and a quota threshold. It
+  counts every board it serves plus anything else running on the machine, and publishes a
+  snapshot (headroom, agents, quota, readiness) to each board.
+- A card's **reservation** is its project's baseline scaled by the card's S/M/L/XL size per
+  dimension. Disk is held while the card has a worktree; CPU and RAM only while an agent or CI
+  runs for it, and for 10 minutes after.
+- Before provisioning a worktree the board takes a **claim** on the worker; the worker refuses a
+  provision with no claim, or with an expired one. Claims are short-lived and re-synced from the
+  board's cards (`syncCards`), so a restart on either side converges instead of leaking.
+- A worker that isn't **ready** for a project (its committed readiness script fails) takes none of
+  its cards.
 
-Each worker's provider list comes from that worker's own server config, as it reports it; the
-central server never invents one. Replaced: the single-machine rule of `maxConcurrent` per
-`providerInstanceId` plus a global ceiling, which is the one-worker special case of the above.
+Rejected: the board limit, worker limit and per-worker provider caps this decision first named.
+Counting agents says nothing about whether a machine has room, a board can't see another board's
+load on a shared worker, and slots held on an offline worker leaked.
 
 The **Building column is the queue** — position is priority, drag to reprioritise, queued cards sit
 in Building flagged as queued (never in Ready, which would lie about their state). The card says
-which ceiling it is waiting on.
+what it is waiting on: room on a worker, an agent, quota, or a worker update.
 
 Ordering rule, unchanged: **stage descending → started before unstarted → drag order.** Finishing
 beats starting; a nearly-merged card is never starved by new work. Preemption takes effect at the
@@ -569,8 +578,8 @@ a card requires its branch to be pushed. Nothing is ever copied worker to worker
 ### D22 — Offline, reconnect and removal
 
 **Offline.** A worker the central server cannot reach is `offline`, and its cards show amber
-"Worker offline". Signals, timeouts and recovery pause for its steps, and their concurrency slots
-stay held — an offline worker is never a dead thread (D4), because the agent may still be working
+"Worker offline". Signals, timeouts and recovery pause for its steps, and their capacity
+stays reserved — an offline worker is never a dead thread (D4), because the agent may still be working
 on a machine the board merely cannot see.
 
 **Reconnect.** The boot `reconcile`, scoped to that worker, runs before anything else acts on its
@@ -582,7 +591,7 @@ affected cards:
 - Cards with no worktree fall back to the default worker, with an activity entry (the one
   board-driven placement change, D18).
 - Cards with a worktree or a running step hold with "Worker removed — move this card". A running
-  step is stopped on the worker if it is reachable, then stalled, and its slot is released.
+  step is stopped on the worker if it is reachable, then stalled, and its reservation is released.
 - Nothing on the worker is deleted: worktrees, branches and thread history stay there.
 - **Force-move** continues from the remote branch, with an explicit choice to abandon unpushed
   work. It is also offered for workers that are offline.

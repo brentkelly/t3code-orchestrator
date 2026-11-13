@@ -104,13 +104,79 @@ doesn't have. The dialog lists them, and **Ask agent to push** asks the card's a
 work. If creating the new worktree fails, the card shows **Move failed**; its branch is safe on the
 remote, so **Retry** it or pick another worker.
 
-## Concurrency across workers
+## Capacity: what a worker can take
 
-With workers, **Settings → Board → Concurrency** has a board limit, and each worker has its own limit
-and a cap for each of its provider instances. A card starts only when all three have room. A
-queued card says which limit it's waiting on: **worker full**, **provider full** or **board full**.
-**Start now** runs a queued card past all of them. Your old limit and provider caps carry over as
-the board limit and this server's limits.
+Each worker decides how much work it takes. It declares its CPU cores, RAM and disk, and the board
+asks it for room before a card gets a worktree there. A card is placed only when the worker has room
+for it, and a queued card says what it's waiting on: **waiting for room** (its details name the
+worker and whether it's CPU, RAM or disk), **behind** another card that's first in line there,
+**agents busy** when the worker's agent cap is full, **provider near quota** when the provider's
+subscription is nearly used up, or **needs update** when the worker is too old to be asked. Cards still
+queue in Building in the usual order; **Start now** jumps the queue.
+
+By default a worker declares every core it has, its RAM less 8 GiB (at least half of it; less where
+T3 Code limits its agents' memory), and 90% of the free disk where worktrees live. Change these on the worker with
+`pnpm t3o-worker config`:
+
+- `capacity.cpuCores`, `capacity.ramGiB`, `capacity.diskGB` — what the worker offers to boards.
+- `maxAgents` — the most agents running at once on this worker, from every board. Unset means no cap.
+- `providerCaps.<providerInstanceId>` — the most agents of one provider instance, such as
+  `providerCaps.claudeAgent`.
+- `quotaThresholdPercent` — how much of a subscription's usage window can be used before the worker
+  stops taking new cards for that provider (default 95).
+
+`pnpm t3o-worker status` shows what the worker declares, what it has free, and its agents.
+
+**What counts toward a worker's load.** Every card with a worktree holds its disk. A card holds its
+CPU and RAM while an agent or CI runs for it, and for 10 minutes after; a card that's waiting on
+you frees them after that. Planning threads on the board's own server count too, and so does
+anything else running on the machine: if real usage goes over what the worker declares, it takes
+no new work until usage drops.
+
+**Quota.** A worker stops taking new cards for a provider whose subscription is nearly used up, and
+starts again when the window resets. Workers signed into the same subscription see the same usage,
+so they stop together.
+
+**After upgrading.** The old Concurrency settings are gone; **Settings → Board** says where each
+limit went. Your workers declare their capacity instead, `maxAgents` and provider caps start unset,
+and each project gets a baseline worked out from its recent cards, marked **set at upgrade** until
+you change it.
+
+## Card sizes and a project's baseline
+
+A card reserves its project's **baseline** on its worker: what one normal card of that project
+needs in CPU, RAM and disk. Set it in **Settings → Board → Projects → <project> → Resources**, or
+in the `resources` block of the project's `t3o.json`. Each card has a size per dimension — S, M, L
+or XL — that scales the baseline (M is the baseline itself). The planner suggests a size with its
+plan; change it in the card's details, where **Reset to planner** goes back to the suggestion. A
+new size applies the next time the card is placed: a card that already has a worktree keeps the
+size it was granted.
+
+A card bigger than its worker's whole capacity says **Too big** and can't be placed there. Lower
+its size or the project's baseline, or pin it to a bigger worker. The Resources tab warns about
+workers that can't take even an M card of the project.
+
+## Setup and readiness
+
+**Setup** runs once for each new worktree, before the card's agent starts: fetch, checkout,
+submodules, then the project's setup script. The card shows **Preparing** while it runs and its
+details list the stages, with **Retry**, **Cancel setup** and the full log. Setup that runs longer
+than the project's setup timeout (30 minutes unless changed in the Resources tab) fails.
+
+**Readiness** says whether a worker can run a project's cards at all. The worker runs the project's
+readiness script, `.t3/ready.sh` unless the Resources tab names another, as it's committed on the
+default branch. Write it to check the machine — tools installed, services running, credentials
+present — not files in the repository. A project with no readiness script is ready wherever it has
+a checkout. A worker that isn't ready for a project takes none of its cards and can't be pinned or
+made default for it. The worker re-checks every hour while ready and every 15 minutes while not;
+**Re-check** in the Resources tab, or **Re-check all** on the Workers page, checks now.
+
+Setup and readiness output is visible to everyone who uses the board, so scripts shouldn't print
+secrets.
+
+**Several boards on one worker.** A worker can serve more than one board, and each board only sees
+its own cards. Boards that share a repository on the same worker should use different project key
+prefixes, so their cards' branches never share a name.
 
 ## When a worker needs attention
 
