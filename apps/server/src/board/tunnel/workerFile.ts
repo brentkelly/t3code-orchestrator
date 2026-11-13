@@ -95,7 +95,7 @@ export const WORKER_CONFIG_KEYS: ReadonlyArray<{
       "Stop taking new cards for a provider once its session or weekly window is at this percent. Default: 95.",
     parse: (raw) => {
       const value = Number(raw);
-      return Number.isFinite(value) && value > 0 && value <= 100
+      return Number.isFinite(value) && value >= 1 && value <= 100
         ? { ok: true, value }
         : { ok: false, message: "quotaThresholdPercent must be between 1 and 100." };
     },
@@ -169,7 +169,7 @@ export function resolveWorkerCapacitySettings(
     maxAgents: read("maxAgents", true),
     providerCaps,
     quotaThresholdPercent:
-      threshold === null ? DEFAULT_QUOTA_THRESHOLD_PERCENT : Math.min(100, threshold),
+      threshold === null ? DEFAULT_QUOTA_THRESHOLD_PERCENT : Math.max(1, Math.min(100, threshold)),
     holdEarlyStartFraction: Math.min(1, read("hold.earlyStartFraction") ?? 0.5),
     holdMaxMinutes: read("hold.maxMinutes") ?? 120,
   };

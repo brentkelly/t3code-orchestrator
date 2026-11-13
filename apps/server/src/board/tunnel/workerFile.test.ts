@@ -123,6 +123,14 @@ describe("board addresses", () => {
     expect(findWorkerConfigKey("providerCaps.claude")?.parse("3")).toEqual({ ok: true, value: 3 });
     expect(findWorkerConfigKey("providerCaps.")).toBeUndefined();
     expect(findWorkerConfigKey("maxAgents")?.parse("1.5").ok).toBe(false);
+    expect(findWorkerConfigKey("quotaThresholdPercent")?.parse("0.5").ok).toBe(false);
+    expect(findWorkerConfigKey("quotaThresholdPercent")?.parse("1")).toEqual({
+      ok: true,
+      value: 1,
+    });
+    expect(
+      resolveWorkerCapacitySettings({ quotaThresholdPercent: 0.5 }).quotaThresholdPercent,
+    ).toBe(1);
     expect(findWorkerConfigKey("capacity.gpus")).toBeUndefined();
     // T3o: holds (T3O-87).
     expect(findWorkerConfigKey("hold.earlyStartFraction")?.parse("1.5").ok).toBe(false);
