@@ -5699,11 +5699,6 @@ export const BoardCardProvisionWorktreeCommand = Schema.Struct({
   /** Base ref the branch was cut from (default branch, or parent integration
       branch for a sub-board plan card). */
   baseRefName: TrimmedNonEmptyString,
-  /** T3o: what the worker granted, on record before it is called (T3O-86). Absent on an
-      older command, which granted nothing. */
-  grantedProfile: Schema.optionalKey(BoardResourceProfile),
-  heavyGranted: Schema.optionalKey(Schema.Boolean),
-  claimId: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 export type BoardCardProvisionWorktreeCommand = typeof BoardCardProvisionWorktreeCommand.Type;
@@ -5760,6 +5755,13 @@ export const BoardCardPlaceCommand = Schema.Struct({
   commandId: CommandId,
   cardId: BoardCardId,
   workerId: BoardWorkerId,
+  /** T3o: what the worker granted, on record before the provision is called (T3O-87, moved
+      from `provision-worktree`). Absent for a placement that took no claim. */
+  grantedProfile: Schema.optionalKey(BoardResourceProfile),
+  heavyGranted: Schema.optionalKey(Schema.Boolean),
+  claimId: Schema.optionalKey(TrimmedNonEmptyString),
+  /** T3o: why the gate chose this worker, for the card's Worker row (T3O-87). */
+  reason: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 export type BoardCardPlaceCommand = typeof BoardCardPlaceCommand.Type;
@@ -12877,6 +12879,15 @@ export function boardCardEffectiveWorkerId(
   defaultWorkerId: BoardWorkerId | undefined,
 ): BoardWorkerId {
   return boardCardBoundWorkerId(card) ?? defaultWorkerId ?? BOARD_LOCAL_WORKER_ID;
+}
+
+/**
+ * T3o: the worker a card's worktree is on, for anything that acts on it (CI, git writes, the
+ * MCP relay guard), or null until the placement gate has placed it and its worktree exists
+ * (T3O-87). "Placed but no worktree" counts as unplaced: it is ranked again.
+ */
+export function boardCardPlacementTarget(card: BoardCardPlacementFields): BoardWorkerId | null {
+  return boardCardHoldsWorktree(card) ? (card.placedWorkerId ?? BOARD_LOCAL_WORKER_ID) : null;
 }
 
 /**

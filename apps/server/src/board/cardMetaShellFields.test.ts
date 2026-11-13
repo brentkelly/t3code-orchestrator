@@ -4,6 +4,7 @@
  * Run through the real seams, where the two producers meet.
  */
 import {
+  BOARD_LOCAL_WORKER_ID,
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
   boardBriefHasImage,
@@ -483,6 +484,13 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
       // Round one: a worktree, a merged pull request, then the reclaim that
       // settling the card at Done performs.
       yield* engine.dispatch({
+        type: "board.card.place",
+        commandId: CommandId.make("cmd-round-1-place"),
+        cardId: roundCardId,
+        workerId: BOARD_LOCAL_WORKER_ID,
+        createdAt,
+      });
+      yield* engine.dispatch({
         type: "board.card.provision-worktree",
         commandId: CommandId.make("cmd-round-1-provision"),
         cardId: roundCardId,
@@ -836,6 +844,13 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
           assert.isFalse(quiet !== undefined && "worktreeKeptReason" in quiet);
 
           yield* engine.dispatch({
+            type: "board.card.place",
+            commandId: CommandId.make("cmd-place"),
+            cardId,
+            workerId: BOARD_LOCAL_WORKER_ID,
+            createdAt,
+          });
+          yield* engine.dispatch({
             type: "board.card.provision-worktree",
             commandId: CommandId.make("cmd-provision"),
             cardId,
@@ -980,6 +995,13 @@ it.layer(makeTestLayer("t3o-card-worker-shell-"))(
         assert.strictEqual(pinned.delta.workerId, worker);
 
         // A worktree cut there, then a move back to this server.
+        yield* engine.dispatch({
+          type: "board.card.place",
+          commandId: CommandId.make("cmd-place"),
+          cardId,
+          workerId: worker,
+          createdAt,
+        });
         yield* engine.dispatch({
           type: "board.card.provision-worktree",
           commandId: CommandId.make("cmd-provision"),

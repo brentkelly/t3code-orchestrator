@@ -2440,7 +2440,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
       // Worktree lifecycle fixtures: each succeeds and none emits a
       // move — worktree provisioning is gated on Building but never advances a
       // stage.
-      const buildingCard = makeCard({ id: "card-building", stage: "building" });
+      const buildingCard = makeCard({
+        id: "card-building",
+        stage: "building",
+        placedWorkerId: "local",
+      });
       const provisioningCard = makeCard({
         id: "card-provisioning",
         stage: "building",

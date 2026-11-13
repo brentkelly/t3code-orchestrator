@@ -531,6 +531,13 @@ describe("BoardWorkers", () => {
         const threadId = ThreadId.make("thread-busy");
         // Its worktree is cut on the worker it is pinned to.
         yield* engine.dispatch({
+          type: "board.card.place",
+          commandId: CommandId.make("cmd-place"),
+          cardId: busy,
+          workerId: WORKER_ID,
+          createdAt: t0,
+        });
+        yield* engine.dispatch({
           type: "board.card.provision-worktree",
           commandId: CommandId.make("cmd-provision"),
           cardId: busy,

@@ -236,7 +236,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       );
     });
 
-    it.effect("provisioning a worktree records the placement it is cut on", () =>
+    it.effect("a provision keeps the gate's placement, never the pin or the default (T3O-87)", () =>
       Effect.gen(function* () {
         const provision: BoardCommand = {
           type: "board.card.provision-worktree",
@@ -246,19 +246,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           baseRefName: "main",
           createdAt: NOW,
         };
-        const byDefault = yield* cardAfter(
+        const unplaced = yield* decideFail(
           provision,
           makeReadModel({ cards: [makeCard()], defaultWorkerId: workerA }),
         );
-        expect(byDefault.placedWorkerId).toBe(workerA);
-        const byPin = yield* cardAfter(
+        expect(String(unplaced)).toContain("has no placement");
+        // An unpinned card the gate placed on a remote worker is still there once its worktree
+        // starts provisioning.
+        const placed = yield* cardAfter(
+          provision,
+          makeReadModel({ cards: [makeCard({ placedWorkerId: workerB })] }),
+        );
+        expect(placed.placedWorkerId).toBe(workerB);
+        const notThePin = yield* cardAfter(
           provision,
           makeReadModel({
-            cards: [makeCard({ pinnedWorkerId: workerB, placedWorkerId: workerA })],
+            cards: [makeCard({ pinnedWorkerId: workerA, placedWorkerId: workerB })],
             defaultWorkerId: workerA,
           }),
         );
-        expect(byPin.placedWorkerId).toBe(workerB);
+        expect(notThePin.placedWorkerId).toBe(workerB);
       }),
     );
 

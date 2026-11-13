@@ -233,6 +233,14 @@ export const BoardCardSetupResult = Schema.Struct({
 });
 export type BoardCardSetupResult = typeof BoardCardSetupResult.Type;
 
+/** T3o: when and why the placement gate chose the card's worker (T3O-87). */
+export const BoardCardPlacementRecord = Schema.Struct({
+  workerId: TrimmedNonEmptyString,
+  at: IsoDateTime,
+  reason: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type BoardCardPlacementRecord = typeof BoardCardPlacementRecord.Type;
+
 /** A card's capacity state, in one column: its size, its grant, and its setup. */
 export const BoardCardResources = Schema.Struct({
   sizing: Schema.NullOr(BoardCardSizing).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -240,6 +248,8 @@ export const BoardCardResources = Schema.Struct({
   setup: Schema.NullOr(BoardCardSetupResult).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** A worktree was cut or moved since the last setup: it runs setup, even on a built card. */
   setupDue: Schema.optional(Schema.Boolean),
+  /** T3o: the placement on record (T3O-87); absent until the gate places the card. */
+  placement: Schema.optional(Schema.NullOr(BoardCardPlacementRecord)),
 });
 export type BoardCardResources = typeof BoardCardResources.Type;
 
@@ -269,7 +279,8 @@ const withSizing = (
     next.sizing.edit === null &&
     next.grant === null &&
     next.setup === null &&
-    next.setupDue !== true
+    next.setupDue !== true &&
+    (next.placement ?? null) === null
     ? null
     : next;
 };

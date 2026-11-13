@@ -305,66 +305,88 @@ describe("the board MCP relay", () => {
     ),
   );
 
-  it.effect("refuses a write to a card that runs on another worker", () =>
-    inCentral(
-      Effect.gen(function* () {
-        const world = yield* setup();
-        const threadId = ThreadId.make("thread-cross");
-        yield* seedCard(world, { cardId: BoardCardId.make("card-own"), threadId }).pipe(
-          Effect.provide(world.runtime),
-        );
-        // Another card, following the default worker: this server.
-        const engine = yield* BoardEngine.pipe(Effect.provide(world.runtime));
-        const other = BoardCardId.make("card-elsewhere");
-        yield* engine.dispatch({
-          type: "board.card.create",
-          commandId: CommandId.make("cmd-card-elsewhere"),
-          cardId: other,
-          projectId: PROJECT_ID,
-          title: "A card on this server",
-          orderKey: "n",
-          createdAt: t0,
-        });
-        const updateCard = relayable("board_update_card", boardHandlers.board_update_card);
-        const archiveCard = relayable("board_archive_card", boardHandlers.board_archive_card);
+  it.effect(
+    "changes unplaced cards and its own group, and refuses a card placed on another worker (T3O-87)",
+    () =>
+      inCentral(
+        Effect.gen(function* () {
+          const world = yield* setup();
+          const threadId = ThreadId.make("thread-cross");
+          yield* seedCard(world, { cardId: BoardCardId.make("card-own"), threadId }).pipe(
+            Effect.provide(world.runtime),
+          );
+          const engine = yield* BoardEngine.pipe(Effect.provide(world.runtime));
+          const create = (cardId: BoardCardId, title: string, parentCardId?: BoardCardId) =>
+            engine.dispatch({
+              type: "board.card.create",
+              commandId: CommandId.make(`cmd-${cardId}`),
+              cardId,
+              projectId: PROJECT_ID,
+              title,
+              orderKey: "n",
+              ...(parentCardId === undefined ? {} : { parentCardId }),
+              createdAt: t0,
+            });
+          const cardOf = (cardId: BoardCardId) =>
+            Effect.map(engine.getReadModel, (model) =>
+              model.board?.cards.find((card) => card.id === cardId),
+            );
+          const updateCard = relayable("board_update_card", boardHandlers.board_update_card);
+          const archiveCard = relayable("board_archive_card", boardHandlers.board_archive_card);
+          const createCard = relayable("board_create_card", boardHandlers.board_create_card);
 
-        const refused = yield* Effect.flip(
-          onWorker(world, threadId, updateCard({ cardId: other, title: "Renamed" })),
-        );
-        assert.strictEqual(refused._tag === "BoardToolError" ? refused.code : null, "rejected");
-        const archiveRefused = yield* Effect.flip(
-          onWorker(world, threadId, archiveCard({ cardId: other })),
-        );
-        assert.strictEqual(
-          archiveRefused._tag === "BoardToolError" ? archiveRefused.code : null,
-          "rejected",
-        );
-        const untouched = (yield* engine.getReadModel).board?.cards.find(
-          (card) => card.id === other,
-        );
-        assert.strictEqual(untouched?.title, "A card on this server");
-        assert.isNull(untouched?.archivedAt);
+          // An unplaced backlog card belongs to no worker: the agent may change it.
+          const backlog = BoardCardId.make("card-backlog");
+          yield* create(backlog, "An unplaced card");
+          yield* onWorker(world, threadId, updateCard({ cardId: backlog, title: "Renamed" }));
+          assert.strictEqual((yield* cardOf(backlog))?.title, "Renamed");
 
-        // Pinned to the calling worker, the same card is the agent's to change.
-        yield* engine.dispatch({
-          type: "board.worker.register",
-          commandId: CommandId.make("cmd-register"),
-          mode: "add",
-          worker: registeredWorker,
-          createdAt: t0,
-        });
-        yield* engine.dispatch({
-          type: "board.card.pin-worker",
-          commandId: CommandId.make("cmd-pin"),
-          cardId: other,
-          workerId: WORKER_ID,
-          createdAt: t0,
-        });
-        yield* onWorker(world, threadId, updateCard({ cardId: other, title: "Renamed" }));
-        const renamed = (yield* engine.getReadModel).board?.cards.find((card) => card.id === other);
-        assert.strictEqual(renamed?.title, "Renamed");
-      }),
-    ),
+          // A group is never refused: the agent adds a card to it and renames it.
+          const group = BoardCardId.make("card-group");
+          yield* create(group, "A group");
+          yield* create(BoardCardId.make("card-in-group"), "Its first child", group);
+          yield* onWorker(
+            world,
+            threadId,
+            createCard({ title: "A follow-up", parentCardId: String(group) }),
+          );
+          yield* onWorker(world, threadId, updateCard({ cardId: group, title: "Renamed group" }));
+          assert.strictEqual((yield* cardOf(group))?.title, "Renamed group");
+
+          // A card placed on another worker (this server) with its worktree there is refused.
+          const elsewhere = BoardCardId.make("card-elsewhere");
+          yield* create(elsewhere, "A card on this server");
+          yield* engine.dispatch({
+            type: "board.card.place",
+            commandId: CommandId.make("cmd-place-elsewhere"),
+            cardId: elsewhere,
+            workerId: "local",
+            createdAt: t0,
+          });
+          yield* engine.dispatch({
+            type: "board.card.provision-worktree",
+            commandId: CommandId.make("cmd-provision-elsewhere"),
+            cardId: elsewhere,
+            branch: "board/card-elsewhere",
+            baseRefName: "main",
+            createdAt: t0,
+          });
+          const refused = yield* Effect.flip(
+            onWorker(world, threadId, updateCard({ cardId: elsewhere, title: "Renamed" })),
+          );
+          assert.strictEqual(refused._tag === "BoardToolError" ? refused.code : null, "rejected");
+          const archiveRefused = yield* Effect.flip(
+            onWorker(world, threadId, archiveCard({ cardId: elsewhere })),
+          );
+          assert.strictEqual(
+            archiveRefused._tag === "BoardToolError" ? archiveRefused.code : null,
+            "rejected",
+          );
+          const untouched = yield* cardOf(elsewhere);
+          assert.strictEqual(untouched?.title, "A card on this server");
+          assert.isNull(untouched?.archivedAt);
+        }),
+      ),
   );
 
   it.effect("applies a call delivered twice under one call id once", () =>

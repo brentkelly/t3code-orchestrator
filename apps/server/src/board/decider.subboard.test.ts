@@ -1010,6 +1010,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
             makeBoard({
               parent: {
                 stage: "review",
+                placedWorkerId: "local",
                 worktree: {
                   branch: "board/t3-190",
                   baseRefName: "main",

@@ -32,6 +32,7 @@ import {
   isBoardCiStageExecution,
   type BoardSkipCiResult,
   boardCardEffectiveWorkerId,
+  boardCardPlacementTarget,
   boardRepositoryGroupingKey,
   boardThreadLinkWorkerId,
   EMPTY_BOARD_WORKERS_STATE,
@@ -1228,7 +1229,13 @@ const make = Effect.gen(function* () {
     // A worker the board cannot reach is no fault of the repository.
     // Nothing is reported, no attempt is spent, and the next pass retries.
     const unreachable = { kind: "transient" } as WorktreeOutcome;
-    const workspace = yield* workspaceFor(card);
+    // T3o: the gate's worker, never `workspaceFor(card)`, which reads an unplaced card as the
+    // board server's (T3O-87). A resumed provision stays where it was placed.
+    const targetWorkerId =
+      card.worktree?.status === "provisioning" && card.placedWorkerId !== null
+        ? card.placedWorkerId
+        : boardCardEffectiveWorkerId(card, (yield* readBoard).defaultWorkerId);
+    const workspace = yield* workspaces.forWorker(targetWorkerId, card.projectId);
     const cwd = workspace.checkoutPath;
     // Pre-flight failures report onto the card, not the server log: the card is where the human
     // is looking.
@@ -1376,6 +1383,18 @@ const make = Effect.gen(function* () {
               providerInstanceId: null,
             }
           : null;
+    // T3o: placement is recorded here and only here, with the grant (T3O-87).
+    const placed = yield* dispatchOptional({
+      type: "board.card.place",
+      commandId: yield* commandId("place"),
+      cardId: card.id,
+      workerId: targetWorkerId,
+      ...(placement.kind === "granted"
+        ? { grantedProfile: placement.profile, heavyGranted: true, claimId: placement.claimId }
+        : {}),
+      createdAt: yield* nowIso,
+    });
+    if (!placed) return { kind: "transient" } as WorktreeOutcome;
     // Observe the provision dispatch: a rejected command (e.g. the worktree is
     // not in a provisionable state) must abort BEFORE the git effect, or the
     // tree lands on disk untracked while `record-worktree` is then rejected too.
@@ -1386,13 +1405,6 @@ const make = Effect.gen(function* () {
         cardId: card.id,
         branch,
         baseRefName,
-        ...(placement.kind === "granted"
-          ? {
-              grantedProfile: placement.profile,
-              heavyGranted: true,
-              claimId: placement.claimId,
-            }
-          : {}),
         createdAt: yield* nowIso,
       })
       .pipe(
@@ -1863,21 +1875,12 @@ const make = Effect.gen(function* () {
     // The user's agent authority, frozen onto the run row at stage entry; the board never forces
     // `full-access`. An approval-gated command surfaces as "Input needed".
     const runtimeMode = step.runtimeMode;
-    // The worker the thread runs on — where the card holds its
-    // worktree, else its pin, else the default — recorded as the card's
-    // placement before anything spawns there.
+    // The worker the thread runs on: where the card holds its worktree, else its pin, else
+    // the default. T3o: only the placement gate records placement (T3O-87).
     const board = yield* readBoard;
     const fresh = board.cards.find((candidate) => candidate.id === card.id) ?? card;
-    const workerId = boardCardEffectiveWorkerId(fresh, board.defaultWorkerId);
-    if (fresh.placedWorkerId !== workerId) {
-      yield* dispatch({
-        type: "board.card.place",
-        commandId: yield* commandId("place"),
-        cardId: card.id,
-        workerId,
-        createdAt: yield* nowIso,
-      });
-    }
+    const workerId =
+      boardCardPlacementTarget(fresh) ?? boardCardEffectiveWorkerId(fresh, board.defaultWorkerId);
     const remoteWorker = workerId === BOARD_LOCAL_WORKER_ID ? null : workerId;
     // An API-only text generator can't run an agent. Only this server's settings are known here,
     // so a worker's own instances are left to the worker.
@@ -3455,6 +3458,16 @@ const make = Effect.gen(function* () {
     }
   });
 
+  /** T3o: where a card's CI runs: the worker its worktree is on (T3O-87); null when unreachable. */
+  const ciRunnerFor = Effect.fn("board-supervisor-ciRunnerFor")(function* (cardId: BoardCardId) {
+    const placed = yield* readCard(cardId);
+    const workerId =
+      (placed === null ? null : boardCardPlacementTarget(placed)) ?? BOARD_LOCAL_WORKER_ID;
+    if (workerId === BOARD_LOCAL_WORKER_ID) return { workerId, runner: undefined };
+    if (Option.isNone(workerConnections)) return null;
+    return { workerId, runner: remoteCiRunner(workerConnections.value, workerId) };
+  });
+
   /** Hold a card in CI with a reason on its rail: a human can Skip CI. */
   const holdInCi = Effect.fn("board-supervisor-holdInCi")(function* (
     card: BoardCard,
@@ -3504,22 +3517,7 @@ const make = Effect.gen(function* () {
       yield* holdBeforeStart(card, "This project's CI has no steps.", "Add one, or skip CI.");
       return;
     }
-    const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
-    // A placed card's steps run on its worker, streamed back here.
-    const runner =
-      workerId === BOARD_LOCAL_WORKER_ID
-        ? undefined
-        : Option.isSome(workerConnections)
-          ? remoteCiRunner(workerConnections.value, workerId)
-          : null;
-    if (runner === null) {
-      yield* holdBeforeStart(
-        card,
-        "CI can't reach the card's worker.",
-        "Restart the stage, or Skip CI.",
-      );
-      return;
-    }
+    // T3o: CI creates its worktree through the placement gate, then runs where it landed (T3O-87).
     const worktree = yield* ensureWorktree(card);
     if (worktree.kind === "held") {
       yield* waitForRoomInCi(card, worktree.hold, startCiPass(cardId, options));
@@ -3528,6 +3526,14 @@ const make = Effect.gen(function* () {
     ciWaitingForRoom.delete(card.id);
     if (worktree.kind !== "ready") {
       yield* holdBeforeStart(card, "CI is waiting for the card's worktree, which is not ready.");
+      return;
+    }
+    if ((yield* ciRunnerFor(cardId)) === null) {
+      yield* holdBeforeStart(
+        card,
+        "CI can't reach the card's worker.",
+        "Restart the stage, or Skip CI.",
+      );
       return;
     }
     const detail = yield* boardQueries
@@ -3634,17 +3640,6 @@ const make = Effect.gen(function* () {
         else yield* startCiForgeStep(card, runId, steps, segment.index);
         return;
       }
-      const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
-      const runner =
-        workerId === BOARD_LOCAL_WORKER_ID
-          ? undefined
-          : Option.isSome(workerConnections)
-            ? remoteCiRunner(workerConnections.value, workerId)
-            : null;
-      if (runner === null) {
-        yield* holdCiPass(card, runId, "CI can't reach the card's worker. Retry CI, or Skip CI.");
-        return;
-      }
       const worktree = yield* ensureWorktree(card);
       if (worktree.kind === "held") {
         yield* waitForRoomInCi(
@@ -3664,6 +3659,12 @@ const make = Effect.gen(function* () {
         );
         return;
       }
+      const ciRunner = yield* ciRunnerFor(cardId);
+      if (ciRunner === null) {
+        yield* holdCiPass(card, runId, "CI can't reach the card's worker. Retry CI, or Skip CI.");
+        return;
+      }
+      const { workerId, runner } = ciRunner;
       // The board's own disk (its database) needs room to record the
       // pass; a worker's worktree disk is the runner's to check.
       if (Option.isSome(serverConfig)) {

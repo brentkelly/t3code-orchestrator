@@ -537,7 +537,8 @@ const withoutEmptyResources = (resources: BoardCardResources): BoardCardResource
   resources.sizing === null &&
   resources.grant === null &&
   resources.setup === null &&
-  resources.setupDue !== true
+  resources.setupDue !== true &&
+  (resources.placement ?? null) === null
     ? null
     : resources;
 
@@ -4608,6 +4609,13 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${command.cardId}' worktree is '${card.worktree.status}'; only a failed, reclaimed or branch-only worktree can be re-provisioned.`,
         );
       }
+      // T3o: the placement gate records where the card goes before it provisions (T3O-87).
+      if (card.placedWorkerId === null) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' has no placement; the board places a card before it provisions it.`,
+        );
+      }
       // `failed` is a retry, so `attempts` climbs; `reclaimed` and `branch-only` are
       // fresh provisions, so it restarts. The round boundary belongs to the move out of
       // Done, not here: a worktree that survived Done is never re-provisioned.
@@ -4628,24 +4636,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           lastError: null,
           reclaimBlockedReason: null,
         },
-        // The worktree binds the card to the worker it is cut on, so placement is recorded in
-        // the same event: the card's pin, or the default. From here only a move changes it.
-        placedWorkerId: boardCardEffectiveWorkerId(card, board.defaultWorkerId),
-        // T3o: the grant is on record before the worker is called (T3O-86).
-        ...(command.grantedProfile === undefined
-          ? { resources: withSetupDue(card.resources) }
-          : {
-              resources: {
-                ...withSetupDue(card.resources),
-                grant: {
-                  profile: command.grantedProfile,
-                  heavy: command.heavyGranted ?? true,
-                  claimId: command.claimId ?? null,
-                  grantedAt: command.createdAt,
-                  settled: false,
-                },
-              },
-            }),
+        // The worktree binds the card to the worker the gate placed it on (T3O-87). From
+        // here only a move or the worker's removal changes it.
+        placedWorkerId: card.placedWorkerId,
+        resources: withSetupDue(card.resources),
         updatedAt: command.createdAt,
       };
       return {
@@ -5140,9 +5134,24 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (card.worktree?.status !== "provisioning") return [];
       // The worktree that was due its setup never landed: the next provision marks it again.
       const { setupDue: _due, ...rest } = card.resources ?? EMPTY_BOARD_CARD_RESOURCES;
+      // T3o: the claim expired, so the placement goes too and the card is ranked again
+      // (T3O-87) — unless the restored record still binds it to its worker.
+      const restoredHolds = boardCardHoldsWorktree({ worktree: command.restore });
       return yield* cardResourcesRecordedEvent({
-        card: { ...card, worktree: command.restore, updatedAt: command.createdAt },
-        resources: card.resources === null ? null : withoutEmptyResources({ ...rest, grant: null }),
+        card: {
+          ...card,
+          worktree: command.restore,
+          placedWorkerId: restoredHolds ? card.placedWorkerId : null,
+          updatedAt: command.createdAt,
+        },
+        resources:
+          card.resources === null
+            ? null
+            : withoutEmptyResources({
+                ...rest,
+                grant: null,
+                ...(restoredHolds ? {} : { placement: null }),
+              }),
         command,
       });
     }
@@ -6286,9 +6295,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // A card with a worktree is bound to its worker: changing that is a
       // move, which checks the work is pushed first. A pin that lands where the
       // worktree already is changes nothing about where the card runs.
-      if (boardCardHoldsWorktree(card)) {
+      // T3o: Unpin on a placed card leaves it where it is (T3O-87).
+      if (boardCardHoldsWorktree(card) && command.workerId !== null) {
         const current = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
-        const target = command.workerId ?? board.defaultWorkerId ?? BOARD_LOCAL_WORKER_ID;
+        const target = command.workerId;
         if (target !== current) {
           return yield* invariant(
             command,
@@ -6333,10 +6343,39 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           );
         }
       }
-      if (card.placedWorkerId === command.workerId) return [];
+      const placement = {
+        workerId: command.workerId,
+        at: command.createdAt,
+        reason: command.reason ?? null,
+      };
+      if (
+        card.placedWorkerId === command.workerId &&
+        command.grantedProfile === undefined &&
+        command.reason === undefined
+      ) {
+        return [];
+      }
+      // T3o: the gate's grant and its reason are on record before the provision (T3O-87).
+      const base = card.resources ?? EMPTY_BOARD_CARD_RESOURCES;
+      const resources: BoardCardResources = {
+        ...base,
+        placement,
+        ...(command.grantedProfile === undefined
+          ? {}
+          : {
+              grant: {
+                profile: command.grantedProfile,
+                heavy: command.heavyGranted ?? true,
+                claimId: command.claimId ?? null,
+                grantedAt: command.createdAt,
+                settled: false,
+              },
+            }),
+      };
       const nextCard: BoardCard = {
         ...card,
         placedWorkerId: command.workerId,
+        resources,
         updatedAt: command.createdAt,
       };
       return {

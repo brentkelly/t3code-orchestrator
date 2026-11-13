@@ -30,6 +30,7 @@ import {
   EMPTY_BOARD_STATE,
   resolveBoardCardForThread,
   boardCardEffectiveWorkerId,
+  boardCardPlacementTarget,
   unwrapStringifiedBoardStepPayload,
   type BoardCardArchiveCommand,
   type BoardCardCreateCommand,
@@ -479,7 +480,10 @@ const refuseOtherWorkersCard = Effect.fn("BoardToolkit.refuseOtherWorkersCard")(
   const relayed = yield* Effect.serviceOption(BoardRelayInvocation);
   if (Option.isNone(relayed)) return;
   if (resolveBoardCardForThread(board, scope.thread.threadId)?.id === card.id) return;
-  if (boardCardEffectiveWorkerId(card, board.defaultWorkerId) === relayed.value.workerId) return;
+  // T3o: only a card placed on another worker is refused; an unplaced card and every group
+  // card belong to no worker, so a build agent keeps write access to them (T3O-87).
+  const target = card.group !== null ? null : boardCardPlacementTarget(card);
+  if (target === null || target === relayed.value.workerId) return;
   return yield* new BoardToolError({
     code: "rejected",
     message: `'${card.key}' runs on another worker, so it cannot be changed from this one: ask a human to do it from the app.`,

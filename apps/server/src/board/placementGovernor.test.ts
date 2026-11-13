@@ -15,21 +15,18 @@ import {
   boardCardStepState,
   EnvironmentId,
   PositiveInt,
-  ProjectId,
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
   type BoardCardStepState,
   type BoardResourceProfile,
   type BoardWorkerId,
-  type BoardWorkersState,
   type BoardWorkerView,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { layerTest } from "../config.ts";
@@ -48,72 +45,21 @@ import {
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 import { aliveThread } from "./threadGateway.testkit.ts";
-import type { BoardPlacementShape } from "./workers/BoardPlacement.ts";
+import {
+  makePlacement,
+  workersState,
+  workerView as workerViewOf,
+} from "./workers/placement.testkit.ts";
 
 const W1 = EnvironmentId.make("env-w1");
 const W2 = EnvironmentId.make("env-w2");
 const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claude");
 
-/** The harness project's repository, as the workers' checkouts report it. */
-const REPOSITORY_KEY = "github.com/acme/repo";
-
 const workerView = (
   id: EnvironmentId,
-  options: {
-    readonly online?: boolean;
-    readonly checkout?: boolean;
-    readonly providers?: ReadonlyArray<ProviderInstanceId>;
-  } = {},
-): BoardWorkerView => ({
-  id,
-  label: id === W1 ? "w1" : "w2",
-  url: `http://${id}:3773`,
-  addedAt: "2026-01-01T00:00:00.000Z",
-  status: {
-    state: options.online === false ? "offline" : "online",
-    lastSeenAt: null,
-    t3oVersion: "0.1.0",
-    protocolVersion: 1,
-  },
-  snapshot: {
-    providers: (options.providers ?? [codex]).map((instanceId) => ({
-      instanceId,
-      driver: "codex",
-      displayName: null,
-      enabled: true,
-      models: [],
-    })),
-    checkouts:
-      options.checkout === false
-        ? []
-        : [
-            {
-              projectId: ProjectId.make(`${id}-project`),
-              title: "repo",
-              workspaceRoot: `/home/${id}/repo`,
-              repositoryKey: REPOSITORY_KEY,
-            },
-          ],
-    projectsFolder: null,
-    reportedAt: "2026-01-01T00:00:00.000Z",
-  },
-});
-
-const workersState = (
-  workers: ReadonlyArray<BoardWorkerView>,
-  defaultWorkerId: BoardWorkerId = BOARD_LOCAL_WORKER_ID,
-): BoardWorkersState => ({ defaultWorkerId, workers, setups: [], joinCodes: [] });
-
-/** A placement whose worker summary the test changes, ticking on each change. */
-const makePlacement = (initial: BoardWorkersState) =>
-  Effect.map(SubscriptionRef.make(initial), (ref) => ({
-    ref,
-    placement: {
-      workers: SubscriptionRef.get(ref),
-      changes: SubscriptionRef.changes(ref).pipe(Stream.drop(1)),
-    } satisfies BoardPlacementShape,
-  }));
+  options: Parameters<typeof workerViewOf>[1] = {},
+): BoardWorkerView => workerViewOf(id, { label: id === W1 ? "w1" : "w2", ...options });
 
 const registered = [
   { id: W1, label: "w1", url: "http://env-w1:3773", addedAt: "2026-01-01T00:00:00.000Z" },
@@ -159,7 +105,7 @@ const pinned = (before: BoardCard, workerId: BoardWorkerId | null, sequence: num
 
 // ── Placement ─────────────────────────────────────────────────────────────
 
-it.effect("a pinned card's first thread spawns on its worker, which becomes its placement", () =>
+it.effect("a pinned card's planning thread spawns on its worker and records no placement", () =>
   Effect.gen(function* () {
     const { placement } = yield* makePlacement(workersState([workerView(W1)]));
     const sprint = makeBoardCard({
@@ -183,7 +129,8 @@ it.effect("a pinned card's first thread spawns on its worker, which becomes its 
           yield* h.pumpDomain(cardMoved(inPlanning(sprint), "sprint", "planning", 1));
           assert.deepStrictEqual(yield* spawnsOn(h), [W1]);
           const after = yield* card(h, "card-1");
-          assert.strictEqual(after.placedWorkerId, W1);
+          // Only the placement gate at build start records placement (T3O-87).
+          assert.isNull(after.placedWorkerId);
           // The link records where the thread lives.
           assert.strictEqual(after.threadLinks[0]?.workerId, W1);
         }),
@@ -309,7 +256,7 @@ it.effect("an unpinned card follows the default worker", () =>
         Effect.gen(function* () {
           yield* h.pumpDomain(cardMoved(inPlanning(sprint), "sprint", "planning", 1));
           assert.deepStrictEqual(yield* spawnsOn(h), [W1]);
-          assert.strictEqual((yield* card(h, "card-1")).placedWorkerId, W1);
+          assert.isNull((yield* card(h, "card-1")).placedWorkerId);
         }),
     );
   }),
