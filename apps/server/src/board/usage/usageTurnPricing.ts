@@ -15,8 +15,8 @@ export interface BoardUsageTurnPrice {
   readonly totals: UsageTokenTotals;
   readonly costUsd: number;
   readonly source: BoardUsageTurnSource;
-  /** The provider marked the turn `partial` (stopped, failed, a billed field missing):
-      its counts are real but may be short, so the figure is a lower bound. */
+  /** The provider marked the turn `partial` (stopped, failed, a billed field missing), or its
+      legacy `otherUsage` was dropped or split by guess: the figure is a lower bound. */
   readonly partial: boolean;
 }
 
@@ -33,13 +33,59 @@ const ZERO: UsageTokenTotals = {
   reasoningTokens: 0,
 };
 
+type OtherUsage = NonNullable<BoardGatewayTurnUsage["otherUsage"]>;
+
 /**
- * `inputTokens` includes cache reads and writes, and `reasoningTokens` is part of
- * `outputTokens`. `otherUsage` (native subagents, compaction) is added as uncached input
- * and output: the ledger does not split its cache. A turn that reported nothing, or
- * `unavailable`, is a no-usage turn and makes the figure partial.
+ * `otherUsage` split into the board's columns. Legacy `otherUsage` (no cache fields: turns
+ * stored before T3O-90, or an old worker) folded cache into input. With no subagents it was a
+ * resumed process's restored totals or compaction, so it is dropped; otherwise its input is
+ * split by the main turn's own cache ratios. Either guess makes the turn partial, except a
+ * split known to have subagents.
  */
-export function boardUsageTurnTotals(usage: BoardGatewayTurnUsage | null): UsageTokenTotals | null {
+function otherUsageTotals(
+  usage: BoardGatewayTurnUsage,
+  other: OtherUsage,
+): { readonly totals: UsageTokenTotals; readonly partial: boolean } {
+  if (other.cachedInputTokens !== undefined || other.cacheCreationTokens !== undefined) {
+    const cached = Math.min(other.cachedInputTokens ?? 0, other.inputTokens);
+    const creation = Math.min(other.cacheCreationTokens ?? 0, other.inputTokens - cached);
+    return {
+      totals: {
+        ...ZERO,
+        uncachedInputTokens: other.inputTokens - cached - creation,
+        cachedInputTokens: cached,
+        cacheCreationTokens: creation,
+        outputTokens: other.outputTokens,
+      },
+      partial: false,
+    };
+  }
+  if (usage.hasSubagents === false) {
+    return { totals: ZERO, partial: other.inputTokens + other.outputTokens > 0 };
+  }
+  const mainInput = usage.inputTokens ?? 0;
+  const cachedRatio = mainInput === 0 ? 0 : Math.min(usage.cachedInputTokens ?? 0, mainInput) / mainInput;
+  const creationRatio =
+    mainInput === 0
+      ? 0
+      : Math.min(usage.cacheCreationTokens ?? 0, mainInput) / mainInput;
+  const cached = Math.round(other.inputTokens * cachedRatio);
+  const creation = Math.min(Math.round(other.inputTokens * creationRatio), other.inputTokens - cached);
+  return {
+    totals: {
+      ...ZERO,
+      uncachedInputTokens: other.inputTokens - cached - creation,
+      cachedInputTokens: cached,
+      cacheCreationTokens: creation,
+      outputTokens: other.outputTokens,
+    },
+    partial: usage.hasSubagents === undefined,
+  };
+}
+
+function turnTotals(
+  usage: BoardGatewayTurnUsage | null,
+): { readonly totals: UsageTokenTotals; readonly partial: boolean } | null {
   if (usage === null || usage.usageStatus === "unavailable") return null;
   if (
     usage.inputTokens === undefined &&
@@ -51,13 +97,30 @@ export function boardUsageTurnTotals(usage: BoardGatewayTurnUsage | null): Usage
   const input = usage.inputTokens ?? 0;
   const cached = Math.min(usage.cachedInputTokens ?? 0, input);
   const creation = Math.min(usage.cacheCreationTokens ?? 0, input - cached);
+  const other =
+    usage.otherUsage === undefined
+      ? { totals: ZERO, partial: false }
+      : otherUsageTotals(usage, usage.otherUsage);
   return {
-    uncachedInputTokens: input - cached - creation + (usage.otherUsage?.inputTokens ?? 0),
-    cachedInputTokens: cached,
-    cacheCreationTokens: creation,
-    outputTokens: (usage.outputTokens ?? 0) + (usage.otherUsage?.outputTokens ?? 0),
-    reasoningTokens: usage.reasoningTokens ?? 0,
+    totals: {
+      uncachedInputTokens: input - cached - creation + other.totals.uncachedInputTokens,
+      cachedInputTokens: cached + other.totals.cachedInputTokens,
+      cacheCreationTokens: creation + other.totals.cacheCreationTokens,
+      outputTokens: (usage.outputTokens ?? 0) + other.totals.outputTokens,
+      reasoningTokens: usage.reasoningTokens ?? 0,
+    },
+    partial: usage.usageStatus === "partial" || other.partial,
   };
+}
+
+/**
+ * `inputTokens` includes cache reads and writes, and `reasoningTokens` is part of
+ * `outputTokens`. `otherUsage` (native subagents, compaction) is added column by column.
+ * A turn that reported nothing, or `unavailable`, is a no-usage turn and makes the figure
+ * partial.
+ */
+export function boardUsageTurnTotals(usage: BoardGatewayTurnUsage | null): UsageTokenTotals | null {
+  return turnTotals(usage)?.totals ?? null;
 }
 
 export function priceBoardUsageTurn(
@@ -65,9 +128,9 @@ export function priceBoardUsageTurn(
   model: string | null,
   usage: BoardGatewayTurnUsage | null,
 ): BoardUsageTurnPrice {
-  const totals = boardUsageTurnTotals(usage);
-  if (totals === null) return { totals: ZERO, costUsd: 0, source: "noUsage", partial: false };
-  const partial = usage?.usageStatus === "partial";
+  const turn = turnTotals(usage);
+  if (turn === null) return { totals: ZERO, costUsd: 0, source: "noUsage", partial: false };
+  const { totals, partial } = turn;
   if (model === null) return { totals, costUsd: 0, source: "unpriced", partial };
   const priced = priceUsage(
     rates.table,

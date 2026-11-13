@@ -34,16 +34,95 @@ describe("a finished turn's board usage", () => {
           cacheCreationTokens: 100,
           outputTokens: 200,
           reasoningTokens: 50,
-          otherUsage: { inputTokens: 40, outputTokens: 4 },
+          hasSubagents: true,
+          otherUsage: {
+            inputTokens: 40,
+            outputTokens: 4,
+            cachedInputTokens: 30,
+            cacheCreationTokens: 6,
+          },
         }),
       ),
     ).toEqual({
-      uncachedInputTokens: 340,
-      cachedInputTokens: 600,
-      cacheCreationTokens: 100,
+      uncachedInputTokens: 304,
+      cachedInputTokens: 630,
+      cacheCreationTokens: 106,
       outputTokens: 204,
       reasoningTokens: 50,
     });
+  });
+
+  it("prices subagent cache reads at the cache rate, not as uncached input", () => {
+    // T3O-84's review rounds: millions of subagent cache reads were priced as uncached input.
+    expect(
+      priceBoardUsageTurn(
+        rates,
+        "listed-model",
+        complete({
+          hasSubagents: true,
+          otherUsage: {
+            inputTokens: 1_000_000,
+            outputTokens: 0,
+            cachedInputTokens: 1_000_000,
+            cacheCreationTokens: 0,
+          },
+        }),
+      ),
+    ).toMatchObject({ costUsd: expect.closeTo(0.1, 9), partial: false });
+  });
+
+  it("drops legacy otherUsage on a turn with no subagents and flags it partial", () => {
+    // A resumed process booked the session's restored totals on an 83ms turn (T3O-84's build).
+    const phantom = complete({
+      hasSubagents: false,
+      otherUsage: { inputTokens: 82_023_971, outputTokens: 54 },
+    });
+    expect(priceBoardUsageTurn(rates, "listed-model", phantom)).toMatchObject({
+      costUsd: 0,
+      partial: true,
+    });
+    expect(
+      priceBoardUsageTurn(
+        rates,
+        "listed-model",
+        complete({ hasSubagents: false, otherUsage: { inputTokens: 0, outputTokens: 0 } }),
+      ),
+    ).toMatchObject({ partial: false });
+  });
+
+  it.each([
+    { hasSubagents: true, partial: false },
+    { hasSubagents: undefined, partial: true },
+  ])(
+    "splits legacy otherUsage by the main turn's cache ratios (hasSubagents $hasSubagents)",
+    ({ hasSubagents, partial }) => {
+      const price = priceBoardUsageTurn(
+        rates,
+        "listed-model",
+        complete({
+          inputTokens: 1000,
+          cachedInputTokens: 600,
+          cacheCreationTokens: 100,
+          ...(hasSubagents === undefined ? {} : { hasSubagents }),
+          otherUsage: { inputTokens: 40, outputTokens: 4 },
+        }),
+      );
+      expect(price.totals).toMatchObject({
+        uncachedInputTokens: 300 + 12,
+        cachedInputTokens: 600 + 24,
+        cacheCreationTokens: 100 + 4,
+        outputTokens: 4,
+      });
+      expect(price.partial).toBe(partial);
+    },
+  );
+
+  it("prices legacy otherUsage as uncached when the main turn read no input", () => {
+    expect(
+      boardUsageTurnTotals(
+        complete({ hasSubagents: true, otherUsage: { inputTokens: 40, outputTokens: 4 } }),
+      ),
+    ).toMatchObject({ uncachedInputTokens: 40, cachedInputTokens: 0, cacheCreationTokens: 0 });
   });
 
   it("never reads more cache than input, so uncached input cannot go negative", () => {
