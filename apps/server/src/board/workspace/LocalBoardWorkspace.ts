@@ -827,6 +827,19 @@ export function makeLocalBoardWorkspace(
     "LocalBoardWorkspace.pushCardBranch",
   )(function* ({ projectId, worktreePath, branch }) {
     const cwd = yield* rootOf("pushCardBranch", projectId);
+    // Branch refs are shared by every worktree of the repository: push only the one checked
+    // out here, so a board's own checkout can't publish another board's branch.
+    const head = yield* git
+      .execute({
+        operation: "boardPushCardBranch.head",
+        cwd: worktreePath,
+        args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    if (head === null || head.exitCode !== 0 || head.stdout.trim() !== branch) {
+      return { pushed: false, detail: `${branch} is not checked out in ${worktreePath}.` };
+    }
     const remoteName = yield* primaryRemote(cwd);
     if (remoteName === null) return { pushed: false, detail: "The project has no git remote." };
     const pushed = yield* git

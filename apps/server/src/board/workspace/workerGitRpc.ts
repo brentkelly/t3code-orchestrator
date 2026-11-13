@@ -43,9 +43,10 @@ const pathsOf = (input: Record<string, unknown>): ReadonlyArray<string> => {
   return typeof path === "string" ? [path] : [];
 };
 
-/** The operations that change or remove the checkout they name. */
+/** The operations that change, remove or publish from the checkout they name. */
 const WRITES_TO_PATH: ReadonlySet<BoardWorkerGitOperation> = new Set([
   "pinGhDefault",
+  "pushCardBranch",
   "pruneWorktree",
   "retireWorktree",
 ]);

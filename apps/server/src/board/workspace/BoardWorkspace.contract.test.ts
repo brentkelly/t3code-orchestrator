@@ -1023,7 +1023,11 @@ vitest.layer(RepoTemplateLive)((it) => {
           branch: "board/A-1",
           baseRefName: "main",
         });
-        yield* boardB.provisionWorktree({ projectId, branch: "board/B-1", baseRefName: "main" });
+        const placedB = yield* boardB.provisionWorktree({
+          projectId,
+          branch: "board/B-1",
+          baseRefName: "main",
+        });
         assert.deepStrictEqual(
           (yield* boardA.listBoardWorktrees({ projectId })).worktrees.map((w) => w.branch),
           ["board/A-1"],
@@ -1041,6 +1045,7 @@ vitest.layer(RepoTemplateLive)((it) => {
             verifiedClean: false,
           }),
           boardB.pruneWorktree({ projectId, worktreePath: placedA.path }),
+          boardB.pushCardBranch({ projectId, worktreePath: placedA.path, branch: "board/A-1" }),
         ]) {
           assert.include(detailOf(yield* Effect.flip(write)), "that the board made");
         }
@@ -1053,6 +1058,14 @@ vitest.layer(RepoTemplateLive)((it) => {
           boardB.deleteCardBranch({ projectId, branch: "board/A-1" }),
         );
         assert.strictEqual(deleted._tag, "BoardWorkerGitError");
+        // Nor push A's branch from its own checkout: refs are shared by every worktree.
+        const pushed = yield* boardB.pushCardBranch({
+          projectId,
+          worktreePath: placedB.path,
+          branch: "board/A-1",
+        });
+        assert.isFalse(pushed.pushed);
+        assert.include(pushed.detail, "not checked out");
         // A's own re-provision adopts its checkout.
         const again = yield* boardA.provisionWorktree({
           projectId,
