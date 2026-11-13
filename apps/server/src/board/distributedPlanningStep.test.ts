@@ -272,3 +272,43 @@ it.effect("planning already under way on a worker carries on there to the end", 
     );
   }).pipe(Effect.scoped, Effect.provide(centralLayer)),
 );
+
+it.effect("a planning step whose thread ran on a since-removed worker plans here again", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread-on-removed");
+    const planning = {
+      ...makeBoardCard({ id: "card-1", stage: PLANNING, orderKey: "m" }),
+      threadLinks: [
+        {
+          threadId,
+          role: PLANNING,
+          linkedAt: "1970-01-01T00:00:00.000Z",
+          tombstonedAt: null,
+          workerId: WORKER_ID,
+        },
+      ],
+    };
+    yield* withGovernor(
+      {
+        board: {
+          cards: [planning],
+          stepStates: [{ ...keptStep(threadId), status: "queued" }],
+          nextCardNumberByProject: {},
+          // The worker it ran on is gone.
+          workers: [],
+        },
+        settings,
+        projectRepository: REPOSITORY,
+      },
+      ({ board, reactor, commands }) =>
+        Effect.gen(function* () {
+          yield* reactor.reconcile;
+          yield* reactor.drain;
+          const spawn = (yield* commands).find((command) => command.type === "thread.spawn");
+          // Respawned on the board server, not held for a worker that will never return.
+          assert.isTrue(spawn?.type === "thread.spawn" && spawn.workerId === undefined);
+          assert.isNull(boardCardStepState(yield* board, cardId)?.queuedBy ?? null);
+        }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(centralLayer)),
+);

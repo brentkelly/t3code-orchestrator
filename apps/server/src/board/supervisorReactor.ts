@@ -2381,7 +2381,7 @@ const make = Effect.gen(function* () {
     // worker, which carries on there; a build step runs where its worktree is (T3O-87).
     const workerId =
       state.mode === "plan"
-        ? (keptPlanningWorker(card, state) ?? BOARD_LOCAL_WORKER_ID)
+        ? (keptPlanningWorker(board, card, state) ?? BOARD_LOCAL_WORKER_ID)
         : (boardCardPlacementTarget(card) ?? boardCardEffectiveWorkerId(card));
     if (workerId === BOARD_LOCAL_WORKER_ID) {
       return { workerId, gate: { kind: "ready", workerProjectId: null } } as const;
@@ -2397,8 +2397,10 @@ const make = Effect.gen(function* () {
     } as const;
   });
   /** T3o: the worker a planning step's live thread runs on, when that isn't this server: it
-      carries on there (T3O-87). Null for a new planning step. */
+      carries on there (T3O-87). Null for a new planning step, or one whose worker was removed:
+      it can never carry on there. */
   const keptPlanningWorker = (
+    board: BoardState,
     card: BoardCard,
     state: Pick<BoardCardStepState, "threadId">,
   ): BoardWorkerId | null => {
@@ -2406,7 +2408,8 @@ const make = Effect.gen(function* () {
     const link = card.threadLinks.find((candidate) => candidate.threadId === state.threadId);
     if (link === undefined || link.tombstonedAt !== null) return null;
     const workerId = boardThreadLinkWorkerId(link);
-    return workerId === BOARD_LOCAL_WORKER_ID ? null : workerId;
+    if (workerId === BOARD_LOCAL_WORKER_ID) return null;
+    return (board.workers ?? []).some((worker) => worker.id === workerId) ? workerId : null;
   };
 
   /**
