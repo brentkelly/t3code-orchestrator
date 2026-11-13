@@ -39,11 +39,27 @@ export interface CgroupFinalSnapshot {
   readonly ioStat: string | null;
 }
 
-const FINAL_DIR = NodePath.join(NodeOS.tmpdir(), `t3o-actuals-${process.pid}`);
 const SNAPSHOT_FILES = ["cpu.stat", "memory.stat", "io.stat"] as const;
 
+/** A private folder (mkdtemp: unguessable, mode 0700), made on first use and removed at exit:
+    the trap writes into it, so nobody else may plant links there. Null when it can't be made. */
+let finalDir: string | null | undefined;
+const finalDirOf = (): string | null => {
+  if (finalDir !== undefined) return finalDir;
+  try {
+    const made = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-actuals-"));
+    process.once("exit", () => NodeFS.rmSync(made, { recursive: true, force: true }));
+    finalDir = made;
+  } catch {
+    finalDir = null;
+  }
+  return finalDir;
+};
+
 const finalScript = (id: string) => {
-  const dir = NodePath.join(FINAL_DIR, id);
+  const base = finalDirOf();
+  if (base === null) return null;
+  const dir = NodePath.join(base, id);
   if (/['"$`\\]/.test(dir)) return null;
   const copy = [
     `g=$(sed -n "s/^0:://p" /proc/self/cgroup)`,
@@ -56,7 +72,9 @@ const finalScript = (id: string) => {
 
 const readFinal = (id: string) =>
   Effect.sync((): CgroupFinalSnapshot | null => {
-    const dir = NodePath.join(FINAL_DIR, id);
+    const base = finalDirOf();
+    if (base === null) return null;
+    const dir = NodePath.join(base, id);
     const read = (file: string) => {
       try {
         return NodeFS.readFileSync(NodePath.join(dir, file), "utf8");
