@@ -13,7 +13,7 @@ const snapshot: BoardWorkerCapacitySnapshot = {
     {
       instanceId: "claude",
       driver: "Claude",
-      account: { status: "signed-in" },
+      account: { status: "signed-in", email: "dev@acme.dev", plan: "Max" },
       quota: {
         exhausted: true,
         checkedAt: null,
@@ -49,5 +49,14 @@ describe("boardWorkerCapacityLines", () => {
     expect(lines.quota).toEqual(["Claude quota used up · resets 14:00"]);
     expect(lines.readiness).toBe("Ready for 1 of 2 projects");
     expect(lines.notReady).toBe(1);
+    expect(lines.projects).toEqual(["b · Not ready"]);
+    expect(lines.accounts).toEqual(["Claude · dev@acme.dev · Max"]);
+    expect(lines.stale).toBeNull();
+  });
+
+  it("marks an offline worker's snapshot as its last report, not what it offers now", () => {
+    expect(boardWorkerCapacityLines(snapshot, () => "09:41", false).stale).toBe(
+      "Last report 09:41",
+    );
   });
 });

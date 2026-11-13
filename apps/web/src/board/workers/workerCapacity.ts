@@ -29,11 +29,29 @@ export interface BoardWorkerCapacityLines {
   /** "Ready for 3 of 4 projects", or null when none was checked. */
   readonly readiness: string | null;
   readonly notReady: number;
+  /** One line per project not ready: "acme/app · Not ready · exit 1". */
+  readonly projects: ReadonlyArray<string>;
+  /** "Claude · dev@acme.dev · Max", one per signed-in provider. */
+  readonly accounts: ReadonlyArray<string>;
+  /** Amber: "Codex is signed out: it takes no work here." */
+  readonly signedOut: ReadonlyArray<string>;
+  /** Null while live; "Last report 14:02" when the worker is out of reach. */
+  readonly stale: string | null;
 }
+
+const STATE_NAMES = {
+  "not-set-up": "Not set up",
+  cloning: "Cloning",
+  checking: "Checking",
+  ready: "Ready",
+  "not-ready": "Not ready",
+} as const;
 
 export function boardWorkerCapacityLines(
   snapshot: BoardWorkerCapacitySnapshot,
   clock: (iso: string) => string,
+  /** False when the worker is offline: the snapshot is its last, not what it offers now. */
+  live = true,
 ): BoardWorkerCapacityLines {
   const bars = BOARD_RESOURCE_DIMENSIONS.map((dimension) => {
     const declared = boardResourceProfileValue(snapshot.declared, dimension);
@@ -72,5 +90,28 @@ export function boardWorkerCapacityLines(
             snapshot.readiness.length === 1 ? "project" : "projects"
           }`,
     notReady,
+    projects: snapshot.readiness
+      .filter((entry) => entry.state !== "ready")
+      .map((entry) =>
+        [
+          entry.repositoryKey?.split("/").slice(-2).join("/") ?? "This project",
+          STATE_NAMES[entry.state],
+          entry.exitCode == null ? null : `exit ${entry.exitCode}`,
+          entry.lastLine ?? null,
+        ]
+          .filter((part): part is string => part !== null && part !== "")
+          .join(" · "),
+      ),
+    accounts: snapshot.providers
+      .filter((provider) => provider.account.status === "signed-in")
+      .map((provider) =>
+        [provider.driver, provider.account.email, provider.account.plan]
+          .filter((part): part is string => part !== undefined)
+          .join(" · "),
+      ),
+    signedOut: snapshot.providers
+      .filter((provider) => provider.account.status === "signed-out")
+      .map((provider) => `${provider.driver} is signed out: it takes no work here.`),
+    stale: live ? null : `Last report ${clock(snapshot.at)}`,
   };
 }

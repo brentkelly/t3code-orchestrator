@@ -237,7 +237,9 @@ export function WorkersSection(props: {
           isDefault={state.defaultWorkerId === BOARD_LOCAL_WORKER_ID}
           subline={`${localVersion === null ? "" : `T3o ${localVersion} · `}runs planning`}
           status={{ label: "Connected", detail: null, tone: "neutral", tooltip: null }}
-          extra={<WorkerCapacity environmentId={environmentId} workerId={BOARD_LOCAL_WORKER_ID} />}
+          extra={
+            <WorkerCapacity environmentId={environmentId} workerId={BOARD_LOCAL_WORKER_ID} live />
+          }
           actions={
             <>
               <BoardHint label="The server hosting the board can't be removed.">
@@ -276,7 +278,11 @@ export function WorkersSection(props: {
                     <CopyCommand command={T3O_UPDATE_COMMAND} target="update command" />
                   </div>
                 ) : (
-                  <WorkerCapacity environmentId={environmentId} workerId={worker.id} />
+                  <WorkerCapacity
+                    environmentId={environmentId}
+                    workerId={worker.id}
+                    live={worker.status.state === "online"}
+                  />
                 )
               }
               actions={
@@ -362,6 +368,7 @@ export function WorkersSection(props: {
 function WorkerCapacity(props: {
   readonly environmentId: EnvironmentId;
   readonly workerId: BoardWorkerId;
+  readonly live: boolean;
 }) {
   const result = useAtomValue(
     boardEnvironment.capacityAtom({ environmentId: props.environmentId, input: {} }),
@@ -369,9 +376,15 @@ function WorkerCapacity(props: {
   const capacityAction = useAtomCommand(boardEnvironment.capacityAction);
   const snapshot = AsyncResult.isSuccess(result) ? result.value.get(props.workerId) : undefined;
   if (snapshot === undefined) return null;
-  const lines = boardWorkerCapacityLines(snapshot, clockTime);
+  const lines = boardWorkerCapacityLines(snapshot, clockTime, props.live);
   return (
-    <div className="flex w-full max-w-72 flex-col gap-1 text-board-11-5 text-muted-foreground">
+    <div
+      className={cn(
+        "flex w-full max-w-72 flex-col gap-1 text-board-11-5 text-muted-foreground",
+        lines.stale !== null && "opacity-60",
+      )}
+    >
+      {lines.stale === null ? null : <span>{lines.stale}</span>}
       {lines.bars.map((bar) => (
         <div key={bar.label} className="grid grid-cols-[2.5rem_1fr] items-center gap-2">
           <span>{bar.label}</span>
@@ -390,6 +403,14 @@ function WorkerCapacity(props: {
       ))}
       <span>{lines.agents}</span>
       {lines.over === null ? null : <span className="text-warning-foreground">{lines.over}</span>}
+      {lines.accounts.map((line) => (
+        <span key={line}>{line}</span>
+      ))}
+      {lines.signedOut.map((line) => (
+        <span key={line} className="text-warning-foreground">
+          {line}
+        </span>
+      ))}
       {lines.quota.map((line) => (
         <span key={line} className="text-warning-foreground">
           {line}
@@ -401,6 +422,7 @@ function WorkerCapacity(props: {
             {lines.readiness}
           </span>
           <Button
+            disabled={lines.stale !== null}
             size="xs"
             variant="ghost"
             onClick={() =>
@@ -414,6 +436,11 @@ function WorkerCapacity(props: {
           </Button>
         </span>
       )}
+      {lines.projects.map((line) => (
+        <span key={line} className="truncate pl-2 text-warning-foreground">
+          {line}
+        </span>
+      ))}
     </div>
   );
 }
