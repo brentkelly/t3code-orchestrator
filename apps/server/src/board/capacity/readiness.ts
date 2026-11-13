@@ -56,7 +56,7 @@ interface Entry {
 }
 
 /** A repository by its key; with no remote, the project is the repository. */
-export const repositoryIdentity = (repositoryKey: string | null, projectId: string | undefined) =>
+const repositoryIdentity = (repositoryKey: string | null, projectId: string | undefined) =>
   repositoryKey ?? `project:${projectId ?? ""}`;
 
 const whose = (repositoryKey: string | null, projectId: string | undefined) => ({

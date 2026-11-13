@@ -2664,7 +2664,8 @@ const make = Effect.gen(function* () {
       yield* capacityAdmission.value.resizeGrants();
     }
     yield* ciPasses.admitQueued;
-    for (const [cardId, waiting] of [...ciWaitingForRoom]) {
+    // A snapshot: a retry may settle its own entry while the pass walks them.
+    for (const [cardId, waiting] of Array.from(ciWaitingForRoom)) {
       const card = (yield* readBoard).cards.find((candidate) => candidate.id === cardId);
       if (
         card === undefined ||
