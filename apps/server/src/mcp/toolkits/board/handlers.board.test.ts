@@ -3770,4 +3770,18 @@ it("board_propose_plans names a too-big size's dimension, worker and the largest
     }),
     [],
   );
+  // The cores on one worker and the RAM on another place nothing: the plan is still warned.
+  assert.deepStrictEqual(
+    boardPlanSizeWarnings({
+      baseline,
+      workers: [
+        { label: "cores", declared: { cpuCores: 32, ramGiB: 8, diskGB: 500 } },
+        { label: "memory", declared: { cpuCores: 4, ramGiB: 128, diskGB: 500 } },
+      ],
+      plans: [{ key: "split", size: { cpu: "XL", ram: "M", disk: "M" } }],
+    }),
+    [
+      "Plan 'split': no single worker has 18 cores, 16 GiB RAM and 45 GB disk together. Size it to fit one worker.",
+    ],
+  );
 });

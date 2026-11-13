@@ -193,9 +193,10 @@ const SIZE_UNITS = { cpu: "cores", ram: "GiB", disk: "GB" } as const;
 const SIZE_NAMES = { cpu: "CPU", ram: "RAM", disk: "Disk" } as const;
 
 /**
- * T3o: a planned size too big for every worker the card could run on, per dimension, naming the
- * largest worker and the largest size that fits there (T3O-86). The size is still accepted.
- * Empty with no capacity yet.
+ * T3o: a planned size no worker the card could run on can take whole: per dimension too big for
+ * the largest worker, naming it and the largest size that fits (T3O-86), or else a plan whose
+ * dimensions fit only on different workers (T3O-87). The size is still accepted. Empty with no
+ * capacity yet.
  */
 export function boardPlanSizeWarnings(input: {
   readonly baseline: BoardResourceProfile;
@@ -212,6 +213,16 @@ export function boardPlanSizeWarnings(input: {
   for (const plan of input.plans) {
     if (plan.size === undefined) continue;
     const profile = boardResourceProfile(input.baseline, plan.size);
+    const fitsOn = (declared: BoardResourceProfile) =>
+      BOARD_RESOURCE_DIMENSIONS.every(
+        (dimension) =>
+          boardResourceProfileValue(profile, dimension) <=
+          boardResourceProfileValue(declared, dimension),
+      );
+    if (input.workers.length === 0 || input.workers.some((worker) => fitsOn(worker.declared))) {
+      continue;
+    }
+    const before = warnings.length;
     for (const dimension of BOARD_RESOURCE_DIMENSIONS) {
       const largest = input.workers.reduce<(typeof input.workers)[number] | null>(
         (best, worker) =>
@@ -236,6 +247,12 @@ export function boardPlanSizeWarnings(input: {
             ? "No size fits: lower the project's baseline."
             : `The largest size that fits is ${fit}.`
         }`,
+      );
+    }
+    // Every dimension fits some worker, but no one worker has them all together.
+    if (warnings.length === before) {
+      warnings.push(
+        `Plan '${plan.key}': no single worker has ${profile.cpuCores} cores, ${profile.ramGiB} GiB RAM and ${profile.diskGB} GB disk together. Size it to fit one worker.`,
       );
     }
   }
