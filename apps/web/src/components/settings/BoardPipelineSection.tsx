@@ -25,6 +25,7 @@ import {
   boardDraftPullRequestLine,
   boardReviewPhasePreamble,
   BOARD_REVIEW_SETTLE_BELOW_FINDINGS_MIN,
+  DEFAULT_BOARD_REVIEW_LATER_MODEL_AFTER_ROUND,
   DEFAULT_BOARD_REVIEW_SETTLE_AFTER_ROUND,
   boardReviewPhaseProtocol,
   reviewStepId,
@@ -51,6 +52,7 @@ import {
   isBoardMergeStageExecution,
   isBoardReviewStageExecution,
   resolveBoardStageExecution,
+  type BoardModelSelection,
   type BoardReviewPhaseExecution,
   type BoardReviewPhaseId,
   type BoardStageDefinition,
@@ -1837,6 +1839,97 @@ function SubmitStepBlock(props: {
   );
 }
 
+/** The review phase's later-rounds model. It is stored only once it names a model, so turning it
+    on with nothing to seed it from holds the toggle locally until one is picked. */
+function LaterReviewModelRows(props: {
+  exec: BoardStageExecutionReview;
+  instanceEntries: InstanceEntries;
+  getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
+  set: (patch: Partial<BoardStageExecutionReview>) => void;
+}) {
+  const { exec, set } = props;
+  const later = exec.laterReviewModel;
+  const [pendingOn, setPendingOn] = useState(false);
+  // Off writes null, so the chosen round lives here until the toggle comes back on.
+  const [lastAfterRound, setLastAfterRound] = useState(
+    later?.afterRound ?? DEFAULT_BOARD_REVIEW_LATER_MODEL_AFTER_ROUND,
+  );
+  const on = later !== null || pendingOn;
+  const afterRound = later?.afterRound ?? lastAfterRound;
+  const setLater = (model: BoardModelSelection, round = afterRound) => {
+    setLastAfterRound(round);
+    setPendingOn(false);
+    set({ laterReviewModel: { afterRound: round, model } });
+  };
+  return (
+    <>
+      <ToggleRow
+        label="Use a different model for later rounds"
+        hint="The later model reviews every round after this one, including the rounds that can end the loop. A card's own Review model, or a model picked for one round, still wins."
+        checked={on}
+        ariaLabel="Use a different review model for later rounds"
+        onChange={(checked) => {
+          if (!checked) {
+            setPendingOn(false);
+            if (later !== null) {
+              setLastAfterRound(later.afterRound);
+              set({ laterReviewModel: null });
+            }
+            return;
+          }
+          const seed = exec.phases.review.model ?? exec.model;
+          if (seed === null) setPendingOn(true);
+          else setLater(seed);
+        }}
+      />
+      {on ? (
+        <>
+          <NumberRow
+            label="Switch after round"
+            {...(afterRound >= exec.rounds
+              ? { hint: "The later model only runs if a card's round budget is extended." }
+              : {})}
+            stepper={
+              <NumberStepper
+                value={afterRound}
+                min={1}
+                max={20}
+                ariaLabel="Switch review model after round"
+                onChange={(round) => {
+                  if (later === null) setLastAfterRound(round);
+                  else setLater(later.model, round);
+                }}
+              />
+            }
+          />
+          <ModelRow
+            label="Later rounds model"
+            ariaLabel="Later rounds review model"
+            selection={later?.model ?? null}
+            requiredMessage="Pick the model later review rounds run on."
+            instanceEntries={props.instanceEntries}
+            getModelOptions={props.getModelOptions}
+            onChange={(model) => {
+              if (model !== null) setLater(model);
+            }}
+            modelOptions={later?.model.options}
+            onModelOptionsChange={(options) => {
+              if (later === null) return;
+              const { instanceId, model } = later.model;
+              setLater(
+                options === undefined ? { instanceId, model } : { instanceId, model, options },
+              );
+            }}
+            runtimeMode={effectiveBoardRuntimeMode(exec.phases.review.runtimeMode, "build")}
+            onRuntimeModeChange={() => {}}
+            hideRuntimeMode
+          />
+        </>
+      ) : null}
+    </>
+  );
+}
+
 function ReviewStageBody(props: {
   stage: BoardStageDefinition;
   exec: BoardStageExecutionReview;
@@ -2066,6 +2159,14 @@ function ReviewStageBody(props: {
                   runtimeMode={effectiveBoardRuntimeMode(phase.runtimeMode, "build")}
                   onRuntimeModeChange={(runtimeMode) => setPhase(phaseId, { runtimeMode })}
                 />
+                {phaseId === "review" ? (
+                  <LaterReviewModelRows
+                    exec={exec}
+                    instanceEntries={props.instanceEntries}
+                    getModelOptions={props.getModelOptions}
+                    set={set}
+                  />
+                ) : null}
               </div>
             );
           })}

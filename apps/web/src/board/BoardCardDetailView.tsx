@@ -107,6 +107,7 @@ import { Popover, PopoverTrigger } from "../components/ui/popover";
 import {
   boardCardModelOverrideSummary,
   boardCardModelRows,
+  boardReviewRoundInheritedModel,
   hasBoardCardModelOverride,
   type BoardCardModelRowSpec,
 } from "./boardCardModelRows";
@@ -2616,6 +2617,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         ? null
         : { key: props.parentCard.key, modelOverrides: props.detail.parentModelOverrides },
   });
+  const reviewModelRow = modelRows.find((row) => row.stageId === BOARD_SEED_STAGE_IDS.review);
+  const reviewRoundInheritedModel =
+    reviewModelRow === undefined
+      ? undefined
+      : (round: number) =>
+          boardReviewRoundInheritedModel({
+            row: reviewModelRow,
+            cardOverride: card.modelOverrides?.[reviewModelRow.stageId],
+            round,
+          });
   const modelSummary = boardCardModelOverrideSummary(modelRows, card.modelOverrides);
   const modelOverridden = hasBoardCardModelOverride(modelRows, card.modelOverrides);
   // The eager view does not hold the provider list, so the container passes a
@@ -3237,6 +3248,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onBackToThread={() => setPane("thread")}
                 onSetRoundModel={props.onSetReviewRoundModel}
                 phaseRuntimeMode={props.reviewPhaseRuntimeMode}
+                roundInheritedModel={reviewRoundInheritedModel}
                 projectId={card.projectId}
                 onResume={props.onResumeReview}
                 onRuling={onReviewStage ? props.onReviewRuling : undefined}

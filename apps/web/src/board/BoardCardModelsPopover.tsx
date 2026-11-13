@@ -43,9 +43,14 @@ function placeholderFor(
 ): string {
   if (row.inheritedModel === null) return "Default (unset in Settings)";
   const name = boardModelDisplayName(row.inheritedModel, getModelOptions, instanceEntries);
-  return row.inheritedFromCardKey === null
-    ? `${name} (default)`
-    : `${name} (from ${row.inheritedFromCardKey})`;
+  if (row.inheritedFromCardKey !== null) {
+    return row.laterRounds === null
+      ? `${name} (from ${row.inheritedFromCardKey})`
+      : `${name} for every round (from ${row.inheritedFromCardKey})`;
+  }
+  if (row.laterRounds === null) return `${name} (default)`;
+  const later = boardModelDisplayName(row.laterRounds.model, getModelOptions, instanceEntries);
+  return `${name} (rounds 1–${row.laterRounds.afterRound}), then ${later}`;
 }
 
 export function BoardCardModelsPopover({
@@ -190,6 +195,12 @@ export function BoardCardModelsPopover({
                   current === null ? null : { instanceId: current.instanceId, model: current.model }
                 }
               />
+              {row.laterRounds !== null &&
+              (current !== null || row.inheritedFromCardKey !== null) ? (
+                <p className="text-board-11 text-muted-foreground">
+                  Runs every round, overriding the later-rounds model from Settings.
+                </p>
+              ) : null}
             </div>
           );
         })}

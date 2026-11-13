@@ -17,6 +17,7 @@ import {
 import {
   boardCardModelOverrideSummary,
   boardCardModelRows,
+  boardReviewRoundInheritedModel,
   hasBoardCardModelOverride,
 } from "./boardCardModelRows";
 
@@ -100,6 +101,61 @@ describe("boardCardModelRows (t3o-29, D1)", () => {
     const buildRow = rowFor(build, { key: "T3O-41", modelOverrides: { [build]: opus } });
     // The build stage resolves to `auto` by default.
     expect(buildRow?.inheritedRuntimeMode).toBe("auto");
+  });
+});
+
+describe("the review row's later-rounds model (T3O-94)", () => {
+  const reviewExec = boardSettings.pipeline[review];
+  if (reviewExec?.kind !== "review") throw new Error("expected the review member");
+  const tiered: BoardSettings = {
+    ...boardSettings,
+    pipeline: {
+      ...boardSettings.pipeline,
+      [review]: {
+        ...reviewExec,
+        laterReviewModel: { afterRound: 2, model: haiku },
+        phases: { ...reviewExec.phases, review: { ...reviewExec.phases.review, model: opus } },
+      },
+    },
+  };
+  const reviewRow = (parentCard: Parameters<typeof rows>[0] = null) =>
+    boardCardModelRows({ stages: BOARD_SEED_STAGES, boardSettings: tiered, parentCard }).find(
+      (row) => row.stageId === review,
+    );
+
+  it("names the early model as inherited and carries the later one", () => {
+    const row = reviewRow();
+    expect(row?.inheritedModel).toEqual(opus);
+    expect(row?.laterRounds).toEqual({ afterRound: 2, model: haiku });
+  });
+
+  it("keeps the later model beside a parent's override, which replaces both tiers", () => {
+    const row = reviewRow({ key: "T3O-41", modelOverrides: { [review]: haiku } });
+    expect(row?.inheritedModel).toEqual(haiku);
+    expect(row?.inheritedFromCardKey).toBe("T3O-41");
+    expect(row?.laterRounds).not.toBeNull();
+  });
+
+  it("names the model and source a round without its own override runs on", () => {
+    const row = reviewRow()!;
+    const at = (round: number, cardOverride: typeof haiku | null = null) =>
+      boardReviewRoundInheritedModel({ row, cardOverride, round });
+    expect(at(2)).toEqual({ model: opus, source: "stage" });
+    expect(at(3)).toEqual({ model: haiku, source: "later" });
+    expect(at(3, opus)).toEqual({ model: opus, source: "card" });
+    const childRow = reviewRow({ key: "T3O-41", modelOverrides: { [review]: opus } })!;
+    expect(boardReviewRoundInheritedModel({ row: childRow, cardOverride: null, round: 5 })).toEqual(
+      { model: opus, source: "parent" },
+    );
+  });
+
+  it("is null off the review row and when Settings leaves it off", () => {
+    expect(rowFor(review)?.laterRounds).toBeNull();
+    expect(
+      boardCardModelRows({ stages: BOARD_SEED_STAGES, boardSettings: tiered, parentCard: null })
+        .filter((row) => row.stageId !== review)
+        .map((row) => row.laterRounds),
+    ).toEqual([null, null]);
   });
 });
 

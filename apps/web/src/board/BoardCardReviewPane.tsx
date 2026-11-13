@@ -25,7 +25,14 @@ import {
   sortProviderInstanceEntries,
 } from "../providerInstances";
 import { getCustomModelOptionsByInstance } from "../modelSelection";
-import { ModelRow } from "../components/settings/BoardModelRow";
+import { ModelRow, type ActiveModel } from "../components/settings/BoardModelRow";
+import { boardModelDisplayName } from "../components/settings/boardModelDisplayName";
+import type {
+  BoardReviewRoundModelSource,
+  boardReviewRoundInheritedModel,
+} from "./boardCardModelRows";
+
+type BoardReviewRoundInheritedModel = ReturnType<typeof boardReviewRoundInheritedModel>;
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardSectionHeading as SectionHeading } from "./BoardCardFields";
@@ -377,7 +384,7 @@ function Round({
         </span>
         {settling === null ? null : (
           <BoardHint label={settling}>
-            <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border px-[7px] text-[10.5px] font-medium text-muted-foreground">
+            <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border px-1.75 text-board-10-5 font-medium text-muted-foreground">
               Settling
             </span>
           </BoardHint>
@@ -410,7 +417,7 @@ function Round({
       {open ? (
         <div className="flex flex-col">
           {settling === null ? null : (
-            <div className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+            <div className="border-t border-border px-3 py-2 text-board-11 text-muted-foreground">
               {settling}
             </div>
           )}
@@ -929,10 +936,18 @@ function UnreadableRoundBlock({
  * The override re-points the REVIEW phase alone. Access is offered only once a
  * model is picked: an override entry has nowhere to keep an access level alone.
  */
+const INHERITED_SOURCE_COPY: Record<BoardReviewRoundModelSource, string> = {
+  card: "this card's Review model",
+  parent: "the parent card's Review model",
+  later: "the later-rounds model",
+  stage: "the review stage's model",
+};
+
 function PlannedRoundSettings({
   round,
   previousRound,
   model,
+  inherited,
   phaseRuntimeMode,
   onChange,
   projectId,
@@ -940,6 +955,7 @@ function PlannedRoundSettings({
   readonly round: number;
   readonly previousRound: number;
   readonly model: BoardReviewRoundOverride | null;
+  readonly inherited: BoardReviewRoundInheritedModel | null;
   readonly phaseRuntimeMode: RuntimeMode;
   readonly onChange: (model: BoardReviewRoundOverride | null) => void;
   readonly projectId: ProjectId | null;
@@ -954,18 +970,24 @@ function PlannedRoundSettings({
       projectId,
     ),
   );
+  const getModelOptions = (active: ActiveModel) =>
+    getCustomModelOptionsByInstance(settings, serverProviders, active.instanceId, active.model);
+  // What a round with nothing picked actually runs on, named, so the round after the later-rounds
+  // switch never claims to match the one before it.
+  const inheritedName =
+    inherited === null
+      ? null
+      : `${
+          inherited.model === null
+            ? "The workspace default"
+            : boardModelDisplayName(inherited.model, getModelOptions, instanceEntries)
+        } (${INHERITED_SOURCE_COPY[inherited.source]})`;
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
       <ModelRow
         ariaLabel={`Round ${round} review model`}
-        getModelOptions={(active) =>
-          getCustomModelOptionsByInstance(
-            settings,
-            serverProviders,
-            active.instanceId,
-            active.model,
-          )
-        }
+        getModelOptions={getModelOptions}
+        {...(inheritedName === null ? {} : { placeholder: inheritedName })}
         hideRuntimeMode={model === null}
         instanceEntries={instanceEntries}
         label={`Round ${round} review model`}
@@ -994,7 +1016,7 @@ function PlannedRoundSettings({
       />
       <p className="text-board-11 text-muted-foreground">
         {model === null
-          ? `Same as ${previousRound < 1 ? "the review stage's configured model" : `round ${previousRound}`}. Only round ${round}'s review runs on this. Triage and adjudication keep their configured models.`
+          ? `${inheritedName === null ? `Same as ${previousRound < 1 ? "the review stage's configured model" : `round ${previousRound}`}` : `Runs on ${inheritedName}`}. A model picked here applies to round ${round}'s review only. Triage and adjudication keep their configured models.`
           : `Only round ${round}'s review runs on this. Triage and adjudication keep their configured models.`}
       </p>
     </div>
@@ -1015,6 +1037,7 @@ export function BoardCardReviewPane({
   onSetRounds,
   onSetRoundModel,
   phaseRuntimeMode,
+  roundInheritedModel,
   onAdvance,
   onRuling,
   onReopenStep,
@@ -1065,6 +1088,8 @@ export function BoardCardReviewPane({
   /** The review phase's EFFECTIVE access level, resolved by the caller — what
       a round without its own shows and inherits. */
   readonly phaseRuntimeMode?: RuntimeMode | undefined;
+  /** The model a round with no override of its own runs on, resolved by the caller. */
+  readonly roundInheritedModel?: ((round: number) => BoardReviewRoundInheritedModel) | undefined;
   /** Move the card on despite a loop that never converged. */
   readonly onAdvance?: (() => void) | undefined;
   /** Rule on a stuck loop's findings and run another round. */
@@ -1237,6 +1262,7 @@ export function BoardCardReviewPane({
           {plannedRound === null || !plannable(plannedRound) ? null : (
             <PlannedRoundSettings
               model={overrides?.roundModels[String(plannedRound)] ?? null}
+              inherited={roundInheritedModel?.(plannedRound) ?? null}
               onChange={(model) => onSetRoundModel?.(plannedRound, model)}
               phaseRuntimeMode={phaseRuntimeMode ?? "auto"}
               previousRound={plannedRound - 1}
