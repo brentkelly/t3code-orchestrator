@@ -44,21 +44,21 @@ const runGatewayCall = (
       case "send":
         return host.send(call.input, caller).pipe(Effect.as(null));
       case "interrupt":
-        return host.interrupt(call.input).pipe(Effect.as(null));
+        return host.interrupt(call.input, caller).pipe(Effect.as(null));
       case "stopSession":
-        return host.stopSession(call.input).pipe(Effect.as(null));
+        return host.stopSession(call.input, caller).pipe(Effect.as(null));
       case "settle":
-        return host.settle(call.input).pipe(Effect.as(null));
+        return host.settle(call.input, caller).pipe(Effect.as(null));
       case "delete":
-        return host.delete(call.input).pipe(Effect.as(null));
+        return host.delete(call.input, caller).pipe(Effect.as(null));
       case "armLimitRecovery":
-        return host.armLimitRecovery(call.input);
+        return host.armLimitRecovery(call.input, caller);
       case "answerPendingInput":
-        return host.answerPendingInput(call.input);
+        return host.answerPendingInput(call.input, caller);
       case "linkPullRequest":
-        return host.linkPullRequest(call.input).pipe(Effect.as(null));
+        return host.linkPullRequest(call.input, caller).pipe(Effect.as(null));
       case "unlinkPullRequest":
-        return host.unlinkPullRequest(call.input).pipe(Effect.as(null));
+        return host.unlinkPullRequest(call.input, caller).pipe(Effect.as(null));
       case "threadState":
         return host.threadState(call.threadId);
       case "threadRecords":
@@ -191,9 +191,9 @@ export const workerGatewayRpcHandlers = (currentSession: AuthenticatedSession) =
     [M.stageAttachments]: call(M.stageAttachments, (host, input: BoardStageAttachmentsInput) =>
       host.stageAttachments(input),
     ),
-    [M.runCi]: stream(M.runCi, (host, input: BoardWorkerRunCiInput) => host.runCi(input)),
+    [M.runCi]: stream(M.runCi, (host, input: BoardWorkerRunCiInput) => host.runCi(input, caller)),
     [M.readCiLog]: stream(M.readCiLog, (host, input: BoardWorkerReadCiLogInput) =>
-      host.readCiLog(input),
+      host.readCiLog(input, caller),
     ),
     [M.subscribeCapacity]: stream(M.subscribeCapacity, (host, _input: Record<string, never>) =>
       host.subscribeCapacity(caller),
