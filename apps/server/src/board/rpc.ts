@@ -160,8 +160,8 @@ export const boardRpcHandlers = Effect.fn("boardRpc.handlers")(function* (
       projectConfig: yield* makeBoardProjectConfigService,
       pinRefusal: Option.isNone(capacityClientForPins)
         ? () => Effect.succeed(null)
-        : (cardId, workerId) =>
-            boardPinRefusal(cardId, workerId).pipe(
+        : (target, workerId) =>
+            boardPinRefusal(target, workerId).pipe(
               Effect.provideContext(
                 Context.add(pinContext, BoardCapacityClient, capacityClientForPins.value),
               ),
@@ -206,8 +206,8 @@ function makeBoardRpcHandlers(
     readonly projectTokenStatus: ReturnType<typeof boardProjectTokenStatus>;
     /** T3o: why a pin can't go to a worker yet (T3O-86), or null. */
     readonly pinRefusal: (
-      cardId: BoardCardId,
-      workerId: BoardWorkerId | null,
+      target: { readonly cardId: BoardCardId } | { readonly projectId: ProjectId },
+      workerId: BoardWorkerId | null | undefined,
     ) => Effect.Effect<string | null>;
     readonly subscriptionContext: Context.Context<
       BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
@@ -289,8 +289,10 @@ function makeBoardRpcHandlers(
         BOARD_WS_METHODS.dispatchCommand,
         // T3o: a worker not ready for the card's project can't be its pin (T3O-86).
         (command.type === "board.card.pin-worker"
-          ? services.pinRefusal(command.cardId, command.workerId)
-          : Effect.succeed(null)
+          ? services.pinRefusal({ cardId: command.cardId }, command.workerId)
+          : command.type === "board.card.create"
+            ? services.pinRefusal({ projectId: command.projectId }, command.pinnedWorkerId)
+            : Effect.succeed(null)
         ).pipe(
           Effect.flatMap((refusal) =>
             refusal === null

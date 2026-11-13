@@ -174,7 +174,7 @@ describe("the worker picker (prototype 4.2)", () => {
     expect(row).toMatchObject({ selectable: true, cloning: true, detail: "Cloning advisor · 32%" });
   });
 
-  it("says a worker whose readiness check fails for the project will queue the card", () => {
+  it("offers no worker that isn't ready for the project, as the server refuses the pin", () => {
     const board = state([worker(LINUX, "linux-box")]);
     const readiness = [
       {
@@ -192,7 +192,7 @@ describe("the worker picker (prototype 4.2)", () => {
       projectName: "advisor",
       capacity: new Map([[LINUX, snapshot(0, { readiness })]]),
     })[1]!;
-    expect(row).toMatchObject({ selectable: true, detail: "Not ready for advisor · will queue" });
+    expect(row).toMatchObject({ selectable: false, detail: "Not ready for advisor" });
     expect(boardWorkerLoadLabel(undefined)).toBe("No capacity report yet");
   });
 });

@@ -171,22 +171,26 @@ export function boardWorkerChoices(input: {
     }
     const setup = setupOf(input.state, worker.id, input.projectId);
     if (boardWorkerHasCheckout(worker, input.projectRepositoryKey)) {
-      const notReady = input.capacity
+      const readiness = input.capacity
         .get(worker.id)
-        ?.readiness.some(
-          (entry) =>
-            boardReadinessIsFor(entry, input.projectRepositoryKey, input.projectId) &&
-            entry.state === "not-ready",
+        ?.readiness.find((entry) =>
+          boardReadinessIsFor(entry, input.projectRepositoryKey, input.projectId),
         );
-      // Like a clone in progress: the card can be pinned, and waits until the check passes.
-      return notReady === true
-        ? {
+      // A worker can't be a project's pin until it is ready for it; the server refuses it too.
+      return readiness === undefined || readiness.state === "ready"
+        ? { ...base, selectable: true, detail: load(worker.id), tooltip: null }
+        : {
             ...base,
-            selectable: true,
-            detail: `Not ready for ${input.projectName} · will queue`,
-            tooltip: `${worker.label}'s readiness check for ${input.projectName} fails. The card waits until it passes; re-check it on the Workers page.`,
-          }
-        : { ...base, selectable: true, detail: load(worker.id), tooltip: null };
+            selectable: false,
+            detail:
+              readiness.state === "checking"
+                ? `Checking ${input.projectName}`
+                : `Not ready for ${input.projectName}`,
+            tooltip:
+              readiness.state === "checking"
+                ? `${worker.label} is checking it's ready for ${input.projectName}. Pin it once the check passes.`
+                : `${worker.label}'s readiness check for ${input.projectName} fails. Re-check it on the Workers page, then pin it.`,
+          };
     }
     if (setup?.phase === "cloning") {
       return {

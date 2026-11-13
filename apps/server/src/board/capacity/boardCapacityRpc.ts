@@ -200,19 +200,23 @@ export function boardPinReadinessRefusal(
   return `${workerLabel} isn't ready for this project yet (${entry.state}). Set it up or re-check it first.`;
 }
 
-/** The refusal for a pin command, read off the latest snapshot of its worker. */
+/** The refusal for a pin (on a card, or at its creation), read off the latest snapshot of
+    its worker. */
 export const boardPinRefusal = Effect.fn("BoardCapacityRpc.pinRefusal")(function* (
-  cardId: string,
-  workerId: BoardWorkerId | null,
+  target: { readonly cardId: string } | { readonly projectId: ProjectId },
+  workerId: BoardWorkerId | null | undefined,
 ) {
-  if (workerId === null) return null;
+  if (workerId == null) return null;
   const client = yield* BoardCapacityClient;
   const engine = yield* BoardEngine;
   const threads = yield* ThreadGateway;
   const board = (yield* engine.getReadModel).board ?? EMPTY_BOARD_STATE;
-  const card = board.cards.find((candidate) => candidate.id === cardId);
-  if (card === undefined) return null;
-  const project = yield* threads.project(card.projectId).pipe(Effect.orElseSucceed(() => null));
+  const projectId =
+    "projectId" in target
+      ? target.projectId
+      : board.cards.find((candidate) => candidate.id === target.cardId)?.projectId;
+  if (projectId === undefined) return null;
+  const project = yield* threads.project(projectId).pipe(Effect.orElseSucceed(() => null));
   const label =
     workerId === BOARD_LOCAL_WORKER_ID
       ? "This server"
@@ -221,6 +225,6 @@ export const boardPinRefusal = Effect.fn("BoardCapacityRpc.pinRefusal")(function
     yield* client.latest(workerId),
     boardRepositoryGroupingKey(project?.repositoryIdentity),
     label,
-    card.projectId,
+    projectId,
   );
 });
