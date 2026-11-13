@@ -270,7 +270,10 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
         ),
       ),
     );
-  /** A board's new turn waits while the worker is at its agent cap (`agent-cap`). */
+  /**
+   * A board's new turn waits while the worker is at its agent cap (`agent-cap`). Admitted, it
+   * counts as running at once, so several boards' spawns can't all pass the same check.
+   */
   const refuseOverAgentCap = (
     operation: string,
     threadId: string,
@@ -279,7 +282,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     Option.match(capacity, {
       onNone: () => Effect.void,
       onSome: (service) =>
-        service.agentCapRefusal(providerInstanceId).pipe(
+        service.reserveAgent(threadId, providerInstanceId).pipe(
           Effect.flatMap((refusal) =>
             refusal === null
               ? Effect.void
@@ -294,6 +297,12 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
                 ),
           ),
         ),
+    });
+
+  const releaseAgentStart = (threadId: string) =>
+    Option.match(capacity, {
+      onNone: () => Effect.void,
+      onSome: (service) => service.releaseAgent(threadId),
     });
 
   // A deleted thread makes no more board calls; its relay record goes too,
@@ -365,30 +374,33 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
         .claim(centralEnvironmentId, caller.sessionId)
         .pipe(Effect.mapError(refused("spawn", input.threadId)));
       yield* refuseOverAgentCap("spawn", input.threadId, input.modelSelection.instanceId);
-      // Recorded first: the agent's first tool call can arrive before the
-      // spawn returns. A thread another board placed stays that board's.
-      const recordFailed = (cause: { readonly cause?: unknown }) =>
-        new BoardWorkerGatewayError({
-          kind: "failed",
-          operation: "spawn",
-          threadId: input.threadId,
-          detail: `Couldn't record the thread for the board: ${String(cause.cause)}`,
-        });
-      const current = yield* store
-        .relayedThreadCentral(input.threadId)
-        .pipe(Effect.mapError(recordFailed));
-      if (current !== null && current !== centralEnvironmentId) {
-        return yield* new BoardWorkerGatewayError({
-          kind: "refused",
-          operation: "spawn",
-          threadId: input.threadId,
-          detail: "That thread belongs to another board.",
-        });
-      }
-      yield* store
-        .recordRelayedThread(input.threadId, centralEnvironmentId)
-        .pipe(Effect.mapError(recordFailed));
-      yield* wireCommand(local.spawn(input));
+      // Anything that stops the spawn hands its agent slot back.
+      yield* Effect.gen(function* () {
+        // Recorded first: the agent's first tool call can arrive before the
+        // spawn returns. A thread another board placed stays that board's.
+        const recordFailed = (cause: { readonly cause?: unknown }) =>
+          new BoardWorkerGatewayError({
+            kind: "failed",
+            operation: "spawn",
+            threadId: input.threadId,
+            detail: `Couldn't record the thread for the board: ${String(cause.cause)}`,
+          });
+        const current = yield* store
+          .relayedThreadCentral(input.threadId)
+          .pipe(Effect.mapError(recordFailed));
+        if (current !== null && current !== centralEnvironmentId) {
+          return yield* new BoardWorkerGatewayError({
+            kind: "refused",
+            operation: "spawn",
+            threadId: input.threadId,
+            detail: "That thread belongs to another board.",
+          });
+        }
+        yield* store
+          .recordRelayedThread(input.threadId, centralEnvironmentId)
+          .pipe(Effect.mapError(recordFailed));
+        yield* wireCommand(local.spawn(input));
+      }).pipe(Effect.tapError(() => releaseAgentStart(input.threadId)));
     }),
     send: Effect.fn("WorkerGatewayHost.send")(function* (input, _caller) {
       // A turn the board sends on an existing thread waits at the cap too, unless the thread
@@ -401,7 +413,9 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
           state?.modelSelection?.instanceId ?? null,
         );
       }
-      yield* wireCommand(local.send(input));
+      yield* wireCommand(local.send(input)).pipe(
+        Effect.tapError(() => releaseAgentStart(input.threadId)),
+      );
     }),
     claimCapacity: (input, caller) =>
       capacityOf("claimCapacity", caller).pipe(

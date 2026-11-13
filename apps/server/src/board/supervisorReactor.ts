@@ -2573,7 +2573,10 @@ const make = Effect.gen(function* () {
     }
     // T3o: this server's own agent cap holds a board-started turn too (T3O-86).
     if (remoteWorker === null && Option.isSome(capacityClient)) {
-      const refusal = yield* capacityClient.value.localAgentCapRefusal(step.providerInstanceId);
+      const refusal = yield* capacityClient.value.localAgentCapRefusal(
+        threadId,
+        step.providerInstanceId,
+      );
       if (refusal !== null) return "agent-cap" as const;
     }
     // A refused spawn leaves no thread. An unreachable worker was sent nothing, so the step waits.

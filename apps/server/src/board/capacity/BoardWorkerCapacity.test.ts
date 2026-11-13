@@ -146,6 +146,31 @@ it.effect("the agent cap counts board-started running threads across every board
   }).pipe(Effect.provide(TestClock.layer()), (effect) => withMachine(makeFakes())(effect)),
 );
 
+it.effect("an admitted start counts against the cap until its thread shows running", () =>
+  Effect.gen(function* () {
+    const fakes = makeFakes();
+    fakes.config = { ...fakes.config, maxAgents: 2 };
+    const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+    fakes.threads = [thread({ threadId: "a", boardId: "board-a" })];
+    // Two boards start a turn before either shows running: only one fits under the cap.
+    const answers = yield* Effect.all(
+      [service.reserveAgent("x", "claude"), service.reserveAgent("y", "claude")],
+      { concurrency: "unbounded" },
+    );
+    assert.deepStrictEqual(
+      answers.map((answer) => answer === null),
+      [true, false],
+    );
+    // Once it runs it is counted once; a start that never happened gives its slot back.
+    fakes.threads.push(thread({ threadId: "x", boardId: "board-b" }));
+    assert.isNotNull(yield* service.reserveAgent("y", "claude"));
+    fakes.threads = [thread({ threadId: "a", boardId: "board-a" })];
+    assert.isNull(yield* service.reserveAgent("y", "claude"));
+    yield* service.releaseAgent("y");
+    assert.isNull(yield* service.agentCapRefusal("claude"));
+  }).pipe(Effect.provide(TestClock.layer()), (effect) => withMachine(makeFakes())(effect)),
+);
+
 it("quota gates only account-wide session and weekly windows, until they reset", () => {
   const now = Date.parse("2026-11-13T00:00:00.000Z");
   const later = "2026-11-20T09:00:00.000Z";

@@ -73,6 +73,8 @@ const HYSTERESIS = 0.05;
 /** A small change held back by the hysteresis is still pushed once it has stood this long. */
 export const SNAPSHOT_SETTLE_MS = 30_000;
 const THREADS_SHARED_MS = 2_000;
+/** A started turn counts against the agent cap this long at most before it shows running. */
+const AGENT_START_GRACE_MS = 30_000;
 const UNOWNED_SHARED_MS = 60_000;
 /** An unsettled worktree is measured at most this often. */
 const MEASURE_INTERVAL_MS = 5 * 60_000;
@@ -154,6 +156,16 @@ export interface BoardWorkerCapacityShape {
   ) => Effect.Effect<void>;
   /** Why a board may not start another turn here now (`agent-cap`), or null. */
   readonly agentCapRefusal: (providerInstanceId: string | null) => Effect.Effect<string | null>;
+  /**
+   * The cap check and the start in one: unless refused, counts the thread as running until it
+   * shows running (or a grace passes), so boards starting turns at once can't pass the cap.
+   */
+  readonly reserveAgent: (
+    threadId: string,
+    providerInstanceId: string | null,
+  ) => Effect.Effect<string | null>;
+  /** A reserved start that never happened. */
+  readonly releaseAgent: (threadId: string) => Effect.Effect<void>;
   /** T3o: ask for or refresh a hold, or withdraw one (T3O-87). */
   readonly hold: (
     boardId: string,
@@ -735,13 +747,31 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     readonly value: WorkerCapacityStatus["unowned"];
   } | null = null;
 
+  /** Turns admitted but not yet seen running, by thread: counted against the cap meanwhile. */
+  const startingAgents = new Map<
+    string,
+    { readonly providerInstanceId: string | null; readonly at: number }
+  >();
+  const agentLock = yield* Semaphore.make(1);
   const agentCapRefusal: BoardWorkerCapacityShape["agentCapRefusal"] = Effect.fn(
     "BoardWorkerCapacity.agentCapRefusal",
   )(function* (providerInstanceId) {
     const settings = yield* ports.settings;
-    const running = (yield* ports.threads).filter(
+    const now = yield* Clock.currentTimeMillis;
+    const threads = yield* ports.threads;
+    const running: Array<Pick<CapacityThread, "providerInstanceId">> = threads.filter(
       (thread) => thread.running && thread.boardId !== null,
     );
+    const seenRunning = new Set(
+      threads.filter((thread) => thread.running).map((thread) => thread.threadId),
+    );
+    for (const [threadId, start] of startingAgents) {
+      if (seenRunning.has(threadId) || now - start.at >= AGENT_START_GRACE_MS) {
+        startingAgents.delete(threadId);
+      } else {
+        running.push(start);
+      }
+    }
     if (settings.maxAgents !== null && running.length >= settings.maxAgents) {
       return `This worker runs at most ${settings.maxAgents} agents at once.`;
     }
@@ -754,6 +784,19 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     }
     return null;
   });
+  const reserveAgent: BoardWorkerCapacityShape["reserveAgent"] = (threadId, providerInstanceId) =>
+    agentLock.withPermits(1)(
+      Effect.gen(function* () {
+        startingAgents.delete(threadId);
+        const refusal = yield* agentCapRefusal(providerInstanceId);
+        if (refusal === null) {
+          startingAgents.set(threadId, { providerInstanceId, at: yield* Clock.currentTimeMillis });
+        }
+        return refusal;
+      }),
+    );
+  const releaseAgent: BoardWorkerCapacityShape["releaseAgent"] = (threadId) =>
+    Effect.sync(() => void startingAgents.delete(threadId));
 
   const snapshot: BoardWorkerCapacityShape["snapshot"] = Effect.fn("BoardWorkerCapacity.snapshot")(
     function* (boardId) {
@@ -960,6 +1003,8 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
       checkProvision,
       recordProvision,
       agentCapRefusal,
+      reserveAgent,
+      releaseAgent,
       hold,
       releaseHold: releaseHoldOf,
       snapshot,

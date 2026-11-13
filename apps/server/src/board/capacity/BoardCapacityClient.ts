@@ -80,8 +80,10 @@ export interface BoardCapacityClientShape {
     claim: BoardProvisionClaim,
     worktree: { readonly branch: string; readonly worktreePath: string },
   ) => Effect.Effect<void>;
-  /** Why a board-started turn can't start on `local` now (its agent cap), or null. */
+  /** Why a board-started turn can't start on `local` now (its agent cap), or null; admitted,
+      the thread counts against the cap at once. */
   readonly localAgentCapRefusal: (
+    threadId: string,
     providerInstanceId: string | null,
   ) => Effect.Effect<string | null>;
   /** Section 5, on a card's worker: its setup, and a project's readiness. A worker out of
@@ -333,7 +335,8 @@ const makeBoardCapacityClient = Effect.gen(function* () {
     latest: (workerId) => Effect.sync(() => snapshots.get(workerId) ?? null),
     all: Effect.sync(() => new Map(snapshots)),
     changes: Stream.fromPubSub(pubsub),
-    localAgentCapRefusal: (providerInstanceId) => localCapacity.agentCapRefusal(providerInstanceId),
+    localAgentCapRefusal: (threadId, providerInstanceId) =>
+      localCapacity.reserveAgent(threadId, providerInstanceId),
     recordLocalProvision: (claim, worktree) =>
       localCapacity.recordProvision(localBoardId, claim, worktree),
     runSetup: (workerId, input) =>
