@@ -1209,17 +1209,14 @@ export function withGovernor(
               instance: state.providerInstanceId,
               workerId:
                 link?.workerId ??
-                (card === undefined
-                  ? BOARD_LOCAL_WORKER_ID
-                  : boardCardEffectiveWorkerId(card, board?.defaultWorkerId)),
+                (card === undefined ? BOARD_LOCAL_WORKER_ID : boardCardEffectiveWorkerId(card)),
             });
           }
           for (const card of board?.cards ?? []) {
             if (card.ci?.phase !== "running") continue;
             entries.push({
               instance: HARNESS_CI_INSTANCE,
-              workerId:
-                card.placedWorkerId ?? boardCardEffectiveWorkerId(card, board?.defaultWorkerId),
+              workerId: card.placedWorkerId ?? boardCardEffectiveWorkerId(card),
             });
           }
           return entries;

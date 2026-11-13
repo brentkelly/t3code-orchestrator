@@ -2404,6 +2404,10 @@ export const BoardStepQueuedBy = Schema.Literals([
   "needs-update",
   // T3o: no worker is online and ready for the project with the step's provider (T3O-87). Amber.
   "no-ready-worker",
+  // T3o: planning runs on the board server (T3O-87): its folder for the project isn't a
+  // checkout (amber), or the step's provider isn't signed in there (violet).
+  "server-checkout",
+  "server-sign-in",
 ]);
 export type BoardStepQueuedBy = typeof BoardStepQueuedBy.Type;
 
@@ -2421,6 +2425,11 @@ export const BoardStepQueuedDetail = Schema.Struct({
   /** Which `setup` wait: the worker's readiness fails, it has no checkout, or the card's own
       setup script holds the agent. Absent: a checkout is on its way. */
   setupCause: Schema.optionalKey(Schema.Literals(["not-ready", "not-set-up", "card-setup"])),
+  /** T3o: why the board server can't plan (T3O-87): its project folder is missing or empty
+      (Clone here), or exists and isn't a checkout of the project's repository. */
+  serverCheckout: Schema.optionalKey(Schema.Literals(["missing", "not-a-checkout"])),
+  /** T3o: the provider to sign in to on the board server (T3O-87). */
+  providerInstanceId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type BoardStepQueuedDetail = typeof BoardStepQueuedDetail.Type;
 
@@ -12871,16 +12880,12 @@ export function boardCardHoldsWorktree(card: Pick<BoardCard, "worktree">): boole
 type BoardCardPlacementFields = Pick<BoardCard, "worktree" | "pinnedWorkerId" | "placedWorkerId">;
 
 /**
- * The worker a card's next thread runs on: where it is placed while it
- * holds a worktree, otherwise its pin, otherwise the board's default. So a
- * default change moves only cards with no checkout, and a card with one moves
- * only through Move.
+ * The worker to show for a card: where it is placed while it holds a worktree, otherwise its
+ * pin, otherwise the board server. Display only (T3O-87): anything that acts on a worktree
+ * reads `boardCardPlacementTarget`, and the placement gate chooses an unpinned card's worker.
  */
-export function boardCardEffectiveWorkerId(
-  card: BoardCardPlacementFields,
-  defaultWorkerId: BoardWorkerId | undefined,
-): BoardWorkerId {
-  return boardCardBoundWorkerId(card) ?? defaultWorkerId ?? BOARD_LOCAL_WORKER_ID;
+export function boardCardEffectiveWorkerId(card: BoardCardPlacementFields): BoardWorkerId {
+  return boardCardBoundWorkerId(card) ?? BOARD_LOCAL_WORKER_ID;
 }
 
 /**

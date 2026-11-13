@@ -517,16 +517,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         ),
     );
 
-    it.effect("Follow default moves to the board's default and lands the card unpinned", () =>
-      withMover({ board: { ...board(makeCard()), defaultWorkerId: W1 } }, (mover, f) =>
+    it.effect("a move naming no worker means the board server, never a default (T3O-87)", () =>
+      withMover({ board: { ...board(makeCard()), defaultWorkerId: W1 } }, (mover) =>
         Effect.gen(function* () {
-          expect(yield* mover.move(cardId, null)).toEqual({ outcome: "started" });
-          yield* mover.drain;
-          const landed = yield* f.card;
-          expect(landed.placedWorkerId).toBe(W1);
-          expect(landed.worktree?.path).toBe(`/home/${W1}/worktrees/t3-1`);
-          // Following, not pinned: once the worktree goes, a default change moves it.
-          expect(landed.pinnedWorkerId).toBeNull();
+          const answer = yield* mover.move(cardId, null);
+          assert.strictEqual(answer.outcome, "refused");
+          if (answer.outcome === "refused") expect(answer.detail).toContain("already on");
         }),
       ),
     );

@@ -611,7 +611,9 @@ export function BoardCardContent({
                 "inline-flex shrink-0 items-center rounded px-1.5 text-board-10 font-medium",
                 queueSlot.blocked === true
                   ? "bg-warning/14 text-board-amber-text"
-                  : "bg-muted text-muted-foreground",
+                  : queueSlot.attention === true
+                    ? "bg-attention/12 text-attention-foreground"
+                    : "bg-muted text-muted-foreground",
               )}
             >
               {queueSlot.label}

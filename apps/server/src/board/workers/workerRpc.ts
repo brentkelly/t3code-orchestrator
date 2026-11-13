@@ -18,6 +18,7 @@ import {
   type BoardWorkersDismissSetupInput,
   type BoardWorkersRenameInput,
   type BoardWorkersSetDefaultInput,
+  type BoardWorkersCloneHereInput,
   type BoardWorkersSetupProjectInput,
   boardIdOfBoardSubject,
   T3O_BOARD_USER_SUBJECT_PREFIX,
@@ -215,6 +216,11 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
         authorized(
           BOARD_WORKERS_WS_METHODS.setupProject,
           Effect.flatMap(workers, (service) => service.setupProject(input)),
+        ),
+      [BOARD_WORKERS_WS_METHODS.cloneHere]: (input: BoardWorkersCloneHereInput) =>
+        authorized(
+          BOARD_WORKERS_WS_METHODS.cloneHere,
+          Effect.flatMap(workers, (service) => service.cloneHere(input.projectId)),
         ),
       [BOARD_WORKERS_WS_METHODS.dismissSetup]: (input: BoardWorkersDismissSetupInput) =>
         authorized(

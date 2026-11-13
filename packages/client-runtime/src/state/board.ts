@@ -12,6 +12,7 @@ import {
   type BoardWorkersDismissSetupInput,
   type BoardWorkersRenameInput,
   type BoardWorkersSetDefaultInput,
+  type BoardWorkersCloneHereInput,
   type BoardWorkersSetupProjectInput,
   type BoardAttachCardFileInput,
   type BoardDetachCardFileInput,
@@ -56,6 +57,7 @@ import {
   renameBoardWorker,
   setDefaultBoardWorker,
   setupBoardWorkerProject,
+  cloneBoardProjectHere,
 } from "../operations/boardWorkers.ts";
 import {
   approveBoardPlans,
@@ -896,6 +898,10 @@ export function createBoardEnvironmentAtoms<R, ER>(
     setupWorkerProject: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:setup-worker-project",
       execute: (input: BoardWorkersSetupProjectInput) => setupBoardWorkerProject(input),
+    }),
+    cloneProjectHere: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:clone-project-here",
+      execute: (input: BoardWorkersCloneHereInput) => cloneBoardProjectHere(input),
     }),
     dismissWorkerSetup: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:dismiss-worker-setup",

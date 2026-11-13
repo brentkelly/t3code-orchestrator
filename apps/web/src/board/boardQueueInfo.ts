@@ -22,6 +22,8 @@ export interface BoardQueueInfo {
   readonly waitingForCheckout?: boolean;
   /** Held for good until a human acts (Too big): amber, not a wait. */
   readonly blocked?: boolean;
+  /** Waiting on a human to sign in somewhere: violet (`--attention`). */
+  readonly attention?: boolean;
 }
 
 /**
@@ -53,6 +55,14 @@ export function boardQueueInfo(input: {
 
 const DIMENSION_NAMES = { cpu: "CPU", ram: "RAM", disk: "disk space" } as const;
 
+/** How to sign a provider in on the board server. */
+const boardProviderLoginHint = (provider: string) =>
+  /claude/i.test(provider)
+    ? "Run `claude login` there."
+    : /codex/i.test(provider)
+      ? "Run `codex login` there."
+      : `Sign in to ${provider} there.`;
+
 /** The hint a capacity wait carries: the worker decides what it offers. */
 const boardCapacityHint = (worker: string) =>
   `${worker} decides what it offers. Run \`pnpm t3o-worker status\` there to see what holds the rest.`;
@@ -73,6 +83,17 @@ function withQueueReason(
   const n = slot.position;
   switch (reason.kind) {
     case "capacity":
+      if (reason.tooBig && reason.anyWorker) {
+        return {
+          ...base,
+          blocked: true,
+          label: "Too big for any worker",
+          headline: "Too big for any worker",
+          detail: `This card needs more ${
+            reason.dimension === null ? "room" : DIMENSION_NAMES[reason.dimension]
+          } than any worker ready for it declares. Lower its size or the project's baseline, or raise a worker's capacity.`,
+        };
+      }
       if (reason.tooBig) {
         return {
           ...base,
@@ -99,6 +120,32 @@ function withQueueReason(
             ? `${reason.worker} has no room for this card right now.`
             : `${reason.worker} has too little ${DIMENSION_NAMES[reason.dimension]} free for this card right now.`
         } ${boardCapacityHint(reason.worker)}`,
+      };
+    case "no-ready-worker":
+      return {
+        ...base,
+        blocked: true,
+        label: "No ready worker",
+        headline: "No ready worker for this project",
+        detail: `No worker is online and ready for ${reason.project} with this step's provider signed in. Set ${reason.project} up on a worker from the Workers page, or fix a worker's readiness.`,
+      };
+    case "server-checkout":
+      return {
+        ...base,
+        blocked: true,
+        label: "No checkout on the board server",
+        headline: `${reason.project}'s folder on the board server isn't a checkout`,
+        detail: reason.missing
+          ? `Planning runs on the board server. Clone ${reason.project} there with Clone here on the Workers page.`
+          : `Planning runs on the board server, and ${reason.project}'s folder there exists but isn't a checkout of its repository. Fix the folder on the board server.`,
+      };
+    case "server-sign-in":
+      return {
+        ...base,
+        attention: true,
+        label: "Sign in on the board server",
+        headline: `Sign in to ${reason.provider} on the board server`,
+        detail: `Planning runs on the board server. ${boardProviderLoginHint(reason.provider)}`,
       };
     case "quota":
       return {

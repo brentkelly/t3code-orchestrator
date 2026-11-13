@@ -26,6 +26,7 @@ export const BoardWorkersLocalOnlyTest = Layer.succeed(BoardWorkers, {
   removePreview: () => Effect.fail(refusedAction),
   setDefault: () => Effect.fail(refusedAction),
   setupProject: () => Effect.fail(refusedAction),
+  cloneHere: () => Effect.fail(refusedAction),
   dismissSetup: () => Effect.void,
   state: Effect.succeed(EMPTY_BOARD_WORKERS_STATE),
   states: Stream.make(EMPTY_BOARD_WORKERS_STATE),

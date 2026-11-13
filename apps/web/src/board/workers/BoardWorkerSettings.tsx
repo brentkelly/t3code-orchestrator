@@ -16,6 +16,7 @@ import { BoardSettingsCard, BoardSettingsCardRow } from "../settings/boardSettin
 import { useBoardSettingsContext } from "../settings/BoardSettingsLayout";
 import { useBoardSettings, useUpdateBoardSettings } from "../useBoardEnvironmentId";
 import { useBoardWorkers, usePruneWorkerThreadEnvironments } from "./boardWorkersState";
+import { BoardServerPlanningCallouts } from "./BoardServerPlanningCallouts";
 import { ProjectCheckoutsSection } from "./ProjectCheckoutsSection";
 import { AddWorkerButton, useAddWorker, WorkersSection } from "./WorkersSection";
 
@@ -55,9 +56,9 @@ export function BoardWorkersSettingsPage() {
         }
       >
         <p className="mb-2 max-w-xl px-3 text-board-13 leading-board-1-55 text-muted-foreground/80 sm:px-4">
-          Machines that run cards for this board. This server hosts the board and is always a
-          worker; others join with a one-time code. Cards run on the default worker unless you pin
-          them to another.
+          Machines that run cards for this board. This server hosts the board, runs planning and can
+          build; others join with a one-time code. When a card's build starts, the board picks the
+          best ready worker for it unless you pin the card to one.
         </p>
         {workers.loading || workers.failed ? (
           <div className="mx-3 flex flex-col gap-2 rounded-xl border border-border bg-card px-4 py-3 shadow-xs sm:mx-4">
@@ -94,6 +95,7 @@ export function BoardWorkersSettingsPage() {
             }
           />
         )}
+        <BoardServerPlanningCallouts environmentId={environmentId} />
       </SettingsSection>
       <BoardAddressSection saved={boardAddress} disabled={!canWrite} />
       {showCheckouts ? (

@@ -381,11 +381,6 @@ export function boardWorkerIds(state: BoardWorkersState | undefined): ReadonlyAr
   return [BOARD_LOCAL_WORKER_ID, ...(state?.workers ?? []).map((worker) => worker.id)];
 }
 
-/** Only an online, compatible, paired worker can become the default. */
-export function canBeDefaultBoardWorker(worker: BoardWorkerView): boolean {
-  return worker.status.state === "online";
-}
-
 // ── Commands and events (the registry) ─────────────────────────────
 
 /**
@@ -621,6 +616,8 @@ export const BOARD_WORKERS_WS_METHODS = {
   setupProject: "board.workers.setupProject",
   /** Forget a finished or failed setup (dismiss). */
   dismissSetup: "board.workers.dismissSetup",
+  /** T3o: clone a project into its missing or empty folder on the board server (T3O-87). */
+  cloneHere: "board.workers.cloneHere",
   /** A session for the caller on a worker, to open its threads through the board. */
   threadAccess: "board.workers.threadAccess",
   /** T3o: what each worker offers this board, then each change, at most every 5 s per worker
@@ -703,6 +700,9 @@ export const BoardWorkersSetupProjectInput = Schema.Struct({
 });
 export type BoardWorkersSetupProjectInput = typeof BoardWorkersSetupProjectInput.Type;
 
+export const BoardWorkersCloneHereInput = Schema.Struct({ projectId: ProjectId });
+export type BoardWorkersCloneHereInput = typeof BoardWorkersCloneHereInput.Type;
+
 export const BoardWorkersDismissSetupInput = Schema.Struct({
   projectId: ProjectId,
   workerId: EnvironmentId,
@@ -782,6 +782,8 @@ export class BoardWorkerActionError extends Schema.TaggedError<BoardWorkerAction
       "is-default",
       "not-online",
       "no-remote",
+      // T3o: Clone here found the folder there and not empty (T3O-87).
+      "folder-exists",
       "internal",
       "invalid",
       "forbidden",
@@ -831,6 +833,11 @@ export const BOARD_WORKERS_RPCS = [
     success: BoardWorkerSetup,
     error: Schema.Union([BoardWorkerActionError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WORKERS_WS_METHODS.cloneHere, {
+    payload: BoardWorkersCloneHereInput,
+    success: Schema.Void,
+    error: Schema.Union([BoardWorkerActionError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(BOARD_WORKERS_WS_METHODS.dismissSetup, {
     payload: BoardWorkersDismissSetupInput,
     success: Schema.Void,
@@ -876,6 +883,7 @@ export const BOARD_WORKER_RPC_SCOPES = {
   [BOARD_WORKERS_WS_METHODS.removePreview]: AuthOrchestrationReadScope,
   [BOARD_WORKERS_WS_METHODS.setDefault]: AuthOrchestrationOperateScope,
   [BOARD_WORKERS_WS_METHODS.setupProject]: AuthSourceControlWriteScope,
+  [BOARD_WORKERS_WS_METHODS.cloneHere]: AuthSourceControlWriteScope,
   [BOARD_WORKERS_WS_METHODS.dismissSetup]: AuthOrchestrationOperateScope,
   // Capacity is a read of the workers; a re-check runs a project's own script on one.
   [BOARD_WORKERS_WS_METHODS.subscribeCapacity]: AuthOrchestrationReadScope,

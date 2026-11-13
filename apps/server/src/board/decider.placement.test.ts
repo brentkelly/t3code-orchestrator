@@ -212,26 +212,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   (it) => {
     // ── Placement resolution ─────────────────────────────────────────────
 
-    it("resolves pin, then default; a worktree binds the card where it was placed", () => {
-      expect(boardCardEffectiveWorkerId(makeCard(), undefined)).toBe(BOARD_LOCAL_WORKER_ID);
-      expect(boardCardEffectiveWorkerId(makeCard(), workerA)).toBe(workerA);
-      expect(boardCardEffectiveWorkerId(makeCard({ pinnedWorkerId: workerB }), workerA)).toBe(
-        workerB,
+    it("shows the placement while a worktree binds it, else the pin, else this server", () => {
+      // The default worker is retired (T3O-87): an unpinned, unplaced card shows this server.
+      expect(boardCardEffectiveWorkerId(makeCard())).toBe(BOARD_LOCAL_WORKER_ID);
+      expect(boardCardEffectiveWorkerId(makeCard({ pinnedWorkerId: workerB }))).toBe(workerB);
+      // Placed on A without a checkout: nothing binds it.
+      expect(boardCardEffectiveWorkerId(makeCard({ placedWorkerId: workerA }))).toBe(
+        BOARD_LOCAL_WORKER_ID,
       );
-      // Placed on A without a checkout: nothing binds it, so it follows its pin
-      // or the default on its next spawn.
-      expect(boardCardEffectiveWorkerId(makeCard({ placedWorkerId: workerA }), workerB)).toBe(
-        workerB,
-      );
-      // With a worktree on A, a default change does not move it.
       expect(
         boardCardEffectiveWorkerId(
-          makeCard({ placedWorkerId: workerA, worktree: readyWorktree }),
-          workerB,
+          makeCard({ placedWorkerId: workerA, pinnedWorkerId: workerB, worktree: readyWorktree }),
         ),
       ).toBe(workerA);
       // A worktree from before workers existed is this server's.
-      expect(boardCardEffectiveWorkerId(makeCard({ worktree: readyWorktree }), workerB)).toBe(
+      expect(boardCardEffectiveWorkerId(makeCard({ worktree: readyWorktree }))).toBe(
         BOARD_LOCAL_WORKER_ID,
       );
     });

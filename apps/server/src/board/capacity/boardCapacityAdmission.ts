@@ -96,7 +96,7 @@ export function desiredHeavy(input: {
 
 /** The worker a card's worktree is on, or would be cut on. */
 const cardWorkerOf = (board: BoardState, card: BoardCard): BoardWorkerId =>
-  boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+  boardCardEffectiveWorkerId(card);
 
 /** The card's reservation if it were placed now. */
 export const requestedProfileOf = (board: BoardState, card: BoardCard) =>

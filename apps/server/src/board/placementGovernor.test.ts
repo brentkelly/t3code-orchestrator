@@ -105,7 +105,7 @@ const pinned = (before: BoardCard, workerId: BoardWorkerId | null, sequence: num
 
 // ── Placement ─────────────────────────────────────────────────────────────
 
-it.effect("a pinned card's planning thread spawns on its worker and records no placement", () =>
+it.effect("a pinned card plans on the board server and records no placement (T3O-87)", () =>
   Effect.gen(function* () {
     const { placement } = yield* makePlacement(workersState([workerView(W1)]));
     const sprint = makeBoardCard({
@@ -127,12 +127,12 @@ it.effect("a pinned card's planning thread spawns on its worker and records no p
       (h) =>
         Effect.gen(function* () {
           yield* h.pumpDomain(cardMoved(inPlanning(sprint), "sprint", "planning", 1));
-          assert.deepStrictEqual(yield* spawnsOn(h), [W1]);
+          // A pin steers builds only.
+          assert.deepStrictEqual(yield* spawnsOn(h), [BOARD_LOCAL_WORKER_ID]);
           const after = yield* card(h, "card-1");
-          // Only the placement gate at build start records placement (T3O-87).
+          // Only the placement gate at build start records placement.
           assert.isNull(after.placedWorkerId);
-          // The link records where the thread lives.
-          assert.strictEqual(after.threadLinks[0]?.workerId, W1);
+          assert.isUndefined(after.threadLinks[0]?.workerId);
         }),
     );
   }),
@@ -145,9 +145,10 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const { placement } = yield* makePlacement(workersState([workerView(W1)]));
+      // A build step: planning runs on the board server (T3O-87).
       const sprint = makeBoardCard({
         id: "card-1",
-        stage: "sprint",
+        stage: "building",
         orderKey: "m",
         pinnedWorkerId: W1,
       });
@@ -173,7 +174,7 @@ it.effect(
         },
         (h) =>
           Effect.gen(function* () {
-            yield* h.pumpDomain(cardMoved(inPlanning(sprint), "sprint", "planning", 1));
+            yield* h.pumpDomain(movedToBuilding(sprint, 1));
             assert.deepStrictEqual(yield* spawnsOn(h), [W1]);
           }),
       );
@@ -191,9 +192,8 @@ it.effect("a card on a worker stages no attachment copies on the central server"
     NodeFS.mkdirSync(folder, { recursive: true });
     NodeFS.writeFileSync(NodePath.join(folder, "spec.pdf"), "pdf");
     const planning: BoardCard = {
-      // Already in Planning: the reactor reads the card off the live model at
-      // admit time, and the harness does not re-project the move.
-      ...makeBoardCard({ id: "card-1", stage: "planning", orderKey: "m", pinnedWorkerId: W1 }),
+      // A build step on W1: planning runs on the board server (T3O-87).
+      ...placedBuildingCard("card-1", "m", W1),
       attachments: [
         {
           id: BoardCardAttachmentId.make("att-doc"),
@@ -221,7 +221,7 @@ it.effect("a card on a worker stages no attachment copies on the central server"
       },
       (h) =>
         Effect.gen(function* () {
-          yield* h.pumpDomain(cardMoved(planning, "sprint", "planning", 1));
+          yield* h.pumpDomain(movedToBuilding(planning, 1));
           const spawn = (yield* h.commands).find((command) => command.type === "thread.spawn");
           assert.isTrue(spawn?.type === "thread.spawn" && spawn.workerId === W1);
           assert.deepStrictEqual(spawn?.type === "thread.spawn" ? spawn.attachments : null, []);
@@ -233,7 +233,7 @@ it.effect("a card on a worker stages no attachment copies on the central server"
   }),
 );
 
-it.effect("an unpinned card follows the default worker", () =>
+it.effect("a default worker no longer steers anything: an unpinned card plans here", () =>
   Effect.gen(function* () {
     const { placement } = yield* makePlacement(workersState([workerView(W1)], W1));
     const sprint = makeBoardCard({ id: "card-1", stage: "sprint", orderKey: "m" });
@@ -255,7 +255,7 @@ it.effect("an unpinned card follows the default worker", () =>
       (h) =>
         Effect.gen(function* () {
           yield* h.pumpDomain(cardMoved(inPlanning(sprint), "sprint", "planning", 1));
-          assert.deepStrictEqual(yield* spawnsOn(h), [W1]);
+          assert.deepStrictEqual(yield* spawnsOn(h), [BOARD_LOCAL_WORKER_ID]);
           assert.isNull((yield* card(h, "card-1")).placedWorkerId);
         }),
     );
@@ -295,9 +295,10 @@ it.effect("a step whose provider the worker lacks stalls amber, and a re-pin cle
     const { placement } = yield* makePlacement(
       workersState([workerView(W1, { providers: [claude] }), workerView(W2)]),
     );
+    // A build step: planning runs on the board server (T3O-87).
     const sprint = makeBoardCard({
       id: "card-1",
-      stage: "sprint",
+      stage: "building",
       orderKey: "m",
       pinnedWorkerId: W1,
     });
@@ -313,7 +314,7 @@ it.effect("a step whose provider the worker lacks stalls amber, and a re-pin cle
       },
       (h) =>
         Effect.gen(function* () {
-          yield* h.pumpDomain(cardMoved(inPlanning(sprint), "sprint", "planning", 1));
+          yield* h.pumpDomain(movedToBuilding(sprint, 1));
           const stalled = yield* step(h, "card-1");
           assert.strictEqual(stalled?.status, "stalled");
           assert.strictEqual(stalled?.stalledReason, "provider-not-on-worker");
@@ -335,9 +336,10 @@ it.effect("a provider stall clears when the instance appears on the worker", () 
     const { placement, ref } = yield* makePlacement(
       workersState([workerView(W1, { providers: [claude] })]),
     );
+    // A build step: planning runs on the board server (T3O-87).
     const sprint = makeBoardCard({
       id: "card-1",
-      stage: "sprint",
+      stage: "building",
       orderKey: "m",
       pinnedWorkerId: W1,
     });
@@ -353,53 +355,13 @@ it.effect("a provider stall clears when the instance appears on the worker", () 
       },
       (h) =>
         Effect.gen(function* () {
-          yield* h.pumpDomain(cardMoved(inPlanning(sprint), "sprint", "planning", 1));
+          yield* h.pumpDomain(movedToBuilding(sprint, 1));
           assert.strictEqual((yield* step(h, "card-1"))?.stalledReason, "provider-not-on-worker");
 
           yield* SubscriptionRef.set(
             ref,
             workersState([workerView(W1, { providers: [claude, codex] })]),
           );
-          yield* Effect.yieldNow;
-          yield* h.reactor.drain;
-          assert.strictEqual((yield* step(h, "card-1"))?.status, "running");
-          assert.deepStrictEqual(yield* spawnsOn(h), [W1]);
-        }),
-    );
-  }),
-);
-
-it.effect("a card pinned to a worker still cloning the project holds, then starts", () =>
-  Effect.gen(function* () {
-    const { placement, ref } = yield* makePlacement(
-      workersState([workerView(W1, { checkout: false })]),
-    );
-    const sprint = makeBoardCard({
-      id: "card-1",
-      stage: "sprint",
-      orderKey: "m",
-      pinnedWorkerId: W1,
-    });
-    yield* withGovernor(
-      {
-        board: { cards: [sprint], nextCardNumberByProject: {}, workers: registered },
-        settings: settingsWith({
-          building: [codexStep],
-          planning: codexStep,
-          globalMaxConcurrent: 3,
-        }),
-        placement,
-      },
-      (h) =>
-        Effect.gen(function* () {
-          yield* h.pumpDomain(cardMoved(inPlanning(sprint), "sprint", "planning", 1));
-          const held = yield* step(h, "card-1");
-          assert.strictEqual(held?.status, "queued");
-          assert.strictEqual(held?.queuedBy, "setup");
-          assert.deepStrictEqual(yield* spawnsOn(h), []);
-
-          // The clone finishes: the worker reports the checkout.
-          yield* SubscriptionRef.set(ref, workersState([workerView(W1)]));
           yield* Effect.yieldNow;
           yield* h.reactor.drain;
           assert.strictEqual((yield* step(h, "card-1"))?.status, "running");
@@ -454,9 +416,10 @@ it.effect("a provider stall stays stalled while its worker is offline", () =>
     const { placement, ref } = yield* makePlacement(
       workersState([workerView(W1, { providers: [claude] })]),
     );
+    // A build step: planning runs on the board server (T3O-87).
     const sprint = makeBoardCard({
       id: "card-1",
-      stage: "sprint",
+      stage: "building",
       orderKey: "m",
       pinnedWorkerId: W1,
     });
@@ -472,7 +435,7 @@ it.effect("a provider stall stays stalled while its worker is offline", () =>
       },
       (h) =>
         Effect.gen(function* () {
-          yield* h.pumpDomain(cardMoved(inPlanning(sprint), "sprint", "planning", 1));
+          yield* h.pumpDomain(movedToBuilding(sprint, 1));
           assert.strictEqual((yield* step(h, "card-1"))?.stalledReason, "provider-not-on-worker");
 
           yield* SubscriptionRef.set(
@@ -492,9 +455,10 @@ it.effect("a provider stall stays stalled while its worker is offline", () =>
 it.effect("an offline worker holds its cards without spawning anything", () =>
   Effect.gen(function* () {
     const { placement } = yield* makePlacement(workersState([workerView(W1, { online: false })]));
+    // A build step: planning runs on the board server (T3O-87).
     const sprint = makeBoardCard({
       id: "card-1",
-      stage: "sprint",
+      stage: "building",
       orderKey: "m",
       pinnedWorkerId: W1,
     });
@@ -510,7 +474,7 @@ it.effect("an offline worker holds its cards without spawning anything", () =>
       },
       (h) =>
         Effect.gen(function* () {
-          yield* h.pumpDomain(cardMoved(inPlanning(sprint), "sprint", "planning", 1));
+          yield* h.pumpDomain(movedToBuilding(sprint, 1));
           // Held queued for its worker, which the card shows as
           // Worker offline.
           assert.strictEqual((yield* step(h, "card-1"))?.status, "queued");

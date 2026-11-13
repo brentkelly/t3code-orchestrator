@@ -765,7 +765,7 @@ const make = Effect.gen(function* () {
         ? boardThreadLinkWorkerId(link)
         : card === undefined
           ? BOARD_LOCAL_WORKER_ID
-          : boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+          : boardCardEffectiveWorkerId(card);
     return { workerId, providerInstanceId: state.providerInstanceId };
   };
 
@@ -2021,9 +2021,14 @@ const make = Effect.gen(function* () {
   const placementFor = Effect.fn("board-supervisor-placementFor")(function* (
     board: BoardState,
     card: BoardCard,
-    state: Pick<BoardCardStepState, "providerInstanceId">,
+    state: Pick<BoardCardStepState, "providerInstanceId" | "mode" | "threadId">,
   ) {
-    const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+    // T3o: planning runs on the board server, except a planning thread already under way on a
+    // worker, which carries on there; a build step runs where its worktree is (T3O-87).
+    const workerId =
+      state.mode === "plan"
+        ? (keptPlanningWorker(card, state) ?? BOARD_LOCAL_WORKER_ID)
+        : (boardCardPlacementTarget(card) ?? boardCardEffectiveWorkerId(card));
     if (workerId === BOARD_LOCAL_WORKER_ID) {
       return { workerId, gate: { kind: "ready", workerProjectId: null } } as const;
     }
@@ -2037,6 +2042,63 @@ const make = Effect.gen(function* () {
       }),
     } as const;
   });
+  /** T3o: the worker a planning step's live thread runs on, when that isn't this server: it
+      carries on there (T3O-87). Null for a new planning step. */
+  const keptPlanningWorker = (
+    card: BoardCard,
+    state: Pick<BoardCardStepState, "threadId">,
+  ): BoardWorkerId | null => {
+    if (state.threadId === null) return null;
+    const link = card.threadLinks.find((candidate) => candidate.threadId === state.threadId);
+    if (link === undefined || link.tombstonedAt !== null) return null;
+    const workerId = boardThreadLinkWorkerId(link);
+    return workerId === BOARD_LOCAL_WORKER_ID ? null : workerId;
+  };
+
+  /**
+   * T3o: why the board server can't plan a card now (T3O-87): the project's folder there is
+   * missing or empty, or isn't a git checkout (amber), or the step's provider is signed out
+   * (violet). Null when it can; the checkout is fetched first.
+   */
+  const serverPlanningProblem = Effect.fn("board-supervisor-serverPlanningProblem")(function* (
+    card: BoardCard,
+    providerInstanceId: ProviderInstanceId,
+  ) {
+    const workspace = yield* workspaces.localProject(card.projectId);
+    const root = workspace.checkoutPath;
+    const checkoutProblem = (serverCheckout: "missing" | "not-a-checkout") => ({
+      queuedBy: "server-checkout" as const,
+      detail: { workerId: BOARD_LOCAL_WORKER_ID, serverCheckout },
+    });
+    if (root === null) return checkoutProblem("missing");
+    const resolved = yield* resolveDefaultBranch(workspace);
+    if (resolved.defaultBranch === "" && !resolved.detachedHead && resolved.unbornBranch === "") {
+      const entries = yield* fileSystem
+        .readDirectory(root)
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+      return checkoutProblem(entries.length === 0 ? "missing" : "not-a-checkout");
+    }
+    if (Option.isSome(capacityClient)) {
+      const snapshot = yield* capacityClient.value.latest(BOARD_LOCAL_WORKER_ID);
+      const provider = snapshot?.providers.find(
+        (candidate) => candidate.instanceId === providerInstanceId,
+      );
+      if (provider?.account.status === "signed-out") {
+        return {
+          queuedBy: "server-sign-in" as const,
+          detail: { workerId: BOARD_LOCAL_WORKER_ID, providerInstanceId },
+        };
+      }
+    }
+    // Fetch before planning: the plan reads the remote's latest base.
+    if (resolved.defaultBranch !== "") {
+      yield* workspace
+        .measureBaseTip({ baseRefName: resolved.defaultBranch })
+        .pipe(Effect.ignoreCause);
+    }
+    return null;
+  });
+
   // A worker the board can't reach is unknown, not dead: nothing it ran is decided on until it
   // is back and reconciled. In memory, so a restart starts every worker unreconciled.
   /** Workers online and reconciled since they last came back. */
@@ -2135,7 +2197,9 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const fresh = board.cards.find((candidate) => candidate.id === card.id) ?? card;
     const workerId =
-      boardCardPlacementTarget(fresh) ?? boardCardEffectiveWorkerId(fresh, board.defaultWorkerId);
+      step.mode === "plan"
+        ? BOARD_LOCAL_WORKER_ID
+        : (boardCardPlacementTarget(fresh) ?? boardCardEffectiveWorkerId(fresh));
     const remoteWorker = workerId === BOARD_LOCAL_WORKER_ID ? null : workerId;
     // An API-only text generator can't run an agent. Only this server's settings are known here,
     // so a worker's own instances are left to the worker.
@@ -2475,7 +2539,9 @@ const make = Effect.gen(function* () {
       const fresh = board.cards.find((candidate) => candidate.id === card.id) ?? card;
       if (
         link !== undefined &&
-        boardThreadLinkWorkerId(link) !== boardCardEffectiveWorkerId(fresh, board.defaultWorkerId)
+        state.mode !== "plan" &&
+        boardThreadLinkWorkerId(link) !==
+          (boardCardPlacementTarget(fresh) ?? boardCardEffectiveWorkerId(fresh))
       ) {
         return "no-thread";
       }
@@ -2631,10 +2697,13 @@ const make = Effect.gen(function* () {
     const state = boardCardStepState(board, cardId);
     if (card === undefined || state === null || !stepBoundToThread(state)) return;
     const at = slotKeyFor(board, state).workerId;
+    // T3o: a planning thread carries on where it runs (T3O-87); a build step runs at its worktree.
     const runsOn =
       card.workerMove?.status === "moving"
         ? card.workerMove.toWorkerId
-        : boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+        : state.mode === "plan"
+          ? at
+          : (boardCardPlacementTarget(card) ?? boardCardEffectiveWorkerId(card));
     if (at === runsOn || !(yield* workerPausedNow)(at)) return;
     yield* stallWorkerRemoved(state, "The card was moved off the worker this step ran on.");
   });
@@ -2977,11 +3046,12 @@ const make = Effect.gen(function* () {
       // ready, and one whose move failed until a human retries or picks
       // another worker — its old worktree is gone.
       if (card.workerMove !== null) continue;
-      // T3o: a build step on a card with no worktree is placed by the gate, which ranks every
-      // worker; only a placed card (or a planning step) waits on one worker here (T3O-87).
+      // T3o: an unpinned build step with no worktree is placed by the gate, which ranks every
+      // worker; a pinned or placed card (or a planning step) waits on one worker here (T3O-87).
       if (
         state.mode !== "plan" &&
         card.group === null &&
+        card.pinnedWorkerId === null &&
         boardCardPlacementTarget(card) === null &&
         !(state.forceStart !== true && !isBoardCardScheduleDue(card.scheduledStartAt, nowMs))
       ) {
@@ -3014,6 +3084,15 @@ const make = Effect.gen(function* () {
         continue;
       }
       if (state.mode === "plan") {
+        // T3o: planning on the board server needs its checkout and the provider signed in
+        // there (T3O-87); never CPU or RAM.
+        if (placed.workerId === BOARD_LOCAL_WORKER_ID) {
+          const problem = yield* serverPlanningProblem(card, state.providerInstanceId);
+          if (problem !== null) {
+            yield* holdQueued(state, problem.queuedBy, problem.detail);
+            continue;
+          }
+        }
         // Plan-mode holds no slot: spawn a freshly selected step now. Nothing
         // withholds a plan step, so `queued` used to be unreachable here — but a
         // paused planning step sent back through Resume arrives exactly
@@ -3717,7 +3796,7 @@ const make = Effect.gen(function* () {
           }),
         ),
       ),
-      workerId: hold.detail?.workerId ?? boardCardEffectiveWorkerId(card, undefined),
+      workerId: hold.detail?.workerId ?? boardCardEffectiveWorkerId(card),
       hold,
       runId,
     });
@@ -4954,7 +5033,7 @@ const make = Effect.gen(function* () {
     const verdict = finished.outcome.headline;
     if (verdict?.machine === true) {
       const board = yield* readBoard;
-      const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+      const workerId = boardCardEffectiveWorkerId(card);
       const where =
         workerId === BOARD_LOCAL_WORKER_ID
           ? boardCiHostName()
@@ -9939,7 +10018,12 @@ const make = Effect.gen(function* () {
       if (boardCardGroupOf(yield* readBoard, card)?.target === "inherit") return null;
       // Cut on the PARENT's worker and pushed: a child placed elsewhere
       // cuts its own branch from the remote copy.
-      const workspace = yield* workspaceFor(card);
+      // T3o: a group's integration branch is cut on the board server, or on the group's pin,
+      // with no claim (T3O-87).
+      const workspace = yield* workspaces.forWorker(
+        card.pinnedWorkerId ?? BOARD_LOCAL_WORKER_ID,
+        card.projectId,
+      );
       const cwd = workspace.checkoutPath;
       if (cwd === null) {
         return yield* fail(noWorkspaceFolderReason(workspace));

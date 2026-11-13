@@ -56,6 +56,7 @@ describe("boardQueueInfo with worker capacity (T3O-86)", () => {
         dimension: "cpu",
         behind: "T3O-90",
         tooBig: false,
+        anyWorker: false,
       },
     })!;
     expect(info.label).toBe("Queued #2 · behind T3O-90");
@@ -75,11 +76,48 @@ describe("boardQueueInfo with worker capacity (T3O-86)", () => {
         dimension: "ram",
         behind: null,
         tooBig: true,
+        anyWorker: false,
       },
     })!;
     expect(info.blocked).toBe(true);
     expect(info.label).toBe("Too big for build-01");
     expect(info.detail).not.toContain("right now");
+  });
+
+  it("an unpinned card too big for every ready worker names none (T3O-87)", () => {
+    const info = boardQueueInfo({
+      slot: slot(1, 3),
+      running: 5,
+      reason: {
+        kind: "capacity",
+        worker: "this server",
+        dimension: "ram",
+        behind: null,
+        tooBig: true,
+        anyWorker: true,
+      },
+    })!;
+    expect(info.blocked).toBe(true);
+    expect(info.label).toBe("Too big for any worker");
+  });
+
+  it("no ready worker and the board server's checkout are amber; signing in there is violet (T3O-87)", () => {
+    const of = (reason: Parameters<typeof boardQueueInfo>[0]["reason"]) =>
+      boardQueueInfo({ slot: slot(1, 1), running: 0, reason })!;
+    expect(of({ kind: "no-ready-worker", project: "z5" })).toMatchObject({
+      blocked: true,
+      headline: "No ready worker for this project",
+    });
+    const missing = of({ kind: "server-checkout", project: "z5", missing: true });
+    expect(missing.blocked).toBe(true);
+    expect(missing.detail).toContain("Clone here");
+    expect(of({ kind: "server-checkout", project: "z5", missing: false }).detail).not.toContain(
+      "Clone here",
+    );
+    const signIn = of({ kind: "server-sign-in", provider: "claude" });
+    expect(signIn.attention).toBe(true);
+    expect(signIn.blocked).toBeUndefined();
+    expect(signIn.detail).toContain("`claude login`");
   });
 
   it("names quota, the agent cap and a worker that needs updating", () => {

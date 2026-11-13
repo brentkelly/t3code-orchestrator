@@ -180,7 +180,7 @@ const boardCardCapacityFor = (board: BoardState, card: BoardCard) => {
   return boardCardCapacityView({
     resources: card.resources,
     projectResources: boardProjectStageConfig(board, card.projectId)?.resources ?? null,
-    workerId: boardCardEffectiveWorkerId(card, board.defaultWorkerId),
+    workerId: boardCardEffectiveWorkerId(card),
     queuedBy: queued ? (state.queuedBy ?? null) : null,
     queuedDetail: queued ? (state.queuedDetail ?? null) : null,
   });
@@ -233,7 +233,7 @@ const planSizeWarnings = Effect.fn("board_propose_plans.sizeWarnings")(function*
 ) {
   const client = yield* Effect.serviceOption(BoardCapacityClient);
   if (Option.isNone(client)) return [];
-  const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+  const workerId = boardCardEffectiveWorkerId(card);
   const snapshot = yield* client.value.latest(workerId);
   if (snapshot === null) return [];
   const label =

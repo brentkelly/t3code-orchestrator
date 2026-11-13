@@ -17,6 +17,7 @@ import {
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -73,9 +74,17 @@ const descriptor = (environmentId: string, label: string): ExecutionEnvironmentD
   capabilities: { repositoryIdentity: true },
 });
 
+/** Every `git` the service ran, as `cwd args…`. */
+const gitRuns: Array<string> = [];
+
 const gitStub = Layer.succeed(GitVcsDriver, {
   readConfigValue: (_cwd: string, key: string) =>
     Effect.succeed(key === "remote.origin.url" ? ORIGIN_URL : null),
+  execute: (input: { readonly cwd: string; readonly args: ReadonlyArray<string> }) =>
+    Effect.sync(() => {
+      gitRuns.push([input.cwd, ...input.args].join(" "));
+      return { stdout: "", stderr: "", exitCode: 0 };
+    }),
 } as unknown as GitVcsDriver["Service"]);
 
 const environmentStub = Layer.succeed(ServerEnvironment, {
@@ -608,7 +617,7 @@ describe("BoardWorkers", () => {
       }),
     ));
 
-  test("a removal preview with nothing there, and none for the default worker", () =>
+  test("a removal preview with nothing there; a worker once made the default can go (T3O-87)", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const context = yield* setup;
@@ -617,31 +626,47 @@ describe("BoardWorkers", () => {
         yield* waitFor(connections, "online");
         const preview = yield* workers.removePreview(WORKER_ID);
         assert.deepStrictEqual([preview.toDefault, preview.byHand], [[], []]);
+        // The default worker is retired: one recorded as the default is removable like any.
         yield* workers.setDefault(WORKER_ID);
-        const refusal = yield* Effect.flip(workers.removePreview(WORKER_ID));
-        assert.strictEqual(refusal.code, "is-default");
+        yield* workers.removePreview(WORKER_ID);
+        yield* workers.remove(WORKER_ID);
+        assert.deepStrictEqual((yield* workers.state).workers, []);
       }),
     ));
 
-  test("refuses removing the default worker, and making an offline one the default", () =>
+  test("Clone here clones only into a missing or empty folder on the board server (T3O-87)", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const context = yield* setup;
-        const { worker, kit, connections, workers } = context;
-        yield* joinWorker(context);
-        yield* waitFor(connections, "online");
-        yield* workers.setDefault(WORKER_ID);
-        assert.strictEqual((yield* workers.state).defaultWorkerId, WORKER_ID);
-        const refusal = yield* Effect.flip(workers.remove(WORKER_ID));
-        assert.strictEqual(refusal.code, "is-default");
-        assert.strictEqual(refusal.message, "Make another worker the default first.");
-
-        yield* workers.setDefault(BOARD_LOCAL_WORKER_ID);
-        worker.mode = "unreachable";
-        yield* kit.fake.drop(worker);
-        yield* waitFor(connections, "offline");
-        const offline = yield* Effect.flip(workers.setDefault(WORKER_ID));
-        assert.strictEqual(offline.code, "not-online");
+        const { workers } = yield* setup;
+        const engine = yield* boardStackEngine;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const base = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3o-clone-here-" });
+        const projectAt = Effect.fn("projectAt")(function* (name: string) {
+          const projectId = ProjectId.make(`project-${name}`);
+          yield* engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make(`cmd-project-${name}-${++projectCommands}`),
+            projectId,
+            title: name,
+            workspaceRoot: `${base}/${name}`,
+            createdAt: t0,
+          });
+          return projectId;
+        });
+        gitRuns.length = 0;
+        // Missing: cloned into it.
+        yield* workers.cloneHere(yield* projectAt("missing"));
+        assert.deepStrictEqual(gitRuns, [`${base}/missing clone -- ${ORIGIN_URL} .`]);
+        // Empty: cloned into it.
+        yield* fileSystem.makeDirectory(`${base}/empty`);
+        yield* workers.cloneHere(yield* projectAt("empty"));
+        assert.strictEqual(gitRuns.length, 2);
+        // Not empty: nothing is cloned over it.
+        yield* fileSystem.makeDirectory(`${base}/full`);
+        yield* fileSystem.writeFileString(`${base}/full/notes.txt`, "mine");
+        const refused = yield* Effect.flip(workers.cloneHere(yield* projectAt("full")));
+        assert.strictEqual(refused.code, "folder-exists");
+        assert.strictEqual(gitRuns.length, 2);
       }),
     ));
 

@@ -261,7 +261,16 @@ export type BoardQueueReason =
       readonly behind: string | null;
       /** Bigger than the worker declares: no room will ever free there. */
       readonly tooBig: boolean;
+      /** T3o: an unpinned card too big for every ready worker names none (T3O-87). */
+      readonly anyWorker: boolean;
     }
+  | { readonly kind: "no-ready-worker"; readonly project: string }
+  | {
+      readonly kind: "server-checkout";
+      readonly project: string;
+      readonly missing: boolean;
+    }
+  | { readonly kind: "server-sign-in"; readonly provider: string }
   | { readonly kind: "quota"; readonly worker: string }
   | { readonly kind: "agent-cap"; readonly worker: string }
   | { readonly kind: "needs-update"; readonly worker: string }
@@ -311,7 +320,18 @@ export function boardQueueReason(input: {
             ? null
             : (input.cardKeys.get(detail.behindCardId) ?? null),
         tooBig: detail?.tooBig === true,
+        anyWorker: detail?.tooBig === true && detail.workerId === undefined,
       };
+    case "no-ready-worker":
+      return { kind: "no-ready-worker", project: input.projectName };
+    case "server-checkout":
+      return {
+        kind: "server-checkout",
+        project: input.projectName,
+        missing: detail?.serverCheckout === "missing",
+      };
+    case "server-sign-in":
+      return { kind: "server-sign-in", provider: detail?.providerInstanceId ?? "the provider" };
     case "quota":
       return { kind: "quota", worker };
     case "agent-cap":

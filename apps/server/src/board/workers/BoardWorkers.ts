@@ -3,6 +3,7 @@
  * and agents share one path. Workers join with a code through `BoardWorkerJoin`;
  * `remove` deletes nothing on the worker.
  */
+import * as FileSystem from "effect/FileSystem";
 import {
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
@@ -92,6 +93,9 @@ export interface BoardWorkersShape {
   readonly setupProject: (
     input: BoardWorkersSetupProjectInput,
   ) => Effect.Effect<BoardWorkerSetup, BoardWorkerActionError>;
+  /** T3o: clone a project into its folder on this server, only when the folder is missing or
+      empty, with this server's own git credentials (T3O-87). Planning needs the checkout. */
+  readonly cloneHere: (projectId: ProjectId) => Effect.Effect<void, BoardWorkerActionError>;
   readonly dismissSetup: (input: {
     readonly projectId: ProjectId;
     readonly workerId: EnvironmentId;
@@ -130,6 +134,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
   const environment = yield* ServerEnvironment;
   const projects = yield* ProjectService;
   const git = yield* GitVcsDriver;
+  const fileSystem = yield* FileSystem.FileSystem;
   const crypto = yield* SecureRandom.SecureRandom;
   const relayStore = yield* BoardRelayStore;
   const join = yield* BoardWorkerJoin;
@@ -273,14 +278,11 @@ export const makeBoardWorkers = Effect.gen(function* () {
     Effect.map((model) => model.board ?? EMPTY_BOARD_STATE),
   );
 
-  /** The registered, non-default worker removal is about. */
+  /** The registered worker removal is about. The default worker is retired (T3O-87). */
   const removable = Effect.fn("BoardWorkers.removable")(function* (workerId: EnvironmentId) {
     const worker = (yield* registry).find((candidate) => candidate.id === workerId);
     if (worker === undefined) {
       return yield* actionError("not-found", "That worker isn't on this board.");
-    }
-    if ((yield* defaultWorkerId) === workerId) {
-      return yield* actionError("is-default", "Make another worker the default first.");
     }
     return worker;
   });
@@ -338,9 +340,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
           // Where its thread runs: the link says, else where the card runs.
           const link = card.threadLinks.find((candidate) => candidate.threadId === live.threadId);
           const runsOn =
-            link === undefined
-              ? boardCardEffectiveWorkerId(card, board.defaultWorkerId)
-              : boardThreadLinkWorkerId(link);
+            link === undefined ? boardCardEffectiveWorkerId(card) : boardThreadLinkWorkerId(link);
           return runsOn === workerId ? [live.threadId] : [];
         }),
       ),
@@ -506,6 +506,59 @@ export const makeBoardWorkers = Effect.gen(function* () {
           : failed(input.workerLabel, log),
     });
   });
+
+  const cloneHere: BoardWorkersShape["cloneHere"] = Effect.fn("BoardWorkers.cloneHere")(
+    function* (projectId) {
+      const project = yield* projects.getShell(projectId).pipe(
+        Effect.map(Option.getOrNull),
+        Effect.orElseSucceed(() => null),
+      );
+      if (project === null) {
+        return yield* actionError("not-found", "That project isn't on this board server.");
+      }
+      const root = project.workspaceRoot;
+      const originUrl = yield* git
+        .readConfigValue(root, "remote.origin.url")
+        .pipe(Effect.orElseSucceed(() => null));
+      const remoteUrl = originUrl ?? project.repositoryIdentity?.locator.remoteUrl ?? null;
+      if (remoteUrl === null || remoteUrl.trim().length === 0) {
+        return yield* actionError(
+          "no-remote",
+          `${project.title} has no known git remote, so it can't be cloned here.`,
+        );
+      }
+      const entries = yield* fileSystem
+        .readDirectory(root)
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+      if (entries.length > 0) {
+        return yield* actionError(
+          "folder-exists",
+          `${root} already exists and isn't empty, so nothing was cloned into it.`,
+        );
+      }
+      yield* fileSystem
+        .makeDirectory(root, { recursive: true })
+        .pipe(
+          Effect.mapError(() => actionError("internal", `Couldn't create ${root} on this server.`)),
+        );
+      const cloned = yield* git
+        .execute({
+          operation: "board.workers.cloneHere",
+          cwd: root,
+          args: ["clone", "--", remoteUrl, "."],
+          allowNonZeroExit: true,
+          timeoutMs: null,
+        })
+        .pipe(Effect.orElseSucceed(() => null));
+      if (cloned === null || cloned.exitCode !== 0) {
+        const detail = (cloned?.stderr ?? "").trim().split("\n").slice(-3).join(" ");
+        return yield* actionError(
+          "internal",
+          `Cloning ${project.title} here failed${detail === "" ? "." : `: ${detail}`}`,
+        );
+      }
+    },
+  );
 
   const setupProject: BoardWorkersShape["setupProject"] = Effect.fn("BoardWorkers.setupProject")(
     function* (input) {
@@ -706,6 +759,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
     removePreview,
     setDefault,
     setupProject,
+    cloneHere,
     dismissSetup,
     state,
     states,

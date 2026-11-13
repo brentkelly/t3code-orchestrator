@@ -6182,12 +6182,6 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (existing === undefined) {
         return yield* invariant(command, `Worker '${command.workerId}' is not registered.`);
       }
-      if ((board.defaultWorkerId ?? BOARD_LOCAL_WORKER_ID) === command.workerId) {
-        return yield* invariant(
-          command,
-          `${existing.label} is the default worker. Make another worker the default first.`,
-        );
-      }
       const removed: PlannedBoardEvent = {
         ...(yield* makeBoardWorkerEventBase({
           workerId: command.workerId,
@@ -6297,7 +6291,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // worktree already is changes nothing about where the card runs.
       // T3o: Unpin on a placed card leaves it where it is (T3O-87).
       if (boardCardHoldsWorktree(card) && command.workerId !== null) {
-        const current = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+        const current = boardCardEffectiveWorkerId(card);
         const target = command.workerId;
         if (target !== current) {
           return yield* invariant(
@@ -6335,7 +6329,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         return yield* invariant(command, `Worker '${command.workerId}' is not registered.`);
       }
       if (boardCardHoldsWorktree(card)) {
-        const current = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+        const current = boardCardEffectiveWorkerId(card);
         if (current !== command.workerId) {
           return yield* invariant(
             command,
@@ -6430,7 +6424,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             `Card '${card.key}' has no worktree to move; pin it to the worker instead.`,
           );
         }
-        const from = holds ? boardCardEffectiveWorkerId(card, board.defaultWorkerId) : null;
+        const from = holds ? boardCardEffectiveWorkerId(card) : null;
         if (from === step.toWorkerId) {
           return yield* invariant(
             command,

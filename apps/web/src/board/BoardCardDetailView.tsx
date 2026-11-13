@@ -2913,7 +2913,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   "inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md px-1.75 text-board-11 font-medium",
                   props.queueInfo.blocked === true
                     ? "bg-warning/14 text-board-amber-text"
-                    : "bg-muted text-muted-foreground",
+                    : props.queueInfo.attention === true
+                      ? "bg-attention/12 text-attention-foreground"
+                      : "bg-muted text-muted-foreground",
                 )}
               >
                 <ClockIcon className="size-2.5" />
