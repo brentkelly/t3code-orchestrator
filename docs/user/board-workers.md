@@ -80,7 +80,7 @@ folder there, after fetching it. So the board server needs, for each project wit
   Workers page) clones the project from its remote with the board server's own git credentials. A
   folder that exists and isn't a checkout has to be fixed by hand.
 - **The step's provider signed in there.** If it isn't, cards wait violet with "Sign in on the board
-  server": run `claude login` (or your provider's sign-in) on the board server.
+  server": run `claude auth login` (or your provider's sign-in) on the board server.
 
 The board server's readiness script only matters for builds, so a board server that fails it still
 plans. Planning that was already running on a worker when you upgraded carries on there.
@@ -143,7 +143,7 @@ worker and whether it's CPU, RAM or disk), **Next on build-01** when it holds a 
 **build-01 is reserved for T3O-90** when this board holds that worker for an earlier card,
 **build-01 isn't taking new cards**, **agents busy** when the worker's agent cap is full, **provider
 near quota** when the provider's subscription is nearly used up, or **needs update** when the
-worker is too old to be asked. Cards queue in Building in the usual order; **Start anyway** jumps
+worker is too old to be asked. Cards queue in Building in the usual order; **Start now** jumps
 the queue and starts a card even on a worker that isn't taking new cards (the worker still refuses
 it if the machine lacks the disk or half the RAM).
 
@@ -251,8 +251,8 @@ than the project's setup timeout (30 minutes unless changed in the Resources tab
 readiness script, `.t3/ready.sh` unless the Resources tab names another, as it's committed on the
 default branch. Write it to check the machine — tools installed, services running, credentials
 present — not files in the repository. A project with no readiness script is ready wherever it has
-a checkout. A worker that isn't ready for a project takes none of its cards and can't be pinned or
-made default for it. The worker re-checks every hour while ready and every 15 minutes while not;
+a checkout. A worker that isn't ready for a project takes none of its cards and can't be pinned
+for it. The worker re-checks every hour while ready and every 15 minutes while not;
 **Re-check** in the Resources tab, or **Re-check all** on the Workers page, checks now.
 
 Setup and readiness output is visible to everyone who uses the board, so scripts shouldn't print

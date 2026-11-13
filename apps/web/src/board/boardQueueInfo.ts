@@ -68,7 +68,7 @@ const DIMENSION_NAMES = { cpu: "CPU", ram: "RAM", disk: "disk space" } as const;
 /** How to sign a provider in on the board server. */
 export const boardProviderLoginHint = (provider: string) =>
   /claude/i.test(provider)
-    ? "Run `claude login` there."
+    ? "Run `claude auth login` there."
     : /codex/i.test(provider)
       ? "Run `codex login` there."
       : `Sign in to ${provider} there.`;

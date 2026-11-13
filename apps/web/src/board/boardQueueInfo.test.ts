@@ -126,7 +126,7 @@ describe("boardQueueInfo with worker capacity (T3O-86)", () => {
     const signIn = of({ kind: "server-sign-in", provider: "claude" });
     expect(signIn.attention).toBe(true);
     expect(signIn.blocked).toBeUndefined();
-    expect(signIn.detail).toContain("`claude login`");
+    expect(signIn.detail).toContain("`claude auth login`");
   });
 
   it("names quota, the agent cap and a worker that needs updating", () => {

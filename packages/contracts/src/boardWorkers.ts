@@ -42,7 +42,7 @@ export const BOARD_WORKER_PROTOCOL_FLOOR = 5;
 
 /**
  * The T3o release that first spoke `BOARD_WORKER_PROTOCOL_FLOOR`, so the UI can
- * say "Needs T3o 0.1.8.2 or newer" rather than a protocol number nobody knows.
+ * say "Needs T3o 0.1.8.3 or newer" rather than a protocol number nobody knows.
  * Raise it together with the floor.
  */
 export const BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION = "0.1.8.3";
