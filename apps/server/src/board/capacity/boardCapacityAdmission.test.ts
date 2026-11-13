@@ -34,6 +34,7 @@ import {
   UNREACHABLE_BACKOFF_MS,
 } from "./boardCapacityAdmission.ts";
 import { upgradeBaseline } from "./boardCapacityUpgrade.ts";
+import { SNAPSHOT_INTERVAL_MS, SNAPSHOT_SETTLE_MS } from "./BoardWorkerCapacity.ts";
 import { makeFakeCapacity } from "./capacityClient.testkit.ts";
 
 const T0 = Date.parse("2026-11-13T00:00:00.000Z");
@@ -286,6 +287,11 @@ it.effect("the cut-short releases once per snapshot, not again on the same stale
     // The next pass reads the same snapshot, which doesn't show the release yet.
     assert.isFalse(yield* h.admission.releaseForWaiting());
     assert.strictEqual(yield* stillHeavy, 1);
+    // An over-committed worker offers zero headroom before and after a release, so it publishes
+    // nothing new: once the settle time passes, the unchanged snapshot no longer holds it back.
+    now.ms += SNAPSHOT_SETTLE_MS + SNAPSHOT_INTERVAL_MS;
+    assert.isTrue(yield* h.admission.releaseForWaiting());
+    assert.strictEqual(yield* stillHeavy, 0);
   }),
 );
 

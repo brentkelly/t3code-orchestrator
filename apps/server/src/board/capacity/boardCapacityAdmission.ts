@@ -30,6 +30,7 @@ import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 
 import type { BoardCapacityClientShape, BoardClaimAnswer } from "./BoardCapacityClient.ts";
+import { SNAPSHOT_INTERVAL_MS, SNAPSHOT_SETTLE_MS } from "./BoardWorkerCapacity.ts";
 
 /** After a claim goes unanswered, the worker's other claims skip it this long. */
 export const UNREACHABLE_BACKOFF_MS = 30_000;
@@ -626,8 +627,13 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
    * reaches the queue within a beat rather than ten minutes later.
    */
   // Per worker, the snapshot the last cut-short was sized against: until a newer one shows the
-  // release, a pass reading the same headroom would release more idle cards than needed.
-  const releasedAgainst = new Map<BoardWorkerId, BoardWorkerCapacitySnapshot | null>();
+  // release, a pass reading the same headroom would release more idle cards than needed. A
+  // worker republishes any moved headroom within the settle time, so a snapshot unchanged past
+  // it shows the release left headroom where it was (an over-committed worker offers zero).
+  const releasedAgainst = new Map<
+    BoardWorkerId,
+    { readonly snapshot: BoardWorkerCapacitySnapshot | null; readonly at: number }
+  >();
   const releaseForWaiting = Effect.fn("BoardCapacityAdmission.releaseForWaiting")(function* () {
     const board = yield* deps.readBoard;
     const states = board.stepStates ?? [];
@@ -667,7 +673,14 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       if (firstCard === undefined) continue;
       const need = firstCard.resources?.grant?.profile ?? requestedProfileOf(board, firstCard);
       const snapshot = yield* deps.client.latest(workerId);
-      if (releasedAgainst.has(workerId) && releasedAgainst.get(workerId) === snapshot) continue;
+      const last = releasedAgainst.get(workerId);
+      if (
+        last !== undefined &&
+        last.snapshot === snapshot &&
+        now - last.at < SNAPSHOT_SETTLE_MS + SNAPSHOT_INTERVAL_MS
+      ) {
+        continue;
+      }
       let freeCpu = snapshot?.headroom.cpuCores ?? 0;
       let freeRam = snapshot?.headroom.ramGiB ?? 0;
       const onWorker = idle
@@ -677,7 +690,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
         if (freeCpu >= need.cpuCores && freeRam >= need.ramGiB) break;
         const profile = card.resources!.grant!.profile;
         yield* release(card);
-        releasedAgainst.set(workerId, snapshot);
+        releasedAgainst.set(workerId, { snapshot, at: now });
         released += 1;
         freeCpu += profile.cpuCores;
         freeRam += profile.ramGiB;
