@@ -120,10 +120,15 @@ function FindingRow({ entry }: { readonly entry: BoardReviewLoopFinding }) {
         className={cn(
           "mt-px inline-flex h-4 shrink-0 items-center rounded-board-5 px-1.5 text-board-10 font-medium uppercase tracking-board-3",
           SEVERITY_STYLES[finding.severity],
+          // The reviewer's rating stays visible, struck through by the adjudicator's ruling.
+          entry.belowBar && "line-through opacity-55",
         )}
       >
         {finding.severity}
       </span>
+      {entry.belowBar ? (
+        <span className="mt-px shrink-0 text-board-10-5 text-muted-foreground">below bar</span>
+      ) : null}
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="text-board-12-5 leading-board-1-45 text-pretty text-foreground">
           {finding.title}
@@ -377,7 +382,7 @@ function Round({
         </span>
         {settling === null ? null : (
           <BoardHint label={settling}>
-            <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border px-[7px] text-[10.5px] font-medium text-muted-foreground">
+            <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border px-1.75 text-board-10-5 font-medium text-muted-foreground">
               Settling
             </span>
           </BoardHint>
@@ -410,7 +415,7 @@ function Round({
       {open ? (
         <div className="flex flex-col">
           {settling === null ? null : (
-            <div className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+            <div className="border-t border-border px-3 py-2 text-board-11 text-muted-foreground">
               {settling}
             </div>
           )}
@@ -546,7 +551,9 @@ function statusPill(
             ? "Loop settled: adjudicator ruled nothing new"
             : loop.convergedBy === "settled"
               ? "Loop settled: no critical findings left"
-              : "Loop settled: nothing blocking",
+              : loop.convergedBy === "below-bar"
+                ? "Loop settled: remaining improvements were ruled below the bar"
+                : "Loop settled: nothing blocking",
         spinning: false,
         className: "bg-success/14 text-success-foreground",
       };
@@ -608,6 +615,9 @@ function footerNote(
     case "converged":
       if (loop.convergedBy === "settled") {
         return `A settling round left no critical finding open, so the loop is settled. Its other findings were fixed or rejected and checked by the adjudicator${loop.unreviewedFixes > 0 ? ` · ${loop.unreviewedFixes} ${loop.unreviewedFixes === 1 ? "fix" : "fixes"} verified by the adjudicator, not re-reviewed` : ""}.`;
+      }
+      if (loop.convergedBy === "below-bar") {
+        return `The remaining improvements were ruled below the bar, so the loop is settled. The reviewer's ratings stay recorded${loop.unreviewedFixes > 0 ? ` · ${loop.unreviewedFixes} ${loop.unreviewedFixes === 1 ? "fix" : "fixes"} verified by the adjudicator, not re-reviewed` : ""}.`;
       }
       return loop.convergedBy === "adjudicator"
         ? "The adjudicator ruled the last round raised nothing new beyond points already settled, and no code changed, so the loop is settled."
