@@ -73,6 +73,26 @@ it.effect("runs the setup script once per worktree, and only the script on Retry
   }),
 );
 
+it.effect("a second run while one is in flight in the worktree starts no second script", () =>
+  Effect.gen(function* () {
+    const gitDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-setup-"));
+    let started = 0;
+    const setup = makeCardSetup({
+      gitDir: () => Effect.succeed(gitDir),
+      script: () => Effect.succeed(defaultScript),
+      runStep: (() =>
+        Effect.sync(() => void (started += 1)).pipe(Effect.andThen(Effect.never))) as never,
+    });
+    yield* collect(setup.run(input).pipe(Stream.take(1)));
+    const second = yield* collect(setup.run({ ...input, retry: true }));
+    assert.deepStrictEqual(
+      second.map((item) => [item.status, item.detail]),
+      [["running", "Already running on the worker."]],
+    );
+    yield* setup.cancel(input.worktreePath);
+  }),
+);
+
 it.effect("a failure or timeout fails the script stage, and later stages read skipped", () =>
   Effect.gen(function* () {
     const { setup } = harness([{ status: "timed-out", exitCode: null }]);

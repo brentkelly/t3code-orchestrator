@@ -6929,6 +6929,8 @@ export type BoardCardAutoMergeHoldRecordedPayload =
 export const BoardCardResourcesRecordedPayload = Schema.Struct({
   cardId: BoardCardId,
   card: BoardCard,
+  /** Set only by a human's Retry or Cancel on the card's setup: what the board acts on. */
+  setupRequested: Schema.optionalKey(Schema.Literals(["retry", "cancel"])),
 });
 export type BoardCardResourcesRecordedPayload = typeof BoardCardResourcesRecordedPayload.Type;
 

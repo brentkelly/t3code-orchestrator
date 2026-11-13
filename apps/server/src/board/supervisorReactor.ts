@@ -11075,8 +11075,9 @@ const make = Effect.gen(function* () {
         }
         // T3o: a human's Retry or Cancel on a card's setup (T3O-86).
         if (event.type === "board.card-resources-recorded") {
-          return Option.isSome(cardSetup)
-            ? cardSetup.value.onRequested(event.payload.card)
+          const requested = event.payload.setupRequested;
+          return Option.isSome(cardSetup) && requested !== undefined
+            ? cardSetup.value.onRequested(event.payload.card, requested)
             : Effect.void;
         }
         if (

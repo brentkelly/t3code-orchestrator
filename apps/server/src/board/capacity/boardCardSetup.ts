@@ -31,7 +31,7 @@ export interface BoardCardSetupDeps {
   readonly placement: (
     card: BoardCard,
   ) => Effect.Effect<{ readonly workerId: BoardWorkerId; readonly projectId: string }>;
-  /** A setup ended: the scheduler looks again. */
+  /** A setup said whether it blocks, or ended: the scheduler looks again. */
   readonly onFinished: Effect.Effect<void>;
 }
 
@@ -98,6 +98,7 @@ export const makeBoardCardSetup = (deps: BoardCardSetupDeps) => {
       boardProjectStageConfig(board, card.projectId)?.resources ?? null,
     );
     const worktreePath = card.worktree.path;
+    let first = true;
     const fiber = yield* deps.client
       .runSetup(workerId, {
         cardId: card.id,
@@ -108,7 +109,16 @@ export const makeBoardCardSetup = (deps: BoardCardSetupDeps) => {
         ...(options.markOnly === true ? { markOnly: true } : {}),
       })
       .pipe(
-        Stream.runForEach((progress) => record(card.id, toSetupResult(progress, workerId))),
+        Stream.runForEach((progress) =>
+          Effect.gen(function* () {
+            yield* record(card.id, toSetupResult(progress, workerId));
+            // The step was held until the first progress said whether setup blocks it.
+            if (first) {
+              first = false;
+              yield* deps.onFinished;
+            }
+          }),
+        ),
         Effect.ignoreCause,
         Effect.ensuring(
           Effect.sync(() => runs.delete(card.id)).pipe(Effect.andThen(deps.onFinished)),
@@ -137,7 +147,10 @@ export const makeBoardCardSetup = (deps: BoardCardSetupDeps) => {
     if ((card.resources?.setup ?? null) === null) {
       const board = yield* deps.readBoard;
       yield* start(card, { markOnly: cardBuiltOnce(board, card.id) });
-      return null;
+      // Whether the script blocks is known only from its first progress: hold until then.
+      return runs.has(card.id)
+        ? ({ queuedBy: "setup", detail: { workerId }, blocksWorker: false } satisfies CapacityHold)
+        : null;
     }
     return setupHold(card, workerId);
   });
@@ -160,15 +173,13 @@ export const makeBoardCardSetup = (deps: BoardCardSetupDeps) => {
     }
   });
 
-  /** A human asked: Retry runs the script again; Cancel stops it. */
-  const onRequested = Effect.fn("BoardCardSetup.onRequested")(function* (card: BoardCard) {
-    const setup = card.resources?.setup ?? null;
-    if (setup === null) return;
-    if (setup.status === "running" && !runs.has(card.id)) {
-      yield* start(card, { retry: true });
-    } else if (setup.status === "cancelled" && runs.has(card.id)) {
-      yield* cancel(card);
-    }
+  /** A human asked: Retry runs the script again; Cancel stops it, on the worker too. */
+  const onRequested = Effect.fn("BoardCardSetup.onRequested")(function* (
+    card: BoardCard,
+    action: "retry" | "cancel",
+  ) {
+    if (action === "cancel") yield* cancel(card);
+    else if (!runs.has(card.id)) yield* start(card, { retry: true });
   });
 
   return {

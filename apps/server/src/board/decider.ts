@@ -543,6 +543,7 @@ const cardResourcesRecordedEvent = Effect.fn("cardResourcesRecordedEvent")(funct
   readonly card: BoardCard;
   readonly resources: BoardCard["resources"];
   readonly command: Pick<BoardCommand, "commandId" | "createdAt">;
+  readonly setupRequested?: "retry" | "cancel";
 }) {
   const card: BoardCard = { ...input.card, resources: input.resources };
   return {
@@ -552,7 +553,11 @@ const cardResourcesRecordedEvent = Effect.fn("cardResourcesRecordedEvent")(funct
       commandId: input.command.commandId,
     })),
     type: "board.card-resources-recorded" as const,
-    payload: { cardId: card.id, card },
+    payload: {
+      cardId: card.id,
+      card,
+      ...(input.setupRequested === undefined ? {} : { setupRequested: input.setupRequested }),
+    },
   } satisfies PlannedBoardEvent;
 });
 
@@ -5095,6 +5100,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           card,
           resources: { ...card.resources!, setup: { ...setup, status: "cancelled" } },
           command,
+          setupRequested: "cancel",
         });
       }
       if (setup.status === "running") return [];
@@ -5114,6 +5120,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           },
         },
         command,
+        setupRequested: "retry",
       });
     }
 

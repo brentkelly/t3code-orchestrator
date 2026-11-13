@@ -44,8 +44,12 @@ const harness = (board: BoardState) =>
     const runs: Array<BoardWorkerRunSetupInput> = [];
     const recorded: Array<BoardCardSetupResult | null> = [];
     let state: "running" | "done" | "failed" | "none" = "none";
+    const cancels: Array<string> = [];
+    let looks = 0;
     const client = {
       ...fake.client,
+      cancelSetup: (_workerId: unknown, worktreePath: string) =>
+        Effect.sync(() => void cancels.push(worktreePath)),
       runSetup: (_workerId: unknown, input: BoardWorkerRunSetupInput) => {
         runs.push(input);
         return Stream.make(progress({ status: "running", exitCode: null }), progress());
@@ -63,12 +67,16 @@ const harness = (board: BoardState) =>
       commandId: (tag) => Effect.succeed(`cmd-${tag}` as BoardCommand["commandId"]),
       nowIso: Effect.succeed(NOW),
       placement: () => Effect.succeed({ workerId: BOARD_LOCAL_WORKER_ID, projectId: "p" }),
-      onFinished: Deferred.succeed(finished, undefined).pipe(Effect.asVoid),
+      // Called on the first progress and again when the run ends: `finished` is the end.
+      onFinished: Effect.suspend(() =>
+        ++looks < 2 ? Effect.void : Deferred.succeed(finished, undefined).pipe(Effect.asVoid),
+      ),
     });
     return {
       setup,
       runs,
       recorded,
+      cancels,
       finished: Deferred.await(finished),
       setState: (next: typeof state) => (state = next),
     };
@@ -100,7 +108,8 @@ it.effect("a worktree with no setup on record starts one, and records each stage
   Effect.gen(function* () {
     const card = buildingCard("a", "a");
     const h = yield* harness({ cards: [card], nextCardNumberByProject: {} });
-    assert.isNull(yield* h.setup.gate(card, BOARD_LOCAL_WORKER_ID));
+    // Held until the first progress says whether the script holds the agent.
+    assert.strictEqual((yield* h.setup.gate(card, BOARD_LOCAL_WORKER_ID))?.queuedBy, "setup");
     yield* h.finished;
     assert.deepStrictEqual(
       h.runs.map((run) => [run.cardId, run.markOnly ?? false]),
@@ -161,5 +170,21 @@ it.effect("a worker that restarted mid-setup records it failed: interrupted", ()
       status: "failed",
       detail: "Interrupted: the worker restarted.",
     });
+  }),
+);
+
+it.effect("only a human's Retry starts a run, and Cancel reaches the worker with no run here", () =>
+  Effect.gen(function* () {
+    const card = withSetup(buildingCard("a", "a"), { status: "cancelled" });
+    const h = yield* harness({ cards: [card], nextCardNumberByProject: {} });
+    yield* h.setup.onRequested(card, "cancel");
+    assert.deepStrictEqual(h.cancels, [card.worktree!.path]);
+    assert.lengthOf(h.runs, 0);
+    yield* h.setup.onRequested(withSetup(card, { status: "running" }), "retry");
+    yield* h.finished;
+    assert.deepStrictEqual(
+      h.runs.map((run) => run.retry),
+      [true],
+    );
   }),
 );

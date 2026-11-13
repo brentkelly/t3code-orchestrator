@@ -128,6 +128,17 @@ export const makeCardSetup = (deps: CardSetupDeps) => {
             finished("failed", { detail: "The worktree has no git directory to set up." }),
           );
         }
+        // One script per worktree: a second request while one runs reports it, and starts none.
+        if (running.has(input.worktreePath) && input.markOnly !== true) {
+          return Stream.make({
+            ...base,
+            status: "running",
+            stage: "setup-script",
+            stages: stagesWith("setup-script", "running", {}),
+            durationMs: null,
+            detail: "Already running on the worker.",
+          } satisfies BoardCardSetupProgress);
+        }
         const alreadyDone = NodeFS.existsSync(paths.marker);
         if (input.markOnly === true || (alreadyDone && input.retry !== true)) {
           if (!alreadyDone) yield* writeMarker(paths.marker);
