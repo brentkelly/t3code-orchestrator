@@ -27,6 +27,8 @@ import {
   applyBoardCardPlacements,
   applyBoardShellStreamEvent,
   boardBuildQueue,
+  boardCardBlockedPriority,
+  snapBoardCardDropOrder,
   boardRunningStepCount,
   planBoardQueueMoveToFront,
   boardColumnAppendOrderKey,
@@ -77,6 +79,7 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   autoMergeSetting: null,
   autoMergeHold: null,
   mergeStrategy: null,
+  priority: "normal",
   pinnedWorkerId: null,
   placedWorkerId: null,
   workerMove: null,
@@ -1084,6 +1087,141 @@ describe("board column ordering", () => {
     const key = assignments[0]?.orderKey ?? "";
     expect(key > "c" && key < "m").toBe(true);
   });
+
+  it("puts higher priority first, then drag order, and treats a group as normal (T3O-95)", () => {
+    const group = cardShell("card-group", { orderKey: "a" });
+    const cards = [
+      cardShell("card-normal", { orderKey: "b" }),
+      cardShell("card-low", { orderKey: "0", priority: "low" }),
+      cardShell("card-urgent-late", { orderKey: "z", priority: "urgent" }),
+      cardShell("card-urgent", { orderKey: "y", priority: "urgent" }),
+      {
+        ...group,
+        priority: "urgent" as const,
+        group: {
+          target: "inherit" as const,
+          autoBuild: false,
+          autoMerge: false,
+          autoPlan: false,
+          started: false,
+          placed: BOARD_SEED_STAGE_IDS.backlog,
+          prevStage: BOARD_SEED_STAGE_IDS.backlog,
+          heading: false,
+          integrated: false,
+        },
+      },
+    ];
+    expect([...cards].sort((l, r) => compareBoardCardShells(l, r)).map((c) => c.cardId)).toEqual([
+      "card-urgent",
+      "card-urgent-late",
+      "card-group",
+      "card-normal",
+      "card-low",
+    ]);
+    // Done keeps pure key order.
+    expect(
+      [...cards].sort((l, r) => compareBoardCardShells(l, r, false)).map((c) => c.cardId),
+    ).toEqual(["card-low", "card-group", "card-normal", "card-urgent", "card-urgent-late"]);
+  });
+
+  it("sorts every column by priority except Done (T3O-95)", () => {
+    const urgent = (id: string, stage: BoardStageId, orderKey: string) =>
+      cardShell(id, { stage, orderKey, priority: "urgent" });
+    const merged = mergeBoardStageColumns([
+      columnsOf([
+        cardShell("ready-a", { stage: BOARD_SEED_STAGE_IDS.ready, orderKey: "c" }),
+        urgent("ready-b", BOARD_SEED_STAGE_IDS.ready, "m"),
+        cardShell("done-a", { stage: BOARD_SEED_STAGE_IDS.done, orderKey: "c" }),
+        urgent("done-b", BOARD_SEED_STAGE_IDS.done, "m"),
+      ]),
+    ]);
+    expect(stageColumn(merged, BOARD_SEED_STAGE_IDS.ready).map((c) => c.cardId)).toEqual([
+      "ready-b",
+      "ready-a",
+    ]);
+    expect(stageColumn(merged, BOARD_SEED_STAGE_IDS.done).map((c) => c.cardId)).toEqual([
+      "done-a",
+      "done-b",
+    ]);
+  });
+
+  describe("a drop snaps into the card's priority level (T3O-95)", () => {
+    // Column as shown: urgent u1, u2; normal n1, n2; low l1.
+    const priorities = new Map([
+      ["u1", "urgent" as const],
+      ["u2", "urgent" as const],
+      ["n1", "normal" as const],
+      ["n2", "normal" as const],
+      ["l1", "low" as const],
+    ]);
+    const keys = new Map([
+      ["u1", "w"],
+      ["u2", "y"],
+      ["n1", "c"],
+      ["n2", "m"],
+      ["l1", "a"],
+    ]);
+
+    it("leaves a drop inside the level alone", () => {
+      const order = ["u1", "u2", "n2", "n1", "l1"];
+      expect(
+        snapBoardCardDropOrder({
+          orderedCardIds: order,
+          movedCardId: "n2",
+          priorityByCardId: priorities,
+        }),
+      ).toEqual(order);
+    });
+
+    it("moves a normal card dropped among urgent ones to the top of its level", () => {
+      const order = ["n2", "u1", "u2", "n1", "l1"];
+      expect(
+        snapBoardCardDropOrder({
+          orderedCardIds: order,
+          movedCardId: "n2",
+          priorityByCardId: priorities,
+        }),
+      ).toEqual(["u1", "u2", "n2", "n1", "l1"]);
+      const assignments = planBoardCardReorder({
+        orderedCardIds: order,
+        keysByCardId: keys,
+        movedCardId: "n2",
+        priorityByCardId: priorities,
+      });
+      expect(assignments).toHaveLength(1);
+      const key = assignments[0]!.orderKey;
+      // Before n1 among normal cards, and clear of every other level's key.
+      expect(key < "c").toBe(true);
+      expect(["w", "y", "a"]).not.toContain(key);
+    });
+
+    it("moves a normal card dropped below the low ones to the bottom of its level", () => {
+      expect(
+        snapBoardCardDropOrder({
+          orderedCardIds: ["u1", "u2", "n2", "l1", "n1"],
+          movedCardId: "n1",
+          priorityByCardId: priorities,
+        }),
+      ).toEqual(["u1", "u2", "n2", "n1", "l1"]);
+    });
+
+    it("never reuses another level's key", () => {
+      // n1's neighbour keys bracket l1's key "a"; the reserved key forces another.
+      const tight = new Map([...keys, ["n1", "0"], ["l1", "1"], ["n2", "2"]]);
+      const [assignment] = planBoardCardReorder({
+        orderedCardIds: ["u1", "u2", "n1", "n2", "l1"],
+        keysByCardId: tight,
+        movedCardId: "n2",
+        priorityByCardId: priorities,
+      });
+      expect(assignment === undefined || assignment.orderKey !== "1").toBe(true);
+    });
+
+    it("does not snap without priorities (Done)", () => {
+      const order = ["n2", "u1", "u2", "n1", "l1"];
+      expect(snapBoardCardDropOrder({ orderedCardIds: order, movedCardId: "n2" })).toBe(order);
+    });
+  });
 });
 
 // Columns are now keyed dynamically by stage id: only stages that
@@ -1213,6 +1351,24 @@ describe("boardBuildQueue", () => {
     expect(queue.has("card-a")).toBe(false);
   });
 
+  it("orders by priority within a stage, under the later-stage rule (T3O-95)", () => {
+    const cards = [
+      queuedCard("card-normal", BOARD_SEED_STAGE_IDS.building, "a"),
+      {
+        ...queuedCard("card-urgent", BOARD_SEED_STAGE_IDS.building, "z"),
+        priority: "urgent" as const,
+      },
+      { ...queuedCard("card-low", BOARD_SEED_STAGE_IDS.building, "0"), priority: "low" as const },
+      queuedCard("card-review", BOARD_SEED_STAGE_IDS.review, "z"),
+    ];
+    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES, NOW_MS);
+    expect(
+      ["card-review", "card-urgent", "card-normal", "card-low"].map(
+        (id) => queue.get(id)?.position,
+      ),
+    ).toEqual([1, 2, 3, 4]);
+  });
+
   it("leaves out a card held for its offline worker: it waits on no slot (T3O-66)", () => {
     const cards = [
       {
@@ -1295,6 +1451,39 @@ describe("boardBuildQueue", () => {
   });
 });
 
+describe("boardCardBlockedPriority (T3O-95)", () => {
+  const ref = (id: string, stage: BoardStageId = BOARD_SEED_STAGE_IDS.ready) => ({
+    cardId: BoardCardId.make(id),
+    key: id.toUpperCase(),
+    title: id,
+    stage,
+    archivedAt: null,
+  });
+
+  it("returns the highest live, unfinished dependent's priority", () => {
+    const shells = new Map([
+      ["high", cardShell("high", { priority: "high" })],
+      ["urgent-done", cardShell("urgent-done", { priority: "urgent" })],
+      ["urgent-archived", cardShell("urgent-archived", { priority: "urgent" })],
+    ]);
+    expect(
+      boardCardBlockedPriority(
+        [
+          ref("high"),
+          ref("urgent-done", BOARD_SEED_STAGE_IDS.done),
+          { ...ref("urgent-archived"), archivedAt: "2026-01-01T00:00:00.000Z" },
+          ref("unknown"),
+        ],
+        shells,
+      ),
+    ).toBe("high");
+  });
+
+  it("is null with no dependents", () => {
+    expect(boardCardBlockedPriority([], new Map())).toBeNull();
+  });
+});
+
 describe("boardRunningStepCount", () => {
   it("counts the cards whose step is actually running, queued ones excluded", () => {
     const cards = [
@@ -1311,6 +1500,37 @@ describe("planBoardQueueMoveToFront", () => {
   const queuedCard = (id: string, stage: BoardStageId, orderKey: string) => ({
     ...cardShell(id, { stage, orderKey }),
     queued: true,
+  });
+
+  it("moves a card to the front of its own priority level only (T3O-95)", () => {
+    const cards = [
+      {
+        ...queuedCard("card-urgent", BOARD_SEED_STAGE_IDS.building, "t"),
+        priority: "urgent" as const,
+      },
+      queuedCard("card-a", BOARD_SEED_STAGE_IDS.building, "c"),
+      queuedCard("card-b", BOARD_SEED_STAGE_IDS.building, "m"),
+    ];
+    const plan = planBoardQueueMoveToFront({
+      cards,
+      stages: BOARD_SEED_STAGES,
+      cardId: "card-b",
+      nowMs: NOW_MS,
+    });
+    expect(plan).not.toBeNull();
+    const moved = cards.map((card) =>
+      card.cardId === "card-b" ? { ...card, orderKey: plan!.orderKey } : card,
+    );
+    expect(boardBuildQueue(moved, BOARD_SEED_STAGES, NOW_MS).get("card-b")?.position).toBe(2);
+    // Already first in its level: nothing a reorder can improve.
+    expect(
+      planBoardQueueMoveToFront({
+        cards: moved,
+        stages: BOARD_SEED_STAGES,
+        cardId: "card-b",
+        nowMs: NOW_MS,
+      }),
+    ).toBeNull();
   });
 
   it("returns a key that actually moves the card to the front", () => {
