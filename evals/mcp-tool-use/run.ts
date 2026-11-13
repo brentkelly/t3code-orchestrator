@@ -16,6 +16,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   BOARD_AUTO_PLAN_INSTRUCTION,
   boardAutoPlanInstruction,
+  BOARD_ENVELOPE_BUILD_DELIVERABLE,
   BOARD_ENVELOPE_PLAN_DELIVERABLE,
   BOARD_ENVELOPE_REGROUP_GUARD,
   boardStepPostamble,
@@ -346,6 +347,7 @@ const CASE_TEXT: Record<string, string> = {
   BOARD_AUTO_PLAN_GATED_INSTRUCTION: boardAutoPlanInstruction(false),
   BOARD_AUTO_PLAN_APPROVED_INSTRUCTION: boardAutoPlanInstruction(true),
   BOARD_AUTO_PLAN_REOPENED_APPROVED_INSTRUCTION: boardAutoPlanInstruction(true, { reopened: true }),
+  BOARD_ENVELOPE_BUILD_DELIVERABLE,
   BOARD_ENVELOPE_PLAN_DELIVERABLE,
   BOARD_ENVELOPE_REGROUP_GUARD,
   BOARD_PLAN_REVIEW_INSTRUCTIONS: composePlanReviewInstructions({

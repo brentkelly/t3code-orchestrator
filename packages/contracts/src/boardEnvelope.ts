@@ -93,7 +93,7 @@ export const BOARD_ENVELOPE_PLAN_DELIVERABLE = [
     build without it. */
 export const BOARD_ENVELOPE_BUILD_DELIVERABLE = [
   `Complete a succeeded build with a JSON payload ${BOARD_BUILD_SUMMARY_PAYLOAD_SHAPE}, and put the same \`lead\` sentence in \`summary\`.`,
-  "`lead` is one sentence covering what was built, the branch, the commit count and whether it is pushed.",
+  "`lead` is one sentence saying what was built and what it now does; leave out the branch, commits and push state, which the board shows itself.",
   "`notes` holds every plan change, unfinished item and shortcut (`kind` is plan_change, not_done or shortcut, with optional `detail`), and these never go in `areas`.",
   "`checks` lists every check or test suite you ran or deliberately skipped, with `status` pass, not_run, fail_preexisting or fail; use fail_preexisting only for a failure this card did not cause, and say why in `detail`.",
   "`areas` groups what was built under names like Data, API, Site core, Panel or Docs, each item one short line.",
