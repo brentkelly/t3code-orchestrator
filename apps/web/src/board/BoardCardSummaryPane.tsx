@@ -4,12 +4,14 @@
  */
 import type { BoardBuildSummaryCheckStatus, BoardBuildSummaryNoteKind } from "@t3tools/contracts";
 import { ChevronLeftIcon } from "lucide-react";
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 
 import { cn } from "../lib/utils";
 import { BoardSectionHeading as SectionHeading } from "./BoardCardFields";
 import { BoardHint } from "./BoardHint";
 import type { BoardCardWorkSummary, BoardCardWorkSummaryTone } from "./boardCardWorkSummary";
+import { BoardCardMeasuredSection } from "./actuals/BoardCardMeasuredSection";
+import type { BoardActualsLine } from "./actuals/boardActualsView";
 import { BoardCardUsageSection } from "./usage/BoardCardUsageSection";
 import type { BoardUsageBreakdown } from "./usage/boardUsageBreakdown";
 
@@ -129,11 +131,20 @@ export function BoardCardSummaryPane({
   onOpenChild,
   decisionLog,
   usage,
+  measured,
   buildPending = false,
 }: {
   readonly summary: BoardCardWorkSummary;
   /** The card's usage, when anything about it is known (T3O-77). */
   readonly usage?: BoardUsageBreakdown | null | undefined;
+  /** The card's measured steps (T3O-87), when any ran. */
+  readonly measured?:
+    | {
+        readonly lines: ReadonlyArray<BoardActualsLine>;
+        readonly footer: { readonly reservation: string; readonly share: string | null } | null;
+      }
+    | null
+    | undefined;
   /** The card's decision log section, when it has one. */
   readonly decisionLog?: React.ReactNode;
   /** No build has finished yet: the pane is here for the decision log. */
@@ -144,6 +155,7 @@ export function BoardCardSummaryPane({
   readonly onOpenChild?: ((childCardId: string) => void) | undefined;
 }) {
   const { verdict, review, build, pullRequest } = summary;
+  const [hoveredStepId, setHoveredStepId] = useState<string | null>(null);
   const structured = build.structured;
   const lead = structured?.lead ?? build.summary;
   const pullRequestUrl = pullRequest.url;
@@ -223,7 +235,20 @@ export function BoardCardSummaryPane({
           </div>
         </div>
 
-        {usage == null ? null : <BoardCardUsageSection breakdown={usage} />}
+        {usage == null ? null : (
+          <BoardCardUsageSection
+            breakdown={usage}
+            hover={{ stepId: hoveredStepId, onHover: setHoveredStepId }}
+          />
+        )}
+        {measured == null || measured.lines.length === 0 ? null : (
+          <BoardCardMeasuredSection
+            footer={measured.footer}
+            hoveredStepId={hoveredStepId}
+            lines={measured.lines}
+            onHoverStep={setHoveredStepId}
+          />
+        )}
 
         {decisionLog}
 

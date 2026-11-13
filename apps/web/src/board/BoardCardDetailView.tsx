@@ -6,6 +6,7 @@
 import {
   DEFAULT_BOARD_REVIEW_ROUNDS,
   activeBoardCardThreadId,
+  BOARD_LOCAL_WORKER_ID,
   BOARD_SEED_STAGE_IDS,
   isBoardCardAwaitingPermission,
   BOARD_AUTO_MERGE_MAX_ATTEMPTS,
@@ -120,6 +121,8 @@ import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
 import { BoardBaseBranchConfirmDialog } from "./BoardBaseBranchConfirmDialog";
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
 import { BoardCardWorkerRow } from "./workers/BoardCardWorkerRow";
+import { useBoardWorkersState } from "./workers/BoardWorkersContext";
+import { boardActualsFooterText, boardActualsLines } from "./actuals/boardActualsView";
 import { BoardBriefEditor } from "./mentions/BoardBriefEditor";
 import { BoardBriefView } from "./mentions/BoardBriefView";
 import { BoardCardProjectConfirmDialog } from "./BoardCardProjectConfirmDialog";
@@ -2724,8 +2727,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // planning inherits as context.
   // T3o: a card's spend lives in its Summary pane at any stage (T3O-77).
   const hasUsage = props.detail.usage.length > 0 || props.detail.usageHistoryPartial;
+  // T3o: measured actuals sit beside Usage (T3O-87).
+  const hasActuals = props.detail.actuals.length > 0;
+  const workersForActuals = useBoardWorkersState();
   const hasSummary =
     hasUsage ||
+    hasActuals ||
     (!integrates
       ? props.detail.decisions.length > 0
       : boardCardHasSummaryPane({
@@ -2800,6 +2807,20 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           runningThreadId:
             props.threadLinks.find((link) => link.threadState === "working")?.threadId ?? null,
         })
+      : null;
+  const measured =
+    summaryShown && hasActuals
+      ? {
+          lines: boardActualsLines(props.detail.actuals, workersForActuals),
+          footer:
+            card.resources?.grant == null
+              ? null
+              : boardActualsFooterText({
+                  rows: props.detail.actuals,
+                  workerId: card.placedWorkerId ?? BOARD_LOCAL_WORKER_ID,
+                  reservation: card.resources.grant.profile,
+                }),
+        }
       : null;
   const decisionLog = summaryShown
     ? boardDecisionLogView({
@@ -3166,6 +3187,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 summary={workSummary}
                 buildPending={buildPending}
                 usage={usageBreakdown}
+                measured={measured}
                 decisionLog={
                   decisionLog === null ? null : (
                     <BoardDecisionLog
