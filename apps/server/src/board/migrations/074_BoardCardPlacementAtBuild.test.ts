@@ -1,6 +1,6 @@
 /**
  * Board migration 074: placement is cleared on cards without a worktree, and kept on cards
- * with one, with an integration branch, or reclaimed (T3O-87).
+ * with one, with an integration branch, or reclaimed or failed (T3O-87).
  */
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -54,7 +54,7 @@ it.effect("clears placement on cards without a worktree, and keeps the rest", ()
       SELECT card_id AS "cardId", placed_worker_id AS "placed" FROM board_cards ORDER BY card_id
     `;
     assert.deepStrictEqual(rows, [
-      { cardId: "failed", placed: null },
+      { cardId: "failed", placed: "env-w1" },
       { cardId: "integration", placed: "env-w1" },
       { cardId: "no-worktree", placed: null },
       { cardId: "provisioning", placed: "env-w1" },

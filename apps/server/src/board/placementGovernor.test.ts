@@ -678,26 +678,57 @@ it.effect("a full worker queues its cards without holding up another worker's (T
   }),
 );
 
-it.effect("a reclaimed card whose branch the remote lacks goes back where its commits are", () =>
+it.effect.each(["reclaimed", "failed"] as const)(
+  "a %s card whose branch the remote lacks goes back where its commits are",
+  (status) =>
+    Effect.gen(function* () {
+      const { placement } = yield* makePlacement(workersState([workerView(W1)]));
+      // `local` has far more room, so an unbound card would rank there first.
+      const capacity = yield* w1RoomForOne();
+      const reclaimed: BoardCard = {
+        ...placedBuildingCard("card-a", "a", W1),
+        worktree: { ...readyWorktree("card-a"), status, path: null },
+      };
+      yield* withGovernor(
+        {
+          board: { cards: [reclaimed], nextCardNumberByProject: {}, workers: registered },
+          settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 8 }),
+          placement,
+          capacity,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.pumpDomain(movedToBuilding(reclaimed, 1));
+            assert.deepStrictEqual(yield* spawnsOn(h), [W1]);
+          }),
+      );
+    }),
+);
+
+it.effect("a card waiting for its unpushed home asks for holds only there", () =>
   Effect.gen(function* () {
     const { placement } = yield* makePlacement(workersState([workerView(W1)]));
-    // `local` has far more room, so an unbound card would rank there first.
     const capacity = yield* w1RoomForOne();
+    const running = placedBuildingCard("card-a", "a", W1);
     const reclaimed: BoardCard = {
-      ...placedBuildingCard("card-a", "a", W1),
-      worktree: { ...readyWorktree("card-a"), status: "reclaimed", path: null },
+      ...placedBuildingCard("card-b", "b", W1),
+      worktree: { ...readyWorktree("card-b"), status: "reclaimed", path: null },
     };
     yield* withGovernor(
       {
-        board: { cards: [reclaimed], nextCardNumberByProject: {}, workers: registered },
+        board: { cards: [running, reclaimed], nextCardNumberByProject: {}, workers: registered },
         settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 8 }),
         placement,
         capacity,
       },
       (h) =>
         Effect.gen(function* () {
-          yield* h.pumpDomain(movedToBuilding(reclaimed, 1));
-          assert.deepStrictEqual(yield* spawnsOn(h), [W1]);
+          yield* h.pumpDomain(movedToBuilding(running, 1));
+          yield* h.pumpDomain(movedToBuilding(reclaimed, 2));
+          assert.strictEqual((yield* step(h, "card-b"))?.status, "queued");
+          const asked = capacity.holds.filter((hold) => String(hold.cardId) === "card-b");
+          assert.isNotEmpty(asked);
+          assert.deepStrictEqual([...new Set(asked.map((hold) => hold.workerId))], [W1]);
         }),
     );
   }),

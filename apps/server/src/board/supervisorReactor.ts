@@ -1394,6 +1394,8 @@ const make = Effect.gen(function* () {
       };
       return { kind: "held", hold } as WorktreeOutcome;
     }
+    // Holds go only where the card may be placed, so they see its unpushed home too.
+    const homed = card.group !== null ? card : yield* withUnpushedHome(card);
     // A group card's integration work is cut on the board server or on its pin, with no claim.
     const ranked =
       card.group !== null
@@ -1403,9 +1405,9 @@ const make = Effect.gen(function* () {
             heldByCard: new Set<BoardWorkerId>(),
             context: null,
           }
-        : yield* rankCandidates(yield* withUnpushedHome(card), claimFor, pass);
+        : yield* rankCandidates(homed, claimFor, pass);
     if (ranked.kind === "wait") {
-      const holding = yield* askHolds(card, claimFor, ranked.context, pass);
+      const holding = yield* askHolds(homed, claimFor, ranked.context, pass);
       return { kind: "held", hold: holding ?? ranked.hold } as WorktreeOutcome;
     }
     let lastHold: CapacityHold | null = null;
@@ -1593,7 +1595,7 @@ const make = Effect.gen(function* () {
     if (lastHold === null) return unreachable;
     // Every candidate refused its claim: the card asks for holds as it would with none.
     const holding =
-      ranked.context === null ? null : yield* askHolds(card, claimFor, ranked.context, pass);
+      ranked.context === null ? null : yield* askHolds(homed, claimFor, ranked.context, pass);
     return { kind: "held", hold: holding ?? lastHold } as WorktreeOutcome;
   });
 
@@ -1607,13 +1609,19 @@ const make = Effect.gen(function* () {
   /**
    * T3o: a reclaimed card whose branch never reached the remote has its commits only on the
    * worker it last ran on, so it ranks as pinned there; a human's pin, or a worker since
-   * removed, still wins.
+   * removed, still wins. A failed re-provision leaves the record `failed`, and keeps its home.
    */
   const withUnpushedHome = Effect.fn("board-supervisor-withUnpushedHome")(function* (
     card: BoardCard,
   ) {
     const last = card.placedWorkerId;
-    if (card.pinnedWorkerId !== null || last === null || card.worktree?.status !== "reclaimed") {
+    const status = card.worktree?.status;
+    if (
+      card.pinnedWorkerId !== null ||
+      last === null ||
+      card.worktree === null ||
+      (status !== "reclaimed" && status !== "failed")
+    ) {
       return card;
     }
     const board = yield* readBoard;

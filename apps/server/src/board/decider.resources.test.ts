@@ -416,6 +416,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("card sizes", (it
         assert.isNull(restored.resources);
         // The placement goes with the claim: the card is ranked again.
         assert.isNull(restored.placedWorkerId);
+        // A reclaimed card keeps the worker its unpushed commits may live on.
+        const reclaimed: BoardCardWorktree = { ...branchOnly, status: "reclaimed" };
+        const rePlaced = yield* provisionAfter(
+          makeCard({ worktree: reclaimed }),
+          makeReadModel({ cards: [makeCard({ worktree: reclaimed })] }),
+        );
+        const home = yield* cardAfter(undo(reclaimed), makeReadModel({ cards: [rePlaced] }));
+        assert.strictEqual(home.placedWorkerId, workerA);
         // With nothing before it, the record goes.
         const fresh = yield* provisionAfter(makeCard(), makeReadModel({ cards: [makeCard()] }));
         const nulled = yield* cardAfter(undo(null), makeReadModel({ cards: [fresh] }));

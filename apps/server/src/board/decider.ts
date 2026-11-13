@@ -5163,13 +5163,16 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // The worktree that was due its setup never landed: the next provision marks it again.
       const { setupDue: _due, ...rest } = card.resources ?? EMPTY_BOARD_CARD_RESOURCES;
       // T3o: the claim expired, so the placement goes too and the card is ranked again
-      // (T3O-87) — unless the restored record still binds it to its worker.
+      // (T3O-87) — unless the restored record still binds it to its worker. A reclaimed or
+      // failed record keeps its worker too: unpushed commits may live only there.
       const restoredHolds = boardCardHoldsWorktree({ worktree: command.restore });
+      const keepsHome =
+        command.restore?.status === "reclaimed" || command.restore?.status === "failed";
       return yield* cardResourcesRecordedEvent({
         card: {
           ...card,
           worktree: command.restore,
-          placedWorkerId: restoredHolds ? card.placedWorkerId : null,
+          placedWorkerId: restoredHolds || keepsHome ? card.placedWorkerId : null,
           updatedAt: command.createdAt,
         },
         resources:
