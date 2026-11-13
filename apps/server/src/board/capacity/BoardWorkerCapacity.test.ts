@@ -421,6 +421,32 @@ it.effect("the default disk counts the worktrees that were there, as they are me
   }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
 });
 
+it.effect("a disk measurement finishing after its board left doesn't bring it back", () => {
+  const fakes = makeFakes();
+  let duringDu: Effect.Effect<void> = Effect.void;
+  return Effect.gen(function* () {
+    const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+    yield* service.syncCards("board-a", {
+      seq: 1,
+      authoritative: true,
+      cards: [card("a-1", { settled: false })],
+    });
+    duringDu = service.forgetBoard("board-a");
+    yield* service.measure;
+    assert.isFalse(fakes.saved.has("board-a"));
+  }).pipe(
+    Effect.provide(TestClock.layer()),
+    Effect.provideService(BoardMachine, {
+      cpuCount: Effect.succeed(32),
+      totalMemoryBytes: Effect.succeed(128 * GiB),
+      availableMemoryBytes: Effect.succeed(500 * GiB),
+      agentSliceMemoryHighBytes: Effect.succeed(null),
+      freeDiskBytes: () => Effect.succeed(1000 * 1000 ** 3),
+      diskUsageBytes: () => Effect.suspend(() => duringDu).pipe(Effect.as(1000 ** 3)),
+    }),
+  );
+});
+
 it.effect("a provision whose claim expired is checked again as a fresh claim", () => {
   const fakes = makeFakes();
   return Effect.gen(function* () {
@@ -539,6 +565,28 @@ it.effect(
       );
     }).pipe(Effect.provide(TestClock.layer()), (effect) => withMachine(makeFakes())(effect)),
 );
+
+it.effect("a worker over on CPU refuses a hold whose disk isn't really free", () => {
+  const fakes = makeFakes();
+  return Effect.gen(function* () {
+    const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+    yield* service.syncCards("board-a", {
+      seq: 1,
+      authoritative: true,
+      cards: [{ ...card("busy"), grantedProfile: { cpuCores: 20, ramGiB: 8, diskGB: 20 } }],
+    });
+    // 180 GB of the 200 declared are unheld, but only 10 GB are free on the volume.
+    fakes.freeDiskBytes = 10 * 1000 ** 3;
+    const asked = yield* service.hold("board-b", {
+      cardId: "needs-disk",
+      repositoryKey: "github.com/acme/app",
+      providerInstanceId: null,
+      profile: { cpuCores: 2, ramGiB: 4, diskGB: 45 },
+      kind: "placement",
+    });
+    assert.isTrue(asked.outcome === "refused" && asked.reason === "disk");
+  }).pipe(Effect.provide(TestClock.layer()), withMachine(fakes));
+});
 
 it.effect(
   "a later card's hold gives way to its board's earlier card only on a grant (T3O-87)",

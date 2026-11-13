@@ -567,13 +567,8 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
           eligibility: {
             eligible: notReady === null && !signedOut && quota === null,
             tooBig: firstShort(input.profile, total) !== null,
-            // Over on CPU or RAM offers nothing, but the disk that is free still counts.
-            diskFits:
-              !headroom.over.disk &&
-              diskNeeded <=
-                (headroom.over.cpuRam
-                  ? headroom.declared.diskGB - headroom.held.diskGB
-                  : headroom.offered.diskGB),
+            // Over on CPU or RAM offers no CPU or RAM, but its offered disk is still real.
+            diskFits: !headroom.over.disk && diskNeeded <= headroom.offered.diskGB,
             placedHere: own !== undefined,
           },
           now,
@@ -964,19 +959,26 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     for (const record of due) {
       const bytes = yield* machine.diskUsageBytes(record.worktreePath!);
       if (bytes === null) continue;
-      yield* lock.withPermits(1)(
+      // Measured outside the lock: the record may since have been replaced or forgotten.
+      const landed = yield* lock.withPermits(1)(
         Effect.sync(() => {
+          const same = (candidate: CapacityRecord) =>
+            candidate.boardId === record.boardId &&
+            candidate.cardId === record.cardId &&
+            candidate.worktreePath === record.worktreePath;
+          if (!state.records.some(same)) return false;
           state = {
             ...state,
             records: state.records.map((candidate) =>
-              candidate.boardId === record.boardId && candidate.cardId === record.cardId
+              same(candidate)
                 ? { ...candidate, measuredDiskGB: bytesToGB(bytes), measuredAt: now }
                 : candidate,
             ),
           };
+          return true;
         }),
       );
-      yield* persistBoard(record.boardId);
+      if (landed) yield* persistBoard(record.boardId);
     }
   }).pipe(Effect.withSpan("BoardWorkerCapacity.measure"));
 
