@@ -2962,7 +2962,9 @@ export function boardProjectConfigVersion(delta: BoardProjectStageDelta): string
   // Resources join the hash only when set, so every existing version stays as it was.
   // T3o (T3O-87): what the board learned never moves the version a human's edit expects.
   const resources =
-    delta.resources === undefined ? undefined : boardProjectResourcesWithoutLearned(delta.resources);
+    delta.resources === undefined
+      ? undefined
+      : boardProjectResourcesWithoutLearned(delta.resources);
   const text = canonicalJson({
     stageSwitches: delta.stageSwitches,
     overrides: delta.overrides,

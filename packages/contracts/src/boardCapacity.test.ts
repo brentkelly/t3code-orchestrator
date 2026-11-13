@@ -104,7 +104,10 @@ const resourcesWith = (input: {
   ...(input.pin === undefined ? {} : { pinDeclared: input.pin }),
   learned: {
     computedAt: NOW,
-    cpu: learnedDimension(input.learned.cpu ?? null, input.unplaceable === "cpu" ? true : undefined),
+    cpu: learnedDimension(
+      input.learned.cpu ?? null,
+      input.unplaceable === "cpu" ? true : undefined,
+    ),
     ram: learnedDimension(input.learned.ram ?? null),
     disk: learnedDimension(input.learned.disk ?? null),
   },
@@ -128,8 +131,9 @@ describe("boardPlannerUse", () => {
     expect(boardPlannerUse(declared, "disk").value).toBe(20);
     expect(boardPlannerUse(declared, "ram").offeredDecrease).toBe(4);
     // The 5 GB placeholder learns a 30 GB worktree, and so does a value set at the upgrade.
-    expect(boardPlannerUse(resourcesWith({ baseline: null, learned: { disk: 30 } }), "disk"))
-      .toMatchObject({ value: 30, source: "learned", declaredSource: "placeholder" });
+    expect(
+      boardPlannerUse(resourcesWith({ baseline: null, learned: { disk: 30 } }), "disk"),
+    ).toMatchObject({ value: 30, source: "learned", declaredSource: "placeholder" });
     expect(
       boardPlannerUse(
         resourcesWith({ baseline: { ...human, setAtUpgrade: true }, learned: { disk: 30 } }),
@@ -139,14 +143,25 @@ describe("boardPlannerUse", () => {
   });
 
   it("ignores learning altogether while pinned", () => {
-    const pinned = resourcesWith({ baseline: human, learned: { cpu: 6, ram: 2 }, pin: ["cpu", "ram"] });
-    expect(boardPlannerUse(pinned, "cpu")).toMatchObject({ value: 4, source: "declared", pinned: true });
+    const pinned = resourcesWith({
+      baseline: human,
+      learned: { cpu: 6, ram: 2 },
+      pin: ["cpu", "ram"],
+    });
+    expect(boardPlannerUse(pinned, "cpu")).toMatchObject({
+      value: 4,
+      source: "declared",
+      pinned: true,
+    });
     expect(boardPlannerUse(pinned, "ram").offeredDecrease).toBeNull();
   });
 
   it("holds back an increase no ready worker could place, and under five samples uses declared", () => {
     expect(
-      boardPlannerUse(resourcesWith({ baseline: human, learned: { cpu: 6 }, unplaceable: "cpu" }), "cpu"),
+      boardPlannerUse(
+        resourcesWith({ baseline: human, learned: { cpu: 6 }, unplaceable: "cpu" }),
+        "cpu",
+      ),
     ).toMatchObject({ value: 4, heldIncrease: 6 });
     expect(boardPlannerUse(resourcesWith({ baseline: human, learned: {} }), "cpu").value).toBe(4);
   });

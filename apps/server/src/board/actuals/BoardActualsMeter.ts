@@ -1,12 +1,11 @@
 /**
- * T3o (T3O-87): the worker side of measured actuals. Every running step key is sampled every
- * 5 s: an agent step through its thread's own scope (upstream's per-agent scopes), a CI pass
- * or setup run through the scopes its commands are wrapped in here. The board reads a key
- * while its step runs (figures so far) and ends it after (a last sample and the worktree's
- * footprint). A key the board saw before but this server lost (a restart) reads partial.
+ * T3o (T3O-87): the worker side of measured actuals, sampled every 5 s: an agent step through
+ * its thread's own scope, a CI pass or setup run through scopes its commands are wrapped in.
+ * A key the board saw before but this server lost (a restart) reads partial.
  */
 import {
   BOARD_ACTUALS_NO_CGROUP_REASON,
+  BOARD_ACTUALS_SAMPLE_INTERVAL_MS,
   type BoardStepReading,
   type BoardWorkerActualsInput,
 } from "@t3tools/contracts";
@@ -188,7 +187,7 @@ export const BoardActualsMeterLive = Layer.effect(
     const meter = yield* makeBoardActualsMeter;
     yield* meter.tick.pipe(
       Effect.ignoreCause,
-      Effect.repeat(Schedule.spaced("5 seconds")),
+      Effect.repeat(Schedule.spaced(BOARD_ACTUALS_SAMPLE_INTERVAL_MS)),
       Effect.forkScoped,
     );
     return meter;

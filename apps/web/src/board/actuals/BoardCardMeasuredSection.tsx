@@ -1,9 +1,7 @@
 /**
- * The Measured section beside a card's Usage (T3O-87): one row per measured step with the
- * worker it ran on, its CPU core-seconds, peak 1-minute rate, peak RAM, I/O and worktree
- * footprint. Running rows are blue ("so far"); Partial and Not measured are grey tags with
- * their reason. On a narrow screen each step is a card. Hovering a row highlights the Usage
- * lines of the same step.
+ * The Measured section beside a card's Usage (T3O-87). Running rows are blue ("so far");
+ * Partial and Not measured are grey tags with their reason, never a 0. On a narrow screen each
+ * step is a card. Hovering a row highlights the Usage lines of the same step.
  */
 import type { BoardActualsRowState } from "@t3tools/contracts";
 
@@ -30,14 +28,14 @@ const STATE_TOOLTIP: Record<BoardActualsRowState, string> = {
 
 function DataTag({ line }: { readonly line: BoardActualsLine }) {
   if (line.state === "complete") {
-    return <span className="text-right text-[10.5px] text-muted-foreground">complete</span>;
+    return <span className="text-right text-board-10-5 text-muted-foreground">complete</span>;
   }
   const running = line.state === "so-far";
   return (
     <BoardHint label={line.reason ?? STATE_TOOLTIP[line.state]}>
       <span
         className={cn(
-          "inline-flex h-[15px] items-center justify-self-end whitespace-nowrap rounded-[4px] border px-[5px] text-[9.5px] font-medium",
+          "inline-flex h-3.75 items-center justify-self-end whitespace-nowrap rounded-sm border px-1.25 text-board-9-5 font-medium",
           running
             ? "border-info/30 bg-info/10 text-info-foreground"
             : "border-border bg-muted text-muted-foreground",
@@ -52,9 +50,9 @@ function DataTag({ line }: { readonly line: BoardActualsLine }) {
 function StepCell({ line }: { readonly line: BoardActualsLine }) {
   return (
     <span className="flex min-w-0 items-center gap-1.5">
-      <span className="truncate text-[11.5px] font-medium text-foreground">{line.label}</span>
+      <span className="truncate text-board-11-5 font-medium text-foreground">{line.label}</span>
       <BoardHint label={line.worker.label}>
-        <span className="shrink-0 rounded-[4px] border border-border px-1 font-mono text-[9.5px] text-muted-foreground">
+        <span className="shrink-0 rounded-sm border border-border px-1 font-mono text-board-9-5 text-muted-foreground">
           {line.worker.abbreviation}
         </span>
       </BoardHint>
@@ -62,7 +60,7 @@ function StepCell({ line }: { readonly line: BoardActualsLine }) {
   );
 }
 
-const figure = "text-right font-mono text-[11px] tabular-nums text-foreground";
+const figure = "text-right font-mono text-board-11 tabular-nums text-foreground";
 
 export function BoardCardMeasuredSection(props: {
   readonly lines: ReadonlyArray<BoardActualsLine>;
@@ -81,7 +79,7 @@ export function BoardCardMeasuredSection(props: {
       className="flex flex-col overflow-hidden rounded-xl border border-border bg-card"
       data-board-measured-section
     >
-      <div className="px-3.5 py-3 text-[11px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+      <div className="px-3.5 py-3 text-board-11 font-semibold uppercase tracking-board-7 text-muted-foreground">
         Measured
       </div>
       {/* Wide: one table row per step. */}
@@ -89,7 +87,7 @@ export function BoardCardMeasuredSection(props: {
         <div
           className={cn(
             GRID,
-            "border-t border-border bg-muted px-3.5 py-1.5 text-[9.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground",
+            "border-t border-border bg-muted px-3.5 py-1.5 text-board-9-5 font-semibold uppercase tracking-board-6 text-muted-foreground",
           )}
         >
           <span>Step</span>
@@ -138,7 +136,7 @@ export function BoardCardMeasuredSection(props: {
               <StepCell line={line} />
               <DataTag line={line} />
             </div>
-            <div className="grid grid-cols-3 gap-x-3 gap-y-1 text-[10.5px] text-muted-foreground">
+            <div className="grid grid-cols-3 gap-x-3 gap-y-1 text-board-10-5 text-muted-foreground">
               <span>
                 CPU <span className="font-mono text-foreground">{line.coreSeconds}</span> core·s
               </span>
@@ -159,16 +157,17 @@ export function BoardCardMeasuredSection(props: {
         ))}
       </div>
       {props.footer === null ? null : (
-        <p className="border-t border-border bg-muted px-3.5 py-2 text-[10.5px]/[1.5] text-pretty text-muted-foreground">
-          Reserved on this worker: <span className="font-mono text-foreground">{props.footer.reservation}</span>
+        <p className="border-t border-border bg-muted px-3.5 py-2 text-board-10-5/[1.5] text-pretty text-muted-foreground">
+          Reserved on this worker:{" "}
+          <span className="font-mono text-foreground">{props.footer.reservation}</span>
           {props.footer.share === null ? null : (
             <>
               {" "}
               · peak used <span className="font-mono text-foreground">{props.footer.share}</span>
             </>
           )}
-          . Agents that start daemons outside their tree are undercounted, and a spike shorter
-          than 5 s can be missed.
+          . Agents that start daemons outside their tree are undercounted, and a spike shorter than
+          5 s can be missed.
         </p>
       )}
     </div>

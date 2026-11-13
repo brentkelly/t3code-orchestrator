@@ -129,7 +129,10 @@ it.effect("each row keeps its worker and granted profile; Codex reads not measur
     const h = yield* harness({
       cards: [card("claude-card"), card("codex-card")],
       nextCardNumberByProject: {},
-      stepStates: [step("claude-card", "claudeAgent", "t-claude"), step("codex-card", "codex", "t-codex")],
+      stepStates: [
+        step("claude-card", "claudeAgent", "t-claude"),
+        step("codex-card", "codex", "t-codex"),
+      ],
     });
     h.answers.set("read:thread:t-claude", reading());
     yield* h.recorder.sweep();
@@ -150,7 +153,9 @@ it.effect("each row keeps its worker and granted profile; Codex reads not measur
     h.state.board = {
       ...h.state.board,
       cards: h.state.board.cards.map((current) =>
-        current.id === "claude-card" ? { ...current, placedWorkerId: EnvironmentId.make("env-w2") } : current,
+        current.id === "claude-card"
+          ? { ...current, placedWorkerId: EnvironmentId.make("env-w2") }
+          : current,
       ),
     };
     // The step stopped, and the worker lost the key (a restart): the stored figures, partial.

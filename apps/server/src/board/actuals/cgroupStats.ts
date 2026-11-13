@@ -1,11 +1,7 @@
 /**
- * T3o (T3O-87): cgroup v2 statistics a step's actuals are read from, and the accumulator that
- * turns 5-second samples into a reading. Pure: the meter feeds it.
- *
- * - CPU: `cpu.stat` `usage_usec`. Core-seconds are its rise; the peak is the highest 1-minute
- *   average rate, or the whole step's average when no full minute was sampled.
- * - Memory: `anon` + `shmem` from `memory.stat`. Not `memory.peak`: that counts page cache.
- * - IO: `io.stat` `rbytes` and `wbytes`, summed over devices, as a rise.
+ * T3o (T3O-87): cgroup v2 stats and the accumulator turning 5 s samples into a reading. Memory
+ * is `anon` + `shmem`, never `memory.peak` (it counts page cache); the CPU peak is the highest
+ * 1-minute average rate, or the whole step's average when no full minute was sampled.
  */
 import { BOARD_ACTUALS_PEAK_WINDOW_MS, type BoardStepReading } from "@t3tools/contracts";
 
@@ -25,7 +21,9 @@ export function parseMemoryRamBytes(memoryStat: string): number | null {
 }
 
 /** `rbytes` and `wbytes` summed over every device line; null when the controller is absent. */
-export function parseIoBytes(ioStat: string): { readonly read: number; readonly write: number } | null {
+export function parseIoBytes(
+  ioStat: string,
+): { readonly read: number; readonly write: number } | null {
   let read = 0;
   let write = 0;
   let seen = false;
@@ -105,7 +103,10 @@ export class ActualsAccumulator {
     this.cpuSeries.push({ atMs, cpuUsec });
     // The newest point a full window before now, and nothing older than it.
     let reference: { readonly atMs: number; readonly cpuUsec: number } | null = null;
-    while (this.cpuSeries.length > 0 && this.cpuSeries[0]!.atMs <= atMs - BOARD_ACTUALS_PEAK_WINDOW_MS) {
+    while (
+      this.cpuSeries.length > 0 &&
+      this.cpuSeries[0]!.atMs <= atMs - BOARD_ACTUALS_PEAK_WINDOW_MS
+    ) {
       reference = this.cpuSeries.shift()!;
     }
     if (reference !== null) {
@@ -162,7 +163,8 @@ export class ActualsAccumulator {
       };
     }
     const elapsedSeconds = ((this.lastAtMs ?? 0) - (this.firstAtMs ?? 0)) / 1000;
-    const wholeStep = cpuUsec === null || elapsedSeconds <= 0 ? null : cpuUsec / 1e6 / elapsedSeconds;
+    const wholeStep =
+      cpuUsec === null || elapsedSeconds <= 0 ? null : cpuUsec / 1e6 / elapsedSeconds;
     const io = this.io();
     return {
       measured: true,

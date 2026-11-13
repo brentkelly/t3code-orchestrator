@@ -45,7 +45,7 @@ const round = (value: number, digits = 1) => {
 const bytes = (value: number) =>
   value >= GB ? `${round(value / GB)} GB` : `${round(value / MB, 0)} MB`;
 
-export function boardWorkerNames(
+function boardWorkerNames(
   workerId: string,
   workers: BoardWorkersState,
 ): { readonly label: string; readonly abbreviation: string } {

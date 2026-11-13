@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 import { BoardCiRunner, runBoardCiPass } from "../ci/BoardCiRunner.ts";
 import { BoardActualsMeter, BoardActualsTap } from "./BoardActualsMeter.ts";
 
-export const boardCiActualsKey = (runId: string) => `ci:${runId}`;
+const boardCiActualsKey = (runId: string) => `ci:${runId}`;
 
 export const BoardMeasuredCiRunnerLive = Layer.effect(
   BoardCiRunner,

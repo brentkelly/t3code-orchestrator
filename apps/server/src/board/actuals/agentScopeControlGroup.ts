@@ -13,24 +13,23 @@ export function parseControlGroup(stdout: string): string | null {
   return value.length > 0 ? value : null;
 }
 
-export const threadControlGroup = (
+export const threadControlGroup = Effect.fn("AgentScope.controlGroup")(function* (
   tracked: { readonly unit: string; readonly shared: boolean } | undefined,
   systemd: Effect.Effect<{ readonly systemctl: string } | undefined>,
   run: (
     command: string,
     args: ReadonlyArray<string>,
   ) => Effect.Effect<Option.Option<{ readonly stdout: string; readonly code: number | null }>>,
-): Effect.Effect<string | null> =>
-  Effect.gen(function* () {
-    if (tracked === undefined || tracked.shared) return null;
-    const scope = yield* systemd;
-    if (scope === undefined) return null;
-    const shown = yield* run(scope.systemctl, [
-      "--user",
-      "show",
-      tracked.unit,
-      "--property=ControlGroup",
-    ]);
-    if (shown._tag === "None" || shown.value.code !== 0) return null;
-    return parseControlGroup(shown.value.stdout);
-  });
+) {
+  if (tracked === undefined || tracked.shared) return null;
+  const scope = yield* systemd;
+  if (scope === undefined) return null;
+  const shown = yield* run(scope.systemctl, [
+    "--user",
+    "show",
+    tracked.unit,
+    "--property=ControlGroup",
+  ]);
+  if (shown._tag === "None" || shown.value.code !== 0) return null;
+  return parseControlGroup(shown.value.stdout);
+});

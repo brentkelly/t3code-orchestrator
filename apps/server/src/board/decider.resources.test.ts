@@ -294,8 +294,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("card sizes", (it
       }
       assert.strictEqual(boardProjectStageConfig(model.board!, projectId)?.version, before);
       const pinned: BoardCommand = {
-        ...set(null),
+        type: "board.project.set-resources",
+        commandId: CommandId.make("cmd-pin"),
+        projectId,
         resources: { ...resources, readinessPath: null, pinDeclared: ["cpu"] },
+        createdAt: NOW,
       };
       for (const event of yield* decideEvents(pinned, model)) {
         model = yield* projectBoardEvent(model, { ...event, sequence: 3 } as never);

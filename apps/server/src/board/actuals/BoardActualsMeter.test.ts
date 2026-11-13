@@ -56,30 +56,33 @@ const makeMachine = () => {
   return { set, threadGroups, provide };
 };
 
-it.effect("an agent step reads so far while it runs, then ends with its worktree's footprint", () => {
-  const machine = makeMachine();
-  return Effect.gen(function* () {
-    machine.threadGroups.set("t1", "/agent/t1");
-    machine.set("/agent/t1", 100, 1);
-    const meter = yield* makeBoardActualsMeter;
-    const read = { op: "read", key: "thread:t1", threadId: "t1" } as const;
-    const first = yield* meter.relay(read);
-    assert.include(first, { measured: true, running: true, partial: false, cpuCoreSeconds: 0 });
-    for (let tick = 1; tick <= 12; tick++) {
-      yield* TestClock.adjust("5 seconds");
-      machine.set("/agent/t1", 100 + tick * 10, tick === 6 ? 3 : 1);
-      yield* meter.tick;
-    }
-    const soFar = yield* meter.relay(read);
-    assert.include(soFar, { running: true, cpuCoreSeconds: 120, peakRamBytes: 3 * GiB });
-    // Two cores for the minute, page cache never counted.
-    assert.strictEqual(soFar?.peakCpuCores, 2);
-    const ended = yield* meter.relay({ op: "end", key: "thread:t1", worktreePath: "/w/card" });
-    assert.include(ended, { running: false, diskBytes: 7 * 1000 ** 3 });
-    // The key is gone: a second end has nothing.
-    assert.isNull(yield* meter.relay({ op: "end", key: "thread:t1" }));
-  }).pipe(machine.provide, Effect.provide(TestClock.layer()));
-});
+it.effect(
+  "an agent step reads so far while it runs, then ends with its worktree's footprint",
+  () => {
+    const machine = makeMachine();
+    return Effect.gen(function* () {
+      machine.threadGroups.set("t1", "/agent/t1");
+      machine.set("/agent/t1", 100, 1);
+      const meter = yield* makeBoardActualsMeter;
+      const read = { op: "read", key: "thread:t1", threadId: "t1" } as const;
+      const first = yield* meter.relay(read);
+      assert.include(first, { measured: true, running: true, partial: false, cpuCoreSeconds: 0 });
+      for (let tick = 1; tick <= 12; tick++) {
+        yield* TestClock.adjust("5 seconds");
+        machine.set("/agent/t1", 100 + tick * 10, tick === 6 ? 3 : 1);
+        yield* meter.tick;
+      }
+      const soFar = yield* meter.relay(read);
+      assert.include(soFar, { running: true, cpuCoreSeconds: 120, peakRamBytes: 3 * GiB });
+      // Two cores for the minute, page cache never counted.
+      assert.strictEqual(soFar?.peakCpuCores, 2);
+      const ended = yield* meter.relay({ op: "end", key: "thread:t1", worktreePath: "/w/card" });
+      assert.include(ended, { running: false, diskBytes: 7 * 1000 ** 3 });
+      // The key is gone: a second end has nothing.
+      assert.isNull(yield* meter.relay({ op: "end", key: "thread:t1" }));
+    }).pipe(machine.provide, Effect.provide(TestClock.layer()));
+  },
+);
 
 it.effect("a key the board saw before but this worker lost reads partial", () => {
   const machine = makeMachine();
@@ -87,7 +90,12 @@ it.effect("a key the board saw before but this worker lost reads partial", () =>
     machine.threadGroups.set("t1", "/agent/t1");
     machine.set("/agent/t1", 50, 1);
     const meter = yield* makeBoardActualsMeter;
-    const reading = yield* meter.relay({ op: "read", key: "thread:t1", threadId: "t1", seen: true });
+    const reading = yield* meter.relay({
+      op: "read",
+      key: "thread:t1",
+      threadId: "t1",
+      seen: true,
+    });
     assert.include(reading, { measured: true, partial: true });
   }).pipe(machine.provide, Effect.provide(TestClock.layer()));
 });
@@ -115,9 +123,9 @@ it.effect("a CI pass is wrapped in scopes of its own, sampled across its steps",
     machine.set("/ci/1", 20, 6, 4096);
     yield* meter.tick;
     // The pass's runner reads the tap from its context: a second step joins the same key.
-    const second = yield* Effect.flatMap(BoardActualsTap, (current) => current.wrap("pnpm lint")).pipe(
-      Effect.provideService(BoardActualsTap, tap),
-    );
+    const second = yield* Effect.flatMap(BoardActualsTap, (current) =>
+      current.wrap("pnpm lint"),
+    ).pipe(Effect.provideService(BoardActualsTap, tap));
     assert.isNotNull(second);
     machine.set("/ci/2", 0, 1);
     yield* meter.finish("ci:run-1");

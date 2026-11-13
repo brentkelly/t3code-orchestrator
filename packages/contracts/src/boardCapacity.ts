@@ -219,7 +219,7 @@ export function resolveBoardProjectDeclared(
 /** Where a declared value came from: a human, the 2/4/5 placeholder, or the upgrade. */
 export type BoardDeclaredSource = "declared" | "placeholder" | "upgrade";
 
-export function boardDeclaredSource(
+function boardDeclaredSource(
   resources: BoardProjectResources | null | undefined,
 ): BoardDeclaredSource {
   const baseline = resources?.baseline;
@@ -229,7 +229,7 @@ export function boardDeclaredSource(
 
 /** A learned value as it may apply: clamped to 0.5x–2x only against a human's declared value,
     so a placeholder or upgrade value learns past 2x. */
-export function boardLearnedCandidate(
+function boardLearnedCandidate(
   declared: number,
   source: BoardDeclaredSource,
   learned: number,

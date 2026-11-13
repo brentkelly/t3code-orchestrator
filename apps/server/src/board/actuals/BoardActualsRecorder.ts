@@ -1,9 +1,7 @@
 /**
- * T3o (T3O-87): the board's side of measured actuals. A sweep reads every heavy step that is
- * running on its worker (an agent step in its worktree, a CI pass, a setup run) and stores its
- * figures so far; a step that stopped running is ended there, its last reading stored, and its
- * project's learned baseline recomputed. A worker out of reach keeps its rows open until it
- * answers; one that lost a key (a restart) leaves the row partial.
+ * T3o (T3O-87): the board's side of measured actuals. A sweep stores each running heavy step's
+ * figures so far, ends the steps that stopped, and relearns their projects' baselines. A worker
+ * out of reach keeps its rows open; one that lost a key (a restart) leaves the row partial.
  */
 import {
   BOARD_LEARNED_WINDOW_DAYS,
@@ -242,7 +240,10 @@ export const makeBoardActualsRecorder = (deps: BoardActualsRecorderDeps) => {
               ...(card?.worktree?.path == null ? {} : { worktreePath: card.worktree.path }),
               ...(row.kind === "agent" ? { threadId: row.stepKey.slice("thread:".length) } : {}),
             });
-      if (answer === "unreachable" && Date.parse(now) - Date.parse(row.updatedAt) < OPEN_ROW_LAPSE_MS) {
+      if (
+        answer === "unreachable" &&
+        Date.parse(now) - Date.parse(row.updatedAt) < OPEN_ROW_LAPSE_MS
+      ) {
         continue;
       }
       const reading: BoardStepReading =
@@ -296,9 +297,7 @@ export const BoardActualsRecorderLive = Layer.effect(
 
     const recorder = makeBoardActualsRecorder({
       sql,
-      readBoard: engine.getReadModel.pipe(
-        Effect.map((model) => model.board ?? EMPTY_BOARD_STATE),
-      ),
+      readBoard: engine.getReadModel.pipe(Effect.map((model) => model.board ?? EMPTY_BOARD_STATE)),
       dispatch: (command) =>
         engine.dispatch(command).pipe(
           Effect.asVoid,

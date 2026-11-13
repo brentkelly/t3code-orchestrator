@@ -39,7 +39,12 @@ function Sparkline({ values }: { readonly values: ReadonlyArray<number> }) {
     .map((value, index) => `${(index / (values.length - 1)) * 120},${30 - (value / max) * 28}`)
     .join(" ");
   return (
-    <svg aria-label="Card samples, oldest first" className="text-foreground" height="32" width="120">
+    <svg
+      aria-label="Card samples, oldest first"
+      className="text-foreground"
+      height="32"
+      width="120"
+    >
       <polyline fill="none" points={points} stroke="currentColor" strokeWidth="1.25" />
     </svg>
   );
@@ -136,8 +141,8 @@ export function BoardProjectLearnedTable(props: {
           className="rounded-md bg-warning-surface px-3 py-2 text-board-12 text-warning-foreground"
           key={dimension}
         >
-          Learned {NAMES[dimension]} of {fmt(use.heldIncrease!)} {UNITS[dimension]} would leave an
-          M card unplaceable on every ready worker, so the planner keeps {fmt(use.declared)}. Source:
+          Learned {NAMES[dimension]} of {fmt(use.heldIncrease!)} {UNITS[dimension]} would leave an M
+          card unplaceable on every ready worker, so the planner keeps {fmt(use.declared)}. Source:
           learned.
         </div>
       ))}

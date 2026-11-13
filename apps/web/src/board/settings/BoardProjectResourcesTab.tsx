@@ -138,7 +138,7 @@ export function BoardProjectResourcesTab(props: {
     send({ ...current, pinDeclared: pinned ? [...others, dimension] : others });
   };
   // Use learned writes the decrease as the declared value, editable back by hand.
-  const useLearned = (dimension: BoardResourceDimension, value: number) =>
+  const applyLearned = (dimension: BoardResourceDimension, value: number) =>
     send({
       ...current,
       baseline: {
@@ -203,7 +203,7 @@ export function BoardProjectResourcesTab(props: {
         <BoardProjectLearnedTable
           canWrite={canWrite}
           onPin={pin}
-          onUseLearned={useLearned}
+          onUseLearned={applyLearned}
           resources={resources}
         />
         {hardToPlace.length === 0 ? null : (

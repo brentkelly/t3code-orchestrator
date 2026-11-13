@@ -46,9 +46,7 @@ const fromDb = (row: DbRow): BoardStoredActualsRow => ({
   label: row.label,
   workerId: row.workerId,
   grantedProfile:
-    row.grantedProfile === null
-      ? null
-      : Option.getOrNull(decodeProfile(row.grantedProfile)),
+    row.grantedProfile === null ? null : Option.getOrNull(decodeProfile(row.grantedProfile)),
   startedAt: row.startedAt,
   endedAt: row.endedAt,
   // A row that no longer decodes still says something was there, never a 0.

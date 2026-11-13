@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -15,7 +16,8 @@ import {
 const GiB = 1024 ** 3;
 const GB = 1000 ** 3;
 const NOW = "2026-11-13T00:00:00.000Z";
-const daysAgo = (days: number) => new Date(Date.parse(NOW) - days * 86_400_000).toISOString();
+const daysAgo = (days: number) =>
+  DateTime.formatIso(DateTime.makeUnsafe(Date.parse(NOW) - days * 86_400_000));
 
 const reading = (overrides: Partial<BoardStepReading> = {}): BoardStepReading => ({
   measured: true,
@@ -121,7 +123,12 @@ describe("boardCardActualsSample", () => {
 });
 
 const samples = (values: ReadonlyArray<number>, age = 1): Array<BoardActualsCardSample> =>
-  values.map((value, index) => ({ at: daysAgo(age + index * 0.01), cpu: value, ram: value, disk: value }));
+  values.map((value, index) => ({
+    at: daysAgo(age + index * 0.01),
+    cpu: value,
+    ram: value,
+    disk: value,
+  }));
 
 describe("boardLearnedDimension", () => {
   it("needs five card samples in the last 30 days", () => {

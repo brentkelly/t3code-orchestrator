@@ -75,7 +75,13 @@ describe("ActualsAccumulator", () => {
       ]),
     );
     // b's group is gone: it keeps its figures and stops counting towards memory.
-    accumulator.addTick(10_000, new Map([["a", sample(13, 150, { read: 1600, write: 40 })], ["b", null]]));
+    accumulator.addTick(
+      10_000,
+      new Map([
+        ["a", sample(13, 150, { read: 1600, write: 40 })],
+        ["b", null],
+      ]),
+    );
     const reading = accumulator.reading(NOT_MEASURED);
     expect(reading.cpuCoreSeconds).toBe(7);
     expect(reading.peakRamBytes).toBe(700);
@@ -85,8 +91,11 @@ describe("ActualsAccumulator", () => {
   it("reads not measured, never 0, when nothing was ever sampled", () => {
     const accumulator = new ActualsAccumulator();
     accumulator.addTick(0, new Map([["a", null]]));
-    expect(accumulator.reading({ ...NOT_MEASURED, notMeasuredReason: "no cgroup" })).toMatchObject(
-      { measured: false, reason: "no cgroup", cpuCoreSeconds: null, peakRamBytes: null },
-    );
+    expect(accumulator.reading({ ...NOT_MEASURED, notMeasuredReason: "no cgroup" })).toMatchObject({
+      measured: false,
+      reason: "no cgroup",
+      cpuCoreSeconds: null,
+      peakRamBytes: null,
+    });
   });
 });

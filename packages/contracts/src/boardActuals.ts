@@ -84,7 +84,7 @@ export const BoardWorkerActualsInput = Schema.Struct({
 });
 export type BoardWorkerActualsInput = typeof BoardWorkerActualsInput.Type;
 
-export const BOARD_ACTUALS_STEP_KINDS = ["agent", "ci", "setup"] as const;
+const BOARD_ACTUALS_STEP_KINDS = ["agent", "ci", "setup"] as const;
 export const BoardActualsStepKind = Schema.Literals(BOARD_ACTUALS_STEP_KINDS);
 export type BoardActualsStepKind = typeof BoardActualsStepKind.Type;
 
@@ -107,7 +107,9 @@ export type BoardCardActualsRow = typeof BoardCardActualsRow.Type;
 
 export type BoardActualsRowState = "complete" | "partial" | "not-measured" | "so-far";
 
-export function boardActualsRowState(row: Pick<BoardCardActualsRow, "reading">): BoardActualsRowState {
+export function boardActualsRowState(
+  row: Pick<BoardCardActualsRow, "reading">,
+): BoardActualsRowState {
   if (!row.reading.measured) return "not-measured";
   if (row.reading.running) return "so-far";
   return row.reading.partial ? "partial" : "complete";
@@ -157,7 +159,9 @@ function peaksOf(rows: ReadonlyArray<BoardCardActualsRow>): BoardActualsPeaks {
   return {
     cpuCores: maxOf(measured.map((row) => row.reading.peakCpuCores)),
     ramGiB: maxOf(
-      measured.map((row) => (row.reading.peakRamBytes === null ? null : row.reading.peakRamBytes / GiB)),
+      measured.map((row) =>
+        row.reading.peakRamBytes === null ? null : row.reading.peakRamBytes / GiB,
+      ),
     ),
     diskGB: maxOf(
       measured.map((row) => (row.reading.diskBytes === null ? null : row.reading.diskBytes / GB)),
@@ -235,14 +239,14 @@ export function boardLearnedDimension(
   const since = Date.parse(nowIso) - BOARD_LEARNED_WINDOW_DAYS * 24 * 60 * 60_000;
   const inWindow = samples
     .filter((sample) => Date.parse(sample.at) >= since)
-    .toSorted((left, right) => left.at.localeCompare(right.at))
+    .sort((left, right) => left.at.localeCompare(right.at))
     .map((sample) => sample[dimension])
     .filter((value): value is number => value !== null);
   const history = inWindow.slice(-HISTORY_POINTS);
   if (inWindow.length < BOARD_LEARNED_MIN_SAMPLES) {
     return { value: null, samples: inWindow.length, history };
   }
-  const sorted = inWindow.toSorted((left, right) => left - right);
+  const sorted = [...inWindow].sort((left, right) => left - right);
   const p90 = sorted[Math.ceil(0.9 * sorted.length) - 1]!;
   return { value: roundUp(p90), samples: inWindow.length, history };
 }
