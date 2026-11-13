@@ -29,6 +29,7 @@ import {
   type BoardStageId,
   type BoardState,
 } from "./board.ts";
+import { normalizeBoardReadinessPath, type BoardProjectResources } from "./boardCapacity.ts";
 
 // T3o: a `t3o.json` is only an import/export format for a
 // project's delta, never read at run time.
@@ -286,12 +287,14 @@ export function resolveT3oProjectFile(input: {
   let steps: BoardCiStep[] = [];
   // Stored only as false; absent is Yes.
   let stopOnFailure = true;
+  let resources: BoardProjectResources | undefined;
   const result = (createStages: ReadonlyArray<BoardStageDefinition> = []) => ({
     delta: {
       stageSwitches,
       overrides,
       ci: stopOnFailure ? { steps } : { steps, stopOnFailure: false },
       warnings,
+      ...(resources === undefined ? {} : { resources }),
     },
     createStages,
   });
@@ -301,9 +304,12 @@ export function resolveT3oProjectFile(input: {
     return result();
   }
   for (const key of Object.keys(input.raw)) {
-    if (!["$schema", "version", "stages", "ci"].includes(key)) {
+    if (!["$schema", "version", "stages", "ci", "resources"].includes(key)) {
       warnings.push(`${key}: unknown key; ignored.`);
     }
+  }
+  if (input.raw.resources !== undefined) {
+    resources = decodeResources(input.raw.resources, warnings);
   }
   const stagesBlock = input.raw.stages ?? {};
   if (!isRecord(stagesBlock)) {
@@ -491,6 +497,74 @@ export function resolveT3oProjectFile(input: {
   return result(createStages);
 }
 
+const positiveNumber = (value: unknown, where: string, warnings: string[]): number | null => {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+  warnings.push(`${where}: expected a positive number; ignored.`);
+  return null;
+};
+
+/** T3o: the file's `resources` block (T3O-86). A bad entry is dropped with a warning. */
+function decodeResources(value: unknown, warnings: string[]): BoardProjectResources | undefined {
+  if (!isRecord(value)) {
+    warnings.push("resources: expected an object; ignored.");
+    return undefined;
+  }
+  for (const key of Object.keys(value)) {
+    if (!["baseline", "setupTimeoutMinutes", "readiness"].includes(key)) {
+      warnings.push(`resources.${key}: unknown key; ignored.`);
+    }
+  }
+  let baseline: BoardProjectResources["baseline"] = null;
+  if (value.baseline !== undefined) {
+    const raw = value.baseline;
+    if (!isRecord(raw)) {
+      warnings.push("resources.baseline: expected an object; ignored.");
+    } else {
+      const cpuCores = positiveNumber(raw.cpuCores, "resources.baseline.cpuCores", warnings);
+      const ramGiB = positiveNumber(raw.ramGiB, "resources.baseline.ramGiB", warnings);
+      const diskGB = positiveNumber(raw.diskGB, "resources.baseline.diskGB", warnings);
+      if (cpuCores !== null && ramGiB !== null && diskGB !== null) {
+        baseline = { cpuCores, ramGiB, diskGB, setAtUpgrade: false };
+      } else {
+        warnings.push("resources.baseline: needs cpuCores, ramGiB and diskGB; ignored.");
+      }
+    }
+  }
+  let readinessPath: string | null = null;
+  let readinessTimeoutSeconds: number | null = null;
+  if (value.readiness !== undefined) {
+    const raw = value.readiness;
+    if (!isRecord(raw)) {
+      warnings.push("resources.readiness: expected an object; ignored.");
+    } else {
+      if (raw.path !== undefined) {
+        readinessPath = typeof raw.path === "string" ? normalizeBoardReadinessPath(raw.path) : null;
+        if (readinessPath === null) {
+          warnings.push(
+            "resources.readiness.path: must be a relative path inside the repository; ignored.",
+          );
+        }
+      }
+      readinessTimeoutSeconds = positiveNumber(
+        raw.timeoutSeconds,
+        "resources.readiness.timeoutSeconds",
+        warnings,
+      );
+    }
+  }
+  return {
+    baseline,
+    setupTimeoutMinutes: positiveNumber(
+      value.setupTimeoutMinutes,
+      "resources.setupTimeoutMinutes",
+      warnings,
+    ),
+    readinessPath,
+    readinessTimeoutSeconds,
+  };
+}
+
 /** Where a stage the file adds goes: after its `after` anchor, but never
     between CI and the merge stage (an anchor there is dropped with a
     warning, and the stage goes just before CI). */
@@ -540,7 +614,9 @@ function placeNewStage(
  */
 export function buildT3oProjectFile(input: {
   readonly board: BoardState;
-  readonly config: Pick<BoardProjectStageConfig, "stageSwitches" | "overrides" | "ci">;
+  readonly config: Pick<BoardProjectStageConfig, "stageSwitches" | "overrides" | "ci"> & {
+    readonly resources?: BoardProjectResources | undefined;
+  };
 }): Record<string, unknown> {
   const ordered = boardStagesInOrder(input.board);
   const remove: string[] = [];
@@ -599,6 +675,29 @@ export function buildT3oProjectFile(input: {
       ...(stopOnFailure ? {} : { stopOnFailure: false }),
       steps: input.config.ci.steps,
     };
+  }
+  const resources = input.config.resources;
+  if (resources !== undefined) {
+    const block: Record<string, unknown> = {};
+    if (resources.baseline !== null) {
+      block.baseline = {
+        cpuCores: resources.baseline.cpuCores,
+        ramGiB: resources.baseline.ramGiB,
+        diskGB: resources.baseline.diskGB,
+      };
+    }
+    if (resources.setupTimeoutMinutes !== null) {
+      block.setupTimeoutMinutes = resources.setupTimeoutMinutes;
+    }
+    if (resources.readinessPath !== null || resources.readinessTimeoutSeconds !== null) {
+      block.readiness = {
+        ...(resources.readinessPath === null ? {} : { path: resources.readinessPath }),
+        ...(resources.readinessTimeoutSeconds === null
+          ? {}
+          : { timeoutSeconds: resources.readinessTimeoutSeconds }),
+      };
+    }
+    if (Object.keys(block).length > 0) file.resources = block;
   }
   return file;
 }

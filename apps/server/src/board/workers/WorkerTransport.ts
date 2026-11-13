@@ -21,6 +21,8 @@ import {
   type BoardWorkerProjects,
   type BoardWorkerProviders,
   type BoardWorkerRenewal,
+  type BoardWorkerMintUserSessionInput,
+  type BoardWorkerUserSession,
   type ProjectCloneListEvent,
   type ProjectCloneStartInput,
   type ProjectCloneStartResult,
@@ -64,10 +66,20 @@ export interface WorkerRpc {
   readonly hello: Effect.Effect<BoardWorkerHello, WorkerRpcError>;
   readonly projects: Effect.Effect<BoardWorkerProjects, WorkerRpcError>;
   readonly providers: Effect.Effect<BoardWorkerProviders, WorkerRpcError>;
-  /** Revoke the calling session on the worker (Remove). */
+  /** Revoke the calling session on the worker (a renewal's predecessor). */
   readonly release: Effect.Effect<void, WorkerRpcError>;
+  /** Revoke every session this board holds on the worker, its users' too (Remove). */
+  readonly releaseAll: Effect.Effect<void, WorkerRpcError>;
   /** A successor to the calling session, before it expires. */
   readonly renew: Effect.Effect<BoardWorkerRenewal, WorkerRpcError>;
+  /** A session on the worker for one board user (T3O-84). */
+  readonly mintUserSession: (
+    input: BoardWorkerMintUserSessionInput,
+  ) => Effect.Effect<BoardWorkerUserSession, WorkerRpcError>;
+  /** Revoke the worker sessions minted for these board sessions. */
+  readonly revokeUserSessions: (
+    boardSessionIds: ReadonlyArray<string>,
+  ) => Effect.Effect<number, WorkerRpcError>;
   readonly startProjectClone: (
     input: ProjectCloneStartInput,
   ) => Effect.Effect<ProjectCloneStartResult, WorkerRpcError>;
@@ -246,10 +258,26 @@ const connectWorker = Effect.fn("WorkerTransport.connect")(function* ({
       client[BOARD_WORKER_WS_METHODS.release]({}),
       "The worker didn't release the board's session.",
     ),
+    releaseAll: call(
+      client[BOARD_WORKER_WS_METHODS.release]({ all: true }),
+      "The worker didn't release the board's sessions.",
+    ),
     renew: call(
       client[BOARD_WORKER_WS_METHODS.renew]({}),
       "The worker didn't renew the board's session.",
     ),
+    mintUserSession: (input) =>
+      call(
+        client[BOARD_WORKER_WS_METHODS.mintUserSession](input),
+        "The worker didn't issue a session for this thread view.",
+      ),
+    revokeUserSessions: (boardSessionIds) =>
+      call(
+        client[BOARD_WORKER_WS_METHODS.revokeUserSessions]({ boardSessionIds }).pipe(
+          Effect.map((result) => result.revoked),
+        ),
+        "The worker didn't revoke the board user's sessions.",
+      ),
     startProjectClone: (input) =>
       call(client[WS_METHODS.projectCloneStart](input), "The worker couldn't start the clone."),
     retryProjectClone: (projectId) =>
@@ -367,5 +395,19 @@ const makeLiveGatewayRpc = (
     runCi: (input) => wireStream(client[M.runCi](input), "The worker's CI run ended early."),
     readCiLog: (input) =>
       wireStream(client[M.readCiLog](input), "The worker's CI log read failed."),
+    claimCapacity: (input) => call({ _tag: "claimCapacity", input }),
+    syncCards: (input) => call({ _tag: "syncCards", input }),
+    subscribeCapacity: wireStream(
+      client[M.subscribeCapacity]({}),
+      "The worker's capacity stream ended.",
+    ),
+    runSetup: (input) =>
+      wireStream(client[M.runSetup](input), "The worker's setup stream ended early."),
+    setupState: (worktreePath) => call({ _tag: "setupState", worktreePath }),
+    cancelSetup: (worktreePath) => call({ _tag: "cancelSetup", worktreePath }).pipe(Effect.asVoid),
+    readSetupLog: (worktreePath) => call({ _tag: "readSetupLog", worktreePath }),
+    checkReadiness: (input) => call({ _tag: "checkReadiness", input }),
+    readinessOutput: (repositoryKey, path) =>
+      call({ _tag: "readinessOutput", repositoryKey, path }),
   };
 };

@@ -1,6 +1,6 @@
 /**
- * The board header's worker indicator, shown only while a worker is offline,
- * revoked or incompatible, listing the cards each has paused. Amber: the cards
+ * The board header's worker indicator, shown only while a worker is offline
+ * or needs an update, listing the cards each has paused. Amber: the cards
  * are held on something outside themselves.
  */
 import type { BoardCardShell, BoardWorkersState } from "@t3tools/contracts";
@@ -75,7 +75,7 @@ export function BoardWorkersAttentionPill(props: {
           <Button
             onClick={() => {
               setOpen(false);
-              void navigate({ to: "/settings/board", hash: "board-workers" });
+              void navigate({ to: "/settings/board/workers" });
             }}
             size="xs"
             variant="outline"

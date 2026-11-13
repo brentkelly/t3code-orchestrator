@@ -54,18 +54,25 @@ export interface LocalBoardWorkspaceDeps {
   readonly boardHasWorkers?: Effect.Effect<boolean>;
 }
 
-/**
- * Whose board a checkout here belongs to: `self` or the `central` server that
- * dialed this one. A server can be both on one repository, so each orphan sweep
- * must see only its own board's checkouts.
- */
-export type BoardWorktreeOwner = "self" | "central";
+/** Whose board a checkout belongs to: `self`, a board that dialed this one
+    (`board:<environment id>`), or `legacy`, a pre-T3O-86 marker naming no board,
+    which no board owns until its `syncCards` lists it. */
+export type BoardWorktreeOwner = "self" | "legacy" | `board:${string}`;
+
+/** The owner a board's session on this worker writes and reads. */
+export const boardWorktreeOwnerOf = (boardId: string): BoardWorktreeOwner => `board:${boardId}`;
 
 /** Kept in the private git dir, so it never dirties status and goes with the
-    worktree. No marker means this server's own board. It names no central
-    server: a worker serves one board, and naming the session would orphan
-    every checkout on a re-pair. */
+    worktree. No marker means this server's own board; `central` is a legacy
+    marker; `board:<id>` names the board's environment, which survives a re-pair. */
 export const CENTRAL_OWNER_MARKER = "t3o-board-owner";
+
+const ownerOfMarker = (text: string): BoardWorktreeOwner => {
+  const value = text.trim();
+  return value.startsWith("board:") && value.length > "board:".length
+    ? (value as BoardWorktreeOwner)
+    : "legacy";
+};
 
 /** How long a staleness check waits on the remote before reading what it has. */
 const BASE_TIP_FETCH_TIMEOUT_MS = 15_000;
@@ -117,12 +124,42 @@ export const boardWorktreeOwner = (
     Effect.flatMap((dir) =>
       dir === null
         ? Effect.succeed(null)
-        : deps.fileSystem.exists(deps.path.join(dir, CENTRAL_OWNER_MARKER)).pipe(
-            Effect.map((marked): BoardWorktreeOwner => (marked ? "central" : "self")),
-            Effect.orElseSucceed(() => null),
-          ),
+        : Effect.gen(function* () {
+            const marker = deps.path.join(dir, CENTRAL_OWNER_MARKER);
+            if (!(yield* deps.fileSystem.exists(marker))) return "self" as BoardWorktreeOwner;
+            return ownerOfMarker(yield* deps.fileSystem.readFileString(marker));
+          }).pipe(Effect.orElseSucceed(() => null)),
     ),
   );
+
+/**
+ * Whether the worktree a board's `syncCards` lists is that board's here (T3O-86): `owned`
+ * with its marker (or, for this server's own board, none), `adopted` when a legacy marker
+ * is rewritten with the board's id, `foreign` when another board owns it, `missing` when
+ * there is no readable checkout. The first board to list a legacy worktree wins it.
+ */
+export const adoptBoardWorktree = Effect.fn("adoptBoardWorktree")(function* (
+  deps: Pick<LocalBoardWorkspaceDeps, "git" | "fileSystem" | "path">,
+  worktreePath: string,
+  owner: BoardWorktreeOwner,
+) {
+  if (!(yield* deps.fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => false)))) {
+    return "missing" as const;
+  }
+  const current = yield* boardWorktreeOwner(deps, worktreePath);
+  if (current === null) return "missing" as const;
+  if (current === owner) return "owned" as const;
+  if (current !== "legacy" || owner === "self") return "foreign" as const;
+  const dir = yield* worktreePrivateGitDir(deps.git, worktreePath);
+  if (dir === null) return "missing" as const;
+  const written = yield* deps.fileSystem
+    .writeFileString(deps.path.join(dir, CENTRAL_OWNER_MARKER), `${owner}\n`)
+    .pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+  return written ? ("adopted" as const) : ("missing" as const);
+});
 
 export function makeLocalBoardWorkspace(
   deps: LocalBoardWorkspaceDeps,
@@ -269,7 +306,7 @@ export function makeLocalBoardWorkspace(
   const privateGitDir = (worktreePath: string) => worktreePrivateGitDir(git, worktreePath);
   const ownerOf = (worktreePath: string) => boardWorktreeOwner(deps, worktreePath);
 
-  const markCentralOwned = Effect.fn("LocalBoardWorkspace.markCentralOwned")(function* (
+  const markBoardOwned = Effect.fn("LocalBoardWorkspace.markBoardOwned")(function* (
     worktreePath: string,
   ) {
     const dir = yield* privateGitDir(worktreePath);
@@ -280,7 +317,7 @@ export function makeLocalBoardWorkspace(
       });
     }
     yield* fileSystem
-      .writeFileString(pathService.join(dir, CENTRAL_OWNER_MARKER), "central\n")
+      .writeFileString(pathService.join(dir, CENTRAL_OWNER_MARKER), `${owner}\n`)
       .pipe(
         Effect.mapError(
           (error) =>
@@ -333,9 +370,7 @@ export function makeLocalBoardWorkspace(
           withGit(provisionBoardCardWorktree({ projectCwd, branch, baseRefName, submodules })),
         ),
       ),
-      Effect.tap((worktree) =>
-        owner === "central" ? markCentralOwned(worktree.path) : Effect.void,
-      ),
+      Effect.tap((worktree) => (owner === "self" ? Effect.void : markBoardOwned(worktree.path))),
       Effect.mapError((error) =>
         error._tag === "BoardWorkerGitError" ? error : gitFailed("provisionWorktree")(error),
       ),
@@ -464,7 +499,7 @@ export function makeLocalBoardWorkspace(
    * server's own board, only once it has workers.
    */
   const baseTipFromRemote =
-    owner === "central" ? Effect.succeed(true) : (deps.boardHasWorkers ?? Effect.succeed(false));
+    owner === "self" ? (deps.boardHasWorkers ?? Effect.succeed(false)) : Effect.succeed(true);
 
   /**
    * The base branch's tip, in the project root (never the card's worktree); null

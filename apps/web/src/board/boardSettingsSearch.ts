@@ -77,16 +77,32 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     to: "/settings/board",
     targetId: "board-pipeline",
   },
-  { id: "board-concurrency", title: "Board concurrency", to: "/settings/board" },
+  {
+    id: "board-concurrency",
+    title: "Capacity",
+    to: "/settings/board",
+    searchTerms: ["concurrency limit agents baseline resources capacity"],
+  },
   // The distributed board.
-  { id: "board-workers", title: "Workers", to: "/settings/board" },
+  {
+    id: "board-workers",
+    title: "Workers",
+    to: "/settings/board/workers",
+    searchTerms: ["add worker join code remote machine rename abbreviation remove"],
+  },
   {
     id: "board-default-worker",
     title: "Default worker",
-    to: "/settings/board",
+    to: "/settings/board/workers",
     targetId: "board-workers",
   },
-  { id: "board-project-checkouts", title: "Project checkouts", to: "/settings/board" },
+  {
+    id: "board-address",
+    title: "Board address",
+    to: "/settings/board/workers",
+    searchTerms: ["worker join url public address"],
+  },
+  { id: "board-project-checkouts", title: "Project checkouts", to: "/settings/board/workers" },
   {
     id: "board-reclaim-worktree-on-done",
     title: 'Reclaim worktrees at "Done"',

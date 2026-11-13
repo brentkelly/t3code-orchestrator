@@ -75,6 +75,7 @@ import { boardAttachmentLimits } from "./boardAttachmentUpload";
 import { boardConflictFix } from "./boardConflictFix";
 import { boardScheduleKind } from "./boardSchedule";
 import { boardQueueInfo } from "./boardQueueInfo";
+import { BoardCardCapacityPanelHost } from "./BoardCardCapacityPanel";
 import { boardCardPlanReviewView, boardPlanStageExecution } from "./boardCardPlanReview";
 import { projectIconColorOf } from "./projectAccent";
 import { useEnvironment } from "../state/environments";
@@ -596,12 +597,12 @@ export function BoardCardDetail({
           // oxlint-disable-next-line react/purity -- the queue order samples the clock when the shells change; the compiler recomputes it only then.
           slot: boardBuildQueue(allShellCards, queueStages, Date.now()).get(cardId),
           running: boardRunningStepCount(allShellCards),
-          cap: boardSettings.concurrency.globalMaxConcurrent,
           reason: boardQueueReason({
             card: cardShell,
             state: workersState,
-            cards: allShellCards,
-            concurrency: boardSettings.concurrency,
+            cardKeys: new Map(
+              allShellCards.map((card) => [String(card.cardId), card.key] as const),
+            ),
             // Named as the board's own queue pill names it.
             projectName:
               snapshot?.projects.find((project) => project.id === cardShell.projectId)?.title ??
@@ -1531,6 +1532,18 @@ export function BoardCardDetail({
       boardMergeStrategy={boardMergeStrategy}
       onSetMergeStrategy={(mergeStrategy) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, mergeStrategy } }))
+      }
+      capacityPanel={
+        // T3o: group cards take no claim and run no setup (T3O-86).
+        card.group !== null ? null : (
+          <BoardCardCapacityPanelHost
+            card={card}
+            environmentId={environmentId}
+            projectResources={projectExecutionConfig?.resources ?? null}
+            stepFailed={cardShell?.stalled === true}
+            workersState={workersState}
+          />
+        )
       }
       resolveModelDisplayName={resolveModelDisplayName}
       // Queued counts as running: its model and authority are already frozen

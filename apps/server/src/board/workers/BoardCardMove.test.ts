@@ -111,6 +111,7 @@ const makeCard = (overrides: Partial<BoardCard> = {}): BoardCard => ({
   ci: null,
   ciLastOutcome: null,
   ciRoundTrips: 0,
+  resources: null,
   worktree: readyWorktree,
   pullRequest: null,
   pullRequestHistory: [],
@@ -150,6 +151,7 @@ const runningStep = (status: BoardCardStepState["status"]): BoardCardStepState =
   slotHeld: status === "running",
   forceStart: false,
   queuedBy: null,
+  queuedDetail: null,
   startedAt: NOW,
   updatedAt: NOW,
 });
@@ -343,6 +345,7 @@ const makeLayer = (fixture: Fixture) =>
               defaultWorkerId: BOARD_LOCAL_WORKER_ID,
               workers: [workerView(fixture.online ?? true)],
               setups: [],
+              joinCodes: [],
             }),
             changes: Stream.empty,
           }),

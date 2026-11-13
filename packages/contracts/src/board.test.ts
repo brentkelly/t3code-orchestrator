@@ -221,6 +221,7 @@ const typicalCard = (index: number): BoardCard => ({
   ci: null,
   ciLastOutcome: null,
   ciRoundTrips: 0,
+  resources: null,
   orderKey: "mmmm",
   title: `A realistically sized card title for card number ${index}`,
   briefRef: "brief",

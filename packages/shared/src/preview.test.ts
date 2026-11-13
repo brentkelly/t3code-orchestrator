@@ -39,6 +39,16 @@ describe("previewPdfAssetUrl", () => {
     },
   );
 
+  // T3o: a board worker proxy's base path (T3O-84).
+  it("keeps a board worker proxy's base path", () => {
+    const base = "https://board.example/api/t3o/workers/w1/";
+    expect(
+      previewPdfAssetUrl("http://127.0.0.1:14537/api/assets/token/guide.pdf#page=2", base),
+    ).toBe("https://board.example/api/t3o/workers/w1/api/assets/token/guide.pdf#page=2");
+    const proxied = "https://board.example/api/t3o/workers/w1/api/assets/token/guide.pdf";
+    expect(previewPdfAssetUrl(proxied, base)).toBe(proxied);
+  });
+
   it("keeps URLs from the connected environment", () => {
     const source = "https://environment.test/api/assets/token/guide.pdf#page=2";
     expect(previewPdfAssetUrl(source, "https://environment.test")).toBe(source);

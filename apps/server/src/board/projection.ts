@@ -10,6 +10,9 @@ import {
   BoardCardPlacementOrphan,
   BoardCardCi,
   BoardCardCiLastOutcome,
+  BoardCardResources,
+  BoardCardSize,
+  BoardStepQueuedDetail,
   BoardCiPass,
   BoardCiStepList,
   BoardCiPassSettle,
@@ -219,6 +222,8 @@ const BoardCardDbRow = Schema.Struct({
   ciLastOutcome: Schema.NullOr(Schema.fromJsonString(BoardCardCiLastOutcome)),
   // CI failure round trips without a human.
   ciRoundTrips: Schema.Int,
+  /** T3o: migration 069, NULL until the card has a size, grant or setup (T3O-86). */
+  resources: Schema.NullOr(Schema.fromJsonString(BoardCardResources)),
   /** Migration 051: NULL `groupTarget` is a leaf. */
   groupTarget: Schema.NullOr(BoardCardGroupTarget),
   groupAutoBuild: Schema.Int,
@@ -519,6 +524,8 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULL for rows written before migration 048 and for any step not queued —
   // both read as plain "Queued".
   queuedBy: BoardCardStepState.fields.queuedBy,
+  /** T3o: migration 071, NULL on older rows (T3O-86). */
+  queuedDetail: Schema.NullOr(Schema.fromJsonString(BoardStepQueuedDetail)),
   startedAt: BoardCardStepState.fields.startedAt,
   updatedAt: BoardCardStepState.fields.updatedAt,
 });
@@ -528,8 +535,12 @@ type BoardCardStepStateDbRow = typeof BoardCardStepStateDbRow.Type;
 const BoardWorkerDbRow = Schema.Struct({
   id: BoardWorker.fields.id,
   label: BoardWorker.fields.label,
-  url: BoardWorker.fields.url,
+  // T3o (T3O-84): outbound workers have no URL; the new columns are nullable in SQL.
+  url: Schema.NullOr(Schema.String),
   addedAt: BoardWorker.fields.addedAt,
+  abbreviation: Schema.NullOr(Schema.String),
+  t3oRelease: Schema.NullOr(Schema.String),
+  joinedAt: Schema.NullOr(Schema.String),
 });
 
 // `dependsOn` JSON-encodes; `locked` travels as 0/1 (SQLite has no boolean).
@@ -543,6 +554,15 @@ const BoardPlanDbRow = Schema.Struct({
   locked: Schema.Int,
   /** 0/1; migration 052 defaults every older row to 1 (planned). */
   planned: Schema.Int,
+  /** T3o: migration 069; NULL when the planner suggested no size (T3O-86). */
+  sizing: Schema.NullOr(
+    Schema.fromJsonString(
+      Schema.Struct({
+        size: BoardCardSize,
+        reason: Schema.optionalKey(BoardPlan.fields.title),
+      }),
+    ),
+  ),
   body: Schema.String,
   createdAt: BoardPlan.fields.createdAt,
   updatedAt: BoardPlan.fields.updatedAt,
@@ -562,6 +582,8 @@ function rowToBoardPlan(row: BoardPlanDbRow): BoardPlan {
     ordinal: row.ordinal,
     locked: row.locked !== 0,
     ...(row.planned === 0 ? { planned: false } : {}),
+    ...(row.sizing === null ? {} : { size: row.sizing.size }),
+    ...(row.sizing?.reason === undefined ? {} : { sizeReason: row.sizing.reason }),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -639,6 +661,8 @@ const BoardCardShellDbRow = Schema.Struct({
   orphanedWorkerLabel: Schema.NullOr(Schema.String),
   ci: Schema.NullOr(Schema.fromJsonString(BoardCardCi)),
   ciLastOutcome: Schema.NullOr(Schema.fromJsonString(BoardCardCiLastOutcome)),
+  /** T3o: the card's resources column, for its setup on the face (T3O-86). */
+  resources: Schema.NullOr(Schema.fromJsonString(BoardCardResources)),
   /** Group settings, the same columns the card row reads. */
   groupTarget: Schema.NullOr(BoardCardGroupTarget),
   groupAutoBuild: Schema.Int,
@@ -722,6 +746,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     ci: card.ci,
     ciLastOutcome: card.ciLastOutcome,
     ciRoundTrips: card.ciRoundTrips,
+    resources: card.resources,
     groupTarget: card.group?.target ?? null,
     groupAutoBuild: card.group?.autoBuild === true ? 1 : 0,
     groupAutoMerge: card.group?.autoMerge === true ? 1 : 0,
@@ -823,6 +848,7 @@ function rowToBoardCard(
     ci: row.ci,
     ciLastOutcome: row.ciLastOutcome,
     ciRoundTrips: row.ciRoundTrips,
+    resources: row.resources,
     group: boardCardGroupFromRow(row),
     blocked: row.blocked !== 0,
     threadLinks,
@@ -899,6 +925,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ci,
         ci_last_outcome,
         ci_round_trips,
+        resources,
         group_target,
         group_auto_build,
         group_auto_merge,
@@ -951,6 +978,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.ci},
         ${row.ciLastOutcome},
         ${row.ciRoundTrips},
+        ${row.resources},
         ${row.groupTarget},
         ${row.groupAutoBuild},
         ${row.groupAutoMerge},
@@ -1003,6 +1031,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ci = excluded.ci,
         ci_last_outcome = excluded.ci_last_outcome,
         ci_round_trips = excluded.ci_round_trips,
+        resources = excluded.resources,
         group_target = excluded.group_target,
         group_auto_build = excluded.group_auto_build,
         group_auto_merge = excluded.group_auto_merge,
@@ -1065,6 +1094,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ci,
         ci_last_outcome AS "ciLastOutcome",
         ci_round_trips AS "ciRoundTrips",
+        resources,
         group_target AS "groupTarget",
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
@@ -1221,6 +1251,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         json_extract(placement_orphaned, '$.workerLabel') AS "orphanedWorkerLabel",
         ci,
         ci_last_outcome AS "ciLastOutcome",
+        resources,
         group_target AS "groupTarget",
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
@@ -1321,6 +1352,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         json_extract(placement_orphaned, '$.workerLabel') AS "orphanedWorkerLabel",
         ci,
         ci_last_outcome AS "ciLastOutcome",
+        resources,
         group_target AS "groupTarget",
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
@@ -1472,6 +1504,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ci,
         ci_last_outcome AS "ciLastOutcome",
         ci_round_trips AS "ciRoundTrips",
+        resources,
         group_target AS "groupTarget",
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
@@ -2175,7 +2208,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         last_error, awaiting_reason, human_turn_at, stalled_reason, retry_at,
         plan_review_started_at, plan_review_rounds, reopened_at, reopened_prompt_at,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
-        queued_by, started_at, updated_at
+        queued_by, queued_detail, started_at, updated_at
       )
       VALUES (
         ${row.cardId}, ${row.stepId}, ${row.stepLabel}, ${row.stageLabel}, ${row.attempt}, ${row.stallCount},
@@ -2186,7 +2219,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.planReviewStartedAt}, ${row.planReviewRounds}, ${row.reopenedAt}, ${row.reopenedPromptAt},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
-        ${row.queuedBy}, ${row.startedAt}, ${row.updatedAt}
+        ${row.queuedBy}, ${row.queuedDetail}, ${row.startedAt}, ${row.updatedAt}
       )
       ON CONFLICT (card_id)
       DO UPDATE SET
@@ -2221,6 +2254,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         slot_held = excluded.slot_held,
         force_start = excluded.force_start,
         queued_by = excluded.queued_by,
+        queued_detail = excluded.queued_detail,
         started_at = excluded.started_at,
         updated_at = excluded.updated_at
     `,
@@ -2263,6 +2297,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         slot_held AS "slotHeld",
         force_start AS "forceStart",
         queued_by AS "queuedBy",
+        queued_detail AS "queuedDetail",
         started_at AS "startedAt",
         updated_at AS "updatedAt"
       FROM board_card_step_state
@@ -2274,10 +2309,17 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
   const upsertBoardWorkerRow = SqlSchema.void({
     Request: BoardWorkerDbRow,
     execute: (row) => sql`
-      INSERT INTO board_workers (worker_id, label, url, added_at)
-      VALUES (${row.id}, ${row.label}, ${row.url}, ${row.addedAt})
+      INSERT INTO board_workers (
+        worker_id, label, url, added_at, abbreviation, t3o_release, joined_at
+      )
+      VALUES (
+        ${row.id}, ${row.label}, ${row.url}, ${row.addedAt}, ${row.abbreviation},
+        ${row.t3oRelease}, ${row.joinedAt}
+      )
       ON CONFLICT (worker_id)
-      DO UPDATE SET label = excluded.label, url = excluded.url, added_at = excluded.added_at
+      DO UPDATE SET label = excluded.label, url = excluded.url, added_at = excluded.added_at,
+        abbreviation = excluded.abbreviation, t3o_release = excluded.t3o_release,
+        joined_at = excluded.joined_at
     `,
   });
 
@@ -2292,7 +2334,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     Request: Schema.Void,
     Result: BoardWorkerDbRow,
     execute: () => sql`
-      SELECT worker_id AS "id", label, url, added_at AS "addedAt"
+      SELECT worker_id AS "id", label, url, added_at AS "addedAt",
+        abbreviation, t3o_release AS "t3oRelease", joined_at AS "joinedAt"
       FROM board_workers
     `,
   });
@@ -2485,13 +2528,13 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     Request: BoardPlanDbRow,
     execute: (row) => sql`
       INSERT INTO board_plans (
-        plan_id, card_id, title, summary, depends_on, ordinal, locked, planned, body,
+        plan_id, card_id, title, summary, depends_on, ordinal, locked, planned, sizing, body,
         created_at, updated_at
       )
       VALUES (
         ${row.planId}, ${row.cardId}, ${row.title}, ${row.summary}, ${row.dependsOn},
-        ${row.ordinal}, ${row.locked}, ${row.planned}, ${row.body}, ${row.createdAt},
-        ${row.updatedAt}
+        ${row.ordinal}, ${row.locked}, ${row.planned}, ${row.sizing}, ${row.body},
+        ${row.createdAt}, ${row.updatedAt}
       )
       ON CONFLICT (plan_id)
       DO UPDATE SET
@@ -2502,6 +2545,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ordinal = excluded.ordinal,
         locked = excluded.locked,
         planned = excluded.planned,
+        sizing = excluded.sizing,
         body = excluded.body,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at
@@ -2535,6 +2579,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ordinal,
         locked,
         planned,
+        sizing,
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2558,6 +2603,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ordinal,
         locked,
         planned,
+        sizing,
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2579,6 +2625,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ordinal,
         locked,
         planned,
+        sizing,
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2962,6 +3009,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         slotHeld: state.slotHeld ? 1 : 0,
         forceStart: state.forceStart ? 1 : 0,
         queuedBy: state.queuedBy,
+        queuedDetail: state.queuedDetail,
         startedAt: state.startedAt,
         updatedAt: state.updatedAt,
       })
@@ -2969,7 +3017,15 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
 
   const upsertWorker = (worker: BoardWorker) =>
     queries
-      .upsertBoardWorkerRow(worker)
+      .upsertBoardWorkerRow({
+        id: worker.id,
+        label: worker.label,
+        url: worker.url ?? null,
+        addedAt: worker.addedAt,
+        abbreviation: worker.abbreviation ?? null,
+        t3oRelease: worker.t3oRelease ?? null,
+        joinedAt: worker.joinedAt ?? null,
+      })
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.worker:query")));
 
   const deleteWorker = (workerId: EnvironmentId) =>
@@ -3018,6 +3074,13 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           ordinal: plan.ordinal,
           locked: plan.locked ? 1 : 0,
           planned: plan.planned === false ? 0 : 1,
+          sizing:
+            plan.size === undefined
+              ? null
+              : {
+                  size: plan.size,
+                  ...(plan.sizeReason === undefined ? {} : { reason: plan.sizeReason }),
+                },
           body: plan.body,
           createdAt: plan.createdAt,
           updatedAt: plan.updatedAt,
@@ -3098,6 +3161,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
                   ...copy,
                   locked: 0,
                   planned: 1,
+                  sizing: planRow.value.sizing,
                   body: planRow.value.body,
                 })
                 .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.plans:query")));
@@ -3282,6 +3346,8 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
       // same thing. The reactor rails the refusal ONCE, through
       // `card-merge-refused`, at the moment the ladder actually stops.
       case "board.card-auto-merge-hold-recorded":
+      // T3o: a card's size, grant or setup (T3O-86): the column only, no rail row.
+      case "board.card-resources-recorded":
       // Worktree lifecycle: every payload carries the whole card, so
       // the persisted projection is the same idempotent upsert — the worktree
       // column rides `board_cards` with the rest of the aggregate.
@@ -3889,6 +3955,7 @@ function loadBoardState(
             slotHeld: row.slotHeld !== 0,
             forceStart: row.forceStart !== 0,
             queuedBy: row.queuedBy,
+            queuedDetail: row.queuedDetail,
             startedAt: row.startedAt,
             updatedAt: row.updatedAt,
           }))
@@ -3896,7 +3963,19 @@ function loadBoardState(
         const plans = planRows.map(rowToBoardPlan).sort(compareBoardPlans);
         // The worker registry: absent when empty, and the default
         // absent when it is `local`, matching the projector's fold.
-        const workers = [...workerRows].sort(compareBoardWorkers);
+        const workers = workerRows
+          .map((row): BoardWorker => ({
+            id: row.id,
+            label: row.label,
+            addedAt: row.addedAt,
+            ...(row.url === null ? {} : { url: row.url as BoardWorker["label"] }),
+            ...(row.abbreviation === null ? {} : { abbreviation: row.abbreviation }),
+            ...(row.t3oRelease === null
+              ? {}
+              : { t3oRelease: row.t3oRelease as BoardWorker["label"] }),
+            ...(row.joinedAt === null ? {} : { joinedAt: row.joinedAt as BoardWorker["addedAt"] }),
+          }))
+          .sort(compareBoardWorkers);
         const defaultWorkerId = Option.getOrNull(
           Option.map(defaultWorkerRow, (row) => row.workerId),
         );
@@ -3984,6 +4063,7 @@ function boardShellCards(
       const labelsByCard = groupCardLabels(cardLabelRows);
       const queuedByCard = new Set<BoardCardId>();
       const queueReasonByCard = new Map<BoardCardId, BoardStepQueuedBy>();
+      const queueDetailByCard = new Map<BoardCardId, BoardStepQueuedDetail>();
       const stalledByCard = new Set<BoardCardId>();
       const runningByCard = new Set<BoardCardId>();
       const heldByCard = new Set<BoardCardId>();
@@ -4002,6 +4082,9 @@ function boardShellCards(
         // Which limit holds it, the same field `card-queued` carries.
         if (row.status === "queued" && row.queuedBy !== null) {
           queueReasonByCard.set(row.cardId, row.queuedBy);
+        }
+        if (row.status === "queued" && row.queuedDetail !== null) {
+          queueDetailByCard.set(row.cardId, row.queuedDetail);
         }
         // The second step-state field on the bounded shell: a card
         // is `stalled` when recovery gave up on its live step.
@@ -4076,8 +4159,10 @@ function boardShellCards(
             row.orphanedWorkerLabel === null ? null : { workerLabel: row.orphanedWorkerLabel },
           ci: row.ci,
           ciLastOutcome: row.ciLastOutcome,
+          setup: row.resources?.setup ?? null,
           group: boardCardGroupFromRow(row),
           queuedBy: queueReasonByCard.get(row.cardId) ?? null,
+          queuedDetail: queueDetailByCard.get(row.cardId) ?? null,
           // Carried UNRESOLVED. The renderer settles the outcome
           // against `stepRunning`, which every shell already holds — resolving
           // it here as well would give the snapshot and the `card-review`
@@ -4166,6 +4251,7 @@ function boardArchivedShellCards(
               row.orphanedWorkerLabel === null ? null : { workerLabel: row.orphanedWorkerLabel },
             ci: row.ci,
             ciLastOutcome: row.ciLastOutcome,
+            setup: row.resources?.setup ?? null,
             group: boardCardGroupFromRow(row),
             archivedAt: row.archivedAt,
             activeThreadId: null,

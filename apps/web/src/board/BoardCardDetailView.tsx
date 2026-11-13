@@ -660,6 +660,8 @@ export interface BoardCardDetailViewProps {
   /** Write this card's own merge strategy; null returns it to the default.
       Absent hides the control. */
   readonly onSetMergeStrategy?: ((next: BoardMergeStrategy | null) => void) | undefined;
+  /** T3o: the card's size and setup, under its title in both layouts (T3O-86). */
+  readonly capacityPanel?: React.ReactNode;
   /** What the card's schedule control is offering, derived by the
       container from the card's live step — the copy has to be honest about
       whether setting a time will STOP an agent that is working right now. */
@@ -2906,7 +2908,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               docs/t3o/status-colours.md. */}
           {props.queueInfo != null ? (
             <BoardHint label={props.queueInfo.detail}>
-              <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-1.75 text-board-11 font-medium text-muted-foreground">
+              <span
+                className={cn(
+                  "inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md px-1.75 text-board-11 font-medium",
+                  props.queueInfo.blocked === true
+                    ? "bg-warning/14 text-board-amber-text"
+                    : "bg-muted text-muted-foreground",
+                )}
+              >
                 <ClockIcon className="size-2.5" />
                 {props.queueInfo.label}
               </span>
@@ -3086,6 +3095,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       </div>
 
       <TitleBody done={done} onSave={props.onSaveTitle} title={card.title} />
+      {props.capacityPanel ?? null}
 
       {/* One insertion above the layout split covers both forms. Only
           the wide one offers `View thread`: the narrow layout has no thread

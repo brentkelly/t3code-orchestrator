@@ -82,6 +82,7 @@ function makeCard(overrides: Partial<BoardCard> = {}): BoardCard {
     ci: null,
     ciLastOutcome: null,
     ciRoundTrips: 0,
+    resources: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -123,6 +124,7 @@ function makeStep(status: BoardCardStepState["status"]): BoardCardStepState {
     slotHeld: false,
     forceStart: false,
     queuedBy: null,
+    queuedDetail: null,
     startedAt: null,
     updatedAt: NOW,
   };

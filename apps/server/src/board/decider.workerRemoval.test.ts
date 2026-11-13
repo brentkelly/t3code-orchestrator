@@ -82,6 +82,7 @@ function makeCard(overrides: Partial<BoardCard> = {}): BoardCard {
     ci: null,
     ciLastOutcome: null,
     ciRoundTrips: 0,
+    resources: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -126,6 +127,7 @@ function makeStep(
     slotHeld: false,
     forceStart: false,
     queuedBy: null,
+    queuedDetail: null,
     startedAt: null,
     updatedAt: NOW,
   };
@@ -304,6 +306,31 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           }),
         );
         expect(events.map((event) => event.type)).toEqual(["board.worker-removed"]);
+      }),
+    );
+
+    it.effect("a re-join of a worker with no abbreviation keeps the one it was given", () =>
+      Effect.gen(function* () {
+        const rejoined = yield* apply(
+          {
+            type: "board.worker.register",
+            commandId: CommandId.make("cmd-rejoin"),
+            mode: "repair",
+            worker: {
+              id: workerA,
+              label: "worker-a",
+              abbreviation: "WA",
+              addedAt: NOW,
+              t3oRelease: "t3o0.1.9.1",
+              joinedAt: NOW,
+            },
+            createdAt: NOW,
+          },
+          makeReadModel({ cards: [] }),
+        );
+        const worker = rejoined.board!.workers!.find((entry) => entry.id === workerA);
+        expect(worker?.abbreviation).toBe("WA");
+        expect(worker?.url).toBeUndefined();
       }),
     );
 

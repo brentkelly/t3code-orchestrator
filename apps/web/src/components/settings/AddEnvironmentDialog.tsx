@@ -64,8 +64,6 @@ import {
   parseRemotePairingFields,
   formatDesktopSshConnectionError,
 } from "./ConnectionsSettings.logic";
-// T3o: the board's "Connect to worker" prefill (T3O-63).
-import { useConnectionsAddHostPrefill } from "../../board/workers/connectionsPrefill";
 
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 
@@ -117,12 +115,6 @@ export function AddEnvironmentDialog({
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
-  // T3o: a board thread on a worker opens Add environment for it (T3O-63).
-  useConnectionsAddHostPrefill((host) => {
-    setSavedBackendMode("remote");
-    setSavedBackendHost(host);
-    onOpenChange(true);
-  });
   const [sshHostSuggestionsOpen, setSshHostSuggestionsOpen] = useState(false);
   const highlightedSshHostRef = useRef<DesktopDiscoveredSshHost | undefined>(undefined);
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);

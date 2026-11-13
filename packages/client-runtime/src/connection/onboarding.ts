@@ -11,6 +11,8 @@ import * as HttpClient from "effect/http/HttpClient";
 import { bootstrapRemoteBearerSession } from "../authorization/remote.ts";
 import { deriveWsBaseUrl, normalizeHttpBaseUrl } from "../environment/endpoint.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
+// T3o: keep a proxied environment's base path (T3O-84).
+import { environmentAddressKey, withEnvironmentBasePath } from "../environment/basePath.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   BearerConnectionCredential,
@@ -88,7 +90,8 @@ const resolvePairingTarget = Effect.fn("clientRuntime.connection.onboarding.reso
 );
 
 function bearerConnectionId(environmentId: EnvironmentId, httpBaseUrl: string): string {
-  return `bearer:${environmentId}:${new URL(httpBaseUrl).origin}`;
+  // T3o: keep a proxied environment's base path (T3O-84).
+  return `bearer:${environmentId}:${environmentAddressKey(httpBaseUrl)}`;
 }
 
 function differentMachineError(label: string) {
@@ -233,7 +236,12 @@ export const prepareBearerConnectionUpdate = Effect.fn(
     });
   }
   const httpBaseUrl = yield* Effect.try({
-    try: () => normalizeHttpBaseUrl(options.input.httpBaseUrl),
+    // T3o: keep a proxied environment's base path (T3O-84).
+    try: () =>
+      withEnvironmentBasePath(
+        normalizeHttpBaseUrl(options.input.httpBaseUrl),
+        options.input.httpBaseUrl,
+      ),
     catch: (cause) =>
       new ConnectionBlockedError({
         reason: "configuration",
@@ -252,7 +260,8 @@ export const prepareBearerConnectionUpdate = Effect.fn(
       environmentId: options.input.environmentId,
       label,
       httpBaseUrl,
-      wsBaseUrl: deriveWsBaseUrl(httpBaseUrl),
+      // T3o: keep a proxied environment's base path (T3O-84).
+      wsBaseUrl: withEnvironmentBasePath(deriveWsBaseUrl(httpBaseUrl), httpBaseUrl),
     }),
     credential: credential.value,
   });

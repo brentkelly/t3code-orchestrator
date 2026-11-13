@@ -18,6 +18,7 @@ import {
   type BoardStageId,
   type BoardState,
 } from "./board.ts";
+import { EMPTY_BOARD_PROJECT_RESOURCES } from "./boardCapacity.ts";
 
 const PROMPT_KEY = "prompt";
 
@@ -129,19 +130,25 @@ export function boardProjectDeltasEqual(
   left: BoardProjectStageDelta,
   right: BoardProjectStageDelta,
 ): boolean {
+  // `left` is the file's: one without `resources` leaves the project's own.
+  const resources =
+    left.resources === undefined ||
+    canonicalJson(left.resources) ===
+      canonicalJson(right.resources ?? EMPTY_BOARD_PROJECT_RESOURCES);
   return (
+    resources &&
     canonicalJson({
       stageSwitches: left.stageSwitches,
       overrides: left.overrides,
       steps: withoutStepIds(left.ci.steps),
       stopOnFailure: boardCiStopsOnFailure(left.ci),
     }) ===
-    canonicalJson({
-      stageSwitches: right.stageSwitches,
-      overrides: right.overrides,
-      steps: withoutStepIds(right.ci.steps),
-      stopOnFailure: boardCiStopsOnFailure(right.ci),
-    })
+      canonicalJson({
+        stageSwitches: right.stageSwitches,
+        overrides: right.overrides,
+        steps: withoutStepIds(right.ci.steps),
+        stopOnFailure: boardCiStopsOnFailure(right.ci),
+      })
   );
 }
 

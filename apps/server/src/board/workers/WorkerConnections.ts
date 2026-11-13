@@ -1,8 +1,7 @@
 /**
- * The central server's live connection to each worker: dial, handshake, hold,
- * redial with backoff. Network failures go `offline` and below-floor protocols go
- * `incompatible`, both retried; a 401/403, missing token or different server goes
- * `unauthorized`, which only a re-pair recovers.
+ * The board's live connection to each worker, over its tunnel's loopback endpoint once the
+ * tunnel is ready. `offline` and below-floor `incompatible` retry; `unauthorized` drops the
+ * tunnel so the worker's next handshake hands over a fresh session (T3O-84).
  */
 import {
   BOARD_WORKER_PROTOCOL_FLOOR,
@@ -26,6 +25,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import { BoardTunnelHost, type TunnelEntry } from "../tunnel/BoardTunnelHost.ts";
 import {
   bootStatus,
   WorkerSnapshotStore,
@@ -59,10 +59,10 @@ export interface WorkerConnectionsShape {
   readonly states: Stream.Stream<ReadonlyMap<EnvironmentId, WorkerRuntime>>;
   /** Ticks on every status or snapshot change. Each access subscribes. */
   readonly changes: Stream.Stream<void>;
-  /** Match the running connections to the registry: dial new workers, drop
-      removed ones, re-dial one whose URL changed. */
+  /** Match the running connections to the registry: open each new worker's tunnel
+      endpoint and follow it, and close removed ones. */
   readonly sync: (workers: ReadonlyArray<BoardWorker>) => Effect.Effect<void>;
-  /** Dial a worker again now — after a re-pair, or a retry the human asked for. */
+  /** Dial a worker again now — a retry the human asked for. */
   readonly restart: (workerId: EnvironmentId) => Effect.Effect<void>;
   /** Re-read the worker's providers and checkouts over its live connection. */
   readonly refresh: (workerId: EnvironmentId) => Effect.Effect<void>;
@@ -146,13 +146,50 @@ type AttemptOutcome =
 
 interface Entry extends WorkerRuntime {
   readonly worker: BoardWorker;
+  /** The worker's tunnel endpoint on this board's loopback. */
+  readonly url: string;
   readonly link: WorkerLink | null;
 }
+
+/** How long a booting board waits for a worker's tunnel before calling it offline. */
+const BOOT_GRACE = Duration.seconds(10);
+/** How long an unauthorized worker reads as reconnecting while its fresh session is
+    awaited: past it the worker is down, or can't mint one, and reads offline. */
+const HANDOFF_GRACE = Duration.minutes(1);
 
 export const makeWorkerConnections = Effect.gen(function* () {
   const transport = yield* WorkerTransport;
   const secrets = yield* ServerSecretStore;
   const store = yield* WorkerSnapshotStore;
+  const host = yield* BoardTunnelHost;
+
+  const tunnelOf = (workerId: EnvironmentId) =>
+    host.entries.pipe(
+      Effect.map(
+        (map): TunnelEntry => map.get(workerId) ?? { phase: "down", readyEpoch: 0, hello: null },
+      ),
+    );
+  /** The worker's tunnel once it is ready with an epoch past `after`. */
+  const awaitReady = (workerId: EnvironmentId, after: number) =>
+    host.states.pipe(
+      Stream.map((map) => map.get(workerId)),
+      Stream.filter(
+        (entry): entry is TunnelEntry =>
+          entry !== undefined && entry.phase === "ready" && entry.readyEpoch > after,
+      ),
+      Stream.runHead,
+      Effect.map(Option.getOrThrow),
+    );
+  /** Resolves when the tunnel leaves the given epoch: dropped, or replaced. */
+  const awaitTunnelChange = (workerId: EnvironmentId, epoch: number) =>
+    host.states.pipe(
+      Stream.map((map) => map.get(workerId)),
+      Stream.filter(
+        (entry) => entry === undefined || entry.phase !== "ready" || entry.readyEpoch !== epoch,
+      ),
+      Stream.runHead,
+      Effect.asVoid,
+    );
 
   const persisted = new Map<EnvironmentId, WorkerSnapshotRecord>(
     (yield* store.list).map((record) => [record.workerId, record]),
@@ -224,25 +261,23 @@ export const makeWorkerConnections = Effect.gen(function* () {
 
   /** Give back a session the board was issued but couldn't keep, over a
       link of its own: `release` revokes the session that calls it. */
-  const releaseUnstored = (worker: BoardWorker, accessToken: string) =>
+  const releaseUnstored = (url: string, accessToken: string) =>
     Effect.scoped(
-      transport
-        .connect({ url: worker.url, accessToken })
-        .pipe(Effect.flatMap((link) => link.rpc.release)),
+      transport.connect({ url, accessToken }).pipe(Effect.flatMap((link) => link.rpc.release)),
     ).pipe(Effect.ignore);
 
   /** Swap the board's session for its successor: store the new token, then
       give the old one back. False when the swap didn't happen, which leaves
       the old token in place. */
   const renewSession = Effect.fn("WorkerConnections.renewSession")(
-    function* (worker: BoardWorker, rpc: WorkerRpc) {
+    function* (worker: BoardWorker, url: string, rpc: WorkerRpc) {
       const renewal = yield* rpc.renew;
       const stored = yield* secrets
         .set(workerSecretName(worker.id), encodeWorkerToken(renewal.accessToken))
         .pipe(Effect.result);
       if (stored._tag === "Failure") {
         // Unstored, the successor would linger on the worker until it expired.
-        yield* releaseUnstored(worker, renewal.accessToken);
+        yield* releaseUnstored(url, renewal.accessToken);
         return false;
       }
       // Unreturned, the old session only lingers until it expires.
@@ -259,6 +294,7 @@ export const makeWorkerConnections = Effect.gen(function* () {
   // Untraced: a span here would stay open for the connection's lifetime.
   const hold = Effect.fnUntraced(function* (
     worker: BoardWorker,
+    url: string,
     link: WorkerLink,
     hello: BoardWorkerHello,
   ) {
@@ -275,20 +311,24 @@ export const makeWorkerConnections = Effect.gen(function* () {
         Effect.timeoutOrElse({ duration: wait, orElse: () => Effect.succeed(true) }),
       );
       if (!due) return { _tag: "dropped" } as const;
-      if (yield* renewSession(worker, link.rpc)) return { _tag: "renewed" } as const;
+      if (yield* renewSession(worker, url, link.rpc)) return { _tag: "renewed" } as const;
       wait = sessionRenewalRetryDelay(failures);
     }
   });
 
   /** One dial, held until the connection drops or its session is renewed. */
-  const attempt = (worker: BoardWorker, renewed: boolean): Effect.Effect<AttemptOutcome> =>
+  const attempt = (
+    worker: BoardWorker,
+    url: string,
+    renewed: boolean,
+  ): Effect.Effect<AttemptOutcome> =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* markDialing(worker.id, renewed);
         const token = yield* readToken(worker.id);
         if (Option.isNone(token)) return { _tag: "unauthorized" } as const;
         const connected = yield* transport
-          .connect({ url: worker.url, accessToken: token.value })
+          .connect({ url, accessToken: token.value })
           .pipe(Effect.result);
         if (connected._tag === "Failure") {
           return connected.failure.reason === "unauthorized"
@@ -326,17 +366,40 @@ export const makeWorkerConnections = Effect.gen(function* () {
           },
         }));
         yield* persist(worker.id);
-        return yield* hold(worker, link, hello);
+        return yield* hold(worker, url, link, hello);
       }),
     );
 
-  /** A worker's loop: dial, hold, and dial again until it is unauthorized. */
+  /** A worker's loop: wait for its tunnel, dial, hold, and dial again. */
   // Untraced: a span here would stay open for the worker's lifetime.
-  const runWorker = Effect.fnUntraced(function* (worker: BoardWorker) {
+  const runWorker = Effect.fnUntraced(function* (worker: BoardWorker, url: string) {
     let failures = 0;
     let renewed = false;
+    // The ready epoch a dial last ran on; an unauthorized one waits for a newer handoff.
+    let waitPast = 0;
+    let booting = true;
     while (true) {
-      const outcome: AttemptOutcome = yield* attempt(worker, renewed);
+      const ready = yield* tunnelOf(worker.id);
+      let tunnel = ready;
+      if (ready.phase !== "ready" || ready.readyEpoch <= waitPast) {
+        // An unauthorized worker reads as reconnecting until its next handoff, for a while.
+        const grace = booting ? BOOT_GRACE : waitPast !== 0 ? HANDOFF_GRACE : null;
+        if (grace === null) yield* setState(worker.id, "offline");
+        tunnel =
+          grace === null
+            ? yield* awaitReady(worker.id, waitPast)
+            : yield* awaitReady(worker.id, waitPast).pipe(
+                Effect.timeoutOrElse({
+                  duration: grace,
+                  orElse: () =>
+                    setState(worker.id, "offline").pipe(
+                      Effect.andThen(awaitReady(worker.id, waitPast)),
+                    ),
+                }),
+              );
+      }
+      booting = false;
+      const outcome: AttemptOutcome = yield* attempt(worker, url, renewed);
       renewed = outcome._tag === "renewed";
       switch (outcome._tag) {
         case "renewed":
@@ -344,8 +407,12 @@ export const makeWorkerConnections = Effect.gen(function* () {
           failures = 0;
           continue;
         case "unauthorized":
+          // The board's session went on the worker. Drop the tunnel so its next hello
+          // hands over a fresh one; until then this reads as reconnecting.
           yield* setState(worker.id, "unauthorized");
-          return;
+          waitPast = tunnel.readyEpoch;
+          yield* host.disconnect(worker.id);
+          continue;
         case "incompatible":
           yield* setState(
             worker.id,
@@ -369,12 +436,17 @@ export const makeWorkerConnections = Effect.gen(function* () {
           yield* setState(worker.id, "offline");
           break;
       }
-      yield* Effect.sleep(workerRedialDelay(failures));
+      // A tunnel that went is waited for above; one still up is retried with backoff.
+      yield* Effect.raceFirst(
+        Effect.sleep(workerRedialDelay(failures)),
+        awaitTunnelChange(worker.id, tunnel.readyEpoch),
+      );
       failures += 1;
     }
   });
 
-  const start = (worker: BoardWorker) => FiberMap.run(fibers, worker.id, runWorker(worker));
+  const start = (worker: BoardWorker, url: string) =>
+    FiberMap.run(fibers, worker.id, runWorker(worker, url));
 
   const sync: WorkerConnectionsShape["sync"] = Effect.fn("WorkerConnections.sync")(
     function* (workers) {
@@ -384,6 +456,7 @@ export const makeWorkerConnections = Effect.gen(function* () {
         if (wanted.has(workerId)) continue;
         // Removed from the registry: stop dialing, and forget what it reported.
         yield* FiberMap.remove(fibers, workerId);
+        yield* host.close(workerId);
         persisted.delete(workerId);
         yield* store.remove(workerId);
         yield* SubscriptionRef.update(entries, (map) => {
@@ -394,23 +467,25 @@ export const makeWorkerConnections = Effect.gen(function* () {
       }
       for (const worker of workers) {
         const existing = before.get(worker.id);
-        if (existing !== undefined && existing.worker.url === worker.url) {
-          if (existing.worker.label !== worker.label) {
+        if (existing !== undefined) {
+          if (existing.worker !== worker) {
             yield* SubscriptionRef.update(entries, (map) =>
               new Map(map).set(worker.id, { ...existing, worker }),
             );
           }
           continue;
         }
+        const url = yield* host.ensure(worker.id);
         yield* SubscriptionRef.update(entries, (map) =>
           new Map(map).set(worker.id, {
             worker,
+            url,
             link: null,
-            status: existing?.status ?? bootStatus(persisted.get(worker.id)),
-            snapshot: existing?.snapshot ?? persisted.get(worker.id)?.snapshot ?? null,
+            status: bootStatus(persisted.get(worker.id)),
+            snapshot: persisted.get(worker.id)?.snapshot ?? null,
           }),
         );
-        yield* start(worker);
+        yield* start(worker, url);
       }
     },
   );
@@ -419,7 +494,9 @@ export const makeWorkerConnections = Effect.gen(function* () {
     SubscriptionRef.get(entries).pipe(
       Effect.flatMap((map) => {
         const entry = map.get(workerId);
-        return entry === undefined ? Effect.void : start(entry.worker).pipe(Effect.asVoid);
+        return entry === undefined
+          ? Effect.void
+          : start(entry.worker, entry.url).pipe(Effect.asVoid);
       }),
     );
 

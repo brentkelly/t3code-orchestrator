@@ -86,6 +86,7 @@ function makeCard(overrides: Partial<BoardCard>): BoardCard {
     ci: null,
     ciLastOutcome: null,
     ciRoundTrips: 0,
+    resources: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -129,6 +130,7 @@ function makeStepState(id: string): BoardCardStepState {
     slotHeld: false,
     forceStart: false,
     queuedBy: null,
+    queuedDetail: null,
     startedAt: null,
     updatedAt: NOW,
   };
@@ -649,6 +651,7 @@ describe("board projector", () => {
         slotHeld: true,
         forceStart: false,
         queuedBy: null,
+        queuedDetail: null,
         startedAt: NOW,
         updatedAt: NOW,
       };
@@ -664,6 +667,7 @@ describe("board projector", () => {
             slotHeld: false,
             forceStart: false,
             queuedBy: null,
+            queuedDetail: null,
             startedAt: null,
           },
         },
@@ -816,6 +820,7 @@ describe("board projector", () => {
         slotHeld: false,
         forceStart: false,
         queuedBy: null,
+        queuedDetail: null,
         startedAt: null,
         updatedAt: NOW,
       };
@@ -864,6 +869,7 @@ describe("board projector", () => {
         slotHeld: false,
         forceStart: false,
         queuedBy: null,
+        queuedDetail: null,
         startedAt: NOW,
         updatedAt: NOW,
       };
@@ -962,6 +968,7 @@ describe("board projector", () => {
         slotHeld: false,
         forceStart: false,
         queuedBy: null,
+        queuedDetail: null,
         startedAt: null,
         updatedAt: NOW,
       };
@@ -1056,6 +1063,7 @@ describe("board projector", () => {
         slotHeld: false,
         forceStart: false,
         queuedBy: null,
+        queuedDetail: null,
         startedAt: null,
         updatedAt: NOW,
       };

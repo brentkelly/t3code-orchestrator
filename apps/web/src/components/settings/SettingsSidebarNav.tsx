@@ -17,6 +17,8 @@ import {
   FolderTreeIcon,
   // T3o: Board settings nav icon.
   LayoutGridIcon,
+  // T3o: the board's Workers nav icon (T3O-84).
+  ServerCogIcon,
   GitBranchIcon,
   GlobeIcon,
   InfoIcon,
@@ -61,6 +63,9 @@ import {
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { useSettingsSectionNavigation } from "./useSettingsSectionNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
+// T3o: the board's Workers nav item (T3O-84).
+import { isSettingsNavPathActive } from "../../board/settings/boardSettingsPaths";
+import { SettingsNavAttentionDot } from "../../board/workers/WorkersNavDot";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -107,6 +112,8 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/connections": ServerIcon,
   // T3o: Board settings page icon.
   "/settings/board": LayoutGridIcon,
+  // T3o: the board's Workers page icon (T3O-84).
+  "/settings/board/workers": ServerCogIcon,
   "/settings/access": ShieldCheckIcon,
   "/settings/secrets": KeyRoundIcon,
   "/settings/maintenance": WrenchIcon,
@@ -138,9 +145,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
   const navPaths = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths);
   const sectionNavigation = useSettingsSectionNavigation(
-    navPaths.find((to) => activePath === to || activePath.startsWith(`${to}/`)) ??
-      navPaths[0] ??
-      "",
+    // T3o: the longest matching entry wins, so Workers does not also light Board (T3O-84).
+    navPaths.find((to) => isSettingsNavPathActive(activePath, to, navPaths)) ?? navPaths[0] ?? "",
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -407,7 +413,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       <SidebarMenu role="presentation">
                         {group.paths.map((to) => {
                           const Icon = SETTINGS_SECTION_ICONS[to];
-                          const isActive = activePath === to || activePath.startsWith(`${to}/`);
+                          // T3o: the longest matching entry wins (T3O-84).
+                          const isActive = isSettingsNavPathActive(activePath, to, navPaths);
                           return (
                             <SidebarMenuItem key={to} role="presentation">
                               <SidebarMenuButton
@@ -425,6 +432,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                                 >
                                   {SETTINGS_SECTION_LABELS[to]}
                                 </span>
+                                {/* T3o: a worker needs attention (T3O-84). */}
+                                <SettingsNavAttentionDot to={to} />
                               </SidebarMenuButton>
                             </SidebarMenuItem>
                           );

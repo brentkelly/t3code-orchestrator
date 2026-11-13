@@ -1,15 +1,15 @@
-// @effect-diagnostics nodeBuiltinImport:off - the worker's HTTP endpoints are a real local server.
-import * as NodeHttp from "node:http";
-
 import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  AuthFilesystemReadScope,
   BOARD_LOCAL_WORKER_ID,
   BoardCardId,
   CommandId,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  T3O_TUNNEL_PROTOCOL_VERSION,
   ThreadId,
-  type BoardWorkerAddError,
   type BoardWorkerConnectionState,
   type BoardWorkerSetup,
   type ExecutionEnvironmentDescriptor,
@@ -23,36 +23,44 @@ import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { FetchHttpClient } from "effect/http";
 import { TestClock } from "effect/testing";
 
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { BoardEngine, type BoardEngineShape } from "../BoardEngine.ts";
-import { BoardProjectorDecodeError } from "../errors.ts";
+import { BoardCommandInvariantError } from "../errors.ts";
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
 import {
   boardStackEngine,
   boardStackSnapshotQuery,
   makeBoardStackTestLayer,
 } from "../boardStack.testkit.ts";
+import {
+  BoardWorkerJoin,
+  joinCallerAddress,
+  makeBoardWorkerJoin,
+  type BoardWorkerJoinShape,
+  type JoinOutcome,
+} from "../tunnel/BoardWorkerJoin.ts";
+import {
+  BoardWorkerJoinStore,
+  hashSecret,
+  makeMemoryBoardWorkerJoinStore,
+} from "../tunnel/BoardWorkerJoinStore.ts";
 import { makeMemoryBoardRelayStore } from "./BoardRelayStore.ts";
 import { makeBoardWorkers, type BoardWorkersShape } from "./BoardWorkers.ts";
 import {
+  encodeWorkerToken,
   makeWorkerConnections,
   WorkerConnections,
   workerSecretName,
   type WorkerConnectionsShape,
 } from "./WorkerConnections.ts";
 import { WorkerRpcError } from "./WorkerTransport.ts";
-import {
-  helloFor,
-  makeFakeWorkerLayer,
-  unsupportedGateway,
-  type FakeWorker,
-} from "./workers.testkit.ts";
+import { makeFakeWorkerLayer, unsupportedGateway, type FakeWorker } from "./workers.testkit.ts";
 
 const BOARD_ENVIRONMENT_ID = EnvironmentId.make("env-board");
 const WORKER_ID = EnvironmentId.make("env-linux-box");
+const WORKER_URL = "http://127.0.0.1:41001";
 const PROJECT_ID = ProjectId.make("project-app");
 const ORIGIN_URL = "git@github.com:acme/app.git";
 const t0 = "2026-10-21T10:00:00.000Z";
@@ -64,70 +72,6 @@ const descriptor = (environmentId: string, label: string): ExecutionEnvironmentD
   serverVersion: "0.0.45",
   capabilities: { repositoryIdentity: true },
 });
-
-/** The worker's upstream HTTP endpoints: its descriptor, and a token exchange
-    that honours each one-time token once. */
-interface WorkerHttp {
-  readonly origin: string;
-  descriptor: ExecutionEnvironmentDescriptor;
-  readonly tokens: Map<string, string>;
-  /** Every token exchange the board attempted. */
-  readonly exchanges: Array<string>;
-}
-
-const withWorkerHttp = Effect.acquireRelease(
-  Effect.callback<{ server: NodeHttp.Server; http: WorkerHttp }>((resume) => {
-    const http: WorkerHttp = {
-      origin: "",
-      descriptor: descriptor(WORKER_ID, "linux-box"),
-      tokens: new Map(),
-      exchanges: [],
-    };
-    const server = NodeHttp.createServer((request, response) => {
-      if (request.url === "/.well-known/t3/environment") {
-        response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify(http.descriptor));
-        return;
-      }
-      if (request.url === "/oauth/token" && request.method === "POST") {
-        let body = "";
-        request.on("data", (chunk) => (body += String(chunk)));
-        request.on("end", () => {
-          const form = new URLSearchParams(body);
-          const token = form.get("subject_token") ?? "";
-          http.exchanges.push(`${token}:${form.get("client_label") ?? ""}`);
-          const access = http.tokens.get(token);
-          if (access === undefined) {
-            response.writeHead(400, { "content-type": "application/json" });
-            response.end(JSON.stringify({ error: "invalid_grant" }));
-            return;
-          }
-          http.tokens.delete(token);
-          response.writeHead(200, { "content-type": "application/json" });
-          response.end(
-            JSON.stringify({
-              access_token: access,
-              issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-              token_type: "Bearer",
-              expires_in: 2_592_000,
-              scope: "orchestration:read orchestration:operate",
-            }),
-          );
-        });
-        return;
-      }
-      response.writeHead(404);
-      response.end();
-    });
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (address === null || typeof address === "string") return;
-      Object.assign(http, { origin: `http://127.0.0.1:${String(address.port)}` });
-      resume(Effect.succeed({ server, http }));
-    });
-  }),
-  ({ server }) => Effect.sync(() => server.close()),
-).pipe(Effect.map(({ http }) => http));
 
 const gitStub = Layer.succeed(GitVcsDriver, {
   readConfigValue: (_cwd: string, key: string) =>
@@ -142,14 +86,13 @@ const environmentStub = Layer.succeed(ServerEnvironment, {
 const layer = makeBoardStackTestLayer("t3o-board-workers-").pipe(
   Layer.provideMerge(gitStub),
   Layer.provideMerge(environmentStub),
-  Layer.provideMerge(FetchHttpClient.layer),
 );
 
 let projectCommands = 0;
 
-/** A board with a project, a worker's HTTP endpoints, its scripted
-    connection, and the service under test. `dispatch` stands in front of the
-    board engine's, for a dispatch that fails. */
+/** A board with a project, a worker's scripted connection behind a fake tunnel, the
+    join service, and the service under test. `dispatch` stands in front of the board
+    engine's, for a dispatch that fails. */
 const setupWith = (
   options: {
     readonly dispatch?: (real: BoardEngineShape["dispatch"]) => BoardEngineShape["dispatch"];
@@ -165,9 +108,8 @@ const setupWith = (
       workspaceRoot: "/tmp/app",
       createdAt: t0,
     });
-    const http = yield* withWorkerHttp;
     const kit = yield* makeFakeWorkerLayer;
-    const worker = yield* kit.fake.add(http.origin, WORKER_ID);
+    const worker = yield* kit.fake.add(WORKER_URL, WORKER_ID);
     worker.providers = [
       {
         instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -177,18 +119,28 @@ const setupWith = (
         models: [],
       },
     ];
+    const joinStore = yield* makeMemoryBoardWorkerJoinStore;
     const connections = yield* makeWorkerConnections.pipe(Effect.provide(kit.layer));
     const relay = yield* makeMemoryBoardRelayStore;
     const boardEngine = yield* BoardEngine;
-    const workers = yield* makeBoardWorkers.pipe(
+    const engineForTest = {
+      ...boardEngine,
+      dispatch: options.dispatch?.(boardEngine.dispatch) ?? boardEngine.dispatch,
+    };
+    const join = yield* makeBoardWorkerJoin.pipe(
+      Effect.provideService(BoardEngine, engineForTest),
       Effect.provideService(WorkerConnections, connections),
-      Effect.provideService(BoardEngine, {
-        ...boardEngine,
-        dispatch: options.dispatch?.(boardEngine.dispatch) ?? boardEngine.dispatch,
-      }),
+      Effect.provideService(BoardWorkerJoinStore, joinStore),
       Effect.provide(relay.layer.pipe(Layer.provideMerge(kit.layer))),
     );
-    return { http, kit, worker, connections, workers, relay };
+    const workers = yield* makeBoardWorkers.pipe(
+      Effect.provideService(WorkerConnections, connections),
+      Effect.provideService(BoardEngine, engineForTest),
+      Effect.provideService(BoardWorkerJoin, join),
+      Effect.provideService(BoardWorkerJoinStore, joinStore),
+      Effect.provide(relay.layer.pipe(Layer.provideMerge(kit.layer))),
+    );
+    return { kit, worker, connections, workers, relay, join, joinStore };
   });
 
 const setup = setupWith();
@@ -203,23 +155,46 @@ const waitFor = (
     Stream.runHead,
   );
 
-const addWithToken = (
-  workers: BoardWorkersShape,
-  http: WorkerHttp,
-  token = "one-time",
-  extra: { readonly expectedEnvironmentId?: EnvironmentId } = {},
-) => {
-  if (!http.tokens.has(token)) http.tokens.set(token, `access-${token}`);
-  return workers.add({
-    url: http.origin,
-    credential: { kind: "pairing-token", token },
-    label: "linux-box",
-    ...extra,
+const joinRequest = (code: string, extra: Record<string, unknown> = {}) => ({
+  code,
+  environmentId: WORKER_ID,
+  label: "linux-box",
+  t3oRelease: "t3o0.1.8.3",
+  tunnelProtocol: T3O_TUNNEL_PROTOCOL_VERSION,
+  ...extra,
+});
+
+/**
+ * Join the worker with a fresh code, as `t3o-worker join` would, then hand the board its
+ * session as the tunnel's hello would. The fake tunnel is ready as soon as it is opened.
+ */
+const joinWorker = (
+  input: {
+    readonly workers: BoardWorkersShape;
+    readonly join: BoardWorkerJoinShape;
+    readonly kit: Effect.Success<typeof makeFakeWorkerLayer>;
+    readonly connections: WorkerConnectionsShape;
+  },
+  token = "access-one-time",
+) =>
+  Effect.gen(function* () {
+    const created = yield* input.workers.createJoinCode;
+    const outcome = yield* input.join.join(joinRequest(created.code), "203.0.113.7");
+    assert.strictEqual(outcome._tag, "accepted");
+    // The worker's first hello hands its session over, then its tunnel is ready (again).
+    yield* input.kit.secrets.store.set(workerSecretName(WORKER_ID), encodeWorkerToken(token));
+    yield* input.kit.tunnel.setPhase(WORKER_ID, "down");
+    yield* input.kit.tunnel.setPhase(WORKER_ID, "ready");
+    return { created, outcome };
   });
+
+const acceptedBody = (outcome: JoinOutcome) => {
+  assert.strictEqual(outcome._tag, "accepted");
+  return (outcome as Extract<JoinOutcome, { readonly _tag: "accepted" }>).body;
 };
 
-const addError = <A>(effect: Effect.Effect<A, BoardWorkerAddError>) =>
-  Effect.flip(effect).pipe(Effect.map((error) => error.code));
+const refusalOf = (outcome: JoinOutcome) =>
+  outcome._tag === "refused" ? outcome.body.refused : "accepted";
 
 /** Each test on its own board: the stack's database is fresh per build. */
 const test = <A, E>(
@@ -228,282 +203,247 @@ const test = <A, E>(
 ) => it.effect(name, () => Effect.scoped(body()).pipe(Effect.provide(layer)));
 
 describe("BoardWorkers", () => {
-  test("adds a worker from a minted token: its own session, stored, registered, dialed", () =>
+  test("joins a worker with a code: registered, credential issued, its tunnel followed", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, kit, worker, connections, workers } = yield* setup;
-        const result = yield* addWithToken(workers, http);
-        assert.strictEqual(result.worker.id, WORKER_ID);
-        assert.strictEqual(result.worker.label, "linux-box");
-        assert.strictEqual(result.worker.url, http.origin);
-        assert.strictEqual(result.totalProjects, 1);
-        assert.deepStrictEqual(
-          result.worker.snapshot?.providers.map((provider) => provider.instanceId),
-          ["claudeAgent"],
+        const context = yield* setup;
+        const { kit, worker, connections, workers, joinStore } = context;
+        const { created, outcome } = yield* joinWorker(context);
+        assert.match(created.code, /^[0-9A-Z]{4}-[0-9A-Z]{4}$/);
+        const body = acceptedBody(outcome);
+        assert.strictEqual(body.boardEnvironmentId, BOARD_ENVIRONMENT_ID);
+        assert.strictEqual(body.boardLabel, "studio");
+        // Only the credential's hash is kept, and it names the worker.
+        assert.strictEqual(
+          yield* joinStore.verifyCredential(hashSecret(body.tunnelCredential)),
+          WORKER_ID,
         );
-        // The board's own session, labelled for the worker's Clients list.
-        assert.deepStrictEqual(http.exchanges, ["one-time:T3o board (studio)"]);
-        assert.deepStrictEqual([...kit.secrets.secrets.keys()], [workerSecretName(WORKER_ID)]);
         yield* waitFor(connections, "online");
         assert.strictEqual(worker.dialedTokens.at(-1), "access-one-time");
+        assert.deepStrictEqual(kit.tunnel.closed, []);
         const state = yield* workers.state;
+        const [view] = state.workers;
+        assert.strictEqual(view?.label, "linux-box");
+        assert.strictEqual(view?.abbreviation, "LIN");
+        assert.strictEqual(view?.t3oRelease, "t3o0.1.8.3");
+        assert.isUndefined(view?.url);
+        const [code] = state.joinCodes;
+        assert.strictEqual(code?.state, "used");
+        assert.strictEqual(code?.usedBy?.address, "203.0.113.7");
+        assert.deepStrictEqual(code?.milestones, ["code-accepted"]);
+      }),
+    ));
+
+  test("a join whose register fails drops a contested abbreviation, then reopens its code", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let refuseAll = false;
+        const { workers, join } = yield* setupWith({
+          dispatch: (real) => (command, options) =>
+            command.type === "board.worker.register" &&
+            (refuseAll || command.worker.abbreviation !== undefined)
+              ? Effect.fail(
+                  new BoardCommandInvariantError({
+                    commandType: command.type,
+                    detail: "abbreviation taken",
+                  }),
+                )
+              : real(command, options),
+        });
+        const first = yield* workers.createJoinCode;
+        assert.strictEqual(refusalOf(yield* join.join(joinRequest(first.code), null)), "accepted");
+        const joined = (yield* workers.state).workers.find((view) => view.id === WORKER_ID);
+        assert.isUndefined(joined?.abbreviation);
+
+        refuseAll = true;
+        const second = yield* workers.createJoinCode;
+        assert.strictEqual(
+          refusalOf(
+            yield* join.join(joinRequest(second.code, { environmentId: "env-other" }), null),
+          ),
+          "busy",
+        );
+        const reopened = (yield* workers.state).joinCodes.find(
+          (code) => code.codeId === second.codeId,
+        );
+        assert.notStrictEqual(reopened?.state, "used");
+      }),
+    ));
+
+  test("refuses unknown, used, cancelled and expired codes; needs-update keeps the code", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { workers, join } = yield* setup;
+        assert.strictEqual(refusalOf(yield* join.join(joinRequest("ZZZZ-ZZZZ"), null)), "unknown");
+        assert.strictEqual(refusalOf(yield* join.join({ code: 1 }, null)), "unknown");
+
+        const older = yield* workers.createJoinCode;
+        const tooOld = yield* join.join(joinRequest(older.code, { tunnelProtocol: 0 }), null);
+        assert.strictEqual(refusalOf(tooOld), "needs-update");
+        const afterUpdate = (yield* workers.state).joinCodes.find(
+          (code) => code.codeId === older.codeId,
+        );
+        assert.strictEqual(afterUpdate?.state, "open");
+        assert.strictEqual(afterUpdate?.lastRefusal?.reason, "needs-update");
+        // Typed loosely (lower case, no dash) it still works, once.
+        const loose = older.code.toLowerCase().replace("-", "");
+        assert.strictEqual(refusalOf(yield* join.join(joinRequest(loose), null)), "accepted");
+        assert.strictEqual(refusalOf(yield* join.join(joinRequest(older.code), null)), "used");
+
+        const cancelled = yield* workers.createJoinCode;
+        yield* workers.cancelJoinCode(cancelled.codeId);
+        assert.strictEqual(
+          refusalOf(yield* join.join(joinRequest(cancelled.code), null)),
+          "cancelled",
+        );
+
+        const expiring = yield* workers.createJoinCode;
+        yield* TestClock.adjust("11 minutes");
+        assert.strictEqual(
+          refusalOf(yield* join.join(joinRequest(expiring.code), null)),
+          "expired",
+        );
+
+        const fresh = yield* workers.createJoinCode;
+        const board = yield* join.join(
+          joinRequest(fresh.code, { environmentId: BOARD_ENVIRONMENT_ID }),
+          null,
+        );
+        assert.strictEqual(refusalOf(board), "board-server");
+      }),
+    ));
+
+  test("trusts X-Forwarded-For only from a reverse proxy on the board's own machine", () =>
+    Effect.sync(() => {
+      const from = (remoteAddress: string, forwarded?: string) =>
+        joinCallerAddress({
+          headers: forwarded === undefined ? {} : { "x-forwarded-for": forwarded },
+          socket: { remoteAddress },
+        });
+      assert.strictEqual(from("127.0.0.1", "198.51.100.1, 203.0.113.9"), "203.0.113.9");
+      assert.strictEqual(from("::ffff:127.0.0.1", "203.0.113.9"), "203.0.113.9");
+      assert.strictEqual(from("::ffff:198.51.100.4", "203.0.113.9"), "198.51.100.4");
+      assert.strictEqual(from("127.0.0.1"), "127.0.0.1");
+    }));
+
+  test("a re-join keeps the worker's names and reattaches it; its new credential works too", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const context = yield* setup;
+        const { workers, join, joinStore, connections } = context;
+        const first = acceptedBody((yield* joinWorker(context)).outcome);
+        yield* waitFor(connections, "online");
+        yield* workers.rename({ workerId: WORKER_ID, label: "Build box", abbreviation: "BB1" });
+
+        const code = yield* workers.createJoinCode;
+        const again = acceptedBody(
+          yield* join.join(joinRequest(code.code, { t3oRelease: "t3o0.1.9.1" }), null),
+        );
+        // The session held from before is dropped, so the worker's next hello mints one.
+        assert.isTrue(
+          Option.isNone(yield* context.kit.secrets.store.get(workerSecretName(WORKER_ID))),
+        );
+        const [view] = (yield* workers.state).workers;
+        assert.strictEqual(view?.label, "Build box");
+        assert.strictEqual(view?.abbreviation, "BB1");
+        assert.strictEqual(view?.t3oRelease, "t3o0.1.9.1");
+        const codes = (yield* workers.state).joinCodes;
+        assert.isTrue(codes.find((entry) => entry.codeId === code.codeId)?.usedBy?.rejoin);
+        // The re-join's progress shows on its own code, never on the earlier one.
+        assert.deepStrictEqual(codes.find((entry) => entry.codeId === code.codeId)?.milestones, [
+          "code-accepted",
+        ]);
+        assert.deepStrictEqual(codes.find((entry) => entry.codeId !== code.codeId)?.milestones, []);
+        // The old credential goes only once the new tunnel is proved (BoardTunnelHost).
+        assert.strictEqual(
+          yield* joinStore.verifyCredential(hashSecret(first.tunnelCredential)),
+          WORKER_ID,
+        );
+        assert.strictEqual(
+          yield* joinStore.verifyCredential(hashSecret(again.tunnelCredential)),
+          WORKER_ID,
+        );
+      }),
+    ));
+
+  test("renames a worker; abbreviations are unique and SRV is the board server's", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const context = yield* setup;
+        const { workers } = context;
+        yield* joinWorker(context);
+        const reserved = yield* Effect.flip(
+          workers.rename({ workerId: WORKER_ID, label: "linux-box", abbreviation: "SRV" }),
+        );
+        assert.strictEqual(reserved.code, "invalid");
+        yield* workers.rename({ workerId: WORKER_ID, label: "Build 03", abbreviation: "B03" });
+        const [view] = (yield* workers.state).workers;
+        assert.strictEqual(view?.label, "Build 03");
+        assert.strictEqual(view?.abbreviation, "B03");
+        const local = yield* Effect.flip(
+          workers.rename({ workerId: BOARD_LOCAL_WORKER_ID, label: "Studio", abbreviation: "STU" }),
+        );
+        assert.strictEqual(local.code, "invalid");
+      }),
+    ));
+
+  test("thread access: a session on the worker no wider than the caller's own", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const context = yield* setup;
+        const { worker, connections, workers } = context;
+        yield* joinWorker(context);
+        yield* waitFor(connections, "online");
+        const access = yield* workers.threadAccess(WORKER_ID, {
+          sessionId: "board-session-1",
+          scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope, "settings:write"],
+          deviceLabel: "Chrome",
+        });
+        assert.strictEqual(access.path, `/api/t3o/workers/${WORKER_ID}/`);
+        assert.strictEqual(access.bearerToken, "user-board-session-1");
+        const readOnly = yield* workers.threadAccess(WORKER_ID, {
+          sessionId: "board-session-2",
+          scopes: [AuthOrchestrationReadScope, AuthFilesystemReadScope],
+          deviceLabel: "Phone",
+        });
+        assert.strictEqual(readOnly.bearerToken, "user-board-session-2");
         assert.deepStrictEqual(
-          state.workers.map((entry) => entry.id),
-          [WORKER_ID],
+          worker.mintedUserSessions.map((minted) => [
+            minted.boardSessionId,
+            minted.scopes,
+            minted.label,
+          ]),
+          [
+            [
+              "board-session-1",
+              [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+              "Chrome via T3o board (studio)",
+            ],
+            [
+              "board-session-2",
+              [AuthOrchestrationReadScope, AuthFilesystemReadScope],
+              "Phone via T3o board (studio)",
+            ],
+          ],
         );
+        // The board's own session asked, never the caller's.
+        assert.deepStrictEqual(
+          worker.mintedUserSessions.map((minted) => minted.boardToken),
+          ["access-one-time", "access-one-time"],
+        );
+        const refused = yield* Effect.flip(
+          workers.threadAccess(WORKER_ID, { sessionId: "s", scopes: [], deviceLabel: "x" }),
+        );
+        assert.strictEqual(refused.code, "forbidden");
       }),
     ));
-
-  test("adds a worker from a pasted pairing link", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { http, workers } = yield* setup;
-        http.tokens.set("link-token", "access-link");
-        const result = yield* workers.add({
-          credential: { kind: "pairing-url", pairingUrl: `${http.origin}/pair#token=link-token` },
-          label: "linux-box",
-        });
-        assert.strictEqual(result.worker.url, http.origin);
-        assert.deepStrictEqual(http.exchanges, ["link-token:T3o board (studio)"]);
-      }),
-    ));
-
-  test("names every way adding a worker fails", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { http, worker, workers } = yield* setup;
-
-        // An expired or used token.
-        assert.strictEqual(
-          yield* addError(
-            workers.add({
-              url: http.origin,
-              credential: { kind: "pairing-token", token: "expired" },
-              label: "linux-box",
-            }),
-          ),
-          "invalid-credential",
-        );
-        // A link that is not a link.
-        assert.strictEqual(
-          yield* addError(
-            workers.add({
-              credential: { kind: "pairing-url", pairingUrl: "not a link" },
-              label: "linux-box",
-            }),
-          ),
-          "invalid-credential",
-        );
-        // Nothing listening: the BOARD server can't reach it.
-        assert.strictEqual(
-          yield* addError(
-            workers.add({
-              url: "http://127.0.0.1:9",
-              credential: { kind: "pairing-token", token: "t" },
-              label: "linux-box",
-            }),
-          ),
-          "unreachable",
-        );
-
-        // A different server than the one picked: refused before the one-time
-        // token is spent.
-        const exchangesBefore = http.exchanges.length;
-        assert.strictEqual(
-          yield* addError(
-            addWithToken(workers, http, "unspent", {
-              expectedEnvironmentId: EnvironmentId.make("env-studio-pc"),
-            }),
-          ),
-          "different-server",
-        );
-        assert.strictEqual(http.exchanges.length, exchangesBefore);
-        assert.isTrue(http.tokens.has("unspent"));
-
-        // Below the protocol floor: refused, and its new session handed back.
-        worker.hello = { ...helloFor(WORKER_ID, 0), t3oVersion: "0.0.11" };
-        const incompatible = yield* Effect.flip(addWithToken(workers, http, "old"));
-        assert.strictEqual(incompatible.code, "incompatible");
-        assert.strictEqual(incompatible.workerVersion, "0.0.45");
-        assert.strictEqual(worker.released, 1);
-        worker.hello = helloFor(WORKER_ID);
-
-        // The board server's own link.
-        http.descriptor = descriptor(BOARD_ENVIRONMENT_ID, "studio");
-        assert.strictEqual(yield* addError(addWithToken(workers, http, "self")), "board-server");
-        http.descriptor = descriptor(WORKER_ID, "linux-box");
-
-        // Already a worker.
-        yield* addWithToken(workers, http, "first");
-        assert.strictEqual(yield* addError(addWithToken(workers, http, "again")), "already-worker");
-      }),
-    ));
-
-  test("a handshake that fails on the wire is unreachable, and its new session is given back", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { http, kit, worker, workers } = yield* setup;
-        worker.helloFails = true;
-        const failure = yield* Effect.flip(addWithToken(workers, http, "blip"));
-        assert.strictEqual(failure.code, "unreachable");
-        // Not stored, not registered, and the worker holds no session for it.
-        assert.deepStrictEqual(worker.releasedTokens, ["access-blip"]);
-        assert.strictEqual(kit.secrets.secrets.size, 0);
-        assert.deepStrictEqual((yield* workers.state).workers, []);
-
-        // A server with no handshake at all is still incompatible.
-        worker.helloFails = false;
-        worker.hello = null;
-        assert.strictEqual(
-          yield* addError(addWithToken(workers, http, "upstream")),
-          "incompatible",
-        );
-        assert.deepStrictEqual(worker.releasedTokens, ["access-blip", "access-upstream"]);
-      }),
-    ));
-
-  test("re-pairing a worker whose session still works gives the old session back", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { http, kit, worker, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
-        yield* waitFor(connections, "online");
-
-        http.tokens.set("fresh", "access-fresh");
-        yield* workers.repair({
-          workerId: WORKER_ID,
-          credential: { kind: "pairing-token", token: "fresh" },
-        });
-        assert.deepStrictEqual(worker.releasedTokens, ["access-one-time"]);
-        assert.strictEqual(
-          new TextDecoder().decode(kit.secrets.secrets.get(workerSecretName(WORKER_ID))),
-          "access-fresh",
-        );
-        yield* waitFor(connections, "online");
-        assert.strictEqual(worker.dialedTokens.at(-1), "access-fresh");
-      }),
-    ));
-
-  test("a re-pair whose record fails keeps the worker's previous session", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        let failRepair = false;
-        const { http, kit, worker, connections, workers } = yield* setupWith({
-          dispatch: (real) => (command, options) =>
-            failRepair && command.type === "board.worker.register" && command.mode === "repair"
-              ? Effect.fail(new BoardProjectorDecodeError({ eventType: "x", issue: "disk" }))
-              : real(command, options),
-        });
-        yield* addWithToken(workers, http);
-        yield* waitFor(connections, "online");
-
-        failRepair = true;
-        http.tokens.set("fresh", "access-fresh");
-        const failure = yield* Effect.flip(
-          workers.repair({
-            workerId: WORKER_ID,
-            credential: { kind: "pairing-token", token: "fresh" },
-          }),
-        );
-        // The board's own failure, not "removed meanwhile".
-        assert.strictEqual(failure.code, "unreachable");
-        // The new session goes back; the one the board dials with stays.
-        assert.deepStrictEqual(worker.releasedTokens, ["access-fresh"]);
-        assert.strictEqual(
-          new TextDecoder().decode(kit.secrets.secrets.get(workerSecretName(WORKER_ID))),
-          "access-one-time",
-        );
-      }),
-    ));
-
-  test("a re-pair of a worker removed meanwhile says so, and stores nothing", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        let removeFirst = false;
-        const { http, kit, connections, workers } = yield* setupWith({
-          dispatch: (real) => (command, options) =>
-            removeFirst && command.type === "board.worker.register" && command.mode === "repair"
-              ? real(
-                  {
-                    type: "board.worker.remove",
-                    commandId: CommandId.make("cmd-remove-meanwhile"),
-                    workerId: WORKER_ID,
-                    createdAt: t0,
-                  },
-                  options,
-                ).pipe(Effect.andThen(real(command, options)))
-              : real(command, options),
-        });
-        yield* addWithToken(workers, http);
-        yield* waitFor(connections, "online");
-
-        removeFirst = true;
-        http.tokens.set("fresh", "access-fresh");
-        const failure = yield* Effect.flip(
-          workers.repair({
-            workerId: WORKER_ID,
-            credential: { kind: "pairing-token", token: "fresh" },
-          }),
-        );
-        assert.strictEqual(failure.code, "not-found");
-        assert.strictEqual(failure.message, "That worker was removed meanwhile.");
-        assert.isFalse(kit.secrets.secrets.has(workerSecretName(WORKER_ID)));
-      }),
-    ));
-
-  test("re-pairing from the picker keeps the address the board already dials", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { http, worker, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
-        yield* waitFor(connections, "online");
-
-        // The client minted the token over its own address for the worker,
-        // which the board server can't reach.
-        http.tokens.set("fresh", "access-fresh");
-        const repaired = yield* workers.repair({
-          workerId: WORKER_ID,
-          url: "http://127.0.0.1:1",
-          credential: { kind: "pairing-token", token: "fresh" },
-        });
-        assert.strictEqual(repaired.worker.url, http.origin);
-        yield* waitFor(connections, "online");
-        assert.strictEqual(worker.dialedTokens.at(-1), "access-fresh");
-      }),
-    ));
-
-  test("re-pairing from the picker moves when another server now answers at the old address", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { http, kit, worker, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
-        yield* waitFor(connections, "online");
-
-        // The worker moved, and a different server took over its old address.
-        const moved = yield* withWorkerHttp;
-        const movedWorker = yield* kit.fake.add(moved.origin, WORKER_ID);
-        http.descriptor = descriptor("env-ci-runner-3", "ci-runner-3");
-        moved.tokens.set("fresh", "access-fresh");
-        const repaired = yield* workers.repair({
-          workerId: WORKER_ID,
-          url: moved.origin,
-          credential: { kind: "pairing-token", token: "fresh" },
-        });
-        assert.strictEqual(repaired.worker.url, moved.origin);
-        yield* waitFor(connections, "online");
-        assert.strictEqual(movedWorker.dialedTokens.at(-1), "access-fresh");
-        // The old session is given back where the worker now is, not to
-        // whatever answers at its old address.
-        assert.deepStrictEqual(movedWorker.releasedTokens, ["access-one-time"]);
-        assert.deepStrictEqual(worker.releasedTokens, []);
-      }),
-    ));
-
   test("removes a worker: gives the session back, then forgets token and record", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, kit, worker, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
+        const context = yield* setup;
+        const { kit, worker, connections, workers } = context;
+        const { outcome: joinedOutcome } = yield* joinWorker(context);
+        const joined = acceptedBody(joinedOutcome);
         yield* waitFor(connections, "online");
         // The session goes back only once the removal has landed.
         const registeredAtRelease: Array<boolean> = [];
@@ -511,10 +451,27 @@ describe("BoardWorkers", () => {
           Effect.map((current) => current.workers.some((entry) => entry.id === WORKER_ID)),
           Effect.flatMap((registered) => Effect.sync(() => registeredAtRelease.push(registered))),
         );
+        const closedAtRelease: Array<number> = [];
+        const release = worker.onRelease;
+        worker.onRelease = release.pipe(
+          Effect.andThen(Effect.sync(() => void closedAtRelease.push(kit.tunnel.closed.length))),
+        );
+        const credentialBefore = yield* context.joinStore.verifyCredential(
+          hashSecret(joined.tunnelCredential),
+        );
+        assert.strictEqual(credentialBefore, WORKER_ID);
         const removed = yield* workers.remove(WORKER_ID);
         assert.isTrue(removed.revoked);
         assert.deepStrictEqual(registeredAtRelease, [false]);
-        assert.strictEqual(worker.released, 1);
+        // The board's sessions go back through the tunnel before its endpoint closes,
+        // and the tunnel credential stops working.
+        assert.deepStrictEqual(closedAtRelease, [0]);
+        assert.deepStrictEqual(kit.tunnel.closed, [WORKER_ID]);
+        assert.isNull(
+          yield* context.joinStore.verifyCredential(hashSecret(joined.tunnelCredential)),
+        );
+        assert.strictEqual(worker.releasedAll, 1);
+        assert.strictEqual(worker.released, 0);
         assert.strictEqual(kit.secrets.secrets.size, 0);
         assert.deepStrictEqual((yield* workers.state).workers, []);
         assert.deepStrictEqual(yield* kit.snapshots.list, []);
@@ -524,8 +481,9 @@ describe("BoardWorkers", () => {
   test("a worker removed and added back reads its signals from its log's head", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, connections, workers, relay } = yield* setup;
-        yield* addWithToken(workers, http);
+        const context = yield* setup;
+        const { connections, workers, relay } = context;
+        yield* joinWorker(context);
         yield* waitFor(connections, "online");
         yield* relay.store.saveSignalCursor(WORKER_ID, 7);
 
@@ -535,7 +493,7 @@ describe("BoardWorkers", () => {
         // A cursor left behind (a crash between the removal and forgetting
         // it) doesn't survive adding the worker back either.
         yield* relay.store.saveSignalCursor(WORKER_ID, 7);
-        yield* addWithToken(workers, http, "again");
+        yield* joinWorker(context, "access-again");
         assert.isNull(yield* relay.store.signalCursor(WORKER_ID));
       }),
     ));
@@ -543,7 +501,8 @@ describe("BoardWorkers", () => {
   test("removal previews and applies D22: default fallback, holds, and a stopped step", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, worker, connections, workers } = yield* setup;
+        const context = yield* setup;
+        const { worker, connections, workers } = context;
         const engine = yield* boardStackEngine;
         // The gateway is bound to each link as it is made.
         const stopped: Array<string> = [];
@@ -551,7 +510,7 @@ describe("BoardWorkers", () => {
           ...unsupportedGateway,
           stopSession: (input) => Effect.sync(() => void stopped.push(input.threadId)),
         };
-        yield* addWithToken(workers, http);
+        yield* joinWorker(context);
         yield* waitFor(connections, "online");
         const create = (id: string, title: string) =>
           engine.dispatch({
@@ -645,8 +604,9 @@ describe("BoardWorkers", () => {
   test("a removal preview with nothing there, and none for the default worker", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
+        const context = yield* setup;
+        const { connections, workers } = context;
+        yield* joinWorker(context);
         yield* waitFor(connections, "online");
         const preview = yield* workers.removePreview(WORKER_ID);
         assert.deepStrictEqual([preview.toDefault, preview.byHand], [[], []]);
@@ -659,8 +619,9 @@ describe("BoardWorkers", () => {
   test("refuses removing the default worker, and making an offline one the default", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, worker, kit, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
+        const context = yield* setup;
+        const { worker, kit, connections, workers } = context;
+        yield* joinWorker(context);
         yield* waitFor(connections, "online");
         yield* workers.setDefault(WORKER_ID);
         assert.strictEqual((yield* workers.state).defaultWorkerId, WORKER_ID);
@@ -677,49 +638,12 @@ describe("BoardWorkers", () => {
       }),
     ));
 
-  test("re-pairs a revoked worker, keeping its label", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { http, kit, worker, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
-        yield* waitFor(connections, "online");
-
-        // Revoked on the worker: the socket closes, and the redial is refused.
-        worker.mode = "unauthorized";
-        yield* kit.fake.drop(worker);
-        yield* waitFor(connections, "offline");
-        yield* TestClock.adjust("1 second");
-        yield* waitFor(connections, "unauthorized");
-
-        // A link from another server is refused for this worker.
-        http.descriptor = descriptor("env-ci-runner-3", "ci-runner-3");
-        http.tokens.set("wrong", "access-wrong");
-        const wrong = yield* Effect.flip(
-          workers.repair({
-            workerId: WORKER_ID,
-            credential: { kind: "pairing-token", token: "wrong" },
-          }),
-        );
-        assert.strictEqual(wrong.code, "different-server");
-        http.descriptor = descriptor(WORKER_ID, "linux-box");
-
-        worker.mode = "ok";
-        http.tokens.set("fresh", "access-fresh");
-        const repaired = yield* workers.repair({
-          workerId: WORKER_ID,
-          credential: { kind: "pairing-token", token: "fresh" },
-        });
-        assert.strictEqual(repaired.worker.label, "linux-box");
-        yield* waitFor(connections, "online");
-        assert.strictEqual(worker.dialedTokens.at(-1), "access-fresh");
-      }),
-    ));
-
   test("sets a project up on a worker: clones its origin into the projects folder", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, worker, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
+        const context = yield* setup;
+        const { worker, connections, workers } = context;
+        yield* joinWorker(context);
         yield* waitFor(connections, "online");
 
         const started = yield* workers.setupProject({ projectId: PROJECT_ID, workerId: WORKER_ID });
@@ -749,8 +673,9 @@ describe("BoardWorkers", () => {
   test("two Set up calls at once for the same project and worker start one clone", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, worker, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
+        const context = yield* setup;
+        const { worker, connections, workers } = context;
+        yield* joinWorker(context);
         yield* waitFor(connections, "online");
 
         // The worker takes a moment to accept the clone.
@@ -776,8 +701,9 @@ describe("BoardWorkers", () => {
   test("a Set up interrupted before the worker answers leaves no stuck clone", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, worker, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
+        const context = yield* setup;
+        const { worker, connections, workers } = context;
+        yield* joinWorker(context);
         yield* waitFor(connections, "online");
 
         // The worker never answers, and the client gives up on the call.
@@ -808,8 +734,9 @@ describe("BoardWorkers", () => {
   test("a Set up abandoned after the worker accepted follows that clone next time", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, worker, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
+        const context = yield* setup;
+        const { worker, connections, workers } = context;
+        yield* joinWorker(context);
         yield* waitFor(connections, "online");
 
         // The worker starts cloning, but its answer never reaches the board.
@@ -848,8 +775,9 @@ describe("BoardWorkers", () => {
   test("a worker that never accepts the clone fails Set up instead of hanging", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, worker, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
+        const context = yield* setup;
+        const { worker, connections, workers } = context;
+        yield* joinWorker(context);
         yield* waitFor(connections, "online");
 
         worker.startClone = () => Effect.never;
@@ -866,8 +794,9 @@ describe("BoardWorkers", () => {
   test("classifies a failed clone and keeps its log", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, worker, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
+        const context = yield* setup;
+        const { worker, connections, workers } = context;
+        yield* joinWorker(context);
         yield* waitFor(connections, "online");
         yield* workers.setupProject({
           projectId: PROJECT_ID,
@@ -900,8 +829,9 @@ describe("BoardWorkers", () => {
   test("a retry the worker no longer tracks starts a fresh clone instead of hanging", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, worker, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
+        const context = yield* setup;
+        const { worker, connections, workers } = context;
+        yield* joinWorker(context);
         yield* waitFor(connections, "online");
         yield* workers.setupProject({ projectId: PROJECT_ID, workerId: WORKER_ID });
         const [first] = worker.cloneStarts;
@@ -936,8 +866,9 @@ describe("BoardWorkers", () => {
   test("a clone the worker refuses to start fails as setup, with its reason", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, worker, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
+        const context = yield* setup;
+        const { worker, connections, workers } = context;
+        yield* joinWorker(context);
         yield* waitFor(connections, "online");
         worker.startClone = () =>
           Effect.fail(
@@ -958,8 +889,9 @@ describe("BoardWorkers", () => {
   test("a worker going offline mid-clone fails the setup as interrupted", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, kit, worker, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
+        const context = yield* setup;
+        const { kit, worker, connections, workers } = context;
+        yield* joinWorker(context);
         yield* waitFor(connections, "online");
         yield* workers.setupProject({ projectId: PROJECT_ID, workerId: WORKER_ID });
         const [start] = worker.cloneStarts;
@@ -979,8 +911,9 @@ describe("BoardWorkers", () => {
   test("refuses a project with no remote, and a worker that is not online", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, kit, worker, connections, workers } = yield* setup;
-        yield* addWithToken(workers, http);
+        const context = yield* setup;
+        const { kit, worker, connections, workers } = context;
+        yield* joinWorker(context);
         yield* waitFor(connections, "online");
         worker.mode = "unreachable";
         yield* kit.fake.drop(worker);

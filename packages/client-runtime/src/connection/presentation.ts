@@ -4,6 +4,8 @@ import * as Option from "effect/Option";
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import type { ConnectionTarget, SupervisorConnectionState } from "./model.ts";
 import { connectionRouteId, connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
+// T3o: a proxied worker has no MCP address (T3O-84).
+import { environmentBasePath } from "../environment/basePath.ts";
 
 export type EnvironmentConnectionPhase =
   | "available"
@@ -126,6 +128,8 @@ function mcpUrlFromBase(httpBaseUrl: string): string | null {
   } catch {
     return null;
   }
+  // T3o: a board proxies a worker's thread view only, not its /mcp (T3O-84).
+  if (environmentBasePath(url) !== "") return null;
   url.pathname = "/mcp";
   url.search = "";
   url.hash = "";

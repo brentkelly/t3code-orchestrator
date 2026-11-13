@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { layer as BoardPullRequestGatewayLive } from "./BoardPullRequestGateway.ts";
-import { BoardStepSlotsLive } from "./BoardStepSlots.ts";
+import { BoardCapacityClientLive } from "./capacity/BoardCapacityClient.ts";
 import { BoardProjectFileLive } from "./projectConfig/BoardProjectFile.ts";
 import { BoardRuntimeLive } from "./runtimeLayer.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
@@ -29,13 +29,21 @@ import { BoardWorkersLive } from "./workers/BoardWorkers.ts";
 import { McpRelayHostLive } from "./workers/McpRelayHost.ts";
 import { WorkerConnectionsLive } from "./workers/WorkerConnections.ts";
 import { WorkerGatewayHostLive } from "./workers/WorkerGatewayHost.ts";
+import { BoardWorkerCapacityLive } from "./capacity/BoardWorkerCapacityLive.ts";
 import { WorkerSignalFeedLive } from "./workers/WorkerSignalFeed.ts";
 import { WorkerSnapshotStoreLive } from "./workers/WorkerSnapshotStore.ts";
 import { WorkerTransportLive } from "./workers/WorkerTransport.ts";
 import { BoardWorkspacesLive } from "./workspace/workspaceLayer.ts";
+import { BoardTunnelHostLive } from "./tunnel/BoardTunnelHost.ts";
+import { BoardTunnelSeamLive, BoardWorkerJoinLive } from "./tunnel/BoardWorkerJoin.ts";
+import { BoardWorkerJoinStoreLive } from "./tunnel/BoardWorkerJoinStore.ts";
+import { WorkerTunnelsLive } from "./tunnel/WorkerTunnels.ts";
 
-/** The central server's connections to its workers. */
+/** The central server's connections to its workers, each over that worker's
+    outbound tunnel (T3O-84). */
 const WorkerConnectionsServerLive = WorkerConnectionsLive.pipe(
+  Layer.provideMerge(BoardTunnelHostLive),
+  Layer.provideMerge(BoardWorkerJoinStoreLive),
   Layer.provideMerge(WorkerTransportLive),
   Layer.provide(WorkerSnapshotStoreLive),
 );
@@ -49,6 +57,8 @@ const WorkerConnectionsServerLive = WorkerConnectionsLive.pipe(
 const BoardThreadsLive = ThreadGatewayRouterLive.pipe(
   Layer.provideMerge(WorkerSignalFeedLive),
   Layer.provideMerge(WorkerGatewayHostLive),
+  // T3o: worker-owned capacity, which the gateway host answers claims from (T3O-86).
+  Layer.provideMerge(BoardWorkerCapacityLive),
   Layer.provideMerge(McpRelayHostLive),
   Layer.provideMerge(BoardRelayStoreLive),
   Layer.provideMerge(WorkerConnectionsServerLive),
@@ -60,6 +70,10 @@ const BoardThreadsLive = ThreadGatewayRouterLive.pipe(
 // The relay answers board tool calls with the same handlers `/mcp` runs, and
 // they reach the supervisor, so it sits on top.
 export const BoardServerLive = BoardMcpRelayClientLive.pipe(
+  // The worker side: this server's tunnels to the boards it works for (T3O-84).
+  Layer.provideMerge(WorkerTunnelsLive),
+  // Routes the HTTP seam's tunnel, join and proxy paths here.
+  Layer.provideMerge(BoardTunnelSeamLive),
   // Board code reaches upstream services through ports; the adapters
   // live here so the upstream requirement still flows up to `server.ts`.
   Layer.provideMerge(SupervisorReactorLive.pipe(Layer.provide(BoardSetupScriptRunnerLive))),
@@ -67,13 +81,17 @@ export const BoardServerLive = BoardMcpRelayClientLive.pipe(
   Layer.provideMerge(BoardWebhookActionsLive),
   // Moving a card to another worker, for the Move dialog's RPCs.
   Layer.provideMerge(BoardCardMoverLive),
-  Layer.provide(BoardStepSlotsLive),
+  // T3o: the board's side of worker-owned capacity, which replaced its concurrency slots
+  // (T3O-86).
+  Layer.provideMerge(BoardCapacityClientLive),
   // T3o.json import/export from this server's checkout, for the
   // project config RPCs.
   Layer.provideMerge(BoardProjectFileLive),
   // The workers' state placement gates a step on.
   Layer.provideMerge(BoardPlacementLive),
   Layer.provideMerge(BoardWorkersLive),
+  // Join codes and the join endpoint.
+  Layer.provideMerge(BoardWorkerJoinLive),
   // Where each card's git and forge work runs — on the worker
   // the card is placed on, read off the board's engine.
   Layer.provideMerge(BoardWorkspacesLive),

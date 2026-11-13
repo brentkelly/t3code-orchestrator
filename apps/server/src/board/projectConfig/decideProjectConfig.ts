@@ -16,6 +16,8 @@ import {
   boardStageOrderViolation,
   boardStages,
   isBoardStageSwitchable,
+  isEmptyBoardProjectResources,
+  normalizeBoardReadinessPath,
   withBoardProjectConfigVersion,
   type BoardActivityActor,
   type BoardProjectStageConfig,
@@ -68,9 +70,12 @@ const projectConfigEvent = Effect.fn("projectConfigEvent")(function* (input: {
 
 function nextConfig(
   current: BoardProjectStageConfig,
-  change: Partial<Pick<BoardProjectStageConfig, "stageSwitches" | "overrides" | "ci" | "warnings">>,
+  change: Partial<
+    Pick<BoardProjectStageConfig, "stageSwitches" | "overrides" | "ci" | "warnings" | "resources">
+  >,
   changedBy: { readonly actor: BoardActivityActor; readonly at: string } | null,
 ): BoardProjectStageConfig {
+  const resources = change.resources ?? current.resources;
   return withBoardProjectConfigVersion({
     stageSwitches: change.stageSwitches ?? current.stageSwitches,
     overrides: change.overrides ?? current.overrides,
@@ -79,6 +84,7 @@ function nextConfig(
     // An import's warnings describe the file as imported; any edit moves on from it.
     warnings: change.warnings ?? [],
     lastChangedBy: changedBy ?? current.lastChangedBy,
+    ...(isEmptyBoardProjectResources(resources) ? {} : { resources }),
   });
 }
 
@@ -170,6 +176,34 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
         "ci-stop-on-failure",
       );
     }
+    case "board.project.set-resources": {
+      const { resources } = command;
+      if (
+        resources.readinessPath !== null &&
+        normalizeBoardReadinessPath(resources.readinessPath) === null
+      ) {
+        return yield* refuse(
+          command,
+          "The readiness script's path must be relative and inside the repository.",
+        );
+      }
+      return yield* emit(
+        nextConfig(
+          current,
+          {
+            resources: {
+              ...resources,
+              readinessPath:
+                resources.readinessPath === null
+                  ? null
+                  : normalizeBoardReadinessPath(resources.readinessPath),
+            },
+          },
+          changedBy,
+        ),
+        "resources",
+      );
+    }
     case "board.project.set-ci-enabled": {
       const ci = boardStageById(board, BOARD_SEED_STAGE_IDS.ci);
       if (ci === null) return yield* refuse(command, "This board has no CI stage.");
@@ -252,6 +286,9 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
               overrides: command.delta.overrides,
               ci: command.delta.ci,
               warnings: command.delta.warnings,
+              ...(command.delta.resources === undefined
+                ? {}
+                : { resources: command.delta.resources }),
             },
             changedBy,
           ),

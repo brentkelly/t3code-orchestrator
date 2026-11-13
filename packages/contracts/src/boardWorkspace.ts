@@ -13,6 +13,7 @@ import {
   EnvironmentAuthorizationError,
 } from "./auth.ts";
 import { NonNegativeInt, PositiveInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { BoardProvisionClaim } from "./boardCapacity.ts";
 import { VcsStatusChangeRequest } from "./git.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 
@@ -176,7 +177,11 @@ export class BoardWorkerGitError extends Schema.TaggedError<BoardWorkerGitError>
   {
     operation: Schema.String,
     detail: Schema.String,
-    refusal: Schema.optionalKey(Schema.Literals(["host", "blocked", "unavailable"])),
+    /** T3o (T3O-86): `claim-expired` is a provision whose claim the worker no longer held and
+        that no longer fits; `needs-update` is a board too old to send one. */
+    refusal: Schema.optionalKey(
+      Schema.Literals(["host", "blocked", "unavailable", "claim-expired", "needs-update"]),
+    ),
   },
 ) {}
 
@@ -244,6 +249,9 @@ const boardBranchName = branchName.check(
   }),
 );
 const path = TrimmedNonEmptyString;
+/** T3o: the placement the provision consumes (T3O-86). A worker refuses a provision
+    without one: that is how an older board is caught. */
+const claim = Schema.optionalKey(BoardProvisionClaim);
 
 export const BOARD_WORKER_GIT_RPCS = [
   Rpc.make(M.resolveDefaultBranch, {
@@ -262,12 +270,12 @@ export const BOARD_WORKER_GIT_RPCS = [
     error: gitError,
   }),
   Rpc.make(M.provisionWorktree, {
-    payload: { ...onProject, branch: boardBranchName, baseRefName: branchName },
+    payload: { ...onProject, branch: boardBranchName, baseRefName: branchName, claim },
     success: BoardWorkspaceProvisionedWorktree,
     error: gitError,
   }),
   Rpc.make(M.provisionWorktreeFromRemoteBranch, {
-    payload: { ...onProject, branch: boardBranchName, baseRefName: branchName },
+    payload: { ...onProject, branch: boardBranchName, baseRefName: branchName, claim },
     success: BoardWorkspaceProvisionedWorktree,
     error: gitError,
   }),

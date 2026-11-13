@@ -42,6 +42,9 @@ import {
   type BoardConcurrencySettings,
   type ServerSettings,
   SourceControlProviderKind,
+  BOARD_LOCAL_WORKER_ID,
+  boardCardEffectiveWorkerId,
+  type BoardWorkerId,
 } from "@t3tools/contracts";
 
 import type { BoardMergeState } from "./boardMergeState.ts";
@@ -57,7 +60,6 @@ import { BoardSetupScriptRunner } from "./ports/BoardSetupScriptRunner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { BoardStepSlots, BoardStepSlotsLive } from "./BoardStepSlots.ts";
 import {
   BoardPullRequestGateway,
   BoardPullRequestGatewayError,
@@ -83,6 +85,12 @@ import {
   type ThreadGatewayShape,
   type ThreadSignal,
 } from "./ThreadGateway.ts";
+import { BoardCapacityClient } from "./capacity/BoardCapacityClient.ts";
+import {
+  makeFakeCapacity,
+  roomForCards,
+  type FakeCapacity,
+} from "./capacity/capacityClient.testkit.ts";
 import { BoardPlacement, type BoardPlacementShape } from "./workers/BoardPlacement.ts";
 import {
   aliveThread,
@@ -236,6 +244,7 @@ export const makeBoardCard = (input: {
   ci: input.ci ?? null,
   ciLastOutcome: input.ciLastOutcome ?? null,
   ciRoundTrips: input.ciRoundTrips ?? 0,
+  resources: null,
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
   pullRequestHistory: input.pullRequestHistory ?? [],
@@ -423,10 +432,25 @@ export const settingsWith = (input: {
     autoCollapseEmptyStages: DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES,
     costEmphasisUsd: DEFAULT_BOARD_COST_EMPHASIS_USD,
   },
+  workers: { boardAddress: null, localLabel: null },
 });
 
+/**
+ * Which steps hold their place on a worker, read off the board: a build step the decider
+ * admitted (`slotHeld`), and a running CI pass under the `board-ci` instance. The board's
+ * concurrency slots are gone (T3O-86); this is how tests still see a step admitted, parked
+ * or settled.
+ */
+export interface HarnessHeldSteps {
+  readonly heldTotal: Effect.Effect<number>;
+  readonly heldFor: (providerInstanceId: string, workerId?: BoardWorkerId) => Effect.Effect<number>;
+  readonly heldOnWorker: (workerId: BoardWorkerId) => Effect.Effect<number>;
+}
+
+const HARNESS_CI_INSTANCE = "board-ci";
+
 export type Harness = {
-  readonly slots: BoardStepSlots["Service"];
+  readonly slots: HarnessHeldSteps;
   readonly reactor: SupervisorReactor["Service"];
   readonly model: Ref.Ref<BoardReadModel>;
   /** What the thread gateway answers for each thread. A spawned thread has no
@@ -666,6 +690,10 @@ export function withGovernor(
     readonly gateway?: (local: LocalThreadGatewayShape) => ThreadGatewayShape;
     /** Where the supervisor spawns each card's threads. */
     readonly placement?: BoardPlacementShape;
+    /** T3o: worker-owned capacity (T3O-86). Absent: every step runs once its worker is ready. */
+    readonly capacity?: FakeCapacity;
+    /** Shorthand for `capacity`: `local` has room for this many default-sized cards. */
+    readonly capacityFor?: number;
     /** Where cards' git runs, built from this harness's own local
         workspace services. By default every card is local. */
     readonly workspaces?: (local: LocalBoardWorkspaceDeps) => BoardWorkspacesShape;
@@ -673,6 +701,11 @@ export function withGovernor(
   body: (h: Harness) => Effect.Effect<void>,
 ): Effect.Effect<void> {
   return Effect.gen(function* () {
+    const capacity =
+      input.capacity ??
+      (input.capacityFor === undefined
+        ? undefined
+        : yield* makeFakeCapacity(roomForCards(input.capacityFor)));
     const model = yield* Ref.make<BoardReadModel>(readModel(input.board));
     const seq = yield* Ref.make(0);
     const domainQueue = yield* Queue.unbounded<BoardEvent>();
@@ -1152,18 +1185,61 @@ export function withGovernor(
       Layer.succeed(BoardQueries, boardQueriesStub),
       Layer.succeed(ThreadGateway, gateway),
       input.placement === undefined ? Layer.empty : Layer.succeed(BoardPlacement, input.placement),
+      capacity === undefined ? Layer.empty : Layer.succeed(BoardCapacityClient, capacity.client),
       Layer.succeed(ServerSettingsService, settingsStub),
       gitLayer,
       Layer.succeed(BoardSetupScriptRunner, setupStub),
       Layer.succeed(BoardPullRequestGateway, pullRequestStub),
-      BoardStepSlotsLive,
       input.serverConfig ?? Layer.empty,
     );
 
     yield* Effect.scoped(
       Effect.gen(function* () {
         const reactor = yield* SupervisorReactor;
-        const slots = yield* BoardStepSlots;
+        const held = Effect.gen(function* () {
+          const board = (yield* Ref.get(model)).board;
+          const entries: Array<{ readonly instance: string; readonly workerId: BoardWorkerId }> =
+            [];
+          for (const state of board?.stepStates ?? []) {
+            if (!state.slotHeld) continue;
+            const card = board?.cards.find((candidate) => candidate.id === state.cardId);
+            if (card === undefined) continue;
+            const link = card?.threadLinks.find((entry) => entry.threadId === state.threadId);
+            entries.push({
+              instance: state.providerInstanceId,
+              workerId:
+                link?.workerId ??
+                (card === undefined
+                  ? BOARD_LOCAL_WORKER_ID
+                  : boardCardEffectiveWorkerId(card, board?.defaultWorkerId)),
+            });
+          }
+          for (const card of board?.cards ?? []) {
+            if (card.ci?.phase !== "running") continue;
+            entries.push({
+              instance: HARNESS_CI_INSTANCE,
+              workerId:
+                card.placedWorkerId ?? boardCardEffectiveWorkerId(card, board?.defaultWorkerId),
+            });
+          }
+          return entries;
+        });
+        const slots: HarnessHeldSteps = {
+          heldTotal: Effect.map(held, (entries) => entries.length),
+          heldFor: (instance, workerId = BOARD_LOCAL_WORKER_ID) =>
+            Effect.map(
+              held,
+              (entries) =>
+                entries.filter(
+                  (entry) => entry.instance === instance && entry.workerId === workerId,
+                ).length,
+            ),
+          heldOnWorker: (workerId) =>
+            Effect.map(
+              held,
+              (entries) => entries.filter((entry) => entry.workerId === workerId).length,
+            ),
+        };
         yield* reactor.start();
         // Buffered queue → published events are never lost to a late
         // subscriber; a cooperative yield lets the worker enqueue before we
@@ -1200,7 +1276,10 @@ export function withGovernor(
           // event, read back as the step's started review; and its rounds
           // changed mid-review.
           event.type === "board.plan-review-started" ||
-          event.type === "board.plan-review-rounds-changed"
+          event.type === "board.plan-review-rounds-changed" ||
+          // T3o: a delete leaves the board, so the card's room goes back to its worker
+          // (T3O-86).
+          event.type === "board.card-deleted"
             ? Ref.get(model).pipe(
                 Effect.flatMap((m) => projectBoardEvent(m, event)),
                 Effect.flatMap((next) => Ref.set(model, next)),

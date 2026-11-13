@@ -959,18 +959,6 @@ describe("applyServerSettingsPatch board settings (T3o, D4)", () => {
     expect(resolveBoardKeyPrefix(cleared.board, project)).toBe(DEFAULT_BOARD_KEY_PREFIX);
   });
 
-  it("persists clearing a per-instance concurrency cap as null", () => {
-    const instance = ProviderInstanceId.make("codex");
-    const configured = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      board: { concurrency: { perInstance: { [instance]: 2 } } },
-    });
-    expect(configured.board.concurrency.perInstance[instance]).toBe(2);
-    const cleared = applyServerSettingsPatch(configured, {
-      board: { concurrency: { perInstance: { [instance]: null } } },
-    });
-    expect(cleared.board.concurrency.perInstance[instance]).toBe(null);
-  });
-
   it("toggles auto-collapse empty stages without disturbing sibling board fields", () => {
     expect(DEFAULT_SERVER_SETTINGS.board.display.autoCollapseEmptyStages).toBe(false);
     const on = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {

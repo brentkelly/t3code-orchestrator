@@ -23,7 +23,8 @@ short-lived, tightly scoped thread; the board assigns each step to a specific pr
 detects death, and restarts.
 
 Since `T3O-60` the board is also **distributed**: one central T3o server hosts the board and places
-cards on workers, other T3o servers it dials as a paired client (D19–D22). A board with no workers
+cards on workers, other T3o servers that join it with a code and hold an outbound tunnel to it
+(D19–D22, outbound since `T3O-84`). A board with no workers
 added is exactly the single-machine board, because the central server is its own implicit `local`
 worker.
 
@@ -120,15 +121,16 @@ capability gating, because thread adoption is dynamic by design.
 Agents keep calling the `/mcp` of the server their thread runs on, with today's tokens and today's
 injection, so no provider adapter changes. The worker's board toolkit recognises a thread a central
 server placed and forwards the call over the connection the **central server** holds open to it (a
-relay stream plus a respond RPC; the worker never dials out). The central server authorizes twice:
+relay stream plus a respond RPC, carried over the worker's own outbound tunnel since `T3O-84`, so
+agents never learn the board's address). The central server authorizes twice:
 the calling thread must be linked to a card, **and** that card must be placed on the worker the
 call arrived from, so one worker cannot touch another worker's cards. Relayed calls must be safe to
 repeat, because a dropped connection can deliver one twice. When the central server is not
 connected the tool returns a retryable "board unreachable" error, never a silent success.
 
 Rejected: handing agents on a worker the central server's `/mcp` URL and a per-card credential. It
-needs the central server reachable from every worker (the firewall rule D19 avoids), a second
-token-minting path, and provider-specific MCP injection on every adapter.
+needs a second token-minting path and provider-specific MCP injection on every adapter, and it would
+hand every agent a credential for the board.
 
 ### D4 — The board orchestrates; agents execute one step at a time
 
@@ -245,25 +247,34 @@ stage added to the board later reaches every project unless that project switche
 writes (`board.dispatchSettingsCommand`), never `board.dispatchCommand`. CI is snapshotted at each
 pass start, the same freeze rule as stage entry.
 
-### D11 — Concurrency is a board limit, a worker limit, and per-worker provider caps
+### D11 — Workers own their capacity; the board claims room before it places a card
 
 There is no concurrency limit anywhere in the T3 server today; a human's typing speed is the
 throttle. T3o removes that throttle.
 
-**Decision:** three ceilings, all of which must have room before a step starts:
+**Decision (rewritten by `T3O-86`):** each worker owns its capacity, and the board has no ceilings
+of its own.
 
-- a **board limit**: agents running across every worker;
-- a **worker limit** for each worker: agents running on that machine;
-- **provider-instance caps** for each worker, because an instance id on one machine is a different
-  account and a different CPU from the same id on another.
+- A worker **declares** CPU cores, RAM and disk (`pnpm t3o-worker config`, defaulting from the
+  machine), an optional `maxAgents` and per-provider-instance caps, and a quota threshold. It
+  counts every board it serves plus anything else running on the machine, and publishes a
+  snapshot (headroom, agents, quota, readiness) to each board.
+- A card's **reservation** is its project's baseline scaled by the card's S/M/L/XL size per
+  dimension. Disk is held while the card has a worktree; CPU and RAM only while an agent or CI
+  runs for it, and for 10 minutes after.
+- Before provisioning a worktree the board takes a **claim** on the worker; the worker refuses a
+  provision with no claim, or with an expired one. Claims are short-lived and re-synced from the
+  board's cards (`syncCards`), so a restart on either side converges instead of leaking.
+- A worker that isn't **ready** for a project (its committed readiness script fails) takes none of
+  its cards.
 
-Each worker's provider list comes from that worker's own server config, as it reports it; the
-central server never invents one. Replaced: the single-machine rule of `maxConcurrent` per
-`providerInstanceId` plus a global ceiling, which is the one-worker special case of the above.
+Rejected: the board limit, worker limit and per-worker provider caps this decision first named.
+Counting agents says nothing about whether a machine has room, a board can't see another board's
+load on a shared worker, and slots held on an offline worker leaked.
 
 The **Building column is the queue** — position is priority, drag to reprioritise, queued cards sit
 in Building flagged as queued (never in Ready, which would lie about their state). The card says
-which ceiling it is waiting on.
+what it is waiting on: room on a worker, an agent, quota, or a worker update.
 
 Ordering rule, unchanged: **stage descending → started before unstarted → drag order.** Finishing
 beats starting; a nearly-merged card is never starved by new work. Preemption takes effect at the
@@ -403,9 +414,9 @@ delivers the thing that matters on a phone: answering the board's questions to k
 concerns) rather than in the web package, so a future mobile board is a UI project rather than a
 rewrite. Costs nothing now.
 
-On a distributed board, upstream mobile drives a worker's threads directly: a card's thread is an
-ordinary upstream thread on an ordinary upstream project (D19), so a phone paired with the worker
-can open, steer and answer it.
+On a distributed board, a card's thread is an ordinary upstream thread on an ordinary upstream
+project (D19). Since workers became outbound-only (`T3O-84`) a phone reaches it only through the
+board's proxy, which mobile doesn't do yet.
 
 ### D18 — Stage advancement is human-gated; work inside a stage is automatic
 
@@ -466,54 +477,68 @@ you.**
 Note that "Begin build" means _commit this card to the build queue_, not _start now_ — the governor
 may hold it as `queued` in Building (D11). Queued is still a state you chose.
 
-### D19 — Topology and credentials: the central server dials workers with its own session
+### D19 — Topology and credentials: workers dial the board, which tunnels back to them
 
-**Topology.** The board lives on one **central** T3o server, and that server **dials each worker**
-as a paired client over the worker's ordinary T3 WebSocket. Workers never dial the central server.
-That makes the firewall story short: central → worker on the worker's T3 port is required;
-client → worker is needed only to open threads; worker → git remote, forge and providers is as any
-server today. Transport is a **direct URL** (LAN or Tailscale); T3 Connect relay transport is a
-follow-up.
+**Topology.** The board lives on one **central** T3o server. Each **worker** is an ordinary T3o
+server, headless and bound to `127.0.0.1`, that **dials out to every board it serves** and holds one
+tunnel to each. The board carries its own connection to the worker — the thread gateway, signals,
+the MCP relay, CI, git and Set up on worker — through that tunnel, unchanged: the board gives each
+worker a stable `127.0.0.1:<port>` listener, and `WorkerTransport` dials it like any URL.
 
-The central server's own machine is the implicit **`local`** worker ("This server (local)"), using
-today's `ThreadGatewayV2` and local git code. A board with no workers added is exactly today's
-board: no worker chip, no worker picker, no per-worker grouping in Concurrency, no Project
-checkouts page.
+**The firewall rule is worker → board HTTPS only.** A worker needs a T3o install, its projects, its
+providers signed in, and outbound HTTPS to each board's address. It needs no inbound port, no
+reverse proxy, no web UI anyone else can reach, and no SSH.
 
-**Worker id = the worker's `environmentId`**, read from its `/.well-known/t3/environment`. It is
-stable across restarts and re-pairs, so a re-added server reattaches its cards.
+**This reverses the original rule that workers never dial the central server** (`T3O-60`). That rule
+existed so a worker needed no route to the board; in practice the opposite constraint bit harder:
+workers sit behind home NAT and laptops move, while the board is the one machine with a stable,
+public, TLS-fronted address. Every worker can reach it; it can reach almost none of them.
 
-**Credentials reuse upstream environments, not a second pairing system.** Upstream's Connections
-live on each client (web storage, or the desktop catalog), but the board's supervisor runs on the
-central server with no client open. So **the central server holds its own session per worker**,
-labelled `T3o board (<central name>)`, with standard client scopes, its bearer token in
-`ServerSecretStore` under the worker's id.
+**The tunnel is a dumb pipe** (`board/tunnel/`). A control channel (newline-delimited JSON over a raw
+`Upgrade: t3o-stream` request) carries the handshake and `dial {streamId, nonce}`; each TCP
+connection the board opens into the worker gets its own dial-back leg, a second raw upgrade, piped
+into the worker's own loopback port. A dial carries no target, so a stream reaches nothing else on
+the worker's machine. TCP flow control holds end to end because legs are joined with `pipe()`.
+Fronts must pass raw upgrades: Caddy, nginx (with `$http_upgrade`) and Tailscale Serve do;
+WebSocket-only CDNs (Cloudflare) and corporate `HTTPS_PROXY`s are unsupported in v1. Nonces live in
+memory, so **one board process per hostname**.
 
-- **Add.** The Add worker dialog lists the environments the _current client_ is already connected
-  to. Picking one makes the client mint a one-time pairing token on that environment
-  (`POST /api/auth/pairing-token`, which needs `access:write`), and hand it to the central server's
-  `board.workers.add`, which exchanges it for the central server's own session. When the client's
-  session lacks `access:write`, or the environment is not connected on this client, the human pastes
-  a pairing link from `t3 pair` on the worker instead.
-- **Remove** revokes the session on the worker if it is reachable, then deletes the secret and the
-  registry record.
-- **Revoked from the worker side** (upstream Settings → Connections → Clients on the worker), the
-  worker turns `unauthorized` on the central server and the UI says "Access revoked".
-- **Re-pair** repeats the add flow for that worker, keeping its label, pinned cards and limits.
+**Pairing is a join code.** Board → Workers → Add worker makes a single-use code that works for ten
+minutes; the worker runs `pnpm t3o-worker join <board-url> --code XXXX-XXXX`. The board answers with
+a long-lived tunnel credential, which the worker keeps in its `ServerSecretStore`. The board keeps
+only SHA-256 hashes of codes and credentials. Upstream's pairing links and `board.workers.add` are
+retired; there is no direct-dial transport any more.
 
-Standard client scopes are enough: the worker RPCs join `BOARD_RPC_SCOPES` under existing scopes
-(`orchestration:read`, `orchestration:operate`, `source-control:write`), so no new scope exists.
-The worker list itself is server-side, so every client sees the same workers.
+**The board's session is minted on the worker.** When the board asks in the tunnel handshake, the
+worker issues the board's session in-process with the subject `t3o-board:<boardId>`, labelled
+`T3o board (<board name>)`, and hands it over the TLS control channel. The board proves it with a
+probe through the tunnel before the worker counts as ready. **Board RPCs on a worker trust only a
+`t3o-board:` subject**, and the board's identity comes from that subject, never from the request.
 
-**Why the server holds its own session, not a client's.** Borrowing the bearer token of whichever
-browser added the worker would tie the board's access to that device: revoking the browser would
-silently break the board, and the board's scopes would be whatever that device happened to hold. A
-session the server owns has one owner, one label on the worker's Clients list, and one way to
-revoke it.
+**Browsers reach a worker's threads through the board.** The board proxies an allow-listed set of
+paths at `/api/t3o/workers/<id>/` (the thread view's WebSocket and HTTP calls, never bootstrap,
+pairing or the web UI), bearer-only and with the board's cookies stripped. `board.workers.threadAccess`
+mints each board user a 24-hour session on the worker (subject
+`t3o-board-user:<boardId>:<boardSessionId>`, scopes no wider than theirs), which the client
+registers as an ordinary environment at that path. Tunnelled traffic is never treated as local by
+the worker. Relay and SSH board connections can't open worker threads in v1.
 
-Rejected: a board-specific pairing protocol (a second auth system to secure and explain), and
-workers dialing the central server (inverts the firewall rule, and the central server would need to
-be reachable from every worker network).
+**A worker and every board it serves are one trust domain.** A board user can see every thread on a
+worker that board uses, including another board's; `join` warns when a worker takes a second board.
+Upstream scopes aren't per-thread, and filtering threads per board would be a large upstream change.
+
+**Worker id = the worker's `environmentId`**, presented when it joins. It is stable across restarts
+and re-joins, so a re-joined server reattaches its cards.
+
+**Reverse states.** Remove on the board releases every session the board holds on the worker through
+the tunnel, then closes its listener and revokes its credential. `t3o-worker leave` does the same from
+the worker side, offline included. A board session that ends takes its users' worker sessions with
+it, and a worker that was offline catches up at its next handshake.
+
+Rejected: upstream T3 Connect (routes through upstream's relay, not the board's address), upstream
+peer links (they point the wrong way), a purpose-built job protocol (rewrites the gateway and still
+needs a way to view threads), and keeping the board → worker direction (the worker would still need
+to be reachable).
 
 ### D20 — Placement: a pin, and where the card actually runs
 
@@ -553,8 +578,8 @@ a card requires its branch to be pushed. Nothing is ever copied worker to worker
 ### D22 — Offline, reconnect and removal
 
 **Offline.** A worker the central server cannot reach is `offline`, and its cards show amber
-"Worker offline". Signals, timeouts and recovery pause for its steps, and their concurrency slots
-stay held — an offline worker is never a dead thread (D4), because the agent may still be working
+"Worker offline". Signals, timeouts and recovery pause for its steps, and their capacity
+stays reserved — an offline worker is never a dead thread (D4), because the agent may still be working
 on a machine the board merely cannot see.
 
 **Reconnect.** The boot `reconcile`, scoped to that worker, runs before anything else acts on its
@@ -566,11 +591,14 @@ affected cards:
 - Cards with no worktree fall back to the default worker, with an activity entry (the one
   board-driven placement change, D18).
 - Cards with a worktree or a running step hold with "Worker removed — move this card". A running
-  step is stopped on the worker if it is reachable, then stalled, and its slot is released.
+  step is stopped on the worker if it is reachable, then stalled, and its reservation is released.
 - Nothing on the worker is deleted: worktrees, branches and thread history stay there.
 - **Force-move** continues from the remote branch, with an explicit choice to abandon unpushed
   work. It is also offered for workers that are offline.
-- Re-adding a server with the same environment id reattaches its cards.
+- Re-joining a server with the same environment id reattaches its cards.
+
+**Unauthorized** is not terminal since `T3O-84`: the board drops that worker's tunnel, and the
+worker's next handshake hands over a fresh session.
 
 ---
 

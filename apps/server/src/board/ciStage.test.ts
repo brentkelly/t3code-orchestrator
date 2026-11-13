@@ -5,6 +5,7 @@
  * runs every step, Skip CI moves the card. Projects without CI are unchanged.
  */
 import {
+  BOARD_LOCAL_WORKER_ID,
   BOARD_SEED_STAGES,
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
@@ -31,6 +32,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   BoardCiRunner,
@@ -38,7 +40,6 @@ import {
   type BoardCiRunnerShape,
   type BoardCiRunResult,
 } from "./ci/BoardCiRunner.ts";
-import { BOARD_CI_SLOT_INSTANCE } from "./ci/ciPasses.ts";
 import { BoardDiskSpace } from "./ci/diskSpace.ts";
 import { layerTest } from "../config.ts";
 import {
@@ -62,6 +63,7 @@ import {
   type HarnessCommand,
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
+import { makeFakeCapacity, roomForCards } from "./capacity/capacityClient.testkit.ts";
 
 const { ci, review, merge } = BOARD_SEED_STAGE_IDS;
 const STEPS: ReadonlyArray<BoardCiStepDefinition> = [
@@ -621,31 +623,63 @@ it.effect("dragging a card back out of CI cancels its pass", () =>
         yield* h.pumpDomain(
           cardMoved({ ...subject, stage: BoardStageId.make(review) }, ci, review, 2),
         );
-        // The pass fiber is stopped and its slot freed; the move's own decision
+        // The pass fiber is stopped; the move's own decision
         // settles the row (ciProjection.test.ts).
         yield* h.reactor.drainCi;
-        assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 0);
         assert.isNull((yield* live(h, subject.id)).ci);
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
-it.effect("a queued pass starts when an agent step frees the slot", () =>
+it.effect("a queued pass starts when an agent step frees its worker's room (T3O-86)", () =>
   Effect.gen(function* () {
     const { runner, calls } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
     const blocker = buildingCard("blocker", "b");
     const subject = card("waiting", review);
     const oneSlot = settingsWith({ building: [codexStep], globalMaxConcurrent: 1 });
-    yield* withGovernor({ board: boardWith([blocker, subject]), settings: oneSlot }, (h) =>
-      Effect.gen(function* () {
-        yield* h.pumpDomain(movedToBuilding(blocker, 1));
-        assert.strictEqual(stepStatus(yield* h.board, blocker.id), "running");
-        yield* enterCiAndRun(h, subject, 2);
-        assert.strictEqual(yield* calls, 0);
-        assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "queued");
+    yield* withGovernor(
+      { board: boardWith([blocker, subject]), settings: oneSlot, capacityFor: 1 },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(blocker, 1));
+          assert.strictEqual(stepStatus(yield* h.board, blocker.id), "running");
+          yield* enterCiAndRun(h, subject, 2);
+          assert.strictEqual(yield* calls, 0);
+          assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "queued");
 
-        yield* h.pumpDomain(stepCompleted(blocker.id, "blocked", 3));
+          yield* h.pumpDomain(stepCompleted(blocker.id, "blocked", 3));
+          yield* h.reactor.drainCi;
+          assert.strictEqual(yield* calls, 1);
+          assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
+        }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("CI that must re-create its worktree waits for room, then starts by itself", () =>
+  Effect.gen(function* () {
+    const { runner, calls } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const subject = card("recut", review, {
+      worktree: { ...readyWorktree("recut"), path: null, status: "reclaimed" },
+    });
+    const capacity = yield* makeFakeCapacity(roomForCards(1));
+    // Another board holds every core on the worker.
+    capacity.external.set(BOARD_LOCAL_WORKER_ID, { cpuCores: 3, ramGiB: 0, diskGB: 0 });
+    yield* withGovernor({ board: boardWith([subject]), settings, capacity }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, subject, 1);
+        assert.strictEqual(yield* calls, 0);
+        const notes = (yield* h.commands).filter(
+          (command) => command.type === "board.card.record-note",
+        );
+        assert.lengthOf(notes, 1);
+        assert.include(JSON.stringify(notes[0]), "waiting for room");
+        capacity.external.delete(BOARD_LOCAL_WORKER_ID);
+        yield* capacity.publish(BOARD_LOCAL_WORKER_ID);
+        // The snapshot's pass runs after up to 2 s of jitter.
+        yield* TestClock.adjust(2_000);
+        yield* h.reactor.drain;
         yield* h.reactor.drainCi;
         assert.strictEqual(yield* calls, 1);
         assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
@@ -666,20 +700,18 @@ const setCard = (h: Harness, id: BoardCardId, next: BoardCard | null) =>
     },
   }));
 
-it.effect("archiving a card in CI stops its pass, frees the slot and settles the row", () =>
+it.effect("archiving a card in CI stops its pass and settles the row", () =>
   Effect.gen(function* () {
     const { runner } = yield* scriptedRunner(["hang"]);
     const subject = card("archived-in-ci", review);
     yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
       Effect.gen(function* () {
         yield* enterCi(h, subject, 1);
-        assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 1);
         const runId = (yield* live(h, subject.id)).ci!.runId;
         const archived = { ...(yield* live(h, subject.id)), archivedAt: NOW };
         yield* setCard(h, subject.id, archived);
         yield* h.pumpDomain(cardArchived(archived, 2));
         yield* h.reactor.drainCi;
-        assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 0);
         const settled = ciRecords(yield* h.decided).flatMap((record) => record.payload.settled);
         assert.isTrue(
           settled.some((entry) => entry.runId === runId && entry.outcome === "cancelled"),
@@ -696,35 +728,35 @@ it.effect("a queued pass of an archived card never starts", () =>
     const blocker = buildingCard("blocker", "b");
     const subject = card("archived-queued", review);
     const oneSlot = settingsWith({ building: [codexStep], globalMaxConcurrent: 1 });
-    yield* withGovernor({ board: boardWith([blocker, subject]), settings: oneSlot }, (h) =>
-      Effect.gen(function* () {
-        yield* h.pumpDomain(movedToBuilding(blocker, 1));
-        yield* enterCi(h, subject, 2);
-        assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "queued");
-        const archived = { ...(yield* live(h, subject.id)), archivedAt: NOW };
-        yield* setCard(h, subject.id, archived);
-        yield* h.pumpDomain(cardArchived(archived, 3));
-        yield* h.pumpDomain(stepCompleted(blocker.id, "blocked", 4));
-        yield* h.reactor.drainCi;
-        assert.strictEqual(yield* calls, 0);
-      }),
+    yield* withGovernor(
+      { board: boardWith([blocker, subject]), settings: oneSlot, capacityFor: 1 },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(blocker, 1));
+          yield* enterCi(h, subject, 2);
+          assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "queued");
+          const archived = { ...(yield* live(h, subject.id)), archivedAt: NOW };
+          yield* setCard(h, subject.id, archived);
+          yield* h.pumpDomain(cardArchived(archived, 3));
+          yield* h.pumpDomain(stepCompleted(blocker.id, "blocked", 4));
+          yield* h.reactor.drainCi;
+          assert.strictEqual(yield* calls, 0);
+        }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
-it.effect("deleting a card in CI stops its pass and frees the slot", () =>
+it.effect("deleting a card in CI stops its pass", () =>
   Effect.gen(function* () {
     const { runner } = yield* scriptedRunner(["hang"]);
     const subject = card("deleted-in-ci", review);
     yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
       Effect.gen(function* () {
         yield* enterCi(h, subject, 1);
-        assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 1);
         const doomed = yield* live(h, subject.id);
         yield* setCard(h, subject.id, null);
         yield* h.pumpDomain(cardDeleted(doomed, 2, null));
         yield* h.reactor.drainCi;
-        assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 0);
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
@@ -934,6 +966,66 @@ it.effect(
         }),
       ).pipe(Effect.provideService(BoardCiRunner, runner));
     }),
+);
+
+it.effect("a later segment that must re-create its worktree waits for room, not for a human", () =>
+  Effect.gen(function* () {
+    const { runner, calls } = yield* scriptedRunner([
+      { result: "passed", failedIndex: null },
+      { result: "passed", failedIndex: null },
+    ]);
+    const subject = card("agent-recut", review);
+    const agentStep: BoardCiStep = {
+      kind: "agent",
+      id: "audit",
+      name: "Audit",
+      parallel: false,
+      prompt: "Audit it.",
+      model: null,
+      timeoutMinutes: 30,
+    };
+    const board = boardWith([subject], mixedConfig([SCRIPT_A, agentStep, SCRIPT_B]));
+    const capacity = yield* makeFakeCapacity(roomForCards(1));
+    yield* withGovernor({ board, settings, capacity }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, subject, 1);
+        const stepId = boardCiAgentStepId((yield* live(h, subject.id)).ci!.runId, 1);
+        // The worktree is reclaimed while the agent step runs, and another board fills the worker.
+        yield* Ref.update(h.model, (model) => ({
+          ...model,
+          board: {
+            ...model.board!,
+            cards: model.board!.cards.map((existing) =>
+              existing.id === subject.id
+                ? {
+                    ...existing,
+                    worktree: { ...existing.worktree!, path: null, status: "reclaimed" as const },
+                  }
+                : existing,
+            ),
+          },
+        }));
+        capacity.external.set(BOARD_LOCAL_WORKER_ID, { cpuCores: 3, ramGiB: 0, diskGB: 0 });
+        yield* h.pumpDomain(
+          fixCompleted(subject.id, stepId, { verdict: "passed", summary: "ok" }, 2),
+        );
+        yield* h.reactor.drainCi;
+        assert.strictEqual(yield* calls, 1);
+        // The orphan sweep holds a pass on its second sighting; a wait for room is not one.
+        yield* h.reactor.sweep;
+        yield* h.reactor.sweep;
+        assert.notStrictEqual((yield* live(h, subject.id)).ci?.phase, "held");
+
+        capacity.external.delete(BOARD_LOCAL_WORKER_ID);
+        yield* capacity.publish(BOARD_LOCAL_WORKER_ID);
+        yield* TestClock.adjust(2_000);
+        yield* h.reactor.drain;
+        yield* h.reactor.drainCi;
+        assert.strictEqual(yield* calls, 2);
+        assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
 );
 
 it.effect("a failed agent verdict is the pass's failure: a fix agent gets it", () =>

@@ -1,32 +1,27 @@
 /**
- * Settings > Board > Workers. The built-in row is first and permanent; other
- * rows are workers the board server dials. Online stays grey; colour means a
- * human is needed. Status is live from the board server.
+ * Settings → Workers (prototype 3.1, 3.2). This server's row is first and
+ * permanent; the rest are machines that joined with a code and dial the
+ * board. Connected stays grey; amber means blocked. Status is live from the
+ * board server.
  */
 import {
+  BOARD_LOCAL_WORKER_ABBREVIATION,
   BOARD_LOCAL_WORKER_ID,
+  BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
   canBeDefaultBoardWorker,
   type BoardWorkerId,
-  type BoardWorkerRemovePreview,
-  type BoardWorkerRemovePreviewCard,
+  type BoardWorkerJoinCodeCreated,
   type BoardWorkerView,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { EllipsisIcon, PlusIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
+import { useState, type ReactNode } from "react";
 
-import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "../../components/ui/alert-dialog";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
 import {
   Select,
   SelectItem,
@@ -34,23 +29,29 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
-import { Spinner } from "../../components/ui/spinner";
 import { toastManager } from "../../components/ui/toast";
+import { cn } from "../../lib/utils";
 import { boardEnvironment } from "../../state/board";
 import { useEnvironment } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { BoardHint } from "../BoardHint";
 import { describeBoardCommandFailure } from "../boardCommandFeedback";
-import { AddWorkerDialog, type AddWorkerMode } from "./AddWorkerDialog";
-import { useBoardWorkers, useNowAtDeadlines } from "./boardWorkersState";
+import { AddWorkerDialog } from "./AddWorkerDialog";
+import { useNowAtDeadlines, type BoardWorkersView } from "./boardWorkersState";
+import { joinCodeInPlay, joinDialogPhase, openJoinCodes } from "./joinDialog";
+import { RemoveWorkerDialog } from "./RemoveWorkerDialog";
+import { RenameWorkerDialog } from "./RenameWorkerDialog";
+import { localWorkerLabel } from "./threadWorker";
 import {
-  workerLastSeen,
+  clockTime,
+  T3O_UPDATE_COMMAND,
   workerLastSeenDeadlines,
   workerStatusPresentation,
+  type WorkerStatusPresentation,
   type WorkerTone,
 } from "./workerCopy";
-
-const LOCAL_LABEL = "This server (local)";
+import { boardWorkerCapacityLines } from "./workerCapacity";
+import { CopyCommand, WorkerAbbreviationBadge } from "./workerUi";
 
 const TONE_BADGE: Record<WorkerTone, "outline" | "info" | "warning" | "success"> = {
   neutral: "outline",
@@ -59,25 +60,112 @@ const TONE_BADGE: Record<WorkerTone, "outline" | "info" | "warning" | "success">
   done: "success",
 };
 
+/** The board server as a worker, for the Rename dialog: its label lives in board settings. */
+const localWorkerView = (label: string): BoardWorkerView =>
+  ({
+    id: BOARD_LOCAL_WORKER_ID,
+    label,
+    abbreviation: BOARD_LOCAL_WORKER_ABBREVIATION,
+    addedAt: "1970-01-01T00:00:00.000Z",
+    status: { state: "online", lastSeenAt: null, t3oVersion: null, protocolVersion: null },
+    snapshot: null,
+  }) as unknown as BoardWorkerView;
+
+function joinedDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+/** The Add worker button and everything it opens, so the page header can hold the button. */
+export function useAddWorker(input: {
+  readonly environmentId: EnvironmentId;
+  readonly workers: BoardWorkersView;
+}) {
+  const createJoinCode = useAtomCommand(boardEnvironment.createWorkerJoinCode, {
+    reportFailure: false,
+  });
+  const [open, setOpen] = useState(false);
+  const [created, setCreated] = useState<BoardWorkerJoinCodeCreated | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  const createCode = async () => {
+    setCreated(null);
+    setCreating(true);
+    setCreateError(null);
+    const result = await createJoinCode({ environmentId: input.environmentId, input: {} });
+    setCreating(false);
+    if (result._tag === "Success") setCreated(result.value);
+    else setCreateError(describeBoardCommandFailure(result));
+  };
+
+  const start = () => {
+    setOpen(true);
+    // A code being created is the one this opens on; never mint a second.
+    if (creating) return;
+    // A code still in play reopens where it was; anything else starts a new one.
+    if (created !== null) {
+      const phase = joinDialogPhase({
+        codeId: created.codeId,
+        expiresAt: created.expiresAt,
+        state: input.workers.state,
+        nowMs: Date.now(),
+      });
+      if (joinCodeInPlay(phase)) return;
+    }
+    void createCode();
+  };
+
+  return {
+    start,
+    dialogProps: {
+      open,
+      onOpenChange: setOpen,
+      created,
+      creating,
+      createError,
+      onCreateCode: () => void createCode(),
+    },
+    forget: (codeId: string) => {
+      if (created?.codeId === codeId) setCreated(null);
+    },
+  };
+}
+
+export function AddWorkerButton(props: { readonly onClick: () => void }) {
+  return (
+    <Button size="sm" onClick={props.onClick}>
+      <PlusIcon />
+      Add worker
+    </Button>
+  );
+}
+
 export function WorkersSection(props: {
   readonly environmentId: EnvironmentId;
+  readonly workers: BoardWorkersView;
+  readonly addWorker: ReturnType<typeof useAddWorker>;
+  readonly boardUrl: string;
+  readonly boardUrlIsFallback: boolean;
+  readonly onSetBoardAddress: () => void;
   readonly onSetUpProjects: () => void;
 }) {
-  const { environmentId } = props;
-  const workers = useBoardWorkers(environmentId);
-  // The board server's own row, which is the primary unless this device nominated another.
+  const { environmentId, workers, addWorker } = props;
   const boardServer = useEnvironment(environmentId);
-  const boardLabel = boardServer?.label ?? "this board";
   const localVersion = boardServer?.serverConfig?.environment.serverVersion ?? null;
-  const localUrl = boardServer?.displayUrl ?? null;
   const setDefault = useAtomCommand(boardEnvironment.setDefaultWorker, { reportFailure: false });
   const removeWorker = useAtomCommand(boardEnvironment.removeWorker, { reportFailure: false });
-  const [dialog, setDialog] = useState<AddWorkerMode | null>(null);
+  const cancelJoinCode = useAtomCommand(boardEnvironment.cancelWorkerJoinCode, {
+    reportFailure: false,
+  });
+  const [renaming, setRenaming] = useState<BoardWorkerView | null>(null);
   const [removing, setRemoving] = useState<BoardWorkerView | null>(null);
-  // Last seen is coarse ("2 min ago"): re-read the clock only when an offline
-  // worker's label is due to change.
-  const lastSeenDeadlines = workers.state.workers.flatMap(workerLastSeenDeadlines);
-  const nowMs = useNowAtDeadlines(lastSeenDeadlines);
+  const { state } = workers;
+  // "Last seen" and the open codes' expiry are coarse: re-read the clock only when one changes.
+  const nowMs = useNowAtDeadlines([
+    ...state.workers.flatMap(workerLastSeenDeadlines),
+    ...state.joinCodes.map((code) => Date.parse(code.expiresAt)),
+  ]);
+  const openCodes = openJoinCodes(state, nowMs);
 
   const runDefault = async (workerId: BoardWorkerId) => {
     const result = await setDefault({ environmentId, input: { workerId } });
@@ -98,87 +186,116 @@ export function WorkersSection(props: {
       title: `${worker.label} was removed`,
       description: result.value.revoked
         ? undefined
-        : `${worker.label} couldn't be reached, so the board's access there wasn't revoked. Remove “T3o board (${boardLabel})” under Settings → Sharing & access → Authorized clients on that machine.`,
+        : `${worker.label} couldn't be reached, so the board's sessions there weren't revoked.`,
     });
   };
 
-  if (workers.loading || workers.failed) {
-    return (
-      <div className="mx-3 flex flex-col gap-2 rounded-xl border border-border bg-card px-4 py-3 shadow-xs sm:mx-4">
-        {workers.failed ? (
-          <div className="flex items-center justify-between gap-3 py-2">
-            <div className="flex flex-col">
-              <span className="text-board-13-5 font-medium">Couldn't load workers</span>
-              <span className="text-xs text-muted-foreground">
-                The board server didn't answer. Your workers and cards are unchanged.
-              </span>
-            </div>
-            <Button size="sm" variant="outline" onClick={workers.retry}>
-              Retry
-            </Button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 py-2 text-board-13 text-muted-foreground">
-            <Spinner className="size-3.5" /> Checking…
-          </div>
-        )}
-      </div>
-    );
-  }
+  const cancelCodes = async () => {
+    for (const code of openCodes) {
+      const result = await cancelJoinCode({ environmentId, input: { codeId: code.codeId } });
+      if (result._tag !== "Success") {
+        toastManager.add({ type: "error", title: describeBoardCommandFailure(result) });
+        return;
+      }
+      addWorker.forget(code.codeId);
+    }
+  };
 
-  const { state } = workers;
-  const localOnly = state.workers.length === 0;
-  const defaultChoices = state.workers.filter(canBeDefaultBoardWorker);
   const defaultItems: ReadonlyArray<{ readonly value: BoardWorkerId; readonly label: string }> = [
-    { value: BOARD_LOCAL_WORKER_ID, label: LOCAL_LABEL },
+    { value: BOARD_LOCAL_WORKER_ID, label: `${localWorkerLabel(state)} (local)` },
     ...state.workers.map((worker) => ({ value: worker.id, label: worker.label })),
   ];
+  const firstExpiry = openCodes
+    .map((code) => code.expiresAt)
+    .toSorted()
+    .at(0);
 
   return (
     <>
+      {firstExpiry === undefined ? null : (
+        <div className="mx-3 mb-2 flex items-center gap-2 text-board-12-5 text-muted-foreground sm:mx-4">
+          <span>
+            {openCodes.length} join {openCodes.length === 1 ? "code" : "codes"} open ·{" "}
+            {openCodes.length === 1 ? "expires" : "first expires"} {clockTime(firstExpiry)}
+          </span>
+          <Button size="xs" variant="ghost" onClick={() => void cancelCodes()}>
+            {openCodes.length === 1 ? "Cancel" : "Cancel all"}
+          </Button>
+        </div>
+      )}
       <div className="mx-3 flex flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xs sm:mx-4">
-        {localOnly ? null : (
-          <div className="grid grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_80px_minmax(0,1fr)_88px] gap-3 border-b border-border px-4 py-2 text-board-11-5 font-medium text-muted-foreground max-md:hidden">
-            <span>Worker</span>
-            <span>Status</span>
-            <span>T3o</span>
-            <span>Last seen</span>
-            <span />
-          </div>
-        )}
+        <div className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1.2fr)_88px] gap-3 border-b border-border px-4 py-2 text-board-11-5 font-medium text-muted-foreground max-md:hidden">
+          <span>Worker</span>
+          <span>Status</span>
+          <span />
+        </div>
         <WorkerRow
-          name={LOCAL_LABEL}
-          url={localUrl}
+          id="board-worker-local"
+          name={`${localWorkerLabel(state)} (local)`}
+          abbreviation={BOARD_LOCAL_WORKER_ABBREVIATION}
+          tags={<Badge variant="secondary">Board</Badge>}
           isDefault={state.defaultWorkerId === BOARD_LOCAL_WORKER_ID}
-          status={{ label: "Online", detail: null, tone: "neutral", tooltip: null }}
-          version={localVersion}
-          lastSeen="Now"
+          subline={`${localVersion === null ? "" : `T3o ${localVersion} · `}runs planning`}
+          status={{ label: "Connected", detail: null, tone: "neutral", tooltip: null }}
+          extra={
+            <WorkerCapacity
+              environmentId={environmentId}
+              workerId={BOARD_LOCAL_WORKER_ID}
+              name={localWorkerLabel(state)}
+              live
+            />
+          }
           actions={
-            <BoardHint label="The server hosting the board can't be removed.">
-              <Badge variant="secondary">Built-in</Badge>
-            </BoardHint>
+            <>
+              <BoardHint label="The server hosting the board can't be removed.">
+                <Badge variant="secondary">Built-in</Badge>
+              </BoardHint>
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => setRenaming(localWorkerView(localWorkerLabel(state)))}
+              >
+                Rename…
+              </Button>
+            </>
           }
         />
         {state.workers.map((worker) => {
           const isDefault = state.defaultWorkerId === worker.id;
+          const release = worker.t3oRelease ?? worker.status.t3oVersion;
+          const joined = worker.joinedAt ?? worker.addedAt;
           return (
             <WorkerRow
               key={worker.id}
+              id={`board-worker-${worker.id}`}
               name={worker.label}
-              url={worker.url}
+              abbreviation={worker.abbreviation ?? null}
               isDefault={isDefault}
-              status={workerStatusPresentation(worker, boardLabel)}
-              version={worker.status.t3oVersion}
-              lastSeen={workerLastSeen(worker, nowMs)}
+              subline={`${release === null ? "" : `T3o ${release} · `}joined ${joinedDate(joined)}`}
+              status={workerStatusPresentation(worker, nowMs)}
+              extra={
+                worker.status.state === "incompatible" ? (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-board-11-5 text-muted-foreground">
+                      Needs T3o {BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION} or newer. On{" "}
+                      {worker.label}, run:
+                    </span>
+                    <CopyCommand command={T3O_UPDATE_COMMAND} target="update command" />
+                  </div>
+                ) : (
+                  <WorkerCapacity
+                    environmentId={environmentId}
+                    workerId={worker.id}
+                    name={worker.label}
+                    live={worker.status.state === "online"}
+                  />
+                )
+              }
               actions={
                 <WorkerMenu
                   worker={worker}
                   isDefault={isDefault}
-                  onRepair={() => setDialog({ kind: "repair", worker })}
-                  onCopyUrl={() => {
-                    void navigator.clipboard.writeText(worker.url);
-                    toastManager.add({ type: "success", title: "URL copied" });
-                  }}
+                  onRename={() => setRenaming(worker)}
                   onMakeDefault={() => void runDefault(worker.id)}
                   onRemove={() => setRemoving(worker)}
                 />
@@ -186,31 +303,18 @@ export function WorkersSection(props: {
             />
           );
         })}
-        {localOnly ? (
-          <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3">
-            <div className="flex flex-col">
-              <span className="text-board-13 font-medium">No other workers</span>
-              <span className="max-w-md text-xs text-muted-foreground">
-                To run cards on another machine, connect to it in Settings → Environments, then use
-                it as a worker here.
-              </span>
-            </div>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: "add" })}>
-              <PlusIcon />
-              Add worker
-            </Button>
+        {state.workers.length === 0 ? (
+          <div className="flex flex-col border-t border-border px-4 py-3">
+            <span className="text-board-13 font-medium">No other workers</span>
+            <span className="max-w-md text-xs text-muted-foreground">
+              Add a worker to run cards on another machine. It joins with a one-time code and
+              connects out to this board.
+            </span>
           </div>
-        ) : (
-          <div className="flex justify-end border-t border-border px-4 py-2.5">
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: "add" })}>
-              <PlusIcon />
-              Add worker
-            </Button>
-          </div>
-        )}
+        ) : null}
       </div>
 
-      {localOnly ? null : (
+      {state.workers.length === 0 ? null : (
         <div className="mx-3 mt-2 flex items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-3 shadow-xs sm:mx-4">
           <div className="flex min-w-0 flex-col">
             <span className="text-board-13-5 text-foreground">Default worker</span>
@@ -230,8 +334,10 @@ export function WorkersSection(props: {
               <SelectValue />
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem value={BOARD_LOCAL_WORKER_ID}>{LOCAL_LABEL}</SelectItem>
-              {defaultChoices.map((worker) => (
+              <SelectItem
+                value={BOARD_LOCAL_WORKER_ID}
+              >{`${localWorkerLabel(state)} (local)`}</SelectItem>
+              {state.workers.filter(canBeDefaultBoardWorker).map((worker) => (
                 <SelectItem key={worker.id} value={worker.id}>
                   {worker.label}
                 </SelectItem>
@@ -243,13 +349,16 @@ export function WorkersSection(props: {
 
       <AddWorkerDialog
         environmentId={environmentId}
-        boardLabel={boardLabel}
-        mode={dialog ?? { kind: "add" }}
-        open={dialog !== null}
-        onOpenChange={(open) => {
-          if (!open) setDialog(null);
-        }}
+        {...addWorker.dialogProps}
+        boardUrl={props.boardUrl}
+        boardUrlIsFallback={props.boardUrlIsFallback}
+        onSetBoardAddress={props.onSetBoardAddress}
         onSetUpProjects={props.onSetUpProjects}
+      />
+      <RenameWorkerDialog
+        environmentId={environmentId}
+        worker={renaming}
+        onClose={() => setRenaming(null)}
       />
       <RemoveWorkerDialog
         environmentId={environmentId}
@@ -261,29 +370,142 @@ export function WorkersSection(props: {
   );
 }
 
-function WorkerRow(props: {
+/** A worker's free capacity, agents, quota and readiness, from its latest snapshot. */
+function WorkerCapacity(props: {
+  readonly environmentId: EnvironmentId;
+  readonly workerId: BoardWorkerId;
   readonly name: string;
-  readonly url: string | null;
-  readonly isDefault: boolean;
-  readonly status: ReturnType<typeof workerStatusPresentation>;
-  readonly version: string | null;
-  readonly lastSeen: string;
-  readonly actions: React.ReactNode;
+  readonly live: boolean;
+}) {
+  const result = useAtomValue(
+    boardEnvironment.capacityAtom({ environmentId: props.environmentId, input: {} }),
+  );
+  const capacityAction = useAtomCommand(boardEnvironment.capacityAction);
+  const snapshot = AsyncResult.isSuccess(result) ? result.value.get(props.workerId) : undefined;
+  if (snapshot === undefined) return null;
+  const lines = boardWorkerCapacityLines(snapshot, clockTime, props.name, props.live);
+  return (
+    <div
+      className={cn(
+        "flex w-full max-w-72 flex-col gap-1 text-board-11-5 text-muted-foreground",
+        lines.stale !== null && "opacity-60",
+      )}
+    >
+      {lines.stale === null ? null : <span>{lines.stale}</span>}
+      {lines.bars.map((bar) => (
+        <div key={bar.label} className="grid grid-cols-[2.5rem_1fr] items-center gap-2">
+          <span>{bar.label}</span>
+          <BoardHint label={bar.tooltip}>
+            <MeterBar used={bar.used} amber={bar.used >= 1} label={bar.text} />
+          </BoardHint>
+        </div>
+      ))}
+      <span>{lines.agents}</span>
+      {lines.over === null ? null : <span className="text-warning-foreground">{lines.over}</span>}
+      {lines.providers.map((provider) => (
+        <div key={provider.title} className="flex flex-col gap-1 pt-1">
+          <span className="truncate text-foreground">{provider.title}</span>
+          {provider.signedOut === null ? null : (
+            <span className="text-attention-foreground">{provider.signedOut}</span>
+          )}
+          {provider.windows.map((window) => (
+            <div key={window.label} className="grid grid-cols-[6rem_1fr] items-center gap-2">
+              <span className="truncate">{window.label}</span>
+              <BoardHint label={window.text}>
+                <MeterBar used={window.used} amber={window.nearLimit} label={window.text} />
+              </BoardHint>
+            </div>
+          ))}
+          {provider.nearLimit === null ? null : (
+            <span className="text-warning-foreground">{provider.nearLimit}</span>
+          )}
+        </div>
+      ))}
+      {lines.readiness === null ? null : (
+        <span className="flex items-center gap-2">
+          <span className={lines.notReady > 0 ? "text-warning-foreground" : undefined}>
+            {lines.readiness}
+          </span>
+          <Button
+            disabled={lines.stale !== null}
+            size="xs"
+            variant="ghost"
+            onClick={() =>
+              void capacityAction({
+                environmentId: props.environmentId,
+                input: { action: "recheck", workerId: props.workerId, projectId: null },
+              })
+            }
+          >
+            Re-check all
+          </Button>
+        </span>
+      )}
+      {lines.projects.map((line) => (
+        <span key={line} className="truncate pl-2 text-warning-foreground">
+          {line}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** A read-only fill bar: amber when it refuses new work. */
+function MeterBar(props: {
+  readonly used: number;
+  readonly amber: boolean;
+  readonly label: string;
 }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1.7fr)_minmax(0,1.3fr)_80px_minmax(0,1fr)_88px] items-center gap-3 border-b border-border px-4 py-2.5 last:border-b-0 max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-y-1">
-      <div className="flex min-w-0 flex-col">
-        <span className="flex items-center gap-2 text-board-13 font-medium">
+    <span
+      className="block h-1.5 overflow-hidden rounded-full bg-accent"
+      role="meter"
+      aria-label={props.label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(props.used * 100)}
+    >
+      <span
+        className={cn(
+          "block h-full rounded-full",
+          props.amber ? "bg-warning" : "bg-muted-foreground",
+        )}
+        style={{ width: `${Math.round(props.used * 100)}%` }}
+      />
+    </span>
+  );
+}
+
+function WorkerRow(props: {
+  readonly id: string;
+  readonly name: string;
+  readonly abbreviation: string | null;
+  readonly tags?: ReactNode;
+  readonly isDefault: boolean;
+  readonly subline: string;
+  readonly status: WorkerStatusPresentation;
+  readonly extra?: ReactNode;
+  readonly actions: ReactNode;
+}) {
+  return (
+    <div
+      id={props.id}
+      className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1.2fr)_88px] items-start gap-3 border-b border-border px-4 py-2.5 last:border-b-0 max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-y-1"
+    >
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="flex min-w-0 items-center gap-1.5 text-board-13 font-medium">
           <span className="truncate">{props.name}</span>
+          {props.abbreviation === null ? null : (
+            <WorkerAbbreviationBadge abbreviation={props.abbreviation} />
+          )}
+          {props.tags}
           {props.isDefault ? <Badge variant="outline">Default</Badge> : null}
         </span>
-        {props.url === null ? null : (
-          <span className="truncate font-mono text-board-11-5 text-muted-foreground">
-            {props.url}
-          </span>
-        )}
+        <span className="truncate font-mono text-board-11-5 text-muted-foreground">
+          {props.subline}
+        </span>
       </div>
-      <div className="flex min-w-0 flex-col items-start">
+      <div className="flex min-w-0 flex-col items-start gap-1 max-md:col-span-2 max-md:row-start-2">
         <BoardHint label={props.status.tooltip}>
           <Badge variant={TONE_BADGE[props.status.tone]}>{props.status.label}</Badge>
         </BoardHint>
@@ -292,12 +514,9 @@ function WorkerRow(props: {
             {props.status.detail}
           </span>
         )}
+        {props.extra}
       </div>
-      <span className="font-mono text-board-11-5 text-muted-foreground max-md:hidden">
-        {props.version ?? "Unknown"}
-      </span>
-      <span className="text-board-12 text-muted-foreground max-md:hidden">{props.lastSeen}</span>
-      <div className="flex justify-end">{props.actions}</div>
+      <div className="flex justify-end max-md:row-start-1 max-md:col-start-2">{props.actions}</div>
     </div>
   );
 }
@@ -305,182 +524,45 @@ function WorkerRow(props: {
 function WorkerMenu(props: {
   readonly worker: BoardWorkerView;
   readonly isDefault: boolean;
-  readonly onRepair: () => void;
-  readonly onCopyUrl: () => void;
+  readonly onRename: () => void;
   readonly onMakeDefault: () => void;
   readonly onRemove: () => void;
 }) {
-  const needsRepair = props.worker.status.state === "unauthorized";
   return (
-    <div className="flex items-center gap-1">
-      {needsRepair ? (
-        <Button size="xs" variant="outline" onClick={props.onRepair}>
-          Re-pair…
-        </Button>
-      ) : null}
-      <Menu>
-        <MenuTrigger
-          render={
-            <Button
-              type="button"
-              variant="ghost-muted"
-              size="icon-sm"
-              aria-label={`Actions for ${props.worker.label}`}
-            />
-          }
+    <Menu>
+      <MenuTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost-muted"
+            size="icon-sm"
+            aria-label={`Actions for ${props.worker.label}`}
+          />
+        }
+      >
+        <EllipsisIcon className="size-3.5" />
+      </MenuTrigger>
+      <MenuPopup align="end">
+        <MenuItem onClick={props.onRename}>Rename…</MenuItem>
+        <MenuItem
+          disabled={props.isDefault || !canBeDefaultBoardWorker(props.worker)}
+          onClick={props.onMakeDefault}
         >
-          <EllipsisIcon className="size-3.5" />
-        </MenuTrigger>
-        <MenuPopup align="end">
-          <MenuItem onClick={props.onRepair}>Re-pair…</MenuItem>
-          <MenuItem onClick={props.onCopyUrl}>Copy URL</MenuItem>
-          <MenuItem
-            disabled={props.isDefault || !canBeDefaultBoardWorker(props.worker)}
-            onClick={props.onMakeDefault}
-          >
-            Make default
-          </MenuItem>
-          {props.isDefault ? (
-            <BoardHint label="Make another worker the default first." side="left">
-              <MenuItem variant="destructive" disabled>
-                Remove worker…
-              </MenuItem>
-            </BoardHint>
-          ) : (
-            <MenuItem variant="destructive" onClick={props.onRemove}>
+          Make default
+        </MenuItem>
+        <MenuSeparator />
+        {props.isDefault ? (
+          <BoardHint label="Make another worker the default first." side="left">
+            <MenuItem variant="destructive" disabled>
               Remove worker…
             </MenuItem>
-          )}
-        </MenuPopup>
-      </Menu>
-    </div>
-  );
-}
-
-/**
- * The remove confirmation (1.11): the cards removal affects, from the board
- * server — those with no worktree yet move to the default worker, and those
- * with work there hold until they are moved.
- */
-function RemoveWorkerDialog(props: {
-  readonly environmentId: EnvironmentId;
-  readonly worker: BoardWorkerView | null;
-  readonly onCancel: () => void;
-  readonly onConfirm: (worker: BoardWorkerView) => void;
-}) {
-  const worker = props.worker;
-  const { environmentId } = props;
-  const previewRemoval = useAtomCommand(boardEnvironment.previewWorkerRemoval, {
-    reportFailure: false,
-  });
-  const [preview, setPreview] = useState<
-    | { readonly workerId: BoardWorkerId; readonly result: BoardWorkerRemovePreview | null }
-    | undefined
-  >(undefined);
-  const workerId = worker?.id ?? null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the board server which cards the removal would move while the confirm is open.
-  useEffect(() => {
-    if (workerId === null) return;
-    let live = true;
-    void previewRemoval({ environmentId, input: { workerId } }).then((result) => {
-      if (live) setPreview({ workerId, result: result._tag === "Success" ? result.value : null });
-    });
-    return () => {
-      live = false;
-    };
-  }, [environmentId, previewRemoval, workerId]);
-  const current = preview !== undefined && preview.workerId === workerId ? preview : undefined;
-  const name = worker?.label ?? "";
-  const affected =
-    current?.result == null ? 0 : current.result.toDefault.length + current.result.byHand.length;
-  const stopsAStep = current?.result?.byHand.some((card) => card.running) ?? false;
-  return (
-    <AlertDialog
-      open={worker !== null}
-      onOpenChange={(open) => {
-        if (!open) props.onCancel();
-      }}
-    >
-      <AlertDialogPopup>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Remove {name}?</AlertDialogTitle>
-          <AlertDialogDescription>
-            {current === undefined
-              ? `Checking which cards are on ${name}…`
-              : current.result === null
-                ? `Couldn't list the cards on ${name}.`
-                : affected === 0
-                  ? `No cards are assigned to ${name}.`
-                  : `${affected} ${affected === 1 ? "card is" : "cards are"} assigned to ${name}.`}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <div className="flex flex-col gap-3 px-6 pb-4 text-board-13">
-          {current === undefined ? <Spinner className="size-4" /> : null}
-          {current?.result != null && current.result.toDefault.length > 0 ? (
-            <RemovePreviewGroup
-              title="Will move to the default worker"
-              subtitle={`${current.result.defaultWorkerLabel} · no worktree yet`}
-              cards={current.result.toDefault}
-            />
-          ) : null}
-          {current?.result != null && current.result.byHand.length > 0 ? (
-            <>
-              <RemovePreviewGroup
-                title="Will need moving by hand"
-                subtitle={`work exists on ${name}`}
-                cards={current.result.byHand}
-              />
-              <span className="text-muted-foreground">
-                These cards hold and show “Worker removed: move this card” until you move them.
-                {stopsAStep ? " The running step is stopped." : ""}
-              </span>
-            </>
-          ) : null}
-          <span className="text-muted-foreground">
-            Nothing on {name} is deleted. Its worktrees, branches and thread history stay on that
-            machine; this board just stops using it. Removing also revokes the board's access on{" "}
-            {name}, if it can be reached.
-          </span>
-        </div>
-        <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button
-            variant="destructive"
-            disabled={current === undefined}
-            onClick={() => {
-              if (worker !== null) props.onConfirm(worker);
-            }}
-          >
-            Remove {name}
-          </Button>
-        </AlertDialogFooter>
-      </AlertDialogPopup>
-    </AlertDialog>
-  );
-}
-
-function RemovePreviewGroup(props: {
-  readonly title: string;
-  readonly subtitle: string;
-  readonly cards: ReadonlyArray<BoardWorkerRemovePreviewCard>;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5 rounded-lg border border-border p-2.5">
-      <span>
-        <span className="text-board-12-5 font-semibold">{props.title}</span>
-        <span className="text-board-12 text-muted-foreground"> · {props.subtitle}</span>
-      </span>
-      <ul className="flex flex-col gap-1">
-        {props.cards.map((card) => (
-          <li className="flex min-w-0 items-center gap-2 text-board-12-5" key={card.cardId}>
-            <span className="shrink-0 font-mono text-board-11-5 text-muted-foreground">
-              {card.key}
-            </span>
-            <span className="min-w-0 flex-1 truncate">{card.title}</span>
-            <span className="shrink-0 text-board-11-5 text-muted-foreground">{card.detail}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
+          </BoardHint>
+        ) : (
+          <MenuItem variant="destructive" onClick={props.onRemove}>
+            Remove worker…
+          </MenuItem>
+        )}
+      </MenuPopup>
+    </Menu>
   );
 }

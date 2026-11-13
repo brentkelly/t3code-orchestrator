@@ -1,9 +1,10 @@
 import {
+  BoardCardId,
   BOARD_LOCAL_WORKER_ID,
+  BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
   EnvironmentId,
-  PositiveInt,
   ProjectId,
-  type BoardConcurrencySettings,
+  type BoardWorkerCapacitySnapshot,
   type BoardWorkersState,
   type BoardWorkerView,
 } from "@t3tools/contracts";
@@ -22,7 +23,6 @@ import {
   boardWorkerChoices,
   boardWorkerFieldLabel,
   boardWorkerLoadLabel,
-  boardWorkerRunningCounts,
 } from "./cardWorker";
 
 const LINUX = EnvironmentId.make("env-linux-box");
@@ -75,17 +75,24 @@ const state = (
   defaultWorkerId: BOARD_LOCAL_WORKER_ID,
   workers,
   setups: [],
+  joinCodes: [],
   ...extra,
 });
 
-const concurrency: BoardConcurrencySettings = {
-  perInstance: {},
-  globalMaxConcurrent: PositiveInt.make(8),
-  workers: {
-    local: { maxConcurrent: PositiveInt.make(4), perInstance: {} },
-    [LINUX]: { maxConcurrent: PositiveInt.make(4), perInstance: {} },
-  },
-};
+const snapshot = (
+  running: number,
+  extra: Partial<BoardWorkerCapacitySnapshot> = {},
+): BoardWorkerCapacitySnapshot => ({
+  at: NOW,
+  declared: { cpuCores: 16, ramGiB: 64, diskGB: 200 },
+  headroom: { cpuCores: 6, ramGiB: 24, diskGB: 120 },
+  over: { cpuRam: false, disk: false },
+  agents: { running, max: null },
+  providers: [],
+  readiness: [],
+  heavyCards: [],
+  ...extra,
+});
 
 describe("the worker chip (prototype 4.4)", () => {
   it("is absent on a board with one worker", () => {
@@ -116,34 +123,28 @@ describe("the worker picker (prototype 4.2)", () => {
       worker(EnvironmentId.make("env-ci"), "ci-runner-2", { state: "unauthorized" }),
       worker(EnvironmentId.make("env-old"), "old-mini", { state: "incompatible" }),
     ]);
-    const running = boardWorkerRunningCounts(
-      [
-        { stepRunning: true },
-        ...Array.from({ length: 4 }, () => ({ workerId: LINUX, stepRunning: true })),
-      ],
-      board,
-    );
+    const capacity = new Map<string, BoardWorkerCapacitySnapshot>([
+      [BOARD_LOCAL_WORKER_ID, snapshot(1)],
+      [LINUX, snapshot(4, { over: { cpuRam: true, disk: false } })],
+    ]);
     const rows = boardWorkerChoices({
       state: board,
       projectId,
       projectRepositoryKey: KEY,
       projectName: "advisor",
-      running,
-      concurrency,
+      capacity,
     });
     expect(rows.map((row) => [row.label, row.selectable, row.detail])).toEqual([
-      ["This server (local)", true, "1 of 4 busy"],
-      ["linux-box", true, "4 of 4 busy · will queue"],
+      ["This server (local)", true, "1 agent · 6 cores, 24 GiB free"],
+      ["linux-box", true, "Full · will queue"],
       ["mbp-brent", false, "No checkout of advisor"],
       ["gpu-rig", false, "Offline"],
-      ["ci-runner-2", false, "Access revoked"],
-      ["old-mini", false, "Needs T3o 0.0.45+"],
+      ["ci-runner-2", false, "Reconnecting"],
+      ["old-mini", false, `Needs T3o ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION}+`],
     ]);
     expect(rows[2]?.canSetUp).toBe(true);
     expect(rows[3]?.tooltip).toBe("gpu-rig is offline. Pin it once it reconnects.");
-    expect(rows[4]?.tooltip).toBe(
-      "ci-runner-2's access was revoked. Re-pair it in Settings → Workers.",
-    );
+    expect(rows[4]?.tooltip).toBe("ci-runner-2 is reconnecting. Pin it once it's connected.");
   });
 
   it("lets a worker still cloning the project be picked, and says how far it is", () => {
@@ -168,14 +169,31 @@ describe("the worker picker (prototype 4.2)", () => {
       projectId,
       projectRepositoryKey: KEY,
       projectName: "advisor",
-      running: new Map(),
-      concurrency,
+      capacity: new Map(),
     })[1]!;
     expect(row).toMatchObject({ selectable: true, cloning: true, detail: "Cloning advisor · 32%" });
   });
 
-  it("says the load with no limit plainly", () => {
-    expect(boardWorkerLoadLabel(2, null)).toBe("2 busy");
+  it("offers no worker that isn't ready for the project, as the server refuses the pin", () => {
+    const board = state([worker(LINUX, "linux-box")]);
+    const readiness = [
+      {
+        repositoryKey: KEY,
+        path: "t3o/ready.sh",
+        state: "not-ready" as const,
+        version: null,
+        checkedAt: NOW,
+      },
+    ];
+    const row = boardWorkerChoices({
+      state: board,
+      projectId,
+      projectRepositoryKey: KEY,
+      projectName: "advisor",
+      capacity: new Map([[LINUX, snapshot(0, { readiness })]]),
+    })[1]!;
+    expect(row).toMatchObject({ selectable: false, detail: "Not ready for advisor" });
+    expect(boardWorkerLoadLabel(undefined)).toBe("No capacity report yet");
   });
 });
 
@@ -190,6 +208,12 @@ describe("the worker field", () => {
       label: "This server",
       pinned: true,
     });
+    // Renamed on the Workers page, the board server reads its new name everywhere.
+    const renamed = { ...board, localLabel: "desk-01" };
+    expect(boardWorkerFieldLabel(BOARD_LOCAL_WORKER_ID, renamed).label).toBe("desk-01");
+    expect(
+      boardWorkerFieldLabel(null, { ...renamed, defaultWorkerId: BOARD_LOCAL_WORKER_ID }).label,
+    ).toBe("Follow default (desk-01)");
   });
 
   it("warns in the create dialog when the default worker has no checkout", () => {
@@ -236,25 +260,48 @@ describe("the worker field", () => {
 });
 
 describe("queue reasons and move notices", () => {
-  it("names the binding limit only once there is more than one worker", () => {
-    const card = { workerId: LINUX, queuedBy: "worker" as const, projectId };
-    const cards = [
-      { workerId: LINUX, stepRunning: true },
-      { workerId: LINUX, stepRunning: true },
-      { workerId: LINUX, stepRunning: true },
-      { workerId: LINUX, stepRunning: true },
-    ];
+  it("names a capacity wait on any board, and reads legacy limits as plain Queued (T3O-86)", () => {
+    const card = {
+      workerId: LINUX,
+      queuedBy: "capacity" as const,
+      queuedDetail: { workerId: LINUX, behindCardId: BoardCardId.make("card-90") },
+      projectId,
+    };
+    const cardKeys = new Map([["card-90", "T3O-90"]]);
     expect(
       boardQueueReason({
         card,
         state: state([worker(LINUX, "linux-box")]),
-        cards,
-        concurrency,
+        cardKeys,
         projectName: "advisor",
       }),
-    ).toEqual({ kind: "worker", worker: "linux-box", running: 4, limit: 4 });
+    ).toEqual({
+      kind: "capacity",
+      worker: "linux-box",
+      dimension: null,
+      behind: "T3O-90",
+      tooBig: false,
+    });
+    // A board with no remote workers says it too: the worker is this server.
     expect(
-      boardQueueReason({ card, state: state([]), cards, concurrency, projectName: "advisor" }),
+      boardQueueReason({
+        card: {
+          queuedBy: "capacity",
+          queuedDetail: { workerId: BOARD_LOCAL_WORKER_ID },
+          projectId,
+        },
+        state: state([]),
+        cardKeys,
+        projectName: "advisor",
+      })?.kind,
+    ).toBe("capacity");
+    expect(
+      boardQueueReason({
+        card: { ...card, queuedBy: "board" as const },
+        state: state([]),
+        cardKeys,
+        projectName: "advisor",
+      }),
     ).toBeNull();
   });
 
@@ -475,33 +522,25 @@ describe("worker trouble (T3O-66)", () => {
     ).toBe("offline");
   });
 
-  it("tells a revoked or incompatible worker apart from one that will reconnect", () => {
-    const revoked = boardCardWorkerTrouble(
-      card(),
-      state([worker(GPU, "gpu-rig", { state: "unauthorized" })]),
-    );
-    expect(revoked?.panelTitle).toBe("gpu-rig's access was revoked");
-    expect(revoked?.panelBody).toContain("once gpu-rig is paired again");
-    expect(revoked?.panelBody).not.toContain("reconnects");
+  it("tells an incompatible worker apart from one that will reconnect", () => {
     const old = boardCardWorkerTrouble(
       card(),
       state([worker(GPU, "gpu-rig", { state: "incompatible" })]),
     );
     expect(old?.panelTitle).toBe("gpu-rig needs a newer T3o");
     expect(old?.panelBody).toContain("once gpu-rig is upgraded");
+    expect(old?.panelBody).not.toContain("reconnects");
     expect(boardCardWorkerTrouble(card(), gpuOffline)?.panelTitle).toBe("gpu-rig is offline");
-    expect(
-      boardWorkersAttention([card()], state([worker(GPU, "gpu-rig", { state: "unauthorized" })]))
-        ?.rows[0]?.resumesWhen,
-    ).toBe("once it is paired again");
   });
 
-  it("says nothing of an idle card pinned there, a reachable worker, or a first dial", () => {
+  it("says nothing of an idle card pinned there, a reachable worker, or a reconnect", () => {
     expect(boardCardWorkerTrouble(card({ stepRunning: false }), gpuOffline)).toBeNull();
     expect(boardCardWorkerTrouble(card({ workerId: LINUX }), gpuOffline)).toBeNull();
-    expect(
-      boardCardWorkerTrouble(card(), state([worker(GPU, "gpu-rig", { state: "connecting" })])),
-    ).toBeNull();
+    for (const reconnecting of ["connecting", "unauthorized"] as const) {
+      expect(
+        boardCardWorkerTrouble(card(), state([worker(GPU, "gpu-rig", { state: reconnecting })])),
+      ).toBeNull();
+    }
     // A card following the default reads the default's state.
     expect(
       boardCardWorkerTrouble(
@@ -526,10 +565,14 @@ describe("worker trouble (T3O-66)", () => {
       [],
       state([
         worker(GPU, "gpu-rig", { state: "offline" }),
-        worker(MBP, "ci-runner-2", { state: "unauthorized" }),
+        worker(MBP, "old-mini", { state: "incompatible" }),
+        worker(LINUX, "linux-box", { state: "unauthorized" }),
       ]),
     );
     expect(mixed?.label).toBe("2 workers need attention");
-    expect(mixed?.rows.map((row) => row.status)).toEqual(["Offline", "Access revoked"]);
+    expect(mixed?.rows.map((row) => row.status)).toEqual([
+      "Offline",
+      `Needs T3o ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION} or newer`,
+    ]);
   });
 });

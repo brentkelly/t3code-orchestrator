@@ -6,6 +6,11 @@
  */
 import {
   BOARD_SEED_STAGE_IDS,
+  EMPTY_BOARD_CARD_RESOURCES,
+  type BoardCardResources,
+  canonicalJson,
+  withBoardCardPlannerSize,
+  withBoardCardSizeEdit,
   BOARD_DECISIONS_PER_CALL_MAX,
   isBoardCardAutoPlanPending,
   BOARD_CARD_BRIEF_BODY_KIND,
@@ -118,6 +123,7 @@ import {
   type BoardCommand,
   type BoardEvent,
   type ProjectId,
+  BOARD_LOCAL_WORKER_ABBREVIATION,
   BOARD_LOCAL_WORKER_ID,
   boardCardBoundWorkerId,
   boardCardEffectiveWorkerId,
@@ -525,6 +531,64 @@ const makeBoardEventBase = Effect.fn("makeBoardEventBase")(function* (input: {
     correlationId: input.commandId,
     metadata: {},
   };
+});
+
+const withoutEmptyResources = (resources: BoardCardResources): BoardCardResources | null =>
+  resources.sizing === null &&
+  resources.grant === null &&
+  resources.setup === null &&
+  resources.setupDue !== true
+    ? null
+    : resources;
+
+/** A new worktree has never run setup, whatever ran in the card's last one. */
+const withSetupDue = (resources: BoardCardResources | null): BoardCardResources => ({
+  ...(resources ?? EMPTY_BOARD_CARD_RESOURCES),
+  setup: null,
+  setupDue: true,
+});
+
+/** T3o: a card's resources changed (T3O-86), carrying the whole card. */
+const cardResourcesRecordedEvent = Effect.fn("cardResourcesRecordedEvent")(function* (input: {
+  readonly card: BoardCard;
+  readonly resources: BoardCard["resources"];
+  readonly command: Pick<BoardCommand, "commandId" | "createdAt">;
+  readonly setupRequested?: "retry" | "cancel";
+}) {
+  const card: BoardCard = { ...input.card, resources: input.resources };
+  return {
+    ...(yield* makeBoardEventBase({
+      cardId: card.id,
+      occurredAt: input.command.createdAt,
+      commandId: input.command.commandId,
+    })),
+    type: "board.card-resources-recorded" as const,
+    payload: {
+      cardId: card.id,
+      card,
+      ...(input.setupRequested === undefined ? {} : { setupRequested: input.setupRequested }),
+    },
+  } satisfies PlannedBoardEvent;
+});
+
+/** The planner's size for a card proposed one plan, or null when nothing changes. A split's
+    sizes reach each child at approval instead. */
+const plannerSizeRecorded = Effect.fn("plannerSizeRecorded")(function* (input: {
+  readonly board: BoardState;
+  readonly command: Pick<BoardCommand, "commandId" | "createdAt">;
+  readonly card: BoardCard;
+  readonly plans: ReadonlyArray<Pick<BoardPlan, "size" | "sizeReason">>;
+}) {
+  const only = input.plans.length === 1 ? input.plans[0]! : null;
+  const planner =
+    only?.size === undefined ? null : { size: only.size, reason: only.sizeReason ?? null };
+  const current = input.card.resources?.sizing?.planner ?? null;
+  if (canonicalJson(current) === canonicalJson(planner)) return null;
+  return yield* cardResourcesRecordedEvent({
+    card: input.card,
+    resources: withBoardCardPlannerSize(input.card.resources, planner),
+    command: input.command,
+  });
 });
 
 /**
@@ -2726,7 +2790,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         command.addDependsOn === undefined &&
         command.removeDependsOn === undefined &&
         command.addLabels === undefined &&
-        command.removeLabels === undefined
+        command.removeLabels === undefined &&
+        command.size === undefined
       ) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
@@ -2872,6 +2937,16 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           command.scheduledStartAt === undefined ? card.scheduledStartAt : command.scheduledStartAt,
         autoMergeHold: mergeStrategyChanged ? null : card.autoMergeHold,
         mergeStrategy,
+        // T3o: a size edit (T3O-86); null drops it, back to the planner's.
+        resources:
+          command.size === undefined
+            ? card.resources
+            : withBoardCardSizeEdit(
+                card.resources,
+                command.size === null
+                  ? null
+                  : { size: command.size, by: command.sizeEditor ?? "human" },
+              ),
         updatedAt: command.createdAt,
       };
       const updated: PlannedBoardEvent = {
@@ -4198,6 +4273,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           // Only a split's plans carry the flag; a single plan is the card's
           // own, which is planned by definition.
           ...(command.plans.length >= 2 && plan.planned === false ? { planned: false } : {}),
+          ...(plan.size === undefined ? {} : { size: plan.size }),
+          ...(plan.sizeReason === undefined ? {} : { sizeReason: plan.sizeReason }),
           createdAt: prior?.createdAt ?? command.createdAt,
           updatedAt: command.createdAt,
           body: plan.body,
@@ -4239,9 +4316,15 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         command.planReview?.enabled === true && plans.length > 0
           ? livePlanReviewStep(board, command.cardId)
           : null;
-      if (reviewStep === null || reviewStep.planReviewStartedAt !== undefined) return proposed;
+      // T3o: a single plan's size is the card's own planner size (T3O-86); a split's
+      // reaches each child at approval.
+      const sized = yield* plannerSizeRecorded({ board, command, card: proposalCard, plans });
+      if (reviewStep === null || reviewStep.planReviewStartedAt !== undefined) {
+        return sized === null ? proposed : [proposed, sized];
+      }
       return [
         proposed,
+        ...(sized === null ? [] : [sized]),
         yield* planReviewStartedEvent({
           command,
           state: reviewStep,
@@ -4455,6 +4538,18 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             parentCardId: card.id,
             sourcePlanId: plan.planId,
             ...(inheritedPin === null ? {} : { pinnedWorkerId: inheritedPin }),
+            ...(plan.size === undefined
+              ? {}
+              : {
+                  resources: {
+                    sizing: {
+                      planner: { size: plan.size, reason: plan.sizeReason ?? null },
+                      edit: null,
+                    },
+                    grant: null,
+                    setup: null,
+                  },
+                }),
             stage,
             orderKey,
             createdAt: command.createdAt,
@@ -4536,6 +4631,21 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         // The worktree binds the card to the worker it is cut on, so placement is recorded in
         // the same event: the card's pin, or the default. From here only a move changes it.
         placedWorkerId: boardCardEffectiveWorkerId(card, board.defaultWorkerId),
+        // T3o: the grant is on record before the worker is called (T3O-86).
+        ...(command.grantedProfile === undefined
+          ? { resources: withSetupDue(card.resources) }
+          : {
+              resources: {
+                ...withSetupDue(card.resources),
+                grant: {
+                  profile: command.grantedProfile,
+                  heavy: command.heavyGranted ?? true,
+                  claimId: command.claimId ?? null,
+                  grantedAt: command.createdAt,
+                  settled: false,
+                },
+              },
+            }),
         updatedAt: command.createdAt,
       };
       return {
@@ -4946,6 +5056,97 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       };
     }
 
+    case "board.card.record-grant": {
+      const card = yield* requireBoardCard({ board, command });
+      const current = card.resources?.grant ?? null;
+      if (command.clear === true) {
+        if (current === null) return [];
+        return yield* cardResourcesRecordedEvent({
+          card,
+          resources: { ...(card.resources ?? EMPTY_BOARD_CARD_RESOURCES), grant: null },
+          command,
+        });
+      }
+      // A grant needs a profile: one already granted, or the one the command brings.
+      const profile = command.profile ?? current?.profile;
+      if (profile === undefined) {
+        return yield* invariant(command, `Card '${command.cardId}' has no grant to change.`);
+      }
+      const next = {
+        profile,
+        heavy: command.heavy ?? current?.heavy ?? false,
+        claimId: current?.claimId ?? null,
+        grantedAt: current?.grantedAt ?? command.createdAt,
+        settled: command.settled ?? current?.settled ?? false,
+      };
+      if (current !== null && canonicalJson(current) === canonicalJson(next)) return [];
+      return yield* cardResourcesRecordedEvent({
+        card,
+        resources: { ...(card.resources ?? EMPTY_BOARD_CARD_RESOURCES), grant: next },
+        command,
+      });
+    }
+
+    case "board.card.record-setup": {
+      const card = yield* requireBoardCard({ board, command });
+      const current = card.resources?.setup ?? null;
+      if (canonicalJson(current) === canonicalJson(command.setup)) return [];
+      const { setupDue: _due, ...base } = card.resources ?? EMPTY_BOARD_CARD_RESOURCES;
+      return yield* cardResourcesRecordedEvent({
+        card,
+        resources: withoutEmptyResources({ ...base, setup: command.setup }),
+        command,
+      });
+    }
+
+    case "board.card.setup-action": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      const setup = card.resources?.setup ?? null;
+      // Nothing to act on: a click that raced the setup's end, or a card with no worktree.
+      if (setup === null || card.worktree?.status !== "ready") return [];
+      if (command.action === "cancel") {
+        if (setup.status !== "running") return [];
+        return yield* cardResourcesRecordedEvent({
+          card,
+          resources: { ...card.resources!, setup: { ...setup, status: "cancelled" } },
+          command,
+          setupRequested: "cancel",
+        });
+      }
+      if (setup.status === "running") return [];
+      // Retry re-runs the setup script only: fetch, checkout and submodules stand.
+      return yield* cardResourcesRecordedEvent({
+        card,
+        resources: {
+          ...card.resources!,
+          setup: {
+            ...setup,
+            status: "running",
+            stage: "setup-script",
+            exitCode: null,
+            startedAt: command.createdAt,
+            durationMs: null,
+            detail: null,
+          },
+        },
+        command,
+        setupRequested: "retry",
+      });
+    }
+
+    case "board.card.undo-provision": {
+      const card = yield* requireBoardCard({ board, command });
+      // Only a provision still in flight is undone; one that landed or failed stands.
+      if (card.worktree?.status !== "provisioning") return [];
+      // The worktree that was due its setup never landed: the next provision marks it again.
+      const { setupDue: _due, ...rest } = card.resources ?? EMPTY_BOARD_CARD_RESOURCES;
+      return yield* cardResourcesRecordedEvent({
+        card: { ...card, worktree: command.restore, updatedAt: command.createdAt },
+        resources: card.resources === null ? null : withoutEmptyResources({ ...rest, grant: null }),
+        command,
+      });
+    }
+
     case "board.card.record-auto-merge-hold": {
       const card = yield* requireActiveBoardCard({ board, command });
       // No-op guard here, not just at the caller: the sweep re-probes a held card every
@@ -5313,6 +5514,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         stalledReason: "gave-up",
         retryAt: null,
         queuedBy: null,
+        queuedDetail: null,
         lastNudgeAt: null,
         // No human has typed into a fresh step, so no free turn-ending is owed.
         humanTurnAt: null,
@@ -5465,6 +5667,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             stalledReason: "gave-up",
             retryAt: null,
             queuedBy: null,
+            queuedDetail: null,
             startedAt: command.createdAt,
             updatedAt: command.createdAt,
           }
@@ -5472,7 +5675,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ? // Re-recording which limit holds an already-queued step
             // touches only that: a resumed step waits queued on its own
             // thread, and dropping it would spawn a fresh one on admission.
-            { ...current, queuedBy: command.queuedBy ?? null, updatedAt: command.createdAt }
+            {
+              ...current,
+              queuedBy: command.queuedBy ?? null,
+              queuedDetail: command.queuedDetail ?? null,
+              updatedAt: command.createdAt,
+            }
           : {
               ...current,
               status: "queued",
@@ -5480,6 +5688,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               slotHeld: false,
               // Which limit holds it; absent keeps plain "Queued".
               queuedBy: command.queuedBy ?? null,
+              queuedDetail: command.queuedDetail ?? null,
               startedAt: null,
               updatedAt: command.createdAt,
             };
@@ -5865,6 +6074,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     case "board.project.set-ci-steps":
     case "board.project.set-ci-enabled":
     case "board.project.set-ci-stop-on-failure":
+    case "board.project.set-resources":
     case "board.project.reset":
     case "board.project.import-file":
     case "board.project.dismiss-import":
@@ -5878,13 +6088,48 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (command.mode === "add" && existing !== undefined) {
         return yield* invariant(command, `${existing.label} is already a worker.`);
       }
-      if (command.mode === "repair" && existing === undefined) {
+      if (command.mode !== "add" && existing === undefined) {
         return yield* invariant(command, `Worker '${command.worker.id}' is not registered.`);
       }
-      // A re-pair keeps the worker's label and when it was added; only where
-      // it is reached may change.
+      // T3o (T3O-84): an abbreviation is unique on the board, and `SRV` is the board server's.
+      const abbreviation =
+        command.mode === "rename"
+          ? command.worker.abbreviation
+          : (existing?.abbreviation ?? command.worker.abbreviation);
+      if (abbreviation !== undefined) {
+        if (abbreviation === BOARD_LOCAL_WORKER_ABBREVIATION) {
+          return yield* invariant(command, `${abbreviation} is reserved for the board server.`);
+        }
+        const holder = (board.workers ?? []).find(
+          (worker) => worker.id !== command.worker.id && worker.abbreviation === abbreviation,
+        );
+        if (holder !== undefined) {
+          return yield* invariant(command, `${holder.label} already uses ${abbreviation}.`);
+        }
+      }
+      // A re-join keeps the label, abbreviation and when it was added; it refreshes the
+      // release and join time, and drops a direct-dial URL. A rename changes only names.
+      const { url: _droppedUrl, ...existingWithoutUrl } = existing ?? command.worker;
       const worker =
-        existing === undefined ? command.worker : { ...existing, url: command.worker.url };
+        existing === undefined
+          ? command.worker
+          : command.mode === "rename"
+            ? {
+                ...existing,
+                label: command.worker.label,
+                ...(abbreviation === undefined ? {} : { abbreviation }),
+              }
+            : {
+                ...existingWithoutUrl,
+                ...(abbreviation === undefined ? {} : { abbreviation }),
+                ...(command.worker.url === undefined ? {} : { url: command.worker.url }),
+                ...(command.worker.t3oRelease === undefined
+                  ? {}
+                  : { t3oRelease: command.worker.t3oRelease }),
+                ...(command.worker.joinedAt === undefined
+                  ? {}
+                  : { joinedAt: command.worker.joinedAt }),
+              };
       const registered: PlannedBoardEvent = {
         ...(yield* makeBoardWorkerEventBase({
           workerId: worker.id,
@@ -5897,7 +6142,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // A server added back with the same environment id reattaches the cards
       // its removal left holding: they are placed there again.
       const reattached: PlannedBoardEvent[] = [];
-      for (const card of board.cards) {
+      for (const card of command.mode === "rename" ? [] : board.cards) {
         if (card.placementOrphaned?.workerId !== worker.id) continue;
         reattached.push({
           ...(yield* makeBoardEventBase({
@@ -6213,6 +6458,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             placedWorkerId: move.toWorkerId,
             workerMove: null,
             placementOrphaned: null,
+            // T3o: the moved worktree runs setup once (T3O-86).
+            resources: withSetupDue(card.resources),
             updatedAt: command.createdAt,
           };
         } else if (step.phase === "restarted") {

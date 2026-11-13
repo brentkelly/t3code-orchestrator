@@ -107,6 +107,8 @@ import type * as Path from "effect/Path";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 // T3o: the board's server layer (T3O-59).
 import { BoardServerLive } from "./board/serverLayer.ts";
+// T3o: the worker tunnel's HTTP seam (T3O-84).
+import { installBoardTunnelSeam } from "./board/tunnel/upgradeSeam.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -361,6 +363,8 @@ const layerHttpServer = Layer.unwrap(
         const server = rejectRequestsUntilServing(
           guardHttpResponseWriteErrors(NodeHttp.createServer()),
         );
+        // T3o: worker tunnel, join and browser proxy byte pipes (board/tunnel/upgradeSeam.ts, T3O-84).
+        installBoardTunnelSeam(server);
         if (config.privateNetworkOnly) {
           server.on("connection", (socket) => {
             if (!acceptsPrivateNetworkConnection(socket)) {

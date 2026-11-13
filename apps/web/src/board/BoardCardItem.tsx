@@ -43,6 +43,7 @@ import {
   pickBoardCardTodoThread,
   type BoardTodoThreadState,
 } from "./boardCardProgressBlock";
+import { boardCardSetupFace } from "./boardCardCapacity";
 import { BoardCardCiFace } from "./BoardCardCiFace";
 import { boardCardAutoBuildChip } from "./boardCardAutomation";
 import { boardCardScheduleLabel } from "./boardCardScheduleLabel";
@@ -605,7 +606,14 @@ export function BoardCardContent({
           // waiting — and that it will start on its own — is readable without
           // opening it.
           <BoardHint label={`${queueSlot.headline}. ${queueSlot.detail}`}>
-            <span className="inline-flex shrink-0 items-center rounded bg-muted px-1.5 text-board-10 font-medium text-muted-foreground">
+            <span
+              className={cn(
+                "inline-flex shrink-0 items-center rounded px-1.5 text-board-10 font-medium",
+                queueSlot.blocked === true
+                  ? "bg-warning/14 text-board-amber-text"
+                  : "bg-muted text-muted-foreground",
+              )}
+            >
               {queueSlot.label}
             </span>
           </BoardHint>
@@ -680,6 +688,7 @@ export function BoardCardContent({
         // CI: the steps while the card is in CI, or how it last left.
         <BoardCardCiFace ci={card.ci} inCi={inCi} lastOutcome={card.ciLastOutcome} />
       )}
+      {isGroup ? null : <BoardCardSetupFace card={card} />}
       {!isGroup && progress.kind === "todos" && !(inCi && card.ci !== undefined) ? (
         <BoardCardTodoStrip
           expanded={todos?.expanded ?? false}
@@ -829,6 +838,32 @@ export function DraggableBoardCard({
         group={group}
         costSlot={costSlot}
       />
+    </div>
+  );
+}
+
+/** T3o: a card's setup on its face: Preparing n/4 with a stepped bar, or Setup failed (T3O-86). */
+function BoardCardSetupFace({ card }: { readonly card: BoardCardShell }) {
+  const face = boardCardSetupFace(card.setup, card.stalled === true);
+  if (face === null) return null;
+  return (
+    <div className="flex items-center gap-2 text-board-11-5">
+      <span
+        className={face.tone === "running" ? "text-info-foreground" : "text-warning-foreground"}
+      >
+        {face.label}
+      </span>
+      <span aria-hidden className="flex flex-1 gap-0.5">
+        {[0, 1, 2, 3].map((index) => (
+          <span
+            key={index}
+            className={cn(
+              "h-1 flex-1 rounded-full",
+              index < face.done ? (face.tone === "running" ? "bg-info" : "bg-warning") : "bg-muted",
+            )}
+          />
+        ))}
+      </span>
     </div>
   );
 }

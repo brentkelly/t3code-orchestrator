@@ -127,6 +127,7 @@ import { BoardGroupUsageButton, BoardUsageChip } from "./usage/BoardUsagePopover
 import { boardUsageInView } from "./usage/boardUsageViews";
 import { projectAccent, projectIconColorOf } from "./projectAccent";
 import { BoardWorkersContext, useBoardWorkersCardView } from "./workers/BoardWorkersContext";
+import { usePruneWorkerThreadEnvironments } from "./workers/boardWorkersState";
 import { boardQueueReason } from "./workers/cardWorker";
 import { BoardWorkersAttentionPill } from "./workers/BoardWorkersAttentionPill";
 import { validateBoardSearch, type BoardSearch } from "../routes/board";
@@ -450,6 +451,7 @@ function useBoardPageModel({
   // Stays the same object across a clone's progress ticks, so those don't
   // rebuild the queue or re-render the columns.
   const cardWorkersState = useBoardWorkersCardView(environmentId);
+  usePruneWorkerThreadEnvironments(environmentId);
   // The strip's thread title and state are joined from the thread shells the
   // client already holds; nothing is duplicated onto the wire.
   const cardThreadsByCard = useAtomValue(boardEnvironment.cardThreadsByCardAtom(environmentId));
@@ -691,7 +693,7 @@ function useBoardPageModel({
     );
     if (queue.size === 0) return EMPTY_QUEUE_INFO;
     const running = boardRunningStepCount(everyCard);
-    const cap = boardSettings.concurrency.globalMaxConcurrent;
+    const cardKeys = new Map(everyCard.map((card) => [String(card.cardId), card.key] as const));
     const cardsById = new Map(everyCard.map((card) => [card.cardId, card] as const));
     const projectNames = new Map(
       allProjects.map((project) => [project.id, project.title] as const),
@@ -705,11 +707,10 @@ function useBoardPageModel({
           : boardQueueReason({
               card,
               state: cardWorkersState,
-              cards: everyCard,
-              concurrency: boardSettings.concurrency,
+              cardKeys,
               projectName: projectNames.get(card.projectId) ?? "this project",
             });
-      const resolved = boardQueueInfo({ slot, running, cap, reason });
+      const resolved = boardQueueInfo({ slot, running, reason });
       if (resolved !== null) info.set(cardId, resolved);
     }
     return info;
@@ -1492,7 +1493,7 @@ function EnvironmentBoard({
     <BoardWorkersContext.Provider value={cardWorkersState}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <BoardTopBar>
-          {/* T3o: workers that are offline, revoked or incompatible,
+          {/* T3o: workers that are offline or need an update,
             and the cards they hold. Renders nothing otherwise. */}
           <BoardWorkersAttentionPill
             cards={everyCard}

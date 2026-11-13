@@ -2,10 +2,12 @@
  * One central server hosts the board and dials each worker as a paired client.
  * Imports only leaf modules, so `board.ts` can import it without a cycle.
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 
 import {
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
@@ -19,6 +21,7 @@ import {
   ProjectId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { BoardResourceProfile, BoardWorkerCapacitySnapshot } from "./boardCapacity.ts";
 import { RepositoryIdentity, repositoryGroupingKeyOf } from "./environment.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -26,23 +29,24 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 
 /**
  * Bump when the central server starts relying on a `boardWorker.*` call an older worker
- * lacks. 2 added `boardWorker.git.closePullRequest`, best-effort, so the floor stays at 1.
- * 3 sends `usage-recorded` signals when asked (`BOARD_WORKER_USAGE_PROTOCOL`).
+ * lacks. 2 added `boardWorker.git.closePullRequest`, best-effort. 3 sends `usage-recorded`
+ * signals when asked (`BOARD_WORKER_USAGE_PROTOCOL`). 4 is worker-owned capacity (T3O-86):
+ * claims, `syncCards`, the capacity stream, and provisions that carry a claim.
  */
-export const BOARD_WORKER_PROTOCOL_VERSION = 3;
+export const BOARD_WORKER_PROTOCOL_VERSION = 4;
 
 /** The first protocol whose workers report usage; an older one leaves its cards partial. */
 export const BOARD_WORKER_USAGE_PROTOCOL = 3;
 
-/** The oldest protocol a worker may speak and still be used. */
-export const BOARD_WORKER_PROTOCOL_FLOOR = 1;
+/** The oldest protocol a worker may speak and still be used: capacity needs 4 on both ends. */
+export const BOARD_WORKER_PROTOCOL_FLOOR = 4;
 
 /**
  * The T3o release that first spoke `BOARD_WORKER_PROTOCOL_FLOOR`, so the UI can
- * say "Needs T3o 0.0.45 or newer" rather than a protocol number nobody knows.
+ * say "Needs T3o 0.1.8.2 or newer" rather than a protocol number nobody knows.
  * Raise it together with the floor.
  */
-export const BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION = "0.0.45";
+export const BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION = "0.1.8.2";
 
 // ── Registry ───────────────────────────────────────────────────────────
 
@@ -63,13 +67,27 @@ export const BoardWorkerLabel = TrimmedNonEmptyString.check(
   Schema.isMaxLength(BOARD_WORKER_LABEL_MAX_LENGTH),
 );
 
+/**
+ * A worker's short name on the board: 1–3 uppercase letters or digits, unique
+ * per board. `SRV` is the board server's own.
+ */
+export const BOARD_LOCAL_WORKER_ABBREVIATION = "SRV";
+export const BoardWorkerAbbreviation = Schema.String.check(Schema.isPattern(/^[A-Z0-9]{1,3}$/));
+export type BoardWorkerAbbreviation = typeof BoardWorkerAbbreviation.Type;
+
 /** A registered worker. The registry lives in the board read model. */
 export const BoardWorker = Schema.Struct({
   id: EnvironmentId,
   label: BoardWorkerLabel,
-  /** The worker's HTTP origin, e.g. `https://linux-box.tail1234.ts.net:3773`. */
-  url: TrimmedNonEmptyString,
+  /** Where a direct-dial worker was reached. Outbound workers (T3O-84) dial the
+      board instead, so they have none; only rows from before then carry one. */
+  url: Schema.optionalKey(TrimmedNonEmptyString),
   addedAt: IsoDateTime,
+  abbreviation: Schema.optionalKey(BoardWorkerAbbreviation),
+  /** The T3o release the worker reported when it joined. */
+  t3oRelease: Schema.optionalKey(TrimmedNonEmptyString),
+  /** When it last joined with a code. */
+  joinedAt: Schema.optionalKey(IsoDateTime),
 });
 export type BoardWorker = typeof BoardWorker.Type;
 
@@ -191,6 +209,131 @@ export const BoardWorkerSetup = Schema.Struct({
 });
 export type BoardWorkerSetup = typeof BoardWorkerSetup.Type;
 
+// ── Join codes (T3O-84) ───────────────────────────────────────────────
+
+/** What Add worker ticks off as a joining worker reports in (prototype 3.5). */
+export const BoardWorkerJoinMilestone = Schema.Literals([
+  "code-accepted",
+  "connected",
+  "reading",
+  "checking",
+  "joined",
+]);
+export type BoardWorkerJoinMilestone = typeof BoardWorkerJoinMilestone.Type;
+
+/** Why a worker's attempt to use a code was refused, kept so the dialog can say so. */
+export const BoardWorkerJoinRefusal = Schema.Literals([
+  "expired",
+  "used",
+  "unknown",
+  "cancelled",
+  "needs-update",
+]);
+export type BoardWorkerJoinRefusal = typeof BoardWorkerJoinRefusal.Type;
+
+/**
+ * A join code as every board client sees it. The code itself is never here: the
+ * board keeps only its hash, and only the client that created it ever shows it.
+ */
+export const BoardWorkerJoinCodeView = Schema.Struct({
+  codeId: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+  expiresAt: IsoDateTime,
+  state: Schema.Literals(["open", "used", "expired", "cancelled"]),
+  /** Who used it: set once a worker presented it. */
+  usedBy: Schema.NullOr(
+    Schema.Struct({
+      workerId: EnvironmentId,
+      label: TrimmedNonEmptyString,
+      address: Schema.NullOr(TrimmedNonEmptyString),
+      t3oRelease: Schema.NullOr(TrimmedNonEmptyString),
+      usedAt: IsoDateTime,
+      /** True when this worker was already on the board (a re-join). */
+      rejoin: Schema.Boolean,
+    }),
+  ),
+  /** The milestones reached so far, in order. */
+  milestones: Schema.Array(BoardWorkerJoinMilestone),
+  /** The last refusal a worker met trying this code (needs-update keeps it open). */
+  lastRefusal: Schema.NullOr(
+    Schema.Struct({
+      reason: BoardWorkerJoinRefusal,
+      at: IsoDateTime,
+      t3oRelease: Schema.NullOr(TrimmedNonEmptyString),
+    }),
+  ),
+});
+export type BoardWorkerJoinCodeView = typeof BoardWorkerJoinCodeView.Type;
+
+/** How long a join code works for. */
+export const BOARD_WORKER_JOIN_CODE_TTL_MINUTES = 10;
+
+/** Crockford base32, with the letters that read as digits left out. */
+const JOIN_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/** A code as typed: case, spaces and dashes don't matter, and I/L read as 1, O as 0. */
+export function normalizeBoardWorkerJoinCode(input: string): string | null {
+  const cleaned = input
+    .toUpperCase()
+    .replace(/[\s-]/g, "")
+    .replace(/[IL]/g, "1")
+    .replace(/O/g, "0");
+  if (cleaned.length !== 8) return null;
+  for (const char of cleaned) if (!JOIN_CODE_ALPHABET.includes(char)) return null;
+  return cleaned;
+}
+
+/** 40 random bits as eight Crockford characters, shown `XXXX-XXXX`. */
+export function formatBoardWorkerJoinCode(bytes: Uint8Array): string {
+  let bits = 0n;
+  for (const byte of bytes.subarray(0, 5)) bits = (bits << 8n) | BigInt(byte);
+  let out = "";
+  for (let index = 0; index < 8; index++) {
+    out = JOIN_CODE_ALPHABET[Number(bits & 31n)] + out;
+    bits >>= 5n;
+  }
+  return `${out.slice(0, 4)}-${out.slice(4)}`;
+}
+
+/**
+ * An abbreviation suggested from a label: `build-03` → `B03`, `mac-mini` → `MAC`.
+ * Never one in `taken`; null when nothing fits.
+ */
+export function suggestBoardWorkerAbbreviation(
+  label: string,
+  taken: ReadonlyArray<string>,
+): string | null {
+  const used = new Set([BOARD_LOCAL_WORKER_ABBREVIATION, ...taken]);
+  const upper = label.toUpperCase();
+  const words = upper.split(/[^A-Z0-9]+/).filter((word) => word.length > 0);
+  const letters = upper.replace(/[^A-Z]/g, "");
+  const digits = upper.replace(/[^0-9]/g, "");
+  const candidates: string[] = [];
+  const firstLetter = words[0]?.match(/[A-Z]/)?.[0] ?? "";
+  if (firstLetter.length > 0 && digits.length > 0) {
+    candidates.push(`${firstLetter}${digits.slice(-2)}`);
+  }
+  if (words[0] !== undefined) candidates.push(words[0].slice(0, 3));
+  if (words.length >= 2)
+    candidates.push(
+      words
+        .map((word) => word[0])
+        .join("")
+        .slice(0, 3),
+    );
+  if (letters.length > 0) candidates.push(letters.slice(0, 3));
+  for (const candidate of candidates) {
+    if (/^[A-Z0-9]{1,3}$/.test(candidate) && !used.has(candidate)) return candidate;
+  }
+  const stem = letters || "W";
+  for (let index = 1; index < 100; index++) {
+    const suffix = String(index);
+    const candidate = `${stem.slice(0, 3 - suffix.length)}${suffix}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  return null;
+}
+
 // ── The board's worker summary ─────────────────────────────────────────
 
 /**
@@ -201,6 +344,12 @@ export const BoardWorkersState = Schema.Struct({
   defaultWorkerId: BoardWorkerId,
   workers: Schema.Array(BoardWorkerView),
   setups: Schema.Array(BoardWorkerSetup),
+  /** Join codes still open, or used recently enough that Add worker follows them. */
+  joinCodes: Schema.Array(BoardWorkerJoinCodeView).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** The board server's own name as a worker; absent or null reads "This server". */
+  localLabel: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type BoardWorkersState = typeof BoardWorkersState.Type;
 
@@ -208,16 +357,23 @@ export const EMPTY_BOARD_WORKERS_STATE: BoardWorkersState = {
   defaultWorkerId: BOARD_LOCAL_WORKER_ID,
   workers: [],
   setups: [],
+  joinCodes: [],
 };
 
-/** A board with no workers and the local default is exactly today's board. */
-export function isLocalOnlyBoardWorkers(state: BoardWorkersState | undefined): boolean {
+/** The board server is its only worker: none joined, none being set up, the local default. */
+export function hasOnlyLocalBoardWorker(state: BoardWorkersState | undefined): boolean {
   return (
     state === undefined ||
     (state.workers.length === 0 &&
       state.setups.length === 0 &&
       state.defaultWorkerId === BOARD_LOCAL_WORKER_ID)
   );
+}
+
+/** A board with no workers, no join codes listed and the local default is exactly today's
+    board, so its payload carries no worker state. */
+export function isLocalOnlyBoardWorkers(state: BoardWorkersState | undefined): boolean {
+  return hasOnlyLocalBoardWorker(state) && (state?.joinCodes.length ?? 0) === 0;
 }
 
 /** Every worker id, the built-in `local` first. */
@@ -233,14 +389,15 @@ export function canBeDefaultBoardWorker(worker: BoardWorkerView): boolean {
 // ── Commands and events (the registry) ─────────────────────────────
 
 /**
- * Internal: dispatched only after the credential exchange succeeded, so the board holds
- * a working session before a worker is registered. `add` refuses a registered worker;
- * `repair` refuses an unknown one and keeps its label and `addedAt`.
+ * Internal: dispatched once a joining worker's code is accepted. `add` refuses a
+ * registered worker; `repair` (a re-join) refuses an unknown one and keeps its label,
+ * abbreviation and `addedAt`; `rename` changes only the label and abbreviation.
+ * An abbreviation another worker holds, or `SRV`, is refused.
  */
 export const BoardWorkerRegisterCommand = Schema.Struct({
   type: Schema.Literal("board.worker.register"),
   commandId: CommandId,
-  mode: Schema.Literals(["add", "repair"]),
+  mode: Schema.Literals(["add", "repair", "rename"]),
   worker: BoardWorker,
   createdAt: IsoDateTime,
 });
@@ -324,16 +481,47 @@ export const BOARD_WORKER_WS_METHODS = {
   projects: "boardWorker.projects",
   /** The worker's provider instances and models, and its projects folder. */
   providers: "boardWorker.providers",
-  /** Revoke the calling session — how Remove gives the board's access back.
-      Upstream refuses a session revoking itself over HTTP, so the worker does
-      it on the board's behalf. */
+  /** Revoke the calling session — how a renewal gives the old session back — or,
+      with `all`, every session this board holds on the worker, its users' too: how
+      Remove gives the board's access back. Upstream refuses a session revoking
+      itself over HTTP, so the worker does it on the board's behalf. */
   release: "boardWorker.release",
   /** Issue the calling session's successor — same subject, scopes and label —
       so the board's access outlives upstream's fixed session lifetime. The
       caller gives the old session back with `release` once it holds the new
       one. */
   renew: "boardWorker.renew",
+  /** A session on the worker for one board user, so their browser can open the
+      worker's threads through the board (T3O-84). Board sessions only. */
+  mintUserSession: "boardWorker.mintUserSession",
+  /** Revoke the worker sessions minted for these board sessions. */
+  revokeUserSessions: "boardWorker.revokeUserSessions",
 } as const;
+
+export const BoardWorkerReleaseInput = Schema.Struct({
+  all: Schema.optional(Schema.Boolean),
+});
+export type BoardWorkerReleaseInput = typeof BoardWorkerReleaseInput.Type;
+
+export const BoardWorkerMintUserSessionInput = Schema.Struct({
+  /** The caller's own session id on the board: it keys the worker session. */
+  boardSessionId: TrimmedNonEmptyString,
+  scopes: Schema.Array(TrimmedNonEmptyString),
+  label: TrimmedNonEmptyString,
+});
+export type BoardWorkerMintUserSessionInput = typeof BoardWorkerMintUserSessionInput.Type;
+
+export const BoardWorkerUserSession = Schema.Struct({
+  bearerToken: TrimmedNonEmptyString,
+  expiresAt: IsoDateTime,
+  scopes: Schema.Array(TrimmedNonEmptyString),
+});
+export type BoardWorkerUserSession = typeof BoardWorkerUserSession.Type;
+
+export const BoardWorkerRevokeUserSessionsInput = Schema.Struct({
+  boardSessionIds: Schema.Array(TrimmedNonEmptyString),
+});
+export type BoardWorkerRevokeUserSessionsInput = typeof BoardWorkerRevokeUserSessionsInput.Type;
 
 export const BoardWorkerHello = Schema.Struct({
   protocolVersion: NonNegativeInt,
@@ -393,7 +581,7 @@ export const BOARD_WORKER_RPCS = [
     error: Schema.Union([BoardWorkerRequestError, EnvironmentAuthorizationError]),
   }),
   Rpc.make(BOARD_WORKER_WS_METHODS.release, {
-    payload: Schema.Struct({}),
+    payload: BoardWorkerReleaseInput,
     success: Schema.Void,
     error: Schema.Union([BoardWorkerRequestError, EnvironmentAuthorizationError]),
   }),
@@ -402,15 +590,27 @@ export const BOARD_WORKER_RPCS = [
     success: BoardWorkerRenewal,
     error: Schema.Union([BoardWorkerRequestError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WORKER_WS_METHODS.mintUserSession, {
+    payload: BoardWorkerMintUserSessionInput,
+    success: BoardWorkerUserSession,
+    error: Schema.Union([BoardWorkerRequestError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(BOARD_WORKER_WS_METHODS.revokeUserSessions, {
+    payload: BoardWorkerRevokeUserSessionsInput,
+    success: Schema.Struct({ revoked: NonNegativeInt }),
+    error: Schema.Union([BoardWorkerRequestError, EnvironmentAuthorizationError]),
+  }),
 ] as const;
 
 // ── Central-server RPCs (`board.workers.*`) ────────────────────────────
 
 export const BOARD_WORKERS_WS_METHODS = {
-  /** Add a worker from a one-time pairing token or a pasted pairing link. */
-  add: "board.workers.add",
-  /** Re-pair an existing worker; keeps its label, pinned cards and limits. */
-  repair: "board.workers.repair",
+  /** A one-time join code for a new worker (T3O-84). */
+  createJoinCode: "board.workers.createJoinCode",
+  /** Stop an open join code working. */
+  cancelJoinCode: "board.workers.cancelJoinCode",
+  /** Change a worker's label and abbreviation. */
+  rename: "board.workers.rename",
   /** Revoke the board's access on the worker if reachable, then forget it. */
   remove: "board.workers.remove",
   /** The cards removing a worker would affect, for its confirm dialog. */
@@ -421,42 +621,68 @@ export const BOARD_WORKERS_WS_METHODS = {
   setupProject: "board.workers.setupProject",
   /** Forget a finished or failed setup (dismiss). */
   dismissSetup: "board.workers.dismissSetup",
+  /** A session for the caller on a worker, to open its threads through the board. */
+  threadAccess: "board.workers.threadAccess",
+  /** T3o: what each worker offers this board, then each change, at most every 5 s per worker
+      (T3O-86). Kept out of `BoardWorkersState`, which every card reads. */
+  subscribeCapacity: "board.workers.subscribeCapacity",
+  /** T3o: Re-check a project's readiness, or read a readiness or setup log (T3O-86). */
+  capacityAction: "board.workers.capacityAction",
 } as const;
 
-/**
- * How the central server gets its own session on a worker: a one-time
- * token the client minted on the worker (`POST /api/auth/pairing-token`), or
- * a pairing link the human pasted from `t3 pair`.
- */
-export const BoardWorkerCredential = Schema.Union([
+export const BoardWorkerCapacityItem = Schema.Struct({
+  workerId: BoardWorkerId,
+  snapshot: BoardWorkerCapacitySnapshot,
+  /** What this board's own placed cards hold there, from the board's grants, not the worker. */
+  held: Schema.optionalKey(BoardResourceProfile),
+});
+export type BoardWorkerCapacityItem = typeof BoardWorkerCapacityItem.Type;
+
+export const BoardWorkersCapacityActionInput = Schema.Union([
+  /** A project's readiness checked again now; no project is every project on the worker. */
   Schema.Struct({
-    kind: Schema.Literal("pairing-token"),
-    token: TrimmedNonEmptyString,
+    action: Schema.Literal("recheck"),
+    workerId: BoardWorkerId,
+    projectId: Schema.NullOr(ProjectId),
   }),
   Schema.Struct({
-    kind: Schema.Literal("pairing-url"),
-    pairingUrl: TrimmedNonEmptyString,
+    action: Schema.Literal("readinessOutput"),
+    workerId: BoardWorkerId,
+    projectId: ProjectId,
   }),
+  Schema.Struct({ action: Schema.Literal("setupLog"), cardId: TrimmedNonEmptyString }),
 ]);
-export type BoardWorkerCredential = typeof BoardWorkerCredential.Type;
+export type BoardWorkersCapacityActionInput = typeof BoardWorkersCapacityActionInput.Type;
 
-export const BoardWorkersAddInput = Schema.Struct({
-  /** The worker's HTTP origin. Optional with a pairing link, which carries it. */
-  url: Schema.optionalKey(TrimmedNonEmptyString),
-  credential: BoardWorkerCredential,
+export const BoardWorkerJoinCodeCreated = Schema.Struct({
+  codeId: TrimmedNonEmptyString,
+  /** `XXXX-XXXX`. Shown once, to the client that asked; the board keeps a hash. */
+  code: TrimmedNonEmptyString,
+  expiresAt: IsoDateTime,
+});
+export type BoardWorkerJoinCodeCreated = typeof BoardWorkerJoinCodeCreated.Type;
+
+export const BoardWorkersCancelJoinCodeInput = Schema.Struct({
+  codeId: TrimmedNonEmptyString,
+});
+export type BoardWorkersCancelJoinCodeInput = typeof BoardWorkersCancelJoinCodeInput.Type;
+
+export const BoardWorkersRenameInput = Schema.Struct({
+  workerId: BoardWorkerId,
   label: BoardWorkerLabel,
-  /** The environment the client picked, when it picked one: the worker must
-      turn out to be that server ("That link is for a different server"). */
-  expectedEnvironmentId: Schema.optionalKey(EnvironmentId),
+  abbreviation: BoardWorkerAbbreviation,
 });
-export type BoardWorkersAddInput = typeof BoardWorkersAddInput.Type;
+export type BoardWorkersRenameInput = typeof BoardWorkersRenameInput.Type;
 
-export const BoardWorkersRepairInput = Schema.Struct({
+/** A browser's way into a worker's threads: the board's proxied path for it and a
+    session there. The client resolves `path` against the board URL it already uses. */
+export const BoardWorkerThreadAccess = Schema.Struct({
   workerId: EnvironmentId,
-  url: Schema.optionalKey(TrimmedNonEmptyString),
-  credential: BoardWorkerCredential,
+  path: TrimmedNonEmptyString,
+  bearerToken: TrimmedNonEmptyString,
+  expiresAt: IsoDateTime,
 });
-export type BoardWorkersRepairInput = typeof BoardWorkersRepairInput.Type;
+export type BoardWorkerThreadAccess = typeof BoardWorkerThreadAccess.Type;
 
 export const BoardWorkerIdInput = Schema.Struct({
   workerId: EnvironmentId,
@@ -551,21 +777,39 @@ export class BoardWorkerAddError extends Schema.TaggedError<BoardWorkerAddError>
 export class BoardWorkerActionError extends Schema.TaggedError<BoardWorkerActionError>()(
   "BoardWorkerActionError",
   {
-    code: Schema.Literals(["not-found", "is-default", "not-online", "no-remote", "internal"]),
+    code: Schema.Literals([
+      "not-found",
+      "is-default",
+      "not-online",
+      "no-remote",
+      "internal",
+      "invalid",
+      "forbidden",
+    ]),
     message: TrimmedNonEmptyString,
   },
 ) {}
 
 export const BOARD_WORKERS_RPCS = [
-  Rpc.make(BOARD_WORKERS_WS_METHODS.add, {
-    payload: BoardWorkersAddInput,
-    success: BoardWorkerAddResult,
-    error: Schema.Union([BoardWorkerAddError, EnvironmentAuthorizationError]),
+  Rpc.make(BOARD_WORKERS_WS_METHODS.createJoinCode, {
+    payload: Schema.Struct({}),
+    success: BoardWorkerJoinCodeCreated,
+    error: Schema.Union([BoardWorkerActionError, EnvironmentAuthorizationError]),
   }),
-  Rpc.make(BOARD_WORKERS_WS_METHODS.repair, {
-    payload: BoardWorkersRepairInput,
-    success: BoardWorkerAddResult,
-    error: Schema.Union([BoardWorkerAddError, EnvironmentAuthorizationError]),
+  Rpc.make(BOARD_WORKERS_WS_METHODS.cancelJoinCode, {
+    payload: BoardWorkersCancelJoinCodeInput,
+    success: Schema.Void,
+    error: Schema.Union([BoardWorkerActionError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(BOARD_WORKERS_WS_METHODS.rename, {
+    payload: BoardWorkersRenameInput,
+    success: Schema.Void,
+    error: Schema.Union([BoardWorkerActionError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(BOARD_WORKERS_WS_METHODS.threadAccess, {
+    payload: BoardWorkerIdInput,
+    success: BoardWorkerThreadAccess,
+    error: Schema.Union([BoardWorkerActionError, EnvironmentAuthorizationError]),
   }),
   Rpc.make(BOARD_WORKERS_WS_METHODS.remove, {
     payload: BoardWorkerIdInput,
@@ -592,6 +836,17 @@ export const BOARD_WORKERS_RPCS = [
     success: Schema.Void,
     error: EnvironmentAuthorizationError,
   }),
+  Rpc.make(BOARD_WORKERS_WS_METHODS.subscribeCapacity, {
+    payload: Schema.Struct({}),
+    success: BoardWorkerCapacityItem,
+    error: EnvironmentAuthorizationError,
+    stream: true,
+  }),
+  Rpc.make(BOARD_WORKERS_WS_METHODS.capacityAction, {
+    payload: BoardWorkersCapacityActionInput,
+    success: Schema.NullOr(Schema.String),
+    error: Schema.Union([BoardWorkerActionError, EnvironmentAuthorizationError]),
+  }),
 ] as const;
 
 /**
@@ -608,12 +863,21 @@ export const BOARD_WORKER_RPC_SCOPES = {
   [BOARD_WORKER_WS_METHODS.release]: AuthOrchestrationReadScope,
   // Its successor carries exactly the caller's own scopes, never more.
   [BOARD_WORKER_WS_METHODS.renew]: AuthOrchestrationReadScope,
-  [BOARD_WORKERS_WS_METHODS.add]: AuthOrchestrationOperateScope,
-  [BOARD_WORKERS_WS_METHODS.repair]: AuthOrchestrationOperateScope,
+  // Board RPCs only: the guard in `board/rpc.ts` also refuses non-board sessions.
+  [BOARD_WORKER_WS_METHODS.mintUserSession]: AuthOrchestrationReadScope,
+  [BOARD_WORKER_WS_METHODS.revokeUserSessions]: AuthOrchestrationReadScope,
+  // A join code lets a machine onto the board, so it is an access write.
+  [BOARD_WORKERS_WS_METHODS.createJoinCode]: AuthAccessWriteScope,
+  [BOARD_WORKERS_WS_METHODS.cancelJoinCode]: AuthAccessWriteScope,
+  [BOARD_WORKERS_WS_METHODS.rename]: AuthOrchestrationOperateScope,
+  [BOARD_WORKERS_WS_METHODS.threadAccess]: AuthOrchestrationReadScope,
   [BOARD_WORKERS_WS_METHODS.remove]: AuthOrchestrationOperateScope,
   // A read of the board's own cards, ahead of the write it previews.
   [BOARD_WORKERS_WS_METHODS.removePreview]: AuthOrchestrationReadScope,
   [BOARD_WORKERS_WS_METHODS.setDefault]: AuthOrchestrationOperateScope,
   [BOARD_WORKERS_WS_METHODS.setupProject]: AuthSourceControlWriteScope,
   [BOARD_WORKERS_WS_METHODS.dismissSetup]: AuthOrchestrationOperateScope,
+  // Capacity is a read of the workers; a re-check runs a project's own script on one.
+  [BOARD_WORKERS_WS_METHODS.subscribeCapacity]: AuthOrchestrationReadScope,
+  [BOARD_WORKERS_WS_METHODS.capacityAction]: AuthOrchestrationOperateScope,
 } as const;

@@ -114,6 +114,18 @@ describe("connection presentation", () => {
     ).toBe("https://tunnel.example.test/mcp");
   });
 
+  // T3o: a worker proxied through a board has no MCP address of its own (T3O-84).
+  it("offers no MCP address for a worker reached through a board's proxy", () => {
+    const proxied = new BearerConnectionProfile({
+      connectionId: TARGET.connectionId,
+      environmentId: TARGET.environmentId,
+      label: TARGET.label,
+      httpBaseUrl: "https://board.example.test/api/t3o/workers/env-worker/",
+      wsBaseUrl: "wss://board.example.test/api/t3o/workers/env-worker/",
+    });
+    expect(environmentMcpUrl({ entry: { ...ENTRY, profile: Option.some(proxied) } })).toBeNull();
+  });
+
   it("distinguishes initial connection, reconnect, and retry errors", () => {
     expect(presentConnectionState(supervisorState({ phase: "connecting", attempt: 1 }))).toEqual({
       phase: "connecting",

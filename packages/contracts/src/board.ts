@@ -36,6 +36,7 @@ import {
   BOARD_WORKER_RPC_SCOPES,
   BOARD_WORKER_RPCS,
   BOARD_WORKERS_RPCS,
+  BOARD_WORKERS_WS_METHODS,
   BoardDefaultWorkerSetPayload,
   BoardWorker,
   BoardWorkerId,
@@ -51,6 +52,16 @@ import {
   BOARD_WORKER_GATEWAY_RPCS,
   BoardCiLogItem,
 } from "./boardWorkerGateway.ts";
+import {
+  BoardCardResources,
+  BoardCardSetupResult,
+  BoardCardSize,
+  BoardCardSizeEditor,
+  BoardProjectResources,
+  BoardResourceDimension,
+  BoardResourceProfile,
+  isEmptyBoardProjectResources,
+} from "./boardCapacity.ts";
 import {
   BOARD_WORKER_GIT_CALL_RPC_SCOPES,
   BOARD_WORKER_GIT_CALL_RPCS,
@@ -2153,6 +2164,11 @@ export const BoardCard = Schema.Struct({
       and returns from Ready for merge for conflicts or failing checks. A
       human's move, Retry CI or Send back anyway starts it again. */
   ciRoundTrips: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  /** T3o: the card's size, what its worker granted, and its setup (T3O-86). Null until any is
+      set; decodes to null on older payloads, matching migration 069's NULL column. */
+  resources: Schema.NullOr(BoardCardResources).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** Derived from unmet dependencies at Ready and beyond, recorded by
       the decider at each move / dependency edit / unarchive. */
   blocked: Schema.Boolean,
@@ -2372,13 +2388,56 @@ export function boardStepParkedReason(
     `worker-offline` is no limit at all: the card's worker is out of
     reach, and the card shows Worker offline until it is back. */
 export const BoardStepQueuedBy = Schema.Literals([
+  // Legacy: the board's own concurrency ceilings, gone with T3O-86. Never written; old rows
+  // and events still decode, and read as plain "Queued".
   "board",
   "worker",
   "provider",
   "setup",
   "worker-offline",
+  // T3o: the worker's own reasons (T3O-86). `capacity` names its dimension and worker in
+  // `queuedDetail`; `quota` is a provider near its limit; `agent-cap` is the worker's agent
+  // cap; `needs-update` is a worker below the protocol floor.
+  "capacity",
+  "quota",
+  "agent-cap",
+  "needs-update",
 ]);
 export type BoardStepQueuedBy = typeof BoardStepQueuedBy.Type;
+
+/**
+ * What a queue reason waits on, beside the literal `queuedBy` (T3O-86): the worker, the
+ * dimension, and the card ahead in this board's queue. Never an amount, so a waiting card
+ * appends no event on every snapshot.
+ */
+export const BoardStepQueuedDetail = Schema.Struct({
+  workerId: Schema.optionalKey(BoardWorkerId),
+  dimension: Schema.optionalKey(BoardResourceDimension),
+  behindCardId: Schema.optionalKey(BoardCardId),
+  /** The card's profile exceeds the worker's declared capacity: no room will ever free. */
+  tooBig: Schema.optionalKey(Schema.Boolean),
+  /** Which `setup` wait: the worker's readiness fails, it has no checkout, or the card's own
+      setup script holds the agent. Absent: a checkout is on its way. */
+  setupCause: Schema.optionalKey(Schema.Literals(["not-ready", "not-set-up", "card-setup"])),
+});
+export type BoardStepQueuedDetail = typeof BoardStepQueuedDetail.Type;
+
+/**
+ * A step held for room a release could free: a capacity wait on a named worker that is
+ * neither Too big for it nor queued behind another of this board's cards.
+ */
+export function boardStepWaitsForRoom(
+  state: Pick<BoardCardStepState, "status" | "queuedBy" | "queuedDetail">,
+): boolean {
+  const detail = state.queuedDetail;
+  return (
+    state.status === "queued" &&
+    state.queuedBy === "capacity" &&
+    detail?.workerId !== undefined &&
+    detail.behindCardId === undefined &&
+    detail.tooBig !== true
+  );
+}
 
 export const BoardCardStepState = Schema.Struct({
   cardId: BoardCardId,
@@ -2507,6 +2566,10 @@ export const BoardCardStepState = Schema.Struct({
       cloning the project (`setup`). Null when not queued, and on every row
       written before the distributed board — read as plain "Queued". */
   queuedBy: Schema.NullOr(BoardStepQueuedBy).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** T3o: what the queue reason waits on (T3O-86); null on older rows and events. */
+  queuedDetail: Schema.NullOr(BoardStepQueuedDetail).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** When the step began running; null while pending/queued. */
   startedAt: Schema.NullOr(IsoDateTime),
   updatedAt: IsoDateTime,
@@ -2534,6 +2597,9 @@ export const BoardPlan = Schema.Struct({
       to build; false when it is a brief that still needs planning. Absent means
       planned. */
   planned: Schema.optionalKey(Schema.Boolean),
+  /** T3o: the planner's suggested size and why (T3O-86); absent is M on every dimension. */
+  size: Schema.optionalKey(BoardCardSize),
+  sizeReason: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -2825,6 +2891,8 @@ const BoardProjectStageConfigV2 = Schema.Struct({
   lastChangedBy: Schema.NullOr(BoardProjectConfigChange).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** T3o: the project's Resources settings (T3O-86); absent follows every default. */
+  resources: Schema.optionalKey(BoardProjectResources),
 });
 
 /** The legacy shape: a config resolved from a committed `t3o.json`. */
@@ -2883,15 +2951,17 @@ export type BoardProjectStageConfig = typeof BoardProjectStageConfigV2.Type;
 export type BoardProjectStageDelta = Pick<
   BoardProjectStageConfig,
   "stageSwitches" | "overrides" | "ci"
->;
+> & { readonly resources?: BoardProjectResources | undefined };
 
 /** A short, stable hash of a delta (FNV-1a over canonical JSON, two lanes).
     Runs on every client, so no `crypto`. */
 export function boardProjectConfigVersion(delta: BoardProjectStageDelta): string {
+  // Resources join the hash only when set, so every existing version stays as it was.
   const text = canonicalJson({
     stageSwitches: delta.stageSwitches,
     overrides: delta.overrides,
     ci: delta.ci,
+    ...(isEmptyBoardProjectResources(delta.resources) ? {} : { resources: delta.resources }),
   });
   let a = 0x811c9dc5;
   let b = 0x01000193 ^ text.length;
@@ -2977,6 +3047,8 @@ export const BoardProjectStageConfigShell = Schema.Struct({
   ciStopOnFailure: Schema.optionalKey(Schema.Literal(false)),
   warnings: Schema.Array(Schema.String),
   version: Schema.String,
+  /** T3o: the project's Resources settings (T3O-86); small, and every card's size reads it. */
+  resources: Schema.optionalKey(BoardProjectResources),
 });
 export type BoardProjectStageConfigShell = typeof BoardProjectStageConfigShell.Type;
 
@@ -2998,6 +3070,7 @@ export function boardProjectStageConfigShell(
       parallel: step.parallel,
     })),
     ...(boardCiStopsOnFailure(config.ci) ? {} : { ciStopOnFailure: false as const }),
+    ...(config.resources === undefined ? {} : { resources: config.resources }),
     warnings: config.warnings,
     version: config.version,
   };
@@ -5054,6 +5127,10 @@ export const BoardCardUpdateCommand = Schema.Struct({
       carry is a no-op; a tombstoned label can be removed. Mutually exclusive
       with `labels`. */
   removeLabels: Schema.optional(Schema.Array(BoardLabelId)),
+  /** T3o: the card's size (T3O-86). Absent leaves it; null drops the edit, back to the
+      planner's; `sizeEditor` says whose edit it is, a human's unless an agent's tool says so. */
+  size: Schema.optional(Schema.NullOr(BoardCardSize)),
+  sizeEditor: Schema.optional(BoardCardSizeEditor),
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;
@@ -5388,6 +5465,19 @@ export const BoardProjectSetCiEnabledCommand = Schema.Struct({
 });
 export type BoardProjectSetCiEnabledCommand = typeof BoardProjectSetCiEnabledCommand.Type;
 
+/** T3o: the project's Resources settings, whole (T3O-86). A human's edit to the baseline
+    clears its "set at upgrade" mark. */
+export const BoardProjectSetResourcesCommand = Schema.Struct({
+  type: Schema.Literal("board.project.set-resources"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  resources: BoardProjectResources,
+  expectedConfigVersion: BoardExpectedConfigVersion,
+  actor: BoardSettingsActor,
+  createdAt: IsoDateTime,
+});
+export type BoardProjectSetResourcesCommand = typeof BoardProjectSetResourcesCommand.Type;
+
 /** The project's "Stop on failure" CI setting. It applies from the
     next pass; a running pass keeps the setting it started with. */
 export const BoardProjectSetCiStopOnFailureCommand = Schema.Struct({
@@ -5428,6 +5518,8 @@ export const BoardProjectImportDelta = Schema.Struct({
     stopOnFailure: Schema.optionalKey(Schema.Boolean),
   }),
   warnings: Schema.Array(Schema.String),
+  /** T3o: the file's `resources` (T3O-86); absent leaves the project's own. */
+  resources: Schema.optionalKey(BoardProjectResources),
 });
 export type BoardProjectImportDelta = typeof BoardProjectImportDelta.Type;
 
@@ -5536,6 +5628,9 @@ export const BoardProposedPlanInput = Schema.Struct({
       and the child lands ready to build. False: the body is a brief, and the
       child lands in the first stage to be planned on its own. */
   planned: Schema.optionalKey(Schema.Boolean),
+  /** T3o: the planner's suggested size per dimension, and why (T3O-86). */
+  size: Schema.optionalKey(BoardCardSize),
+  sizeReason: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type BoardProposedPlanInput = typeof BoardProposedPlanInput.Type;
 
@@ -5604,6 +5699,11 @@ export const BoardCardProvisionWorktreeCommand = Schema.Struct({
   /** Base ref the branch was cut from (default branch, or parent integration
       branch for a sub-board plan card). */
   baseRefName: TrimmedNonEmptyString,
+  /** T3o: what the worker granted, on record before it is called (T3O-86). Absent on an
+      older command, which granted nothing. */
+  grantedProfile: Schema.optionalKey(BoardResourceProfile),
+  heavyGranted: Schema.optionalKey(Schema.Boolean),
+  claimId: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 export type BoardCardProvisionWorktreeCommand = typeof BoardCardProvisionWorktreeCommand.Type;
@@ -5922,6 +6022,55 @@ export const BoardCardSetReviewCarryCommand = Schema.Struct({
 });
 export type BoardCardSetReviewCarryCommand = typeof BoardCardSetReviewCarryCommand.Type;
 
+/**
+ * T3o: a card's grant changed (T3O-86): grown heavy (a granted grow, or a turn the board
+ * didn't start), released light, settled, or backfilled at the upgrade. Only the keys
+ * present change; `grant: null` drops it.
+ */
+export const BoardCardRecordGrantCommand = Schema.Struct({
+  type: Schema.Literal("board.card.record-grant"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  profile: Schema.optionalKey(BoardResourceProfile),
+  heavy: Schema.optionalKey(Schema.Boolean),
+  settled: Schema.optionalKey(Schema.Boolean),
+  clear: Schema.optionalKey(Schema.Boolean),
+  createdAt: IsoDateTime,
+});
+export type BoardCardRecordGrantCommand = typeof BoardCardRecordGrantCommand.Type;
+
+/** T3o: the worker no longer held a provision's claim and it doesn't fit now
+    (`claim-expired`, T3O-86). The provisioning record goes back to the one it replaced;
+    no attempt is counted. */
+export const BoardCardUndoProvisionCommand = Schema.Struct({
+  type: Schema.Literal("board.card.undo-provision"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  restore: Schema.NullOr(BoardCardWorktree),
+  createdAt: IsoDateTime,
+});
+export type BoardCardUndoProvisionCommand = typeof BoardCardUndoProvisionCommand.Type;
+
+/** T3o: a card's setup progressed or ended on its worker (T3O-86). */
+export const BoardCardRecordSetupCommand = Schema.Struct({
+  type: Schema.Literal("board.card.record-setup"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  setup: Schema.NullOr(BoardCardSetupResult),
+  createdAt: IsoDateTime,
+});
+export type BoardCardRecordSetupCommand = typeof BoardCardRecordSetupCommand.Type;
+
+/** T3o: a human's Retry (the setup script only) or Cancel on a card's setup (T3O-86). */
+export const BoardCardSetupActionCommand = Schema.Struct({
+  type: Schema.Literal("board.card.setup-action"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  action: Schema.Literals(["retry", "cancel"]),
+  createdAt: IsoDateTime,
+});
+export type BoardCardSetupActionCommand = typeof BoardCardSetupActionCommand.Type;
+
 export const BoardCardRecordAutoMergeHoldCommand = Schema.Struct({
   type: Schema.Literal("board.card.record-auto-merge-hold"),
   commandId: CommandId,
@@ -6045,6 +6194,8 @@ export const BoardCardAdmitStepCommand = Schema.Struct({
   /** Why a refused step is queued. Re-sent on a step already queued
       only when the binding limit changed. */
   queuedBy: Schema.optional(BoardStepQueuedBy),
+  /** T3o: what it waits on (T3O-86). */
+  queuedDetail: Schema.optional(BoardStepQueuedDetail),
   createdAt: IsoDateTime,
 });
 export type BoardCardAdmitStepCommand = typeof BoardCardAdmitStepCommand.Type;
@@ -6259,6 +6410,8 @@ export const BoardCardCreatedPayload = Schema.Struct({
   /** The card's merge strategy at birth. Absent follows the default,
       the same null migration 057's column defaults to. */
   mergeStrategy: Schema.optionalKey(BoardMergeStrategy),
+  /** T3o: a split child's planner size, from its plan (T3O-86). Absent is none. */
+  resources: Schema.optionalKey(BoardCardResources),
   /** Key-optional: absent is no reference, the null the column defaults to. */
   externalRef: Schema.optionalKey(BoardCardExternalRef),
   /** The decider has no SQL client, so the payload names the plan and the SQL projector
@@ -6665,6 +6818,8 @@ export const BoardProjectStageConfigSetPayload = Schema.Struct({
       "dismiss-import",
       "stage-deleted",
       "stage-created",
+      // T3o: the project's Resources settings (T3O-86).
+      "resources",
     ]),
   ),
 });
@@ -6771,6 +6926,16 @@ export const BoardCardAutoMergeHoldRecordedPayload = Schema.Struct({
 });
 export type BoardCardAutoMergeHoldRecordedPayload =
   typeof BoardCardAutoMergeHoldRecordedPayload.Type;
+
+/** T3o: a card's capacity state changed (T3O-86): its size, grant or setup. Carries the
+    whole post-change card, like the other card records. */
+export const BoardCardResourcesRecordedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  card: BoardCard,
+  /** Set only by a human's Retry or Cancel on the card's setup: what the board acts on. */
+  setupRequested: Schema.optionalKey(Schema.Literals(["retry", "cancel"])),
+});
+export type BoardCardResourcesRecordedPayload = typeof BoardCardResourcesRecordedPayload.Type;
 
 /** A pass row change: only the keys present are written. */
 export const BoardCiPassSettle = Schema.Struct({
@@ -7231,10 +7396,20 @@ export const BoardCardShell = Schema.Struct({
       the shell. */
   ci: Schema.optionalKey(BoardCardCi),
   ciLastOutcome: Schema.optionalKey(BoardCardCiLastOutcome),
+  /** T3o: the card's setup, for its face: Preparing n/4 or Setup failed (T3O-86). */
+  setup: Schema.optionalKey(
+    BoardCardSetupResult.mapFields((fields) => ({
+      status: fields.status,
+      stage: fields.stage,
+      blocking: fields.blocking,
+    })),
+  ),
   /** Which limit holds a queued card. Present only beside
       `queued`; rides the snapshot and the `card-queued` delta like `queued`
       itself, and card deltas preserve the last known value. */
   queuedBy: Schema.optionalKey(BoardStepQueuedBy),
+  /** T3o: what a queued card waits on (T3O-86), beside `queuedBy`. */
+  queuedDetail: Schema.optionalKey(BoardStepQueuedDetail),
   // Review summary — counts, never bodies; absent until the post-MVP
   // review pipeline lands, then populated only in the review stage.
   roundCurrent: Schema.optionalKey(NonNegativeInt),
@@ -7579,9 +7754,12 @@ export function makeBoardCardShell(input: {
   /** The card's CI entry and last CI outcome. */
   readonly ci?: BoardCardCi | null | undefined;
   readonly ciLastOutcome?: BoardCardCiLastOutcome | null | undefined;
+  /** The card's setup, from its resources. */
+  readonly setup?: BoardCardSetupResult | null | undefined;
   /** Which limit holds a queued card. Real on the snapshot, absent
       on card deltas (the client keeps the last known value). */
   readonly queuedBy?: BoardStepQueuedBy | null | undefined;
+  readonly queuedDetail?: BoardStepQueuedDetail | null | undefined;
   /** The card's review-loop summary, or null when it has no
       review history. Absent-means-preserve, like the body/plan slices: a
       producer that cannot see the step-completion ledger omits the key rather
@@ -7680,7 +7858,19 @@ export function makeBoardCardShell(input: {
       : { placementOrphaned: { workerLabel: input.placementOrphaned.workerLabel } }),
     ...(input.ci == null ? {} : { ci: { ...input.ci, steps: boardCardCiSteps(input.ci.steps) } }),
     ...(input.ciLastOutcome == null ? {} : { ciLastOutcome: input.ciLastOutcome }),
+    ...(input.setup == null
+      ? {}
+      : {
+          setup: {
+            status: input.setup.status,
+            stage: input.setup.stage,
+            blocking: input.setup.blocking,
+          },
+        }),
     ...(input.queued === true && input.queuedBy != null ? { queuedBy: input.queuedBy } : {}),
+    ...(input.queued === true && input.queuedDetail != null
+      ? { queuedDetail: input.queuedDetail }
+      : {}),
     // The review slice. Spread whole or not at all: the counts and
     // the outcome describe one loop, so a producer must never publish half of
     // them and let the client blend them with a previous card's other half.
@@ -7767,6 +7957,7 @@ export function boardCardShellFromCard(
     workerMove: card.workerMove,
     placementOrphaned: card.placementOrphaned,
     ci: card.ci,
+    setup: card.resources?.setup ?? null,
     ciLastOutcome:
       card.ciLastOutcome?.finding === undefined
         ? card.ciLastOutcome
@@ -7823,6 +8014,7 @@ export const BoardCardQueuedShellEvent = Schema.Struct({
   stepRunning: Schema.Boolean,
   /** Which limit holds the card, present only when `queued`. */
   queuedBy: Schema.optionalKey(BoardStepQueuedBy),
+  queuedDetail: Schema.optionalKey(BoardStepQueuedDetail),
 });
 export type BoardCardQueuedShellEvent = typeof BoardCardQueuedShellEvent.Type;
 
@@ -8015,6 +8207,8 @@ const BOARD_CLIENT_COMMANDS = [
   BoardCardForceStartStepCommand,
   // The card's Resume button — a parked step re-enters the build queue.
   BoardCardRequeueStepCommand,
+  // T3o: Retry or Cancel a card's setup (T3O-86).
+  BoardCardSetupActionCommand,
   BoardPlansProposeCommand,
   BoardPlanWriteCommand,
   BoardPlansApproveCommand,
@@ -8039,6 +8233,10 @@ const BOARD_INTERNAL_COMMANDS = [
   BoardCardRetireThreadCommand,
   // The auto-merge hold and its retry ladder.
   BoardCardRecordAutoMergeHoldCommand,
+  // T3o: a card's grant on its worker, and a provision whose claim expired (T3O-86).
+  BoardCardRecordGrantCommand,
+  BoardCardUndoProvisionCommand,
+  BoardCardRecordSetupCommand,
   // The review loop's server-only carry fields.
   BoardCardSetReviewCarryCommand,
   // The decision log and auto-planning.
@@ -8089,6 +8287,7 @@ const BOARD_SETTINGS_COMMANDS = [
   BoardProjectSetCiStepsCommand,
   BoardProjectSetCiEnabledCommand,
   BoardProjectSetCiStopOnFailureCommand,
+  BoardProjectSetResourcesCommand,
   BoardProjectResetCommand,
   BoardProjectImportFileCommand,
   BoardProjectDismissImportCommand,
@@ -8157,6 +8356,8 @@ export const BOARD_EVENT_TYPES = [
   "board.card-pull-request-recorded",
   "board.card-note-recorded",
   "board.card-auto-merge-hold-recorded",
+  // T3o: a card's size, grant or setup (T3O-86).
+  "board.card-resources-recorded",
   // Planning decisions on a card's decision log.
   "board.card-decisions-recorded",
   "board.card-step-selected",
@@ -8447,6 +8648,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-ci-recorded"),
       payload: BoardCardCiRecordedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-resources-recorded"),
+      payload: BoardCardResourcesRecordedPayload,
     }),
     Schema.Struct({
       ...base,
@@ -8787,7 +8993,9 @@ export const BOARD_CONFIG_VERSION_MISMATCH = "Changed elsewhere, reload.";
 export type BoardSubscriptionRpcTag =
   | (typeof BOARD_WS_METHODS)["subscribeBoard"]
   | (typeof BOARD_WS_METHODS)["subscribeCard"]
-  | (typeof BOARD_WS_METHODS)["readCiLog"];
+  | (typeof BOARD_WS_METHODS)["readCiLog"]
+  // T3o: each worker's capacity (T3O-86).
+  | (typeof BOARD_WORKERS_WS_METHODS)["subscribeCapacity"];
 
 /** `board.readCiLog`'s request. With no `fromOffset` the read starts
     at the last 256 KiB, from a line start. */
@@ -9678,7 +9886,27 @@ export const BoardDisplaySettings = Schema.Struct({
   ),
 });
 export type BoardDisplaySettings = typeof BoardDisplaySettings.Type;
-export const DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT = 3;
+
+/** An http(s) address workers dial, with no query or fragment. */
+export const BoardAddress = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^https?:\/\/[^\s/?#]+(\/[^\s?#]*)?$/i),
+);
+
+/** The board's worker pool (T3O-84). */
+export const BoardWorkerPoolSettings = Schema.Struct({
+  /** The address workers reach this board on, used in the join command and sent to
+      joined workers. Null: the dialog falls back to the browser's own address. */
+  boardAddress: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** The board server's own name as a worker; null shows "This server". Its
+      abbreviation is always `SRV`. */
+  localLabel: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+});
+export type BoardWorkerPoolSettings = typeof BoardWorkerPoolSettings.Type;
+const DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT = 3;
 export const DEFAULT_BOARD_STEP_TIMEOUT_MS = 30 * 60 * 1000;
 /** Consecutive unproductive stalls per step (`stallCount`, reset on progress), not
     cumulative nudges. */
@@ -12115,6 +12343,9 @@ export const BoardSettings = Schema.Struct({
       }),
     ),
   ),
+  workers: BoardWorkerPoolSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ boardAddress: null, localLabel: null })),
+  ),
 });
 export type BoardSettings = typeof BoardSettings.Type;
 
@@ -12124,25 +12355,6 @@ export const DEFAULT_BOARD_SETTINGS: BoardSettings = Schema.decodeSync(BoardSett
 // Merged by the stock `deepMerge`: arrays are replaced wholesale, and a map key can never be
 // deleted. So clearing an override is a retained entry of nulls (`{ keyPrefix: null }`, a
 // `null` cap), which the resolvers read as "use the default", never an omitted key.
-
-export const BoardConcurrencySettingsPatch = Schema.Struct({
-  perInstance: Schema.optionalKey(Schema.Record(ProviderInstanceId, Schema.NullOr(PositiveInt))),
-  globalMaxConcurrent: Schema.optionalKey(PositiveInt),
-  /** Per-worker limits. Merged key by key like every other map here:
-      a cleared limit or cap is a retained `null`, never a deleted key. */
-  workers: Schema.optionalKey(
-    Schema.Record(
-      Schema.String,
-      Schema.Struct({
-        maxConcurrent: Schema.optionalKey(Schema.NullOr(PositiveInt)),
-        perInstance: Schema.optionalKey(
-          Schema.Record(ProviderInstanceId, Schema.NullOr(PositiveInt)),
-        ),
-      }),
-    ),
-  ),
-});
-export type BoardConcurrencySettingsPatch = typeof BoardConcurrencySettingsPatch.Type;
 
 export const BoardLifecycleSettingsPatch = Schema.Struct({
   reclaimWorktreeOnDone: Schema.optionalKey(Schema.Boolean),
@@ -12164,9 +12376,17 @@ export const BoardSettingsPatch = Schema.Struct({
       so this follows the same retained-null convention as a project override. */
   defaultModel: Schema.optionalKey(Schema.NullOr(BoardModelSelection)),
   pipeline: Schema.optionalKey(BoardPipeline),
-  concurrency: Schema.optionalKey(BoardConcurrencySettingsPatch),
+  // T3o: no `concurrency` (T3O-86): the board's own limits are gone; stored values are read
+  // once by the capacity upgrade and never written again.
   lifecycle: Schema.optionalKey(BoardLifecycleSettingsPatch),
   display: Schema.optionalKey(BoardDisplaySettingsPatch),
+  /** A null address is retained and clears it. */
+  workers: Schema.optionalKey(
+    Schema.Struct({
+      boardAddress: Schema.optionalKey(Schema.NullOr(BoardAddress)),
+      localLabel: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+    }),
+  ),
 });
 export type BoardSettingsPatch = typeof BoardSettingsPatch.Type;
 

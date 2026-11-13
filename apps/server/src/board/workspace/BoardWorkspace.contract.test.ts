@@ -482,7 +482,7 @@ vitest.layer(RepoTemplateLive)((it) => {
           trackedBefore,
         );
         // The same server, working for a central board, does read the remote.
-        const forCentral = yield* workspaces.forCentral.measureBaseTip({
+        const forCentral = yield* workspaces.forBoard("env-board").measureBaseTip({
           projectId,
           baseRefName: "main",
         });
@@ -1005,6 +1005,90 @@ vitest.layer(RepoTemplateLive)((it) => {
           assert.strictEqual(status.trim(), "");
           assert.notStrictEqual(own.path, placed.path);
         }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+
+    it.effect("two boards on one worker and repository each own only their own checkouts", () =>
+      Effect.gen(function* () {
+        const env = yield* makeEnv("two-boards");
+        const workspaces = yield* workspacesOver(env.checkout);
+        const boardA = remoteOver(
+          makeInProcessWorker(workspaces, boardSession(undefined, "env-a")),
+        );
+        const boardB = remoteOver(
+          makeInProcessWorker(workspaces, boardSession(undefined, "env-b")),
+        );
+        const fileSystem = yield* FileSystem.FileSystem;
+        const placedA = yield* boardA.provisionWorktree({
+          projectId,
+          branch: "board/A-1",
+          baseRefName: "main",
+        });
+        yield* boardB.provisionWorktree({ projectId, branch: "board/B-1", baseRefName: "main" });
+        assert.deepStrictEqual(
+          (yield* boardA.listBoardWorktrees({ projectId })).worktrees.map((w) => w.branch),
+          ["board/A-1"],
+        );
+        assert.deepStrictEqual(
+          (yield* boardB.listBoardWorktrees({ projectId })).worktrees.map((w) => w.branch),
+          ["board/B-1"],
+        );
+        // B can neither remove A's checkout, adopt its branch, nor delete it.
+        for (const write of [
+          boardB.retireWorktree({
+            projectId,
+            worktreePath: placedA.path,
+            kind: "forced",
+            verifiedClean: false,
+          }),
+          boardB.pruneWorktree({ projectId, worktreePath: placedA.path }),
+        ]) {
+          assert.include(detailOf(yield* Effect.flip(write)), "that the board made");
+        }
+        assert.isTrue(yield* fileSystem.exists(placedA.path));
+        const adopt = yield* Effect.flip(
+          boardB.provisionWorktree({ projectId, branch: "board/A-1", baseRefName: "main" }),
+        );
+        assert.include(detailOf(adopt), "another board on this server");
+        const deleted = yield* Effect.flip(
+          boardB.deleteCardBranch({ projectId, branch: "board/A-1" }),
+        );
+        assert.strictEqual(deleted._tag, "BoardWorkerGitError");
+        // A's own re-provision adopts its checkout.
+        const again = yield* boardA.provisionWorktree({
+          projectId,
+          branch: "board/A-1",
+          baseRefName: "main",
+        });
+        assert.strictEqual(again.path, placedA.path);
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+
+    it.effect("a legacy marker that names no board is in no board's sweep", () =>
+      Effect.gen(function* () {
+        const env = yield* makeEnv("legacy-owner");
+        const workspaces = yield* workspacesOver(env.checkout);
+        const board = remoteOver(makeInProcessWorker(workspaces));
+        const placed = yield* board.provisionWorktree({
+          projectId,
+          branch: "board/legacy-1",
+          baseRefName: "main",
+        });
+        const gitDir = yield* git(placed.path, ["rev-parse", "--absolute-git-dir"]);
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.writeFileString(
+          NodePath.join(gitDir.trim(), "t3o-board-owner"),
+          "central\n",
+        );
+        assert.deepStrictEqual((yield* board.listBoardWorktrees({ projectId })).worktrees, []);
+        assert.deepStrictEqual(
+          (yield* workspaces.local.listBoardWorktrees({ projectId })).worktrees,
+          [],
+        );
+        const write = yield* Effect.flip(
+          board.pruneWorktree({ projectId, worktreePath: placed.path }),
+        );
+        assert.include(detailOf(write), "that the board made");
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
     );
 
     it.effect("a checkout whose owner cannot be read is in neither board's sweep", () =>

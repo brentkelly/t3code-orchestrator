@@ -87,7 +87,10 @@ const placeCardOnWorker = (options: { readonly reachable?: boolean } = {}): Plac
                 ? Effect.succeed(privateGitDir)
                 : local.fileSystem.makeTempDirectory({ prefix: "t3o-worker-gitdir-" }).pipe(
                     Effect.tap((dir) =>
-                      local.fileSystem.writeFileString(`${dir}/t3o-board-owner`, "central\n"),
+                      local.fileSystem.writeFileString(
+                        `${dir}/t3o-board-owner`,
+                        "board:env-board\n",
+                      ),
                     ),
                     Effect.tap((dir) => Effect.sync(() => void (privateGitDir = dir))),
                     Effect.orDie,
@@ -346,6 +349,33 @@ describe("a worker the board cannot reach (T3O-64)", () => {
           assert.strictEqual(resumed.worktree?.status, "ready");
           assert.strictEqual(resumed.worktree?.attempts, 1);
           assert.strictEqual(worktreeFailures(yield* h.decided).length, 0);
+        }),
+    );
+  });
+
+  it.effect("a provision a board restart cut off resumes on its slice at boot", () => {
+    const placement = placeCardOnWorker();
+    const cutOff = makeBoardCard({
+      id: "card-1",
+      stage: BUILDING,
+      orderKey: "m",
+      worktree: { ...readyWorktree("card-1"), path: null, status: "provisioning" },
+    });
+    return withGovernor(
+      {
+        board: { cards: [cutOff], nextCardNumberByProject: {} },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 4 }),
+        registeredWorktrees: workerWorktrees(["/tmp/worktrees/board/card-1", "board/card-1"]),
+        workspaces: placement.workspaces,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(cutOff, 1));
+          const commands = yield* h.commands;
+          assert.strictEqual(commandsOf(commands, "board.card.provision-worktree").length, 0);
+          assert.strictEqual(commandsOf(commands, "board.card.record-worktree").length, 1);
+          const resumed = (yield* h.board).cards.find((entry) => entry.id === placedId)!;
+          assert.strictEqual(resumed.worktree?.status, "ready");
         }),
     );
   });

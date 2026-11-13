@@ -303,10 +303,30 @@ threads no longer open.
 
 ### Optional: the desktop's server as a worker
 
-The app's local server can also be a worker for the central board. Open **Settings → Connections**,
-enable **Network access** (the app restarts), then add it from the board server's **Settings → Board
-→ Workers** — or run `~/.t3o/bin/t3 pair` on the desktop and paste the link into **Add worker**. The
-board server must be able to reach the desktop over the network.
+The app's local server can also be a worker for the central board, with no network access turned
+on: press **Add worker** on the board and run the join command it shows with the app's launcher,
+`~/.t3o/bin/t3 worker join <board-url> --code XXXX-XXXX`, while the app is open. The worker
+connects out to the board, so it needs outbound HTTPS to the board's address and nothing else.
+
+## Install as a worker
+
+A worker is a T3o server that runs a board's cards. It connects out to the board, so it needs no
+open port, reverse proxy or SSH: only outbound HTTPS to the board's address. On Linux:
+
+```bash
+git clone https://github.com/brentkelly/t3code-orchestrator.git t3o && cd t3o
+git checkout "$(git tag --list 't3o*' --sort=-v:refname | head -1)"
+corepack enable pnpm && pnpm install
+pnpm t3o-worker join https://board.example --code ABCD-EFGH   # from the board's Add worker dialog
+```
+
+`join` installs the service first when there is none (`install-t3o-service`, bound to
+`127.0.0.1`), then joins. Sign in to the worker's providers (`claude`, `codex` and so on) as the
+service's user, and clone its projects, or use **Set up on worker** from the board. Check it with
+`pnpm t3o-worker status`. See [Running the board across several machines](../user/board-workers.md#workers).
+
+On macOS, start a T3o server with the same home and keep it running before `join`; the launchd
+service is not written yet. Windows workers are not supported.
 
 ## Uninstall
 

@@ -11,9 +11,15 @@ export function previewPdfAssetUrl(rawUrl: string, httpBaseUrl: string | null): 
   try {
     const url = new URL(rawUrl);
     const baseUrl = new URL(httpBaseUrl);
+    // T3o: a board worker proxy serves the environment under a base path (T3O-84).
+    const basePath = baseUrl.pathname.replace(/\/+$/, "");
+    const assetPath =
+      basePath !== "" && url.origin === baseUrl.origin && url.pathname.startsWith(`${basePath}/`)
+        ? url.pathname.slice(basePath.length)
+        : url.pathname;
     if (
       (url.protocol !== "http:" && url.protocol !== "https:") ||
-      !url.pathname.startsWith("/api/assets/") ||
+      !assetPath.startsWith("/api/assets/") ||
       !/\.pdf$/i.test(url.pathname)
     ) {
       return null;
@@ -27,7 +33,7 @@ export function previewPdfAssetUrl(rawUrl: string, httpBaseUrl: string | null): 
     }
     // The browser may run on the host's loopback address. Fetch signed bytes
     // through this client's environment connection, including remote routes.
-    return new URL(`${url.pathname}${url.search}${url.hash}`, baseUrl).href;
+    return new URL(`${basePath}${assetPath}${url.search}${url.hash}`, baseUrl).href;
   } catch {
     return null;
   }

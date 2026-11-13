@@ -260,6 +260,7 @@ const overdueStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   slotHeld: false,
   forceStart: false,
   queuedBy: null,
+  queuedDetail: null,
   startedAt: OVERDUE,
   updatedAt: OVERDUE,
   ...overrides,

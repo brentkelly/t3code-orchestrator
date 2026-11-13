@@ -50,6 +50,8 @@ import {
 } from "./compatibility.ts";
 import { credentialConnectionId } from "./routes.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
+// T3o: keep a proxied environment's base path (T3O-84).
+import { environmentSocketUrl } from "../environment/basePath.ts";
 
 export class ConnectionResolver extends Context.Service<
   ConnectionResolver,
@@ -80,10 +82,8 @@ function primarySocketUrl(
   clientMetadata: AuthClientPresentationMetadata | undefined,
   owners: ClientOwnerParams,
 ): string {
-  const url = new URL(target.wsBaseUrl);
-  if (url.pathname === "" || url.pathname === "/") {
-    url.pathname = "/ws";
-  }
+  // T3o: keep a proxied environment's base path (T3O-84).
+  const url = environmentSocketUrl(target.wsBaseUrl);
   appendClientConnectionParams(url, clientMetadata, "direct", owners);
   return url.toString();
 }
