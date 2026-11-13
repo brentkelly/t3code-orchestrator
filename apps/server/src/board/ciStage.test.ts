@@ -675,6 +675,8 @@ it.effect("CI that must re-create its worktree waits for room, then starts by it
         );
         assert.lengthOf(notes, 1);
         assert.include(JSON.stringify(notes[0]), "waiting for room");
+        // CI's own retry waits for it: no hold that the refresh would drop and CI take again.
+        assert.deepStrictEqual(capacity.holds, []);
         capacity.external.delete(BOARD_LOCAL_WORKER_ID);
         yield* capacity.publish(BOARD_LOCAL_WORKER_ID);
         // The snapshot's pass runs after up to 2 s of jitter.

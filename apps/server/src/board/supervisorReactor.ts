@@ -418,6 +418,7 @@ interface PlacementPass {
   /** Cards offered earlier in this queue pass; null outside one, where every hold counts. */
   readonly ahead: Set<string> | null;
 }
+const CI_CLAIM = { providerInstanceId: null, force: false, noHolds: true } as const;
 const freshPlacementPass = (): PlacementPass => ({ grants: new Map(), ahead: null });
 
 /** T3o: the hold a card's step takes when no worker can be placed on now (T3O-87). */
@@ -1310,6 +1311,8 @@ const make = Effect.gen(function* () {
     claimFor: {
       readonly providerInstanceId: string | null;
       readonly force: boolean;
+      /** CI waits through its own retry, so it takes no hold that no step keeps. */
+      readonly noHolds?: boolean;
     } = { providerInstanceId: null, force: false },
     pass: PlacementPass = freshPlacementPass(),
   ) {
@@ -1943,7 +1946,11 @@ const make = Effect.gen(function* () {
    */
   const askHolds = Effect.fn("board-supervisor-askHolds")(function* (
     card: BoardCard,
-    claimFor: { readonly providerInstanceId: string | null; readonly force: boolean },
+    claimFor: {
+      readonly providerInstanceId: string | null;
+      readonly force: boolean;
+      readonly noHolds?: boolean;
+    },
     context: {
       readonly facts: ReadonlyArray<PlacementWorkerFacts>;
       readonly profile: BoardResourceProfile;
@@ -1951,7 +1958,14 @@ const make = Effect.gen(function* () {
     },
     pass: PlacementPass,
   ) {
-    if (Option.isNone(capacityClient) || claimFor.force || card.group !== null) return null;
+    if (
+      Option.isNone(capacityClient) ||
+      claimFor.force ||
+      claimFor.noHolds === true ||
+      card.group !== null
+    ) {
+      return null;
+    }
     const client = capacityClient.value;
     const board = yield* readBoard;
     const fractions = new Map<BoardWorkerId, number>();
@@ -4278,7 +4292,7 @@ const make = Effect.gen(function* () {
       return;
     }
     // T3o: CI creates its worktree through the placement gate, then runs where it landed (T3O-87).
-    const worktree = yield* ensureWorktree(card);
+    const worktree = yield* ensureWorktree(card, CI_CLAIM);
     if (worktree.kind === "held") {
       yield* waitForRoomInCi(card, worktree.hold, startCiPass(cardId, options));
       return;
@@ -4400,7 +4414,7 @@ const make = Effect.gen(function* () {
         else yield* startCiForgeStep(card, runId, steps, segment.index);
         return;
       }
-      const worktree = yield* ensureWorktree(card);
+      const worktree = yield* ensureWorktree(card, CI_CLAIM);
       if (worktree.kind === "held") {
         yield* waitForRoomInCi(
           card,
