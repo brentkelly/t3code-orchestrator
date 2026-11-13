@@ -733,6 +733,18 @@ it.effect("a grow hold goes when its card waits on something other than room (T3
           yield* h.reactor.sweep;
           // Forgotten, so the sweep's refresh no longer re-asks it.
           assert.strictEqual(capacity.holds.length, asked);
+          // A snapshot from before the release still names card-b: it is neither adopted nor
+          // released again.
+          const released = capacity.releasedHolds.length;
+          const stale = yield* capacity.client.latest(W1);
+          capacity.frozen.set(W1, {
+            ...stale!,
+            hold: { ...stale!.hold!, closed: true, cardId: "card-b" },
+          });
+          yield* h.reactor.refreshHolds;
+          yield* h.reactor.refreshHolds;
+          assert.strictEqual(capacity.holds.length, asked);
+          assert.strictEqual(capacity.releasedHolds.length, released);
         }),
     );
   }),

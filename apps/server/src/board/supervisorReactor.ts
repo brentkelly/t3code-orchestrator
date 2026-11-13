@@ -1784,7 +1784,14 @@ const make = Effect.gen(function* () {
         [...byWorker].filter(([, entry]) => entry.kind === "placement").map(([id]) => id),
       ),
     );
+  /** Holds this board let go of, by `card|worker`, with the snapshot time (`at`) the hold
+      refresh first saw after: a snapshot that old can still name the card, and is no reason to
+      adopt it again. Null until the refresh has looked. */
+  const releasedHolds = new Map<string, string | null>();
   const forgetHold = (cardId: string, workerId: BoardWorkerId) => {
+    if (boardHolds.get(cardId)?.has(workerId) === true) {
+      releasedHolds.set(`${cardId}|${workerId}`, null);
+    }
     const byWorker = boardHolds.get(cardId);
     byWorker?.delete(workerId);
     if (byWorker !== undefined && byWorker.size === 0) boardHolds.delete(cardId);
@@ -1804,6 +1811,7 @@ const make = Effect.gen(function* () {
       boardHolds.set(cardId, byWorker);
     }
     byWorker.set(workerId, entry);
+    releasedHolds.delete(`${cardId}|${workerId}`);
   };
   /** Withdraw a card's holds, except on `keep` (where a provision consumes it). */
   const releaseCardHolds = Effect.fn("board-supervisor-releaseCardHolds")(function* (
@@ -11762,8 +11770,16 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const limit = boardHoldLimit(yield* readyWorkerCount(board));
     for (const workerId of [BOARD_LOCAL_WORKER_ID, ...(board.workers ?? []).map((w) => w.id)]) {
-      const heldCard = (yield* client.latest(workerId))?.hold?.cardId ?? null;
+      const snapshot = yield* client.latest(workerId);
+      const heldCard = snapshot?.hold?.cardId ?? null;
       if (heldCard === null || boardHolds.get(heldCard)?.has(workerId) === true) continue;
+      const releasedKey = `${heldCard}|${workerId}`;
+      if (releasedHolds.has(releasedKey)) {
+        const seenAt = releasedHolds.get(releasedKey) ?? null;
+        if (seenAt === null) releasedHolds.set(releasedKey, snapshot!.at);
+        if (seenAt === null || seenAt === snapshot!.at) continue;
+        releasedHolds.delete(releasedKey);
+      }
       const card = board.cards.find((candidate) => candidate.id === heldCard);
       const state = waitingStep(board, heldCard);
       const holding = boardHoldingWorkers();
