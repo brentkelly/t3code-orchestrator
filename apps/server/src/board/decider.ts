@@ -534,9 +534,19 @@ const makeBoardEventBase = Effect.fn("makeBoardEventBase")(function* (input: {
 });
 
 const withoutEmptyResources = (resources: BoardCardResources): BoardCardResources | null =>
-  resources.sizing === null && resources.grant === null && resources.setup === null
+  resources.sizing === null &&
+  resources.grant === null &&
+  resources.setup === null &&
+  resources.setupDue !== true
     ? null
     : resources;
+
+/** A new worktree has never run setup, whatever ran in the card's last one. */
+const withSetupDue = (resources: BoardCardResources | null): BoardCardResources => ({
+  ...(resources ?? EMPTY_BOARD_CARD_RESOURCES),
+  setup: null,
+  setupDue: true,
+});
 
 /** T3o: a card's resources changed (T3O-86), carrying the whole card. */
 const cardResourcesRecordedEvent = Effect.fn("cardResourcesRecordedEvent")(function* (input: {
@@ -4623,10 +4633,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         placedWorkerId: boardCardEffectiveWorkerId(card, board.defaultWorkerId),
         // T3o: the grant is on record before the worker is called (T3O-86).
         ...(command.grantedProfile === undefined
-          ? {}
+          ? { resources: withSetupDue(card.resources) }
           : {
               resources: {
-                ...(card.resources ?? EMPTY_BOARD_CARD_RESOURCES),
+                ...withSetupDue(card.resources),
                 grant: {
                   profile: command.grantedProfile,
                   heavy: command.heavyGranted ?? true,
@@ -5081,7 +5091,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const card = yield* requireBoardCard({ board, command });
       const current = card.resources?.setup ?? null;
       if (canonicalJson(current) === canonicalJson(command.setup)) return [];
-      const base = card.resources ?? EMPTY_BOARD_CARD_RESOURCES;
+      const { setupDue: _due, ...base } = card.resources ?? EMPTY_BOARD_CARD_RESOURCES;
       return yield* cardResourcesRecordedEvent({
         card,
         resources: withoutEmptyResources({ ...base, setup: command.setup }),
@@ -5128,12 +5138,11 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const card = yield* requireBoardCard({ board, command });
       // Only a provision still in flight is undone; one that landed or failed stands.
       if (card.worktree?.status !== "provisioning") return [];
+      // The worktree that was due its setup never landed: the next provision marks it again.
+      const { setupDue: _due, ...rest } = card.resources ?? EMPTY_BOARD_CARD_RESOURCES;
       return yield* cardResourcesRecordedEvent({
         card: { ...card, worktree: command.restore, updatedAt: command.createdAt },
-        resources:
-          card.resources === null
-            ? null
-            : withoutEmptyResources({ ...card.resources, grant: null }),
+        resources: card.resources === null ? null : withoutEmptyResources({ ...rest, grant: null }),
         command,
       });
     }
@@ -6449,6 +6458,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             placedWorkerId: move.toWorkerId,
             workerMove: null,
             placementOrphaned: null,
+            // T3o: the moved worktree runs setup once (T3O-86).
+            resources: withSetupDue(card.resources),
             updatedAt: command.createdAt,
           };
         } else if (step.phase === "restarted") {

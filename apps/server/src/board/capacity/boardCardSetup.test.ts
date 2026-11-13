@@ -128,27 +128,46 @@ it.effect("a worktree with no setup on record starts one, and records each stage
   }),
 );
 
+const builtOnce = (card: BoardCard) =>
+  ({
+    cards: [card],
+    nextCardNumberByProject: {},
+    stepCompletions: [
+      {
+        cardId: BoardCardId.make("a"),
+        stepId: "building",
+        outcome: "succeeded",
+        summary: null,
+        payload: null,
+        threadId: null,
+        completedAt: NOW,
+      },
+    ],
+  }) as unknown as BoardState;
+
 it.effect("a card that already built is marked set up, not run again", () =>
   Effect.gen(function* () {
     const card = buildingCard("a", "a");
-    const h = yield* harness({
-      cards: [card],
-      nextCardNumberByProject: {},
-      stepCompletions: [
-        {
-          cardId: BoardCardId.make("a"),
-          stepId: "building",
-          outcome: "succeeded",
-          summary: null,
-          payload: null,
-          threadId: null,
-          completedAt: NOW,
-        },
-      ],
-    } as unknown as BoardState);
+    const h = yield* harness(builtOnce(card));
     yield* h.setup.gate(card, BOARD_LOCAL_WORKER_ID);
     yield* h.finished;
     assert.isTrue(h.runs[0]?.markOnly);
+  }),
+);
+
+it.effect("a built card's re-cut or moved worktree runs setup", () =>
+  Effect.gen(function* () {
+    const card: BoardCard = {
+      ...buildingCard("a", "a"),
+      resources: { sizing: null, grant: null, setup: null, setupDue: true },
+    };
+    const h = yield* harness(builtOnce(card));
+    yield* h.setup.gate(card, BOARD_LOCAL_WORKER_ID);
+    yield* h.finished;
+    assert.deepStrictEqual(
+      h.runs.map((run) => run.markOnly ?? false),
+      [false],
+    );
   }),
 );
 

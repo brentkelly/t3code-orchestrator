@@ -238,6 +238,8 @@ export const BoardCardResources = Schema.Struct({
   sizing: Schema.NullOr(BoardCardSizing).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   grant: Schema.NullOr(BoardCardGrant).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   setup: Schema.NullOr(BoardCardSetupResult).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** A worktree was cut or moved since the last setup: it runs setup, even on a built card. */
+  setupDue: Schema.optional(Schema.Boolean),
 });
 export type BoardCardResources = typeof BoardCardResources.Type;
 
@@ -266,7 +268,8 @@ const withSizing = (
   return next.sizing.planner === null &&
     next.sizing.edit === null &&
     next.grant === null &&
-    next.setup === null
+    next.setup === null &&
+    next.setupDue !== true
     ? null
     : next;
 };

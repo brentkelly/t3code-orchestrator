@@ -154,7 +154,9 @@ export const makeBoardCardSetup = (deps: BoardCardSetupDeps) => {
     if (card.group !== null || card.worktree?.status !== "ready") return null;
     if ((card.resources?.setup ?? null) === null) {
       const board = yield* deps.readBoard;
-      yield* start(card, { markOnly: cardBuiltOnce(board, card.id) });
+      // Only a worktree from before setup existed is marked: a re-cut or moved one runs it.
+      const markOnly = card.resources?.setupDue !== true && cardBuiltOnce(board, card.id);
+      yield* start(card, { markOnly });
       // Whether the script blocks is known only from its first progress: wait one round trip
       // for it, and hold the step if it is slower. A run that ended silently holds nothing.
       const report = firstReports.get(card.id);

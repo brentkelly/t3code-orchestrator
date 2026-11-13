@@ -304,6 +304,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("card sizes", (it
         );
         assert.strictEqual(provisioning.worktree?.status, "provisioning");
         assert.deepInclude(provisioning.resources?.grant, { heavy: true, claimId: "card-1:1:0" });
+        // A new worktree runs setup even when the last one ran it: the old result goes.
+        const recut = yield* cardAfter(
+          provision(before),
+          makeReadModel({
+            cards: [
+              {
+                ...before,
+                resources: {
+                  sizing: null,
+                  grant: null,
+                  setup: {
+                    status: "succeeded",
+                    stage: "setup-script",
+                    exitCode: 0,
+                    startedAt: NOW,
+                    durationMs: 1,
+                    workerId: workerA,
+                    detail: null,
+                    blocking: false,
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        assert.deepInclude(recut.resources, { setup: null, setupDue: true });
 
         const undo = (restore: BoardCardWorktree | null): BoardCommand => ({
           type: "board.card.undo-provision",
