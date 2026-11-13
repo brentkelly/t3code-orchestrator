@@ -382,7 +382,7 @@ function Round({
         </span>
         {settling === null ? null : (
           <BoardHint label={settling}>
-            <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border px-[7px] text-[10.5px] font-medium text-muted-foreground">
+            <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border px-1.75 text-board-10-5 font-medium text-muted-foreground">
               Settling
             </span>
           </BoardHint>
@@ -415,7 +415,7 @@ function Round({
       {open ? (
         <div className="flex flex-col">
           {settling === null ? null : (
-            <div className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+            <div className="border-t border-border px-3 py-2 text-board-11 text-muted-foreground">
               {settling}
             </div>
           )}
@@ -552,7 +552,7 @@ function statusPill(
             : loop.convergedBy === "settled"
               ? "Loop settled: no critical findings left"
               : loop.convergedBy === "below-bar"
-                ? "Converged: remaining improvements were ruled below the bar"
+                ? "Loop settled: remaining improvements were ruled below the bar"
                 : "Loop settled: nothing blocking",
         spinning: false,
         className: "bg-success/14 text-success-foreground",
@@ -617,7 +617,7 @@ function footerNote(
         return `A settling round left no critical finding open, so the loop is settled. Its other findings were fixed or rejected and checked by the adjudicator${loop.unreviewedFixes > 0 ? ` · ${loop.unreviewedFixes} ${loop.unreviewedFixes === 1 ? "fix" : "fixes"} verified by the adjudicator, not re-reviewed` : ""}.`;
       }
       if (loop.convergedBy === "below-bar") {
-        return `Converged: remaining improvements were ruled below the bar, so the loop is settled. The reviewer's ratings stay recorded${loop.unreviewedFixes > 0 ? ` · ${loop.unreviewedFixes} ${loop.unreviewedFixes === 1 ? "fix" : "fixes"} verified by the adjudicator, not re-reviewed` : ""}.`;
+        return `The remaining improvements were ruled below the bar, so the loop is settled. The reviewer's ratings stay recorded${loop.unreviewedFixes > 0 ? ` · ${loop.unreviewedFixes} ${loop.unreviewedFixes === 1 ? "fix" : "fixes"} verified by the adjudicator, not re-reviewed` : ""}.`;
       }
       return loop.convergedBy === "adjudicator"
         ? "The adjudicator ruled the last round raised nothing new beyond points already settled, and no code changed, so the loop is settled."

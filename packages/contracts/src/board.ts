@@ -11045,8 +11045,8 @@ export function boardReviewCompletionDefect(input: {
 
 /** Why a verdict's `belowBar` is refused: only a non-carried finding the reviewer rated
     `improvement`, not drawn from a human PR comment, can be ruled below the bar, and never
-    with `escalated`. Reads only the
-    round's records, never settings, so a past round is never re-judged. */
+    with `escalated`. Reads only the round's records, never settings, so a past round is
+    never re-judged. */
 function boardReviewBelowBarDefect(input: {
   readonly verdicts: ReadonlyArray<BoardReviewAdjudication>;
   readonly review: BoardStepCompletion | undefined;
