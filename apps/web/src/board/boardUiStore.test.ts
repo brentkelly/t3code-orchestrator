@@ -49,14 +49,12 @@ describe("migratePersistedBoardUiState", () => {
       lastLocationByMode: {},
       collapsedByStage: {},
       utilityMenuCollapsed: false,
-      usageSectionOpen: false,
     });
     expect(migratePersistedBoardUiState("nope")).toEqual({
       mode: "threads",
       lastLocationByMode: {},
       collapsedByStage: {},
       utilityMenuCollapsed: false,
-      usageSectionOpen: false,
     });
   });
 

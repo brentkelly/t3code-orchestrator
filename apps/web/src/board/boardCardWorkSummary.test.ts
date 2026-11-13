@@ -17,7 +17,11 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import { deriveBoardPlanRows } from "./boardPlanRows";
-import { boardCardHasSummaryPane, deriveBoardCardWorkSummary } from "./boardCardWorkSummary";
+import {
+  boardCardHasSummaryPane,
+  deriveBoardCardWorkSummary,
+  reviewLoopChip,
+} from "./boardCardWorkSummary";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const cardId = BoardCardId.make("card-1");
@@ -54,6 +58,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     autoMergeSetting: null,
     autoMergeHold: null,
     mergeStrategy: null,
+    priority: "normal",
     pinnedWorkerId: null,
     placedWorkerId: null,
     workerMove: null,
@@ -196,6 +201,57 @@ describe("boardCardHasSummaryPane", () => {
         card: card({ stage: BOARD_SEED_STAGE_IDS.building, pullRequest: openPr }),
       }),
     ).toBe(true);
+  });
+});
+
+describe("reviewLoopChip", () => {
+  const base = { reviewLive: false, reviewStalled: false } as const;
+  it.each([
+    ["stuck in review", { role: "review", loopStatus: "stuck" }, "Stuck", "attention"],
+    ["stuck off the review stage", { role: "merge", loopStatus: "stuck" }, null, null],
+    ["held at Done", { role: "done", loopStatus: "round-cap" }, null, null],
+    ["round-cap at merge", { role: "merge", loopStatus: "round-cap" }, "No convergence", "warning"],
+    [
+      "running but not live",
+      { role: "review", loopStatus: "running" },
+      "Waiting to run",
+      "attention",
+    ],
+    [
+      "running and live",
+      { role: "review", loopStatus: "running", reviewLive: true },
+      "Review running",
+      "info",
+    ],
+    [
+      "running but stalled",
+      { role: "review", loopStatus: "running", reviewLive: true, reviewStalled: true },
+      "Review stopped",
+      "warning",
+    ],
+    [
+      "running off the review stage",
+      { role: "build", loopStatus: "running" },
+      "Review paused",
+      "muted",
+    ],
+    ["advanced", { role: "merge", loopStatus: "advanced" }, "Review advanced", "muted"],
+    ["converged", { role: "merge", loopStatus: "converged" }, "Review settled", "success"],
+    ["no loop", { role: "build", loopStatus: null }, null, null],
+  ] as const)("%s", (_name, input, label, tone) => {
+    const chip = reviewLoopChip({ ...base, ...input });
+    expect(chip === null ? null : chip.label).toBe(label);
+    expect(chip === null ? null : chip.tone).toBe(tone);
+  });
+
+  it("is exposed on the recap, and the verdict reads it", () => {
+    const summary = deriveBoardCardWorkSummary({
+      detail: detail({ stage: BOARD_SEED_STAGE_IDS.review }),
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(summary.review.empty).toBe(true);
+    expect(summary.review.loop).toEqual({ label: "Waiting to run", tone: "attention" });
+    expect(summary.verdict).toEqual(summary.review.loop);
   });
 });
 

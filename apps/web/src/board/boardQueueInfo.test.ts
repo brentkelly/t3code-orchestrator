@@ -25,9 +25,18 @@ describe("boardQueueInfo", () => {
 
   it("drops the tasks-ahead clause at the front of the queue", () => {
     const info = boardQueueInfo({ slot: slot(1, 2), running: 1 })!;
-    expect(info.label).toBe("Next");
+    expect(info.label).toBe("Next up");
     expect(info.headline).toBe("Queued: starts next");
     expect(info.detail).toBe("1 agent running. It starts on its own when there is room.");
+  });
+
+  it("says After others for a Low card behind a higher-priority one (T3O-95)", () => {
+    const info = boardQueueInfo({
+      slot: { ...slot(3, 3), afterHigherPriority: true },
+      running: 3,
+    })!;
+    expect(info.label).toBe("After others");
+    expect(info.detail).toContain("no higher-priority card is waiting");
   });
 
   it("pluralises the work ahead", () => {

@@ -619,17 +619,19 @@ describe("resolveBoardStageExecution with a project config", () => {
   it("T3O-64: passes the settling keys through, an explicit null meaning off", () => {
     const { delta } = resolve({
       stages: {
-        settings: { review: { settleAfterRound: null, settleBelowFindings: 4 } },
+        settings: { review: { convergeAfterRound: null, settleBelowFindings: 4 } },
       },
     });
-    expect(delta.overrides).toEqual({ review: { settleAfterRound: null, settleBelowFindings: 4 } });
+    expect(delta.overrides).toEqual({
+      review: { convergeAfterRound: null, settleBelowFindings: 4 },
+    });
     const review = resolveBoardStageExecution(
       DEFAULT_BOARD_SETTINGS,
       BOARD_SEED_STAGE_IDS.review,
       delta,
     );
     if (!isBoardReviewStageExecution(review)) throw new Error("review member expected");
-    expect(review.settleAfterRound).toBeNull();
+    expect(review.convergeAfterRound).toBeNull();
     expect(review.settleBelowFindings).toBe(4);
     const { delta: invalid } = resolve({
       stages: { settings: { review: { settleBelowFindings: 1 } } },
@@ -637,6 +639,26 @@ describe("resolveBoardStageExecution with a project config", () => {
     expect(invalid.overrides).toEqual({});
     expect(invalid.warnings).toEqual(
       expect.arrayContaining([expect.stringContaining("review.settleBelowFindings: invalid")]),
+    );
+  });
+
+  it("T3O-94: passes the later-rounds review model through, and drops a partial one", () => {
+    const laterReviewModel = { afterRound: 3, model: { instanceId: "codex", model: "gpt-5" } };
+    const { delta } = resolve({ stages: { settings: { review: { laterReviewModel } } } });
+    expect(delta.overrides).toEqual({ review: { laterReviewModel } });
+    const review = resolveBoardStageExecution(
+      DEFAULT_BOARD_SETTINGS,
+      BOARD_SEED_STAGE_IDS.review,
+      delta,
+    );
+    if (!isBoardReviewStageExecution(review)) throw new Error("review member expected");
+    expect(review.laterReviewModel).toEqual(laterReviewModel);
+    const { delta: partial } = resolve({
+      stages: { settings: { review: { laterReviewModel: { afterRound: 3 } } } },
+    });
+    expect(partial.overrides).toEqual({});
+    expect(partial.warnings).toEqual(
+      expect.arrayContaining([expect.stringContaining("review.laterReviewModel: invalid")]),
     );
   });
 

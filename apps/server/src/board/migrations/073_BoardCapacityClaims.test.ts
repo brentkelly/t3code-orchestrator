@@ -1,5 +1,5 @@
 /**
- * Board migration 071: a step queued on a legacy concurrency reason loads with no reason, and its new `queued_detail` is NULL (T3O-86).
+ * Board migration 073: a step queued on a legacy concurrency reason loads with no reason, and its new `queued_detail` is NULL (T3O-86).
  */
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -10,7 +10,7 @@ import { runMigrations } from "../../persistence/Migrations.ts";
 import { attachBoardDatabase } from "../boardDatabase.ts";
 import { BOARD_MIGRATIONS } from "./index.ts";
 
-const MIGRATION_ID = 71;
+const MIGRATION_ID = 73;
 const NOW = "2026-01-01T00:00:00.000Z";
 
 it.effect("clears a legacy queue reason and adds queued_detail as NULL", () =>
@@ -38,7 +38,7 @@ it.effect("clears a legacy queue reason and adds queued_detail as NULL", () =>
     `;
 
     const migration = BOARD_MIGRATIONS.find(([id]) => id === MIGRATION_ID);
-    assert.ok(migration, "migration 071 is registered in the lineage");
+    assert.ok(migration, "migration 073 is registered in the lineage");
     yield* migration[2];
     const steps = yield* sql<{
       readonly queuedBy: string | null;

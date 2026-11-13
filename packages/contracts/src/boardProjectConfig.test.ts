@@ -20,7 +20,9 @@ import {
   parseBoardCiFailureLine,
   parseBoardCiProgressLine,
   parseBoardCiResultFile,
+  ProviderInstanceId,
   type BoardCiStep,
+  type BoardSettings,
   type BoardStageDefinition,
 } from "./index.ts";
 
@@ -120,6 +122,42 @@ describe("normalization and version", () => {
     // A prompt override is kept even when it matches: it pins the text.
     expect(normalized.overrides.building).toHaveProperty("prompt");
     expect(normalized.overrides).not.toHaveProperty("nope");
+  });
+
+  it("keeps a later-rounds review model whole, even when its round matches global", () => {
+    const review = DEFAULT_BOARD_SETTINGS.pipeline.review;
+    if (review?.kind !== "review") throw new Error("expected the review member");
+    const globalLater = {
+      afterRound: 2,
+      model: { instanceId: ProviderInstanceId.make("codex"), model: "a" },
+    };
+    const settings = {
+      ...DEFAULT_BOARD_SETTINGS,
+      pipeline: {
+        ...DEFAULT_BOARD_SETTINGS.pipeline,
+        review: { ...review, laterReviewModel: globalLater },
+      },
+    } satisfies BoardSettings;
+    const laterReviewModel = {
+      afterRound: 2,
+      model: { instanceId: ProviderInstanceId.make("codex"), model: "b" },
+    };
+    const normalized = normalizeBoardProjectDelta({
+      board: EMPTY_BOARD_STATE,
+      settings,
+      delta: { stageSwitches: {}, overrides: { review: { laterReviewModel } }, ci: { steps: [] } },
+    });
+    expect(normalized.overrides.review).toEqual({ laterReviewModel });
+    const same = normalizeBoardProjectDelta({
+      board: EMPTY_BOARD_STATE,
+      settings,
+      delta: {
+        stageSwitches: {},
+        overrides: { review: { laterReviewModel: globalLater } },
+        ci: { steps: [] },
+      },
+    });
+    expect(same.overrides).toEqual({});
   });
 
   it("hashes the delta only, whatever order its keys were built in", () => {

@@ -8,11 +8,13 @@ import {
   boardBlockedInstruction,
   boardReviewQuestionAnswer,
   BOARD_LOCAL_WORKER_ID,
+  boardCardPriorityRank,
   clampBoardInstanceCap,
   resolveBoardWorkerConcurrency,
 } from "@t3tools/contracts";
 import type {
   BoardCardId,
+  BoardCardPriority,
   BoardCardStepState,
   BoardConcurrencySettings,
   BoardWorkerId,
@@ -398,12 +400,15 @@ export interface BoardQueueCandidate {
   /** The card has already begun this stage's work (has a recorded completion),
       so it is "mid-stage waiting on a slot", not "not yet started". */
   readonly started: boolean;
+  /** Effective priority: a group's is always normal. */
+  readonly priority: BoardCardPriority;
   readonly orderKey: string;
 }
 
 /**
  * The governor's total order: later stage first (finishing beats starting), then started
- * before unstarted (so a half-done card is never starved by fresh work), then drag order.
+ * before unstarted (so a half-done card is never starved by fresh work), then priority (it
+ * only decides between cards waiting at the same stage), then drag order.
  * Callers offer candidates to `acquire` in this order; greedy allocation and preemption at a
  * step boundary both fall out of iterating it.
  */
@@ -414,6 +419,8 @@ export function orderBoardQueue(
     const stageDelta = b.stageOrder - a.stageOrder;
     if (stageDelta !== 0) return stageDelta;
     if (a.started !== b.started) return a.started ? -1 : 1;
+    const priorityDelta = boardCardPriorityRank(b.priority) - boardCardPriorityRank(a.priority);
+    if (priorityDelta !== 0) return priorityDelta;
     return a.orderKey < b.orderKey ? -1 : a.orderKey > b.orderKey ? 1 : 0;
   });
 }

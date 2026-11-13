@@ -22,7 +22,7 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { attachBoardDatabase } from "../boardDatabase.ts";
-import Migration073 from "../migrations/073_BoardCardActuals.ts";
+import Migration075 from "../migrations/075_BoardCardActuals.ts";
 import { buildingCard } from "../supervisorHarness.testkit.ts";
 import { makeBoardActualsRecorder } from "./BoardActualsRecorder.ts";
 import { listCardActualsRows } from "./boardActualsStore.ts";
@@ -100,7 +100,7 @@ const harness = (initial: BoardState) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* attachBoardDatabase();
-    yield* Migration073;
+    yield* Migration075;
     const state = { board: initial, now: NOW };
     const calls: Array<{ readonly workerId: string; readonly input: BoardWorkerActualsInput }> = [];
     const answers = new Map<string, BoardStepReading | null | "unreachable">();

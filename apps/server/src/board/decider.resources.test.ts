@@ -54,6 +54,7 @@ function makeCard(overrides: Partial<BoardCard> = {}): BoardCard {
     labels: [],
     stage: BoardStageId.make("building"),
     orderKey: "m",
+    priority: "normal",
     title: "Card",
     briefRef: null,
     dependsOn: [],

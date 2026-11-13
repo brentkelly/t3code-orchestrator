@@ -282,12 +282,16 @@ Rejected: the board limit, worker limit and per-worker provider caps this decisi
 Counting agents says nothing about whether a machine has room, a board can't see another board's
 load on a shared worker, and slots held on an offline worker leaked.
 
-The **Building column is the queue** — position is priority, drag to reprioritise, queued cards sit
-in Building flagged as queued (never in Ready, which would lie about their state). The card says
-what it is waiting on: room on a worker, an agent, quota, or a worker update.
+The **Building column is the queue** — the card's priority, then its position, decide its place;
+drag to reorder within a priority level. Queued cards sit in Building flagged as queued (never in
+Ready, which would lie about their state). The card says what it is waiting on: room on a worker,
+an agent, quota, or a worker update.
 
-Ordering rule, unchanged: **stage descending → started before unstarted → drag order.** Finishing
-beats starting; a nearly-merged card is never starved by new work. Preemption takes effect at the
+Ordering rule: **stage descending → started before unstarted → priority (Urgent, High, Normal, Low)
+→ drag order** (T3O-95). Finishing beats starting; a nearly-merged card is never starved by new
+work, and priority only decides between cards waiting at the same stage. Priority is per board
+(workers never see it), never ages, and never passes along dependencies; columns other than Done
+sort by priority then position, so the column still reads in run order. Preemption takes effect at the
 **next step boundary** — nothing in flight is wasted and the worktree is always left clean.
 
 **Holds replace the sibling card's strict order (`T3O-87`).** Cards are placed in queue order. A

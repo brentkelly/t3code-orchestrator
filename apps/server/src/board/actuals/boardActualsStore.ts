@@ -1,5 +1,5 @@
 /**
- * The board's actuals table (T3O-87, migration 073): one row per card step a worker measured.
+ * The board's actuals table (T3O-87, migration 075): one row per card step a worker measured.
  * A row is upserted while its step runs (figures so far) and once more when it ends.
  */
 import {

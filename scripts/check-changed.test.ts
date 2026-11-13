@@ -260,7 +260,11 @@ const env = {
 };
 
 // History A -> B -> C, with HEAD at C. Each remote's main points at A or B.
-function fixture(remotes: Record<string, "A" | "B">) {
+// T3o: `heads` gives a remote a default branch (refs/remotes/<r>/HEAD) at A or B.
+function fixture(
+  remotes: Record<string, "A" | "B">,
+  heads: Record<string, { branch: string; at: "A" | "B" }> = {},
+) {
   const root = NodeFS.realpathSync(
     NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-check-changed-")),
   );
@@ -283,6 +287,10 @@ function fixture(remotes: Record<string, "A" | "B">) {
     for (const [remote, commit] of Object.entries(remotes)) {
       git("remote", "add", remote, NodePath.join(root, "missing"));
       git("update-ref", `refs/remotes/${remote}/main`, commits[commit]!);
+    }
+    for (const [remote, { branch, at }] of Object.entries(heads)) {
+      git("update-ref", `refs/remotes/${remote}/${branch}`, commits[at]!);
+      git("symbolic-ref", `refs/remotes/${remote}/HEAD`, `refs/remotes/${remote}/${branch}`);
     }
   } catch (error) {
     NodeFS.rmSync(root, { recursive: true, force: true });
@@ -318,6 +326,25 @@ it.each(["upstream", "team/upstream"])(
   },
 );
 
+// T3o: a fork's trunk (origin/HEAD -> origin/t3o) beats an upstream main it is ahead of.
+it("compares against the remote's default branch when it sits closer than upstream/main", async () => {
+  using project = fixture({ origin: "A", upstream: "A" }, { origin: { branch: "t3o", at: "B" } });
+  const result = await compare(project.root, Option.none());
+  assert.strictEqual(result.base, project.commits.B);
+  assert.strictEqual(result.ref, "origin/t3o");
+});
+
+it("on the trunk branch itself, compares against its remote copy so unpushed commits are checked", async () => {
+  using project = fixture({ origin: "A" }, { origin: { branch: "t3o", at: "B" } });
+  NodeChildProcess.execFileSync("git", ["checkout", "-q", "-b", "t3o"], {
+    cwd: project.root,
+    env,
+  });
+  const result = await compare(project.root, Option.none());
+  assert.strictEqual(result.base, project.commits.B);
+  assert.strictEqual(result.ref, "origin/t3o");
+});
+
 it("compares against an explicit ref instead of the closest remote main", async () => {
   using project = fixture({ origin: "A", upstream: "B" });
   const result = await compare(project.root, Option.some("origin/main"));
@@ -337,6 +364,8 @@ function launcherFixture() {
   for (const file of [
     "scripts/check-changed.ts",
     "scripts/check-changed-command.ts",
+    // T3o: check-changed.ts imports the fork's comparison candidates (T3O-88).
+    "scripts/t3o-check-changed-base.ts",
     ".github/scripts/ci-changes.cjs",
   ]) {
     write(file, NodeFS.readFileSync(NodePath.join(import.meta.dirname, "..", file), "utf8"));

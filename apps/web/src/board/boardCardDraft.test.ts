@@ -48,6 +48,7 @@ const draftOf = (patch: Partial<BoardCardDraft> = {}): BoardCardDraft => ({
   labelIds: [],
   dependsOn: [],
   scheduledStartAt: null,
+  priority: "normal",
   attachments: [],
   ...patch,
 });
@@ -126,6 +127,7 @@ describe("boardCardDraftHasContent", () => {
           labelIds: [BoardLabelId.make("bug")],
           baseBranch: "release",
           scheduledStartAt: "2026-01-01T00:00:00.000Z",
+          priority: "urgent",
         }),
       ),
     ).toBe(false);
@@ -144,6 +146,11 @@ describe("parseBoardCardDraft", () => {
   it("still reads a record written before the save clock was dropped", () => {
     const draft = draftOf({ title: "Ship it" });
     expect(parseBoardCardDraft({ ...draft, updatedAt: NOW })).toEqual(draft);
+  });
+
+  it("reads a draft saved before priority existed as normal (T3O-95)", () => {
+    const { priority: _priority, ...legacy } = draftOf({ title: "Ship it" });
+    expect(parseBoardCardDraft(legacy)?.priority).toBe("normal");
   });
 
   it("reads corrupt, foreign-shaped and empty records as no draft", () => {

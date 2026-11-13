@@ -104,6 +104,7 @@ const makeCard = (overrides: Partial<BoardCard> = {}): BoardCard => ({
   autoMergeSetting: null,
   autoMergeHold: null,
   mergeStrategy: null,
+  priority: "normal",
   pinnedWorkerId: null,
   placedWorkerId: BOARD_LOCAL_WORKER_ID,
   workerMove: null,

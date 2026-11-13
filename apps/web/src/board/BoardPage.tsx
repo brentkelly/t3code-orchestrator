@@ -34,15 +34,18 @@ import {
   type ProjectId,
   type ThreadId,
   assignBoardKeyPrefix,
+  boardCardEffectivePriority,
 } from "@t3tools/contracts";
 import {
   applyBoardCardPlacements,
   boardBuildQueue,
+  boardColumnSortsByPriority,
   boardRunningStepCount,
   boardThreadStateSourceWithSubagents,
   isBoardCardPlacementSettled,
   mergeBoardStageColumns,
   planBoardCardReorder,
+  snapBoardCardDropOrder,
   type BoardCardPlacement,
   type BoardStageColumns,
 } from "@t3tools/client-runtime/state/shell";
@@ -648,25 +651,6 @@ function useBoardPageModel({
   const parentShell =
     scope.kind === "sub-board" ? (findBoardCard(columns, scope.parentCardId)?.card ?? null) : null;
 
-  // ── Groups ────────────────────────────────────────────────
-  // A group card's face, folded once per board render over the shells the
-  // client already holds: no group adds a field to the wire.
-  const groupVmByCard = (() => {
-    const input = { shells: groupShells, stages: stageState, attentionFor };
-    const parents = new Set(
-      groupShells.flatMap((card) =>
-        card.parentCardId === undefined ? [] : [String(card.parentCardId)],
-      ),
-    );
-    const out = new Map<string, NonNullable<ReturnType<typeof boardGroupCardVm>>>();
-    for (const card of groupShells) {
-      if (card.group === undefined && !parents.has(String(card.cardId))) continue;
-      const vm = boardGroupCardVm(input, card);
-      if (vm !== null) out.set(String(card.cardId), vm);
-    }
-    return out;
-  })();
-  const groupFor = (card: BoardCardShell) => groupVmByCard.get(String(card.cardId)) ?? null;
   const parentGroup = parentShell === null ? null : boardShellGroup(groupShells, parentShell);
   // Where a new card lands by default: Planning inside a started group.
   const defaultCreateStageId = boardCreateDefaultStage(
@@ -725,6 +709,27 @@ function useBoardPageModel({
     }
     return info;
   })();
+
+  // ── Groups ────────────────────────────────────────────────
+  // A group card's face, folded once per board render over the shells the
+  // client already holds: no group adds a field to the wire.
+  const groupVmByCard = (() => {
+    const queueFor = (card: BoardCardShell) => queueSlots.get(String(card.cardId));
+    const input = { shells: groupShells, stages: stageState, attentionFor, queueFor };
+    const parents = new Set(
+      groupShells.flatMap((card) =>
+        card.parentCardId === undefined ? [] : [String(card.parentCardId)],
+      ),
+    );
+    const out = new Map<string, NonNullable<ReturnType<typeof boardGroupCardVm>>>();
+    for (const card of groupShells) {
+      if (card.group === undefined && !parents.has(String(card.cardId))) continue;
+      const vm = boardGroupCardVm(input, card);
+      if (vm !== null) out.set(String(card.cardId), vm);
+    }
+    return out;
+  })();
+  const groupFor = (card: BoardCardShell) => groupVmByCard.get(String(card.cardId)) ?? null;
 
   const toggleCardThreads = (cardId: string) => {
     setExpandedThreadCards((current) => {
@@ -1141,11 +1146,26 @@ function EnvironmentBoard({
   ) => {
     const cardId = source.card.cardId as string;
     const isMove = targetStage !== source.stage;
+    // A drag never changes priority: the drop snaps into the card's own level (not in Done,
+    // which ignores priority), and the no-op check compares that snapped order.
+    const targetCards = columns[targetStage] ?? EMPTY_CARDS;
+    const priorityByCardId = boardColumnSortsByPriority(targetStage)
+      ? new Map(
+          [...targetCards, source.card].map(
+            (card) => [card.cardId as string, boardCardEffectivePriority(card)] as const,
+          ),
+        )
+      : undefined;
+    const snappedIds = snapBoardCardDropOrder({
+      orderedCardIds: orderedIds,
+      movedCardId: cardId,
+      priorityByCardId,
+    });
     if (!isMove) {
-      const currentIds = (columns[targetStage] ?? EMPTY_CARDS).map((card) => card.cardId as string);
+      const currentIds = targetCards.map((card) => card.cardId as string);
       if (
-        orderedIds.length === currentIds.length &&
-        orderedIds.every((id, index) => id === currentIds[index])
+        snappedIds.length === currentIds.length &&
+        snappedIds.every((id, index) => id === currentIds[index])
       ) {
         return;
       }
@@ -1159,6 +1179,7 @@ function EnvironmentBoard({
       orderedCardIds: [...orderedIds],
       keysByCardId,
       movedCardId: cardId,
+      priorityByCardId,
     });
     if (assignments.length === 0) return;
 

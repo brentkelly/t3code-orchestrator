@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build summary: overview and drill-in sections</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f4f4f5;--fg:#27272a;--card:#fff;--muted:#fafafa;--muted-fg:#71717a;--accent:#f4f4f5;--border:#e4e4e7;--input:#d4d4d8;
+--info:#3b82f6;--info-fg:#1d4ed8;--attention:#8b5cf6;--attention-fg:#6d28d9;--success:#10b981;--success-fg:#047857;--warning:#f59e0b;--warning-fg:#b45309;--destructive-fg:#b91c1c;
+--font-sans:"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;--font-mono:"SF Mono","SFMono-Regular","JetBrains Mono",Consolas,Menlo,monospace}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font-sans);background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased}
+a{color:var(--info-fg);text-decoration:none}
+a:hover{text-decoration:underline}
+button{font-family:inherit}
+</style>
+</helmet>
+
+<section style="padding:48px;display:flex;flex-direction:column;gap:28px">
+  <div style="display:flex;flex-direction:column;gap:8px;max-width:1100px">
+    <div style="font:600 18px var(--font-sans)">Build summary — overview first, drill in by section</div>
+    <div style="font:400 13.5px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Same two cards as the live app: T3O-80 (a heavy build) and T3O-83 (a light one). The top of the pane answers "what happened, is it safe, what did it cost, what wasn't done" without scrolling. Everything else sits in sections that start collapsed; each closed row still shows its counts, so you only open the one you care about. Click a tile or a row to open it.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px 18px;font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg)">
+      <span><b style="color:var(--fg);font-weight:600">Cost is in the overview</b>, a fixed tile, so it can't be pushed out of view by long content.</span>
+      <span><b style="color:var(--fg);font-weight:600">Not done</b> items surface in the overview, since they're the ones you act on.</span>
+      <span><b style="color:var(--fg);font-weight:600">Sections reset to closed</b> on every card.</span>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start">
+    <sc-for list="{{ panes }}" as="p" hint-placeholder-count="2">
+      <div style="display:flex;flex-direction:column;gap:12px;width:820px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font:600 12px var(--font-mono);padding:3px 8px;border-radius:6px;background:var(--fg);color:var(--card)">{{ p.key }}</span>
+          <span style="font:600 13px var(--font-sans)">{{ p.title }}</span>
+          <span style="font:400 12.5px var(--font-sans);color:var(--muted-fg)">{{ p.caption }}</span>
+        </div>
+
+        <div style="border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden">
+          <!-- pane header -->
+          <div style="display:flex;align-items:center;gap:8px;height:44px;padding:0 12px 0 22px;border-bottom:1px solid var(--border)">
+            <span style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Build summary</span>
+            <span style="flex:1"></span>
+            <button type="button" style="height:26px;padding:0 10px;border:1px solid var(--border);border-radius:7px;background:var(--card);color:var(--fg);font:500 12px var(--font-sans);cursor:pointer">‹ Back to thread</button>
+          </div>
+
+          <!-- OVERVIEW -->
+          <div style="padding:20px 22px 20px;display:flex;flex-direction:column;gap:16px">
+            <div style="display:flex;flex-direction:column;gap:9px">
+              <div style="font:500 15px/1.55 var(--font-sans);text-wrap:pretty"><sc-for list="{{ p.headline }}" as="pt" hint-placeholder-count="1"><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"><code style="font:500 13px var(--font-mono);padding:1px 5px;border-radius:4px;background:var(--accent)">{{ pt.t }}</code></sc-if><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}">{{ pt.t }}</sc-if></sc-for></div>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font:400 12px var(--font-sans);color:var(--muted-fg)">
+                <span style="font:500 11.5px var(--font-sans);padding:2px 7px;border-radius:6px;background:color-mix(in srgb,var(--success) 13%,var(--card));color:var(--success-fg)">Merged</span>
+                <a href="#" style="font-weight:500">{{ p.pr }}</a>
+                <span style="font:400 11.5px var(--font-mono)">{{ p.branch }}</span>
+                <span>·</span><span>{{ p.commits }}</span>
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px">
+              <sc-for list="{{ p.tiles }}" as="t" hint-placeholder-count="4">
+                <button type="button" onClick="{{ t.open }}" style="{{ t.style }}">
+                  <span style="display:flex;align-items:center;gap:6px;font:600 10.5px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">{{ t.label }}<span style="flex:1"></span><span style="{{ t.dotStyle }}"></span></span>
+                  <span style="font:600 19px var(--font-sans);letter-spacing:-0.01em;color:var(--fg);font-variant-numeric:tabular-nums">{{ t.value }}</span>
+                  <span style="display:flex;gap:2px;height:4px;width:100%">
+                    <sc-for list="{{ t.bar }}" as="b" hint-placeholder-count="3"><span title="{{ b.tip }}" style="{{ b.style }}"></span></sc-for>
+                  </span>
+                  <span style="font:400 11.5px/1.4 var(--font-sans);color:var(--muted-fg);text-align:left;text-wrap:pretty">{{ t.sub }}</span>
+                </button>
+              </sc-for>
+            </div>
+
+            <sc-if value="{{ p.hasOpenItems }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--warning) 7%,var(--card));border:1px solid color-mix(in srgb,var(--warning) 28%,var(--border))">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span style="font:600 12px var(--font-sans);color:var(--warning-fg)">{{ p.openHead }}</span>
+                  <span style="flex:1"></span>
+                  <button type="button" onClick="{{ p.openHeadsUp }}" style="height:22px;padding:0 6px;border:none;border-radius:6px;background:transparent;color:var(--warning-fg);font:500 11.5px var(--font-sans);cursor:pointer">Details ›</button>
+                </div>
+                <sc-for list="{{ p.openItems }}" as="o" hint-placeholder-count="3">
+                  <div style="display:flex;gap:8px;align-items:baseline;font:400 12.5px/1.5 var(--font-sans)">
+                    <span style="width:4px;height:4px;flex:none;border-radius:99px;background:var(--warning-fg);transform:translateY(-2px)"></span>
+                    <span style="text-wrap:pretty"><sc-for list="{{ o.parts }}" as="pt" hint-placeholder-count="1"><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"><code style="font:500 11.5px var(--font-mono);padding:1px 4px;border-radius:4px;background:color-mix(in srgb,var(--warning) 10%,var(--card))">{{ pt.t }}</code></sc-if><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}">{{ pt.t }}</sc-if></sc-for></span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+
+          <!-- SECTIONS -->
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 22px;border-top:1px solid var(--border);background:var(--muted)">
+            <span style="font:600 10.5px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Details</span>
+            <span style="flex:1"></span>
+            <button type="button" onClick="{{ p.toggleAll }}" style="height:22px;padding:0 6px;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);font:500 11.5px var(--font-sans);cursor:pointer">{{ p.toggleAllLabel }}</button>
+          </div>
+
+          <sc-for list="{{ p.sections }}" as="s" hint-placeholder-count="5">
+            <div style="border-top:1px solid var(--border)">
+              <button type="button" onClick="{{ s.toggle }}" style="{{ s.rowStyle }}">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="{{ s.caretStyle }}"><path d="m9 18 6-6-6-6"></path></svg>
+                <span style="font:600 13px var(--font-sans);color:var(--fg);white-space:nowrap">{{ s.name }}</span>
+                <span style="font:400 12px var(--font-sans);color:var(--muted-fg);white-space:nowrap">{{ s.count }}</span>
+                <span style="flex:1"></span>
+                <span style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end">
+                  <sc-for list="{{ s.chips }}" as="c" hint-placeholder-count="2"><span style="{{ c.style }}">{{ c.label }}</span></sc-for>
+                </span>
+              </button>
+
+              <sc-if value="{{ s.open }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:2px 22px 18px 44px;display:flex;flex-direction:column;gap:12px">
+
+                  <sc-if value="{{ s.isNotes }}" hint-placeholder-val="{{ false }}">
+                    <sc-for list="{{ p.notes }}" as="n" hint-placeholder-count="4">
+                      <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:10px;align-items:baseline">
+                        <span style="{{ n.tagStyle }}">{{ n.label }}</span>
+                        <div style="display:flex;flex-direction:column;gap:3px">
+                          <div style="font:400 13px/1.55 var(--font-sans);text-wrap:pretty"><sc-for list="{{ n.parts }}" as="pt" hint-placeholder-count="1"><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"><code style="font:500 12px var(--font-mono);padding:1px 4px;border-radius:4px;background:var(--accent)">{{ pt.t }}</code></sc-if><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}">{{ pt.t }}</sc-if></sc-for></div>
+                          <sc-if value="{{ n.hasSub }}" hint-placeholder-val="{{ false }}"><div style="font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty"><sc-for list="{{ n.subParts }}" as="pt" hint-placeholder-count="1"><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"><code style="font:500 11.5px var(--font-mono);padding:1px 4px;border-radius:4px;background:var(--accent)">{{ pt.t }}</code></sc-if><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}">{{ pt.t }}</sc-if></sc-for></div></sc-if>
+                        </div>
+                      </div>
+                    </sc-for>
+                  </sc-if>
+
+                  <sc-if value="{{ s.isChecks }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:9px;overflow:hidden">
+                      <sc-for list="{{ p.checks }}" as="c" hint-placeholder-count="4">
+                        <div style="{{ c.rowStyle }}">
+                          <span style="{{ c.iconStyle }}">{{ c.glyph }}</span>
+                          <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+                            <span style="font:500 12.5px/1.45 var(--font-sans);text-wrap:pretty"><sc-for list="{{ c.parts }}" as="pt" hint-placeholder-count="1"><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"><code style="font:500 11.5px var(--font-mono)">{{ pt.t }}</code></sc-if><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}">{{ pt.t }}</sc-if></sc-for></span>
+                            <span style="font:400 12px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty"><sc-for list="{{ c.detailParts }}" as="pt" hint-placeholder-count="1"><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"><code style="font:500 11px var(--font-mono);padding:0 3px;border-radius:3px;background:var(--accent)">{{ pt.t }}</code></sc-if><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}">{{ pt.t }}</sc-if></sc-for></span>
+                          </div>
+                          <span style="{{ c.verdictStyle }}">{{ c.verdict }}</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{ s.isBuilt }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:grid;grid-template-columns:110px minmax(0,1fr);gap:14px 16px">
+                      <sc-for list="{{ p.areas }}" as="a" hint-placeholder-count="4">
+                        <div style="display:flex;flex-direction:column;gap:1px;padding-top:1px">
+                          <span style="font:600 12.5px var(--font-sans)">{{ a.name }}</span>
+                          <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">{{ a.count }}</span>
+                        </div>
+                        <div style="display:flex;flex-direction:column;gap:3px">
+                          <sc-for list="{{ a.items }}" as="it" hint-placeholder-count="2">
+                            <div style="display:flex;gap:9px;align-items:baseline;font:400 13px/1.55 var(--font-sans)">
+                              <span style="width:4px;height:4px;flex:none;border-radius:99px;background:var(--muted-fg);transform:translateY(-3px)"></span>
+                              <span style="text-wrap:pretty;min-width:0"><sc-for list="{{ it.parts }}" as="pt" hint-placeholder-count="1"><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"><code style="font:500 12px var(--font-mono);padding:1px 4px;border-radius:4px;background:var(--accent);overflow-wrap:anywhere">{{ pt.t }}</code></sc-if><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}">{{ pt.t }}</sc-if></sc-for></span>
+                            </div>
+                          </sc-for>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{ s.isDecisions }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;gap:4px;padding:3px;border-radius:8px;background:var(--accent);align-self:flex-start">
+                      <sc-for list="{{ p.decFilters }}" as="f" hint-placeholder-count="3">
+                        <button type="button" onClick="{{ f.select }}" style="{{ f.style }}">{{ f.label }} <span style="color:var(--muted-fg);font-weight:400">{{ f.n }}</span></button>
+                      </sc-for>
+                    </div>
+                    <div style="display:flex;flex-direction:column">
+                      <sc-for list="{{ p.decisions }}" as="d" hint-placeholder-count="4">
+                        <div style="display:grid;grid-template-columns:26px minmax(0,1fr) auto;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--border)">
+                          <span style="font:500 11.5px var(--font-mono);color:var(--muted-fg)">{{ d.n }}</span>
+                          <span style="font:400 13px/1.5 var(--font-sans);text-wrap:pretty"><sc-for list="{{ d.parts }}" as="pt" hint-placeholder-count="1"><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"><code style="font:500 12px var(--font-mono);padding:1px 4px;border-radius:4px;background:var(--accent)">{{ pt.t }}</code></sc-if><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}">{{ pt.t }}</sc-if></sc-for></span>
+                          <span style="display:flex;gap:4px">
+                            <sc-for list="{{ d.tags }}" as="tg" hint-placeholder-count="1"><span style="{{ tg.style }}">{{ tg.label }}</span></sc-for>
+                          </span>
+                        </div>
+                      </sc-for>
+                    </div>
+                    <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">Decision text is illustrative; the real log fills this list.</span>
+                  </sc-if>
+
+                  <sc-if value="{{ s.isUsage }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+                      <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) 70px 70px 76px;gap:0 10px;padding:6px 12px;background:var(--muted);font:600 9.5px var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--muted-fg)">
+                        <span>Stage</span><span>Models</span><span style="text-align:right">Input</span><span style="text-align:right">Output</span><span style="text-align:right">Cost</span>
+                      </div>
+                      <sc-for list="{{ p.usageRows }}" as="u" hint-placeholder-count="4">
+                        <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) 70px 70px 76px;gap:0 10px;align-items:center;padding:8px 12px;border-top:1px solid var(--border)">
+                          <span style="display:flex;align-items:center;gap:7px;min-width:0"><span style="{{ u.keyStyle }}"></span><span style="font:600 12px var(--font-sans)">{{ u.name }}</span></span>
+                          <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ u.models }}</span>
+                          <span style="text-align:right;font:500 11px var(--font-mono);font-variant-numeric:tabular-nums">{{ u.inp }}</span>
+                          <span style="text-align:right;font:500 11px var(--font-mono);font-variant-numeric:tabular-nums">{{ u.out }}</span>
+                          <span style="text-align:right;font:600 11.5px var(--font-mono);font-variant-numeric:tabular-nums">{{ u.cost }}</span>
+                        </div>
+                      </sc-for>
+                      <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) 70px 70px 76px;gap:0 10px;align-items:center;padding:8px 12px;border-top:1px solid var(--border);background:var(--muted)">
+                        <span style="font:600 11.5px var(--font-sans)">Card total</span><span></span>
+                        <span style="text-align:right;font:600 11px var(--font-mono);font-variant-numeric:tabular-nums">{{ p.uInp }}</span>
+                        <span style="text-align:right;font:600 11px var(--font-mono);font-variant-numeric:tabular-nums">{{ p.uOut }}</span>
+                        <span style="text-align:right;font:700 11.5px var(--font-mono);font-variant-numeric:tabular-nums">{{ p.costLabel }}</span>
+                      </div>
+                    </div>
+                    <span style="font:400 11px/1.5 var(--font-sans);color:var(--muted-fg)">≈ priced from the model price table. Per-thread rows and the By model view open from each stage, as in the Usage design.</span>
+                  </sc-if>
+
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1780,"height":1300}}'>
+const P = (s) => String(s).split("`").map((t, i) => ({ t, code: i % 2 === 1, plain: i % 2 === 0 })).filter((p) => p.t);
+
+const KIND = {
+  plan: { label: "Plan change", c: "var(--attention)", fg: "var(--attention-fg)" },
+  notdone: { label: "Not done", c: "var(--warning)", fg: "var(--warning-fg)" },
+  shortcut: { label: "Shortcut", c: "var(--fg)", fg: "var(--muted-fg)" },
+};
+const ST = { pass: ["✓", "var(--success-fg)", "Passed"], warn: ["!", "var(--warning-fg)", "Not from this card"], skip: ["–", "var(--muted-fg)", "Skipped"] };
+const STAGE_SHADE = { Planning: 62, Build: 44, "Code review": 28, CI: 16 };
+
+const CARDS = [
+  {
+    id: "a", key: "T3O-80", title: "Auto-plan disabled because planning is \"finished\"", caption: "Heavy card: 4 review rounds, 18 changes",
+    headline: "Auto-plan can now be turned on in Planning after the agent marked planning finished; a still-working thread gets the prompt when its turn ends, and the agent's next finish approves and builds.",
+    pr: "#255", branch: "t3o ← board/t3o-80", commits: "5 commits, not pushed",
+    review: { round: 4, of: 10, raised: 15, fixed: 15, rejected: 0 },
+    notes: [
+      { k: "notdone", t: "No harness test for an answer-error rollback.", s: "The fake thread gateway's `answerPendingInput` can't fail, and the harness has no hook to make it." },
+      { k: "notdone", t: "No new case in `planReviewLateStart.test.ts`.", s: "The generalised `boardCompletionReopened` also fixes the late-review turn-end and boot path, but that path has no dedicated test. The existing late-review tests pass." },
+      { k: "notdone", t: "The new eval case `board-auto-plan-reopened-completes-again` was not run.", s: "There is no `ANTHROPIC_API_KEY` in the repo `.env`. A dry run builds the case." },
+      { k: "plan", t: "The reopened prompt is delivered straight from turn-end (`handleTurnCompleted`) and from the top of `recoverStep`, not as the backoff-rung resume text in `resumeExistingStepThread`.", s: "`recoverStep` parks on a backoff and the recover command moves `lastNudgeAt`, so the plan's check would never match at resume. Delivery is recorded with an uncharged `board.card.check-in-step`." },
+      { k: "plan", t: "The delivery stamp is forced to be strictly after `reopenedAt`.", s: "Answering a pending question can happen in the reopen's own millisecond, which would make the prompt go out twice. Tests caught this." },
+      { k: "plan", t: "If the reopen's question answer returns false, the turn-end handover still applies. Only an answer error ends Auto-plan and settles the step back to succeeded." },
+      { k: "shortcut", t: "`reopenedAt` is not added to the card-detail error-row query in `projection.ts`. Nothing reads it there." },
+    ],
+    checks: [
+      { st: "pass", n: "typecheck (41 packages)", d: "Clean after replacing `new Date()` with `DateTime`." },
+      { st: "pass", n: "knip", d: "Cleared after un-exporting `BOARD_AUTO_PLAN_REOPENED_…`." },
+      { st: "pass", n: "vp test: autoPlan, decider, handlers, migration 062, contracts, web", d: "All pass. The boot-reconcile test fails if the old `hasSucceeded` is restored." },
+      { st: "warn", n: "check:changed test: `threadGatewayBoundary.test.ts`", d: "Flags SQL in `board/boardCardThreadFilter.ts`, which this card does not touch." },
+      { st: "warn", n: "check:changed test: `AddEnvironmentDialog` (SSH)", d: "A 15s browser timeout in an untouched file. Passed on the first run, so it is flaky." },
+      { st: "warn", n: "check:changed format", d: "Only `.plans/` files fail (the documented hook failure). Every changed source file is formatted." },
+      { st: "warn", n: "check:changed lint", d: "Only arbitrary-value errors in `apps/web/src/board/BoardC…`, a file this card does not touch." },
+      { st: "skip", n: "evals mcp-tool-use", d: "No `ANTHROPIC_API_KEY` available. The dry run passes." },
+    ],
+    areas: [
+      ["Data", ["`BoardCardStepState.reopenedAt` (optional, never null)", "Board migration `062_BoardStepReopenedAt` adds a guarded `reopened_at` column", "`projection.ts` maps it in the row schema, upsert, select and both conversions"]],
+      ["Domain", ["`resolveBoardCardAutomation` locks Auto-plan only past Planning; the `planningFinished` input is removed", "`board.card.mark-auto-plan` takes `reopenFinished` and emits `card-updated` plus `card-step-recovered`", "`reopenedPlanStep` is shared with `latePlanReviewStep`", "`boardCompletionReopened` (generalised) and `boardCompletionReopenedByAutoPlan`"]],
+      ["Supervisor", ["`reopenFinishedPlanning`: an active thread is reopened, retuned unattended and any pending question answered", "Only the card's own `changed.autoPlan` reopens; group re-evaluations never do", "`deliverReopenedAutoPlan` at turn end and in `recoverStep`, once, uncharged", "`answerReopenedQuestion` answers a later question instead of parking it", "Turn-end and boot reconcile ignore a superseded completion (`pinnedSuccess`)", "Turning Auto-plan off while reopened sends the reopened off text"]],
+      ["Agent text", ["`boardAutoPlanInstruction(autoBuild, { reopened })` and `boardAutoPlanOffInstruction`", "Eval case `board-auto-plan-reopened-completes-again`"]],
+      ["MCP", ["The `board_complete_step` mirror uses the generalised helper, so a superseding completion reports `alreadyCompleted: false`"]],
+      ["Panel", ["Auto-plan switch is enabled in Planning after planning finished"]],
+      ["Docs", ["`docs/user/board-auto-plan.md` explains the lock and the handover"]],
+    ],
+    decisions: { total: 17, unclear: 4, important: 5, rows: [
+      { t: "Deliver the reopened prompt from turn-end rather than the resume rung", imp: true },
+      { t: "Stamp delivery strictly after `reopenedAt`", imp: true },
+      { t: "Group re-evaluations never reopen a finished step", imp: true, unc: true },
+      { t: "Keep the panel note reading 'Planning is finished.'", unc: true },
+      { t: "Leave `reopenedAt` out of the error-row query", unc: true },
+    ] },
+    usage: [
+      { s: "Planning", m: "Opus 4.8", i: 2140000, o: 96000, cost: 3.42 },
+      { s: "Build", m: "Opus 4.8 · Sonnet 4.8", i: 7810000, o: 412000, cost: 11.86 },
+      { s: "Code review", m: "Opus 4.8 · Sonnet 4.8", i: 6020000, o: 238000, cost: 8.97, note: "4 rounds" },
+      { s: "CI", m: "Sonnet 4.8", i: 610000, o: 31000, cost: 0.78 },
+    ],
+    est: true,
+  },
+  {
+    id: "b", key: "T3O-83", title: "Settling round ran after critical bug", caption: "Light card: 1 round, 5 changes",
+    headline: "A round that left a surviving critical finding now always makes the next review round full.",
+    pr: "#258", branch: "t3o ← board/t3o-83", commits: "1 commit, pushed",
+    review: { round: 1, of: 10, raised: 2, fixed: 2, rejected: 0 },
+    notes: [
+      { k: "plan", t: "The existing 'lets a Fix it round follow the rule' test assumed a stuck critical still settles; it now uses a stuck improvement for the settling case and asserts a stuck critical runs full.", s: "Follows decisions 2–4: any surviving critical, including a human-carried one, forces a full round." },
+      { k: "shortcut", t: "`vp run check:changed` with no ref compared against `upstream/main` and failed on unrelated files; it was run against `t3o` instead, where it passes.", s: "The no-ref run flagged lint errors in `BoardUsagePopovers.tsx` and a `.plans` format error, which this card does not touch." },
+    ],
+    checks: [
+      { st: "pass", n: "packages/contracts `boardReviewLoop.test.ts`", d: "110 tests pass. The 3 new or changed critical cases failed before the fix." },
+      { st: "pass", n: "apps/server reviewLoopExecutor, supervisorReactor, decider.board", d: "227 tests pass." },
+      { st: "pass", n: "vp run check:changed t3o", d: "format, lint, knip, typecheck, tests and react compiler all pass." },
+    ],
+    areas: [
+      ["Contracts", ["`boardReviewNextRoundMode` returns full when the previous round has a surviving critical that was not ruled `rejection-justified`", "`boardReviewRoundForcingCount` now counts the findings returned by a new internal `boardReviewRoundSurvivingForcing` helper"]],
+      ["Tests", ["Failing-first cases in 'the mode rule': a fixed critical in round 3, a critical ruled `rejection-justified`, a critical in a settling round, and a stuck critical"]],
+      ["Docs", ["The Settling rounds section of `docs/user/board-another-review-round.md` states the critical rule", "The settings hint in `BoardPipelineSection.tsx` says a round with a critical is always followed by a full round"]],
+    ],
+    decisions: { total: 7, unclear: 0, important: 2, rows: [
+      { t: "Any surviving critical forces a full round", imp: true },
+      { t: "A critical ruled `rejection-justified` does not force one", imp: true },
+      { t: "A human-carried critical counts as surviving" },
+      { t: "Hint text lives in the pipeline settings section" },
+    ] },
+    usage: [
+      { s: "Planning", m: "Opus 4.8", i: 410000, o: 18000, cost: 0.71 },
+      { s: "Build", m: "Opus 4.8", i: 1120000, o: 52000, cost: 1.92 },
+      { s: "Code review", m: "Opus 4.8 · Sonnet 4.8", i: 930000, o: 34000, cost: 1.41, note: "1 round" },
+    ],
+    est: true,
+  },
+];
+
+const tag = (k) => ({
+  font: "500 11.5px var(--font-sans)", padding: "2px 7px", borderRadius: 6, whiteSpace: "nowrap", justifySelf: "start",
+  background: k === "shortcut" ? "var(--accent)" : "color-mix(in srgb," + KIND[k].c + " 12%,var(--card))", color: KIND[k].fg,
+});
+const chip = (label, tone) => {
+  const map = {
+    warn: ["color-mix(in srgb,var(--warning) 12%,var(--card))", "var(--warning-fg)"],
+    plan: ["color-mix(in srgb,var(--attention) 11%,var(--card))", "var(--attention-fg)"],
+    ok: ["color-mix(in srgb,var(--success) 12%,var(--card))", "var(--success-fg)"],
+    info: ["color-mix(in srgb,var(--info) 10%,var(--card))", "var(--info-fg)"],
+    plain: ["var(--accent)", "var(--muted-fg)"],
+  }[tone];
+  return { label, style: { font: "500 11px var(--font-sans)", padding: "2px 7px", borderRadius: 6, whiteSpace: "nowrap", background: map[0], color: map[1] } };
+};
+const k = (n) => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : (n / 1e3).toFixed(0) + "k";
+const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
+
+class Component extends DCLogic {
+  state = { open: { a: {}, b: {} }, decFilter: { a: "all", b: "all" } };
+
+  setOpen(id, sec, val) {
+    const cur = this.state.open[id] || {};
+    this.setState({ open: { ...this.state.open, [id]: { ...cur, [sec]: val } } });
+  }
+
+  pane(c) {
+    const open = this.state.open[c.id] || {};
+    const cnt = (kk) => c.notes.filter((n) => n.k === kk).length;
+    const nd = cnt("notdone"), pl = cnt("plan"), sc = cnt("shortcut");
+    const pass = c.checks.filter((x) => x.st === "pass").length;
+    const warn = c.checks.filter((x) => x.st === "warn").length;
+    const skip = c.checks.filter((x) => x.st === "skip").length;
+    const changes = c.areas.reduce((s, a) => s + a[1].length, 0);
+    const cost = c.usage.reduce((s, u) => s + u.cost, 0);
+    const costLabel = (c.est ? "≈" : "") + "$" + cost.toFixed(2);
+
+    const toneDot = (tone) => ({ width: 7, height: 7, borderRadius: 99, flex: "none", background: tone === "warn" ? "var(--warning)" : tone === "ok" ? "var(--success)" : "transparent" });
+    const tileStyle = (tone) => ({
+      display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, padding: "11px 12px 12px", borderRadius: 10, cursor: "pointer", textAlign: "left",
+      border: "1px solid " + (tone === "warn" ? "color-mix(in srgb,var(--warning) 30%,var(--border))" : "var(--border)"),
+      background: "var(--card)",
+    });
+    const seg = (n, color, tip) => ({ tip, style: { flex: n, height: 4, borderRadius: 2, background: color } });
+
+    const r = c.review;
+    const notesTotal = c.notes.length;
+    const tiles = [
+      {
+        sec: "checks", label: "Checks", tone: warn ? "warn" : "ok",
+        value: pass + " / " + c.checks.length + " passed",
+        sub: warn || skip ? [warn ? warn + " flagged, not from this card" : "", skip ? skip + " skipped" : ""].filter(Boolean).join(" · ") : "All clean",
+        bar: [seg(pass, "var(--success)", pass + " passed"), ...(warn ? [seg(warn, "var(--warning)", warn + " flagged")] : []), ...(skip ? [seg(skip, "color-mix(in srgb,var(--fg) 14%,transparent)", skip + " skipped")] : [])],
+      },
+      {
+        sec: "review", label: "Review", tone: r.fixed + r.rejected === r.raised ? "ok" : "warn",
+        value: "Round " + r.round + " of " + r.of,
+        sub: r.raised + " raised · " + r.fixed + " fixed · " + r.rejected + " rejected",
+        bar: [seg(r.fixed, "var(--success)", r.fixed + " fixed"), ...(r.rejected ? [seg(r.rejected, "var(--warning)", r.rejected + " rejected")] : []), ...(r.raised - r.fixed - r.rejected > 0 ? [seg(r.raised - r.fixed - r.rejected, "color-mix(in srgb,var(--fg) 14%,transparent)", "open")] : [])],
+      },
+      {
+        sec: "notes", label: "Heads-up", tone: nd ? "warn" : "none",
+        value: plural(notesTotal, "note"),
+        sub: [nd ? nd + " not done" : "", pl ? plural(pl, "plan change") : "", sc ? plural(sc, "shortcut") : ""].filter(Boolean).join(" · "),
+        bar: [...(nd ? [seg(nd, "var(--warning)", nd + " not done")] : []), ...(pl ? [seg(pl, "var(--attention)", pl + " plan changes")] : []), ...(sc ? [seg(sc, "color-mix(in srgb,var(--fg) 22%,transparent)", sc + " shortcuts")] : [])],
+      },
+      {
+        sec: "usage", label: "Cost", tone: "none",
+        value: costLabel,
+        sub: k(c.usage.reduce((s, u) => s + u.i + u.o, 0)) + " tokens · " + Array.from(new Set(c.usage.flatMap((u) => u.m.split(" · ")))).join(", "),
+        bar: c.usage.map((u) => seg(u.cost, "color-mix(in srgb,var(--fg) " + STAGE_SHADE[u.s] + "%,transparent)", u.s + " $" + u.cost.toFixed(2))),
+      },
+    ].map((t) => ({
+      ...t, style: tileStyle(t.tone), dotStyle: toneDot(t.tone),
+      open: () => this.setOpen(c.id, t.sec === "review" ? "checks" : t.sec, true),
+    }));
+
+    const dec = c.decisions;
+    const SECTIONS = [
+      { id: "notes", name: "Heads-up", count: plural(notesTotal, "note"),
+        chips: [nd ? chip(nd + " not done", "warn") : null, pl ? chip(plural(pl, "plan change"), "plan") : null, sc ? chip(plural(sc, "shortcut"), "plain") : null].filter(Boolean) },
+      { id: "checks", name: "Checks & review", count: plural(c.checks.length, "check") + " · round " + r.round,
+        chips: [chip(pass + " passed", "ok"), warn ? chip(warn + " flagged", "warn") : null, skip ? chip(skip + " skipped", "plain") : null].filter(Boolean) },
+      { id: "built", name: "What was built", count: plural(changes, "change") + " · " + plural(c.areas.length, "area"),
+        chips: c.areas.slice(0, 4).map((a) => chip(a[0], "plain")).concat(c.areas.length > 4 ? [chip("+" + (c.areas.length - 4), "plain")] : []) },
+      { id: "decisions", name: "Decision log", count: plural(dec.total, "decision"),
+        chips: [dec.important ? chip(dec.important + " important", "info") : null, dec.unclear ? chip(dec.unclear + " unclear", "plan") : null].filter(Boolean) },
+      { id: "usage", name: "Usage", count: c.usage.length + " stages",
+        chips: [chip(costLabel, "plain")] },
+    ];
+    const anyOpen = SECTIONS.some((s) => open[s.id]);
+    const sections = SECTIONS.map((s) => {
+      const isOpen = !!open[s.id];
+      return {
+        ...s, open: isOpen,
+        isNotes: s.id === "notes", isChecks: s.id === "checks", isBuilt: s.id === "built", isDecisions: s.id === "decisions", isUsage: s.id === "usage",
+        toggle: () => this.setOpen(c.id, s.id, !isOpen),
+        caretStyle: { flex: "none", transition: "transform .15s", transform: isOpen ? "rotate(90deg)" : "none" },
+        rowStyle: { display: "flex", alignItems: "center", gap: 9, width: "100%", minHeight: 46, padding: "8px 22px", border: "none", background: isOpen ? "var(--muted)" : "transparent", cursor: "pointer", textAlign: "left" },
+      };
+    });
+
+    // notes: not done first
+    const order = { notdone: 0, plan: 1, shortcut: 2 };
+    const notes = c.notes.slice().sort((x, y) => order[x.k] - order[y.k]).map((n) => ({
+      label: KIND[n.k].label, tagStyle: tag(n.k), parts: P(n.t), hasSub: !!n.s, subParts: P(n.s || ""),
+    }));
+    const openItems = c.notes.filter((n) => n.k === "notdone").map((n) => ({ parts: P(n.t) }));
+
+    const checks = c.checks.slice().sort((x, y) => ({ warn: 0, skip: 1, pass: 2 }[x.st] - { warn: 0, skip: 1, pass: 2 }[y.st])).map((x, i) => {
+      const [glyph, col, verdict] = ST[x.st];
+      return {
+        glyph, verdict, parts: P(x.n), detailParts: P(x.d),
+        iconStyle: { font: "700 12px var(--font-sans)", color: col, width: 12, textAlign: "center", paddingTop: 1 },
+        rowStyle: { display: "grid", gridTemplateColumns: "12px minmax(0,1fr) auto", gap: 10, alignItems: "start", padding: "9px 12px", borderTop: i ? "1px solid var(--border)" : "none", background: x.st === "warn" ? "color-mix(in srgb,var(--warning) 5%,var(--card))" : "var(--card)" },
+        verdictStyle: { font: "500 11px var(--font-sans)", color: col, whiteSpace: "nowrap", paddingTop: 2 },
+      };
+    });
+    const reviewCheck = {
+      glyph: "✓", verdict: "Settled", parts: P("Review: round " + r.round + " of " + r.of), detailParts: P(r.raised + " raised · " + r.fixed + " fixed · " + r.rejected + " rejected"),
+      iconStyle: { font: "700 12px var(--font-sans)", color: "var(--success-fg)", width: 12, textAlign: "center", paddingTop: 1 },
+      rowStyle: { display: "grid", gridTemplateColumns: "12px minmax(0,1fr) auto", gap: 10, alignItems: "start", padding: "9px 12px", borderTop: "1px solid var(--border)", background: "var(--card)" },
+      verdictStyle: { font: "500 11px var(--font-sans)", color: "var(--success-fg)", whiteSpace: "nowrap", paddingTop: 2 },
+    };
+
+    const areas = c.areas.map(([name, items]) => ({ name, count: plural(items.length, "change"), items: items.map((t) => ({ parts: P(t) })) }));
+
+    const df = this.state.decFilter[c.id] || "all";
+    const FIL = [["all", "All", () => true, dec.total], ["imp", "Important", (d) => d.imp, dec.important], ["unc", "Unclear", (d) => d.unc, dec.unclear]].filter((f) => f[0] === "all" || f[3] > 0);
+    const curF = FIL.find((f) => f[0] === df) || FIL[0];
+    const decFilters = FIL.map(([id, label, , n]) => ({
+      label, n, select: () => this.setState({ decFilter: { ...this.state.decFilter, [c.id]: id } }),
+      style: { height: 24, padding: "0 9px", border: "none", borderRadius: 6, cursor: "pointer", font: "500 11.5px var(--font-sans)", color: "var(--fg)", background: id === curF[0] ? "var(--card)" : "transparent", boxShadow: id === curF[0] ? "0 1px 2px rgb(0 0 0 / 8%)" : "none" },
+    }));
+    const decisions = dec.rows.map((d, i) => ({ ...d, n: i + 1 })).filter(curF[2]).map((d) => ({
+      n: d.n, parts: P(d.t),
+      tags: [d.imp ? chip("Important", "info") : null, d.unc ? chip("Unclear", "plan") : null].filter(Boolean),
+    }));
+
+    const usageRows = c.usage.map((u) => ({
+      name: u.s + (u.note ? " (" + u.note + ")" : ""), models: u.m, inp: k(u.i), out: k(u.o), cost: (c.est ? "≈" : "") + "$" + u.cost.toFixed(2),
+      keyStyle: { width: 8, height: 8, borderRadius: 2, flex: "none", background: "color-mix(in srgb,var(--fg) " + STAGE_SHADE[u.s] + "%,transparent)" },
+    }));
+
+    return {
+      key: c.key, title: c.title, caption: c.caption, headline: P(c.headline), pr: c.pr, branch: c.branch, commits: c.commits,
+      tiles, sections, notes, checks: checks.concat([reviewCheck]), areas, decFilters, decisions, usageRows,
+      hasOpenItems: nd > 0, openItems, openHead: nd === 1 ? "1 thing wasn't done" : nd + " things weren't done",
+      openHeadsUp: () => this.setOpen(c.id, "notes", true),
+      toggleAllLabel: anyOpen ? "Collapse all" : "Expand all",
+      toggleAll: () => {
+        const v = {}; SECTIONS.forEach((s) => (v[s.id] = !anyOpen));
+        this.setState({ open: { ...this.state.open, [c.id]: v } });
+      },
+      costLabel, uInp: k(c.usage.reduce((s, u) => s + u.i, 0)), uOut: k(c.usage.reduce((s, u) => s + u.o, 0)),
+    };
+  }
+
+  renderVals() {
+    return { panes: CARDS.map((c) => this.pane(c)) };
+  }
+}
+</script>
+</body>
+</html>

@@ -12,7 +12,8 @@ export interface BoardQueueInfo {
   readonly ahead: number;
   readonly running: number;
   readonly startsNext: boolean;
-  /** The pill: `Next` at the front of the queue, `Queued #3` behind it. */
+  /** The pill: `Next up` at the front of the queue, `Queued #3` behind it, `After others`
+      for a Low card behind a higher-priority one. */
   readonly label: string;
   /** The banner's bold line. */
   readonly headline: string;
@@ -41,15 +42,24 @@ export function boardQueueInfo(input: {
   if (slot === undefined) return null;
   const ahead = slot.ahead === 0 ? "" : ` · ${slot.ahead} task${slot.ahead === 1 ? "" : "s"} ahead`;
   if (input.reason != null) return withQueueReason(slot, input, input.reason);
+  const runningAgents = `${input.running} agent${input.running === 1 ? "" : "s"} running`;
   return {
     position: slot.position,
     total: slot.total,
     ahead: slot.ahead,
     running: input.running,
     startsNext: slot.startsNext,
-    label: slot.startsNext ? "Next" : `Queued #${slot.position}`,
-    headline: slot.startsNext ? "Queued: starts next" : `Queued #${slot.position}`,
-    detail: `${input.running} agent${input.running === 1 ? "" : "s"} running${ahead}. It starts on its own when there is room.`,
+    ...(slot.afterHigherPriority === true
+      ? {
+          label: "After others",
+          headline: `Queued #${slot.position} · low priority`,
+          detail: `${runningAgents}${ahead}. It starts on its own when there is room and no higher-priority card is waiting.`,
+        }
+      : {
+          label: slot.startsNext ? "Next up" : `Queued #${slot.position}`,
+          headline: slot.startsNext ? "Queued: starts next" : `Queued #${slot.position}`,
+          detail: `${runningAgents}${ahead}. It starts on its own when there is room.`,
+        }),
   };
 }
 

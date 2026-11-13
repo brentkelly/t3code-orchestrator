@@ -459,6 +459,7 @@ describe("orderBoardQueue (governor ordering, t3o-11 D11)", () => {
     // in the seed stage list — higher is later, and later ranks first.
     stageOrder: 4,
     started: false,
+    priority: "normal",
     orderKey: "m",
     ...overrides,
   });
@@ -526,6 +527,37 @@ describe("orderBoardQueue (governor ordering, t3o-11 D11)", () => {
       "b-unstarted-early", // then drag order among unstarted
       "b-unstarted-late",
     ]);
+  });
+
+  it("ranks priority between waiting peers, above drag order (T3O-95)", () => {
+    const ordered = orderBoardQueue([
+      candidate({ cardId: BoardCardId.make("normal"), orderKey: "a" }),
+      candidate({ cardId: BoardCardId.make("low"), priority: "low", orderKey: "0" }),
+      candidate({ cardId: BoardCardId.make("urgent"), priority: "urgent", orderKey: "z" }),
+      candidate({ cardId: BoardCardId.make("high"), priority: "high", orderKey: "y" }),
+    ]);
+    assert.deepStrictEqual(keys(ordered), ["urgent", "high", "normal", "low"]);
+  });
+
+  it("never lets priority overtake a later stage or a started card (T3O-95)", () => {
+    const laterStage = orderBoardQueue([
+      candidate({ cardId: BoardCardId.make("urgent"), priority: "urgent", stageOrder: 4 }),
+      candidate({ cardId: BoardCardId.make("review"), stageOrder: 5, orderKey: "z" }),
+    ]);
+    assert.deepStrictEqual(keys(laterStage), ["review", "urgent"]);
+    const started = orderBoardQueue([
+      candidate({ cardId: BoardCardId.make("urgent"), priority: "urgent", orderKey: "a" }),
+      candidate({ cardId: BoardCardId.make("started"), started: true, orderKey: "z" }),
+    ]);
+    assert.deepStrictEqual(keys(started), ["started", "urgent"]);
+  });
+
+  it("falls back to drag order within one priority level (T3O-95)", () => {
+    const ordered = orderBoardQueue([
+      candidate({ cardId: BoardCardId.make("second"), priority: "high", orderKey: "t" }),
+      candidate({ cardId: BoardCardId.make("first"), priority: "high", orderKey: "c" }),
+    ]);
+    assert.deepStrictEqual(keys(ordered), ["first", "second"]);
   });
 });
 

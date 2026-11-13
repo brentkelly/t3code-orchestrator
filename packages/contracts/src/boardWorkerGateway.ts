@@ -137,8 +137,16 @@ export const BoardGatewayTurnUsage = Schema.Struct({
   cacheCreationTokens: Schema.optional(NonNegativeInt),
   outputTokens: Schema.optional(NonNegativeInt),
   reasoningTokens: Schema.optional(NonNegativeInt),
+  /** Absent from workers that predate T3O-90. */
+  hasSubagents: Schema.optional(Schema.Boolean),
   otherUsage: Schema.optional(
-    Schema.Struct({ inputTokens: NonNegativeInt, outputTokens: NonNegativeInt }),
+    Schema.Struct({
+      inputTokens: NonNegativeInt,
+      outputTokens: NonNegativeInt,
+      /** The cache share of `inputTokens`; absent on legacy usage, which is split by ratio. */
+      cachedInputTokens: Schema.optional(NonNegativeInt),
+      cacheCreationTokens: Schema.optional(NonNegativeInt),
+    }),
   ),
 });
 export type BoardGatewayTurnUsage = typeof BoardGatewayTurnUsage.Type;

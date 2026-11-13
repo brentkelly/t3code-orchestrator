@@ -636,10 +636,13 @@ it.effect("a full worker queues its cards without holding up another worker's (T
   Effect.gen(function* () {
     const { placement } = yield* makePlacement(workersState([workerView(W1)]));
     const capacity = yield* w1RoomForOne();
+    // Priority (T3O-95): an Urgent card behind card-b takes W1's freed room first, and a Low
+    // card still runs on a worker with room while Normal ones wait on W1.
     const cards = [
       placedBuildingCard("card-a", "a", W1),
       placedBuildingCard("card-b", "b", W1),
-      placedBuildingCard("card-c", "c", BOARD_LOCAL_WORKER_ID),
+      { ...placedBuildingCard("card-c", "c", BOARD_LOCAL_WORKER_ID), priority: "low" as const },
+      { ...placedBuildingCard("card-d", "d", W1), priority: "urgent" as const },
     ];
     yield* withGovernor(
       {
@@ -654,15 +657,20 @@ it.effect("a full worker queues its cards without holding up another worker's (T
             yield* h.pumpDomain(movedToBuilding(building, index + 1));
           }
           assert.strictEqual((yield* step(h, "card-a"))?.status, "running");
-          const waiting = yield* step(h, "card-b");
-          assert.strictEqual(waiting?.status, "queued");
-          // T3o: placed there and short of room, it holds W1 to grow (T3O-87).
-          assert.strictEqual(waiting?.queuedBy, "holding");
-          assert.strictEqual(waiting?.queuedDetail?.workerId, W1);
+          // T3o: the Urgent card-d is first in the queue, so it holds W1 to grow (T3O-87).
+          const urgent = yield* step(h, "card-d");
+          assert.strictEqual(urgent?.status, "queued");
+          assert.strictEqual(urgent?.queuedBy, "holding");
+          assert.strictEqual(urgent?.queuedDetail?.workerId, W1);
+          assert.strictEqual((yield* step(h, "card-b"))?.status, "queued");
           assert.strictEqual((yield* step(h, "card-c"))?.status, "running");
 
-          // card-a finishes on W1; the sweep releases it for the card waiting there.
+          // card-a finishes on W1: the room it frees there goes to the Urgent card-d, then card-b.
           yield* h.pumpDomain(stepCompleted(BoardCardId.make("card-a"), "succeeded", 9));
+          yield* h.reactor.sweep;
+          assert.strictEqual((yield* step(h, "card-d"))?.status, "running");
+          assert.strictEqual((yield* step(h, "card-b"))?.status, "queued");
+          yield* h.pumpDomain(stepCompleted(BoardCardId.make("card-d"), "succeeded", 10));
           yield* h.reactor.sweep;
           assert.strictEqual((yield* step(h, "card-b"))?.status, "running");
         }),

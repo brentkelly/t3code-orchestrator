@@ -63,6 +63,7 @@ function card(
     autoMergeSetting: null,
     autoMergeHold: null,
     mergeStrategy: null,
+    priority: "normal",
     pinnedWorkerId: null,
     placedWorkerId: null,
     workerMove: null,
@@ -425,6 +426,51 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("grouping (T3O-27
     }),
   );
 
+  it.effect("refuses a priority on a group or a new heading (T3O-95)", () =>
+    Effect.gen(function* () {
+      const cards = [card("g", "backlog", { group: group("backlog") }), child("a", "backlog", "g")];
+      const refusal = yield* decideFail(
+        {
+          type: "board.card.update",
+          commandId: CommandId.make("cmd-priority-g"),
+          cardId: BoardCardId.make("g"),
+          priority: "urgent",
+          createdAt: NOW,
+        },
+        model(cards),
+      );
+      expect(refusal.message).toMatch(/no priority/);
+      const headingRefusal = yield* decideFail(
+        {
+          type: "board.card.create",
+          commandId: CommandId.make("cmd-heading-priority"),
+          cardId: BoardCardId.make("card-heading"),
+          projectId,
+          title: "Epic",
+          heading: true,
+          priority: "high",
+          createdAt: NOW,
+        },
+        model([]),
+      );
+      expect(headingRefusal.message).toMatch(/no priority/);
+      // A leaf takes it.
+      const events = yield* decideEvents(
+        {
+          type: "board.card.update",
+          commandId: CommandId.make("cmd-priority-a"),
+          cardId: BoardCardId.make("a"),
+          priority: "urgent",
+          createdAt: NOW,
+        },
+        model(cards),
+      );
+      const updated = events[0]!;
+      assert.ok(updated.type === "board.card-updated");
+      expect(updated.payload.card.priority).toBe("urgent");
+    }),
+  );
+
   // ── Regrouping ───────────────────────────────────────────────────────
 
   it.effect("refuses moving a card inside itself", () =>
@@ -557,7 +603,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("grouping (T3O-27
     Effect.gen(function* () {
       const events = yield* decideEvents(
         moveCards(["b"], "a"),
-        model([card("a", "planning"), card("b", "backlog")]),
+        model([card("a", "planning", { priority: "high" }), card("b", "backlog")]),
       );
       const conversion = events.find(
         (event) => event.type === "board.card-updated" && String(event.payload.cardId) === "a",
@@ -565,6 +611,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("grouping (T3O-27
       assert.ok(conversion?.type === "board.card-updated");
       expect(conversion.payload.becameGroup).toBe(true);
       expect(conversion.payload.card.group?.prevStage).toBe("planning");
+      // A group has no priority (T3O-95), so a stale one cannot come back if it reverts.
+      expect(conversion.payload.card.priority).toBe("normal");
     }),
   );
 

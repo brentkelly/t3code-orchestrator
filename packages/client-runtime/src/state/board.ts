@@ -4,7 +4,10 @@
  * (`withBoardThreadFields`). Order keys reuse the `threadSort.ts` pin-order helpers.
  */
 import {
+  BOARD_SEED_STAGE_IDS,
   BOARD_WS_METHODS,
+  boardCardEffectivePriority,
+  boardCardPriorityRank,
   EMPTY_BOARD_WORKERS_STATE,
   type BoardCardWorkerMoveRequest,
   type BoardWorkerIdInput,
@@ -18,8 +21,10 @@ import {
   type BoardDetachCardFileInput,
   compareBoardStages,
   deriveBoardCardThreadState,
+  type BoardCardDependencyRef,
   type BoardCardDetail,
   type BoardCardId,
+  type BoardCardPriority,
   type BoardCardShell,
   type BoardCardThreadShell,
   type BoardLabel,
@@ -295,11 +300,39 @@ export function boardThreadStateSourceWithSubagents(
 
 // ── Column ordering ────────────────────────────────────────────────────
 
-/** Column order inside a stage: (orderKey, cardId) by code units — the
-    cardId tiebreak keeps two clients that computed equal keys agreeing. */
-export function compareBoardCardShells(left: BoardCardShell, right: BoardCardShell): number {
+/** Column order inside a stage: priority (highest first, so a column reads in run order),
+    then (orderKey, cardId) by code units — the cardId tiebreak keeps two clients that
+    computed equal keys agreeing. `byPriority` is false for Done, which keeps pure key order. */
+export function compareBoardCardShells(
+  left: BoardCardShell,
+  right: BoardCardShell,
+  byPriority = true,
+): number {
   const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-  return compare(left.orderKey, right.orderKey) || compare(left.cardId, right.cardId);
+  return (
+    (byPriority ? boardCardPriorityDelta(left, right) : 0) ||
+    compare(left.orderKey, right.orderKey) ||
+    compare(left.cardId, right.cardId)
+  );
+}
+
+/** Positive when `right` runs before `left`. */
+function boardCardPriorityDelta(left: BoardCardShell, right: BoardCardShell): number {
+  return (
+    boardCardPriorityRank(boardCardEffectivePriority(right)) -
+    boardCardPriorityRank(boardCardEffectivePriority(left))
+  );
+}
+
+/** Done is the only seeded column that ignores priority: its order is newest first, and its
+    role cannot move to another stage. */
+export function boardColumnSortsByPriority(stage: string): boolean {
+  return stage !== BOARD_SEED_STAGE_IDS.done;
+}
+
+function sortBoardColumn(stage: string, cards: BoardCardShell[]): void {
+  const byPriority = boardColumnSortsByPriority(stage);
+  cards.sort((left, right) => compareBoardCardShells(left, right, byPriority));
 }
 
 /** Scans for the maximum key rather than trusting input order (snapshot order is
@@ -316,18 +349,61 @@ export function boardColumnAppendOrderKey(
 }
 
 /**
- * Assignments realizing a drop within or into a stage column, over `planPinnedReorder`.
- * Callers dispatch `board.card.reorder` per assignment, or `board.card.move` with the moved
- * card's key when the drop crossed stages.
+ * A drop's order once the moved card snaps into its own priority level: a drag never changes
+ * priority, so a card dropped among another level's cards lands at the nearest edge of its
+ * own. Without `priorityByCardId` (the Done column) the order is returned as dropped.
+ */
+export function snapBoardCardDropOrder(input: {
+  readonly orderedCardIds: readonly string[];
+  readonly movedCardId: string;
+  readonly priorityByCardId?: ReadonlyMap<string, BoardCardPriority> | undefined;
+}): readonly string[] {
+  const priorities = input.priorityByCardId;
+  if (priorities === undefined) return input.orderedCardIds;
+  const rankOf = (cardId: string) => boardCardPriorityRank(priorities.get(cardId) ?? "normal");
+  const movedRank = rankOf(input.movedCardId);
+  const movedIndex = input.orderedCardIds.indexOf(input.movedCardId);
+  if (movedIndex === -1) return input.orderedCardIds;
+  // Same-level cards dropped above it stay above it; the rest of its level follows.
+  const sameLevelAbove = input.orderedCardIds
+    .slice(0, movedIndex)
+    .filter((cardId) => rankOf(cardId) === movedRank).length;
+  const others = input.orderedCardIds.filter((cardId) => cardId !== input.movedCardId);
+  let insertAt = 0;
+  let seenSameLevel = 0;
+  for (const [index, cardId] of others.entries()) {
+    const rank = rankOf(cardId);
+    if (rank > movedRank) insertAt = index + 1;
+    else if (rank === movedRank && seenSameLevel < sameLevelAbove) {
+      seenSameLevel += 1;
+      insertAt = index + 1;
+    }
+  }
+  return [...others.slice(0, insertAt), input.movedCardId, ...others.slice(insertAt)];
+}
+
+/**
+ * Assignments realizing a drop, over `planPinnedReorder`: dispatched as `board.card.reorder`,
+ * or `board.card.move` when the drop crossed stages. With `priorityByCardId` the key is
+ * planned within the moved card's level, every other card's key reserved.
  */
 export function planBoardCardReorder(input: {
   /** Card ids in the desired visual order (after the move). */
   readonly orderedCardIds: readonly string[];
   readonly keysByCardId: ReadonlyMap<string, string | null | undefined>;
   readonly movedCardId: string;
+  readonly priorityByCardId?: ReadonlyMap<string, BoardCardPriority> | undefined;
 }): ReadonlyArray<{ readonly cardId: string; readonly orderKey: string }> {
+  const priorities = input.priorityByCardId;
+  const level = priorities?.get(input.movedCardId) ?? "normal";
+  const orderedIds =
+    priorities === undefined
+      ? input.orderedCardIds
+      : snapBoardCardDropOrder(input).filter(
+          (cardId) => (priorities.get(cardId) ?? "normal") === level,
+        );
   return planPinnedReorder({
-    orderedIds: input.orderedCardIds,
+    orderedIds,
     keysById: input.keysByCardId,
     movedId: input.movedCardId,
   }).map((assignment) => ({ cardId: assignment.id, orderKey: assignment.orderKey }));
@@ -394,7 +470,7 @@ function groupBoardCards(
   }
   for (const columns of byProject.values()) {
     for (const stage of Object.keys(columns)) {
-      columns[stage]!.sort(compareBoardCardShells);
+      sortBoardColumn(stage, columns[stage]!);
     }
   }
   return byProject;
@@ -416,7 +492,7 @@ export function mergeBoardStageColumns(
     }
   }
   for (const stage of Object.keys(merged)) {
-    merged[stage]!.sort(compareBoardCardShells);
+    sortBoardColumn(stage, merged[stage]!);
   }
   return merged;
 }
@@ -463,7 +539,7 @@ export function applyBoardCardPlacements(
   }
   if (!changed) return columns;
   for (const stage of Object.keys(next)) {
-    next[stage]!.sort(compareBoardCardShells);
+    sortBoardColumn(stage, next[stage]!);
   }
   return next;
 }
@@ -495,12 +571,15 @@ export interface BoardQueueSlot {
   /** Cards that will be admitted before this one. */
   readonly ahead: number;
   readonly startsNext: boolean;
+  /** A Low card with a higher-priority card ahead of it: it has no fixed place in line,
+      because anything higher that arrives goes first. Absent otherwise. */
+  readonly afterHigherPriority?: true;
 }
 
 /**
  * Mirrors the server's `orderBoardQueue` across the whole environment: later stage first,
- * then drag order. It skips the server's started-before-unstarted tiebreak, which needs card
- * detail. A future scheduled start is excluded: such a card stays `queued` while the server
+ * then priority, then drag order. It skips the server's started-before-unstarted tiebreak,
+ * which the shell does not carry; that only matters for a stage restarted after a requeue. A future scheduled start is excluded: such a card stays `queued` while the server
  * no longer offers it a slot, and counting it would misnumber every card behind it.
  */
 export function boardBuildQueue(
@@ -527,17 +606,30 @@ export function boardBuildQueue(
   const ordered = [...queued].sort(
     (left, right) =>
       rankOf(right) - rankOf(left) ||
+      boardCardPriorityDelta(left, right) ||
       (left.orderKey < right.orderKey ? -1 : left.orderKey > right.orderKey ? 1 : 0) ||
       (left.cardId < right.cardId ? -1 : left.cardId > right.cardId ? 1 : 0),
   );
   const queue = new Map<string, BoardQueueSlot>();
+  // Per stage: a later-stage card is ahead on stage, not priority.
+  let highestAhead = -1;
+  let stageAhead: number | null = null;
   ordered.forEach((card, index) => {
+    const rank = boardCardPriorityRank(boardCardEffectivePriority(card));
+    if (rankOf(card) !== stageAhead) {
+      stageAhead = rankOf(card);
+      highestAhead = -1;
+    }
     queue.set(card.cardId, {
       position: index + 1,
       total: ordered.length,
       ahead: index,
       startsNext: index === 0,
+      ...(rank === boardCardPriorityRank("low") && highestAhead > rank
+        ? { afterHigherPriority: true as const }
+        : {}),
     });
+    highestAhead = Math.max(highestAhead, rank);
   });
   return queue;
 }
@@ -555,7 +647,7 @@ export function boardRunningStepCount(cards: ReadonlyArray<BoardCardShell>): num
 
 /**
  * Null when the card is already first or reordering cannot improve its position (drag order
- * is only the last tiebreak). Checked by running the derivation against the projected key,
+ * is only the last tiebreak, so the move stays within the card's priority level). Checked by running the derivation against the projected key,
  * so it cannot drift from what the queue will show.
  */
 export function planBoardQueueMoveToFront(input: {
@@ -581,6 +673,27 @@ export function planBoardQueueMoveToFront(input: {
     input.nowMs,
   ).get(input.cardId);
   return projected !== undefined && projected.position < current.position ? { orderKey } : null;
+}
+
+/**
+ * The highest priority among the cards waiting on this one, or null when none are: the side
+ * panel's "Blocks an Urgent card" hint. Archived and done dependents are skipped, and a
+ * dependent this client has no shell for reads as normal. The scheduler never acts on it.
+ */
+export function boardCardBlockedPriority(
+  dependents: ReadonlyArray<BoardCardDependencyRef>,
+  shellsById: ReadonlyMap<string, Pick<BoardCardShell, "priority" | "group">>,
+): BoardCardPriority | null {
+  let highest: BoardCardPriority | null = null;
+  for (const dependent of dependents) {
+    if (dependent.archivedAt !== null || dependent.stage === BOARD_SEED_STAGE_IDS.done) continue;
+    const shell = shellsById.get(dependent.cardId);
+    const priority = shell === undefined ? "normal" : boardCardEffectivePriority(shell);
+    if (highest === null || boardCardPriorityRank(priority) > boardCardPriorityRank(highest)) {
+      highest = priority;
+    }
+  }
+  return highest;
 }
 
 /** Card-detail subscriptions get a short grace so closing and immediately

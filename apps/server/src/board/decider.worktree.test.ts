@@ -60,6 +60,7 @@ function makeCard(
     autoMergeSetting: null,
     autoMergeHold: null,
     mergeStrategy: null,
+    priority: "normal",
     pinnedWorkerId: null,
     // The placement gate has placed it: a provision needs a placement (T3O-87).
     placedWorkerId: BOARD_LOCAL_WORKER_ID,

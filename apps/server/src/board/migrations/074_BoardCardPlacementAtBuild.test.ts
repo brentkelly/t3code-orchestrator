@@ -1,5 +1,5 @@
 /**
- * Board migration 072: placement is cleared on cards without a worktree, and kept on cards
+ * Board migration 074: placement is cleared on cards without a worktree, and kept on cards
  * with one or with an integration branch (T3O-87).
  */
 import { assert, it } from "@effect/vitest";
@@ -11,7 +11,7 @@ import { runMigrations } from "../../persistence/Migrations.ts";
 import { attachBoardDatabase } from "../boardDatabase.ts";
 import { BOARD_MIGRATIONS } from "./index.ts";
 
-const MIGRATION_ID = 72;
+const MIGRATION_ID = 74;
 const NOW = "2026-01-01T00:00:00.000Z";
 
 const worktree = (status: string) =>
@@ -48,7 +48,7 @@ it.effect("clears placement on cards without a worktree, and keeps the rest", ()
     yield* insert("integration", worktree("branch-only"));
 
     const migration = BOARD_MIGRATIONS.find(([id]) => id === MIGRATION_ID);
-    assert.ok(migration, "migration 072 is registered in the lineage");
+    assert.ok(migration, "migration 074 is registered in the lineage");
     yield* migration[2];
     const rows = yield* sql<{ readonly cardId: string; readonly placed: string | null }>`
       SELECT card_id AS "cardId", placed_worker_id AS "placed" FROM board_cards ORDER BY card_id

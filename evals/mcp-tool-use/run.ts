@@ -16,6 +16,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   BOARD_AUTO_PLAN_INSTRUCTION,
   boardAutoPlanInstruction,
+  BOARD_ENVELOPE_BUILD_DELIVERABLE,
   BOARD_ENVELOPE_PLAN_DELIVERABLE,
   BOARD_ENVELOPE_REGROUP_GUARD,
   boardStepPostamble,
@@ -23,6 +24,7 @@ import {
   composePlanReviewInstructions,
   ComposerContextRecord,
   DEFAULT_BOARD_PLAN_REVIEW_PROMPT,
+  DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT,
   DEFAULT_BOARD_TRIAGE_PHASE_PROMPT,
   DeviceOperationError,
   DeviceSummary,
@@ -346,6 +348,7 @@ const CASE_TEXT: Record<string, string> = {
   BOARD_AUTO_PLAN_GATED_INSTRUCTION: boardAutoPlanInstruction(false),
   BOARD_AUTO_PLAN_APPROVED_INSTRUCTION: boardAutoPlanInstruction(true),
   BOARD_AUTO_PLAN_REOPENED_APPROVED_INSTRUCTION: boardAutoPlanInstruction(true, { reopened: true }),
+  BOARD_ENVELOPE_BUILD_DELIVERABLE,
   BOARD_ENVELOPE_PLAN_DELIVERABLE,
   BOARD_ENVELOPE_REGROUP_GUARD,
   BOARD_PLAN_REVIEW_INSTRUCTIONS: composePlanReviewInstructions({
@@ -364,6 +367,20 @@ const CASE_TEXT: Record<string, string> = {
       humanInLoop: false,
       role: null,
       step: { stepId: "triage@1", stepLabel: "Triage · round 1" },
+    }),
+  ].join("\n\n"),
+  BOARD_ADJUDICATE_RAISED_BAR_PROMPT: [
+    composeBoardReviewPhasePrompt({
+      phase: "adjudicate",
+      round: 6,
+      rounds: 8,
+      prompt: DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT,
+      barTier: 2,
+    }),
+    boardStepPostamble({
+      humanInLoop: false,
+      role: null,
+      step: { stepId: "adjudicate@6", stepLabel: "Adjudicate · round 6" },
     }),
   ].join("\n\n"),
 };

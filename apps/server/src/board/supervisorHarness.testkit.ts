@@ -199,6 +199,8 @@ export const makeBoardCard = (input: {
   readonly ciRoundTrips?: number;
   /** The card's own merge strategy. Absent follows the default. */
   readonly mergeStrategy?: BoardCard["mergeStrategy"];
+  /** Absent is normal. */
+  readonly priority?: BoardCard["priority"];
   /** The cards this one waits on. Absent is nothing. */
   readonly dependsOn?: ReadonlyArray<string>;
   /** The sub-board parent this card is a child of. Absent is
@@ -228,6 +230,7 @@ export const makeBoardCard = (input: {
   reviewOverrides: null,
   modelOverrides: null,
   mergeStrategy: input.mergeStrategy ?? null,
+  priority: input.priority ?? "normal",
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: (input.scheduledStartAt ?? null) as BoardCard["scheduledStartAt"],

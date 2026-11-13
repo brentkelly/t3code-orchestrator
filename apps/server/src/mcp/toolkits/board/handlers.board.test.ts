@@ -2788,6 +2788,30 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
     }),
   );
 
+  it.effect("create, update, read and list carry the card's priority (T3O-95)", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const urgent = yield* boardHandlers
+        .board_create_card({ projectId, title: "Hotfix", priority: "urgent" })
+        .pipe(withScope(orphanThread));
+      assert.strictEqual((yield* read(urgent.cardId)).priority, "urgent");
+      const plain = yield* boardHandlers
+        .board_create_card({ projectId, title: "Plain" })
+        .pipe(withScope(orphanThread));
+      assert.strictEqual((yield* read(plain.cardId)).priority, "normal");
+
+      // A priority-only update is a real change, not a refused empty edit.
+      yield* boardHandlers
+        .board_update_card({ cardId: plain.cardId, priority: "low" })
+        .pipe(withScope(orphanThread));
+      const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(orphanThread));
+      const priorityOf = (cardId: string) =>
+        listed.cards.find((card) => card.cardId === cardId)?.priority;
+      assert.strictEqual(priorityOf(plain.cardId), "low");
+      assert.strictEqual(priorityOf(urgent.cardId), "urgent");
+    }),
+  );
+
   it.effect("reads another card by key: brief, version, dependencies and plans", () =>
     Effect.gen(function* () {
       yield* seed();

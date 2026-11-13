@@ -38,6 +38,8 @@
         "smoke-desktop-app.ts",
         // T3o: the fork's npm tarball packer, run by hand.
         "t3o-pack.mjs",
+        // T3o: the board CI stage's steps, run from t3o.json (T3O-88).
+        "t3o-ci.ts",
         "verify-windows-desktop-artifact.ts",
       ],
       "ignoreDependencies": ["agent-device", "esbuild"],

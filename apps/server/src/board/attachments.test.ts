@@ -61,6 +61,7 @@ const card = (attachments: BoardCard["attachments"] = []): BoardCard => ({
   autoMergeSetting: null,
   autoMergeHold: null,
   mergeStrategy: null,
+  priority: "normal",
   pinnedWorkerId: null,
   placedWorkerId: null,
   workerMove: null,

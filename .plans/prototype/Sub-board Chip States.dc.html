@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sub-board chips: stage and activity</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#fcfcfc; --fg:#27272a; --card:#ffffff; --popover:#ffffff;
+  --muted:#fafafa; --muted-fg:#71717a; --accent:#f4f4f5;
+  --border:#e4e4e7; --input:#d4d4d8;
+  --info:#3b82f6; --info-fg:#1d4ed8; --success:#10b981; --success-fg:#047857;
+  --awaiting:#8b5cf6; --awaiting-fg:#6d28d9;
+  --teal:#4fa8b6;
+  --shadow-xs:0 1px 2px rgb(0 0 0 / 5%);
+  --font-sans:"DM Sans",-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+  --font-mono:"SF Mono","SFMono-Regular","JetBrains Mono",Consolas,Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font-sans);background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased}
+
+/* ---- chip vocabulary: fill = actively worked, hue = existing state colours ---- */
+.chip{flex:1;height:6px;border-radius:3px;--c:var(--info)}
+.solid{background:var(--c)}
+.hatch{background:repeating-linear-gradient(-45deg,var(--c) 0 1.5px,color-mix(in srgb,var(--c) 18%,transparent) 1.5px 4px)}
+.awaiting{--c:var(--awaiting);background:var(--awaiting)}
+.done{background:var(--success)}
+.idle{background:color-mix(in srgb,var(--fg) 12%,transparent)}
+.old{background:#8db4f5;height:4px}
+
+/* parent card */
+.pcard{width:248px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:13px 14px 12px;display:flex;flex-direction:column;gap:10px;box-shadow:0 4px 0 -1px #fff,0 4px 0 0 var(--border),0 8px 0 -2px #fff,0 8px 0 -1px var(--border)}
+.badge{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;background:var(--teal);color:#fff;font:600 12px var(--font-sans);letter-spacing:.02em}
+.ptitle{margin:0;font:500 14px/1.4 var(--font-sans);color:var(--fg);text-wrap:pretty}
+.bar{display:flex;gap:4px;align-items:center}
+.foot{display:flex;align-items:center;gap:8px;min-width:0}
+.frac{font:500 12.5px var(--font-sans);color:var(--muted-fg);white-space:nowrap}
+.boardbtn{margin-left:auto;flex:none;display:inline-flex;align-items:center;gap:3px;height:26px;padding:0 8px 0 10px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--muted-fg);font:500 12px var(--font-sans)}
+.branch{font:400 11.5px var(--font-sans);color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.tag{font:600 11px var(--font-mono);border-radius:6px;padding:2px 7px;border:1px solid var(--border);color:var(--muted-fg)}
+.note{margin:0;font:400 12.5px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty}
+.h2{margin:0;font:600 15px var(--font-sans)}
+.cell{font:400 12px var(--font-sans);color:var(--muted-fg)}
+.colhead{font:600 12px var(--font-sans);color:var(--fg)}
+</style>
+</helmet>
+
+<section style="padding:34px 40px 48px;display:flex;flex-direction:column;gap:40px">
+
+  <!-- Header -->
+  <div style="display:flex;flex-direction:column;gap:10px;max-width:1080px">
+    <div style="display:flex;align-items:baseline;gap:10px">
+      <span class="tag">WAL-16</span>
+      <h1 style="margin:0;font:600 20px var(--font-sans)">Sub-board chips: filled means being worked</h1>
+    </div>
+    <p style="margin:0;max-width:760px;font:400 13.5px/1.65 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Today every child in the build process paints the same solid blue, so a parent card reads “4 building” when one of them is queued. The chip colours stay as they are (blue building, purple awaiting input, green done). What changes is the fill: a solid chip is actively being worked, and a hatched chip is in that state but waiting for a slot. Building and code review are both blue, so a card queued for review is hatched blue too.</p>
+  </div>
+
+  <!-- 1. Before / after -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">1</span><span class="h2">The WAL-16 card: three active, one queued</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:48px;align-items:flex-start">
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span class="cell">Before: four identical chips</span>
+        <div class="pcard">
+          <div style="display:flex;align-items:center;gap:8px"><span class="badge">WAL-16</span><span style="width:8px;height:8px;border-radius:99px;background:#8db4f5"></span></div>
+          <p class="ptitle">Earthworks hardening: pad live sync, pad tool keys, ground-mesh tiling</p>
+          <div class="bar"><span class="chip old"></span><span class="chip old"></span><span class="chip old"></span><span class="chip old"></span></div>
+          <div class="foot"><span class="frac">0/4</span><span class="boardbtn">Board <span style="font-size:13px">›</span></span></div>
+          <span class="branch">→ board/wal-16 · auto-build on</span>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span class="cell">After: filled = being worked, hatched = queued</span>
+        <div class="pcard">
+          <div style="display:flex;align-items:center;gap:8px"><span class="badge">WAL-16</span><span style="width:8px;height:8px;border-radius:99px;background:var(--info)"></span></div>
+          <p class="ptitle">Earthworks hardening: pad live sync, pad tool keys, ground-mesh tiling</p>
+          <div class="bar"><span class="chip solid" title="WAL-17 · building"></span><span class="chip solid" title="WAL-18 · building"></span><span class="chip solid" title="WAL-19 · building (code review)"></span><span class="chip hatch" title="WAL-20 · queued #2"></span></div>
+          <div class="foot"><span class="frac">0/4</span><span class="boardbtn">Board <span style="font-size:13px">›</span></span></div>
+          <span class="branch">→ board/wal-16 · auto-build on</span>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span class="cell">Another mix: done, building, awaiting input, queued</span>
+        <div class="pcard">
+          <div style="display:flex;align-items:center;gap:8px"><span class="badge">WAL-21</span><span style="width:8px;height:8px;border-radius:99px;background:var(--awaiting)"></span></div>
+          <p class="ptitle">Batter seams follow-ups: sight-line index and step geometry</p>
+          <div class="bar"><span class="chip done" title="Done"></span><span class="chip solid" title="Building"></span><span class="chip awaiting" title="Awaiting input"></span><span class="chip hatch" title="Queued"></span></div>
+          <div class="foot"><span class="frac">1/4</span><span class="boardbtn">Board <span style="font-size:13px">›</span></span></div>
+          <span class="branch">→ board/wal-21 · auto-build on</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 2. Vocabulary -->
+  <div style="display:flex;flex-direction:column;gap:16px;max-width:820px">
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag">2</span><span class="h2">Chip vocabulary</span></div>
+    <div style="display:grid;grid-template-columns:repeat(5, minmax(0, 1fr));gap:12px 18px;align-items:center;padding:18px;border:1px solid var(--border);border-radius:12px;background:var(--card)">
+      <span class="colhead">Building</span>
+      <span class="colhead">Queued</span>
+      <span class="colhead">Awaiting input</span>
+      <span class="colhead">Done</span>
+      <span class="colhead">Not started</span>
+
+      <div style="display:flex"><span class="chip solid" style="max-width:56px"></span></div>
+      <div style="display:flex"><span class="chip hatch" style="max-width:56px"></span></div>
+      <div style="display:flex"><span class="chip awaiting" style="max-width:56px"></span></div>
+      <div style="display:flex"><span class="chip done" style="max-width:56px"></span></div>
+      <div style="display:flex"><span class="chip idle" style="max-width:56px"></span></div>
+
+      <span class="cell">Solid blue: an agent is working on it (build or code review)</span>
+      <span class="cell">Hatched blue: in the build process, waiting for a slot</span>
+      <span class="cell">Solid purple: waiting on a person</span>
+      <span class="cell">Solid green, unchanged</span>
+      <span class="cell">Grey track, unchanged</span>
+    </div>
+    <p class="note">No motion on any chip. Chips go from 4px to 6px tall so the hatching reads at card size; hatch is 1.5px stripes at 45° with the gaps tinted 18% of the stage colour. The purple here is a stand-in; use the board’s existing awaiting-input colour.</p>
+  </div>
+
+</section>
+</x-dc>
+</body>
+</html>

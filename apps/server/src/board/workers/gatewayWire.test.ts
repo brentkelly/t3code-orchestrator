@@ -59,7 +59,12 @@ it.effect("a finished turn's usage crosses the wire with the counts the board pr
       reasoningTokens: 30,
       hasSubagents: true,
       models: ["gpt-5-codex"],
-      otherUsage: { inputTokens: 10, outputTokens: 2 },
+      otherUsage: {
+        inputTokens: 10,
+        outputTokens: 2,
+        cachedInputTokens: 6,
+        cacheCreationTokens: 1,
+      },
     } as const;
     const encoded = yield* encodeSignal(
       toWireSignal({
@@ -86,7 +91,13 @@ it.effect("a finished turn's usage crosses the wire with the counts the board pr
         cachedInputTokens: 800,
         outputTokens: 90,
         reasoningTokens: 30,
-        otherUsage: { inputTokens: 10, outputTokens: 2 },
+        hasSubagents: true,
+        otherUsage: {
+          inputTokens: 10,
+          outputTokens: 2,
+          cachedInputTokens: 6,
+          cacheCreationTokens: 1,
+        },
       },
     });
   }),

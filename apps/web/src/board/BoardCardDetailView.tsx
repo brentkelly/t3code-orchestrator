@@ -41,6 +41,7 @@ import {
   type BoardLabelId,
   type BoardStageDefinition,
   type BoardCardModelOverrides,
+  type BoardCardPriority,
   type BoardMergeStrategy,
   type BoardCardStageModelOverride,
   type BoardSettings,
@@ -108,6 +109,7 @@ import { Popover, PopoverTrigger } from "../components/ui/popover";
 import {
   boardCardModelOverrideSummary,
   boardCardModelRows,
+  boardReviewRoundInheritedModel,
   hasBoardCardModelOverride,
   type BoardCardModelRowSpec,
 } from "./boardCardModelRows";
@@ -170,11 +172,11 @@ import {
   isBoardStageManuallySelectable,
   type BoardStageSecondaryAction,
 } from "./boardStageActions";
+import { BoardCardPriorityChip, BoardCardPrioritySection } from "./BoardCardPriority";
 import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
 import { boardCardMoveBlocked } from "./boardCardMoveGate";
 import { BoardHint } from "./BoardHint";
-import { BoardDecisionLog } from "./BoardDecisionLog";
 import { boardDecisionFollowUp, boardDecisionLogView } from "./boardDecisionLog";
 import { BOARD_DEFERRED_STAGE } from "./boardScope";
 import { BoardSplitGate } from "./BoardSplitGate";
@@ -189,6 +191,7 @@ import {
   type BoardStepRecovery,
 } from "./boardStepRecovery";
 import { deriveBoardUsageBreakdown } from "./usage/boardUsageBreakdown";
+import type { BoardSummarySectionId } from "./boardSummaryOverview";
 import { BoardPopoverPopup } from "./ui/BoardPopoverPopup";
 import { BoardSheetPopup } from "./ui/BoardDialog";
 
@@ -365,6 +368,18 @@ function RailSections({
       )}
       {props.automation == null ? null : (
         <div className="border-t border-border p-3.5">{props.automation}</div>
+      )}
+      {props.onSetPriority === undefined ||
+      card.archivedAt !== null ||
+      boardCardIsDone(props.stages, card.stage) ? null : (
+        <div className="border-t border-border p-3.5">
+          <BoardCardPrioritySection
+            blocksHint={props.priorityBlocksHint ?? null}
+            onChange={props.onSetPriority}
+            startedNote={props.priorityStartedNote ?? null}
+            value={card.priority}
+          />
+        </div>
       )}
       {group === null ? (
         <BoardCollapsibleSection
@@ -665,6 +680,12 @@ export interface BoardCardDetailViewProps {
   readonly onSetMergeStrategy?: ((next: BoardMergeStrategy | null) => void) | undefined;
   /** T3o: the card's size and setup, under its title in both layouts (T3O-86). */
   readonly capacityPanel?: React.ReactNode;
+  /** Write the card's priority. Absent hides the row and the chip: a group has none. */
+  readonly onSetPriority?: ((next: BoardCardPriority) => void) | undefined;
+  /** The side panel's note when the card already outranks waiting work. */
+  readonly priorityStartedNote?: string | null | undefined;
+  /** "Blocks an Urgent card", worked out from the card's dependents. */
+  readonly priorityBlocksHint?: string | null | undefined;
   /** What the card's schedule control is offering, derived by the
       container from the card's live step — the copy has to be honest about
       whether setting a time will STOP an agent that is working right now. */
@@ -766,6 +787,8 @@ export interface BoardCardDetailPanelProps extends BoardCardDetailViewProps {
       frame. Null means "whichever pane the card's stage makes current". */
   readonly paneChoice: BoardCardPane | null;
   readonly onSelectPane: (pane: BoardCardPane) => void;
+  /** A spend popover opened this card: its Summary pane starts on Usage. */
+  readonly usageRequested?: boolean;
 }
 
 const THREAD_STATE_LABEL: Record<BoardCardThreadState, string> = {
@@ -2621,6 +2644,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         ? null
         : { key: props.parentCard.key, modelOverrides: props.detail.parentModelOverrides },
   });
+  const reviewModelRow = modelRows.find((row) => row.stageId === BOARD_SEED_STAGE_IDS.review);
+  const reviewRoundInheritedModel =
+    reviewModelRow === undefined
+      ? undefined
+      : (round: number) =>
+          boardReviewRoundInheritedModel({
+            row: reviewModelRow,
+            cardOverride: card.modelOverrides?.[reviewModelRow.stageId],
+            round,
+          });
   const modelSummary = boardCardModelOverrideSummary(modelRows, card.modelOverrides);
   const modelOverridden = hasBoardCardModelOverride(modelRows, card.modelOverrides);
   // The eager view does not hold the provider list, so the container passes a
@@ -2673,6 +2706,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // stage makes current", so the pane follows the card until the user picks a
   // thread, and a since-unlinked selection falls back to that same default.
   const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
+  // Held here, not in the Summary pane, so its open sections survive a switch to another pane.
+  const [summaryOpen, setSummaryOpen] = useState<ReadonlySet<BoardSummarySectionId> | null>(null);
   // Read once on open, so a subagent asking mid-read never moves the pane;
   // the newest such thread, as the stage default prefers the newest.
   const [awaitingThreadAtOpen] = useState(() => {
@@ -2791,8 +2826,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       })
     : null;
 
-  // The decision log. Null open state means "the default rule".
-  const [logOpen, setLogOpen] = useState<boolean | null>(null);
   const stagesState = stageStateOf(props.stages);
   const buildStage = boardStageWithRole(stagesState, "build");
   const pastBuild =
@@ -2892,6 +2925,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               ? "CI"
               : boardStageLabel(props.stages, card.stage)}
           </span>
+          {archived || done || props.onSetPriority === undefined ? null : (
+            <BoardCardPriorityChip onChange={props.onSetPriority} value={card.priority} />
+          )}
           {archived ? (
             <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-1.75 text-board-11 font-medium text-muted-foreground">
               Archived
@@ -3182,41 +3218,37 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           ) : activePane === "summary" && workSummary !== null ? (
             <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
               <BoardCardSummaryPane
+                key={card.id}
                 onBackToThread={() => setPane("thread")}
                 onOpenChild={props.onOpenChildInSubBoard}
                 onOpenPullRequest={props.onOpenPullRequest}
                 onSelectReview={() => setPane("review")}
                 summary={workSummary}
                 buildPending={buildPending}
+                pastBuild={pastBuild}
+                integrates={integrates}
                 usage={usageBreakdown}
                 measured={measured}
-                decisionLog={
-                  decisionLog === null ? null : (
-                    <BoardDecisionLog
-                      view={decisionLog}
-                      open={logOpen}
-                      onOpenChange={setLogOpen}
-                      onSendBack={
-                        buildStage === null
-                          ? undefined
-                          : () => {
-                              props.onMoveStage(buildStage.stageId);
-                              setPane("thread");
-                            }
+                initialOpen={props.usageRequested === true ? ["usage"] : []}
+                savedOpen={summaryOpen}
+                onOpenChange={setSummaryOpen}
+                decisionLog={decisionLog}
+                onSendBack={
+                  buildStage === null
+                    ? undefined
+                    : () => {
+                        props.onMoveStage(buildStage.stageId);
+                        setPane("thread");
                       }
-                      onFollowUp={(() => {
-                        const create = props.onCreateFollowUp;
-                        const draft = boardDecisionFollowUp({
-                          cardKey: card.key,
-                          rows: decisionLog.rows,
-                        });
-                        return create === undefined || draft === null
-                          ? undefined
-                          : () => create(draft);
-                      })()}
-                    />
-                  )
                 }
+                onFollowUp={(() => {
+                  const create = props.onCreateFollowUp;
+                  const draft =
+                    decisionLog === null
+                      ? null
+                      : boardDecisionFollowUp({ cardKey: card.key, rows: decisionLog.rows });
+                  return create === undefined || draft === null ? undefined : () => create(draft);
+                })()}
               />
             </Suspense>
           ) : activePane === "ci" ? (
@@ -3271,6 +3303,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onBackToThread={() => setPane("thread")}
                 onSetRoundModel={props.onSetReviewRoundModel}
                 phaseRuntimeMode={props.reviewPhaseRuntimeMode}
+                roundInheritedModel={reviewRoundInheritedModel}
                 projectId={card.projectId}
                 onResume={props.onResumeReview}
                 onRuling={onReviewStage ? props.onReviewRuling : undefined}
@@ -3523,6 +3556,8 @@ export function BoardCardDetailView(props: BoardCardDetailViewProps) {
   const [paneChoice, setPaneChoice] = useState<BoardCardPane | null>(
     summaryRequested ? "summary" : null,
   );
+  // Captured at mount: the effect below clears the store's request.
+  const [usageRequested] = useState(summaryRequested);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- consumes the one-shot store request at mount, so no close path or card step can leave it behind
   useEffect(() => {
     if (summaryRequested) setDetailSummaryCardId(null);
@@ -3547,6 +3582,7 @@ export function BoardCardDetailView(props: BoardCardDetailViewProps) {
           onSelectPane={setPaneChoice}
           onToggleMaximised={() => setMaximisedCardId(maximised ? null : cardId)}
           paneChoice={paneChoice}
+          usageRequested={usageRequested}
         />
       </BoardCardDetailPopup>
     </Dialog>
