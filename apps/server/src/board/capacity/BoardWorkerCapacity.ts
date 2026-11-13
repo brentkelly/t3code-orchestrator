@@ -539,6 +539,14 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
         const signedOut = provider !== undefined && accountOf(provider).status === "signed-out";
         const quota = quotaFor(providers, settings, now)(input.providerInstanceId);
         const holdSettings = holdSettingsOf(settings);
+        const own = state.records.find(
+          (record) => record.boardId === boardId && record.cardId === input.cardId,
+        );
+        // A grow already holds its current disk: only the extra must be free.
+        const diskNeeded =
+          input.kind === "grow" && own !== undefined
+            ? Math.max(0, input.profile.diskGB - own.profile.diskGB)
+            : input.profile.diskGB;
         const asked = requestHold(holds, {
           boardId,
           cardId: input.cardId,
@@ -550,13 +558,11 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
             // Over on CPU or RAM offers nothing, but the disk that is free still counts.
             diskFits:
               !headroom.over.disk &&
-              input.profile.diskGB <=
+              diskNeeded <=
                 (headroom.over.cpuRam
                   ? headroom.declared.diskGB - headroom.held.diskGB
                   : headroom.offered.diskGB),
-            placedHere: state.records.some(
-              (record) => record.boardId === boardId && record.cardId === input.cardId,
-            ),
+            placedHere: own !== undefined,
           },
           now,
           settings: holdSettings,

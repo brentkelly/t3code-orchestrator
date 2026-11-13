@@ -464,8 +464,8 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
           boardResourceProfileValue(grant.profile, dimension),
       );
       const workerId = card.placedWorkerId ?? cardWorkerOf(board, card);
+      const declared = grows ? ((yield* deps.client.latest(workerId))?.declared ?? null) : null;
       if (grows && grant.heavy) {
-        const declared = (yield* deps.client.latest(workerId))?.declared ?? null;
         const fits =
           declared !== null &&
           BOARD_RESOURCE_DIMENSIONS.every(
@@ -498,7 +498,15 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       // A light card holds no CPU or RAM, so a larger CPU or RAM is what its next grow claims.
       // It does hold disk, kept at its grant until the card is heavy and a grow, which judges an
       // unsettled card's larger disk too, is granted.
-      const next = grows && !grant.heavy ? { ...want, diskGB: shrunk.diskGB } : shrunk;
+      // Never above the worker's declared size, which no claim could grant.
+      const next =
+        grows && !grant.heavy
+          ? {
+              cpuCores: Math.min(want.cpuCores, declared?.cpuCores ?? grant.profile.cpuCores),
+              ramGiB: Math.min(want.ramGiB, declared?.ramGiB ?? grant.profile.ramGiB),
+              diskGB: shrunk.diskGB,
+            }
+          : shrunk;
       if (
         BOARD_RESOURCE_DIMENSIONS.every(
           (dimension) =>

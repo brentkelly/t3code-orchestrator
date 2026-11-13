@@ -35,6 +35,8 @@ export interface WorkerHold {
   readonly profile: BoardResourceProfile;
   readonly since: number;
   readonly refreshedAt: number;
+  /** A grow hold that refused another board's placement: its time limit now runs. */
+  readonly blockedOthers?: boolean;
 }
 
 /** Per (board, worker): the 2-hour clock and whether someone else is waiting. */
@@ -167,6 +169,16 @@ export function tickHolds(
       next = { ...next, placement: null, coolOffs, clocks: remaining };
     }
   }
+  // A grow hold past the limit that has kept another board out ends too, with the same cool-off.
+  const limitMs = input.settings.maxMinutes * 60_000;
+  const expired = next.grows.filter(
+    (grow) => grow.blockedOthers === true && now - grow.since >= limitMs,
+  );
+  if (expired.length > 0) {
+    const coolOffs = new Map(next.coolOffs);
+    for (const grow of expired) coolOffs.set(grow.boardId, now + limitMs);
+    next = { ...next, grows: next.grows.filter((grow) => !expired.includes(grow)), coolOffs };
+  }
   return next;
 }
 
@@ -191,6 +203,17 @@ const flagWaiting = (state: HoldState, refusedBoardId: string): HoldState => {
   );
 };
 
+/** Mark the grow holds of other boards as keeping this board out. */
+const flagGrowsWaiting = (state: HoldState, refusedBoardId: string): HoldState =>
+  state.grows.some((grow) => grow.boardId !== refusedBoardId && grow.blockedOthers !== true)
+    ? {
+        ...state,
+        grows: state.grows.map((grow) =>
+          grow.boardId === refusedBoardId ? grow : { ...grow, blockedOthers: true },
+        ),
+      }
+    : state;
+
 /** Ask for, or refresh, a hold. An idempotent upsert. */
 export function requestHold(
   state: HoldState,
@@ -214,10 +237,19 @@ export function requestHold(
   });
   let current = tickHolds(state, input);
   if (input.kind === "grow") {
-    if (!input.eligibility.placedHere) return refuse(current, "not-eligible");
     const existing = current.grows.find(
       (grow) => grow.boardId === boardId && grow.cardId === cardId,
     );
+    const dropGrow = (s: HoldState) =>
+      existing === undefined ? s : { ...s, grows: s.grows.filter((grow) => grow !== existing) };
+    if (!input.eligibility.placedHere) return refuse(dropGrow(current), "not-eligible");
+    // A grow that can never fit, or whose extra disk isn't free, would close the worker for nothing.
+    if (input.eligibility.tooBig) return refuse(dropGrow(current), "too-big");
+    if (!input.eligibility.diskFits) return refuse(dropGrow(current), "disk");
+    const coolOff = current.coolOffs.get(boardId);
+    if (existing === undefined && coolOff !== undefined) {
+      return refuse(current, "cool-off", coolOff);
+    }
     const grow: WorkerHold = {
       boardId,
       cardId,
@@ -225,6 +257,7 @@ export function requestHold(
       profile: input.profile,
       since: existing?.since ?? now,
       refreshedAt: now,
+      ...(existing?.blockedOthers === true ? { blockedOthers: true } : {}),
     };
     current = {
       ...current,
@@ -352,7 +385,10 @@ export function holdClaimRefusal(
   if (!growBlocking && (placement === null || ownPlacement || givesWay)) {
     return { state, refusal: null };
   }
-  const flagged = tickHolds(flagWaiting(state, input.boardId), input);
+  const flagged = tickHolds(
+    flagGrowsWaiting(flagWaiting(state, input.boardId), input.boardId),
+    input,
+  );
   return { state: flagged, refusal: "reserved" };
 }
 

@@ -587,6 +587,28 @@ it.effect("a learned increase reaches a placed card only as a background grow cl
     yield* h.admission.syncAll();
     yield* h.admission.resizeGrants();
     assert.strictEqual((yield* h.grantOf("heavy"))?.profile.cpuCores, 4);
+    // Learned above the worker's 16 cores: no claim could grant it, so the light grant stops there.
+    const huge = {
+      ...board,
+      projectStageConfigs: {
+        [projectId]: {
+          ...board.projectStageConfigs[projectId]!,
+          resources: {
+            ...board.projectStageConfigs[projectId]!.resources!,
+            learned: {
+              computedAt: iso(T0),
+              cpu: learned(40),
+              ram: learned(null),
+              disk: learned(null),
+            },
+          },
+        },
+      },
+    };
+    const big = yield* harness(huge, now);
+    yield* big.admission.syncAll();
+    yield* big.admission.resizeGrants();
+    assert.strictEqual((yield* big.grantOf("light"))?.profile.cpuCores, 16);
     // A light card holds no CPU: the learned value waits for its next grow.
     assert.deepStrictEqual(
       h.fake.claims.map((claim) => [claim.cardId, claim.kind, claim.profile.cpuCores]),

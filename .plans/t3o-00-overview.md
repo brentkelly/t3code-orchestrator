@@ -303,7 +303,8 @@ running the worker over its declared capacity until it is back within it. A boar
 half its ready workers; a hold lapses unless refreshed every 20 s; after two hours
 (`hold.maxMinutes`) a hold ends as soon as another board is waiting, with a cool-off; a board that
 started early waits its turn. A placed card short of room holds its own worker to grow (finishing
-beats starting). Holds live in worker memory; nothing names or counts another board.
+beats starting), unless the grow can never fit there or its extra disk isn't free; a grow hold
+that has kept another board out ends at the same two-hour limit, with the same cool-off. Holds live in worker memory; nothing names or counts another board.
 
 Rejected: a waiting period before holding, which only delays the large card that can't fit, and the
 strict per-worker order, which let one large card stall every smaller card behind it.

@@ -284,6 +284,39 @@ describe("grow holds (T3O-87)", () => {
     expect(claim(younger, "a", "c1", 20, { early: true }).refusal).toBe("reserved");
   });
 
+  it("is refused, and dropped, when it can never fit or its extra disk isn't free", () => {
+    const held = grow(EMPTY_HOLD_STATE, "a", "g", 0);
+    const tooBig = ask(held, "a", "g", 1, {
+      kind: "grow",
+      eligibility: { placedHere: true, tooBig: true },
+    });
+    expect(tooBig.answer).toMatchObject({ outcome: "refused", reason: "too-big" });
+    expect(tooBig.state.grows).toEqual([]);
+    expect(claim(tooBig.state, "b", "x", 2).refusal).toBeNull();
+    const disk = ask(held, "a", "g", 1, {
+      kind: "grow",
+      eligibility: { placedHere: true, diskFits: false },
+    });
+    expect(disk.answer).toMatchObject({ outcome: "refused", reason: "disk" });
+    expect(disk.state.grows).toEqual([]);
+  });
+
+  it("ends after the time limit once it has kept another board out, with a cool-off", () => {
+    const limit = DEFAULT_HOLD_SETTINGS.maxMinutes * MIN;
+    // Nobody else waiting: it keeps its place past the limit, refreshed.
+    let state = grow(EMPTY_HOLD_STATE, "a", "g", 0);
+    for (let at = 20_000; at <= limit + MIN; at += 20_000) state = grow(state, "a", "g", at);
+    expect(state.grows).toHaveLength(1);
+    // Another board refused by it: its limit has run out, so it ends at once.
+    state = claim(state, "b", "x", limit + MIN).state;
+    expect(state.grows).toEqual([]);
+    expect(claim(state, "b", "x", limit + MIN).refusal).toBeNull();
+    expect(
+      ask(state, "a", "g", limit + 2 * MIN, { kind: "grow", eligibility: { placedHere: true } })
+        .answer,
+    ).toMatchObject({ reason: "cool-off" });
+  });
+
   it("are served oldest first", () => {
     const state = grow(grow(EMPTY_HOLD_STATE, "a", "g1", 0), "b", "g2", 5);
     expect(claim(state, "b", "g2", 10, { kind: "grow", early: true }).refusal).toBe("reserved");
