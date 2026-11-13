@@ -98,7 +98,7 @@ import {
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { useNowSecond } from "../hooks/useNowSecond";
 import { useStableCallback } from "../hooks/useStableCallback";
-import { Fragment, Suspense, lazy, useEffect, useState, type ReactNode } from "react";
+import { Fragment, Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./BoardCardNavRails";
 import { useBoardUiStore } from "./boardUiStore";
@@ -919,7 +919,11 @@ function BriefBody({
     if (next !== (brief ?? null)) onSave(next);
     setEditing(false);
   };
+  // The click-to-edit target unmounts while focused, and the sheet's focus manager would then pull
+  // focus back to itself just after the editor takes it, blurring (and committing) the edit.
+  const frameRef = useRef<HTMLDivElement>(null);
   const startEditing = () => {
+    frameRef.current?.focus({ preventScroll: true });
     setDraft(brief ?? "");
     setEditing(true);
   };
@@ -935,7 +939,7 @@ function BriefBody({
   );
   if (editing) {
     return (
-      <>
+      <div className="outline-none" ref={frameRef} tabIndex={-1}>
         <div
           className={cn(
             "-mx-[7px] -my-1 flex flex-col gap-2 rounded-lg border bg-muted px-1.75 py-1 shadow-board-ring-primary",
@@ -974,7 +978,7 @@ function BriefBody({
           />
         </div>
         {attachRow}
-      </>
+      </div>
     );
   }
   // Click-to-edit in place, the prototype's affordance: the brief reads as
@@ -982,7 +986,7 @@ function BriefBody({
   // strip renders without its badges here (view mode, K9); a drop still
   // attaches, since that is never a text edit.
   return (
-    <>
+    <div className="outline-none" ref={frameRef} tabIndex={-1}>
       <BoardBriefThumbnailStrip
         attachments={attachments}
         cardId={cardId}
@@ -1020,7 +1024,7 @@ function BriefBody({
         </div>
       </BoardHint>
       {attachRow}
-    </>
+    </div>
   );
 }
 

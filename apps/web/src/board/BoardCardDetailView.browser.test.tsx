@@ -279,3 +279,24 @@ describe("a spend popover's Summary request (T3O-77)", () => {
     await expect.element(usage).toHaveAttribute("aria-expanded", "false");
   });
 });
+
+describe("the brief's click-to-edit in the card sheet (T3O-96)", () => {
+  it("opens an editor that keeps focus, with the cursor at the end", async () => {
+    await using _screen = await render(
+      <BoardCardDetailView
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.backlog }, "Fix the flicker")}
+        projectName="P"
+      />,
+    );
+    // A real click focuses the click-to-edit target on mousedown, then clicks it.
+    const target = page.getByRole("button", { name: "Fix the flicker" }).element();
+    if (!(target instanceof HTMLElement)) throw new Error("brief is not an element");
+    target.focus();
+    target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const editor = page.getByRole("textbox", { name: "Brief" });
+    await expect.element(editor).toHaveFocus();
+    await userEvent.keyboard(" now");
+    await expect.element(editor).toHaveTextContent("Fix the flicker now");
+  });
+});
