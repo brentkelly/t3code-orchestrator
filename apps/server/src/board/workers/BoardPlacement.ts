@@ -25,6 +25,8 @@ export interface BoardPlacementShape {
       subscribes. A worker that drops and returns before the supervisor gets
       to the change is still seen to have dropped. */
   readonly changes: Stream.Stream<BoardWorkersState>;
+  /** T3o: workers in the middle of their removal; no card is placed there (T3O-87). */
+  readonly beingRemoved?: Effect.Effect<ReadonlySet<BoardWorkerId>>;
 }
 
 export class BoardPlacement extends Context.Service<BoardPlacement, BoardPlacementShape>()(

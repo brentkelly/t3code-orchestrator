@@ -10,7 +10,6 @@ import {
   boardCardEffectiveWorkerId,
   boardCardRequestedProfile,
   boardProjectStageConfig,
-  boardResourceProfileOverflow,
   boardStageWithRole,
   type BoardCard,
   type BoardCardId,
@@ -105,26 +104,6 @@ export const requestedProfileOf = (board: BoardState, card: BoardCard) =>
     card.resources,
     boardProjectStageConfig(board, card.projectId)?.resources ?? null,
   );
-
-/** Too big: a card with no worktree whose profile exceeds its worker's declared capacity. */
-export function tooBigDimension(
-  profile: BoardResourceProfile,
-  snapshot: BoardWorkerCapacitySnapshot | null,
-): BoardResourceDimension | null {
-  if (snapshot === null) return null;
-  return boardResourceProfileOverflow(profile, snapshot.declared);
-}
-
-/** What the local filter says before any claim: fits, or the dimension that doesn't. */
-export function headroomShortfall(
-  profile: BoardResourceProfile,
-  snapshot: BoardWorkerCapacitySnapshot | null,
-): BoardResourceDimension | null {
-  if (snapshot === null) return null;
-  if (snapshot.over.cpuRam) return "cpu";
-  if (snapshot.over.disk) return "disk";
-  return boardResourceProfileOverflow(profile, snapshot.headroom);
-}
 
 const isGroup = (card: BoardCard) => card.group !== null;
 

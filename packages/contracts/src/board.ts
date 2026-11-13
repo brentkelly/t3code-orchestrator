@@ -2402,6 +2402,8 @@ export const BoardStepQueuedBy = Schema.Literals([
   "quota",
   "agent-cap",
   "needs-update",
+  // T3o: no worker is online and ready for the project with the step's provider (T3O-87). Amber.
+  "no-ready-worker",
 ]);
 export type BoardStepQueuedBy = typeof BoardStepQueuedBy.Type;
 

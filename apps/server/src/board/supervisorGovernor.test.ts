@@ -308,7 +308,11 @@ it.effect("a Too-big card at the head of the queue doesn't hold up the card behi
       new Map([[BOARD_LOCAL_WORKER_ID, { cpuCores: 2.5, ramGiB: 64, diskGB: 100 }]]),
     ),
     (capacity) => {
-      const cards = [unplaced("big", "a", "XL"), unplaced("small", "b")];
+      const cards = [
+        unplaced("big", "a", "XL"),
+        { ...unplaced("pinned", "b", "XL"), pinnedWorkerId: BOARD_LOCAL_WORKER_ID },
+        unplaced("small", "c"),
+      ];
       return withGovernor(
         {
           board: { cards, nextCardNumberByProject: {} },
@@ -321,13 +325,15 @@ it.effect("a Too-big card at the head of the queue doesn't hold up the card behi
               yield* pumpDomain(movedToBuilding(card, index + 1));
             }
             const after = yield* board;
+            // Unpinned: too big for any worker ready for the project, so it names none (T3O-87).
             assert.deepStrictEqual(
               boardCardStepState(after, BoardCardId.make("big"))?.queuedDetail,
-              {
-                workerId: BOARD_LOCAL_WORKER_ID,
-                dimension: "cpu",
-                tooBig: true,
-              },
+              { dimension: "cpu", tooBig: true },
+            );
+            // Pinned: too big for its pin.
+            assert.deepStrictEqual(
+              boardCardStepState(after, BoardCardId.make("pinned"))?.queuedDetail,
+              { workerId: BOARD_LOCAL_WORKER_ID, dimension: "cpu", tooBig: true },
             );
             assert.strictEqual(stepStatus(after, BoardCardId.make("small")), "running");
             assert.isNull(after.cards.find((card) => card.id === "big")?.worktree ?? null);
