@@ -18,7 +18,9 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 
 import { buildingCard, projectId } from "../supervisorHarness.testkit.ts";
@@ -298,6 +300,47 @@ it.effect(
       yield* h.admission.syncAll();
       assert.strictEqual(h.fake.syncs.length, syncs + 2);
     }),
+);
+
+it.effect("a sync that read the board before a newer one never lands after it", () =>
+  Effect.gen(function* () {
+    const now = { ms: T0 };
+    const light = boardWith([granted("a", { heavy: false })]);
+    const heavy = boardWith([granted("a", { heavy: true })]);
+    const fake = yield* makeFakeCapacity(
+      new Map([[BOARD_LOCAL_WORKER_ID, { cpuCores: 16, ramGiB: 64, diskGB: 200 }]]),
+    );
+    const staleRead = yield* Deferred.make<void>();
+    const releaseStale = yield* Deferred.make<void>();
+    let reads = 0;
+    const admission = makeBoardCapacityAdmission({
+      client: fake.client,
+      readBoard: Effect.gen(function* () {
+        reads += 1;
+        if (reads > 1) return heavy;
+        yield* Deferred.succeed(staleRead, undefined);
+        yield* Deferred.await(releaseStale);
+        return light;
+      }),
+      dispatch: () => Effect.succeed(true),
+      commandId: (tag) => Effect.succeed(`cmd-${tag}` as BoardCommand["commandId"]),
+      nowIso: Effect.sync(() => iso(now.ms)),
+      repositoryKey: () => Effect.succeed("github.com/acme/app"),
+      awaitingPermission: () => Effect.succeed(false),
+    });
+    const stale = yield* Effect.forkChild(admission.syncWorker(BOARD_LOCAL_WORKER_ID));
+    yield* Deferred.await(staleRead);
+    const fresh = yield* Effect.forkChild(admission.syncWorker(BOARD_LOCAL_WORKER_ID));
+    // The fresh sync runs as far as it can (all of it, unserialised) before the stale one resumes.
+    yield* Effect.yieldNow;
+    yield* Deferred.succeed(releaseStale, undefined);
+    yield* Fiber.join(stale);
+    yield* Fiber.join(fresh);
+    assert.deepStrictEqual(
+      fake.syncs.map((sync) => sync.cards[0]?.phase),
+      ["light", "heavy"],
+    );
+  }),
 );
 
 it.effect("a grant settles when its first heavy step ends, or two hours after placement", () =>

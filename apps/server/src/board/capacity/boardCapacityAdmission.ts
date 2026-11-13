@@ -27,6 +27,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 
 import type { BoardCapacityClientShape, BoardClaimAnswer } from "./BoardCapacityClient.ts";
 
@@ -272,21 +273,36 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     return (projectId: ProjectId) => keys.get(projectId) ?? null;
   });
 
+  // One sync per worker at a time: a read taken before a newer sync's seq would lower its raise.
+  const syncLocks = new Map<BoardWorkerId, Semaphore.Semaphore>();
+  const syncLockFor = (workerId: BoardWorkerId) => {
+    let lock = syncLocks.get(workerId);
+    if (lock === undefined) {
+      lock = Semaphore.makeUnsafe(1);
+      syncLocks.set(workerId, lock);
+    }
+    return lock;
+  };
+
   /** Send each worker the board's granted state for it, when it changed. */
   const syncWorker = Effect.fn("BoardCapacityAdmission.syncWorker")(function* (
     workerId: BoardWorkerId,
   ) {
-    // A worker that just left a call unanswered isn't asked again until the backoff passes.
-    if (yield* backingOff(workerId)) return yield* deps.client.synced(workerId);
-    const board = yield* deps.readBoard;
-    const keys = yield* repositoryKeys(board);
-    const synced = yield* deps.client.syncCards(
-      workerId,
-      syncEntriesFor({ board, workerId, repositoryKey: keys }),
+    return yield* syncLockFor(workerId).withPermits(1)(
+      Effect.gen(function* () {
+        // A worker that just left a call unanswered isn't asked again until the backoff passes.
+        if (yield* backingOff(workerId)) return yield* deps.client.synced(workerId);
+        const board = yield* deps.readBoard;
+        const keys = yield* repositoryKeys(board);
+        const synced = yield* deps.client.syncCards(
+          workerId,
+          syncEntriesFor({ board, workerId, repositoryKey: keys }),
+        );
+        // Unanswered, even by a worker synced before, costs the next passes nothing until the backoff.
+        if (!synced) yield* noteReach(workerId, false);
+        return synced || (yield* deps.client.synced(workerId));
+      }),
     );
-    // Unanswered, even by a worker synced before, costs the next passes nothing until the backoff.
-    if (!synced) yield* noteReach(workerId, false);
-    return synced || (yield* deps.client.synced(workerId));
   });
 
   const workersOf = (board: BoardState): ReadonlyArray<BoardWorkerId> => [
@@ -472,7 +488,8 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
         }
       }
       // A light card holds no CPU or RAM, so a larger CPU or RAM is what its next grow claims.
-      // It does hold disk: more is recorded only once a claim, as a heavy card, grants it.
+      // It does hold disk, kept at its grant until the card is heavy and a grow is granted; a grow
+      // judges CPU and RAM only, so the larger disk is then recorded without a disk check.
       const next = grows && !grant.heavy ? { ...want, diskGB: shrunk.diskGB } : shrunk;
       if (
         BOARD_RESOURCE_DIMENSIONS.every(
