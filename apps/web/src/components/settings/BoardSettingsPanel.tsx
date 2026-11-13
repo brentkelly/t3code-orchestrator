@@ -8,7 +8,6 @@ import {
   DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT,
   DEFAULT_BOARD_KEY_PREFIX,
   DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
-  ProviderInstanceId,
   type BoardSettings,
   type EnvironmentId,
   type ProjectId,
@@ -30,42 +29,24 @@ import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import {
   normalizeKeyPrefixInput,
-  setBoardInstanceConcurrency,
   setBoardProjectSetting,
 } from "./BoardSettingsPanel.logic";
 import { BoardPipelineSection, NumberStepper } from "./BoardPipelineSection";
 import { BoardSettingsCard, BoardSettingsCardRow } from "../../board/settings/boardSettingsCards";
 import { BoardImportNotices } from "../../board/settings/BoardImportNotice";
-import { useBoardWorkers } from "../../board/workers/boardWorkersState";
-import { boardShowsWorkers } from "../../board/workers/cardWorker";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsSection } from "./settingsLayout";
 import { BoardServerSection } from "../../board/BoardServerSettings";
 import {
   useBoardEnvironment,
-  useBoardServerProviders,
   useBoardSettings,
   useUpdateBoardSettings,
 } from "../../board/useBoardEnvironmentId";
 import { BoardInput } from "../../board/ui/BoardInput";
 import { BoardButton } from "../../board/ui/BoardButton";
 
-/** The provider instances the server reports, built-in drivers included, plus
-    any configured custom instances — the concurrency rows offer these. Free text
-    would risk an invalid slug that fails the whole-settings decode on save. */
-function useProviderInstanceIds(): ReadonlyArray<string> {
-  const providers = useBoardServerProviders();
-  const providerInstances = useBoardSettings((settings) => settings.providerInstances);
-  return [
-    ...new Set([
-      ...providers.map((provider) => String(provider.instanceId)),
-      ...Object.keys(providerInstances),
-    ]),
-  ];
-}
-
 /** Settings → Board → General: the board server, display, the
-    project list with its import notices, the global pipeline, concurrency and lifecycle.
+    project list with its import notices, the global pipeline, the capacity note and lifecycle.
     Workers have their own page.
     The layout resolves the board server first. */
 export function BoardSettingsPanel() {
@@ -86,7 +67,6 @@ export function BoardSettingsPanel() {
 function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId }) {
   const board = useBoardSettings((settings) => settings.board);
   const update = useUpdateBoardSettings();
-  const instanceIds = useProviderInstanceIds();
 
   return (
     <>

@@ -108,6 +108,8 @@ import {
   undeleteBoardLabel,
   unlinkBoardCardThread,
   updateBoardCard,
+  setBoardProjectResources,
+  type SetBoardProjectResourcesInput,
   boardCardSetupAction,
   type BoardCardSetupActionInput,
   setBoardCardProject,
@@ -1046,6 +1048,10 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:set-project-ci-stop-on-failure",
       execute: (input: SetBoardProjectCiStopOnFailureInput) =>
         setBoardProjectCiStopOnFailure(input),
+    }),
+    setProjectResources: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-project-resources",
+      execute: (input: SetBoardProjectResourcesInput) => setBoardProjectResources(input),
     }),
     resetProject: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:reset-project",

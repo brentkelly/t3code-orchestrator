@@ -85,6 +85,7 @@ export type SetBoardProjectCiEnabledInput = SettingsCommandInput<"board.project.
 export type SetBoardProjectCiStopOnFailureInput =
   SettingsCommandInput<"board.project.set-ci-stop-on-failure">;
 export type ResetBoardProjectInput = SettingsCommandInput<"board.project.reset">;
+export type SetBoardProjectResourcesInput = SettingsCommandInput<"board.project.set-resources">;
 export type DismissBoardProjectImportInput = SettingsCommandInput<"board.project.dismiss-import">;
 export type StartBoardStageThreadInput = CommandInput<"board.card.start-stage-thread">;
 export type ApproveBoardPlansInput = CommandInput<"board.plans.approve">;
@@ -537,6 +538,11 @@ export const setBoardProjectCiStopOnFailure = dispatchSettings(
   "setBoardProjectCiStopOnFailure",
 );
 export const resetBoardProject = dispatchSettings("board.project.reset", "resetBoardProject");
+/** T3o: the project's Resources settings, whole (T3O-86). */
+export const setBoardProjectResources = dispatchSettings(
+  "board.project.set-resources",
+  "setBoardProjectResources",
+);
 export const dismissBoardProjectImport = dispatchSettings(
   "board.project.dismiss-import",
   "dismissBoardProjectImport",

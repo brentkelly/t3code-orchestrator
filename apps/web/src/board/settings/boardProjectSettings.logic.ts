@@ -21,7 +21,7 @@ import {
 } from "@t3tools/contracts";
 
 /** The tabs of a project's settings page, in order. */
-export const BOARD_PROJECT_SETTINGS_TABS = ["pipeline", "ci", "import"] as const;
+export const BOARD_PROJECT_SETTINGS_TABS = ["pipeline", "ci", "resources", "import"] as const;
 export type BoardProjectSettingsTab = (typeof BOARD_PROJECT_SETTINGS_TABS)[number];
 
 export function parseBoardProjectSettingsTab(value: string): BoardProjectSettingsTab {
