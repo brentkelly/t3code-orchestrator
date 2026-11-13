@@ -246,7 +246,7 @@ describe("headroom", () => {
 });
 
 describe("claims", () => {
-  it("a placement is consumed by its provision; an expired one is not", () => {
+  it("a placement is consumed by its provision, even once its reservation lapsed mid-cut", () => {
     const granted = decideClaim(EMPTY_CAPACITY_STATE, claim(), context());
     expect(granted.state.reservations).toHaveLength(1);
     const consumed = consumePlacement(granted.state, {
@@ -260,7 +260,6 @@ describe("claims", () => {
       profile: card,
       now: 1_000,
     });
-    expect(consumed.consumed).toBe(true);
     expect(consumed.state.records).toHaveLength(1);
     expect(consumed.state.reservations).toHaveLength(0);
     const late = consumePlacement(granted.state, {
@@ -274,7 +273,10 @@ describe("claims", () => {
       profile: card,
       now: CLAIM_TTL_MS + 1,
     });
-    expect(late.consumed).toBe(false);
+    expect(late.state.records).toEqual([
+      expect.objectContaining({ cardId: "card-1", profile: card, phase: "heavy", settled: false }),
+    ]);
+    expect(late.state.reservations).toHaveLength(0);
   });
 
   it("a timed-out claim retried with the same id, or replaced for the same card, never double-counts", () => {

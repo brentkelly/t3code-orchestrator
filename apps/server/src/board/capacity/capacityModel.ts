@@ -413,8 +413,8 @@ function physicalShortfall(
   return null;
 }
 
-/** A provision's claim: consumed when it is the live reservation for the card, or already
-    consumed (a resumed provision); otherwise the caller checks it again as a fresh claim. */
+/** A provision's claim becomes the card's record. checkProvision granted it before the worktree
+    was cut, so a reservation that lapsed during a slow cut still records the claim's profile. */
 export function consumePlacement(
   state: CapacityState,
   input: {
@@ -428,13 +428,12 @@ export function consumePlacement(
     readonly profile: BoardResourceProfile;
     readonly now: number;
   },
-): { readonly consumed: boolean; readonly state: CapacityState } {
+): { readonly state: CapacityState } {
   const existingRecord = state.records.find(
     (record) => record.boardId === input.boardId && record.cardId === input.cardId,
   );
   if (existingRecord !== undefined) {
     return {
-      consumed: true,
       state: {
         ...state,
         records: state.records.map((record) =>
@@ -452,12 +451,17 @@ export function consumePlacement(
       candidate.claimId === input.claimId &&
       candidate.kind === "placement",
   );
-  if (reservation === undefined) return { consumed: false, state };
   return {
-    consumed: true,
     state: {
       ...state,
-      reservations: state.reservations.filter((candidate) => candidate !== reservation),
+      reservations: state.reservations.filter(
+        (candidate) =>
+          !(
+            candidate.boardId === input.boardId &&
+            candidate.cardId === input.cardId &&
+            candidate.kind === "placement"
+          ),
+      ),
       records: [
         ...state.records,
         {
@@ -466,7 +470,7 @@ export function consumePlacement(
           repositoryKey: input.repositoryKey,
           branch: input.branch,
           worktreePath: input.worktreePath,
-          profile: reservation.profile,
+          profile: reservation?.profile ?? input.profile,
           phase: "heavy",
           settled: false,
           seq: input.seq,
