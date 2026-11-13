@@ -14,6 +14,7 @@ import { boardEnvironment } from "../../state/board";
 import { environmentShell } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { describeBoardCommandFailure } from "../boardCommandFeedback";
+import { boardProviderLoginHint } from "../boardQueueInfo";
 
 export interface BoardServerPlanningCallout {
   readonly projectId: ProjectId;
@@ -99,7 +100,7 @@ export function BoardServerPlanningCallouts(props: { readonly environmentId: Env
                   ? callout.missing
                     ? `Planning runs here. ${waiting}.`
                     : `Planning runs here, and the folder exists but isn't a checkout. Fix it on the board server. ${waiting}.`
-                  : `Planning runs here. Run \`${/claude/i.test(callout.provider ?? "") ? "claude" : "codex"} login\` on the board server. ${waiting}.`}
+                  : `Planning runs on the board server. ${boardProviderLoginHint(callout.provider ?? "the provider")} ${waiting}.`}
               </span>
             </div>
             {amber && callout.missing ? (

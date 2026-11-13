@@ -56,7 +56,7 @@ export function boardQueueInfo(input: {
 const DIMENSION_NAMES = { cpu: "CPU", ram: "RAM", disk: "disk space" } as const;
 
 /** How to sign a provider in on the board server. */
-const boardProviderLoginHint = (provider: string) =>
+export const boardProviderLoginHint = (provider: string) =>
   /claude/i.test(provider)
     ? "Run `claude login` there."
     : /codex/i.test(provider)
