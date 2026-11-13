@@ -70,24 +70,46 @@ Run these in the worker's T3o checkout:
 
 If the worker's managed policy forbids remote clients, it can't join a board.
 
-## Default worker
+## Planning runs on the board server
 
-Unpinned cards run on the default worker, which starts out as this server. Change it with
-**Default worker**, or **Make default** in a worker's menu. Only an online worker can be the default.
-Changing it only affects cards that don't have a worktree yet.
+Every new planning step runs on the board server, whatever the card's pin, in the project's own
+folder there, after fetching it. So the board server needs, for each project with cards:
 
-## Choosing where a card runs
+- **A checkout of the project.** If the project's folder on the board server isn't a checkout, cards
+  wait amber with "isn't a checkout". When the folder is missing or empty, **Clone here** (on the
+  Workers page) clones the project from its remote with the board server's own git credentials. A
+  folder that exists and isn't a checkout has to be fixed by hand.
+- **The step's provider signed in there.** If it isn't, cards wait violet with "Sign in on the board
+  server": run `claude login` (or your provider's sign-in) on the board server.
 
-Once a board has a worker, cards show a small worker chip and get a **Worker** field, in the new card
-dialog and in the card's details. A card either follows the default worker or is pinned to one.
-Planning and every later step run on the same worker, in that worker's checkout of the project.
+The board server's readiness script only matters for builds, so a board server that fails it still
+plans. Planning that was already running on a worker when you upgraded carries on there.
 
-Each worker in the picker says how busy it is, or why it can't be picked: no checkout of the project
-(with **Set up on worker**), offline, access revoked, or too old a T3o. A card pinned to a worker
-that's still cloning the project waits as **Queued · setting up** and starts once the clone
-finishes. Sub-board cards start out pinned where their parent is.
+## How a worker is chosen
 
-If a step's provider isn't on the card's worker, the step doesn't start and the card says
+A card is placed on a worker when its build starts, not before. The board picks among workers that
+are online, ready for the project, signed in to the step's provider with quota to spare, not
+reserved, and with room for the whole card:
+
+1. **Warm first:** a worker that finished building one of this board's cards for the same repository
+   in the last 24 hours, the most recent first. Reviews and CI don't count.
+2. Then the worker with the most room left after the card.
+
+The card's **Worker** row says where it was placed, when, and why ("offered the most RAM among ready
+workers", "built z5 most recently", "pinned"), or **Not placed yet — chosen when the build starts**.
+The board server is in the pool when it's ready; declare it zero build capacity to keep it for
+planning only.
+
+**Pin builds to…** in a card's details restricts its builds to one worker; it doesn't affect
+planning. Each worker in the picker says whether it's ready and what it offers. A card that holds a
+worktree stays on its worker: the board only moves it if you **Move** it or its worker is removed.
+**Unpin** leaves a placed card where it is. There is no longer a default worker.
+
+A card that no worker can take says why: **No ready worker for this project** (amber: set the
+project up on a worker, or fix its readiness), **Too big for any worker** (amber: lower its size or
+the baseline, or raise a worker's capacity), or a wait that clears by itself (room, quota, an agent).
+
+If a step's provider isn't on the card's pinned worker, the step doesn't start and the card says
 **Provider missing**. Pin the card to a worker that has it, or pick a model the worker offers in the
 card's **Models**, and the step starts again.
 
@@ -109,10 +131,34 @@ remote, so **Retry** it or pick another worker.
 Each worker decides how much work it takes. It declares its CPU cores, RAM and disk, and the board
 asks it for room before a card gets a worktree there. A card is placed only when the worker has room
 for it, and a queued card says what it's waiting on: **waiting for room** (its details name the
-worker and whether it's CPU, RAM or disk), **behind** another card that's first in line there,
-**agents busy** when the worker's agent cap is full, **provider near quota** when the provider's
-subscription is nearly used up, or **needs update** when the worker is too old to be asked. Cards still
-queue in Building in the usual order; **Start now** jumps the queue.
+worker and whether it's CPU, RAM or disk), **Next on build-01** when it holds a worker,
+**build-01 is reserved for T3O-90** when this board holds that worker for an earlier card,
+**build-01 isn't taking new cards**, **agents busy** when the worker's agent cap is full, **provider
+near quota** when the provider's subscription is nearly used up, or **needs update** when the
+worker is too old to be asked. Cards queue in Building in the usual order; **Start anyway** jumps
+the queue and starts a card even on a worker that isn't taking new cards (the worker still refuses
+it if the machine lacks the disk or half the RAM).
+
+### Holds: a large card doesn't wait forever
+
+When no worker can take a card now, it **holds** a worker straight away: that worker takes no new
+cards from any board until the held card starts. Cards behind it can still start on other workers.
+The held card starts as soon as all of its disk and half of its CPU and RAM are free, so a worker
+will often run one card over its declared capacity: declare capacity with that in mind.
+
+- A card holds at most two workers and releases the other when it starts. A board holds at most half
+  of its ready workers, so a second hold only happens with four or more.
+- A card short of disk, quota, readiness or a provider sign-in holds nothing: freeing CPU and RAM
+  can't help it.
+- A board that started a card early on a worker can't hold it again until the worker is back within
+  its capacity, or for 30 minutes; any other board can.
+- After two hours, a hold ends as soon as another board is waiting, and that board can't hold the
+  worker again for two hours (the card's waiting details show when). With nobody waiting, a hold
+  carries on.
+- A card that needs more room to carry on its own build holds its own worker, ahead of new cards.
+
+On the worker, `pnpm t3o-worker config` sets `hold.earlyStartFraction` (default 0.5) and
+`hold.maxMinutes` (default 120), and `pnpm t3o-worker status` shows any hold.
 
 By default a worker declares every core it has, its RAM less 8 GiB (at least half of it; less where
 T3 Code limits its agents' memory), and 90% of the free disk where worktrees live. Change these on the worker with
@@ -240,17 +286,19 @@ calls fail with a message telling it to retry shortly.
 
 **Remove worker…** in a worker's menu takes it off the board, gives back everything the board held
 on that machine (its own access and every user's), and stops the worker's credential working. An
-offline worker can be removed too; work it never pushed may be lost. Nothing on the worker is deleted: its worktrees, branches and
-thread history stay there. The default worker can't be removed; make another one the default first.
+offline worker can be removed too; work it never pushed may be lost. Nothing on the worker is
+deleted: its worktrees, branches and thread history stay there.
 
-The confirmation lists the cards on that worker:
+When the worker can be reached, the board first pauses any step running there, then pushes each
+card's branch where the remote is missing commits:
 
-- Cards with no worktree yet move to the default worker.
-- Cards with a worktree, or a step running there, show **Worker removed: move this card** until you
-  move them. A running step is stopped first, if the worker can be reached.
+- Cards with no worktree there are placed again when they next build.
+- A card whose work is all pushed carries on from its branch on whichever worker it's placed on
+  next.
+- A card with uncommitted or unpushable work, and every card on a worker that can't be reached,
+  shows **Worker removed: move this card** until you move it.
 
-Joining the same server again, with a new code, puts those cards back on it, and a stopped step
-carries on.
+Joining the same server again, with a new code, puts the cards still placed there back on it.
 
 ## Force-moving a card off an unreachable worker
 
