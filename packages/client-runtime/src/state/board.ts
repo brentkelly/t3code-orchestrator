@@ -34,6 +34,7 @@ import {
   type OrchestrationV2ThreadShell,
   type ProjectId,
   type ThreadId,
+  type BoardWorkersCapacityActionInput,
 } from "@t3tools/contracts";
 import {
   type BoardThreadShellFields,
@@ -107,6 +108,8 @@ import {
   undeleteBoardLabel,
   unlinkBoardCardThread,
   updateBoardCard,
+  boardCardSetupAction,
+  type BoardCardSetupActionInput,
   setBoardCardProject,
   pinBoardCardWorker,
   boardCardWorkerMove,
@@ -149,6 +152,7 @@ import {
   type UpdateBoardLabelInput,
 } from "../operations/boardCommands.ts";
 import type { EnvironmentShellState } from "./shell.ts";
+import { boardCapacityAction, boardCapacityViewStream } from "./boardCapacity.ts";
 import {
   createEnvironmentCommand,
   createEnvironmentRpcQueryAtomFamily,
@@ -749,8 +753,20 @@ export function createBoardEnvironmentAtoms<R, ER>(
       boardCiLogDownloadStream(request),
   });
 
+  /** T3o: each worker's capacity, for the views that show it (T3O-86). */
+  const capacityAtom = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-board-capacity",
+    idleTtlMs: 5_000,
+    subscribe: (_request: Record<string, never>) => boardCapacityViewStream(),
+  });
+
   return {
     boardAtom,
+    capacityAtom,
+    capacityAction: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:capacity-action",
+      execute: (input: BoardWorkersCapacityActionInput) => boardCapacityAction(input),
+    }),
     ciLogAtom,
     ciLogDownloadAtom,
     cardsByProjectAtom,
@@ -926,6 +942,10 @@ export function createBoardEnvironmentAtoms<R, ER>(
     updateCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:update-card",
       execute: (input: UpdateBoardCardInput) => updateBoardCard(input),
+    }),
+    cardSetupAction: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:card-setup-action",
+      execute: (input: BoardCardSetupActionInput) => boardCardSetupAction(input),
     }),
     /** Move a card to another project — human-only, and refused by the
         decider once the card has ever been built. */

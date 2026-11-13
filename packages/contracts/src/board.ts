@@ -36,6 +36,7 @@ import {
   BOARD_WORKER_RPC_SCOPES,
   BOARD_WORKER_RPCS,
   BOARD_WORKERS_RPCS,
+  BOARD_WORKERS_WS_METHODS,
   BoardDefaultWorkerSetPayload,
   BoardWorker,
   BoardWorkerId,
@@ -3031,6 +3032,8 @@ export const BoardProjectStageConfigShell = Schema.Struct({
   ciStopOnFailure: Schema.optionalKey(Schema.Literal(false)),
   warnings: Schema.Array(Schema.String),
   version: Schema.String,
+  /** T3o: the project's Resources settings (T3O-86); small, and every card's size reads it. */
+  resources: Schema.optionalKey(BoardProjectResources),
 });
 export type BoardProjectStageConfigShell = typeof BoardProjectStageConfigShell.Type;
 
@@ -3052,6 +3055,7 @@ export function boardProjectStageConfigShell(
       parallel: step.parallel,
     })),
     ...(boardCiStopsOnFailure(config.ci) ? {} : { ciStopOnFailure: false as const }),
+    ...(config.resources === undefined ? {} : { resources: config.resources }),
     warnings: config.warnings,
     version: config.version,
   };
@@ -7375,6 +7379,14 @@ export const BoardCardShell = Schema.Struct({
       the shell. */
   ci: Schema.optionalKey(BoardCardCi),
   ciLastOutcome: Schema.optionalKey(BoardCardCiLastOutcome),
+  /** T3o: the card's setup, for its face: Preparing n/4 or Setup failed (T3O-86). */
+  setup: Schema.optionalKey(
+    BoardCardSetupResult.mapFields((fields) => ({
+      status: fields.status,
+      stage: fields.stage,
+      blocking: fields.blocking,
+    })),
+  ),
   /** Which limit holds a queued card. Present only beside
       `queued`; rides the snapshot and the `card-queued` delta like `queued`
       itself, and card deltas preserve the last known value. */
@@ -7725,6 +7737,8 @@ export function makeBoardCardShell(input: {
   /** The card's CI entry and last CI outcome. */
   readonly ci?: BoardCardCi | null | undefined;
   readonly ciLastOutcome?: BoardCardCiLastOutcome | null | undefined;
+  /** The card's setup, from its resources. */
+  readonly setup?: BoardCardSetupResult | null | undefined;
   /** Which limit holds a queued card. Real on the snapshot, absent
       on card deltas (the client keeps the last known value). */
   readonly queuedBy?: BoardStepQueuedBy | null | undefined;
@@ -7827,6 +7841,15 @@ export function makeBoardCardShell(input: {
       : { placementOrphaned: { workerLabel: input.placementOrphaned.workerLabel } }),
     ...(input.ci == null ? {} : { ci: { ...input.ci, steps: boardCardCiSteps(input.ci.steps) } }),
     ...(input.ciLastOutcome == null ? {} : { ciLastOutcome: input.ciLastOutcome }),
+    ...(input.setup == null
+      ? {}
+      : {
+          setup: {
+            status: input.setup.status,
+            stage: input.setup.stage,
+            blocking: input.setup.blocking,
+          },
+        }),
     ...(input.queued === true && input.queuedBy != null ? { queuedBy: input.queuedBy } : {}),
     ...(input.queued === true && input.queuedDetail != null
       ? { queuedDetail: input.queuedDetail }
@@ -7917,6 +7940,7 @@ export function boardCardShellFromCard(
     workerMove: card.workerMove,
     placementOrphaned: card.placementOrphaned,
     ci: card.ci,
+    setup: card.resources?.setup ?? null,
     ciLastOutcome:
       card.ciLastOutcome?.finding === undefined
         ? card.ciLastOutcome
@@ -8952,7 +8976,9 @@ export const BOARD_CONFIG_VERSION_MISMATCH = "Changed elsewhere, reload.";
 export type BoardSubscriptionRpcTag =
   | (typeof BOARD_WS_METHODS)["subscribeBoard"]
   | (typeof BOARD_WS_METHODS)["subscribeCard"]
-  | (typeof BOARD_WS_METHODS)["readCiLog"];
+  | (typeof BOARD_WS_METHODS)["readCiLog"]
+  // T3o: each worker's capacity (T3O-86).
+  | (typeof BOARD_WORKERS_WS_METHODS)["subscribeCapacity"];
 
 /** `board.readCiLog`'s request. With no `fromOffset` the read starts
     at the last 256 KiB, from a line start. */

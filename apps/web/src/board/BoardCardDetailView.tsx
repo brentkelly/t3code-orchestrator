@@ -660,6 +660,8 @@ export interface BoardCardDetailViewProps {
   /** Write this card's own merge strategy; null returns it to the default.
       Absent hides the control. */
   readonly onSetMergeStrategy?: ((next: BoardMergeStrategy | null) => void) | undefined;
+  /** T3o: the card's size and setup, under its title in both layouts (T3O-86). */
+  readonly capacityPanel?: React.ReactNode;
   /** What the card's schedule control is offering, derived by the
       container from the card's live step — the copy has to be honest about
       whether setting a time will STOP an agent that is working right now. */
@@ -3086,6 +3088,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       </div>
 
       <TitleBody done={done} onSave={props.onSaveTitle} title={card.title} />
+      {props.capacityPanel ?? null}
 
       {/* One insertion above the layout split covers both forms. Only
           the wide one offers `View thread`: the narrow layout has no thread

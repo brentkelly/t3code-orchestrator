@@ -75,6 +75,7 @@ import { boardAttachmentLimits } from "./boardAttachmentUpload";
 import { boardConflictFix } from "./boardConflictFix";
 import { boardScheduleKind } from "./boardSchedule";
 import { boardQueueInfo } from "./boardQueueInfo";
+import { BoardCardCapacityPanelHost } from "./BoardCardCapacityPanel";
 import { boardCardPlanReviewView, boardPlanStageExecution } from "./boardCardPlanReview";
 import { projectIconColorOf } from "./projectAccent";
 import { useEnvironment } from "../state/environments";
@@ -1531,6 +1532,18 @@ export function BoardCardDetail({
       boardMergeStrategy={boardMergeStrategy}
       onSetMergeStrategy={(mergeStrategy) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, mergeStrategy } }))
+      }
+      capacityPanel={
+        // T3o: group cards take no claim and run no setup (T3O-86).
+        card.group !== null ? null : (
+          <BoardCardCapacityPanelHost
+            card={card}
+            environmentId={environmentId}
+            projectResources={projectExecutionConfig?.resources ?? null}
+            stepRunning={cardShell?.stepRunning === true}
+            workersState={workersState}
+          />
+        )
       }
       resolveModelDisplayName={resolveModelDisplayName}
       // Queued counts as running: its model and authority are already frozen

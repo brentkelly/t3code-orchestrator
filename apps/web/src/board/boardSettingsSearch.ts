@@ -77,7 +77,12 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     to: "/settings/board",
     targetId: "board-pipeline",
   },
-  { id: "board-concurrency", title: "Board concurrency", to: "/settings/board" },
+  {
+    id: "board-concurrency",
+    title: "Capacity",
+    to: "/settings/board",
+    searchTerms: ["concurrency limit agents baseline resources capacity"],
+  },
   // The distributed board.
   {
     id: "board-workers",

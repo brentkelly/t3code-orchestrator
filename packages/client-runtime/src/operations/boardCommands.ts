@@ -46,6 +46,7 @@ export type SetBoardCardGroupSettingsInput = CommandInput<"board.card.set-group-
 export type SetBoardCardAutomationInput = CommandInput<"board.card.set-automation">;
 export type CancelBoardCardWorkInput = CommandInput<"board.card.cancel-work">;
 export type UpdateBoardCardInput = CommandInput<"board.card.update">;
+export type BoardCardSetupActionInput = CommandInput<"board.card.setup-action">;
 export type SetBoardCardProjectInput = CommandInput<"board.card.set-project">;
 export type PinBoardCardWorkerInput = CommandInput<"board.card.pin-worker">;
 export type ForceStartBoardCardStepInput = CommandInput<"board.card.force-start-step">;
@@ -268,6 +269,19 @@ export const updateBoardCard: (input: UpdateBoardCardInput) => CommandEffect = E
   return yield* dispatch({
     ...input,
     type: "board.card.update",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+/** T3o: Retry or Cancel a card's setup (T3O-86). */
+export const boardCardSetupAction: (input: BoardCardSetupActionInput) => CommandEffect = Effect.fn(
+  "BoardCommands.boardCardSetupAction",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.card.setup-action",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

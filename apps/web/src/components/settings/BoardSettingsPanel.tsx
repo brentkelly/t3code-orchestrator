@@ -38,8 +38,6 @@ import { BoardSettingsCard, BoardSettingsCardRow } from "../../board/settings/bo
 import { BoardImportNotices } from "../../board/settings/BoardImportNotice";
 import { useBoardWorkers } from "../../board/workers/boardWorkersState";
 import { boardShowsWorkers } from "../../board/workers/cardWorker";
-import { WorkerConcurrencySection } from "../../board/workers/WorkerConcurrencySection";
-import { boardLocalConcurrencyDiverges } from "../../board/workers/workerConcurrency";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsSection } from "./settingsLayout";
 import { BoardServerSection } from "../../board/BoardServerSettings";
@@ -97,12 +95,7 @@ function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId
       <BoardImportNotices />
       <ProjectsSection board={board} environmentId={environmentId} update={update} />
       <BoardPipelineSection />
-      <BoardConcurrencySettings
-        board={board}
-        environmentId={environmentId}
-        instanceIds={instanceIds}
-        update={update}
-      />
+      <BoardCapacityNote />
       <LifecycleSection board={board} update={update} />
     </>
   );
@@ -265,113 +258,25 @@ function ProjectRows({
   );
 }
 
-// ── Concurrency ────────────────────────────────────────────────────────
+// ── Capacity ───────────────────────────────────────────────────────────
 
-function ConcurrencySection({
-  board,
-  instanceIds,
-  update,
-}: {
-  board: BoardSettings;
-  instanceIds: ReadonlyArray<string>;
-  update: UpdateFn;
-}) {
+/**
+ * T3o: the board's concurrency limits are gone (T3O-86). Each worker decides what it offers,
+ * and each project's baseline says what a card reserves; this note points at both.
+ */
+function BoardCapacityNote() {
   const anchor = searchableSetting("board-concurrency");
   return (
     <SettingsSection id="board-concurrency" title={anchor.title} variant="plain">
       <BoardSettingsCard>
-        <BoardSettingsCardRow
-          label="Global limit"
-          description="The maximum number of build steps running at once across all provider instances."
-          control={
-            <NumberStepper
-              value={board.concurrency.globalMaxConcurrent}
-              min={1}
-              max={99}
-              ariaLabel="Global concurrency limit"
-              onChange={(value) => {
-                if (value !== board.concurrency.globalMaxConcurrent) {
-                  update({ board: { concurrency: { globalMaxConcurrent: value } } });
-                }
-              }}
-            />
-          }
-        />
-        <div className="h-px bg-border" />
-        <p className="pt-1 text-xs text-muted-foreground">
-          Optionally cap concurrent steps for a specific provider instance. Clear a value to fall
-          back to the global limit.
+        <p className="py-1 text-board-13-5 text-muted-foreground">
+          Limits are now{" "}
+          <Link to="/settings/board/workers" className="text-foreground underline">
+            this server's capacity
+          </Link>{" "}
+          and each project's baseline, set on its Resources tab.
         </p>
-        {instanceIds.map((id) => {
-          const current = board.concurrency.perInstance[ProviderInstanceId.make(id)];
-          return (
-            <div key={id} className="flex items-center justify-between gap-4 py-1.5">
-              <span className="min-w-0 flex-1 truncate text-board-13-5 text-foreground">{id}</span>
-              <NumberStepper
-                nullable
-                value={current ?? null}
-                min={1}
-                max={99}
-                // Unset means "follow the global limit", so that is both what
-                // the field reads and where −/+ start counting from.
-                placeholder="Global"
-                stepFrom={board.concurrency.globalMaxConcurrent}
-                ariaLabel={`Concurrency limit for ${id}`}
-                onChange={(value) => {
-                  update({
-                    board: {
-                      concurrency: {
-                        perInstance: setBoardInstanceConcurrency(
-                          board.concurrency.perInstance,
-                          ProviderInstanceId.make(id),
-                          value,
-                        ),
-                      },
-                    },
-                  });
-                }}
-              />
-            </div>
-          );
-        })}
       </BoardSettingsCard>
-    </SettingsSection>
-  );
-}
-
-/**
- * Concurrency, per worker once the board has any. A local-only
- * board keeps the section exactly as it was, unless a per-worker override for
- * this server outlived the workers.
- */
-function BoardConcurrencySettings(props: {
-  board: BoardSettings;
-  environmentId: EnvironmentId;
-  instanceIds: ReadonlyArray<string>;
-  update: UpdateFn;
-}) {
-  const workers = useBoardWorkers(props.environmentId);
-  if (
-    !boardShowsWorkers(workers.state) &&
-    !boardLocalConcurrencyDiverges(props.board.concurrency)
-  ) {
-    return (
-      <ConcurrencySection
-        board={props.board}
-        instanceIds={props.instanceIds}
-        update={props.update}
-      />
-    );
-  }
-  const anchor = searchableSetting("board-concurrency");
-  return (
-    <SettingsSection id="board-concurrency" title={anchor.title} variant="plain">
-      <WorkerConcurrencySection
-        concurrency={props.board.concurrency}
-        localInstanceIds={props.instanceIds}
-        onChange={(patch) => props.update({ board: { concurrency: patch } })}
-        workers={workers.state}
-      />
     </SettingsSection>
   );
 }
