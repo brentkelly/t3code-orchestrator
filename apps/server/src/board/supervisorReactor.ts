@@ -1320,14 +1320,15 @@ const make = Effect.gen(function* () {
         card.projectId,
       );
       if (workspace.checkoutPath === null) return yield* stuck(noWorkspaceFolderReason(workspace));
-      // A resumed provision resends its original claim (T3O-86).
+      // A resumed provision resends its original claim (T3O-86). The record it replaced is
+      // gone, so an expired claim restores the branch as reclaimed: never lost to a fresh cut.
       return yield* provisionOnWorkspace(
         card,
         workspace,
         { branch: card.worktree.branch, baseRefName: card.worktree.baseRefName },
         yield* persistedProvisionClaim(card, claimFor.providerInstanceId),
-        null,
-        false,
+        { ...card.worktree, status: "reclaimed", path: null },
+        card.group === null && (yield* remoteHasBranch(workspace, card.worktree.branch)),
       );
     }
     const branch = boardCardWorktreeBranchName(card);

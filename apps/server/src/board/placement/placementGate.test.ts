@@ -7,6 +7,7 @@ import {
   BOARD_LOCAL_WORKER_ID,
   BoardCardId,
   boardCardStepState,
+  BoardWorkerGitError,
   EnvironmentId,
   ThreadId,
   type BoardCard,
@@ -57,6 +58,8 @@ interface WorkerGit {
   readonly missingBase: Set<BoardWorkerId>;
   /** Branches the remote has. */
   readonly remoteBranches: Set<string>;
+  /** Workers that refuse a provision whose claim expired. */
+  readonly claimExpired: Set<BoardWorkerId>;
 }
 
 const newWorkerGit = (): WorkerGit => ({
@@ -64,6 +67,7 @@ const newWorkerGit = (): WorkerGit => ({
   unreachableBase: new Set(),
   missingBase: new Set(),
   remoteBranches: new Set(),
+  claimExpired: new Set(),
 });
 
 /** Every worker runs over the harness's own local git, logging what it was asked. */
@@ -98,6 +102,15 @@ const loggingWorkspaces = (git: WorkerGit) => (local: LocalBoardWorkspaceDeps) =
     },
     provisionWorktreeFromRemoteBranch: (input) => {
       git.log.push(`${workerId}:provision-from-remote`);
+      if (git.claimExpired.has(workerId)) {
+        return Effect.fail(
+          new BoardWorkerGitError({
+            operation: "provision",
+            detail: "no room",
+            refusal: "claim-expired",
+          }),
+        );
+      }
       return base.provisionWorktree(input);
     },
   });
@@ -355,6 +368,31 @@ describe("the placement gate (T3O-87)", () => {
         );
       }
     }),
+  );
+
+  it.effect(
+    "a provision a restart cut off resumes from the remote branch, and keeps it if refused",
+    () =>
+      Effect.gen(function* () {
+        const capacity = yield* capacityOf([[W1, FULL]]);
+        const git = newWorkerGit();
+        git.remoteBranches.add("board/card-1");
+        git.claimExpired.add(W1);
+        const card = unplaced("card-1", "a", {
+          placedWorkerId: W1,
+          worktree: { ...readyWorktree("card-1"), path: null, status: "provisioning" },
+        });
+        yield* run({ cards: [card], capacity, git }, (h) =>
+          Effect.gen(function* () {
+            yield* h.pumpDomain(movedToBuilding(card, 1));
+            assert.include(git.log, `${W1}:provision-from-remote`);
+            // The claim expired: the branch record stays for the next placement to resume.
+            const after = yield* cardIn(h, "card-1");
+            assert.strictEqual(after.worktree?.status, "reclaimed");
+            assert.strictEqual(after.worktree?.branch, "board/card-1");
+          }),
+        );
+      }),
   );
 
   it.effect("a card with a worktree isn't re-placed while its worker exists", () =>
