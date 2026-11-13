@@ -1,8 +1,9 @@
 import type { BoardGroupChildState } from "./boardGroups";
 
 /** A group's pips in the fixed status vocabulary: green done, violet needs
-    you, amber blocked or held by an offline worker, solid blue an agent on it, hatched blue queued for a
-    slot, grey not started. Static: no pip animates. */
+    you, amber blocked or held by an offline worker, solid blue an agent on
+    it, hatched blue queued for a slot, grey not started. Static: no pip
+    animates. */
 export const BOARD_GROUP_PIP_CLASS: Record<BoardGroupChildState, string> = {
   done: "bg-success",
   waiting: "bg-attention",

@@ -146,8 +146,7 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   stripes over a faint blue tint instead, so a busy board doesn't read as four builds when two are
   waiting. A card held by an offline worker is neither: no slot will start it, so its chip is
   amber, matching the worker's own notice, but it is not counted or named as blocked, because the
-  card itself isn't. Violet, amber, green and grey keep their meanings, and no
-  chip moves.
+  card itself isn't. Violet, amber, green and grey keep their meanings, and no chip moves.
 - **The Summary pane's Heads-up tags and check tiles follow it too.** Plan change is violet (it
   waits on a human's read), Not done is amber, and Shortcut is neutral, never blue, because blue
   means running. A failing check tile is amber, not red.

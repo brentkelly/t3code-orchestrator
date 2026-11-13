@@ -237,6 +237,8 @@ describe("boardGroupCardVm", () => {
     const queuedLeaf = child("l-2", "building", "i-1", { queued: true });
     expect(rollUp(queuedLeaf, child("l-3", "planning", "i-1"))).toEqual(["queued"]);
     expect(rollUp(queuedLeaf, child("l-3", "building", "i-1"))).toEqual(["running"]);
+    const heldLeaf = child("l-4", "building", "i-1", { queued: true, queuedBy: "worker-offline" });
+    expect(rollUp(queuedLeaf, child("l-3", "building", "i-1"), heldLeaf)).toEqual(["held"]);
   });
 
   it("is null for a leaf", () => {
