@@ -375,7 +375,7 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
       assert.deepStrictEqual(left, { rows: 0, keys: 0 });
     }),
   );
-  it.effect("migration 068 re-prices the usage the backfill can rebuild, and drops the rest", () =>
+  it.effect("migration 069 re-prices the usage the backfill can rebuild, and drops the rest", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const { cardId, threadId, projectId } = yield* seedLinkedThread("reprice");
@@ -431,8 +431,8 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-usage-"))("board usage re
         VALUES (${BOARD_USAGE_BACKFILL_MARKER}, 1, ${t0})
       `;
 
-      const migration = BOARD_MIGRATIONS.find(([id]) => id === 68);
-      assert.ok(migration, "migration 068 is registered in the lineage");
+      const migration = BOARD_MIGRATIONS.find(([id]) => id === 69);
+      assert.ok(migration, "migration 069 is registered in the lineage");
       yield* migration[2];
       yield* withRecorder(Effect.flatMap(BoardUsageRecorder, (recorder) => recorder.backfill));
 
