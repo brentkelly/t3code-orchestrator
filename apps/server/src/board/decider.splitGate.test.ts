@@ -64,6 +64,7 @@ function makeCard(
     autoMergeSetting: null,
     autoMergeHold: null,
     mergeStrategy: null,
+    priority: "normal",
     pinnedWorkerId: null,
     placedWorkerId: null,
     workerMove: null,
@@ -362,10 +363,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("split gate (T3O-
           parent: {
             splitRationale: WHY,
             splitRecommendation: { autoBuild: false, mergeTarget: "inherit" },
+            priority: "urgent",
           },
           plans: [makePlan({ key: "p1", ordinal: 0 }), makePlan({ key: "p2", ordinal: 1 })],
         }),
       );
+      // Children copy the parent's priority; the parent, now a group, has none (T3O-95).
+      expect(createdEvents(events).map((event) => event.payload.priority)).toEqual([
+        "urgent",
+        "urgent",
+      ]);
+      expect(approvedEvent(events).payload.card.priority).toBe("normal");
       // Children and the approval record only: no move, no step.
       expect(events.map((event) => event.type)).toEqual([
         "board.card-created",
