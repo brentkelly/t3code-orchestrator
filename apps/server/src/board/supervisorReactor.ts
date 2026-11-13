@@ -1485,7 +1485,6 @@ const make = Effect.gen(function* () {
       }
       if (placement.kind === "held") {
         lastHold = placement.hold;
-        notePlacementRejection(card.id, candidate.workerId, placement.hold.queuedBy, yield* nowIso);
         continue;
       }
       if (placement.kind === "unavailable") continue;
@@ -1545,7 +1544,6 @@ const make = Effect.gen(function* () {
         charge(-1);
         continue;
       }
-      placementRejections.delete(String(card.id));
       // T3o: placed: its other holds go at once; the provision consumes this one (T3O-87).
       yield* releaseCardHolds(String(card.id), candidate.workerId);
       // Observe the provision dispatch: a rejected command (e.g. the worktree is
@@ -1721,12 +1719,6 @@ const make = Effect.gen(function* () {
       excluded: claimFor.force ? new Set() : new Set(heldForOthers.keys()),
       heldByCard,
     });
-    const at = yield* nowIso;
-    for (const verdict of result.verdicts) {
-      if (verdict.ineligible !== null) {
-        notePlacementRejection(card.id, verdict.workerId, verdict.ineligible, at);
-      }
-    }
     const context = {
       facts,
       profile,
@@ -2007,7 +1999,6 @@ const make = Effect.gen(function* () {
       profile: context.profile,
       kind: "placement",
     };
-    const at = yield* nowIso;
     for (const workerId of [...ask, ...signal]) {
       // A later card's hold passes to this one only if this request succeeds.
       const later = ask.includes(workerId) ? laterHolderOn(card, workerId, pass) : null;
@@ -2018,7 +2009,6 @@ const make = Effect.gen(function* () {
       if (answer === null) continue;
       if (answer.outcome === "refused") {
         if (holding.has(workerId)) forgetHold(card.id, workerId);
-        notePlacementRejection(card.id, workerId, `hold:${answer.reason}`, at);
         continue;
       }
       // A signal granted while the board is at its limit is released at once.
@@ -2050,25 +2040,6 @@ const make = Effect.gen(function* () {
           blocksWorker: false,
         } satisfies CapacityHold);
   });
-
-  /** T3o: the last reason each worker turned a queued card down, for its waiting popover. */
-  const placementRejections = new Map<
-    string,
-    Map<BoardWorkerId, { readonly reason: string; readonly at: string }>
-  >();
-  const notePlacementRejection = (
-    cardId: BoardCardId,
-    workerId: BoardWorkerId,
-    reason: string,
-    at: string,
-  ) => {
-    let byWorker = placementRejections.get(String(cardId));
-    if (byWorker === undefined) {
-      byWorker = new Map();
-      placementRejections.set(String(cardId), byWorker);
-    }
-    byWorker.set(workerId, { reason, at });
-  };
 
   /** A provision's claim as the card recorded it, for a resumed provision (T3O-86). */
   const persistedProvisionClaim = Effect.fn("board-supervisor-persistedProvisionClaim")(function* (
@@ -11818,6 +11789,12 @@ const make = Effect.gen(function* () {
         },
         until: null,
       });
+    }
+    // Only a waiting card can be adopted again, so its guard goes with its wait.
+    for (const key of Array.from(releasedHolds.keys())) {
+      if (!stillWaiting(board, key.slice(0, key.lastIndexOf("|")), "grow")) {
+        releasedHolds.delete(key);
+      }
     }
   }).pipe(
     Effect.catchCause((cause) =>
