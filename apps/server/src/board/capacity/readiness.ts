@@ -9,6 +9,7 @@ import * as NodePath from "node:path";
 
 import {
   BOARD_CAPACITY_LOG_MAX_BYTES,
+  normalizeBoardReadinessPath,
   type BoardWorkerCheckReadinessInput,
   type BoardWorkerReadiness,
 } from "@t3tools/contracts";
@@ -145,6 +146,18 @@ export const makeReadiness = (deps: {
     before: BoardWorkerReadiness,
   ) {
     const { repositoryKey, projectId, path } = entry.readiness;
+    if (normalizeBoardReadinessPath(path) === null) {
+      // Never read as "no script": that would count the worker ready.
+      entry.readiness = {
+        ...whose(repositoryKey, projectId),
+        path,
+        state: "not-ready",
+        version: null,
+        checkedAt: yield* nowIso,
+        lastLine: "The readiness script's path must be relative and inside the repository.",
+      };
+      return entry.readiness;
+    }
     const checkout = yield* deps.git.checkout(repositoryKey, projectId);
     if (checkout === null) {
       entry.readiness = { ...entry.readiness, state: "not-set-up" };

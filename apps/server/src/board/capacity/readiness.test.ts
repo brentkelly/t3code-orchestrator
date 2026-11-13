@@ -99,6 +99,9 @@ it.effect("no script means ready; no checkout means not set up", () =>
     const other = makeHarness();
     other.state.checkout = null;
     assert.strictEqual((yield* other.readiness.check("board-a", input)).state, "not-set-up");
+    // A path outside the repository is not "no script": it never reads ready.
+    const outside = yield* readiness.check("board-a", { ...input, path: "../ready.sh" });
+    assert.strictEqual(outside.state, "not-ready");
   }),
 );
 
