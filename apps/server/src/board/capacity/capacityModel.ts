@@ -152,7 +152,7 @@ export function heldByBoard(
 }
 
 /** Disk the burst of recent placements will still fill: unsettled records' unfilled
-    profile, plus unconsumed placement claims. */
+    profile, plus the disk unconsumed claims add. */
 function pendingDiskGB(state: CapacityState, now: number): number {
   let pending = 0;
   for (const record of state.records) {
@@ -160,7 +160,7 @@ function pendingDiskGB(state: CapacityState, now: number): number {
     pending += Math.max(0, record.profile.diskGB - (record.measuredDiskGB ?? 0));
   }
   for (const reservation of liveReservations(state, now)) {
-    if (reservation.kind === "placement") pending += reservation.load.diskGB;
+    pending += reservation.load.diskGB;
   }
   return round2(pending);
 }
@@ -350,7 +350,8 @@ export function decideClaim(
     };
   }
 
-  // A grow: CPU and RAM only, never disk, for a card already here.
+  // A grow, for a card already here: CPU and RAM, plus disk only while the record is
+  // unsettled (a settled record's disk is never regrown, see applySyncCards).
   if (record === undefined) {
     return {
       result: denied("capacity", { detail: "The card has no worktree on this worker." }),
@@ -361,14 +362,20 @@ export function decideClaim(
   const load: BoardResourceProfile = {
     cpuCores: Math.max(0, input.profile.cpuCores - (heavyNow ? record.profile.cpuCores : 0)),
     ramGiB: Math.max(0, input.profile.ramGiB - (heavyNow ? record.profile.ramGiB : 0)),
-    diskGB: 0,
+    diskGB:
+      record.settled || record.diskFromMeasurement
+        ? 0
+        : Math.max(0, input.profile.diskGB - record.profile.diskGB),
   };
   if (input.force !== true) {
     if (headroom.over.cpuRam) {
       const dimension = headroom.held.cpuCores > context.declared.cpuCores ? "cpu" : "ram";
       return { result: denied("capacity", { dimension }), state: current };
     }
-    const short = firstShort(load, headroom.offered, ["cpu", "ram"]);
+    if (load.diskGB > 0 && headroom.over.disk) {
+      return { result: denied("capacity", { dimension: "disk" }), state: current };
+    }
+    const short = firstShort(load, headroom.offered);
     if (short !== null) return { result: denied("capacity", { dimension: short }), state: current };
   }
   return {

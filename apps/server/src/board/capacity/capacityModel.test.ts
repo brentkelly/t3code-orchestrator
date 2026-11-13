@@ -556,6 +556,27 @@ describe("syncCards", () => {
     expect(state.records[0]?.profile.diskGB).toBe(20);
   });
 
+  it("a grow judges an unsettled card's larger disk, never a settled one's", () => {
+    // 20 GB placed, 170 GB held by another card: 10 GB of declared disk is left.
+    let state = placed(EMPTY_CAPACITY_STATE, "board-a", "card-1");
+    state = placed(state, "board-b", "card-b", { ...card, diskGB: 170 });
+    const bigger = { ...card, diskGB: 40 };
+    const grow = (from: CapacityState) =>
+      decideClaim(from, claim({ kind: "grow", claimId: "g", profile: bigger }), context());
+    expect(grow(state).result).toMatchObject({ outcome: "denied", dimension: "disk" });
+    const within = decideClaim(
+      state,
+      claim({ kind: "grow", claimId: "g", profile: { ...card, diskGB: 30 } }),
+      context(),
+    );
+    expect(within.result.outcome).toBe("granted");
+    const settled = sync(state, {
+      seq: 2,
+      cards: [entry({ worktreePath: "/w/card-1", settled: true })],
+    }).state;
+    expect(grow(settled).result.outcome).toBe("granted");
+  });
+
   it("forgetting a board drops its records and claims only", () => {
     let state = placed(EMPTY_CAPACITY_STATE, "board-a", "card-1");
     state = decideClaim(state, claim({ cardId: "card-2", claimId: "c2" }), context()).state;
