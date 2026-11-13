@@ -53,7 +53,9 @@ const makeMachine = () => {
         controlGroup: (threadId) => Effect.sync(() => threadGroups.get(threadId) ?? null),
       }),
     );
-  return { set, threadGroups, provide };
+  /** A scope that ended: its files are gone. */
+  const drop = (group: string) => void files.delete(group);
+  return { set, drop, threadGroups, provide };
 };
 
 it.effect(
@@ -139,5 +141,42 @@ it.effect("a CI pass is wrapped in scopes of its own, sampled across its steps",
       peakRamBytes: 7 * GiB,
       ioReadBytes: 4096,
     });
+  }).pipe(machine.provide, Effect.provide(TestClock.layer()));
+});
+
+it.effect("a thread's next session is counted from 0, not against its last session", () => {
+  const machine = makeMachine();
+  return Effect.gen(function* () {
+    machine.threadGroups.set("t1", "/agent/t1-a");
+    machine.set("/agent/t1-a", 100, 1);
+    const meter = yield* makeBoardActualsMeter;
+    const read = { op: "read", key: "thread:t1", threadId: "t1" } as const;
+    yield* meter.relay(read);
+    yield* TestClock.adjust("5 seconds");
+    machine.set("/agent/t1-a", 130, 1);
+    yield* meter.tick;
+    // The session ends and a new one starts in a scope of its own, its counters from 0.
+    machine.drop("/agent/t1-a");
+    machine.threadGroups.set("t1", "/agent/t1-b");
+    machine.set("/agent/t1-b", 40, 1);
+    yield* TestClock.adjust("5 seconds");
+    yield* meter.tick;
+    const reading = yield* meter.relay(read);
+    assert.strictEqual(reading?.cpuCoreSeconds, 30 + 40);
+  }).pipe(machine.provide, Effect.provide(TestClock.layer()));
+});
+
+it.effect("a CI step shorter than a tick is measured, from its first second", () => {
+  const machine = makeMachine();
+  return Effect.gen(function* () {
+    const meter = yield* makeBoardActualsMeter;
+    yield* meter.tap("ci:run-1").wrap("pnpm fmt");
+    // The step's scope has run for a second when it is first seen, and is gone before a tick.
+    machine.set("/ci/1", 3, 1);
+    yield* TestClock.adjust("1 second");
+    machine.drop("/ci/1");
+    yield* meter.finish("ci:run-1");
+    const ended = yield* meter.relay({ op: "end", key: "ci:run-1" });
+    assert.include(ended, { measured: true, cpuCoreSeconds: 3 });
   }).pipe(machine.provide, Effect.provide(TestClock.layer()));
 });

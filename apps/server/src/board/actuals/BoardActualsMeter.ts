@@ -15,6 +15,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
 
 import { BoardMachine } from "../capacity/machine.ts";
 import { BoardCgroupReader } from "./cgroupReader.ts";
@@ -52,9 +53,22 @@ export class BoardActualsMeter extends Context.Service<BoardActualsMeter, BoardA
   "t3/board/actuals/BoardActualsMeter",
 ) {}
 
-type Source =
-  | { readonly kind: "thread"; readonly threadId: string; cgroup: string | null }
-  | { readonly kind: "unit"; readonly unit: string; cgroup: string | null };
+/** Ticks a wrapped unit is looked up for before it is taken as gone: a short step's unit may
+    have exited before any tick saw it. */
+const UNIT_RESOLVE_TRIES = 3;
+
+/** One early sample after a command is wrapped, so a step shorter than a tick is measured. */
+const EARLY_SAMPLE_MS = 1_000;
+
+type Source = (
+  | { readonly kind: "thread"; readonly threadId: string }
+  | { readonly kind: "unit"; readonly unit: string }
+) & {
+  cgroup: string | null;
+  /** Groups resolved after the first: a thread's next session, created within the step. */
+  resolved: number;
+  tries: number;
+};
 
 interface Entry {
   readonly sources: Map<string, Source>;
@@ -68,6 +82,7 @@ export const makeBoardActualsMeter = Effect.gen(function* () {
   const reader = yield* BoardCgroupReader;
   const machine = yield* BoardMachine;
   const entries = new Map<string, Entry>();
+  const ticking = yield* Semaphore.make(1);
 
   const sampleOf = Effect.fnUntraced(function* (controlGroup: string) {
     const [cpuStat, memoryStat, ioStat] = yield* Effect.all([
@@ -83,22 +98,38 @@ export const makeBoardActualsMeter = Effect.gen(function* () {
       ? (agentScope.controlGroup?.(source.threadId) ?? Effect.succeed(null))
       : reader.unitControlGroup(source.unit);
 
-  // Untraced: every running key, every 5 s.
+  const lookUp = Effect.fnUntraced(function* (source: Source) {
+    source.tries += 1;
+    source.cgroup = yield* resolve(source);
+    if (source.cgroup !== null) source.resolved += 1;
+  });
+
+  // Untraced: every running key, every 5 s. One at a time: an early sample may race a tick.
   const tickEntry = Effect.fnUntraced(function* (entry: Entry) {
     const atMs = yield* Clock.currentTimeMillis;
     const samples = new Map<string, CgroupSample | null>();
+    const fresh = new Set<string>();
     for (const [id, source] of entry.sources) {
-      source.cgroup ??= yield* resolve(source);
+      if (
+        source.cgroup === null &&
+        (source.kind === "thread" || source.tries < UNIT_RESOLVE_TRIES)
+      ) {
+        yield* lookUp(source);
+      }
       let sample = source.cgroup === null ? null : yield* sampleOf(source.cgroup);
       // A thread's next session gets a new scope: look its group up again.
       if (sample === null && source.kind === "thread" && source.cgroup !== null) {
-        source.cgroup = yield* resolve(source);
+        yield* lookUp(source);
         sample = source.cgroup === null ? null : yield* sampleOf(source.cgroup);
       }
-      samples.set(id, sample);
+      if (source.cgroup === null) continue;
+      // Each group its own source: a new session's counters restart at 0.
+      const sampleId = `${id}@${source.cgroup}`;
+      samples.set(sampleId, sample);
+      if (source.kind === "unit" || source.resolved > 1) fresh.add(sampleId);
     }
-    entry.accumulator.addTick(atMs, samples);
-  });
+    entry.accumulator.addTick(atMs, samples, fresh);
+  }, ticking.withPermits(1));
 
   const tick = Effect.gen(function* () {
     for (const entry of entries.values()) {
@@ -134,7 +165,13 @@ export const makeBoardActualsMeter = Effect.gen(function* () {
       if (entry === undefined) {
         if (input.op === "end" || input.threadId === undefined) return null;
         entry = newEntry(input.seen === true);
-        entry.sources.set("thread", { kind: "thread", threadId: input.threadId, cgroup: null });
+        entry.sources.set("thread", {
+          kind: "thread",
+          threadId: input.threadId,
+          cgroup: null,
+          resolved: 0,
+          tries: 0,
+        });
         entries.set(input.key, entry);
         yield* tickEntry(entry);
       }
@@ -165,7 +202,18 @@ export const makeBoardActualsMeter = Effect.gen(function* () {
       }
       // A later segment of the same pass adds to it.
       entry.running = true;
-      entry.sources.set(launch.unit, { kind: "unit", unit: launch.unit, cgroup: null });
+      entry.sources.set(launch.unit, {
+        kind: "unit",
+        unit: launch.unit,
+        cgroup: null,
+        resolved: 0,
+        tries: 0,
+      });
+      const wrapped = entry;
+      yield* Effect.sleep(EARLY_SAMPLE_MS).pipe(
+        Effect.andThen(Effect.suspend(() => (wrapped.running ? tickEntry(wrapped) : Effect.void))),
+        Effect.forkDetach,
+      );
       return { command: launch.command, args: launch.args };
     }),
   });

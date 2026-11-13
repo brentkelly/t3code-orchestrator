@@ -81,16 +81,32 @@ export class ActualsAccumulator {
   private peakRamBytes: number | null = null;
   private sampleCount = 0;
 
-  /** One tick: each source's sample now, or null when its files can't be read. */
-  addTick(atMs: number, samples: ReadonlyMap<string, CgroupSample | null>): void {
+  /**
+   * One tick: each source's sample now, or null when its files can't be read. A `fresh` source
+   * is a group created for this step, so its counters started at 0 with it: nothing it did
+   * before its first sample is lost.
+   */
+  addTick(
+    atMs: number,
+    samples: ReadonlyMap<string, CgroupSample | null>,
+    fresh: ReadonlySet<string> = new Set(),
+  ): void {
     let ramNow: number | null = null;
     let any = false;
     for (const [id, sample] of samples) {
       if (sample === null) continue;
       any = true;
       const held = this.sources.get(id);
-      if (held === undefined) this.sources.set(id, { first: sample, last: sample });
-      else held.last = sample;
+      if (held === undefined) {
+        const first = fresh.has(id)
+          ? {
+              cpuUsec: sample.cpuUsec === null ? null : 0,
+              ramBytes: sample.ramBytes,
+              io: sample.io === null ? null : { read: 0, write: 0 },
+            }
+          : sample;
+        this.sources.set(id, { first, last: sample });
+      } else held.last = sample;
       if (sample.ramBytes !== null) ramNow = (ramNow ?? 0) + sample.ramBytes;
     }
     if (!any) return;
