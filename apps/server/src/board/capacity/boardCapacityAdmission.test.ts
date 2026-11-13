@@ -116,7 +116,14 @@ const harness = (initial: BoardState, now: { ms: number }, permission = false) =
                 grantedAt: before?.grantedAt ?? iso(now.ms),
                 settled: command.settled ?? before?.settled ?? false,
               };
-              return { ...card, resources: { sizing: null, setup: null, grant: next } };
+              return {
+                ...card,
+                resources: {
+                  sizing: card.resources?.sizing ?? null,
+                  setup: card.resources?.setup ?? null,
+                  grant: next,
+                },
+              };
             }),
           }));
           return true;
@@ -307,6 +314,69 @@ it.effect("a turn the board didn't start makes a light card heavy with no claim"
     now.ms += 1;
     yield* h.admission.sweep();
     assert.isFalse((yield* h.grantOf("a"))?.heavy);
+  }),
+);
+
+it.effect("a size change reaches a placed card: grows in the background, shrinks at once", () =>
+  Effect.gen(function* () {
+    const now = { ms: T0 };
+    const sized = (id: string, letter: "S" | "L", overrides: Partial<BoardCardGrant> = {}) => {
+      const card = granted(id, overrides);
+      return {
+        ...card,
+        resources: {
+          ...card.resources!,
+          sizing: {
+            planner: null,
+            edit: { size: { cpu: letter, ram: "M", disk: letter }, by: "human" },
+          },
+        },
+      } as BoardCard;
+    };
+    const h = yield* harness(
+      boardWith([
+        sized("big", "L", { settled: true }),
+        sized("small", "S"),
+        sized("idle", "L", { heavy: false }),
+      ]),
+      now,
+    );
+    yield* h.admission.syncAll();
+    // Another board holds the rest of the cores: the grow is refused, and nothing is queued.
+    h.fake.external.set(BOARD_LOCAL_WORKER_ID, { cpuCores: 12, ramGiB: 0, diskGB: 0 });
+    yield* h.admission.resizeGrants();
+    // L is 2.5 cores; a settled record's disk is never regrown.
+    assert.deepStrictEqual((yield* h.grantOf("big"))?.profile, {
+      cpuCores: 2,
+      ramGiB: 4,
+      diskGB: 5,
+    });
+    assert.deepStrictEqual((yield* h.grantOf("small"))?.profile, {
+      cpuCores: 1.5,
+      ramGiB: 4,
+      diskGB: 3.75,
+    });
+    // A light card holds no CPU: its next grow claims the larger profile.
+    assert.deepStrictEqual((yield* h.grantOf("idle"))?.profile, {
+      cpuCores: 2.5,
+      ramGiB: 4,
+      diskGB: 6.25,
+    });
+    // Room frees: the next pass grows it.
+    h.fake.external.delete(BOARD_LOCAL_WORKER_ID);
+    yield* h.admission.resizeGrants();
+    assert.deepStrictEqual((yield* h.grantOf("big"))?.profile, {
+      cpuCores: 2.5,
+      ramGiB: 4,
+      diskGB: 5,
+    });
+    assert.deepStrictEqual(
+      h.fake.claims.map((claim) => [claim.cardId, claim.kind]),
+      [
+        ["big", "grow"],
+        ["big", "grow"],
+      ],
+    );
   }),
 );
 

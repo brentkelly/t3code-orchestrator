@@ -4,6 +4,8 @@
  */
 import {
   BOARD_LOCAL_WORKER_ID,
+  BOARD_RESOURCE_DIMENSIONS,
+  boardResourceProfileValue,
   boardStepWaitsForRoom,
   boardCardEffectiveWorkerId,
   boardCardRequestedProfile,
@@ -396,6 +398,86 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     yield* syncWorker(card.placedWorkerId ?? cardWorkerOf(board, card));
   });
 
+  /**
+   * A size or baseline change reaches a placed card's grant: a shrink applies at once, an
+   * increase on a heavy card is a background grow, retried each pass until granted, and never
+   * queues a step. A light card's CPU and RAM are claimed when it next goes heavy. A settled
+   * record's disk is never regrown, and no grow is asked above the worker's declared capacity.
+   */
+  const resizeGrants = Effect.fn("BoardCapacityAdmission.resizeGrants")(function* () {
+    const board = yield* deps.readBoard;
+    for (const card of board.cards) {
+      const grant = card.resources?.grant ?? null;
+      if (grant === null || card.archivedAt !== null || isGroup(card)) continue;
+      const requested = requestedProfileOf(board, card);
+      const want: BoardResourceProfile = {
+        ...requested,
+        diskGB: grant.settled ? Math.min(requested.diskGB, grant.profile.diskGB) : requested.diskGB,
+      };
+      const shrunk: BoardResourceProfile = {
+        cpuCores: Math.min(want.cpuCores, grant.profile.cpuCores),
+        ramGiB: Math.min(want.ramGiB, grant.profile.ramGiB),
+        diskGB: Math.min(want.diskGB, grant.profile.diskGB),
+      };
+      const grows = BOARD_RESOURCE_DIMENSIONS.some(
+        (dimension) =>
+          boardResourceProfileValue(want, dimension) >
+          boardResourceProfileValue(grant.profile, dimension),
+      );
+      const workerId = card.placedWorkerId ?? cardWorkerOf(board, card);
+      if (grows && grant.heavy) {
+        const declared = (yield* deps.client.latest(workerId))?.declared ?? null;
+        const fits =
+          declared !== null &&
+          BOARD_RESOURCE_DIMENSIONS.every(
+            (dimension) =>
+              boardResourceProfileValue(want, dimension) <=
+              boardResourceProfileValue(declared, dimension),
+          );
+        if (fits) {
+          const answer = yield* claimOn(workerId, {
+            claimId: `${card.id}:grow:${yield* nowMs}`,
+            cardId: card.id,
+            repositoryKey: yield* deps.repositoryKey(card.projectId),
+            kind: "grow",
+            profile: want,
+            providerInstanceId: null,
+          });
+          if (answer.outcome === "granted") {
+            yield* deps.dispatch({
+              type: "board.card.record-grant",
+              commandId: yield* deps.commandId("resize"),
+              cardId: card.id,
+              profile: want,
+              createdAt: yield* deps.nowIso,
+            });
+            yield* syncWorker(workerId);
+            continue;
+          }
+        }
+      }
+      // A light card holds no CPU or RAM: its larger profile is what its next grow claims.
+      const next = grows && !grant.heavy ? want : shrunk;
+      if (
+        BOARD_RESOURCE_DIMENSIONS.every(
+          (dimension) =>
+            boardResourceProfileValue(next, dimension) ===
+            boardResourceProfileValue(grant.profile, dimension),
+        )
+      ) {
+        continue;
+      }
+      yield* deps.dispatch({
+        type: "board.card.record-grant",
+        commandId: yield* deps.commandId("resize"),
+        cardId: card.id,
+        profile: next,
+        createdAt: yield* deps.nowIso,
+      });
+      yield* syncWorker(workerId);
+    }
+  });
+
   /** A turn the board didn't start ended: the card's ten-minute tail starts now. */
   const noteTurnEnded = Effect.fn("BoardCapacityAdmission.noteTurnEnded")(function* (
     threadId: string,
@@ -575,6 +657,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     ensureHeavy,
     recordUnstartedTurn,
     noteTurnEnded,
+    resizeGrants,
     noteStepEnded,
     sweep,
     releaseForWaiting,

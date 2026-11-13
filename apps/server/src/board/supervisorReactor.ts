@@ -2658,7 +2658,10 @@ const make = Effect.gen(function* () {
     // Queued CI passes go first: whatever freed a slot (a step settling, a
     // pass ending) runs this pass, and CI cards are later-stage than any step.
     // T3o: a parked or finished card's room reaches the queue now (T3O-86).
-    if (Option.isSome(capacityAdmission)) yield* capacityAdmission.value.releaseForWaiting();
+    if (Option.isSome(capacityAdmission)) {
+      yield* capacityAdmission.value.releaseForWaiting();
+      yield* capacityAdmission.value.resizeGrants();
+    }
     yield* ciPasses.admitQueued;
     for (const [cardId, waiting] of [...ciWaitingForRoom]) {
       const card = (yield* readBoard).cards.find((candidate) => candidate.id === cardId);
