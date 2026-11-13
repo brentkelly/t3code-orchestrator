@@ -3,7 +3,7 @@
  * functions of what the board knows about each worker, so the rules are tested as a table.
  */
 import {
-  BOARD_LOCAL_WORKER_ID,
+  boardThreadLinkWorkerId,
   boardReadinessIsFor,
   type BoardCard,
   type BoardState,
@@ -368,9 +368,11 @@ export function boardBuildHistory(input: {
       completion.threadId === null
         ? undefined
         : card.threadLinks.find((candidate) => candidate.threadId === completion.threadId);
+    // Where an unlinked build ran is unknown: it warms no worker.
+    if (link === undefined) continue;
     const at = Date.parse(completion.completedAt);
     if (Number.isNaN(at)) continue;
-    builds.push({ workerId: link?.workerId ?? BOARD_LOCAL_WORKER_ID, at });
+    builds.push({ workerId: boardThreadLinkWorkerId(link), at });
   }
   return builds;
 }

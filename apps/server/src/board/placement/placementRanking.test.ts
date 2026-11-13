@@ -207,6 +207,8 @@ describe("placement ranking (T3O-87)", () => {
           completion("failed", "building", "failed", "t-failed"),
           completion("other-repo", "building", "succeeded", "t-other"),
           completion("here", "building", "succeeded", "t-here"),
+          // Its thread link is gone: where it ran is unknown, so it warms nothing.
+          completion("built", "building", "succeeded", "t-unlinked"),
         ],
       },
       buildStageId: "building",
