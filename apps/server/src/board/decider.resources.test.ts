@@ -274,6 +274,38 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("card sizes", (it
       assert.deepStrictEqual(config?.resources, { ...resources, readinessPath: ".t3/ready.sh" });
       const refused = yield* decideFail(set("../outside.sh"), model);
       assert.include(String(refused), "inside the repository");
+
+      // T3O-87: the board's learned baseline lands without moving the version, and a human's
+      // later edit (or Pin declared) never overwrites it.
+      const dimension = { value: 9, samples: 6, history: [9] };
+      const learned = { computedAt: NOW, cpu: dimension, ram: dimension, disk: dimension };
+      const before = boardProjectStageConfig(model.board!, projectId)!.version;
+      for (const event of yield* decideEvents(
+        {
+          type: "board.project.record-learned",
+          commandId: CommandId.make("cmd-learned"),
+          projectId,
+          learned,
+          createdAt: NOW,
+        },
+        model,
+      )) {
+        model = yield* projectBoardEvent(model, { ...event, sequence: 2 } as never);
+      }
+      assert.strictEqual(boardProjectStageConfig(model.board!, projectId)?.version, before);
+      const pinned: BoardCommand = {
+        type: "board.project.set-resources",
+        commandId: CommandId.make("cmd-pin"),
+        projectId,
+        resources: { ...resources, readinessPath: null, pinDeclared: ["cpu"] },
+        createdAt: NOW,
+      };
+      for (const event of yield* decideEvents(pinned, model)) {
+        model = yield* projectBoardEvent(model, { ...event, sequence: 3 } as never);
+      }
+      const after = boardProjectStageConfig(model.board!, projectId)?.resources;
+      assert.deepStrictEqual(after?.learned, learned);
+      assert.deepStrictEqual(after?.pinDeclared, ["cpu"]);
     }),
   );
 

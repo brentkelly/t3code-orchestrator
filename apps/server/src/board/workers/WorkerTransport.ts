@@ -409,5 +409,6 @@ const makeLiveGatewayRpc = (
     checkReadiness: (input) => call({ _tag: "checkReadiness", input }),
     readinessOutput: (repositoryKey, path) =>
       call({ _tag: "readinessOutput", repositoryKey, path }),
+    actuals: (input) => call({ _tag: "actuals", input }),
   };
 };

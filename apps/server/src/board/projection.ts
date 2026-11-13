@@ -105,6 +105,8 @@ import {
   cardUsageSummary,
   listCardUsageRows,
 } from "./usage/boardUsageStore.ts";
+// T3o: measured actuals (T3O-87).
+import { listCardActualsRows } from "./actuals/boardActualsStore.ts";
 import { makeBoardEventStore } from "./boardEventStore.ts";
 import {
   boardCardFromCreatedPayload,
@@ -2639,6 +2641,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardUsageSummaries: () => allCardUsageSummaries(sql),
     listBoardCardUsageRows: (cardId: BoardCardId) => listCardUsageRows(sql, cardId),
     findBoardCardUsageHistoryPartial: (cardId: BoardCardId) => cardUsageHistoryPartial(sql, cardId),
+    // T3o: a card's measured actuals (T3O-87), in their own store.
+    listBoardCardActualsRows: (cardId: BoardCardId) => listCardActualsRows(sql, cardId),
     upsertBoardCardRow,
     listBoardCardRows,
     listBoardCardThreadLinkRows,
@@ -4415,6 +4419,7 @@ function makeBoardCardDetailLoader(
       queries.listBoardCiPassRowsForCard(cardId),
       queries.listBoardCardUsageRows(cardId),
       queries.findBoardCardUsageHistoryPartial(cardId),
+      queries.listBoardCardActualsRows(cardId),
     ]).pipe(
       Effect.map(
         ([
@@ -4435,6 +4440,7 @@ function makeBoardCardDetailLoader(
           ciPassRows,
           usageRows,
           usageHistoryPartial,
+          actualsRows,
         ]) => {
           if (Option.isNone(cardRow)) return null;
           const links = sortBoardCardThreadLinks(
@@ -4510,6 +4516,7 @@ function makeBoardCardDetailLoader(
             decisions: decisionRows,
             usage: usageRows,
             usageHistoryPartial,
+            actuals: actualsRows,
             // Filled below for a sub-board child; a top-level card has no
             // parent to inherit from and keeps the null.
             parentModelOverrides: null,

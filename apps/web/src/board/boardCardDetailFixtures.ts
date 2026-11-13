@@ -108,6 +108,7 @@ export function detail(
     ciPasses: [],
     usage: edges?.usage ?? [],
     usageHistoryPartial: edges?.usageHistoryPartial ?? false,
+    actuals: [],
   };
 }
 

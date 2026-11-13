@@ -57,11 +57,14 @@ import {
   BoardCardSetupResult,
   BoardCardSize,
   BoardCardSizeEditor,
+  BoardProjectLearned,
   BoardProjectResources,
   BoardResourceDimension,
   BoardResourceProfile,
+  boardProjectResourcesWithoutLearned,
   isEmptyBoardProjectResources,
 } from "./boardCapacity.ts";
+import { BoardCardActualsRow } from "./boardActuals.ts";
 import {
   BOARD_WORKER_GIT_CALL_RPC_SCOPES,
   BOARD_WORKER_GIT_CALL_RPCS,
@@ -2968,11 +2971,16 @@ export type BoardProjectStageDelta = Pick<
     Runs on every client, so no `crypto`. */
 export function boardProjectConfigVersion(delta: BoardProjectStageDelta): string {
   // Resources join the hash only when set, so every existing version stays as it was.
+  // T3o (T3O-87): what the board learned never moves the version a human's edit expects.
+  const resources =
+    delta.resources === undefined
+      ? undefined
+      : boardProjectResourcesWithoutLearned(delta.resources);
   const text = canonicalJson({
     stageSwitches: delta.stageSwitches,
     overrides: delta.overrides,
     ci: delta.ci,
-    ...(isEmptyBoardProjectResources(delta.resources) ? {} : { resources: delta.resources }),
+    ...(isEmptyBoardProjectResources(resources) ? {} : { resources }),
   });
   let a = 0x811c9dc5;
   let b = 0x01000193 ^ text.length;
@@ -5488,6 +5496,17 @@ export const BoardProjectSetResourcesCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type BoardProjectSetResourcesCommand = typeof BoardProjectSetResourcesCommand.Type;
+
+/** T3o: the board's learned baseline for a project (T3O-87). Server-internal: it never moves
+    the config's version, so a human's edit in flight still lands. */
+export const BoardProjectRecordLearnedCommand = Schema.Struct({
+  type: Schema.Literal("board.project.record-learned"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  learned: BoardProjectLearned,
+  createdAt: IsoDateTime,
+});
+export type BoardProjectRecordLearnedCommand = typeof BoardProjectRecordLearnedCommand.Type;
 
 /** The project's "Stop on failure" CI setting. It applies from the
     next pass; a running pass keeps the setting it started with. */
@@ -8250,6 +8269,8 @@ const BOARD_INTERNAL_COMMANDS = [
   BoardCardRecordGrantCommand,
   BoardCardUndoProvisionCommand,
   BoardCardRecordSetupCommand,
+  // T3o: a project's learned baseline (T3O-87).
+  BoardProjectRecordLearnedCommand,
   // The review loop's server-only carry fields.
   BoardCardSetReviewCarryCommand,
   // The decision log and auto-planning.
@@ -9464,6 +9485,8 @@ export const BoardCardDetail = Schema.Struct({
   usage: Schema.Array(BoardCardUsageRow).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** The card ran on a worker before usage was tracked, so its rows are a lower bound. */
   usageHistoryPartial: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** T3o: the card's measured steps (T3O-87), oldest first. Decodes to `[]` on older payloads. */
+  actuals: Schema.Array(BoardCardActualsRow).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** The card's decision log, oldest first. Decodes to `[]` on
       legacy detail payloads. */
   decisions: Schema.Array(BoardCardDecision).pipe(Schema.withDecodingDefault(Effect.succeed([]))),

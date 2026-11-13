@@ -3259,6 +3259,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("board decider", 
           actor: BOARD_SYSTEM_ACTOR,
           createdAt: NOW,
         },
+        "board.project.record-learned": {
+          type: "board.project.record-learned",
+          commandId: CommandId.make("cmd-project-learned"),
+          projectId: ProjectId.make("project-1"),
+          learned: {
+            computedAt: NOW,
+            cpu: { value: null, samples: 0, history: [] },
+            ram: { value: null, samples: 0, history: [] },
+            disk: { value: null, samples: 0, history: [] },
+          },
+          createdAt: NOW,
+        },
         "board.project.reset": {
           type: "board.project.reset",
           commandId: CommandId.make("cmd-project-reset"),

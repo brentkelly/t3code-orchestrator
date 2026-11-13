@@ -5,6 +5,7 @@
  */
 import {
   boardCardUsageSummaryFromRows,
+  boardCardActualsSummary,
   type BoardCardDetail,
   boardAppendOrderKey,
   boardBuildStepPayloadDefect,
@@ -1269,6 +1270,10 @@ export const boardHandlers = {
         state: entry.state,
       })),
       usage: describeUsage(detail),
+      ...(() => {
+        const actuals = boardCardActualsSummary(detail?.actuals ?? []);
+        return actuals === null ? {} : { actuals };
+      })(),
     };
   }),
 

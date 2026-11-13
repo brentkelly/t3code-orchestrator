@@ -139,6 +139,7 @@ export const unsupportedGateway: WorkerGatewayRpc = (() => {
     readSetupLog: fail,
     checkReadiness: fail,
     readinessOutput: fail,
+    actuals: fail,
   };
 })();
 
@@ -207,6 +208,7 @@ const linkedGateway = (
     readSetupLog: (path) => guard(gateway.readSetupLog(path)),
     checkReadiness: (input) => guard(gateway.checkReadiness(input)),
     readinessOutput: (key, path) => guard(gateway.readinessOutput(key, path)),
+    actuals: (input) => guard(gateway.actuals(input)),
   };
 };
 

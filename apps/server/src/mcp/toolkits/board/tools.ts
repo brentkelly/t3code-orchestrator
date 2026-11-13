@@ -12,6 +12,7 @@ import {
   BoardCardThreadShell,
   BoardCardUsageRow,
   BoardCardUsageSummary,
+  BoardCardActualsSummary,
   BoardCardExternalRef,
   BoardCardPlanReview,
   BoardCardAttachmentId,
@@ -285,6 +286,8 @@ const BoardCardReadResult = Schema.Struct({
   usage: BoardCardToolUsage.pipe(
     Schema.withDecodingDefault(Effect.succeed({ summary: null, rows: [] })),
   ),
+  /** T3o: the card's measured steps (T3O-87): peaks across them; absent when none ran. */
+  actuals: Schema.optionalKey(BoardCardActualsSummary),
 });
 
 const BoardCardListItem = Schema.Struct({

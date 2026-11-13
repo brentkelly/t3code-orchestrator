@@ -94,6 +94,7 @@ function detail(
     ciPasses: [],
     usage: [],
     usageHistoryPartial: false,
+    actuals: [],
   };
 }
 

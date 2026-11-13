@@ -22,6 +22,7 @@ import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
+import { BoardActualsTap, type BoardActualsMeterShape } from "../actuals/BoardActualsMeter.ts";
 import { BoardCiTail, runBoardCiStep } from "../ci/BoardCiRunner.ts";
 import { readLogTail } from "./logTail.ts";
 
@@ -47,7 +48,12 @@ export interface CardSetupDeps {
   readonly gitDir: (worktreePath: string) => Effect.Effect<string | null>;
   /** Replaces the real step runner in tests. */
   readonly runStep?: typeof runBoardCiStep;
+  /** T3o (T3O-87): measures the setup script in its own scope, under `setup:<worktree>`. */
+  readonly actuals?: Pick<BoardActualsMeterShape, "tap" | "finish">;
 }
+
+/** The meter key a card's setup run is measured under on its worker. */
+export const boardSetupActualsKey = (worktreePath: string) => `setup:${worktreePath}`;
 
 const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
@@ -179,6 +185,16 @@ export const makeCardSetup = (deps: CardSetupDeps) => {
           resultPath: NodePath.join(paths.dir, SETUP_RESULT),
           ciEnvironment: false,
         }).pipe(
+          (step) =>
+            deps.actuals === undefined
+              ? step
+              : step.pipe(
+                  Effect.provideService(
+                    BoardActualsTap,
+                    deps.actuals.tap(boardSetupActualsKey(input.worktreePath)),
+                  ),
+                  Effect.ensuring(deps.actuals.finish(boardSetupActualsKey(input.worktreePath))),
+                ),
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
               const durationMs = (yield* Clock.currentTimeMillis) - started;

@@ -32,6 +32,7 @@ import {
   BoardWorkerRunSetupInput,
   BoardWorkerSetupState,
 } from "./boardCapacity.ts";
+import { BoardStepReading, BoardWorkerActualsInput } from "./boardActuals.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { RepositoryIdentity } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
@@ -398,6 +399,8 @@ export const BoardGatewayCall = Schema.Union([
     repositoryKey: Schema.NullOr(Schema.String),
     path: Schema.String,
   }),
+  // T3o: a step's measured actuals (T3O-87). An older worker refuses the tag: not measured.
+  Schema.TaggedStruct("actuals", { input: BoardWorkerActualsInput }),
 ]);
 export type BoardGatewayCall = typeof BoardGatewayCall.Type;
 
@@ -432,6 +435,7 @@ export const BOARD_GATEWAY_CALL_RESULTS = {
   readSetupLog: Schema.String,
   checkReadiness: BoardWorkerReadiness,
   readinessOutput: Schema.NullOr(Schema.String),
+  actuals: Schema.NullOr(BoardStepReading),
 } as const satisfies Record<BoardGatewayCall["_tag"], Schema.Top>;
 
 /**

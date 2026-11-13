@@ -25,6 +25,8 @@ import {
   type BoardWorkerRunCiInput,
   type BoardWorkerReadCiLogInput,
   type BoardCiLogItem,
+  type BoardStepReading,
+  type BoardWorkerActualsInput,
   type EnvironmentId,
   type ProjectId,
   type ThreadId,
@@ -133,6 +135,8 @@ export interface WorkerGatewayRpcOf<E> {
     repositoryKey: string | null,
     path: string,
   ) => Effect.Effect<string | null, E>;
+  /** T3o: a step's measured actuals on the worker (T3O-87). */
+  readonly actuals: (input: BoardWorkerActualsInput) => Effect.Effect<BoardStepReading | null, E>;
 }
 
 export type WorkerGatewayRpc = WorkerGatewayRpcOf<WorkerGatewayCallError>;

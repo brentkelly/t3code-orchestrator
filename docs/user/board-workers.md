@@ -156,6 +156,36 @@ A card bigger than its worker's whole capacity says **Too big** and can't be pla
 its size or the project's baseline, or pin it to a bigger worker. The Resources tab warns about
 workers that can't take even an M card of the project.
 
+## Measured resources and learned baselines
+
+On Linux, a worker measures what each card's heavy steps actually used: CPU (core-seconds, and the
+highest one-minute rate), peak RAM, disk reads and writes, and the worktree's size at the end of
+the step. The card's Summary shows them in **Measured**, beside Usage, with the worker each step ran
+on. A running step shows its figures so far. **Partial** means the worker restarted during the step,
+so the figures are a lower bound. The footer compares the card's peak with what it reserved on its
+current worker.
+
+Some steps are **Not measured**, never shown as zero: Codex, Cursor, Grok, OpenCode, Antigravity
+and Kiro steps (only Claude agents run in a space of their own that can be measured), and every
+step on macOS or a machine without systemd. CI passes and setup runs are measured for every
+provider. Measurements are approximate: programs that detach from the agent aren't counted, and a
+memory spike shorter than five seconds can be missed.
+
+The board **learns** each project's baseline from its cards. Each card that had a measured CI pass
+or setup gives one sample per dimension, its largest step scaled to an M card; the learned value is
+the 90th percentile of the last 30 days, once there are at least five cards. In **Settings → Board
+→ Projects → <project> → Resources**, the table shows each dimension's declared and learned values
+and what the planner uses for new placements.
+
+- A learned **increase** applies to new placements, and grows cards already placed in the
+  background when their worker has room. Against a value you declared it's capped at twice that
+  value; against the placeholder or a value set at upgrade it isn't.
+- A learned **decrease** is only offered: **Use learned** writes it as the declared value, which you
+  can edit back.
+- An increase that would leave an M card too big for every ready worker isn't used; the Resources
+  tab shows it as a warning instead.
+- **Pin declared** makes a dimension ignore learning until you switch it off.
+
 ## Setup and readiness
 
 **Setup** runs once for each new worktree, before the card's agent starts: fetch, checkout,
