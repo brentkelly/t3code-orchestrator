@@ -193,6 +193,7 @@ describe("card delete (T3O-23)", () => {
           );
           // The handler finished while the hook is still running: the freed slot
           // already went to the waiting card, and nothing was removed yet.
+          yield* h.reactor.drainScheduling;
           assert.equal(
             boardCardStepState(yield* h.board, BoardCardId.make("waiting"))?.status,
             "running",

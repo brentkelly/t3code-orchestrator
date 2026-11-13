@@ -437,6 +437,9 @@ export interface SupervisorReactorShape {
   /** Resolves when the internal queue, and the per-card worktree cleanup it
       hands off, are empty and idle (test hook). */
   readonly drain: Effect.Effect<void>;
+  /** Resolves when the reactor's own queue is idle, without waiting on card cleanup or
+      retirement (test hook). */
+  readonly drainScheduling: Effect.Effect<void>;
   /** Ask for a worktree-cleanup pass; single-flight, so a burst
       of requests runs at most one pass plus one follow-up. */
   readonly sweepWorktrees: (options?: {
@@ -11221,6 +11224,7 @@ const make = Effect.gen(function* () {
     fireRetries: sweepRetries,
     fireAutoMerges: sweepAutoMergeHolds,
     releaseThreads: releaseFinishedThreads,
+    drainScheduling: worker.drain,
     drain: worker.drain.pipe(
       Effect.andThen(cardCleanupWorker.drain),
       Effect.andThen(cardRetireWorker.drain),

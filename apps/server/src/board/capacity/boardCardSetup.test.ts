@@ -37,7 +37,13 @@ const progress = (overrides: Partial<BoardCardSetupProgress> = {}): BoardCardSet
   ...overrides,
 });
 
-const harness = (board: BoardState) =>
+const harness = (
+  board: BoardState,
+  stream: Stream.Stream<BoardCardSetupProgress> = Stream.make(
+    progress({ status: "running", exitCode: null }),
+    progress(),
+  ),
+) =>
   Effect.gen(function* () {
     const fake = yield* makeFakeCapacity(roomForCards(4));
     const finished = yield* Deferred.make<void>();
@@ -52,7 +58,7 @@ const harness = (board: BoardState) =>
         Effect.sync(() => void cancels.push(worktreePath)),
       runSetup: (_workerId: unknown, input: BoardWorkerRunSetupInput) => {
         runs.push(input);
-        return Stream.make(progress({ status: "running", exitCode: null }), progress());
+        return stream;
       },
       setupState: () => Effect.sync(() => state),
     };
@@ -108,8 +114,8 @@ it.effect("a worktree with no setup on record starts one, and records each stage
   Effect.gen(function* () {
     const card = buildingCard("a", "a");
     const h = yield* harness({ cards: [card], nextCardNumberByProject: {} });
-    // Held until the first progress says whether the script holds the agent.
-    assert.strictEqual((yield* h.setup.gate(card, BOARD_LOCAL_WORKER_ID))?.queuedBy, "setup");
+    // The first progress says the script doesn't hold the agent: the step goes ahead.
+    assert.isNull(yield* h.setup.gate(card, BOARD_LOCAL_WORKER_ID));
     yield* h.finished;
     assert.deepStrictEqual(
       h.runs.map((run) => [run.cardId, run.markOnly ?? false]),
@@ -186,5 +192,21 @@ it.effect("only a human's Retry starts a run, and Cancel reaches the worker with
       h.runs.map((run) => run.retry),
       [true],
     );
+  }),
+);
+
+it.effect("a new setup that blocks holds its step from the first pass; a silent one doesn't", () =>
+  Effect.gen(function* () {
+    const card = buildingCard("a", "a");
+    const blocking = yield* harness(
+      { cards: [card], nextCardNumberByProject: {} },
+      Stream.make(progress({ status: "running", exitCode: null, blocking: true })),
+    );
+    assert.strictEqual(
+      (yield* blocking.setup.gate(card, BOARD_LOCAL_WORKER_ID))?.queuedBy,
+      "setup",
+    );
+    const silent = yield* harness({ cards: [card], nextCardNumberByProject: {} }, Stream.empty);
+    assert.isNull(yield* silent.setup.gate(card, BOARD_LOCAL_WORKER_ID));
   }),
 );

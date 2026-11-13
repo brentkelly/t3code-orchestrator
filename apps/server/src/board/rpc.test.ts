@@ -122,6 +122,7 @@ const supervisorStub: SupervisorReactorShape = {
   fireAutoMerges: Effect.void,
   releaseThreads: Effect.void,
   drain: Effect.void,
+  drainScheduling: Effect.void,
   sweepWorktrees: () => Effect.void,
   drainWorktreeSweep: Effect.void,
   forceRemoveWorktree: (cardId) =>

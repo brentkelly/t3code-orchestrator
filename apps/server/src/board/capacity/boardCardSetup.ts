@@ -14,8 +14,10 @@ import {
   type BoardState,
   type BoardWorkerId,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import type { BoardCapacityClientShape } from "./BoardCapacityClient.ts";
@@ -56,6 +58,9 @@ export function setupHold(card: BoardCard, workerId: BoardWorkerId): CapacityHol
   return { queuedBy: "setup", detail: { workerId }, blocksWorker: false };
 }
 
+/** How long a step waits for a new setup's first word before it is held instead. */
+const FIRST_REPORT_WAIT_MS = 10_000;
+
 const toSetupResult = (
   progress: BoardCardSetupProgress,
   workerId: BoardWorkerId,
@@ -72,6 +77,8 @@ const toSetupResult = (
 
 export const makeBoardCardSetup = (deps: BoardCardSetupDeps) => {
   const runs = new Map<string, Fiber.Fiber<unknown>>();
+  /** Per run, its first progress, or null when it ended without one. */
+  const firstReports = new Map<string, Deferred.Deferred<BoardCardSetupProgress | null>>();
 
   const record = Effect.fn("BoardCardSetup.record")(function* (
     cardId: BoardCardId,
@@ -98,7 +105,8 @@ export const makeBoardCardSetup = (deps: BoardCardSetupDeps) => {
       boardProjectStageConfig(board, card.projectId)?.resources ?? null,
     );
     const worktreePath = card.worktree.path;
-    let first = true;
+    const firstReport = yield* Deferred.make<BoardCardSetupProgress | null>();
+    firstReports.set(card.id, firstReport);
     const fiber = yield* deps.client
       .runSetup(workerId, {
         cardId: card.id,
@@ -112,16 +120,16 @@ export const makeBoardCardSetup = (deps: BoardCardSetupDeps) => {
         Stream.runForEach((progress) =>
           Effect.gen(function* () {
             yield* record(card.id, toSetupResult(progress, workerId));
-            // The step was held until the first progress said whether setup blocks it.
-            if (first) {
-              first = false;
-              yield* deps.onFinished;
-            }
+            // A step held for want of it looks again once this says whether setup blocks.
+            if (yield* Deferred.succeed(firstReport, progress)) yield* deps.onFinished;
           }),
         ),
         Effect.ignoreCause,
         Effect.ensuring(
-          Effect.sync(() => runs.delete(card.id)).pipe(Effect.andThen(deps.onFinished)),
+          Effect.sync(() => runs.delete(card.id)).pipe(
+            Effect.andThen(Deferred.succeed(firstReport, null)),
+            Effect.andThen(deps.onFinished),
+          ),
         ),
         Effect.forkDetach,
       );
@@ -147,10 +155,15 @@ export const makeBoardCardSetup = (deps: BoardCardSetupDeps) => {
     if ((card.resources?.setup ?? null) === null) {
       const board = yield* deps.readBoard;
       yield* start(card, { markOnly: cardBuiltOnce(board, card.id) });
-      // Whether the script blocks is known only from its first progress: hold until then.
-      return runs.has(card.id)
-        ? ({ queuedBy: "setup", detail: { workerId }, blocksWorker: false } satisfies CapacityHold)
-        : null;
+      // Whether the script blocks is known only from its first progress: wait one round trip
+      // for it, and hold the step if it is slower. A run that ended silently holds nothing.
+      const report = firstReports.get(card.id);
+      if (report === undefined) return null;
+      const first = yield* Deferred.await(report).pipe(Effect.timeoutOption(FIRST_REPORT_WAIT_MS));
+      const held = { queuedBy: "setup", detail: { workerId }, blocksWorker: false } as const;
+      if (Option.isNone(first)) return held satisfies CapacityHold;
+      if (first.value === null) return null;
+      return first.value.blocking && first.value.status !== "succeeded" ? held : null;
     }
     return setupHold(card, workerId);
   });
