@@ -91,13 +91,13 @@ describe("billable native turn usage", () => {
             output_tokens_details: { thinking_tokens: 25 },
           },
         },
-        true,
+        false,
         "completed",
       ),
     ).toEqual({
       usageStatus: "complete",
       usageScope: "main_agent",
-      hasSubagents: true,
+      hasSubagents: false,
       inputTokens: 150,
       cachedInputTokens: 40,
       cacheCreationTokens: 10,
@@ -214,12 +214,61 @@ describe("billable native turn usage", () => {
   );
 
   it("measures Claude ledger growth only from a known, nondecreasing baseline", () => {
-    const ledger = (output: number) =>
-      claudeModelLedger({ "claude-sonnet-4-6": { inputTokens: 100, outputTokens: output } });
-    expect(claudeLedgerDelta(ledger(10), ledger(25))).toEqual({ inputTokens: 0, outputTokens: 15 });
+    const ledger = (output: number, cacheRead = 50) =>
+      claudeModelLedger({
+        "claude-sonnet-4-6": {
+          inputTokens: 100,
+          outputTokens: output,
+          cacheReadInputTokens: cacheRead,
+          cacheCreationInputTokens: 7,
+        },
+      });
+    expect(claudeLedgerDelta(ledger(10), ledger(25, 80))).toEqual({
+      uncachedInputTokens: 0,
+      cachedInputTokens: 30,
+      cacheCreationTokens: 0,
+      outputTokens: 15,
+    });
     expect(claudeLedgerDelta(ledger(25), ledger(10))).toBeUndefined();
+    expect(claudeLedgerDelta(ledger(10, 80), ledger(10, 50))).toBeUndefined();
     expect(claudeLedgerDelta(undefined, ledger(10))).toBeUndefined();
     expect(claudeModelLedger({})).toBeUndefined();
+  });
+
+  it("splits Claude ledger growth beyond the main agent by cache field", () => {
+    const result = {
+      subtype: "success",
+      usage: {
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_read_input_tokens: 100,
+        cache_creation_input_tokens: 20,
+      },
+    } as const;
+    const ledger = (cachedInputTokens: number) => ({
+      uncachedInputTokens: 13,
+      cachedInputTokens,
+      cacheCreationTokens: 22,
+      outputTokens: 12,
+    });
+    expect(
+      normalizeClaudeTurnTokenUsage(result, true, "completed", [], { ledger: ledger(140) }),
+    ).toMatchObject({
+      usageStatus: "complete",
+      otherUsage: { inputTokens: 45, outputTokens: 7, cachedInputTokens: 40, cacheCreationTokens: 2 },
+    });
+    // A field below the main agent's own count means the ledger cannot be trusted.
+    const shrunk = normalizeClaudeTurnTokenUsage(result, false, "completed", [], {
+      ledger: ledger(90),
+    });
+    expect(shrunk.usageStatus).toBe("complete");
+    expect(shrunk.otherUsage).toBeUndefined();
+    // Subagents ran but their spend is unknown: the main counts are only a lower bound.
+    expect(normalizeClaudeTurnTokenUsage(result, true, "completed")).toMatchObject({
+      usageStatus: "partial",
+      inputTokens: 130,
+      outputTokens: 5,
+    });
   });
 
   it("adds Claude steering segments to the final measured result once", () => {

@@ -8477,7 +8477,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             outputTokens: 1,
             cachedInputTokens: 0,
             cacheCreationTokens: 0,
-            otherUsage: { inputTokens: 0, outputTokens: 0 },
+            otherUsage: {
+              inputTokens: 0,
+              outputTokens: 0,
+              cachedInputTokens: 0,
+              cacheCreationTokens: 0,
+            },
           });
         }
       }).pipe(
@@ -8491,6 +8496,98 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  // T3o: a resumed CLI can restore the session's saved modelUsage (T3O-90).
+  it.effect("does not book a resumed session's restored ledger as the first turn's usage", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      const ledgerEntry = (counts: {
+        readonly input: number;
+        readonly output: number;
+        readonly cacheRead: number;
+        readonly cacheWrite: number;
+      }) => ({
+        "gateway-model": {
+          inputTokens: counts.input,
+          outputTokens: counts.output,
+          cacheReadInputTokens: counts.cacheRead,
+          cacheCreationInputTokens: counts.cacheWrite,
+          webSearchRequests: 0,
+          costUSD: 0,
+          contextWindow: 200_000,
+          maxOutputTokens: 32_000,
+        },
+      });
+      const restored = { input: 1_000_000, output: 50_000, cacheRead: 5_000_000, cacheWrite: 200_000 };
+      const lastTurnTokenUsage = () => {
+        const updated = harness.events.findLast((event) => event.type === "provider_turn.updated");
+        return updated?.type === "provider_turn.updated"
+          ? updated.providerTurn.turnTokenUsage
+          : undefined;
+      };
+      const start = (ordinal: number) =>
+        harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-resumed-ledger-${ordinal}`),
+            text: "Continue.",
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            nativeThreadHasTurns: true,
+          }),
+        );
+
+      yield* start(2);
+      assert.equal(harness.getOpenedOptions()?.resume, WAKE_NATIVE_SESSION);
+      yield* harness.offerAndWait(
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000901",
+          result: "Done.",
+          usage: { ...zeroUsage, input_tokens: 0, output_tokens: 0 },
+          modelUsage: ledgerEntry(restored),
+        }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      const resumed = lastTurnTokenUsage();
+      assert.equal(resumed?.usageStatus, "complete");
+      assert.isUndefined(resumed?.otherUsage);
+
+      yield* start(3);
+      yield* harness.offerAndWait(
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000902",
+          result: "Done.",
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 100,
+            cache_creation_input_tokens: 20,
+          },
+          modelUsage: ledgerEntry({
+            input: restored.input + 10 + 3,
+            output: restored.output + 5 + 7,
+            cacheRead: restored.cacheRead + 100 + 40,
+            cacheWrite: restored.cacheWrite + 20 + 2,
+          }),
+        }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      assert.deepEqual(lastTurnTokenUsage()?.otherUsage, {
+        inputTokens: 45,
+        outputTokens: 7,
+        cachedInputTokens: 40,
+        cacheCreationTokens: 2,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect("shows automatic compaction before its boundary and completes the same item", () =>
