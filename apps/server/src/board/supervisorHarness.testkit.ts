@@ -86,6 +86,7 @@ import {
   type ThreadSignal,
 } from "./ThreadGateway.ts";
 import { BoardCapacityClient } from "./capacity/BoardCapacityClient.ts";
+import { BoardWorkerCapacity } from "./capacity/BoardWorkerCapacity.ts";
 import {
   makeFakeCapacity,
   roomForCards,
@@ -514,6 +515,8 @@ export type Harness = {
       remote-only base was MATERIALISED has nowhere else to read it:
       `git branch develop origin/develop` leaves no trace on the card. */
   readonly gitInvocations: Effect.Effect<ReadonlyArray<ReadonlyArray<string>>>;
+  /** The threads this server's own capacity counts as the board's, as the reactor told it. */
+  readonly localBoardThreads: Effect.Effect<ReadonlySet<string>>;
 };
 
 /** Run `body` against a live reactor wired to the stateful engine double. */
@@ -1182,7 +1185,14 @@ export function withGovernor(
     });
 
     const gitLayer = Layer.succeed(GitVcsDriver.GitVcsDriver, gitStub);
+    let localBoardThreads: Effect.Effect<ReadonlySet<string>> = Effect.succeed(new Set());
     const deps = Layer.mergeAll(
+      Layer.succeed(BoardWorkerCapacity, {
+        registerLocalBoardThreads: (read: Effect.Effect<ReadonlySet<string>>) =>
+          Effect.sync(() => {
+            localBoardThreads = read;
+          }),
+      } as never),
       (input.worktreeRetirer ?? worktreeRetirerTestLayer()).pipe(Layer.provide(gitLayer)),
       Layer.succeed(BoardEngine, boardEngineStub),
       Layer.succeed(BoardQueries, boardQueriesStub),
@@ -1331,6 +1341,7 @@ export function withGovernor(
           setBoardSettings: (settings) => void (boardSettings = settings),
           setWorktreeUndurable: (undurable) => void (worktreeUndurable = undurable),
           gitInvocations: Effect.sync(() => [...gitInvocationLog]),
+          localBoardThreads: Effect.suspend(() => localBoardThreads),
         });
       }).pipe(
         Effect.provide(

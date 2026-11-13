@@ -962,3 +962,37 @@ it.effect("changing the stage's model to one the worker has restarts a provider 
     );
   }),
 );
+
+it.effect("the board server's own capacity counts only its live local threads (T3O-71)", () =>
+  Effect.gen(function* () {
+    const link = (threadId: string, extra: Partial<BoardCard["threadLinks"][number]> = {}) => ({
+      threadId: ThreadId.make(threadId),
+      role: "build",
+      linkedAt: "2026-01-01T00:00:00.000Z",
+      tombstonedAt: null,
+      ...extra,
+    });
+    const here = {
+      ...buildingCard("card-1", "a"),
+      threadLinks: [
+        link("thread-local"),
+        link("thread-tombstoned", { tombstonedAt: "2026-01-01T00:00:01.000Z" }),
+        link("thread-retired", { retiredAt: "2026-01-01T00:00:01.000Z" }),
+      ],
+    } as BoardCard;
+    const away = {
+      ...placedBuildingCard("card-2", "b", W1),
+      threadLinks: [link("thread-on-w1", { workerId: W1 })],
+    } as BoardCard;
+    yield* withGovernor(
+      {
+        board: { cards: [here, away], nextCardNumberByProject: {}, workers: registered },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          assert.deepStrictEqual([...(yield* h.localBoardThreads)], ["thread-local"]);
+        }),
+    );
+  }),
+);

@@ -196,6 +196,7 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
 import { BoardCapacityClient } from "./capacity/BoardCapacityClient.ts";
+import { BoardWorkerCapacity } from "./capacity/BoardWorkerCapacity.ts";
 import { runBoardCapacityUpgrade } from "./capacity/boardCapacityUpgrade.ts";
 import { makeBoardCardSetup } from "./capacity/boardCardSetup.ts";
 import {
@@ -734,6 +735,8 @@ const make = Effect.gen(function* () {
   // T3o: worker-owned capacity (T3O-86). Optional: a harness without it runs every step
   // as soon as its worker is ready, with no limit.
   const capacityClient = yield* Effect.serviceOption(BoardCapacityClient);
+  // T3o: this server's own capacity counts the board's local threads as board threads.
+  const workerCapacity = yield* Effect.serviceOption(BoardWorkerCapacity);
   // Every git and forge operation for a card runs in the card's
   // workspace — this server's, or the worker it is placed on.
   const workspaces = yield* BoardWorkspaces;
@@ -12131,6 +12134,14 @@ const make = Effect.gen(function* () {
         ),
       );
     }
+    if (Option.isSome(workerCapacity)) {
+      yield* workerCapacity.value.registerLocalBoardThreads(
+        readBoard.pipe(
+          Effect.map(localBoardThreadIds),
+          Effect.orElseSucceed(() => new Set<string>()),
+        ),
+      );
+    }
     // The server restarts mid-step: reconcile persisted step state, serialised
     // ahead of the live events now flowing into the same worker queue.
     yield* worker.enqueue({ source: "reconcile" });
@@ -12319,5 +12330,21 @@ const make = Effect.gen(function* () {
       ),
   } satisfies SupervisorReactorShape;
 });
+
+/** The live threads this board runs on its own server, which its capacity counts as its own. */
+const localBoardThreadIds = (board: BoardState): ReadonlySet<string> => {
+  const ids = new Set<string>();
+  for (const card of board.cards) {
+    for (const link of card.threadLinks) {
+      if (
+        isLiveBoardCardThreadLink(link) &&
+        boardThreadLinkWorkerId(link) === BOARD_LOCAL_WORKER_ID
+      ) {
+        ids.add(String(link.threadId));
+      }
+    }
+  }
+  return ids;
+};
 
 export const SupervisorReactorLive = Layer.effect(SupervisorReactor, make);
