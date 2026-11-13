@@ -434,6 +434,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
+    it.effect("refuses to place a pinned card anywhere but its pin", () =>
+      Effect.gen(function* () {
+        const pinned = makeReadModel({ cards: [makeCard({ pinnedWorkerId: workerA })] });
+        const failure = yield* decideFail(place(workerB), pinned);
+        expect(String(failure)).toContain("is pinned to worker");
+        expect((yield* cardAfter(place(workerA), pinned)).placedWorkerId).toBe(workerA);
+      }),
+    );
+
     // ── Move ─────────────────────────────────────────────────────────────
 
     it.effect("a move runs start → retired → done and lands the card on the new worker", () =>

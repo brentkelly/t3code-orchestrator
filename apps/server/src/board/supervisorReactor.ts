@@ -1403,6 +1403,8 @@ const make = Effect.gen(function* () {
     }
     let lastHold: CapacityHold | null = null;
     const folderless: Array<BoardCardWorkspace> = [];
+    // The first checkout with no base to cut from: the card is stuck only if no other can take it.
+    let baseMissing: string | null = null;
     for (const candidate of ranked.ranked) {
       const workspace = yield* workspaces.forWorker(candidate.workerId, card.projectId);
       const cwd = workspace.checkoutPath;
@@ -1434,12 +1436,15 @@ const make = Effect.gen(function* () {
         // resolve the base branch" is true but unactionable, and the four have
         // different fixes (commit the parent's work, check out a branch, make a
         // first commit in an empty repository, run `git init`).
+        if (baseRefName !== null) {
+          // This checkout's problem: another candidate may still have a branch.
+          baseMissing ??= noDefaultBranchReason(cwd, resolved, "the card's branch");
+          continue;
+        }
         return yield* stuck(
-          baseRefName !== null
-            ? noDefaultBranchReason(cwd, resolved, "the card's branch")
-            : parentFailure !== null
-              ? `The parent card ${parentFailure.key} has no integration branch, so there is no base to cut this card's branch from. ${parentFailure.reason}`
-              : "The parent card has no branch yet, so there is no base to cut this card's branch from.",
+          parentFailure !== null
+            ? `The parent card ${parentFailure.key} has no integration branch, so there is no base to cut this card's branch from. ${parentFailure.reason}`
+            : "The parent card has no branch yet, so there is no base to cut this card's branch from.",
         );
       }
       // The base must exist locally: `measureBaseTip`, `pullMergedBaseBranch` and the rebase all
@@ -1449,10 +1454,9 @@ const make = Effect.gen(function* () {
       if (!baseExists) {
         // Never fall back to the default. A card pinned to `release/2.4` that
         // silently builds off `main` is worse than a card that does not build,
-        // and this path is card-visible and retryable.
-        return yield* stuck(
-          `The card's base branch '${baseRefName}' does not exist in ${cwd}, locally or on a remote, so there is nothing to cut the card's branch from.`,
-        );
+        // and this path is card-visible and retryable. Another candidate may have it.
+        baseMissing ??= `The card's base branch '${baseRefName}' does not exist in ${cwd}, locally or on a remote, so there is nothing to cut the card's branch from.`;
+        continue;
       }
       // T3o: a later card's hold gives way to this earlier one if its claim is granted (T3O-87).
       const laterHolder = laterHolderOn(card, candidate.workerId, pass);
@@ -1580,6 +1584,7 @@ const make = Effect.gen(function* () {
     ) {
       return yield* stuck(noWorkspaceFolderReason(firstFolderless));
     }
+    if (lastHold === null && baseMissing !== null) return yield* stuck(baseMissing);
     if (lastHold === null) return unreachable;
     // Every candidate refused its claim: the card asks for holds as it would with none.
     const holding =

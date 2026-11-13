@@ -228,7 +228,7 @@ describe("the placement gate (T3O-87)", () => {
     }),
   );
 
-  it.effect("a transient base-check failure moves on with no claim; a stuck one parks", () =>
+  it.effect("a base-check failure on one worker moves on with no claim; on every one, parks", () =>
     Effect.gen(function* () {
       const capacity = yield* capacityOf([
         [W1, FULL],
@@ -249,19 +249,40 @@ describe("the placement gate (T3O-87)", () => {
         }),
       );
 
+      // One worker's checkout lacks the base branch: the next candidate takes the card.
+      const otherCapacity = yield* capacityOf([
+        [W1, FULL],
+        [W2, BIG],
+      ]);
+      const otherGit = newWorkerGit();
+      otherGit.missingBase.add(W2);
+      yield* run({ cards: [card], capacity: otherCapacity, git: otherGit }, (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(card, 1));
+          assert.deepStrictEqual(
+            otherCapacity.claims
+              .filter((claim) => claim.kind === "placement")
+              .map((c) => c.workerId),
+            [W1],
+          );
+          assert.strictEqual((yield* cardIn(h, "card-1")).placedWorkerId, W1);
+        }),
+      );
+
       const stuckCapacity = yield* capacityOf([
         [W1, FULL],
         [W2, BIG],
       ]);
       const stuckGit = newWorkerGit();
       stuckGit.missingBase.add(W2);
+      stuckGit.missingBase.add(W1);
       yield* run({ cards: [card], capacity: stuckCapacity, git: stuckGit }, (h) =>
         Effect.gen(function* () {
           yield* h.pumpDomain(movedToBuilding(card, 1));
           const state = boardCardStepState(yield* h.board, BoardCardId.make("card-1"));
           assert.strictEqual(state?.status, "stalled");
           assert.strictEqual(state?.stalledReason, "no-worktree");
-          assert.deepStrictEqual(stuckGit.log, [`${W2}:base`]);
+          assert.deepStrictEqual(stuckGit.log, [`${W2}:base`, `${W1}:base`]);
           assert.strictEqual(stuckCapacity.claims.length, 0);
         }),
       );

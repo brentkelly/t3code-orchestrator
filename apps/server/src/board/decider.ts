@@ -6426,6 +6426,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             `Card '${card.key}' has a worktree on worker '${current}'; only a move places it elsewhere.`,
           );
         }
+      } else if (card.pinnedWorkerId !== null && card.pinnedWorkerId !== command.workerId) {
+        // A pin that landed after the pass ranked the card's workers.
+        return yield* invariant(
+          command,
+          `Card '${card.key}' is pinned to worker '${card.pinnedWorkerId}'; it can't be placed on '${command.workerId}'.`,
+        );
       }
       const placement = {
         workerId: command.workerId,
