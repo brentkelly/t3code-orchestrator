@@ -1893,7 +1893,7 @@ function ReviewStageBody(props: {
           />
           <ToggleRow
             label="Help long reviews converge"
-            hint="After the chosen round, the bar for a blocking improvement rises every two rounds until only critical findings block, and the adjudicator can rule an improvement below the bar. Quiet rounds review only the new changes. Another review round always reviews the whole branch, at that round's bar."
+            hint="After the chosen round, the bar for a blocking improvement rises every two rounds until only critical findings block, and the adjudicator can rule an improvement below the bar. After a round with few blocking findings, the next is a settling round that reviews only the new changes. Another review round always reviews the whole branch, at that round's bar."
             checked={exec.convergeAfterRound !== null}
             ariaLabel="Help long reviews converge"
             onChange={(checked) => {

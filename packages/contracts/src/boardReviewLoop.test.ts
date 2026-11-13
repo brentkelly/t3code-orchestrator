@@ -2216,15 +2216,25 @@ describe("T3O-92: the raised bar", () => {
     assert.strictEqual(summary?.severityImprovement, 1);
   });
 
-  it("an early exit over a below-bar fix past the SHA reports the unreviewed fix", () => {
+  it("an early exit over a below-bar fix past the SHA reports every unreviewed fix", () => {
     const result = walkFull([
-      review(1, [finding("critical", "c1"), finding("improvement", "i1")]),
-      triage(1, { c1: "rejected", i1: "fixed" }, "fix-1"),
-      ruling("adjudicate", 1, { c1: "rejection-justified", i1: below("fix-upheld") }, false),
+      review(1, [
+        finding("critical", "c1"),
+        finding("improvement", "i1"),
+        finding("nitpick", "n1"),
+      ]),
+      triage(1, { c1: "rejected", i1: "fixed", n1: "fixed" }, "fix-1"),
+      ruling(
+        "adjudicate",
+        1,
+        { c1: "rejection-justified", i1: below("fix-upheld"), n1: "fix-upheld" },
+        false,
+      ),
     ]);
     assert.strictEqual(result.status, "converged");
     assert.strictEqual(result.convergedBy, "below-bar");
-    assert.strictEqual(result.unreviewedFixes, 1);
+    // Counted as the below-bar exit counts them: the nitpick's fix went unreviewed too.
+    assert.strictEqual(result.unreviewedFixes, 2);
     // With the fix pinned to the reviewed SHA it stays the adjudicator's exit.
     const pinned = walkFull([
       review(1, [finding("critical", "c1"), finding("improvement", "i1")]),
@@ -2272,7 +2282,7 @@ describe("T3O-92: the raised bar", () => {
     );
   });
 
-  it("refuses belowBar on anything but a non-carried improvement, and with escalated", () => {
+  it("refuses belowBar on anything but a non-carried, non-human improvement, and with escalated", () => {
     const carriedFindings = {
       "1": {
         ruling: "fix" as const,
@@ -2295,13 +2305,21 @@ describe("T3O-92: the raised bar", () => {
       review(1, [
         finding("critical", "c1"),
         finding("improvement", "i1"),
+        { ...finding("improvement", "h1"), source: "pr-comment" },
         finding("nitpick", "n1"),
       ]),
-      triage(1, { c1: "rejected", i1: "rejected", n1: "rejected", "carried:r0:f1": "fixed" }),
+      triage(1, {
+        c1: "rejected",
+        i1: "rejected",
+        h1: "rejected",
+        n1: "rejected",
+        "carried:r0:f1": "fixed",
+      }),
     ];
     const base = {
       c1: "rejection-justified",
       i1: "rejection-justified",
+      h1: "rejection-justified",
       n1: "rejection-justified",
       "carried:r0:f1": "fix-upheld",
     } as Record<string, Verdict>;
@@ -2315,6 +2333,7 @@ describe("T3O-92: the raised bar", () => {
     assert.isNull(defect({ i1: below("rejection-unjustified") }));
     assert.include(defect({ c1: below("rejection-justified") }), "'c1'");
     assert.include(defect({ n1: below("rejection-justified") }), "'n1'");
+    assert.include(defect({ h1: below("rejection-justified") }), "'h1'");
     assert.include(defect({ ghost: below("fix-upheld") }), "'ghost'");
     assert.include(defect({ "carried:r0:f1": below("fix-upheld") }), "'carried:r0:f1'");
     assert.include(defect({ i1: below("escalated") }), "escalated");

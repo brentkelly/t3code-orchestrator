@@ -9738,6 +9738,9 @@ export const BoardReviewFinding = Schema.Struct({
   line: Schema.NullOr(PositiveInt).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   title: TrimmedNonEmptyString,
   detail: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** Set by a raised-bar reviewer on a concern drawn from a human pull request comment,
+      which can never be ruled below the bar. */
+  source: Schema.optional(Schema.Literal("pr-comment")),
 });
 export type BoardReviewFinding = typeof BoardReviewFinding.Type;
 
@@ -10846,20 +10849,12 @@ export function boardReviewRoundResolution(input: {
     };
   }
 
-  const unreviewedBelowBarFixes = fold.belowBar.filter(
-    (finding) =>
-      latestAction(finding.id) === "fixed" &&
-      !boardReviewShaMatches(fold.latestFixedSha(finding.id), fold.reviewedSha),
-  ).length;
+  const unreviewed = fixedFindings.filter(
+    (finding) => !boardReviewShaMatches(fold.latestFixedSha(finding.id), fold.reviewedSha),
+  );
   // Every blocking finding was ruled below the bar: nothing left forces a round.
   if (fold.blocking.length > 0 && blocking.length === 0) {
-    return {
-      kind: "converge",
-      by: "below-bar",
-      unreviewedFixes: fixedFindings.filter(
-        (finding) => !boardReviewShaMatches(fold.latestFixedSha(finding.id), fold.reviewedSha),
-      ).length,
-    };
+    return { kind: "converge", by: "below-bar", unreviewedFixes: unreviewed.length };
   }
 
   // The adjudicator's early exit: honoured only when the round changed no
@@ -10876,8 +10871,8 @@ export function boardReviewRoundResolution(input: {
         (fold.retriage === null ||
           boardReviewShaMatches(fold.retriage.fixedSha, fold.reviewedSha)));
     if (settled && shaCheckPasses) {
-      return unreviewedBelowBarFixes > 0
-        ? { kind: "converge", by: "below-bar", unreviewedFixes: unreviewedBelowBarFixes }
+      return unreviewed.some((finding) => fold.belowBar.includes(finding))
+        ? { kind: "converge", by: "below-bar", unreviewedFixes: unreviewed.length }
         : { kind: "converge", by: "adjudicator" };
     }
   }
@@ -11049,7 +11044,8 @@ export function boardReviewCompletionDefect(input: {
 }
 
 /** Why a verdict's `belowBar` is refused: only a non-carried finding the reviewer rated
-    `improvement` can be ruled below the bar, and never with `escalated`. Reads only the
+    `improvement`, not drawn from a human PR comment, can be ruled below the bar, and never
+    with `escalated`. Reads only the
     round's records, never settings, so a past round is never re-judged. */
 function boardReviewBelowBarDefect(input: {
   readonly verdicts: ReadonlyArray<BoardReviewAdjudication>;
@@ -11073,16 +11069,18 @@ function boardReviewBelowBarDefect(input: {
       : Option.getOrNull(
           decodeBoardReviewPayloadOption(parseBoardStepPayloadJson(input.review.payload)),
         );
-  const severities = new Map(
-    (decoded?.findings ?? []).map((finding) => [finding.id, finding.severity]),
-  );
-  const unknown = ruled.filter((v) => !severities.has(v.findingId));
+  const reviewed = new Map((decoded?.findings ?? []).map((finding) => [finding.id, finding]));
+  const unknown = ruled.filter((v) => !reviewed.has(v.findingId));
   if (unknown.length > 0) {
     return `${input.listIds(unknown.map((v) => v.findingId))} is not a finding of this round's review, so it cannot be ruled below the bar. Drop \`belowBar\` from those verdicts and complete the step again.`;
   }
-  const notImprovement = ruled.filter((v) => severities.get(v.findingId) !== "improvement");
+  const notImprovement = ruled.filter((v) => reviewed.get(v.findingId)?.severity !== "improvement");
   if (notImprovement.length > 0) {
     return `Only an \`improvement\` finding can be ruled below the bar; ${input.listIds(notImprovement.map((v) => v.findingId))} is not one. A critical always blocks and a nitpick never does. Drop \`belowBar\` from those verdicts and complete the step again.`;
+  }
+  const fromHuman = ruled.filter((v) => reviewed.get(v.findingId)?.source === "pr-comment");
+  if (fromHuman.length > 0) {
+    return `${input.listIds(fromHuman.map((v) => v.findingId))} came from a human pull request comment, so it cannot be ruled below the bar. Drop \`belowBar\` from those verdicts and complete the step again.`;
   }
   return null;
 }

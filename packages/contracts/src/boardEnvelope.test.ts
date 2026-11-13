@@ -776,12 +776,14 @@ describe("raised bar prompts (T3O-92)", () => {
     );
     expect(bar).toBeLessThan(tier1.indexOf("To finish this phase"));
     expect(tier1).toContain("`critical`, `improvement` or `nitpick`");
+    expect(tier1).toContain('`source` is `"pr-comment"` on a finding drawn from a human');
     expect(compose("review", 2)).toContain("a user or operator would actually hit in normal use");
     const tier3 = compose("review", 3);
     expect(tier3).toContain("there are no improvements");
     expect(tier3).toContain("Never raise a finding to critical to get it past the bar");
     expect(tier3).toContain("where `severity` is `critical` or `nitpick`");
     expect(tier3).not.toContain("belowBar");
+    expect(tier3).not.toContain("the CI finding and concerns");
   });
 
   it("gives the adjudicators the bar and the below-bar ruling", () => {
@@ -790,6 +792,7 @@ describe("raised bar prompts (T3O-92)", () => {
       expect(prompt).toContain("a user or operator would actually hit in normal use");
       expect(prompt).toContain("add `belowBar: true` to its verdict");
       expect(prompt).toContain("Never escalate a finding that is below the bar");
+      expect(prompt).toContain('a finding the reviewer marked `source: "pr-comment"`');
       expect(prompt).toContain("findingId, verdict, note, belowBar?");
       expect(prompt).toContain("fixes to findings you ruled below the bar don't count");
     }

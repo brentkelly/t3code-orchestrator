@@ -433,7 +433,7 @@ const BOARD_REVIEW_STRICT_CRITICAL =
 
 /** The adjudicator's power to rule an improvement below the raised bar. */
 const BOARD_REVIEW_BELOW_BAR_RULING =
-  "For an `improvement` finding that does not meet this round's bar, add `belowBar: true` to its verdict and say why in the note; still give the normal verdict. It then counts as a nitpick: it does not force another round. Never set it on a critical, on a finding a human ordered fixed, on the CI finding, or on a concern from a human pull request comment, and never with `escalated`. Never escalate a finding that is below the bar; rule it `belowBar` instead.";
+  'For an `improvement` finding that does not meet this round\'s bar, add `belowBar: true` to its verdict and say why in the note; still give the normal verdict. It then counts as a nitpick: it does not force another round. Never set it on a critical, on a finding a human ordered fixed, on the CI finding, or on a finding the reviewer marked `source: "pr-comment"`, and never with `escalated`. Never escalate a finding that is below the bar; rule it `belowBar` instead.';
 
 /** The raised bar for a full round past `convergeAfterRound`, compiled in after the user's
     prompt so it overrides that prompt's severity definitions. Empty at tier 0 and for triage. */
@@ -450,7 +450,7 @@ function boardReviewBarBlock(input: {
     case "review":
       return [
         bar,
-        "Rate anything below it `nitpick`. The CI finding, findings a human ordered fixed, and concerns from unresolved human pull request comments keep their severity.",
+        'Rate anything below it `nitpick`. The CI finding, findings a human ordered fixed, and concerns from unresolved human pull request comments keep their severity; add `source: "pr-comment"` to each finding drawn from a human pull request comment.',
         strict,
       ]
         .filter((part) => part.length > 0)
@@ -559,8 +559,10 @@ export function boardReviewPhaseProtocol(input: {
     case "review":
       return [
         input.barTier === 3
-          ? "To finish this phase, complete with a succeeded outcome and a JSON payload { reviewedSha, findings: [{ id, severity, file, line, title, detail }] }, where `severity` is `critical` or `nitpick`; only the CI finding and concerns from unresolved human pull request comments keep their own severity, which may be `improvement`."
-          : "To finish this phase, complete with a succeeded outcome and a JSON payload { reviewedSha, findings: [{ id, severity, file, line, title, detail }] }, where `severity` is `critical`, `improvement` or `nitpick`.",
+          ? 'To finish this phase, complete with a succeeded outcome and a JSON payload { reviewedSha, findings: [{ id, severity, file, line, title, detail, source? }] }, where `severity` is `critical` or `nitpick`; only concerns from unresolved human pull request comments keep their own severity, which may be `improvement`, and carry `source: "pr-comment"`.'
+          : raised
+            ? 'To finish this phase, complete with a succeeded outcome and a JSON payload { reviewedSha, findings: [{ id, severity, file, line, title, detail, source? }] }, where `severity` is `critical`, `improvement` or `nitpick`, and `source` is `"pr-comment"` on a finding drawn from a human pull request comment.'
+            : "To finish this phase, complete with a succeeded outcome and a JSON payload { reviewedSha, findings: [{ id, severity, file, line, title, detail }] }, where `severity` is `critical`, `improvement` or `nitpick`.",
         "Critical and improvement findings are blocking; nitpicks never are. Whether the loop runs another round is decided by the system from the severities you record, never by you. Report what you found and stop.",
         "If you cannot produce a valid findings payload, complete with outcome failed instead. Never complete succeeded with an empty or malformed payload.",
       ].join(" ");
