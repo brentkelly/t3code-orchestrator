@@ -11678,6 +11678,16 @@ export const BoardReviewSettleBelowFindings = Schema.Int.check(
   Schema.isGreaterThanOrEqualTo(BOARD_REVIEW_SETTLE_BELOW_FINDINGS_MIN),
 );
 
+/** Seeded into `afterRound` when a user turns the later-rounds review model on. */
+export const DEFAULT_BOARD_REVIEW_LATER_MODEL_AFTER_ROUND = 2;
+
+/** The review phase runs `model` instead of its own on every round after `afterRound`. */
+export const BoardReviewLaterModel = Schema.Struct({
+  afterRound: PositiveInt,
+  model: BoardModelSelection,
+});
+export type BoardReviewLaterModel = typeof BoardReviewLaterModel.Type;
+
 /**
  * Carries every simple-member field so the reactor reads stages uniformly, plus `rounds` and
  * the per-phase configs. The executor ignores the top-level `prompt`/`model`, and
@@ -11722,6 +11732,10 @@ export const BoardStageExecutionReview = Schema.Struct({
   /** The board marks the pull request ready when the card reaches the merge stage, so full CI
       runs once after review. Global, because a forge without drafts just gets a normal PR. */
   draftPullRequests: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Null runs the review phase's own model on every round. */
+  laterReviewModel: Schema.NullOr(BoardReviewLaterModel).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   phases: Schema.Struct({
     review: BoardReviewPhaseExecution.pipe(
       Schema.decodeTo(
@@ -11755,6 +11769,17 @@ export const BoardStageExecutionReview = Schema.Struct({
   }).pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_PHASES))),
 });
 export type BoardStageExecutionReview = typeof BoardStageExecutionReview.Type;
+
+/** The model the review phase's settings give `round` (1-based), before any card or round
+    override: the later-rounds model past its `afterRound`, else the phase's own model. */
+export function resolveBoardReviewTierModel(
+  review: Pick<BoardStageExecutionReview, "phases" | "laterReviewModel">,
+  round: number,
+): BoardModelSelection | null {
+  const later = review.laterReviewModel;
+  if (later !== null && round > later.afterRound) return later.model;
+  return review.phases.review.model;
+}
 
 /**
  * No rewriting: a force-push on a branch with an open PR strands the loop's inline comments,
@@ -12268,6 +12293,7 @@ export const BoardStageExecutionPatch = Schema.Struct({
   settleAfterRound: Schema.optionalKey(Schema.NullOr(PositiveInt)),
   settleBelowFindings: Schema.optionalKey(BoardReviewSettleBelowFindings),
   draftPullRequests: Schema.optionalKey(Schema.Boolean),
+  laterReviewModel: Schema.optionalKey(Schema.NullOr(BoardReviewLaterModel)),
   phases: Schema.optionalKey(
     Schema.Struct({
       review: Schema.optionalKey(BoardStepExecutionPatch),
@@ -12314,6 +12340,7 @@ export const BOARD_STAGE_EXECUTION_PATCH_KEYS: Readonly<
     "settleAfterRound",
     "settleBelowFindings",
     "draftPullRequests",
+    "laterReviewModel",
     "phases",
   ],
   merge: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "strategy", "autoMerge", "deleteBranchOnDone"],

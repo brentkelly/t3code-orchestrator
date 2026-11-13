@@ -6,6 +6,8 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  BoardStageExecution,
+  resolveBoardReviewTierModel,
   boardPullRequestPredatesCard,
   BoardCardStepState,
   BOARD_CARD_LABELS_MAX,
@@ -1447,6 +1449,50 @@ describe("per-card merge strategy (T3O-80)", () => {
         stageStrategy: null,
       }),
     ).toEqual({ strategy: "squash", source: "board" });
+  });
+});
+
+const decodeStageExecution = Schema.decodeUnknownSync(BoardStageExecution);
+
+describe("resolveBoardReviewTierModel (T3O-94)", () => {
+  const fable = { instanceId: ProviderInstanceId.make("anthropic"), model: "claude-fable-5-2" };
+  const opus = { instanceId: ProviderInstanceId.make("anthropic"), model: "claude-opus-5-5" };
+  const decoded = decodeStageExecution({
+    kind: "review",
+    phases: { review: { model: fable } },
+  });
+  if (decoded.kind !== "review") throw new Error("expected the review member");
+  const withLater = (afterRound: number) => ({
+    ...decoded,
+    laterReviewModel: { afterRound, model: opus },
+  });
+
+  it("decodes settings without the key as off", () => {
+    expect(decoded.laterReviewModel).toBeNull();
+  });
+
+  it.each([
+    ["off", decoded, 1, fable],
+    ["off, a late round", decoded, 9, fable],
+    ["on, an early round", withLater(2), 1, fable],
+    ["on, the last early round", withLater(2), 2, fable],
+    ["on, the first later round", withLater(2), 3, opus],
+    ["on, a custom boundary", withLater(4), 4, fable],
+    ["on, past a custom boundary", withLater(4), 5, opus],
+  ] as const)("%s", (_name, review, round, expected) => {
+    expect(resolveBoardReviewTierModel(review, round)).toEqual(expected);
+  });
+
+  it("falls through to null when the phase has no model of its own", () => {
+    expect(
+      resolveBoardReviewTierModel(
+        {
+          ...decoded,
+          phases: { ...decoded.phases, review: { ...decoded.phases.review, model: null } },
+        },
+        1,
+      ),
+    ).toBeNull();
   });
 });
 

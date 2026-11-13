@@ -612,6 +612,26 @@ describe("resolveBoardStageExecution with a project config", () => {
     );
   });
 
+  it("T3O-94: passes the later-rounds review model through, and drops a partial one", () => {
+    const laterReviewModel = { afterRound: 3, model: { instanceId: "codex", model: "gpt-5" } };
+    const { delta } = resolve({ stages: { settings: { review: { laterReviewModel } } } });
+    expect(delta.overrides).toEqual({ review: { laterReviewModel } });
+    const review = resolveBoardStageExecution(
+      DEFAULT_BOARD_SETTINGS,
+      BOARD_SEED_STAGE_IDS.review,
+      delta,
+    );
+    if (!isBoardReviewStageExecution(review)) throw new Error("review member expected");
+    expect(review.laterReviewModel).toEqual(laterReviewModel);
+    const { delta: partial } = resolve({
+      stages: { settings: { review: { laterReviewModel: { afterRound: 3 } } } },
+    });
+    expect(partial.overrides).toEqual({});
+    expect(partial.warnings).toEqual(
+      expect.arrayContaining([expect.stringContaining("review.laterReviewModel: invalid")]),
+    );
+  });
+
   it("re-applies the forced invariants over the project's values", () => {
     const { delta: config } = resolve({
       stages: {

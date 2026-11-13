@@ -23,6 +23,7 @@ import {
   isBoardReviewStageExecution,
   parseReviewStepId,
   reviewStepId,
+  resolveBoardReviewTierModel,
   reviewStepLabel,
   type BoardCardReviewOverrides,
   type BoardModelSelection,
@@ -70,20 +71,21 @@ function succeededReviewSteps(
 }
 
 /**
- * The model a phase runs on: its own, else the stage's fallback. A card's review-model
+ * The model a phase runs on: its configured one (for the review phase, the one its round's
+ * tier names), else the stage's fallback. A card's review-model
  * override applies to the `review` phase alone: escalating the reviewer must not also
  * re-model the triager, which changes who writes the code.
  */
 function resolvePhaseModel(input: {
   readonly phase: BoardReviewPhaseId;
-  readonly phaseConfig: BoardReviewPhaseExecution;
+  readonly configuredModel: BoardModelSelection | null;
   readonly fallback: BoardModelSelection;
   readonly roundOverride: BoardReviewRoundOverride | undefined;
   readonly cardOverride: BoardCardStageModelOverride | null;
 }): BoardModelSelection {
   if (input.phase === "review") {
     // Narrowest first: the round the user named, then the card's
-    // standing choice, then the configured phase model. The card override sits
+    // standing choice, then the round's tier model. The card override sits
     // BELOW the round override so escalating one round still wins, and ABOVE
     // the phase config so setting it on the card actually takes effect.
     if (input.roundOverride !== undefined) {
@@ -93,7 +95,7 @@ function resolvePhaseModel(input: {
       return boardModelSelectionOfOverride(input.cardOverride);
     }
   }
-  return input.phaseConfig.model ?? input.fallback;
+  return input.configuredModel ?? input.fallback;
 }
 
 /**
@@ -211,7 +213,8 @@ function reviewLoopDecision(input: {
       }),
       model: resolvePhaseModel({
         phase,
-        phaseConfig,
+        configuredModel:
+          phase === "review" ? resolveBoardReviewTierModel(review, round) : phaseConfig.model,
         fallback: config.model,
         roundOverride: overrides?.roundModels[String(round)],
         cardOverride: config.cardOverride,
@@ -260,7 +263,7 @@ function reviewLoopDecision(input: {
       }),
       model: resolvePhaseModel({
         phase: basePhase,
-        phaseConfig,
+        configuredModel: phaseConfig.model,
         fallback: config.model,
         roundOverride: undefined,
         cardOverride: config.cardOverride,
