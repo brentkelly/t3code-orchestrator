@@ -706,6 +706,8 @@ it.effect("a settled card's grow hold isn't refused for disk its grow never take
       kind: "grow",
     });
     assert.strictEqual(asked.outcome, "held");
+    // Its shortfall counts only the extra the grow takes, so no disk.
+    assert.strictEqual(asked.outcome === "held" ? asked.short.diskGB : null, 0);
   }).pipe(Effect.provide(TestClock.layer()), withMachine(fakes));
 });
 

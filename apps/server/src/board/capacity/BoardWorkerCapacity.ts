@@ -44,7 +44,7 @@ import {
   EMPTY_CAPACITY_STATE,
   firstShort,
   forgetBoard,
-  growDiskGB,
+  growLoad,
   PROVISION_TTL_MS,
   heldByBoard,
   recordIsHeavy,
@@ -600,7 +600,8 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
         );
         // A grow already holds its current disk: only the extra must be free, as for its claim.
         const grow = input.kind === "grow" && own !== undefined;
-        const diskNeeded = grow ? growDiskGB(own, input.profile) : input.profile.diskGB;
+        const extra = grow ? growLoad(own, input.profile, activity) : input.profile;
+        const diskNeeded = extra.diskGB;
         const asked = requestHold(holds, {
           boardId,
           cardId: input.cardId,
@@ -629,14 +630,12 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
             until: answer.until === null ? null : nowIso(answer.until),
           } satisfies BoardCapacityHoldResult;
         }
-        const need =
-          input.kind === "grow"
-            ? input.profile
-            : {
-                cpuCores: input.profile.cpuCores * holdSettings.earlyStartFraction,
-                ramGiB: input.profile.ramGiB * holdSettings.earlyStartFraction,
-                diskGB: input.profile.diskGB,
-              };
+        // The share of the claim's own need that must be free to serve it.
+        const need = {
+          cpuCores: extra.cpuCores * holdSettings.earlyStartFraction,
+          ramGiB: extra.ramGiB * holdSettings.earlyStartFraction,
+          diskGB: extra.diskGB,
+        };
         return {
           outcome: "held",
           short: {

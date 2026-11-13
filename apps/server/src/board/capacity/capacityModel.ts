@@ -185,10 +185,25 @@ function pendingRamGiB(state: CapacityState, activity: CapacityActivity, now: nu
 
 /** The extra disk a grow takes: none for a settled or measured record, whose disk is never
     regrown (see applySyncCards). */
-export const growDiskGB = (record: CapacityRecord, profile: BoardResourceProfile): number =>
+const growDiskGB = (record: CapacityRecord, profile: BoardResourceProfile): number =>
   record.settled || record.diskFromMeasurement
     ? 0
     : Math.max(0, profile.diskGB - record.profile.diskGB);
+
+/** What a grow adds over a card's record: CPU and RAM past what it already holds heavy, plus disk
+    only while the record is unsettled. */
+export const growLoad = (
+  record: CapacityRecord,
+  profile: BoardResourceProfile,
+  activity: CapacityActivity,
+): BoardResourceProfile => {
+  const heavyNow = recordIsHeavy(record, activity);
+  return {
+    cpuCores: Math.max(0, profile.cpuCores - (heavyNow ? record.profile.cpuCores : 0)),
+    ramGiB: Math.max(0, profile.ramGiB - (heavyNow ? record.profile.ramGiB : 0)),
+    diskGB: growDiskGB(record, profile),
+  };
+};
 
 export interface Headroom {
   readonly declared: BoardResourceProfile;
@@ -380,12 +395,7 @@ export function decideClaim(
       state: current,
     };
   }
-  const heavyNow = recordIsHeavy(record, context.activity);
-  const load: BoardResourceProfile = {
-    cpuCores: Math.max(0, input.profile.cpuCores - (heavyNow ? record.profile.cpuCores : 0)),
-    ramGiB: Math.max(0, input.profile.ramGiB - (heavyNow ? record.profile.ramGiB : 0)),
-    diskGB: growDiskGB(record, input.profile),
-  };
+  const load = growLoad(record, input.profile, context.activity);
   if (input.force !== true) {
     if (headroom.over.cpuRam) {
       const dimension = headroom.held.cpuCores > context.declared.cpuCores ? "cpu" : "ram";
