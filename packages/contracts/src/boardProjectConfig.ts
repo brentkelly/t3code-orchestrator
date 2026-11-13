@@ -18,7 +18,7 @@ import {
   type BoardStageId,
   type BoardState,
 } from "./board.ts";
-import { EMPTY_BOARD_PROJECT_RESOURCES } from "./boardCapacity.ts";
+import { EMPTY_BOARD_PROJECT_RESOURCES, type BoardProjectResources } from "./boardCapacity.ts";
 
 const PROMPT_KEY = "prompt";
 
@@ -131,10 +131,15 @@ export function boardProjectDeltasEqual(
   right: BoardProjectStageDelta,
 ): boolean {
   // `left` is the file's: one without `resources` leaves the project's own.
+  // T3o (T3O-87): a file carries neither what the board learned nor Pin declared.
+  const fileShaped = (resources: BoardProjectResources) => {
+    const { learned: _learned, pinDeclared: _pinned, ...rest } = resources;
+    return rest;
+  };
   const resources =
     left.resources === undefined ||
-    canonicalJson(left.resources) ===
-      canonicalJson(right.resources ?? EMPTY_BOARD_PROJECT_RESOURCES);
+    canonicalJson(fileShaped(left.resources)) ===
+      canonicalJson(fileShaped(right.resources ?? EMPTY_BOARD_PROJECT_RESOURCES));
   return (
     resources &&
     canonicalJson({

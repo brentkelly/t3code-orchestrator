@@ -7,6 +7,7 @@ import {
   BOARD_CONFIG_VERSION_MISMATCH,
   BOARD_SEED_STAGE_IDS,
   BOARD_SYSTEM_ACTOR,
+  EMPTY_BOARD_PROJECT_RESOURCES,
   EMPTY_BOARD_PROJECT_STAGE_CONFIG,
   EventId,
   boardCiStepsRefusal,
@@ -20,6 +21,7 @@ import {
   normalizeBoardReadinessPath,
   withBoardProjectConfigVersion,
   type BoardActivityActor,
+  type BoardProjectResources,
   type BoardProjectStageConfig,
   type BoardStageDefinition,
   type BoardState,
@@ -75,7 +77,10 @@ function nextConfig(
   >,
   changedBy: { readonly actor: BoardActivityActor; readonly at: string } | null,
 ): BoardProjectStageConfig {
-  const resources = change.resources ?? current.resources;
+  const resources =
+    change.resources === undefined
+      ? current.resources
+      : withBoardOwnedResources(change.resources, current.resources);
   return withBoardProjectConfigVersion({
     stageSwitches: change.stageSwitches ?? current.stageSwitches,
     overrides: change.overrides ?? current.overrides,
@@ -86,6 +91,21 @@ function nextConfig(
     lastChangedBy: changedBy ?? current.lastChangedBy,
     ...(isEmptyBoardProjectResources(resources) ? {} : { resources }),
   });
+}
+
+/** T3o (T3O-87): an edit or an import never overwrites what the board learned, and an import
+    (which carries no Pin declared) keeps the project's pins. */
+function withBoardOwnedResources(
+  next: BoardProjectResources,
+  current: BoardProjectResources | undefined,
+): BoardProjectResources {
+  const { learned: _sent, ...edited } = next;
+  const pinDeclared = edited.pinDeclared ?? current?.pinDeclared;
+  return {
+    ...edited,
+    ...(pinDeclared === undefined || pinDeclared.length === 0 ? {} : { pinDeclared }),
+    ...(current?.learned === undefined ? {} : { learned: current.learned }),
+  };
 }
 
 function withoutKey<V>(record: Readonly<Record<string, V>>, key: string): Record<string, V> {
@@ -203,6 +223,14 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
         ),
         "resources",
       );
+    }
+    case "board.project.record-learned": {
+      // The board's own write: no actor, warnings kept, and the version unmoved.
+      const resources = {
+        ...(current.resources ?? EMPTY_BOARD_PROJECT_RESOURCES),
+        learned: command.learned,
+      };
+      return yield* emit(withBoardProjectConfigVersion({ ...current, resources }), "resources");
     }
     case "board.project.set-ci-enabled": {
       const ci = boardStageById(board, BOARD_SEED_STAGE_IDS.ci);

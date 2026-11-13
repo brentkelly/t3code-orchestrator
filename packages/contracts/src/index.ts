@@ -57,6 +57,8 @@ export * from "./boardEvent.ts";
 export * from "./boardWorkers.ts";
 // T3o: worker-owned capacity (T3O-86).
 export * from "./boardCapacity.ts";
+// T3o: measured actuals and learned baselines (T3O-87).
+export * from "./boardActuals.ts";
 // T3o: outbound-only workers (T3O-84).
 export * from "./boardWorkerTunnel.ts";
 export * from "./boardWorkerGateway.ts";

@@ -6075,6 +6075,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     case "board.project.set-ci-enabled":
     case "board.project.set-ci-stop-on-failure":
     case "board.project.set-resources":
+    // T3o: the board's learned baseline (T3O-87).
+    case "board.project.record-learned":
     case "board.project.reset":
     case "board.project.import-file":
     case "board.project.dismiss-import":
