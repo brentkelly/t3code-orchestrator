@@ -182,7 +182,8 @@ export function tickHolds(
   return next;
 }
 
-/** When a board's hold here ends at the latest: only once someone is waiting. */
+/** When a board's hold here ends at the latest: only once someone is waiting, and not while
+    its clock is paused (an end that moved with every tick would be no end at all). */
 export function holdUntil(
   state: HoldState,
   boardId: string,
@@ -190,7 +191,7 @@ export function holdUntil(
   now: number,
 ): number | null {
   const clock = state.clocks.get(boardId);
-  if (clock === undefined || !clock.someoneWaiting) return null;
+  if (clock === undefined || !clock.someoneWaiting || clock.pausedSince !== null) return null;
   return now + Math.max(0, settings.maxMinutes * 60_000 - heldFor(clock, now));
 }
 

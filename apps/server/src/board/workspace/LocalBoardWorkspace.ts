@@ -822,10 +822,6 @@ export function makeLocalBoardWorkspace(
     },
   );
 
-  /** The branch's tip on the remote, freshly fetched; null when the remote
-      does not have it, or there is no remote. A remote that can't be asked
-      fails instead: "not there" offers a restart from base, which
-      forgets pushed work, so it must not be guessed from a network error. */
   /** T3o: `git push -u <remote> <branch>` from the card's worktree, never forced (T3O-87). */
   const pushCardBranch: BoardWorkspace["pushCardBranch"] = Effect.fn(
     "LocalBoardWorkspace.pushCardBranch",
@@ -847,6 +843,10 @@ export function makeLocalBoardWorkspace(
     return { pushed: false, detail: detail === "" ? "git push failed." : detail };
   });
 
+  /** The branch's tip on the remote, freshly fetched; null when the remote
+      does not have it, or there is no remote. A remote that can't be asked
+      fails instead: "not there" offers a restart from base, which
+      forgets pushed work, so it must not be guessed from a network error. */
   const remoteBranchTip: BoardWorkspace["remoteBranchTip"] = Effect.fn(
     "LocalBoardWorkspace.remoteBranchTip",
   )(function* ({ projectId, branch }) {

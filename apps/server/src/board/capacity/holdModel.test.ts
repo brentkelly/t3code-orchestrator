@@ -231,6 +231,8 @@ describe("the 2-hour limit (T3O-87)", () => {
     state = ask(state, "b", "x", 3 * HOUR).state;
     // Blocked the whole time: the clock never ran, so someone waiting doesn't end it.
     expect(state.placement?.boardId).toBe("a");
+    // Paused, the hold has no end to show, rather than one that moves with every tick.
+    expect(holdView(state, "b", DEFAULT_HOLD_SETTINGS, 3 * HOUR).until).toBeNull();
   });
 });
 
