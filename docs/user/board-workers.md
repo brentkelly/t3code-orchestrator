@@ -113,6 +113,14 @@ If a step's provider isn't on the card's pinned worker, the step doesn't start a
 **Provider missing**. Pin the card to a worker that has it, or pick a model the worker offers in the
 card's **Models**, and the step starts again.
 
+## Showing the cards on one worker
+
+On a board with workers, **Worker** beside **Filter cards** shows only the cards whose worktree is
+on the workers you pick; **Not placed yet** shows the cards that haven't started building. A card
+planned on the board server and built on build-01 shows under build-01. The filter is in the page's
+address, so you can share it, and the board remembers your last choice in this browser. **Show cards
+on this worker** in a worker's menu on the Workers page opens the board filtered to it.
+
 ## Moving a card to another worker
 
 Before a card has a worktree, picking another worker simply re-pins it. Once it has one, the card is

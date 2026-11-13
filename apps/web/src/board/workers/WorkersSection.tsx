@@ -16,6 +16,7 @@ import {
 import { EllipsisIcon, PlusIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
+import { useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 
 import { Badge } from "../../components/ui/badge";
@@ -478,6 +479,7 @@ function WorkerMenu(props: {
   readonly onRename: () => void;
   readonly onRemove: () => void;
 }) {
+  const navigate = useNavigate();
   return (
     <Menu>
       <MenuTrigger
@@ -494,6 +496,12 @@ function WorkerMenu(props: {
       </MenuTrigger>
       <MenuPopup align="end">
         <MenuItem onClick={props.onRename}>Rename…</MenuItem>
+        {/* T3o: the board's worker filter, set to this worker (T3O-87). */}
+        <MenuItem
+          onClick={() => void navigate({ to: "/board", search: { worker: props.worker.id } })}
+        >
+          Show cards on this worker
+        </MenuItem>
         <MenuSeparator />
         <MenuItem variant="destructive" onClick={props.onRemove}>
           Remove worker…
