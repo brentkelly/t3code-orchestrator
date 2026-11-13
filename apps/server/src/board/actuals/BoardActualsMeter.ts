@@ -12,6 +12,7 @@ import {
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
@@ -60,6 +61,10 @@ const UNIT_RESOLVE_TRIES = 3;
 /** One early sample after a command is wrapped, so a step shorter than a tick is measured. */
 const EARLY_SAMPLE_MS = 1_000;
 
+/** A thread's entry the board hasn't asked about for this long is dropped: the board reads
+    every running step each sweep, so it lost the step (a read reply lost, then the step ended). */
+const THREAD_UNASKED_MS = 10 * 60_000;
+
 type Source = (
   | { readonly kind: "thread"; readonly threadId: string }
   | {
@@ -80,6 +85,10 @@ interface Entry {
   readonly accumulator: ActualsAccumulator;
   running: boolean;
   partial: boolean;
+  /** When the board last asked about it. */
+  askedAtMs: number;
+  /** The `end` reading, kept until evicted so a retried `end` (its reply lost) gets it too. */
+  ended: Deferred.Deferred<BoardStepReading> | null;
 }
 
 export const makeBoardActualsMeter = Effect.gen(function* () {
@@ -146,16 +155,24 @@ export const makeBoardActualsMeter = Effect.gen(function* () {
   }, ticking.withPermits(1));
 
   const tick = Effect.gen(function* () {
-    for (const entry of entries.values()) {
-      if (entry.running) yield* tickEntry(entry);
+    const nowMs = yield* Clock.currentTimeMillis;
+    for (const [key, entry] of entries) {
+      if (!entry.running) continue;
+      if (entry.sources.has("thread") && nowMs - entry.askedAtMs >= THREAD_UNASKED_MS) {
+        entries.delete(key);
+        continue;
+      }
+      yield* tickEntry(entry);
     }
   });
 
-  const newEntry = (partial: boolean): Entry => ({
+  const newEntry = (partial: boolean, askedAtMs: number): Entry => ({
     sources: new Map(),
     accumulator: new ActualsAccumulator(),
     running: true,
     partial,
+    askedAtMs,
+    ended: null,
   });
 
   const readingOf = (entry: Entry, diskBytes: number | null) =>
@@ -175,10 +192,16 @@ export const makeBoardActualsMeter = Effect.gen(function* () {
 
   const relay: BoardActualsMeterShape["relay"] = Effect.fn("BoardActualsMeter.relay")(
     function* (input) {
+      const nowMs = yield* Clock.currentTimeMillis;
       let entry = entries.get(input.key);
+      // A resumed thread is a new run under the same key: its ended entry is the last run's.
+      if (entry?.ended != null && input.op === "read" && input.threadId !== undefined) {
+        entries.delete(input.key);
+        entry = undefined;
+      }
       if (entry === undefined) {
         if (input.op === "end" || input.threadId === undefined) return null;
-        entry = newEntry(input.seen === true);
+        entry = newEntry(input.seen === true, nowMs);
         entry.sources.set("thread", {
           kind: "thread",
           threadId: input.threadId,
@@ -189,15 +212,28 @@ export const makeBoardActualsMeter = Effect.gen(function* () {
         entries.set(input.key, entry);
         yield* tickEntry(entry);
       }
+      entry.askedAtMs = nowMs;
       if (input.op === "read") return readingOf(entry, null);
-      if (entry.running) {
-        yield* tickEntry(entry);
-        entry.running = false;
+      if (entry.ended === null) {
+        if (entry.running) {
+          yield* tickEntry(entry);
+          entry.running = false;
+        }
+        const ending = entry;
+        const ended = yield* Deferred.make<BoardStepReading>();
+        ending.ended = ended;
+        forgetOldFinished();
+        // Detached: `du` may outlast the relay's timeout, and the retried `end` collects it.
+        yield* (
+          input.worktreePath === undefined
+            ? Effect.succeed(null)
+            : machine.diskUsageBytes(input.worktreePath)
+        ).pipe(
+          Effect.flatMap((diskBytes) => Deferred.succeed(ended, readingOf(ending, diskBytes))),
+          Effect.forkDetach,
+        );
       }
-      entries.delete(input.key);
-      const diskBytes =
-        input.worktreePath === undefined ? null : yield* machine.diskUsageBytes(input.worktreePath);
-      return readingOf(entry, diskBytes);
+      return yield* Deferred.await(entry.ended);
     },
   );
 
@@ -216,7 +252,7 @@ export const makeBoardActualsMeter = Effect.gen(function* () {
       if (launch.unit === undefined) return null;
       let entry = entries.get(key);
       if (entry === undefined) {
-        entry = newEntry(false);
+        entry = newEntry(false, yield* Clock.currentTimeMillis);
         entries.set(key, entry);
       }
       // A later segment of the same pass adds to it.

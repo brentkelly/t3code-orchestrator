@@ -104,11 +104,30 @@ it.effect(
       assert.strictEqual(soFar?.peakCpuCores, 2);
       const ended = yield* meter.relay({ op: "end", key: "thread:t1", worktreePath: "/w/card" });
       assert.include(ended, { running: false, diskBytes: 7 * 1000 ** 3 });
-      // The key is gone: a second end has nothing.
-      assert.isNull(yield* meter.relay({ op: "end", key: "thread:t1" }));
+      // A retried end, its first reply lost, gets the same reading, disk included.
+      assert.deepStrictEqual(yield* meter.relay({ op: "end", key: "thread:t1" }), ended);
+      // A resumed thread under the same key starts a new run.
+      const resumed = yield* meter.relay(read);
+      assert.include(resumed, { running: true, cpuCoreSeconds: 0 });
     }).pipe(machine.provide, Effect.provide(TestClock.layer()));
   },
 );
+
+it.effect("a thread entry the board stops asking about is dropped, not sampled forever", () => {
+  const machine = makeMachine();
+  return Effect.gen(function* () {
+    machine.threadGroups.set("t1", "/agent/t1");
+    machine.set("/agent/t1", 100, 1);
+    const meter = yield* makeBoardActualsMeter;
+    // The reply to this read is lost, and the step ends before the board's next sweep.
+    yield* meter.relay({ op: "read", key: "thread:t1", threadId: "t1" });
+    for (let tick = 1; tick <= 120; tick++) {
+      yield* TestClock.adjust("5 seconds");
+      yield* meter.tick;
+    }
+    assert.isNull(yield* meter.relay({ op: "end", key: "thread:t1" }));
+  }).pipe(machine.provide, Effect.provide(TestClock.layer()));
+});
 
 it.effect("a key the board saw before but this worker lost reads partial", () => {
   const machine = makeMachine();
