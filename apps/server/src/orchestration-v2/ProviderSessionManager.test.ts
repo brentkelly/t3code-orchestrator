@@ -2065,7 +2065,8 @@ it.effect(
         assert.equal(resolved?.thread.threadId, threadId);
         assert.deepEqual(
           resolved?.capabilities,
-          new Set(["preview", "orchestration", "worktree", "pull-requests"]),
+          // T3o: every thread session is also granted "board" (t3o-08, D3).
+          new Set(["preview", "orchestration", "worktree", "pull-requests", "board"]),
         );
 
         yield* manager.close(providerSessionId);
@@ -2175,7 +2176,8 @@ it.effect(
         const resolved = yield* registry.resolve(token!);
         assert.deepEqual(
           resolved?.capabilities,
-          new Set(["orchestration", "worktree", "pull-requests"]),
+          // T3o: every thread session is also granted "board" (t3o-08, D3).
+          new Set(["orchestration", "worktree", "pull-requests", "board"]),
         );
 
         yield* manager.close(providerSessionId);

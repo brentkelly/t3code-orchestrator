@@ -8,6 +8,7 @@
 // runs the full test suites and the jobs listed in the summary.
 //
 //   vp run check:changed                  compare against the closest merge base with any remote main
+//                                         or remote default branch (T3o: origin/HEAD, e.g. t3o)
 //   vp run check:changed <ref>            compare against the merge base with <ref>
 //   vp run check:changed --concurrency 1  run the steps one at a time
 //
@@ -150,16 +151,47 @@ export const git = Effect.fn("checkChanged.git")(function* (
 export const gitLines = (cwd: string, args: ReadonlyArray<string>) =>
   git(cwd, args).pipe(Effect.map((stdout) => stdout.toString().split("\n").filter(Boolean)));
 
+// T3o: a fork's trunk is its remote's default branch (origin/HEAD -> origin/t3o), not
+// main, so each remote also offers its HEAD target and that branch's local copy.
+const remoteCandidates = Effect.fn("checkChanged.remoteCandidates")(function* (root: string) {
+  const output = (args: ReadonlyArray<string>) =>
+    git(root, args).pipe(
+      Effect.map((stdout) => stdout.toString().trim()),
+      Effect.orElseSucceed(() => ""),
+    );
+  const wanted: Array<{ ref: string; rev: string }> = [];
+  for (const name of yield* gitLines(root, ["remote"])) {
+    wanted.push({ ref: name + "/main", rev: "refs/remotes/" + name + "/main" });
+    const prefix = "refs/remotes/" + name + "/";
+    const head = yield* output(["symbolic-ref", "--quiet", prefix + "HEAD"]);
+    if (!head.startsWith(prefix)) continue;
+    const branch = head.slice(prefix.length);
+    wanted.push({ ref: name + "/" + branch, rev: head });
+    wanted.push({ ref: branch, rev: "refs/heads/" + branch });
+  }
+  const candidates: Array<{ ref: string; rev: string }> = [];
+  const seen = new Set<string>();
+  for (const candidate of wanted) {
+    const resolved = yield* output([
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      candidate.rev + "^{commit}",
+    ]);
+    if (!resolved || seen.has(resolved)) continue;
+    seen.add(resolved);
+    candidates.push(candidate);
+  }
+  return candidates;
+});
+
 export const comparisonBase = Effect.fn("checkChanged.comparisonBase")(function* (
   root: string,
   explicitRef: Option.Option<string>,
 ) {
   const candidates = Option.isSome(explicitRef)
     ? [{ ref: explicitRef.value, rev: explicitRef.value }]
-    : (yield* gitLines(root, ["remote"])).map((name) => ({
-        ref: name + "/main",
-        rev: "refs/remotes/" + name + "/main",
-      }));
+    : yield* remoteCandidates(root);
   let closest: { ref: string; base: string; ahead: number } | undefined;
   for (const { ref, rev } of candidates) {
     const base = yield* git(root, ["merge-base", "HEAD", rev]).pipe(
@@ -218,6 +250,8 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   readonly ref: Option.Option<string>;
   readonly concurrency: Option.Option<number>;
   readonly timeout: Option.Option<number>;
+  // T3o: the full CI tier runs every suite itself, so it asks for every check but the tests.
+  readonly noTests?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -305,7 +339,12 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     return hash.digest("hex");
   });
   const key = yield* inputKey;
-  const cachePath = inRoot("node_modules/.cache/check-changed.json");
+  const cachePath = inRoot(
+    // T3o: a pass without tests must not answer for a full one.
+    input.noTests === true
+      ? "node_modules/.cache/check-changed-no-tests.json"
+      : "node_modules/.cache/check-changed.json",
+  );
   // A missing or unreadable cache is a miss, never a failure.
   const cached = yield* fs
     .readFileString(cachePath)
@@ -507,7 +546,8 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
         ]
       : []),
     // From the repo root, the root vite.config.ts hands each file to its package's config.
-    ...(vitestTests.length > 0
+    // T3o: --no-tests skips the three test steps.
+    ...(input.noTests !== true && vitestTests.length > 0
       ? [
           {
             ...command(`test (${vitestTests.length} files)`, [
@@ -520,7 +560,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
           },
         ]
       : []),
-    ...(nodeTests.length > 0
+    ...(input.noTests !== true && nodeTests.length > 0
       ? [
           command(`node --test (${nodeTests.length} files)`, [
             "exec",
@@ -530,7 +570,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
           ]),
         ]
       : []),
-    ...(compilerApps.length > 0
+    ...(input.noTests !== true && compilerApps.length > 0
       ? [
           {
             ...command(`react compiler (${compilerFiles} files)`, [
@@ -603,6 +643,10 @@ export const checkChangedCommand = Command.make(
         "Seconds before a step is killed; also CHECK_CHANGED_TIMEOUT. Defaults to 900.",
       ),
       Flag.optional,
+    ),
+    // T3o: scripts/t3o-ci.ts's full tier runs the suites itself (T3O-88).
+    noTests: Flag.Boolean("no-tests").pipe(
+      Flag.withDescription("Run every check except the test steps."),
     ),
   },
   (input) =>
