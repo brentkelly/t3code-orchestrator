@@ -334,6 +334,8 @@ it.effect("the freed slot goes straight to a card that was waiting for one", () 
         nextCardNumberByProject: {},
       },
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+      // T3o: room for one card on `local` (T3O-86).
+      capacityFor: 1,
     },
     ({ pumpDomain, board, slots }) =>
       Effect.gen(function* () {
@@ -342,7 +344,9 @@ it.effect("the freed slot goes straight to a card that was waiting for one", () 
         assert.strictEqual(stepStatus(yield* board, BoardCardId.make("aaa")), "running");
         assert.strictEqual(stepStatus(yield* board, BoardCardId.make("bbb")), "queued");
 
-        yield* pumpDomain(cardScheduleUpdated(scheduledCard({ id: "aaa" }), FUTURE, 3));
+        // Built from the card as it is now, so its grant rides the edit.
+        const current = (yield* board).cards.find((card) => card.id === "aaa")!;
+        yield* pumpDomain(cardScheduleUpdated(current, FUTURE, 3));
 
         // The whole point of releasing the slot: it flows to the queue within a
         // beat, not at some unrelated step boundary.
@@ -446,6 +450,8 @@ it.effect("a due card with no free agent queues honestly rather than pretending"
         nextCardNumberByProject: {},
       },
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+      // T3o: room for one card on `local` (T3O-86).
+      capacityFor: 1,
     },
     ({ pumpDomain, board, reactor, slots }) =>
       Effect.gen(function* () {

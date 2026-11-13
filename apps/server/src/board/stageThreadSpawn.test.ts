@@ -30,6 +30,7 @@ import {
   stepStatus,
   withGovernor,
 } from "./supervisorHarness.testkit.ts";
+import { makeFakeCapacity, roomForCards } from "./capacity/capacityClient.testkit.ts";
 
 const sprintCard = () => makeBoardCard({ id: "card-1", stage: "sprint", orderKey: "m" });
 const cardId = BoardCardId.make("card-1");
@@ -573,4 +574,35 @@ it.effect("a turn on a thread whose step is not stalled leaves the step alone (t
         );
       }),
   ),
+);
+
+it.effect(
+  "at the worker's agent cap a planning step queues on `agent-cap`, then starts (T3O-86)",
+  () =>
+    Effect.flatMap(makeFakeCapacity(roomForCards(4)), (capacity) => {
+      capacity.agentCap = "This worker runs at most 1 agents at once.";
+      return withGovernor(
+        {
+          board: { cards: [sprintCard()], nextCardNumberByProject: {} },
+          settings: settingsWith({
+            building: [codexStep],
+            planning: codexStep,
+            globalMaxConcurrent: 3,
+          }),
+          capacity,
+        },
+        ({ pumpDomain, board, commands, reactor }) =>
+          Effect.gen(function* () {
+            yield* pumpDomain(movedToPlanning(1));
+            const held = boardCardStepState(yield* board, cardId);
+            assert.strictEqual(held?.status, "queued");
+            assert.strictEqual(held?.queuedBy, "agent-cap");
+            assert.isFalse((yield* commands).some((command) => command.type === "thread.spawn"));
+
+            capacity.agentCap = null;
+            yield* reactor.sweep;
+            assert.strictEqual(boardCardStepState(yield* board, cardId)?.status, "running");
+          }),
+      );
+    }),
 );

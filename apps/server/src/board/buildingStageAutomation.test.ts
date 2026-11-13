@@ -180,7 +180,7 @@ it.effect("D4: a double build-step completion advances once and never double-rel
 //    The acceptance gate's "ten cards vs maxConcurrent:2" needs a watched run;
 //    this is its focused unit proof — the bounding and ordering are the same
 //    logic at any N.
-it.effect("D11: at maxConcurrent 2, two cards build and the rest queue in order", () =>
+it.effect("D11: with room for two, two cards build and the rest queue in order", () =>
   withGovernor(
     {
       board: {
@@ -196,8 +196,9 @@ it.effect("D11: at maxConcurrent 2, two cards build and the rest queue in order"
       settings: settingsWith({
         building: [codexStep],
         globalMaxConcurrent: 10,
-        perInstance: { codex: 2 },
       }),
+      // T3o: room for two cards on `local` (T3O-86).
+      capacityFor: 2,
     },
     ({ slots, pumpDomain, board }) =>
       Effect.gen(function* () {

@@ -167,8 +167,9 @@ describe("card delete (T3O-23)", () => {
           cards: [buildingCard("doomed", "m"), buildingCard("waiting", "n")],
           nextCardNumberByProject: {},
         },
-        // One slot: `waiting` can only start once the delete releases it.
+        // Room for one card: `waiting` can only start once the delete gives it back.
         settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+        capacityFor: 1,
         worktreeRetirer: blockingRetirer,
       },
       (h) =>

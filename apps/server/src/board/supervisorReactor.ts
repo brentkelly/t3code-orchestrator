@@ -189,7 +189,6 @@ import { forkParked, ServerActivation } from "../serverActivation.ts";
 import { BoardCapacityClient } from "./capacity/BoardCapacityClient.ts";
 import { runBoardCapacityUpgrade } from "./capacity/boardCapacityUpgrade.ts";
 import {
-  cardWorkerOf,
   headroomShortfall,
   makeBoardCapacityAdmission,
   requestedProfileOf,
@@ -241,7 +240,6 @@ import {
   reconcileStepDecision,
   recoveryCeilingCrossed,
   recoveryDecision,
-  resolveBoardConcurrencyLimit,
   type BoardOfflineInterval,
   type BoardQueueCandidate,
 } from "./supervisor.ts";
@@ -2601,6 +2599,8 @@ const make = Effect.gen(function* () {
   const schedule = Effect.fn("board-supervisor-schedule")(function* () {
     // Queued CI passes go first: whatever freed a slot (a step settling, a
     // pass ending) runs this pass, and CI cards are later-stage than any step.
+    // T3o: a parked or finished card's room reaches the queue now (T3O-86).
+    if (Option.isSome(capacityAdmission)) yield* capacityAdmission.value.releaseForWaiting();
     yield* ciPasses.admitQueued;
     const board = yield* readBoard;
     // Read once for the whole pass: every candidate is gated against the same
@@ -3513,7 +3513,6 @@ const make = Effect.gen(function* () {
         );
         return;
       }
-      const settings = yield* boardSettings;
       // The board's own disk (its database) needs room to record the
       // pass; a worker's worktree disk is the runner's to check.
       if (Option.isSome(serverConfig)) {
@@ -10757,7 +10756,12 @@ const make = Effect.gen(function* () {
     yield* runCapacityUpgrade;
     yield* capacityAdmission.value.sweep();
     yield* schedule();
-  }).pipe(Effect.withSpan("board-supervisor-sweepCapacity"));
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: capacity sweep failed", { cause: Cause.pretty(cause) }),
+    ),
+    Effect.withSpan("board-supervisor-sweepCapacity"),
+  );
 
   // Enforce `timeoutMs` on unattended running steps: recovery is otherwise edge-triggered on
   // turn end, so a hung turn would hold its slot forever. Human-in-the-loop runs are exempt.
@@ -11093,6 +11097,8 @@ const make = Effect.gen(function* () {
     sweep: sweepTimeouts.pipe(
       Effect.andThen(sweepCiForgeSteps),
       Effect.andThen(sweepOrphanedCiPasses),
+      // T3o: and worker capacity's phase rule and sync (T3O-86).
+      Effect.andThen(sweepCapacity),
     ),
     fireSchedules: sweepSchedules,
     fireAutoArchives: sweepAutoArchives,

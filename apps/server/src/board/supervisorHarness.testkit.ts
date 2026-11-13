@@ -86,7 +86,11 @@ import {
   type ThreadSignal,
 } from "./ThreadGateway.ts";
 import { BoardCapacityClient } from "./capacity/BoardCapacityClient.ts";
-import type { FakeCapacity } from "./capacity/capacityClient.testkit.ts";
+import {
+  makeFakeCapacity,
+  roomForCards,
+  type FakeCapacity,
+} from "./capacity/capacityClient.testkit.ts";
 import { BoardPlacement, type BoardPlacementShape } from "./workers/BoardPlacement.ts";
 import {
   aliveThread,
@@ -688,6 +692,8 @@ export function withGovernor(
     readonly placement?: BoardPlacementShape;
     /** T3o: worker-owned capacity (T3O-86). Absent: every step runs once its worker is ready. */
     readonly capacity?: FakeCapacity;
+    /** Shorthand for `capacity`: `local` has room for this many default-sized cards. */
+    readonly capacityFor?: number;
     /** Where cards' git runs, built from this harness's own local
         workspace services. By default every card is local. */
     readonly workspaces?: (local: LocalBoardWorkspaceDeps) => BoardWorkspacesShape;
@@ -695,6 +701,11 @@ export function withGovernor(
   body: (h: Harness) => Effect.Effect<void>,
 ): Effect.Effect<void> {
   return Effect.gen(function* () {
+    const capacity =
+      input.capacity ??
+      (input.capacityFor === undefined
+        ? undefined
+        : yield* makeFakeCapacity(roomForCards(input.capacityFor)));
     const model = yield* Ref.make<BoardReadModel>(readModel(input.board));
     const seq = yield* Ref.make(0);
     const domainQueue = yield* Queue.unbounded<BoardEvent>();
@@ -1174,9 +1185,7 @@ export function withGovernor(
       Layer.succeed(BoardQueries, boardQueriesStub),
       Layer.succeed(ThreadGateway, gateway),
       input.placement === undefined ? Layer.empty : Layer.succeed(BoardPlacement, input.placement),
-      input.capacity === undefined
-        ? Layer.empty
-        : Layer.succeed(BoardCapacityClient, input.capacity.client),
+      capacity === undefined ? Layer.empty : Layer.succeed(BoardCapacityClient, capacity.client),
       Layer.succeed(ServerSettingsService, settingsStub),
       gitLayer,
       Layer.succeed(BoardSetupScriptRunner, setupStub),
@@ -1267,7 +1276,10 @@ export function withGovernor(
           // event, read back as the step's started review; and its rounds
           // changed mid-review.
           event.type === "board.plan-review-started" ||
-          event.type === "board.plan-review-rounds-changed"
+          event.type === "board.plan-review-rounds-changed" ||
+          // T3o: a delete leaves the board, so the card's room goes back to its worker
+          // (T3O-86).
+          event.type === "board.card-deleted"
             ? Ref.get(model).pipe(
                 Effect.flatMap((m) => projectBoardEvent(m, event)),
                 Effect.flatMap((next) => Ref.set(model, next)),

@@ -11,7 +11,6 @@ import {
   CommandId,
   EnvironmentId,
   ProjectId,
-  ProviderInstanceId,
   type BoardCard,
   type BoardCardStepState,
   type BoardCardWorktree,
@@ -92,41 +91,6 @@ function makeCard(overrides: Partial<BoardCard> = {}): BoardCard {
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
-  };
-}
-
-function makeStep(status: BoardCardStepState["status"]): BoardCardStepState {
-  return {
-    cardId: BoardCardId.make("card-1"),
-    stepId: "building",
-    stepLabel: null,
-    stageLabel: "Building",
-    attempt: 1,
-    stallCount: 0,
-    stageEntryRecoveries: 0,
-    humanTurnAt: null,
-    lastNudgeAt: null,
-    baseTipAtRoundStart: null,
-    lastError: null,
-    awaitingReason: "question",
-    stalledReason: "gave-up",
-    retryAt: null,
-    prompt: "build it",
-    providerInstanceId: ProviderInstanceId.make("codex"),
-    model: "gpt-5-codex",
-    mode: "build",
-    runtimeMode: "full-access",
-    humanInLoop: false,
-    maxAttempts: 3,
-    timeoutMs: 60_000,
-    threadId: null,
-    status,
-    slotHeld: false,
-    forceStart: false,
-    queuedBy: null,
-    queuedDetail: null,
-    startedAt: null,
-    updatedAt: NOW,
   };
 }
 
@@ -310,6 +274,101 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("card sizes", (it
       assert.deepStrictEqual(config?.resources, { ...resources, readinessPath: ".t3/ready.sh" });
       const refused = yield* decideFail(set("../outside.sh"), model);
       assert.include(String(refused), "inside the repository");
+    }),
+  );
+
+  it.effect(
+    "a provision records its grant before the worker is called; claim-expired undoes it",
+    () =>
+      Effect.gen(function* () {
+        const branchOnly: BoardCardWorktree = {
+          ...readyWorktree,
+          path: null,
+          status: "branch-only",
+        };
+        const provision = (_card: BoardCard): BoardCommand => ({
+          type: "board.card.provision-worktree",
+          commandId: CommandId.make("cmd-provision"),
+          cardId,
+          branch: "board/card-1",
+          baseRefName: "main",
+          grantedProfile: { cpuCores: 2, ramGiB: 4, diskGB: 5 },
+          heavyGranted: true,
+          claimId: "card-1:1:0",
+          createdAt: NOW,
+        });
+        const before = makeCard({ worktree: branchOnly });
+        const provisioning = yield* cardAfter(
+          provision(before),
+          makeReadModel({ cards: [before] }),
+        );
+        assert.strictEqual(provisioning.worktree?.status, "provisioning");
+        assert.deepInclude(provisioning.resources?.grant, { heavy: true, claimId: "card-1:1:0" });
+
+        const undo = (restore: BoardCardWorktree | null): BoardCommand => ({
+          type: "board.card.undo-provision",
+          commandId: CommandId.make("cmd-undo"),
+          cardId,
+          restore,
+          createdAt: NOW,
+        });
+        // The branch-only record a group child takes its base from comes back, attempts and all.
+        const restored = yield* cardAfter(
+          undo(branchOnly),
+          makeReadModel({ cards: [provisioning] }),
+        );
+        assert.deepStrictEqual(restored.worktree, branchOnly);
+        assert.isNull(restored.resources);
+        // With nothing before it, the record goes.
+        const fresh = yield* cardAfter(
+          provision(makeCard()),
+          makeReadModel({ cards: [makeCard()] }),
+        );
+        const nulled = yield* cardAfter(undo(null), makeReadModel({ cards: [fresh] }));
+        assert.isNull(nulled.worktree);
+        // A provision that already landed is never undone.
+        const ready = { ...fresh, worktree: readyWorktree };
+        assert.deepStrictEqual(
+          yield* decideEvents(undo(null), makeReadModel({ cards: [ready] })),
+          [],
+        );
+      }),
+  );
+
+  it.effect("record-grant goes light, settles, and never changes a grant to the same thing", () =>
+    Effect.gen(function* () {
+      const grant = {
+        profile: { cpuCores: 2, ramGiB: 4, diskGB: 5 },
+        heavy: true,
+        claimId: null,
+        grantedAt: NOW,
+        settled: false,
+      };
+      const card = makeCard({ resources: { sizing: null, grant, setup: null } });
+      const command = (
+        fields: Partial<Extract<BoardCommand, { type: "board.card.record-grant" }>>,
+      ) =>
+        ({
+          type: "board.card.record-grant",
+          commandId: CommandId.make("cmd-grant"),
+          cardId,
+          createdAt: NOW,
+          ...fields,
+        }) as BoardCommand;
+      const light = yield* cardAfter(
+        command({ heavy: false, settled: true }),
+        makeReadModel({ cards: [card] }),
+      );
+      assert.deepInclude(light.resources?.grant, { heavy: false, settled: true });
+      assert.deepStrictEqual(
+        yield* decideEvents(command({ heavy: true }), makeReadModel({ cards: [card] })),
+        [],
+      );
+      const refused = yield* decideFail(
+        command({ heavy: true }),
+        makeReadModel({ cards: [makeCard()] }),
+      );
+      assert.include(String(refused), "no grant");
     }),
   );
 });

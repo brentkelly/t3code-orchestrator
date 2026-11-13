@@ -1,9 +1,6 @@
 /**
- * How the supervisor uses worker-owned capacity (T3O-86): a placement claim before a card's
- * worktree is provisioned, a grow claim before a light card's step, the phase rule that
- * releases a card's CPU and RAM, settling, and keeping each worker's records in step with
- * `syncCards`. Pure decisions live in the exported helpers; the factory wires them to the
- * supervisor's reads and commands.
+ * How the supervisor uses worker-owned capacity (T3O-86): placement and grow claims, the
+ * phase rule that releases a card's CPU and RAM, settling, and `syncCards`.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
@@ -441,6 +438,73 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     yield* syncAll();
   });
 
+  /**
+   * The cut-short, read off the board alone, at the start of every scheduling pass: when one
+   * of this board's steps waits on capacity on a worker, its idle heavy cards there (nothing
+   * active or queued) go light, longest idle first, so a parked or finished card's room
+   * reaches the queue within a beat rather than ten minutes later.
+   */
+  const releaseForWaiting = Effect.fn("BoardCapacityAdmission.releaseForWaiting")(function* () {
+    const board = yield* deps.readBoard;
+    const states = board.stepStates ?? [];
+    // Every pass first tells each worker what the board holds there: a card deleted or
+    // reclaimed since gives its room back at once. Unchanged state sends nothing.
+    yield* syncAll();
+    const waitingSteps = states.filter(
+      (state) =>
+        state.status === "queued" &&
+        state.queuedBy === "capacity" &&
+        state.queuedDetail?.workerId !== undefined,
+    );
+    const waiting = new Set<BoardWorkerId>(
+      waitingSteps.map((state) => state.queuedDetail!.workerId!),
+    );
+    // A CI pass waiting for its card to grow counts too.
+    const waitingCi = board.cards.filter(
+      (card) => card.archivedAt === null && card.ci?.phase === "queued",
+    );
+    for (const card of waitingCi) waiting.add(card.placedWorkerId ?? cardWorkerOf(board, card));
+    if (waiting.size === 0) return false;
+    const now = yield* nowMs;
+    const idle: Array<{ readonly card: BoardCard; readonly since: number }> = [];
+    for (const card of board.cards) {
+      const grant = card.resources?.grant ?? null;
+      if (grant === null || !grant.heavy || card.archivedAt !== null) continue;
+      const workerId = card.placedWorkerId ?? cardWorkerOf(board, card);
+      if (!waiting.has(workerId)) continue;
+      const state = states.find((candidate) => candidate.cardId === card.id) ?? null;
+      if (stepActiveInWorktree(state) || stepQueuedInWorktree(state) || ciActive(card)) continue;
+      idle.push({ card, since: lastActive.get(card.id) ?? now });
+    }
+    // Per worker, release until the first waiting step's profile fits what is offered.
+    let released = 0;
+    for (const workerId of waiting) {
+      const first = waitingSteps.find((state) => state.queuedDetail?.workerId === workerId);
+      const firstCard =
+        board.cards.find((card) => card.id === first?.cardId) ??
+        waitingCi.find((card) => (card.placedWorkerId ?? cardWorkerOf(board, card)) === workerId);
+      if (firstCard === undefined) continue;
+      const need = firstCard.resources?.grant?.profile ?? requestedProfileOf(board, firstCard);
+      const snapshot = yield* deps.client.latest(workerId);
+      let freeCpu = snapshot?.headroom.cpuCores ?? 0;
+      let freeRam = snapshot?.headroom.ramGiB ?? 0;
+      const onWorker = idle
+        .filter(({ card }) => (card.placedWorkerId ?? cardWorkerOf(board, card)) === workerId)
+        .sort((left, right) => left.since - right.since);
+      for (const { card } of onWorker) {
+        if (freeCpu >= need.cpuCores && freeRam >= need.ramGiB) break;
+        const profile = card.resources!.grant!.profile;
+        yield* release(card);
+        released += 1;
+        freeCpu += profile.cpuCores;
+        freeRam += profile.ramGiB;
+      }
+    }
+    if (released === 0) return false;
+    yield* syncAll();
+    return true;
+  });
+
   const release = Effect.fn("BoardCapacityAdmission.release")(function* (card: BoardCard) {
     yield* deps.dispatch({
       type: "board.card.record-grant",
@@ -457,6 +521,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     recordUnstartedTurn,
     noteStepEnded,
     sweep,
+    releaseForWaiting,
     syncWorker,
     syncAll,
     /** Test access: the tail's clock per card. */

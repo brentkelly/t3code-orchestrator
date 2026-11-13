@@ -4,6 +4,7 @@
  * clock or network behind it. Tests read the claims it was asked and set room directly.
  */
 import {
+  BOARD_LOCAL_WORKER_ID,
   BOARD_RESOURCE_DIMENSIONS,
   boardResourceProfileValue,
   ZERO_BOARD_RESOURCE_PROFILE,
@@ -28,8 +29,10 @@ export interface FakeCapacity {
     readonly workerId: BoardWorkerId;
     readonly cards: ReadonlyArray<BoardSyncedCard>;
   }>;
-  /** What each worker offers now; change it to free or take room. */
-  readonly headroom: Map<BoardWorkerId, BoardResourceProfile>;
+  /** Room another board holds on each worker; change it to free or take room. */
+  readonly external: Map<BoardWorkerId, BoardResourceProfile>;
+  /** What a worker offers this board now. */
+  readonly headroomOf: (workerId: BoardWorkerId) => BoardResourceProfile;
   /** Push a snapshot change for a worker, as its stream would. */
   readonly publish: (workerId: BoardWorkerId) => Effect.Effect<void>;
   /** The local agent cap's refusal, or null. */
@@ -54,16 +57,39 @@ const minus = (left: BoardResourceProfile, right: BoardResourceProfile): BoardRe
   diskGB: left.diskGB - right.diskGB,
 });
 
+/** `local` with room for `n` cards of the 2/4/5 placeholder at size M, and no more. */
+export const roomForCards = (n: number): ReadonlyMap<BoardWorkerId, BoardResourceProfile> =>
+  new Map([[BOARD_LOCAL_WORKER_ID, { cpuCores: 2 * n + 1, ramGiB: 4 * n + 2, diskGB: 1000 }]]);
+
 export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
   declared: ReadonlyMap<BoardWorkerId, BoardResourceProfile>,
 ) {
   const pubsub = yield* PubSub.unbounded<BoardWorkerId>();
-  const headroom = new Map(declared);
+  /** Room taken from outside this board (another board's cards), per worker. */
+  const external = new Map<BoardWorkerId, BoardResourceProfile>();
+  /** Granted claims not yet consumed by a sync, per worker and card. */
+  const pending = new Map<BoardWorkerId, Map<string, BoardResourceProfile>>();
+  /** What the board last synced, per worker. */
+  const synced = new Map<BoardWorkerId, ReadonlyArray<BoardSyncedCard>>();
   let seq = 0;
+  const headroomOf = (workerId: BoardWorkerId): BoardResourceProfile => {
+    let room = declared.get(workerId) ?? ZERO_BOARD_RESOURCE_PROFILE;
+    room = minus(room, external.get(workerId) ?? ZERO_BOARD_RESOURCE_PROFILE);
+    for (const card of synced.get(workerId) ?? []) {
+      room = minus(room, {
+        cpuCores: card.phase === "heavy" ? card.grantedProfile.cpuCores : 0,
+        ramGiB: card.phase === "heavy" ? card.grantedProfile.ramGiB : 0,
+        diskGB: card.grantedProfile.diskGB,
+      });
+    }
+    for (const load of pending.get(workerId)?.values() ?? []) room = minus(room, load);
+    return room;
+  };
   const fake: FakeCapacity = {
     claims: [],
     syncs: [],
-    headroom,
+    external,
+    headroomOf,
     agentCap: null,
     publish: (workerId) => PubSub.publish(pubsub, workerId).pipe(Effect.asVoid),
     client: {
@@ -71,8 +97,20 @@ export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
       claim: (workerId, input) =>
         Effect.sync(() => {
           fake.claims.push({ ...input, seq: ++seq, workerId });
-          const room = headroom.get(workerId) ?? ZERO_BOARD_RESOURCE_PROFILE;
-          const need = input.kind === "grow" ? { ...input.profile, diskGB: 0 } : input.profile;
+          const listed = (synced.get(workerId) ?? []).find((card) => card.cardId === input.cardId);
+          const need: BoardResourceProfile =
+            input.kind === "grow"
+              ? {
+                  cpuCores:
+                    input.profile.cpuCores -
+                    (listed?.phase === "heavy" ? listed.grantedProfile.cpuCores : 0),
+                  ramGiB:
+                    input.profile.ramGiB -
+                    (listed?.phase === "heavy" ? listed.grantedProfile.ramGiB : 0),
+                  diskGB: 0,
+                }
+              : input.profile;
+          const room = headroomOf(workerId);
           if (input.force !== true && !fits(need, room)) {
             const dimension = short(need, room);
             return {
@@ -81,25 +119,35 @@ export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
               ...(dimension === undefined ? {} : { dimension }),
             };
           }
-          headroom.set(workerId, minus(room, need));
+          const onWorker = pending.get(workerId) ?? new Map<string, BoardResourceProfile>();
+          onWorker.set(input.cardId, need);
+          pending.set(workerId, onWorker);
           return { outcome: "granted" as const };
         }),
       nextSeq: () => Effect.sync(() => ++seq),
       syncCards: (workerId, cards) =>
         Effect.sync(() => {
           fake.syncs.push({ workerId, cards });
+          synced.set(workerId, cards);
+          const onWorker = pending.get(workerId);
+          for (const card of cards) onWorker?.delete(card.cardId);
           return true;
         }),
-      synced: () => Effect.succeed(true),
+      synced: (workerId) => Effect.sync(() => synced.has(workerId)),
       latest: (workerId) =>
         Effect.sync((): BoardWorkerCapacitySnapshot | null => {
           const total = declared.get(workerId);
           if (total === undefined) return null;
+          const room = headroomOf(workerId);
           return {
             at: "2026-01-01T00:00:00.000Z",
             declared: total,
-            headroom: headroom.get(workerId) ?? ZERO_BOARD_RESOURCE_PROFILE,
-            over: { cpuRam: false, disk: false },
+            headroom: {
+              cpuCores: Math.max(0, room.cpuCores),
+              ramGiB: Math.max(0, room.ramGiB),
+              diskGB: Math.max(0, room.diskGB),
+            },
+            over: { cpuRam: room.cpuCores < 0 || room.ramGiB < 0, disk: room.diskGB < 0 },
             agents: { running: 0, max: null },
             providers: [],
             readiness: [],

@@ -20,6 +20,7 @@ import {
   ThreadId,
   type BoardCard,
   type BoardCardStepState,
+  type BoardResourceProfile,
   type BoardWorkerId,
   type BoardWorkersState,
   type BoardWorkerView,
@@ -32,6 +33,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { layerTest } from "../config.ts";
+import { makeFakeCapacity } from "./capacity/capacityClient.testkit.ts";
 import {
   buildingCard,
   cardMoved,
@@ -710,9 +712,19 @@ it.effect("a re-planned review round cuts no worktree on a card whose move faile
 
 // ── Concurrency: board, worker and provider ceilings ──────────────────────
 
-it.effect("a full worker queues its cards without holding up another worker's", () =>
+/** W1 with room for one default card (2 cores of the 2/4/5 placeholder); `local` roomy. */
+const w1RoomForOne = () =>
+  makeFakeCapacity(
+    new Map<BoardWorkerId, BoardResourceProfile>([
+      [W1, { cpuCores: 3, ramGiB: 16, diskGB: 100 }],
+      [BOARD_LOCAL_WORKER_ID, { cpuCores: 64, ramGiB: 256, diskGB: 1000 }],
+    ]),
+  );
+
+it.effect("a full worker queues its cards without holding up another worker's (T3O-86)", () =>
   Effect.gen(function* () {
     const { placement } = yield* makePlacement(workersState([workerView(W1)]));
+    const capacity = yield* w1RoomForOne();
     const cards = [
       placedBuildingCard("card-a", "a", W1),
       placedBuildingCard("card-b", "b", W1),
@@ -721,12 +733,9 @@ it.effect("a full worker queues its cards without holding up another worker's", 
     yield* withGovernor(
       {
         board: { cards, nextCardNumberByProject: {}, workers: registered },
-        settings: settingsWith({
-          building: [codexStep],
-          globalMaxConcurrent: 8,
-          workers: { [W1]: { maxConcurrent: PositiveInt.make(1), perInstance: {} } },
-        }),
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 8 }),
         placement,
+        capacity,
       },
       (h) =>
         Effect.gen(function* () {
@@ -736,153 +745,109 @@ it.effect("a full worker queues its cards without holding up another worker's", 
           assert.strictEqual((yield* step(h, "card-a"))?.status, "running");
           const waiting = yield* step(h, "card-b");
           assert.strictEqual(waiting?.status, "queued");
-          assert.strictEqual(waiting?.queuedBy, "worker");
+          assert.strictEqual(waiting?.queuedBy, "capacity");
+          assert.strictEqual(waiting?.queuedDetail?.workerId, W1);
           assert.strictEqual((yield* step(h, "card-c"))?.status, "running");
-          assert.strictEqual(yield* h.slots.heldOnWorker(W1), 1);
 
-          // card-a finishes on W1: the slot it frees there goes to card-b.
+          // card-a finishes on W1; the sweep releases it for the card waiting there.
           yield* h.pumpDomain(stepCompleted(BoardCardId.make("card-a"), "succeeded", 9));
+          yield* h.reactor.sweep;
           assert.strictEqual((yield* step(h, "card-b"))?.status, "running");
         }),
     );
   }),
 );
 
-it.effect("a provider cap on one worker queues that provider there and names it", () =>
-  Effect.gen(function* () {
-    const { placement } = yield* makePlacement(workersState([workerView(W1)]));
-    const cards = [placedBuildingCard("card-a", "a", W1), placedBuildingCard("card-b", "b", W1)];
-    yield* withGovernor(
-      {
-        board: { cards, nextCardNumberByProject: {}, workers: registered },
-        settings: settingsWith({
-          building: [codexStep],
-          globalMaxConcurrent: 8,
-          // A codex cap of 1 on W1, and none here: local codex is untouched.
-          workers: {
-            [W1]: {
-              maxConcurrent: PositiveInt.make(4),
-              perInstance: { [codex]: PositiveInt.make(1) },
-            },
+it.effect(
+  "after a restart, a running card's grant reaches its worker before anything is placed there",
+  () =>
+    Effect.gen(function* () {
+      const { placement } = yield* makePlacement(workersState([workerView(W1)]));
+      const capacity = yield* w1RoomForOne();
+      const threadId = ThreadId.make("thread-running");
+      const running: BoardCard = {
+        ...placedBuildingCard("card-a", "a", W1),
+        resources: {
+          sizing: null,
+          setup: null,
+          grant: {
+            profile: { cpuCores: 2, ramGiB: 4, diskGB: 5 },
+            heavy: true,
+            claimId: "card-a:1:0",
+            grantedAt: "2026-01-01T00:00:00.000Z",
+            settled: true,
           },
-        }),
-        placement,
-      },
-      (h) =>
-        Effect.gen(function* () {
-          yield* h.pumpDomain(movedToBuilding(cards[0]!, 1));
-          yield* h.pumpDomain(movedToBuilding(cards[1]!, 2));
-          assert.strictEqual((yield* step(h, "card-a"))?.status, "running");
-          assert.strictEqual((yield* step(h, "card-b"))?.queuedBy, "provider");
-          assert.strictEqual(yield* h.slots.heldFor(codex, W1), 1);
-        }),
-    );
-  }),
-);
-
-it.effect("the board limit holds a card even when its worker has room", () =>
-  Effect.gen(function* () {
-    const { placement } = yield* makePlacement(workersState([workerView(W1), workerView(W2)]));
-    const cards = [
-      placedBuildingCard("card-a", "a", BOARD_LOCAL_WORKER_ID),
-      placedBuildingCard("card-b", "b", W1),
-      placedBuildingCard("card-c", "c", W2),
-    ];
-    yield* withGovernor(
-      {
-        board: { cards, nextCardNumberByProject: {}, workers: registered },
-        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 2 }),
-        placement,
-      },
-      (h) =>
-        Effect.gen(function* () {
-          for (const [index, building] of cards.entries()) {
-            yield* h.pumpDomain(movedToBuilding(building, index + 1));
-          }
-          const waiting = yield* step(h, "card-c");
-          assert.strictEqual(waiting?.status, "queued");
-          assert.strictEqual(waiting?.queuedBy, "board");
-          assert.strictEqual(yield* h.slots.heldTotal, 2);
-        }),
-    );
-  }),
-);
-
-it.effect("a step restored at boot holds its slot on its own worker", () =>
-  Effect.gen(function* () {
-    const { placement } = yield* makePlacement(workersState([workerView(W1)]));
-    const threadId = ThreadId.make("thread-running");
-    const running: BoardCard = {
-      ...placedBuildingCard("card-a", "a", W1),
-      threadLinks: [
+        },
+        threadLinks: [
+          {
+            threadId,
+            role: "building",
+            linkedAt: "2026-01-01T00:00:00.000Z",
+            tombstonedAt: null,
+            workerId: W1,
+          },
+        ],
+      };
+      const runningStep: BoardCardStepState = {
+        cardId: running.id,
+        stepId: String(BOARD_SEED_STAGE_IDS.building),
+        stepLabel: null,
+        stageLabel: "Building",
+        attempt: 1,
+        stallCount: 0,
+        stageEntryRecoveries: 0,
+        humanTurnAt: null,
+        lastNudgeAt: null,
+        baseTipAtRoundStart: null,
+        lastError: null,
+        awaitingReason: "question",
+        stalledReason: "gave-up",
+        retryAt: null,
+        prompt: "build it",
+        providerInstanceId: codex,
+        model: "gpt-5-codex",
+        mode: "build",
+        runtimeMode: "auto",
+        humanInLoop: false,
+        maxAttempts: 3,
+        timeoutMs: 30 * 60_000,
+        threadId,
+        status: "running",
+        slotHeld: true,
+        forceStart: false,
+        queuedBy: null,
+        queuedDetail: null,
+        startedAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+      const waiting = placedBuildingCard("card-b", "b", W1);
+      yield* withGovernor(
         {
-          threadId,
-          role: "building",
-          linkedAt: "2026-01-01T00:00:00.000Z",
-          tombstonedAt: null,
-          workerId: W1,
+          board: {
+            cards: [running, waiting],
+            stepStates: [runningStep],
+            nextCardNumberByProject: {},
+            workers: registered,
+          },
+          settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 8 }),
+          initialShells: new Map([[String(threadId), aliveThread(String(threadId))]]),
+          placement,
+          capacity,
         },
-      ],
-    };
-    const runningStep: BoardCardStepState = {
-      cardId: running.id,
-      stepId: String(BOARD_SEED_STAGE_IDS.building),
-      stepLabel: null,
-      stageLabel: "Building",
-      attempt: 1,
-      stallCount: 0,
-      stageEntryRecoveries: 0,
-      humanTurnAt: null,
-      lastNudgeAt: null,
-      baseTipAtRoundStart: null,
-      lastError: null,
-      awaitingReason: "question",
-      stalledReason: "gave-up",
-      retryAt: null,
-      prompt: "build it",
-      providerInstanceId: codex,
-      model: "gpt-5-codex",
-      mode: "build",
-      runtimeMode: "auto",
-      humanInLoop: false,
-      maxAttempts: 3,
-      timeoutMs: 30 * 60_000,
-      threadId,
-      status: "running",
-      slotHeld: true,
-      forceStart: false,
-      queuedBy: null,
-      queuedDetail: null,
-      startedAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    };
-    const waiting = placedBuildingCard("card-b", "b", W1);
-    yield* withGovernor(
-      {
-        board: {
-          cards: [running, waiting],
-          stepStates: [runningStep],
-          nextCardNumberByProject: {},
-          workers: registered,
-        },
-        settings: settingsWith({
-          building: [codexStep],
-          globalMaxConcurrent: 8,
-          workers: { [W1]: { maxConcurrent: PositiveInt.make(1), perInstance: {} } },
-        }),
-        initialShells: new Map([[String(threadId), aliveThread(String(threadId))]]),
-        placement,
-      },
-      (h) =>
-        Effect.gen(function* () {
-          yield* h.reactor.drain;
-          assert.strictEqual(yield* h.slots.heldFor(codex, W1), 1);
-          assert.strictEqual(yield* h.slots.heldFor(codex), 0);
-          yield* h.pumpDomain(movedToBuilding(waiting, 1));
-          assert.strictEqual((yield* step(h, "card-b"))?.queuedBy, "worker");
-        }),
-    );
-  }),
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.drain;
+            yield* h.pumpDomain(movedToBuilding(waiting, 1));
+            // The first sync on the connection is sent before any claim, listing the running
+            // card heavy, so the waiting card finds no room.
+            assert.deepStrictEqual(
+              capacity.syncs.find((sync) => sync.workerId === W1)?.cards.map((card) => card.phase),
+              ["heavy"],
+            );
+            assert.strictEqual((yield* step(h, "card-b"))?.queuedBy, "capacity");
+          }),
+      );
+    }),
 );
 
 // ── Moving ────────────────────────────────────────────────────────────────

@@ -57,7 +57,6 @@ import {
   settingsWith,
   stepStatus,
   withGovernor,
-  HARNESS_CI_INSTANCE,
   type Harness,
   type HarnessCommand,
   type HarnessEvent,
@@ -621,35 +620,36 @@ it.effect("dragging a card back out of CI cancels its pass", () =>
         yield* h.pumpDomain(
           cardMoved({ ...subject, stage: BoardStageId.make(review) }, ci, review, 2),
         );
-        // The pass fiber is stopped and its slot freed; the move's own decision
+        // The pass fiber is stopped; the move's own decision
         // settles the row (ciProjection.test.ts).
         yield* h.reactor.drainCi;
-        assert.strictEqual(yield* h.slots.heldFor(HARNESS_CI_INSTANCE), 0);
         assert.isNull((yield* live(h, subject.id)).ci);
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
-it.effect("a queued pass starts when an agent step frees the slot", () =>
+it.effect("a queued pass starts when an agent step frees its worker's room (T3O-86)", () =>
   Effect.gen(function* () {
     const { runner, calls } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
     const blocker = buildingCard("blocker", "b");
     const subject = card("waiting", review);
     const oneSlot = settingsWith({ building: [codexStep], globalMaxConcurrent: 1 });
-    yield* withGovernor({ board: boardWith([blocker, subject]), settings: oneSlot }, (h) =>
-      Effect.gen(function* () {
-        yield* h.pumpDomain(movedToBuilding(blocker, 1));
-        assert.strictEqual(stepStatus(yield* h.board, blocker.id), "running");
-        yield* enterCiAndRun(h, subject, 2);
-        assert.strictEqual(yield* calls, 0);
-        assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "queued");
+    yield* withGovernor(
+      { board: boardWith([blocker, subject]), settings: oneSlot, capacityFor: 1 },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(blocker, 1));
+          assert.strictEqual(stepStatus(yield* h.board, blocker.id), "running");
+          yield* enterCiAndRun(h, subject, 2);
+          assert.strictEqual(yield* calls, 0);
+          assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "queued");
 
-        yield* h.pumpDomain(stepCompleted(blocker.id, "blocked", 3));
-        yield* h.reactor.drainCi;
-        assert.strictEqual(yield* calls, 1);
-        assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
-      }),
+          yield* h.pumpDomain(stepCompleted(blocker.id, "blocked", 3));
+          yield* h.reactor.drainCi;
+          assert.strictEqual(yield* calls, 1);
+          assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
+        }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
@@ -666,20 +666,18 @@ const setCard = (h: Harness, id: BoardCardId, next: BoardCard | null) =>
     },
   }));
 
-it.effect("archiving a card in CI stops its pass, frees the slot and settles the row", () =>
+it.effect("archiving a card in CI stops its pass and settles the row", () =>
   Effect.gen(function* () {
     const { runner } = yield* scriptedRunner(["hang"]);
     const subject = card("archived-in-ci", review);
     yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
       Effect.gen(function* () {
         yield* enterCi(h, subject, 1);
-        assert.strictEqual(yield* h.slots.heldFor(HARNESS_CI_INSTANCE), 1);
         const runId = (yield* live(h, subject.id)).ci!.runId;
         const archived = { ...(yield* live(h, subject.id)), archivedAt: NOW };
         yield* setCard(h, subject.id, archived);
         yield* h.pumpDomain(cardArchived(archived, 2));
         yield* h.reactor.drainCi;
-        assert.strictEqual(yield* h.slots.heldFor(HARNESS_CI_INSTANCE), 0);
         const settled = ciRecords(yield* h.decided).flatMap((record) => record.payload.settled);
         assert.isTrue(
           settled.some((entry) => entry.runId === runId && entry.outcome === "cancelled"),
@@ -696,35 +694,35 @@ it.effect("a queued pass of an archived card never starts", () =>
     const blocker = buildingCard("blocker", "b");
     const subject = card("archived-queued", review);
     const oneSlot = settingsWith({ building: [codexStep], globalMaxConcurrent: 1 });
-    yield* withGovernor({ board: boardWith([blocker, subject]), settings: oneSlot }, (h) =>
-      Effect.gen(function* () {
-        yield* h.pumpDomain(movedToBuilding(blocker, 1));
-        yield* enterCi(h, subject, 2);
-        assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "queued");
-        const archived = { ...(yield* live(h, subject.id)), archivedAt: NOW };
-        yield* setCard(h, subject.id, archived);
-        yield* h.pumpDomain(cardArchived(archived, 3));
-        yield* h.pumpDomain(stepCompleted(blocker.id, "blocked", 4));
-        yield* h.reactor.drainCi;
-        assert.strictEqual(yield* calls, 0);
-      }),
+    yield* withGovernor(
+      { board: boardWith([blocker, subject]), settings: oneSlot, capacityFor: 1 },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(blocker, 1));
+          yield* enterCi(h, subject, 2);
+          assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "queued");
+          const archived = { ...(yield* live(h, subject.id)), archivedAt: NOW };
+          yield* setCard(h, subject.id, archived);
+          yield* h.pumpDomain(cardArchived(archived, 3));
+          yield* h.pumpDomain(stepCompleted(blocker.id, "blocked", 4));
+          yield* h.reactor.drainCi;
+          assert.strictEqual(yield* calls, 0);
+        }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
-it.effect("deleting a card in CI stops its pass and frees the slot", () =>
+it.effect("deleting a card in CI stops its pass", () =>
   Effect.gen(function* () {
     const { runner } = yield* scriptedRunner(["hang"]);
     const subject = card("deleted-in-ci", review);
     yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
       Effect.gen(function* () {
         yield* enterCi(h, subject, 1);
-        assert.strictEqual(yield* h.slots.heldFor(HARNESS_CI_INSTANCE), 1);
         const doomed = yield* live(h, subject.id);
         yield* setCard(h, subject.id, null);
         yield* h.pumpDomain(cardDeleted(doomed, 2, null));
         yield* h.reactor.drainCi;
-        assert.strictEqual(yield* h.slots.heldFor(HARNESS_CI_INSTANCE), 0);
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
