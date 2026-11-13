@@ -98,6 +98,20 @@ export const listCardActualsRows = Effect.fn("boardActualsStore.listCardActualsR
   });
 });
 
+/** Whether a step already has its row, open or ended. */
+export const hasActualsRow = Effect.fn("boardActualsStore.hasActualsRow")(function* (
+  sql: SqlClient.SqlClient,
+  cardId: BoardCardId,
+  stepKey: string,
+) {
+  const rows = yield* sql<{ readonly one: number }>`
+    SELECT 1 AS one FROM boards.board_card_actuals
+    WHERE card_id = ${cardId} AND step_key = ${stepKey}
+    LIMIT 1
+  `;
+  return rows.length > 0;
+});
+
 /** Every row whose step hasn't ended, to read again or end. */
 export const listOpenActualsRows = Effect.fn("boardActualsStore.listOpenActualsRows")(function* (
   sql: SqlClient.SqlClient,

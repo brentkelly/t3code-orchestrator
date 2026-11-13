@@ -44,6 +44,7 @@ import { BoardUsageRecorder } from "../usage/BoardUsageRecorder.ts";
 import { WorkerConnections } from "../workers/WorkerConnections.ts";
 import { BoardActualsMeter } from "./BoardActualsMeter.ts";
 import {
+  hasActualsRow,
   listEndedActualsRows,
   listOpenActualsRows,
   upsertActualsRow,
@@ -202,8 +203,12 @@ export const makeBoardActualsRecorder = (deps: BoardActualsRecorderDeps) => {
       const id = `${step.card.id}|${step.stepKey}`;
       const held = open.get(id);
       open.delete(id);
-      if (step.skipReason !== null) {
-        if (held !== undefined) continue;
+      // A step no worker measures has one row, written once and ended.
+      if (
+        step.skipReason !== null &&
+        (yield* hasActualsRow(deps.sql, step.card.id, step.stepKey))
+      ) {
+        continue;
       }
       const reading =
         step.skipReason !== null
@@ -219,8 +224,9 @@ export const makeBoardActualsRecorder = (deps: BoardActualsRecorderDeps) => {
         workerId: step.workerId,
         grantedProfile: step.card.resources?.grant?.profile ?? null,
         startedAt: held?.startedAt ?? now,
-        // Not measured is final from the start: nothing more will come.
-        endedAt: reading.measured ? null : now,
+        // The board's own "not measured" is final; a worker's may be measured yet, and its
+        // meter entry is ended with the step.
+        endedAt: step.skipReason !== null ? now : null,
         reading,
         updatedAt: now,
       });

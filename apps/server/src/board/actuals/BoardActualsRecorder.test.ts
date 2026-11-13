@@ -209,3 +209,33 @@ it.effect("an ended CI pass recomputes its project's learned baseline", () =>
     assert.include(recorded.learned.disk, { value: 3 });
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
+
+it.effect("a not-measured row is written once; a running one not yet measured stays open", () =>
+  Effect.gen(function* () {
+    const h = yield* harness({
+      cards: [card("claude-card"), card("codex-card")],
+      nextCardNumberByProject: {},
+      stepStates: [
+        step("claude-card", "claudeAgent", "t-claude"),
+        step("codex-card", "codex", "t-codex"),
+      ],
+    });
+    // The thread has no scope yet: the worker's meter keeps looking.
+    h.answers.set(
+      "read:thread:t-claude",
+      reading({ measured: false, reason: "no scope yet", cpuCoreSeconds: null, samples: 0 }),
+    );
+    yield* h.recorder.sweep();
+    h.state.now = "2026-11-13T00:05:00.000Z";
+    yield* h.recorder.sweep();
+    const [codex] = yield* listCardActualsRows(h.sql, BoardCardId.make("codex-card"));
+    assert.strictEqual(codex?.updatedAt, NOW);
+    const [claude] = yield* listCardActualsRows(h.sql, BoardCardId.make("claude-card"));
+    assert.ok(claude !== undefined);
+    assert.isNull(claude.endedAt);
+    // The step ends: its meter entry is ended on the worker, not left behind.
+    h.state.board = { ...h.state.board, stepStates: [] };
+    yield* h.recorder.sweep();
+    assert.include(h.calls.at(-1)?.input, { op: "end", key: "thread:t-claude" });
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);
