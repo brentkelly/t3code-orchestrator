@@ -263,12 +263,15 @@ Each worker's provider list comes from that worker's own server config, as it re
 central server never invents one. Replaced: the single-machine rule of `maxConcurrent` per
 `providerInstanceId` plus a global ceiling, which is the one-worker special case of the above.
 
-The **Building column is the queue** — position is priority, drag to reprioritise, queued cards sit
-in Building flagged as queued (never in Ready, which would lie about their state). The card says
-which ceiling it is waiting on.
+The **Building column is the queue** — the card's priority, then its position, decide its place;
+drag to reorder within a priority level. Queued cards sit in Building flagged as queued (never in
+Ready, which would lie about their state). The card says which ceiling it is waiting on.
 
-Ordering rule, unchanged: **stage descending → started before unstarted → drag order.** Finishing
-beats starting; a nearly-merged card is never starved by new work. Preemption takes effect at the
+Ordering rule: **stage descending → started before unstarted → priority (Urgent, High, Normal, Low)
+→ drag order** (T3O-95). Finishing beats starting; a nearly-merged card is never starved by new
+work, and priority only decides between cards waiting at the same stage. Priority is per board
+(workers never see it), never ages, and never passes along dependencies; columns other than Done
+sort by priority then position, so the column still reads in run order. Preemption takes effect at the
 **next step boundary** — nothing in flight is wasted and the worktree is always left clean.
 
 ### D12 — Groups nest; a group's stage is derived from its children

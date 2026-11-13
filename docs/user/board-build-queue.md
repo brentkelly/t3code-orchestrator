@@ -5,7 +5,7 @@ agent on the machine — not per project. A card that reaches a stage needing an
 limit is full does not stop and does not fail. It queues, and it starts by itself as soon as an
 agent frees up.
 
-A queued card carries a **Queued #2** pill on the board. Hovering it says how busy the agents are
+A queued card carries a **Queued #2** pill on the board, or **Next up** at the front. Hovering it says how busy the agents are
 and how much work is ahead. Opening the card says the same thing in full, above the dependencies:
 where it sits in the queue, why it is waiting, and that nobody has to do anything about it.
 
@@ -18,12 +18,31 @@ the count drops back under it on its own.
 Starting a card still takes a moment — it needs a workspace before an agent can pick it up — so the
 button holds at **Starting…** until the work is genuinely under way.
 
+## Priority
+
+Every card has a priority: **Low**, **Normal** (the default), **High** or **Urgent**. When an agent
+frees up, the highest-priority card waiting for it gets it; cards at the same priority go in column
+order. Set it in the new card dialog (**Alt+1** to **Alt+4** pick a level without leaving the
+title), or open a card and use its **Priority** row or the chip beside its stage.
+
+- Priority never interrupts work that is running.
+- A card further along the pipeline, or one that has already started its current stage, still goes
+  first. Priority decides between cards waiting at the same stage.
+- **Low** cards run as soon as no higher-priority card is waiting, and read **After others** in the
+  queue while one is.
+- Columns show cards by priority, then position. Dragging a card moves it within its own priority
+  level; to move it between levels, change its priority in the card.
+- A card that a higher-priority card depends on says so in its Priority row (for example **Blocks an
+  Urgent card**). The scheduler does not raise its priority for you.
+- Groups have no priority of their own; set it on the cards inside. Cards split from a plan start
+  with their parent's priority.
+
 ## Moving one up
 
-**Move to front** reorders the queue without starting anything. It appears only when it would
-actually help. Later stages are admitted before earlier ones, so a card queued behind work that is
-already in review cannot overtake it by reordering, and the button stays out of the way rather than
-doing nothing.
+**Move to front** reorders the queue without starting anything, within the card's own priority
+level. It appears only when it would actually help. Later stages are admitted before earlier ones,
+so a card queued behind work that is already in review cannot overtake it by reordering, and the
+button stays out of the way rather than doing nothing.
 
 ## What the numbers mean
 

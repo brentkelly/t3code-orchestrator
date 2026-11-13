@@ -170,6 +170,10 @@ would be a regression:
   Same argument: a checked control is UI state. The status surface for that feature — the card
   face's **Auto-start** chip — is neutral, because the card is not running.
 - The teal terminal-process indicator, which deliberately reads as "not agent work".
+- A card's **Urgent** priority marker (`--priority-urgent`): the red "!" icon, the tile's red-tinted
+  border and soft ring, and the header chip (T3O-95). It says how soon the card should get a slot,
+  not how its work is going, and it is not the red of a failed or stalled card. A status tone on the
+  tile wins over it.
 - A card's project colour — the key pill, legend and picker dots. It is the project's icon colour
   (T3O-4), chosen by the user from the full icon palette, so it can be green, blue or violet. It says
   which project a card belongs to, never how its work is going, and the status indicators beside it

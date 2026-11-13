@@ -1404,7 +1404,7 @@ reactor grows the same two seams by one merge line and one start line — it nev
 core-only diff audit is empty. This is the seam grammar paying off: the governor's whole surface lives
 in board-owned files. The admission policy (per-`providerInstanceId` `maxConcurrent` + global ceiling)
 and boot-time `restore` are in `BoardStepSlots.ts`; the pure ordering (stage desc → started before
-unstarted → drag order) and `resolveBoardConcurrencyLimit` are in `supervisor.ts`; the `schedule`
+unstarted → card priority → drag order; priority added by T3O-95) and `resolveBoardConcurrencyLimit` are in `supervisor.ts`; the `schedule`
 pass (offer candidates to `acquire` in priority order, queue the rest, run after every slot release
 for step-boundary preemption) and the `reschedule` boot decision are in `supervisorReactor.ts`. The
 one bit of governor state that reaches the column card — the `queued` flag on `BoardCardShell` — was
