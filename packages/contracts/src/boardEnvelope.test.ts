@@ -736,7 +736,9 @@ describe("raised bar prompts (T3O-92)", () => {
       round: 6,
       rounds: 9,
       prompt:
-        phase === "retriage" ? DEFAULT_BOARD_TRIAGE_PHASE_PROMPT : DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT,
+        phase === "retriage"
+          ? DEFAULT_BOARD_TRIAGE_PHASE_PROMPT
+          : DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT,
       findings: [],
       barTier,
     });
@@ -769,7 +771,9 @@ describe("raised bar prompts (T3O-92)", () => {
     expect(tier1).toContain("must be a real defect in this change");
     expect(tier1).toContain("Rate anything below it `nitpick`");
     const bar = tier1.indexOf("the bar for `improvement` is raised");
-    expect(bar).toBeGreaterThan(tier1.indexOf(DEFAULT_BOARD_REVIEW_PHASE_PROMPT.trim().slice(0, 40)));
+    expect(bar).toBeGreaterThan(
+      tier1.indexOf(DEFAULT_BOARD_REVIEW_PHASE_PROMPT.trim().slice(0, 40)),
+    );
     expect(bar).toBeLessThan(tier1.indexOf("To finish this phase"));
     expect(tier1).toContain("`critical`, `improvement` or `nitpick`");
     expect(compose("review", 2)).toContain("a user or operator would actually hit in normal use");
@@ -801,7 +805,13 @@ describe("raised bar prompts (T3O-92)", () => {
 
   it("takes no bar in a settling round", () => {
     const settling = { kind: "settling" as const, sinceSha: "abc1234def5678" };
-    const base = { phase: "review" as const, round: 6, rounds: 9, prompt: "Intent.", mode: settling };
+    const base = {
+      phase: "review" as const,
+      round: 6,
+      rounds: 9,
+      prompt: "Intent.",
+      mode: settling,
+    };
     // The executor passes tier 0 for a settling round; the composer adds nothing for it.
     expect(composeBoardReviewPhasePrompt({ ...base, barTier: 0 })).not.toContain("raised bar");
   });

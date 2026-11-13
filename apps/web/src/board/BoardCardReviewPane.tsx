@@ -123,7 +123,6 @@ function FindingRow({ entry }: { readonly entry: BoardReviewLoopFinding }) {
           // The reviewer's rating stays visible, struck through by the adjudicator's ruling.
           entry.belowBar && "line-through opacity-55",
         )}
-        title={entry.belowBar ? "The adjudicator ruled this below the round's bar" : undefined}
       >
         {finding.severity}
       </span>

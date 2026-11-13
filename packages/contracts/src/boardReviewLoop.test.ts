@@ -2144,7 +2144,10 @@ describe("T3O-92: the raised bar", () => {
     assert.strictEqual(result.convergedBy, "below-bar");
     assert.strictEqual(result.unreviewedFixes, 2);
     // Without the ruling the fixes force another round.
-    const upheld = walkFull([...fixed, ruling("adjudicate", 1, { i1: "fix-upheld", i2: "fix-upheld" })]);
+    const upheld = walkFull([
+      ...fixed,
+      ruling("adjudicate", 1, { i1: "fix-upheld", i2: "fix-upheld" }),
+    ]);
     assert.deepStrictEqual(upheld.next, { phase: "review", round: 2 });
   });
 

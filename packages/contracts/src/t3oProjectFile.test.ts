@@ -594,7 +594,9 @@ describe("resolveBoardStageExecution with a project config", () => {
         settings: { review: { convergeAfterRound: null, settleBelowFindings: 4 } },
       },
     });
-    expect(delta.overrides).toEqual({ review: { convergeAfterRound: null, settleBelowFindings: 4 } });
+    expect(delta.overrides).toEqual({
+      review: { convergeAfterRound: null, settleBelowFindings: 4 },
+    });
     const review = resolveBoardStageExecution(
       DEFAULT_BOARD_SETTINGS,
       BOARD_SEED_STAGE_IDS.review,

@@ -460,7 +460,9 @@ function boardReviewBarBlock(input: {
       return "";
     case "adjudicate":
     case "readjudicate":
-      return [bar, strict, BOARD_REVIEW_BELOW_BAR_RULING].filter((part) => part.length > 0).join(" ");
+      return [bar, strict, BOARD_REVIEW_BELOW_BAR_RULING]
+        .filter((part) => part.length > 0)
+        .join(" ");
   }
 }
 

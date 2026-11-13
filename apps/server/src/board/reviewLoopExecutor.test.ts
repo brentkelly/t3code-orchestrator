@@ -1600,8 +1600,9 @@ describe("settling rounds (T3O-64)", () => {
     );
     expect(adjudicate.stepId).toBe("adjudicate@6");
     expect(adjudicate.prompt).toContain("add `belowBar: true` to its verdict");
-    expect(runOf(plan(twoImprovementRounds(3), reviewExec({ convergeAfterRound: null }))).prompt)
-      .not.toContain("raised bar");
+    expect(
+      runOf(plan(twoImprovementRounds(3), reviewExec({ convergeAfterRound: null }))).prompt,
+    ).not.toContain("raised bar");
     // A settling round's bar is already critical-only.
     expect(runOf(plan(oneImprovementRounds(3))).prompt).not.toContain("raised bar");
   });
