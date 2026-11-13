@@ -2,7 +2,7 @@
  * The worker's capacity service with every machine and server reading faked, two boards
  * below the RPC guard (T3O-86).
  */
-import type { BoardSyncedCard, ServerProvider } from "@t3tools/contracts";
+import { ProviderDriverKind, type BoardSyncedCard, type ServerProvider } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -88,12 +88,19 @@ const card = (cardId: string, overrides: Partial<BoardSyncedCard> = {}): BoardSy
 
 const provider = (
   instanceId: string,
-  windows: ReadonlyArray<{ kind: string; label: string; usedPercent: number; resetsAt?: string }>,
+  windows: ReadonlyArray<{
+    kind: string;
+    label: string;
+    usedPercent: number;
+    resetsAt?: string;
+    id?: string;
+  }>,
   checkedAt = "1970-01-01T00:00:00.000Z",
+  driver = "claudeAgent",
 ) =>
   ({
     instanceId,
-    driver: "claudeAgent",
+    driver,
     enabled: true,
     auth: { status: "authenticated", email: "dev@example.com", label: "Max" },
     usageLimits: {
@@ -135,10 +142,29 @@ it("quota gates only account-wide session and weekly windows, until they reset",
   const now = Date.parse("2026-11-13T00:00:00.000Z");
   const later = "2026-11-20T09:00:00.000Z";
   const scoped = provider("claude", [
-    { kind: "weekly", label: "Weekly · Opus", usedPercent: 100, resetsAt: later },
+    {
+      kind: "weekly",
+      label: "Weekly · Opus",
+      usedPercent: 100,
+      resetsAt: later,
+      id: "seven_day_opus",
+    },
     { kind: "monthly", label: "Monthly spend", usedPercent: 100 },
   ]);
   assert.isFalse(providerQuota(scoped, 95, now).exhausted);
+  // Scope comes from ids and drivers, not labels: an account window's label may carry a "·"…
+  const relabelled = provider("claude", [
+    { kind: "weekly", label: "Weekly · all models", usedPercent: 100, id: "seven_day" },
+  ]);
+  assert.isTrue(providerQuota(relabelled, 95, now).exhausted);
+  // …and every Antigravity window is one model family's.
+  const family = provider(
+    "ag",
+    [{ kind: "weekly", label: "Gemini", usedPercent: 100, resetsAt: later }],
+    undefined,
+    "antigravity",
+  );
+  assert.isFalse(providerQuota(family, 95, now).exhausted);
   const weekly = provider("claude", [
     { kind: "weekly", label: "Weekly", usedPercent: 96, resetsAt: later },
   ]);
@@ -147,7 +173,13 @@ it("quota gates only account-wide session and weekly windows, until they reset",
     { kind: "session", label: "Session", usedPercent: 100, resetsAt: "2026-11-12T00:00:00.000Z" },
   ]);
   assert.isFalse(providerQuota(past, 95, now).exhausted);
-  assert.isFalse(providerQuota({ usageLimits: undefined }, 95, now).exhausted);
+  assert.isFalse(
+    providerQuota(
+      { usageLimits: undefined, driver: ProviderDriverKind.make("claudeAgent") },
+      95,
+      now,
+    ).exhausted,
+  );
 });
 
 it.effect(

@@ -178,15 +178,22 @@ export class BoardWorkerCapacity extends Context.Service<
   BoardWorkerCapacityShape
 >()("t3/board/capacity/BoardWorkerCapacity") {}
 
-const isGatingWindow = (window: { readonly kind: string; readonly label: string }) =>
-  (window.kind === "session" || window.kind === "weekly") && !window.label.includes("·");
+/** Drivers whose every window is one model family's quota, never the account's. */
+const MODEL_SCOPED_DRIVERS: ReadonlySet<string> = new Set(["antigravity"]);
+
+/** Read from window ids, which the usage contract keeps stable, never display labels.
+    Claude's per-model weekly windows are `seven_day_<model>` beside the account's `seven_day`. */
+const isGatingWindow = (driver: string, window: { readonly kind: string; readonly id: string }) =>
+  (window.kind === "session" || window.kind === "weekly") &&
+  !MODEL_SCOPED_DRIVERS.has(driver) &&
+  !window.id.startsWith("seven_day_");
 
 const nowIso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 
 /** A provider is exhausted when an account-wide session or weekly window is at the
     threshold. Model-scoped and spend windows never gate; a passed reset is available. */
 export function providerQuota(
-  provider: Pick<ServerProvider, "usageLimits">,
+  provider: Pick<ServerProvider, "usageLimits" | "driver">,
   thresholdPercent: number,
   now: number,
 ): BoardWorkerProviderCapacity["quota"] {
@@ -200,7 +207,7 @@ export function providerQuota(
       label: window.label,
       usedPercent: window.usedPercent,
       resetsAt: reset,
-      gating: isGatingWindow(window),
+      gating: isGatingWindow(provider.driver, window),
     };
   });
   const exhausting = windows.filter(
