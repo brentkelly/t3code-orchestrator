@@ -6,6 +6,7 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  boardReviewBarTier,
   boardReviewBlockedOutcomeRefusal,
   boardReviewCompletionDefect,
   boardReviewFindingResolution,
@@ -2053,5 +2054,281 @@ describe("T3O-64: settling rounds", () => {
         }),
       );
     });
+  });
+});
+
+describe("T3O-92: the raised bar", () => {
+  const FULL = { kind: "full" } as const;
+  type Verdict = string | { readonly verdict: string; readonly belowBar: true };
+  const below = (verdict: string): Verdict => ({ verdict, belowBar: true });
+  const triage = (
+    round: number,
+    actions: Record<string, "fixed" | "rejected">,
+    fixedSha = reviewSha(round),
+  ) =>
+    completion(`triage@${round}`, {
+      fixedSha,
+      dispositions: Object.entries(actions).map(([findingId, action]) => ({
+        findingId,
+        action,
+        note: `${action} it`,
+      })),
+    });
+  const retriage = (round: number, actions: Record<string, "fixed" | "rejected">) =>
+    completion(`retriage@${round}`, {
+      fixedSha: reviewSha(round),
+      dispositions: Object.entries(actions).map(([findingId, action]) => ({
+        findingId,
+        action,
+        note: `re-${action}`,
+      })),
+    });
+  const verdictsPayload = (verdicts: Record<string, Verdict>, anotherRound: boolean) => ({
+    verdicts: Object.entries(verdicts).map(([findingId, v]) =>
+      typeof v === "string"
+        ? { findingId, verdict: v, note: `ruled ${v}` }
+        : { findingId, verdict: v.verdict, note: "below the bar", belowBar: true },
+    ),
+    anotherRound,
+  });
+  const ruling = (
+    phase: "adjudicate" | "readjudicate",
+    round: number,
+    verdicts: Record<string, Verdict>,
+    anotherRound = true,
+  ) => completion(`${phase}@${round}`, verdictsPayload(verdicts, anotherRound));
+  const walkFull = (
+    completions: ReadonlyArray<BoardStepCompletion>,
+    carriedFindings: Parameters<typeof boardReviewLoopWalk>[0]["carriedFindings"] = {},
+  ) =>
+    boardReviewLoopWalk({
+      completions,
+      maxRounds: 10,
+      stopAfterRound: null,
+      runThroughRound: null,
+      carriedFindings,
+    });
+
+  it("rises every two rounds past convergeAfterRound, to critical-only", () => {
+    const tiers = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((round) =>
+      boardReviewBarTier({ round, convergeAfterRound: 3, mode: FULL }),
+    );
+    assert.deepStrictEqual(tiers, [0, 0, 0, 1, 1, 2, 2, 3, 3]);
+    assert.deepStrictEqual(
+      [1, 2, 3, 4, 5, 6, 7].map((round) =>
+        boardReviewBarTier({ round, convergeAfterRound: 1, mode: FULL }),
+      ),
+      [0, 1, 1, 2, 2, 3, 3],
+    );
+    assert.strictEqual(boardReviewBarTier({ round: 9, convergeAfterRound: null, mode: FULL }), 0);
+    assert.strictEqual(
+      boardReviewBarTier({
+        round: 9,
+        convergeAfterRound: 3,
+        mode: { kind: "settling", sinceSha: reviewSha(8) },
+      }),
+      0,
+    );
+  });
+
+  it("converges a full round whose only blocking findings were ruled below the bar", () => {
+    const fixed = [
+      review(1, [finding("improvement", "i1"), finding("improvement", "i2")]),
+      triage(1, { i1: "fixed", i2: "fixed" }, "fix-1"),
+    ];
+    const result = walkFull([
+      ...fixed,
+      ruling("adjudicate", 1, { i1: below("fix-upheld"), i2: below("fix-upheld") }),
+    ]);
+    assert.strictEqual(result.status, "converged");
+    assert.strictEqual(result.convergedBy, "below-bar");
+    assert.strictEqual(result.unreviewedFixes, 2);
+    // Without the ruling the fixes force another round.
+    const upheld = walkFull([...fixed, ruling("adjudicate", 1, { i1: "fix-upheld", i2: "fix-upheld" })]);
+    assert.deepStrictEqual(upheld.next, { phase: "review", round: 2 });
+  });
+
+  it("continues while an upheld fix beside a below-bar one moved past the reviewed SHA", () => {
+    const result = walkFull([
+      review(1, [finding("improvement", "i1"), finding("improvement", "i2")]),
+      triage(1, { i1: "fixed", i2: "fixed" }, "fix-1"),
+      ruling("adjudicate", 1, { i1: below("fix-upheld"), i2: "fix-upheld" }),
+    ]);
+    assert.deepStrictEqual(result.next, { phase: "review", round: 2 });
+  });
+
+  it("never re-triages a finding ruled below the bar, and re-triage need not answer it", () => {
+    const round = [
+      review(1, [finding("improvement", "i1"), finding("improvement", "i2")]),
+      triage(1, { i1: "rejected", i2: "rejected" }),
+      ruling("adjudicate", 1, { i1: below("rejection-unjustified"), i2: "rejection-unjustified" }),
+    ];
+    assert.deepStrictEqual(walkFull(round).next, { phase: "retriage", round: 1 });
+    assert.isNull(
+      boardReviewCompletionDefect({
+        stepId: "retriage@1",
+        payload: JSON.stringify({
+          fixedSha: reviewSha(1),
+          dispositions: [{ findingId: "i2", action: "fixed", note: "done" }],
+        }),
+        completions: round,
+        carriedFindings: {},
+      }),
+    );
+    // Alone, it converges with no second pass and is never stuck.
+    const alone = walkFull([
+      review(1, [finding("improvement", "i1")]),
+      triage(1, { i1: "rejected" }),
+      ruling("adjudicate", 1, { i1: below("rejection-unjustified") }),
+    ]);
+    assert.strictEqual(alone.status, "converged");
+    assert.strictEqual(alone.convergedBy, "below-bar");
+    assert.strictEqual(alone.unreviewedFixes, 0);
+  });
+
+  it("a finding first ruled below the bar at re-adjudication is not stuck", () => {
+    const result = walkFull([
+      review(1, [finding("improvement", "i1")]),
+      triage(1, { i1: "rejected" }),
+      ruling("adjudicate", 1, { i1: "rejection-unjustified" }),
+      retriage(1, { i1: "rejected" }),
+      ruling("readjudicate", 1, { i1: below("fix-absent") }),
+    ]);
+    assert.strictEqual(result.status, "converged");
+    assert.strictEqual(result.convergedBy, "below-bar");
+    const summary = deriveBoardCardReviewSummary({
+      completions: [
+        review(1, [finding("improvement", "i1")]),
+        triage(1, { i1: "rejected" }),
+        ruling("adjudicate", 1, { i1: "rejection-unjustified" }),
+        retriage(1, { i1: "rejected" }),
+        ruling("readjudicate", 1, { i1: below("fix-absent") }),
+      ],
+      maxRounds: null,
+      stopAfterRound: null,
+      runThroughRound: null,
+    });
+    assert.strictEqual(summary?.issuesDisputed, 0);
+    assert.strictEqual(summary?.issuesRejected, 1);
+    assert.strictEqual(summary?.severityImprovement, 1);
+  });
+
+  it("an early exit over a below-bar fix past the SHA reports the unreviewed fix", () => {
+    const result = walkFull([
+      review(1, [finding("critical", "c1"), finding("improvement", "i1")]),
+      triage(1, { c1: "rejected", i1: "fixed" }, "fix-1"),
+      ruling("adjudicate", 1, { c1: "rejection-justified", i1: below("fix-upheld") }, false),
+    ]);
+    assert.strictEqual(result.status, "converged");
+    assert.strictEqual(result.convergedBy, "below-bar");
+    assert.strictEqual(result.unreviewedFixes, 1);
+    // With the fix pinned to the reviewed SHA it stays the adjudicator's exit.
+    const pinned = walkFull([
+      review(1, [finding("critical", "c1"), finding("improvement", "i1")]),
+      triage(1, { c1: "rejected", i1: "fixed" }),
+      ruling("adjudicate", 1, { c1: "rejection-justified", i1: below("fix-upheld") }, false),
+    ]);
+    assert.strictEqual(pinned.convergedBy, "adjudicator");
+  });
+
+  it("below-bar findings never count toward the settling threshold", () => {
+    const settings = { convergeAfterRound: 3, settleBelowFindings: 2 };
+    const roundThree = (i1: Verdict) => [
+      review(3, [finding("improvement", "i1"), finding("improvement", "i2")]),
+      triage(3, { i1: "fixed", i2: "fixed" }, "fix-3"),
+      ruling("adjudicate", 3, { i1, i2: "fix-upheld" }),
+    ];
+    const modeAfter = (i1: Verdict) =>
+      boardReviewNextRoundMode({
+        round: 4,
+        completions: roundThree(i1),
+        review: settings,
+        overrides: null,
+      });
+    assert.deepStrictEqual(modeAfter("fix-upheld"), FULL);
+    assert.deepStrictEqual(modeAfter(below("fix-upheld")), {
+      kind: "settling",
+      sinceSha: reviewSha(3),
+    });
+  });
+
+  it("a finding ruled below the bar reads as triage left it, never disputed", () => {
+    for (const verdict of ["fix-absent", "fix-incomplete", "fix-upheld"] as const) {
+      assert.strictEqual(
+        boardReviewFindingResolution({ action: "fixed" }, { verdict, belowBar: true }),
+        "fixed",
+        verdict,
+      );
+    }
+    assert.strictEqual(
+      boardReviewFindingResolution(
+        { action: "rejected" },
+        { verdict: "rejection-unjustified", belowBar: true },
+      ),
+      "rejected",
+    );
+  });
+
+  it("refuses belowBar on anything but a non-carried improvement, and with escalated", () => {
+    const carriedFindings = {
+      "1": {
+        ruling: "fix" as const,
+        note: null,
+        findings: [
+          {
+            findingId: "carried:r0:f1",
+            origRound: 0,
+            severity: "improvement" as const,
+            title: "carried thing",
+            file: "src/x.ts",
+            line: 1,
+            detail: "",
+            rulingNote: "",
+          },
+        ],
+      },
+    };
+    const round = [
+      review(1, [
+        finding("critical", "c1"),
+        finding("improvement", "i1"),
+        finding("nitpick", "n1"),
+      ]),
+      triage(1, { c1: "rejected", i1: "rejected", n1: "rejected", "carried:r0:f1": "fixed" }),
+    ];
+    const base = {
+      c1: "rejection-justified",
+      i1: "rejection-justified",
+      n1: "rejection-justified",
+      "carried:r0:f1": "fix-upheld",
+    } as Record<string, Verdict>;
+    const defect = (verdicts: Record<string, Verdict>) =>
+      boardReviewCompletionDefect({
+        stepId: "adjudicate@1",
+        payload: JSON.stringify(verdictsPayload({ ...base, ...verdicts }, true)),
+        completions: round,
+        carriedFindings,
+      });
+    assert.isNull(defect({ i1: below("rejection-unjustified") }));
+    assert.include(defect({ c1: below("rejection-justified") }), "'c1'");
+    assert.include(defect({ n1: below("rejection-justified") }), "'n1'");
+    assert.include(defect({ ghost: below("fix-upheld") }), "'ghost'");
+    assert.include(defect({ "carried:r0:f1": below("fix-upheld") }), "'carried:r0:f1'");
+    assert.include(defect({ i1: below("escalated") }), "escalated");
+    // Re-adjudication is held to the same rules.
+    const disputed = [
+      ...round,
+      ruling("adjudicate", 1, { ...base, i1: "rejection-unjustified" }),
+      retriage(1, { i1: "rejected" }),
+    ];
+    const redefect = (verdict: Verdict) =>
+      boardReviewCompletionDefect({
+        stepId: "readjudicate@1",
+        payload: JSON.stringify(verdictsPayload({ i1: verdict }, true)),
+        completions: disputed,
+        carriedFindings,
+      });
+    assert.isNull(redefect(below("rejection-unjustified")));
+    assert.include(redefect(below("escalated")), "escalated");
   });
 });
