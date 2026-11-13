@@ -42,7 +42,7 @@ import {
   type WorkerStatusPresentation,
   type WorkerTone,
 } from "./workerCopy";
-import { boardWorkerCapacityLines } from "./workerCapacity";
+import { boardWorkerCapacityLines, boardWorkerHoldLine } from "./workerCapacity";
 import { CopyCommand, WorkerAbbreviationBadge } from "./workerUi";
 
 const TONE_BADGE: Record<WorkerTone, "outline" | "info" | "warning" | "success"> = {
@@ -323,9 +323,18 @@ function WorkerCapacity(props: {
     boardEnvironment.capacityAtom({ environmentId: props.environmentId, input: {} }),
   );
   const capacityAction = useAtomCommand(boardEnvironment.capacityAction);
+  const cardsByProject = useAtomValue(boardEnvironment.cardsByProjectAtom(props.environmentId));
   const snapshot = AsyncResult.isSuccess(result) ? result.value.get(props.workerId) : undefined;
   if (snapshot === undefined) return null;
   const lines = boardWorkerCapacityLines(snapshot, clockTime, props.name, props.live);
+  const holdLine = boardWorkerHoldLine(
+    snapshot.hold,
+    (cardId) =>
+      [...cardsByProject.values()]
+        .flatMap((columns) => Object.values(columns).flat())
+        .find((card) => card.cardId === cardId)?.key ?? null,
+    clockTime,
+  );
   return (
     <div
       className={cn(
@@ -334,6 +343,9 @@ function WorkerCapacity(props: {
       )}
     >
       {lines.stale === null ? null : <span>{lines.stale}</span>}
+      {holdLine === null ? null : (
+        <span className="font-medium text-info-foreground">{holdLine}</span>
+      )}
       {lines.bars.map((bar) => (
         <div key={bar.label} className="grid grid-cols-[2.5rem_1fr] items-center gap-2">
           <span>{bar.label}</span>

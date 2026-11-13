@@ -181,7 +181,7 @@ const boardCardCapacityFor = (board: BoardState, card: BoardCard) => {
   return boardCardCapacityView({
     resources: card.resources,
     projectResources: boardProjectStageConfig(board, card.projectId)?.resources ?? null,
-    workerId: boardCardEffectiveWorkerId(card),
+    workerId: boardCardPlacementTarget(card) ?? boardCardEffectiveWorkerId(card),
     queuedBy: queued ? (state.queuedBy ?? null) : null,
     queuedDetail: queued ? (state.queuedDetail ?? null) : null,
   });

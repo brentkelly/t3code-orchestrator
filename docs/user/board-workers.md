@@ -96,7 +96,7 @@ reserved, and with room for the whole card:
 2. Then the worker with the most room left after the card.
 
 The card's **Worker** row says where it was placed, when, and why ("offered the most RAM among ready
-workers", "built z5 most recently", "pinned"), or **Not placed yet — chosen when the build starts**.
+workers", "built z5 most recently", "pinned"), or **Not placed yet: chosen when the build starts**.
 The board server is in the pool when it's ready; declare it zero build capacity to keep it for
 planning only.
 

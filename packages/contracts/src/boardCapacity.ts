@@ -696,6 +696,8 @@ export const BoardCardCapacityView = Schema.Struct({
   granted: Schema.NullOr(Schema.Struct({ profile: BoardResourceProfile, heavy: Schema.Boolean })),
   /** The worker it runs on, or will. */
   workerId: TrimmedNonEmptyString,
+  /** T3o: where the placement gate put it, when and why; absent until its build starts (T3O-87). */
+  placement: Schema.optionalKey(BoardCardPlacementRecord),
   /** Why its step waits, when it does. */
   queuedBy: Schema.NullOr(TrimmedNonEmptyString),
   queuedDetail: Schema.NullOr(
@@ -725,6 +727,7 @@ export function boardCardCapacityView(input: {
     reservation: boardCardRequestedProfile(input.resources, input.projectResources),
     granted: grant === null ? null : { profile: grant.profile, heavy: grant.heavy },
     workerId: input.workerId,
+    ...(input.resources?.placement == null ? {} : { placement: input.resources.placement }),
     queuedBy: input.queuedBy,
     queuedDetail: input.queuedDetail,
   };

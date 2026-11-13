@@ -1,7 +1,7 @@
 import type { BoardResourceProfile, BoardWorkerCapacitySnapshot } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { boardWorkerCapacityLines } from "./workerCapacity";
+import { boardWorkerHoldLine, boardWorkerCapacityLines } from "./workerCapacity";
 
 const snapshot: BoardWorkerCapacitySnapshot & { held: BoardResourceProfile } = {
   held: { cpuCores: 10, ramGiB: 24, diskGB: 0 },
@@ -98,5 +98,22 @@ describe("boardWorkerCapacityLines", () => {
     expect(boardWorkerCapacityLines(snapshot, () => "09:41", "build-01", false).stale).toBe(
       "Last report 09:41",
     );
+  });
+});
+
+describe("what the Workers page says of holds (T3O-87)", () => {
+  const keys = (cardId: string) => (cardId === "card-90" ? "T3O-90" : null);
+  const clock = (iso: string) => iso.slice(11, 16);
+  it("names this board's own held card, never another board's", () => {
+    const hold = { closed: true, until: null, earlyStartFraction: 0.5, cardId: "card-90" };
+    expect(boardWorkerHoldLine(hold, keys, clock)).toBe("Reserved for T3O-90");
+    expect(boardWorkerHoldLine({ ...hold, until: "2026-01-01T14:20:00.000Z" }, keys, clock)).toBe(
+      "Reserved for T3O-90 · until 14:20 at the latest",
+    );
+    expect(boardWorkerHoldLine({ ...hold, cardId: null }, keys, clock)).toBe(
+      "Not taking new cards",
+    );
+    expect(boardWorkerHoldLine({ ...hold, closed: false }, keys, clock)).toBeNull();
+    expect(boardWorkerHoldLine(undefined, keys, clock)).toBeNull();
   });
 });

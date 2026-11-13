@@ -111,6 +111,23 @@ const STATE_NAMES = {
   "not-ready": "Not ready",
 } as const;
 
+/**
+ * T3o: what the Workers page says of a worker's holds (T3O-87). This board's own hold names its
+ * card; a worker closed for any other reason says only that it isn't taking new cards.
+ */
+export function boardWorkerHoldLine(
+  hold: BoardWorkerCapacitySnapshot["hold"],
+  cardKeyOf: (cardId: string) => string | null,
+  clock: (iso: string) => string,
+): string | null {
+  if (hold === undefined || !hold.closed) return null;
+  const until = hold.until === null ? "" : ` · until ${clock(hold.until)} at the latest`;
+  if (hold.cardId !== null) {
+    return `Reserved for ${cardKeyOf(hold.cardId) ?? "one of this board's cards"}${until}`;
+  }
+  return `Not taking new cards${hold.until === null ? "" : ` · until ${clock(hold.until)}`}`;
+}
+
 export function boardWorkerCapacityLines(
   snapshot: BoardWorkerCapacitySnapshot & { readonly held?: BoardResourceProfile },
   clock: (iso: string) => string,

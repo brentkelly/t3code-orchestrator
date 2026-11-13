@@ -21,6 +21,7 @@ import {
   boardWorkerCheckoutWarning,
   boardQueueReason,
   boardWorkerChoices,
+  boardCardPlacementLine,
   boardWorkerFieldLabel,
   boardWorkerLoadLabel,
 } from "./cardWorker";
@@ -198,10 +199,10 @@ describe("the worker picker (prototype 4.2)", () => {
 });
 
 describe("the worker field", () => {
-  it("reads Follow default ({worker}), or the pin", () => {
+  it("reads Any ready worker, or the pin; a default worker steers nothing (T3O-87)", () => {
     const board = state([worker(LINUX, "linux-box")], { defaultWorkerId: LINUX });
     expect(boardWorkerFieldLabel(null, board)).toEqual({
-      label: "Follow default (linux-box)",
+      label: "Any ready worker",
       pinned: false,
     });
     expect(boardWorkerFieldLabel(BOARD_LOCAL_WORKER_ID, board)).toEqual({
@@ -211,9 +212,21 @@ describe("the worker field", () => {
     // Renamed on the Workers page, the board server reads its new name everywhere.
     const renamed = { ...board, localLabel: "desk-01" };
     expect(boardWorkerFieldLabel(BOARD_LOCAL_WORKER_ID, renamed).label).toBe("desk-01");
-    expect(
-      boardWorkerFieldLabel(null, { ...renamed, defaultWorkerId: BOARD_LOCAL_WORKER_ID }).label,
-    ).toBe("Follow default (desk-01)");
+  });
+
+  it("the placement line: where, when and why, or chosen when the build starts (T3O-87)", () => {
+    const board = state([worker(LINUX, "linux-box")]);
+    expect(boardCardPlacementLine(null, false, board)).toBe(
+      "Not placed yet: chosen when the build starts",
+    );
+    const placed = { workerId: LINUX, at: "2026-01-01T18:31:00.000Z", reason: "pinned" };
+    expect(boardCardPlacementLine(placed, true, board)).toMatch(
+      /^linux-box · placed at .+ · pinned$/,
+    );
+    // A placement without a worktree is chosen again at the next build.
+    expect(boardCardPlacementLine(placed, false, board)).toBe(
+      "Not placed yet: chosen when the build starts",
+    );
   });
 
   it("warns in the create dialog when the default worker has no checkout", () => {
@@ -281,6 +294,7 @@ describe("queue reasons and move notices", () => {
       dimension: null,
       behind: "T3O-90",
       tooBig: false,
+      anyWorker: false,
     });
     // A board with no remote workers says it too: the worker is this server.
     expect(

@@ -212,17 +212,37 @@ export function boardWorkerChoices(input: {
   return [local, ...rows];
 }
 
-/** The closed Worker field: "Follow default (This server)", or the pin. */
+/** T3o: the unpinned choice: the placement gate picks at build start (T3O-87). */
+export const BOARD_ANY_READY_WORKER_LABEL = "Any ready worker";
+
+/** The closed Worker field: "Any ready worker", or the pin. */
 export function boardWorkerFieldLabel(
   pinnedWorkerId: BoardWorkerId | null,
   state: BoardWorkersState,
 ): { readonly label: string; readonly pinned: boolean } {
   return pinnedWorkerId === null
-    ? {
-        label: `Follow default (${boardWorkerLabel(state.defaultWorkerId, state)})`,
-        pinned: false,
-      }
+    ? { label: BOARD_ANY_READY_WORKER_LABEL, pinned: false }
     : { label: boardWorkerLabel(pinnedWorkerId, state), pinned: true };
+}
+
+/**
+ * T3o: the card's placement line (T3O-87): where and when the gate placed it and why, or that
+ * it is chosen when the build starts.
+ */
+export function boardCardPlacementLine(
+  placement: {
+    readonly workerId: string;
+    readonly at: string;
+    readonly reason: string | null;
+  } | null,
+  holdsWorktree: boolean,
+  state: BoardWorkersState,
+): string {
+  if (placement === null || !holdsWorktree) return "Not placed yet: chosen when the build starts";
+  const worker = boardWorkerLabel(placement.workerId as BoardWorkerId, state);
+  return `${worker} · placed at ${clockTime(placement.at)}${
+    placement.reason === null ? "" : ` · ${placement.reason}`
+  }`;
 }
 
 /**
