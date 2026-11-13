@@ -188,9 +188,9 @@ export interface BoardGroupStatsInput {
   ) => Pick<BoardQueueInfo, "position" | "startsNext"> | undefined;
 }
 
-/** Waiting for a slot. A worker-offline hold is not: no slot will start it. */
-function isQueuedForSlot(card: BoardCardShell): boolean {
-  return card.queued && card.queuedBy !== "worker-offline";
+/** Held by a worker the board can't reach: amber, as the worker's own notice is. */
+function isWorkerHeld(card: BoardCardShell): boolean {
+  return card.queued && card.queuedBy === "worker-offline";
 }
 
 // One memo per input object, so a page building every group's face from one
@@ -230,9 +230,9 @@ function statsWithMemo(
     }
     const attention = input.attentionFor(child);
     if (attention?.tone === "attention") return "waiting";
-    if (child.blocked || attention?.tone === "warning") return "blocked";
+    if (child.blocked || attention?.tone === "warning" || isWorkerHeld(child)) return "blocked";
     if (!isBoardStageAtOrAfterBuild(input.stages, child.stage)) return "idle";
-    return isQueuedForSlot(child) ? "queued" : "running";
+    return child.queued ? "queued" : "running";
   };
   const states = active.map(stateOf);
   const count = (state: BoardGroupChildState) => states.filter((s) => s === state).length;

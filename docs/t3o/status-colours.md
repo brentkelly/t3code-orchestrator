@@ -144,8 +144,8 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
 - **A group's sub-board chips split blue into solid and hatched (T3O-91).** Solid blue claims an
   agent is on the child; a child at or past Building that is only queued for a slot wears blue
   stripes over a faint blue tint instead, so a busy board doesn't read as four builds when two are
-  waiting. The hatch follows the child's own Queued badge, so a card held by an offline worker stays
-  solid (its own amber notice covers it). Violet, amber, green and grey keep their meanings, and no
+  waiting. A card held by an offline worker is neither: no slot will start it, so its chip is
+  amber, matching the worker's own notice. Violet, amber, green and grey keep their meanings, and no
   chip moves.
 - **The Summary pane's Heads-up tags and check tiles follow it too.** Plan change is violet (it
   waits on a human's read), Not done is amber, and Shortcut is neutral, never blue, because blue

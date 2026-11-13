@@ -113,7 +113,7 @@ describe("boardGroupCardVm", () => {
       child("s-5", "done", "g-4"),
       child("s-6", "planning", "g-4"),
       child("s-7", "building", "g-4", { queued: true, queuedBy: "board" }),
-      // Held by an offline worker: not waiting for a slot, so not hatched.
+      // Held by an offline worker: no slot will start it, so amber, not hatched or solid.
       child("s-8", "building", "g-4", { queued: true, queuedBy: "worker-offline" }),
       child("s-9", "review", "g-4", { queued: true }),
     ];
@@ -134,9 +134,9 @@ describe("boardGroupCardVm", () => {
       "S-3",
       "S-5",
       "S-2",
-      "S-8",
       "S-4",
       "S-1",
+      "S-8",
       "S-7",
       "S-9",
       "S-0",
@@ -146,8 +146,8 @@ describe("boardGroupCardVm", () => {
       "done",
       "done",
       "running",
-      "running",
       "waiting",
+      "blocked",
       "blocked",
       "queued",
       "queued",
