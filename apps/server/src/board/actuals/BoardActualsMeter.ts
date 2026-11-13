@@ -62,7 +62,12 @@ const EARLY_SAMPLE_MS = 1_000;
 
 type Source = (
   | { readonly kind: "thread"; readonly threadId: string }
-  | { readonly kind: "unit"; readonly unit: string }
+  | {
+      readonly kind: "unit";
+      readonly unit: string;
+      /** Where the scope copies its stat files as it exits, or null. */
+      readonly finalId: string | null;
+    }
 ) & {
   cgroup: string | null;
   /** Groups resolved after the first: a thread's next session, created within the step. */
@@ -121,6 +126,15 @@ export const makeBoardActualsMeter = Effect.gen(function* () {
       if (sample === null && source.kind === "thread" && source.cgroup !== null) {
         yield* lookUp(source);
         sample = source.cgroup === null ? null : yield* sampleOf(source.cgroup);
+      }
+      // A wrapped command that exited took its group with it: its copy is the last sample.
+      if (sample === null && source.kind === "unit" && source.finalId !== null) {
+        const final = yield* reader.finalSnapshot.read(source.finalId);
+        if (final !== null) {
+          source.cgroup = final.controlGroup;
+          sample = parseCgroupSample(final);
+          entry.sources.delete(id);
+        }
       }
       if (source.cgroup === null) continue;
       // Each group its own source: a new session's counters restart at 0.
@@ -187,11 +201,15 @@ export const makeBoardActualsMeter = Effect.gen(function* () {
     },
   );
 
+  let finalIds = 0;
   const tap = (key: string): BoardActualsTapShape => ({
     wrap: Effect.fn("BoardActualsMeter.wrap")(function* (command: string) {
+      finalIds += 1;
+      const finalId = `${finalIds}`;
+      const trap = reader.finalSnapshot.script(finalId);
       const launch = yield* agentScope.wrap({
         command: "/bin/sh",
-        args: ["-c", command],
+        args: ["-c", trap === null ? command : `${trap}\n${command}`],
         name: key.startsWith("setup:") ? "board-setup" : "board-ci",
       });
       if (launch.unit === undefined) return null;
@@ -205,6 +223,7 @@ export const makeBoardActualsMeter = Effect.gen(function* () {
       entry.sources.set(launch.unit, {
         kind: "unit",
         unit: launch.unit,
+        finalId: trap === null ? null : finalId,
         cgroup: null,
         resolved: 0,
         tries: 0,

@@ -20,6 +20,8 @@ const makeMachine = () => {
   const files = new Map<string, Record<string, string>>();
   const threadGroups = new Map<string, string>();
   const unitGroups = new Map<string, string>();
+  /** What a wrapped scope copied out as it exited, by the meter's id for it. */
+  const finals = new Map<string, Record<string, string>>();
   let units = 0;
   const set = (group: string, cpuSeconds: number, ramGiB: number, ioRead = 0) =>
     files.set(group, {
@@ -32,6 +34,22 @@ const makeMachine = () => {
       Effect.provideService(BoardCgroupReader, {
         readFile: (group, file) => Effect.sync(() => files.get(group)?.[file] ?? null),
         unitControlGroup: (unit) => Effect.sync(() => unitGroups.get(unit) ?? null),
+        finalSnapshot: {
+          script: (id) => `trap 'copy ${id}' EXIT`,
+          read: (id) =>
+            Effect.sync(() => {
+              const copy = finals.get(id);
+              finals.delete(id);
+              return copy === undefined
+                ? null
+                : {
+                    controlGroup: copy.group!,
+                    cpuStat: copy["cpu.stat"] ?? null,
+                    memoryStat: copy["memory.stat"] ?? null,
+                    ioStat: copy["io.stat"] ?? null,
+                  };
+            }),
+        },
       }),
       Effect.provideService(BoardMachine, {
         cpuCount: Effect.succeed(8),
@@ -55,7 +73,13 @@ const makeMachine = () => {
     );
   /** A scope that ended: its files are gone. */
   const drop = (group: string) => void files.delete(group);
-  return { set, drop, threadGroups, provide };
+  /** The `n`th wrapped scope exits: its group goes, and its trap's copy is left behind. */
+  const exit = (n: number) => {
+    const group = `/ci/${n}`;
+    finals.set(String(n), { ...files.get(group), group });
+    files.delete(group);
+  };
+  return { set, drop, exit, threadGroups, provide };
 };
 
 it.effect(
@@ -118,7 +142,11 @@ it.effect("a CI pass is wrapped in scopes of its own, sampled across its steps",
     const meter = yield* makeBoardActualsMeter;
     const tap = meter.tap("ci:run-1");
     const launch = yield* tap.wrap("pnpm test");
-    assert.deepStrictEqual(launch?.args.slice(-3), ["/bin/sh", "-c", "pnpm test"]);
+    assert.deepStrictEqual(launch?.args.slice(-3), [
+      "/bin/sh",
+      "-c",
+      "trap 'copy 1' EXIT\npnpm test",
+    ]);
     machine.set("/ci/1", 0, 2, 0);
     yield* meter.tick;
     yield* TestClock.adjust("5 seconds");
@@ -178,5 +206,25 @@ it.effect("a CI step shorter than a tick is measured, from its first second", ()
     yield* meter.finish("ci:run-1");
     const ended = yield* meter.relay({ op: "end", key: "ci:run-1" });
     assert.include(ended, { measured: true, cpuCoreSeconds: 3 });
+  }).pipe(machine.provide, Effect.provide(TestClock.layer()));
+});
+
+// The scope's group goes the moment its command exits, before the last tick can read it.
+it.effect("a step's last seconds count, from the copy its scope leaves as it exits", () => {
+  const machine = makeMachine();
+  return Effect.gen(function* () {
+    const meter = yield* makeBoardActualsMeter;
+    yield* meter.tap("setup:/w").wrap("pnpm install");
+    machine.set("/ci/1", 0, 1);
+    yield* meter.tick;
+    yield* TestClock.adjust("5 seconds");
+    machine.set("/ci/1", 10, 1);
+    yield* meter.tick;
+    // Four more seconds of work, then the command exits between ticks.
+    machine.set("/ci/1", 14, 1);
+    machine.exit(1);
+    yield* meter.finish("setup:/w");
+    const ended = yield* meter.relay({ op: "end", key: "setup:/w" });
+    assert.include(ended, { measured: true, cpuCoreSeconds: 14 });
   }).pipe(machine.provide, Effect.provide(TestClock.layer()));
 });

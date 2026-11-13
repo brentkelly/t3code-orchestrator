@@ -6,6 +6,8 @@
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -19,7 +21,60 @@ export interface BoardCgroupReaderShape {
   readonly readFile: (controlGroup: string, file: string) => Effect.Effect<string | null>;
   /** A systemd unit's control group, or null until it exists (or without systemd). */
   readonly unitControlGroup: (unit: string) => Effect.Effect<string | null>;
+  /**
+   * A wrapped scope's group is removed the moment its command exits, taking the last
+   * seconds' counters with it. `script` is shell that, run as an EXIT trap inside the scope,
+   * copies the stat files out; `read` returns (and removes) that copy. Null script: no copy.
+   */
+  readonly finalSnapshot: {
+    readonly script: (id: string) => string | null;
+    readonly read: (id: string) => Effect.Effect<CgroupFinalSnapshot | null>;
+  };
 }
+
+export interface CgroupFinalSnapshot {
+  readonly controlGroup: string;
+  readonly cpuStat: string | null;
+  readonly memoryStat: string | null;
+  readonly ioStat: string | null;
+}
+
+const FINAL_DIR = NodePath.join(NodeOS.tmpdir(), `t3o-actuals-${process.pid}`);
+const SNAPSHOT_FILES = ["cpu.stat", "memory.stat", "io.stat"] as const;
+
+const finalScript = (id: string) => {
+  const dir = NodePath.join(FINAL_DIR, id);
+  if (/['"$`\\]/.test(dir)) return null;
+  const copy = [
+    `g=$(sed -n "s/^0:://p" /proc/self/cgroup)`,
+    `d="${dir}"`,
+    `mkdir -p "$d" && printf %s "$g" >"$d/cgroup"`,
+    `for f in ${SNAPSHOT_FILES.join(" ")}; do cat "/sys/fs/cgroup$g/$f" >"$d/$f" 2>/dev/null; done`,
+  ].join("; ");
+  return `trap '${copy}' EXIT`;
+};
+
+const readFinal = (id: string) =>
+  Effect.sync((): CgroupFinalSnapshot | null => {
+    const dir = NodePath.join(FINAL_DIR, id);
+    const read = (file: string) => {
+      try {
+        return NodeFS.readFileSync(NodePath.join(dir, file), "utf8");
+      } catch {
+        return null;
+      }
+    };
+    const controlGroup = read("cgroup");
+    if (controlGroup === null) return null;
+    const snapshot = {
+      controlGroup: controlGroup.trim(),
+      cpuStat: read("cpu.stat"),
+      memoryStat: read("memory.stat"),
+      ioStat: read("io.stat"),
+    };
+    NodeFS.rmSync(dir, { recursive: true, force: true });
+    return snapshot;
+  });
 
 const readCgroupFile = (controlGroup: string, file: string) =>
   Effect.callback<string | null>((resume) => {
@@ -45,6 +100,7 @@ export class BoardCgroupReader extends Context.Reference<BoardCgroupReaderShape>
     defaultValue: () => ({
       readFile: readCgroupFile,
       unitControlGroup: showUnitControlGroup,
+      finalSnapshot: { script: finalScript, read: readFinal },
     }),
   },
 ) {}
