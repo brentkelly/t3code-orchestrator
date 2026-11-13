@@ -1699,7 +1699,20 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed(() => false));
     if (done) upgradeDone = true;
   });
+  // The upgrade may wait up to a minute for workers: forked, so the serial queue never does.
+  let upgradeRunning = false;
+  const startCapacityUpgrade = Effect.gen(function* () {
+    if (upgradeDone || upgradeRunning) return;
+    upgradeRunning = true;
+    yield* runCapacityUpgrade.pipe(
+      Effect.andThen(Effect.suspend(() => (upgradeDone ? requestCapacityPass : Effect.void))),
+      Effect.ensuring(Effect.sync(() => (upgradeRunning = false))),
+      Effect.ignoreCause,
+      Effect.forkDetach,
+    );
+  });
   let requestCapacityPass: Effect.Effect<void> = Effect.void;
+  let capacityPassQueued = false;
   /** T3o: each card's setup, once per worktree, on its worker (T3O-86). */
   const cardSetup = Option.map(capacityClient, (client) =>
     makeBoardCardSetup({
@@ -10838,7 +10851,7 @@ const make = Effect.gen(function* () {
       the one-time upgrade until it has, then schedule what that freed (T3O-86). */
   const sweepCapacity = Effect.gen(function* () {
     if (Option.isNone(capacityAdmission)) return;
-    yield* runCapacityUpgrade;
+    yield* startCapacityUpgrade;
     yield* capacityAdmission.value.sweep();
     if (Option.isSome(cardSetup)) yield* cardSetup.value.reconcile();
     yield* requestReadiness;
@@ -10982,6 +10995,7 @@ const make = Effect.gen(function* () {
       case "domain":
         return processDomainEvent(input.event);
       case "capacity":
+        capacityPassQueued = false;
         return schedule();
       case "thread":
         return noteCapacityTurn(input.signal).pipe(Effect.andThen(gateThreadSignal(input.signal)));
@@ -11037,7 +11051,13 @@ const make = Effect.gen(function* () {
     );
 
   const worker = yield* makeDrainableWorker(processInputSafely);
-  requestCapacityPass = worker.enqueue({ source: "capacity" }).pipe(Effect.asVoid);
+  // Coalesced: one capacity pass waits in the queue at most, whatever the snapshot rate.
+  const enqueueCapacityPass = Effect.suspend(() => {
+    if (capacityPassQueued) return Effect.void;
+    capacityPassQueued = true;
+    return worker.enqueue({ source: "capacity" }).pipe(Effect.asVoid);
+  });
+  requestCapacityPass = enqueueCapacityPass;
 
   const start: SupervisorReactorShape["start"] = Effect.fn("board-supervisor-start")(function* () {
     // forkParked holds these subscriptions until activation, so reconcile cannot rely on them and
@@ -11148,7 +11168,7 @@ const make = Effect.gen(function* () {
             pending = true;
             yield* Effect.sleep(Duration.millis(yield* Random.nextIntBetween(0, 2000)));
             pending = false;
-            yield* worker.enqueue({ source: "capacity" });
+            yield* enqueueCapacityPass;
           }),
         ),
       );

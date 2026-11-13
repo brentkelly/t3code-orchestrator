@@ -26,7 +26,10 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import type { BoardCapacityClientShape } from "./BoardCapacityClient.ts";
+import type { BoardCapacityClientShape, BoardClaimAnswer } from "./BoardCapacityClient.ts";
+
+/** After a claim goes unanswered, the worker's other claims skip it this long. */
+export const UNREACHABLE_BACKOFF_MS = 30_000;
 
 /** A card stays heavy this long after its last activity ended. */
 export const HEAVY_TAIL_MS = 10 * 60_000;
@@ -202,6 +205,25 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
   const claimNonce = new Map<string, number>();
 
   const nowMs = Effect.map(deps.nowIso, (iso) => Date.parse(iso));
+  // A worker that just left a claim unanswered costs the serial pass one timeout, not one
+  // per candidate: until the backoff passes, its claims answer unavailable at once.
+  const unreachableUntil = new Map<BoardWorkerId, number>();
+  const backingOff = (workerId: BoardWorkerId) =>
+    Effect.map(nowMs, (now) => (unreachableUntil.get(workerId) ?? 0) > now);
+  const noteReach = (workerId: BoardWorkerId, reached: boolean) =>
+    Effect.map(nowMs, (now) => {
+      if (reached) unreachableUntil.delete(workerId);
+      else unreachableUntil.set(workerId, now + UNREACHABLE_BACKOFF_MS);
+    });
+  const claimOn = Effect.fn("BoardCapacityAdmission.claimOn")(function* (
+    workerId: BoardWorkerId,
+    input: Parameters<BoardCapacityClientShape["claim"]>[1],
+  ) {
+    if (yield* backingOff(workerId)) return { outcome: "unavailable" } as BoardClaimAnswer;
+    const answer = yield* deps.client.claim(workerId, input);
+    yield* noteReach(workerId, answer.outcome !== "unavailable");
+    return answer;
+  });
 
   const claimIdFor = (card: BoardCard) => {
     const attempt = (card.worktree?.attempts ?? 0) + 1;
@@ -257,7 +279,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     const board = yield* deps.readBoard;
     const profile = requestedProfileOf(board, card);
     const claimId = claimIdFor(card);
-    const answer = yield* deps.client.claim(workerId, {
+    const answer = yield* claimOn(workerId, {
       claimId,
       cardId: card.id,
       repositoryKey: yield* deps.repositoryKey(card.projectId),
@@ -300,7 +322,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       } as CapacityHold;
     }
     const profile = grant?.profile ?? requestedProfileOf(board, card);
-    const answer = yield* deps.client.claim(workerId, {
+    const answer = yield* claimOn(workerId, {
       claimId: `${card.id}:grow:${yield* nowMs}`,
       cardId: card.id,
       repositoryKey: yield* deps.repositoryKey(card.projectId),

@@ -37,6 +37,8 @@ export interface FakeCapacity {
   readonly publish: (workerId: BoardWorkerId) => Effect.Effect<void>;
   /** The local agent cap's refusal, or null. */
   agentCap: string | null;
+  /** Workers whose claims go unanswered, as a timed-out RPC would. */
+  readonly unreachable: Set<BoardWorkerId>;
 }
 
 const fits = (need: BoardResourceProfile, room: BoardResourceProfile) =>
@@ -91,12 +93,14 @@ export const makeFakeCapacity = Effect.fn("makeFakeCapacity")(function* (
     external,
     headroomOf,
     agentCap: null,
+    unreachable: new Set(),
     publish: (workerId) => PubSub.publish(pubsub, workerId).pipe(Effect.asVoid),
     client: {
       localBoardId: "env-board",
       claim: (workerId, input) =>
         Effect.sync(() => {
           fake.claims.push({ ...input, seq: ++seq, workerId });
+          if (fake.unreachable.has(workerId)) return { outcome: "unavailable" as const };
           const listed = (synced.get(workerId) ?? []).find((card) => card.cardId === input.cardId);
           const need: BoardResourceProfile =
             input.kind === "grow"

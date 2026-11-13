@@ -326,6 +326,7 @@ it.effect("a Too-big card at the head of the queue doesn't hold up the card behi
               {
                 workerId: BOARD_LOCAL_WORKER_ID,
                 dimension: "cpu",
+                tooBig: true,
               },
             );
             assert.strictEqual(stepStatus(after, BoardCardId.make("small")), "running");

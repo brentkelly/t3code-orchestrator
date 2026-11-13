@@ -29,6 +29,7 @@ import {
   makeBoardCapacityAdmission,
   SETTLE_AFTER_MS,
   syncEntriesFor,
+  UNREACHABLE_BACKOFF_MS,
 } from "./boardCapacityAdmission.ts";
 import { upgradeBaseline } from "./boardCapacityUpgrade.ts";
 import { makeFakeCapacity } from "./capacityClient.testkit.ts";
@@ -244,6 +245,26 @@ it.effect("a Too-big card, or one queued behind another, evicts no idle card's t
       yield* h.admission.releaseForWaiting();
       assert.isTrue((yield* h.grantOf("a"))?.heavy, JSON.stringify(detail));
     }
+  }),
+);
+
+it.effect("an unanswered claim costs a pass one timeout per worker, not one per candidate", () =>
+  Effect.gen(function* () {
+    const now = { ms: T0 };
+    const fresh = (id: string) => ({ ...buildingCard(id, id), worktree: null });
+    const h = yield* harness(boardWith([fresh("a"), fresh("b")]), now);
+    yield* h.admission.syncAll();
+    h.fake.unreachable.add(BOARD_LOCAL_WORKER_ID);
+    const claim = (id: string) =>
+      h.admission.placementClaim(fresh(id), BOARD_LOCAL_WORKER_ID, null, false);
+    assert.strictEqual((yield* claim("a")).kind, "unavailable");
+    assert.strictEqual((yield* claim("b")).kind, "unavailable");
+    assert.strictEqual(h.fake.claims.length, 1);
+    // Once the backoff passes, the worker is asked again.
+    h.fake.unreachable.clear();
+    now.ms += UNREACHABLE_BACKOFF_MS;
+    assert.strictEqual((yield* claim("b")).kind, "granted");
+    assert.strictEqual(h.fake.claims.length, 2);
   }),
 );
 

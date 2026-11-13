@@ -201,7 +201,7 @@ it.effect(
         }),
       );
       // Another board's sync runs while the refresh hangs: the lock isn't held across it.
-      yield* service.syncCards("board-b", { seq: 1, cards: [] });
+      yield* service.syncCards("board-b", { seq: 1, authoritative: true, cards: [] });
       yield* TestClock.adjust(5_000);
       assert.strictEqual((yield* Fiber.join(pending)).outcome, "granted");
     }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
