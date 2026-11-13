@@ -638,25 +638,6 @@ function useBoardPageModel({
   const parentShell =
     scope.kind === "sub-board" ? (findBoardCard(columns, scope.parentCardId)?.card ?? null) : null;
 
-  // ── Groups ────────────────────────────────────────────────
-  // A group card's face, folded once per board render over the shells the
-  // client already holds: no group adds a field to the wire.
-  const groupVmByCard = (() => {
-    const input = { shells: groupShells, stages: stageState, attentionFor };
-    const parents = new Set(
-      groupShells.flatMap((card) =>
-        card.parentCardId === undefined ? [] : [String(card.parentCardId)],
-      ),
-    );
-    const out = new Map<string, NonNullable<ReturnType<typeof boardGroupCardVm>>>();
-    for (const card of groupShells) {
-      if (card.group === undefined && !parents.has(String(card.cardId))) continue;
-      const vm = boardGroupCardVm(input, card);
-      if (vm !== null) out.set(String(card.cardId), vm);
-    }
-    return out;
-  })();
-  const groupFor = (card: BoardCardShell) => groupVmByCard.get(String(card.cardId)) ?? null;
   const parentGroup = parentShell === null ? null : boardShellGroup(groupShells, parentShell);
   // Where a new card lands by default: Planning inside a started group.
   const defaultCreateStageId = boardCreateDefaultStage(
@@ -716,6 +697,27 @@ function useBoardPageModel({
     }
     return info;
   })();
+
+  // ── Groups ────────────────────────────────────────────────
+  // A group card's face, folded once per board render over the shells the
+  // client already holds: no group adds a field to the wire.
+  const groupVmByCard = (() => {
+    const queueFor = (card: BoardCardShell) => queueSlots.get(String(card.cardId));
+    const input = { shells: groupShells, stages: stageState, attentionFor, queueFor };
+    const parents = new Set(
+      groupShells.flatMap((card) =>
+        card.parentCardId === undefined ? [] : [String(card.parentCardId)],
+      ),
+    );
+    const out = new Map<string, NonNullable<ReturnType<typeof boardGroupCardVm>>>();
+    for (const card of groupShells) {
+      if (card.group === undefined && !parents.has(String(card.cardId))) continue;
+      const vm = boardGroupCardVm(input, card);
+      if (vm !== null) out.set(String(card.cardId), vm);
+    }
+    return out;
+  })();
+  const groupFor = (card: BoardCardShell) => groupVmByCard.get(String(card.cardId)) ?? null;
 
   const toggleCardThreads = (cardId: string) => {
     setExpandedThreadCards((current) => {

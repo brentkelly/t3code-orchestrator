@@ -141,6 +141,12 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   is violet, and only while the card is in Code review. Once a human advances the card past it, the
   loop reads `Advanced past stuck round N`: not green, because nothing was signed off, and not
   violet or amber, because nobody is waited on. An escalated finding is violet too.
+- **A group's sub-board chips split blue into solid and hatched (T3O-91).** Solid blue claims an
+  agent is on the child; a child at or past Building that is only queued for a slot wears blue
+  stripes over a faint blue tint instead, so a busy board doesn't read as four builds when two are
+  waiting. The hatch follows the child's own Queued badge, so a card held by an offline worker stays
+  solid (its own amber notice covers it). Violet, amber, green and grey keep their meanings, and no
+  chip moves.
 - **The Summary pane's Heads-up tags and check tiles follow it too.** Plan change is violet (it
   waits on a human's read), Not done is amber, and Shortcut is neutral, never blue, because blue
   means running. A failing check tile is amber, not red.

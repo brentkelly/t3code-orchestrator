@@ -100,7 +100,7 @@ describe("boardGroupCardVm", () => {
     expect(vm.pips[2]!.tooltip).toBe("C-1 · Card c-1 (needs you)");
   });
 
-  it("orders pips done, running, needs you, blocked, not started, keeping child order within a state", () => {
+  it("orders pips done, running, needs you, blocked, queued, not started, keeping child order within a state", () => {
     const sorted = shell("g-4", "building", { group: group() });
     const cards = [
       sorted,
@@ -108,9 +108,14 @@ describe("boardGroupCardVm", () => {
       child("s-1", "ready", "g-4", { blocked: true }),
       child("s-2", "building", "g-4"),
       child("s-3", "done", "g-4"),
-      child("s-4", "building", "g-4"),
+      // Queued but needing you: the question wins over the queue.
+      child("s-4", "building", "g-4", { queued: true, queuedBy: "board" }),
       child("s-5", "done", "g-4"),
       child("s-6", "planning", "g-4"),
+      child("s-7", "building", "g-4", { queued: true, queuedBy: "board" }),
+      // Held by an offline worker: not waiting for a slot, so not hatched.
+      child("s-8", "building", "g-4", { queued: true, queuedBy: "worker-offline" }),
+      child("s-9", "review", "g-4", { queued: true }),
     ];
     const ask = (card: BoardCardShell): BoardCardAttention | null =>
       card.cardId === BoardCardId.make("s-4")
@@ -129,8 +134,11 @@ describe("boardGroupCardVm", () => {
       "S-3",
       "S-5",
       "S-2",
+      "S-8",
       "S-4",
       "S-1",
+      "S-7",
+      "S-9",
       "S-0",
       "S-6",
     ]);
@@ -138,10 +146,42 @@ describe("boardGroupCardVm", () => {
       "done",
       "done",
       "running",
+      "running",
       "waiting",
       "blocked",
+      "queued",
+      "queued",
       "idle",
       "idle",
+    ]);
+  });
+
+  it("names a queued pip's place in line when the page knows it", () => {
+    const parent = shell("g-5", "building", { group: group() });
+    const cards = [
+      parent,
+      child("q-1", "building", "g-5", { queued: true }),
+      child("q-2", "building", "g-5", { queued: true }),
+      child("q-3", "building", "g-5", { queued: true }),
+    ];
+    const tooltips = (queueFor?: Parameters<typeof boardGroupCardVm>[0]["queueFor"]) =>
+      boardGroupCardVm(
+        { shells: cards, stages: STAGES, attentionFor: noAttention, queueFor },
+        parent,
+      )!.pips.map((pip) => pip.tooltip);
+    expect(tooltips()).toEqual([
+      "Q-1 · Card q-1 (queued)",
+      "Q-2 · Card q-2 (queued)",
+      "Q-3 · Card q-3 (queued)",
+    ]);
+    const slots = new Map([
+      ["q-1", { position: 1, startsNext: true }],
+      ["q-2", { position: 2, startsNext: false }],
+    ]);
+    expect(tooltips((card) => slots.get(String(card.cardId)))).toEqual([
+      "Q-1 · Card q-1 (queued, next)",
+      "Q-2 · Card q-2 (queued #2)",
+      "Q-3 · Card q-3 (queued)",
     ]);
   });
 
@@ -179,6 +219,15 @@ describe("boardGroupCardVm", () => {
       outer,
     )!;
     expect(nested.pips.map((pip) => pip.state)).toEqual(["blocked"]);
+
+    const rollUp = (...leaves: ReadonlyArray<BoardCardShell>) =>
+      boardGroupCardVm(
+        { shells: [outer, inner, ...leaves], stages: STAGES, attentionFor: noAttention },
+        outer,
+      )!.pips.map((pip) => pip.state);
+    const queuedLeaf = child("l-2", "building", "i-1", { queued: true });
+    expect(rollUp(queuedLeaf, child("l-3", "planning", "i-1"))).toEqual(["queued"]);
+    expect(rollUp(queuedLeaf, child("l-3", "building", "i-1"))).toEqual(["running"]);
   });
 
   it("is null for a leaf", () => {
