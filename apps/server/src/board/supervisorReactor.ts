@@ -229,6 +229,7 @@ import { HOLD_REFRESH_MS } from "./capacity/holdModel.ts";
 import { boardHoldLimit, holdsToAsk, rankHoldCandidates } from "./placement/holdRanking.ts";
 import {
   boardBuildHistory,
+  boardWorkerReadyForProject,
   localIsBuildCandidate,
   placementFacts,
   placementWait,
@@ -1815,7 +1816,6 @@ const make = Effect.gen(function* () {
     for (const workerId of [BOARD_LOCAL_WORKER_ID, ...(board.workers ?? []).map((w) => w.id)]) {
       const snapshot = yield* capacityClient.value.latest(workerId);
       if (snapshot === null) continue;
-      if (workerId === BOARD_LOCAL_WORKER_ID && !localIsBuildCandidate(snapshot.declared)) continue;
       for (const projectId of projects) {
         const repositoryKey = yield* projectRepositoryKey(projectId);
         const gate = boardPlacementGate({
@@ -1824,15 +1824,17 @@ const make = Effect.gen(function* () {
           projectRepositoryKey: repositoryKey,
           providerInstanceId: null,
         });
-        const readiness = snapshot.readiness.find((entry) =>
-          boardReadinessIsFor(entry, repositoryKey, String(projectId)),
-        );
         const baseline = resolveBoardProjectBaseline(
           boardProjectStageConfig(board, projectId)?.resources ?? null,
         );
         if (
-          gate.kind === "ready" &&
-          (readiness === undefined || readiness.state === "ready") &&
+          boardWorkerReadyForProject({
+            workerId,
+            gate: gate.kind,
+            snapshot,
+            repositoryKey,
+            projectId: String(projectId),
+          }) &&
           boardResourceProfileOverflow(baseline, snapshot.declared) === null
         ) {
           count += 1;

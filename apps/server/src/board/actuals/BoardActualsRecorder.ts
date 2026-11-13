@@ -8,6 +8,7 @@ import {
   BOARD_LOCAL_WORKER_ID,
   CommandId,
   EMPTY_BOARD_STATE,
+  EMPTY_BOARD_WORKERS_STATE,
   type EnvironmentId,
   boardAgentActualsSkipReason,
   boardCardActualsSample,
@@ -17,6 +18,7 @@ import {
   boardProjectLearned,
   boardProjectLearnedEqual,
   boardProjectStageConfig,
+  boardRepositoryGroupingKey,
   boardStepNotMeasured,
   boardThreadLinkWorkerId,
   type BoardCard,
@@ -38,6 +40,9 @@ import * as Schedule from "effect/Schedule";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { BoardEngine } from "../BoardEngine.ts";
+import { boardWorkerReadyForProject } from "../placement/placementRanking.ts";
+import { ThreadGateway } from "../ThreadGateway.ts";
+import { BoardPlacement, boardPlacementGate } from "../workers/BoardPlacement.ts";
 import { BoardCapacityClient } from "../capacity/BoardCapacityClient.ts";
 import { boardSetupActualsKey } from "../capacity/cardSetup.ts";
 import { BoardUsageRecorder } from "../usage/BoardUsageRecorder.ts";
@@ -69,8 +74,10 @@ export interface BoardActualsRecorderDeps {
   readonly commandId: (tag: string) => Effect.Effect<CommandId>;
   readonly nowIso: Effect.Effect<string>;
   readonly relay: BoardActualsRelay;
-  /** The declared capacity of every worker reporting now, for the unplaceable check. */
-  readonly readyWorkers: Effect.Effect<ReadonlyArray<BoardResourceProfile>>;
+  /** The declared capacity of every worker ready for the project now, for the unplaceable check. */
+  readonly readyWorkers: (
+    projectId: ProjectId,
+  ) => Effect.Effect<ReadonlyArray<BoardResourceProfile>>;
   /** After a card's rows changed: an open card re-reads its detail. */
   readonly publish: (cardId: BoardCardId) => Effect.Effect<void>;
 }
@@ -176,7 +183,7 @@ export const makeBoardActualsRecorder = (deps: BoardActualsRecorderDeps) => {
     const learned = boardProjectLearned({
       samples,
       resources,
-      readyWorkers: yield* deps.readyWorkers,
+      readyWorkers: yield* deps.readyWorkers(projectId),
       nowIso: now,
     });
     if (resources?.learned === undefined && samples.length === 0) return;
@@ -287,6 +294,8 @@ export const BoardActualsRecorderLive = Layer.effect(
     const connections = yield* Effect.serviceOption(WorkerConnections);
     const capacity = yield* Effect.serviceOption(BoardCapacityClient);
     const usage = yield* Effect.serviceOption(BoardUsageRecorder);
+    const placement = yield* Effect.serviceOption(BoardPlacement);
+    const threads = yield* ThreadGateway;
 
     const relay: BoardActualsRelay = (workerId, input) => {
       if (workerId === BOARD_LOCAL_WORKER_ID) {
@@ -319,11 +328,43 @@ export const BoardActualsRecorderLive = Layer.effect(
         ),
       nowIso: Effect.map(DateTime.now, DateTime.formatIso),
       relay,
-      readyWorkers: Option.isNone(capacity)
-        ? Effect.succeed([])
-        : capacity.value.all.pipe(
-            Effect.map((snapshots) => [...snapshots.values()].map((snapshot) => snapshot.declared)),
-          ),
+      readyWorkers: Effect.fn("BoardActualsRecorder.readyWorkers")(function* (
+        projectId: ProjectId,
+      ) {
+        if (Option.isNone(capacity)) return [];
+        const board = yield* engine.getReadModel.pipe(
+          Effect.map((model) => model.board ?? EMPTY_BOARD_STATE),
+        );
+        const workersState = Option.isNone(placement)
+          ? EMPTY_BOARD_WORKERS_STATE
+          : yield* placement.value.workers;
+        const repositoryKey = yield* threads.project(projectId).pipe(
+          Effect.map((project) => boardRepositoryGroupingKey(project?.repositoryIdentity)),
+          Effect.catchCause(() => Effect.succeed(null)),
+        );
+        const profiles: Array<BoardResourceProfile> = [];
+        for (const workerId of [BOARD_LOCAL_WORKER_ID, ...(board.workers ?? []).map((w) => w.id)]) {
+          const snapshot = yield* capacity.value.latest(workerId);
+          if (snapshot === null) continue;
+          const gate = boardPlacementGate({
+            workerId,
+            workers: workersState,
+            projectRepositoryKey: repositoryKey,
+            providerInstanceId: null,
+          });
+          if (
+            boardWorkerReadyForProject({
+              workerId,
+              gate: gate.kind,
+              snapshot,
+              repositoryKey,
+              projectId: String(projectId),
+            })
+          )
+            profiles.push(snapshot.declared);
+        }
+        return profiles;
+      }),
       publish: (cardId) => (Option.isNone(usage) ? Effect.void : usage.value.publish(cardId)),
     });
 

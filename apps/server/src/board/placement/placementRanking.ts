@@ -3,6 +3,7 @@
  * functions of what the board knows about each worker, so the rules are tested as a table.
  */
 import {
+  BOARD_LOCAL_WORKER_ID,
   boardThreadLinkWorkerId,
   boardReadinessIsFor,
   type BoardCard,
@@ -13,6 +14,13 @@ import {
   type BoardResourceProfile,
   type BoardWorkerId,
 } from "@t3tools/contracts";
+
+export type BoardPlacementGateKind =
+  | "ready"
+  | "offline"
+  | "needs-update"
+  | "no-checkout"
+  | "provider-missing";
 
 /** A Building step finished on a worker this recently counts it warm. */
 export const PLACEMENT_WARM_WINDOW_MS = 24 * 60 * 60_000;
@@ -288,6 +296,24 @@ export function placementWait(input: {
 export const localIsBuildCandidate = (declared: BoardResourceProfile | null): boolean =>
   declared === null || declared.cpuCores > 0 || declared.ramGiB > 0;
 
+/** A reporting worker placement could use for a project now: its gate is ready, its readiness for
+    the project isn't pending or failed, and this server only with build capacity declared. */
+export function boardWorkerReadyForProject(input: {
+  readonly workerId: BoardWorkerId;
+  readonly gate: BoardPlacementGateKind;
+  readonly snapshot: BoardWorkerCapacitySnapshot;
+  readonly repositoryKey: string | null;
+  readonly projectId: string;
+}): boolean {
+  if (input.workerId === BOARD_LOCAL_WORKER_ID && !localIsBuildCandidate(input.snapshot.declared))
+    return false;
+  if (input.gate !== "ready") return false;
+  const readiness = input.snapshot.readiness.find((entry) =>
+    boardReadinessIsFor(entry, input.repositoryKey, input.projectId),
+  );
+  return readiness === undefined || readiness.state === "ready";
+}
+
 /**
  * The facts for one worker, from the board's worker summary (status and checkouts, through
  * `boardPlacementGate`'s answer) and its last capacity snapshot, less this pass's grants. A
@@ -296,7 +322,7 @@ export const localIsBuildCandidate = (declared: BoardResourceProfile | null): bo
 export function placementFacts(input: {
   readonly workerId: BoardWorkerId;
   readonly label: string;
-  readonly gate: "ready" | "offline" | "needs-update" | "no-checkout" | "provider-missing";
+  readonly gate: BoardPlacementGateKind;
   readonly snapshot: BoardWorkerCapacitySnapshot | null;
   readonly repositoryKey: string | null;
   readonly projectId: string;

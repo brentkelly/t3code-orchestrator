@@ -8,12 +8,14 @@ import {
   type BoardCard,
   type BoardResourceProfile,
   type BoardStepCompletion,
+  type BoardWorkerCapacitySnapshot,
   type BoardWorkerId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
   boardBuildHistory,
+  boardWorkerReadyForProject,
   localIsBuildCandidate,
   PLACEMENT_WARM_WINDOW_MS,
   placementWait,
@@ -246,6 +248,48 @@ describe("placement ranking (T3O-87)", () => {
     expect(localIsBuildCandidate({ cpuCores: 0, ramGiB: 0, diskGB: 50 })).toBe(false);
     expect(localIsBuildCandidate({ cpuCores: 4, ramGiB: 8, diskGB: 50 })).toBe(true);
     expect(localIsBuildCandidate(null)).toBe(true);
+  });
+
+  it("a worker counts ready for a project only with its gate ready and its readiness clear", () => {
+    const snapshot = (
+      declared: BoardResourceProfile,
+      state: "ready" | "not-ready" | "cloning" | null = null,
+    ): BoardWorkerCapacitySnapshot => ({
+      at: "2026-06-01T12:00:00.000Z",
+      declared,
+      headroom: declared,
+      over: { cpuRam: false, disk: false },
+      agents: { running: 0, max: null },
+      providers: [],
+      readiness:
+        state === null
+          ? []
+          : [{ repositoryKey: "repo", path: "/r", state, version: null, checkedAt: null }],
+      heavyCards: [],
+    });
+    const big = { cpuCores: 64, ramGiB: 256, diskGB: 1000 };
+    const ready = (
+      workerId: BoardWorkerId,
+      gate: "ready" | "offline" | "no-checkout",
+      snap: BoardWorkerCapacitySnapshot,
+    ) =>
+      boardWorkerReadyForProject({
+        workerId,
+        gate,
+        snapshot: snap,
+        repositoryKey: "repo",
+        projectId: "p",
+      });
+    expect(ready(W1, "ready", snapshot(big))).toBe(true);
+    expect(ready(W1, "ready", snapshot(big, "ready"))).toBe(true);
+    expect(ready(W1, "offline", snapshot(big))).toBe(false);
+    expect(ready(W1, "no-checkout", snapshot(big))).toBe(false);
+    expect(ready(W1, "ready", snapshot(big, "not-ready"))).toBe(false);
+    expect(ready(W1, "ready", snapshot(big, "cloning"))).toBe(false);
+    expect(
+      ready(BOARD_LOCAL_WORKER_ID, "ready", snapshot({ cpuCores: 0, ramGiB: 0, diskGB: 50 })),
+    ).toBe(false);
+    expect(ready(BOARD_LOCAL_WORKER_ID, "ready", snapshot(big))).toBe(true);
   });
 });
 

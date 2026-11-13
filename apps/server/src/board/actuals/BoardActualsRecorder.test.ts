@@ -118,7 +118,7 @@ const harness = (initial: BoardState) =>
             ? answers.get(`${input.op}:${input.key}`)!
             : null;
         }),
-      readyWorkers: Effect.succeed([{ cpuCores: 32, ramGiB: 64, diskGB: 500 }]),
+      readyWorkers: () => Effect.succeed([{ cpuCores: 32, ramGiB: 64, diskGB: 500 }]),
       publish: () => Effect.void,
     });
     return { sql, state, calls, answers, commands, recorder };
