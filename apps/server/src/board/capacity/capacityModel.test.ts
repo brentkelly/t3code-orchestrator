@@ -510,6 +510,16 @@ describe("syncCards", () => {
     expect(restored.state.lastSeq.get("board-a")).toBe(7);
   });
 
+  it("an authoritative sync stamps the records it lists, so later syncs can release them", () => {
+    let state = placed(EMPTY_CAPACITY_STATE, "board-a", "card-1");
+    const grown = entry({ worktreePath: "/w/card-1", grantedProfile: { ...card, cpuCores: 9 } });
+    state = sync(state, { seq: 40, cards: [grown] }).state;
+    // Restored to seq 7, the board still lists the card, then drops it at seq 8.
+    state = sync(state, { seq: 7, authoritative: true, cards: [grown] }).state;
+    expect(state.records[0]?.seq).toBe(7);
+    expect(sync(state, { seq: 8, cards: [] }).state.records).toEqual([]);
+  });
+
   it("a card still provisioning is listed and its entry consumes the placement claim", () => {
     const granted = decideClaim(EMPTY_CAPACITY_STATE, claim(), context());
     const synced = sync(granted.state, {
