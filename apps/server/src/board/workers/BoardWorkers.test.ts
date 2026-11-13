@@ -217,7 +217,11 @@ const refusalOf = (outcome: JoinOutcome) =>
   outcome._tag === "refused" ? outcome.body.refused : "accepted";
 
 /** A card pinned and placed on the worker, its worktree cut there and its Build step running. */
-const runningOnWorker = (engine: BoardEngineShape, busy: BoardCardId, threadId: ThreadId) =>
+const runningOnWorker = (
+  engine: Effect.Success<typeof boardStackEngine>,
+  busy: BoardCardId,
+  threadId: ThreadId,
+) =>
   Effect.gen(function* () {
     // Its worktree is cut on the worker it is pinned to.
     yield* engine.dispatch({

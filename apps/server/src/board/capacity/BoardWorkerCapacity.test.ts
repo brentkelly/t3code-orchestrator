@@ -465,7 +465,7 @@ it.effect(
       assert.strictEqual((yield* claim("board-a", "forced", { force: true })).outcome, "granted");
       // Someone waits: the worker's status shows the hold ending at its own 30-minute limit.
       assert.strictEqual(
-        (yield* service.status([])).hold.placement?.until,
+        (yield* service.status(new Set())).hold?.placement?.until,
         "1970-01-01T00:30:00.000Z",
       );
       // Board A sees the worker closed, with no card named; board B sees its own card.
