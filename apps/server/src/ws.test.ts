@@ -858,7 +858,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(BoardQueries)({}),
   Layer.mock(BoardThreadTail)({}),
   Layer.mock(BoardWorkers)({}),
-  Layer.mock(BoardWorkspaces)({ local: {} as never, forCentral: {} as never }),
+  Layer.mock(BoardWorkspaces)({ local: {} as never, forBoard: (() => ({})) as never }),
   Layer.mock(SupervisorReactor)({}),
   Layer.mock(ThreadGateway)({}),
   Layer.mock(WorkerGatewayHost)({}),

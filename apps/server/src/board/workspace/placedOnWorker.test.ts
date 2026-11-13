@@ -87,7 +87,10 @@ const placeCardOnWorker = (options: { readonly reachable?: boolean } = {}): Plac
                 ? Effect.succeed(privateGitDir)
                 : local.fileSystem.makeTempDirectory({ prefix: "t3o-worker-gitdir-" }).pipe(
                     Effect.tap((dir) =>
-                      local.fileSystem.writeFileString(`${dir}/t3o-board-owner`, "central\n"),
+                      local.fileSystem.writeFileString(
+                        `${dir}/t3o-board-owner`,
+                        "board:env-board\n",
+                      ),
                     ),
                     Effect.tap((dir) => Effect.sync(() => void (privateGitDir = dir))),
                     Effect.orDie,

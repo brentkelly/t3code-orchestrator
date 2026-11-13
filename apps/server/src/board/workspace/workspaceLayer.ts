@@ -37,6 +37,7 @@ import {
 } from "./BoardWorkspace.ts";
 import {
   boardWorktreeOwner,
+  boardWorktreeOwnerOf,
   makeLocalBoardWorkspace,
   type LocalBoardWorkspaceDeps,
 } from "./LocalBoardWorkspace.ts";
@@ -65,7 +66,14 @@ export function makeBoardWorkspaces(
   options: BoardWorkspacesOptions = {},
 ): BoardWorkspacesShape {
   const local = makeLocalBoardWorkspace(deps);
-  const forCentral = makeLocalBoardWorkspace(deps, "central");
+  const boardWorkspaces = new Map<string, ReturnType<typeof makeLocalBoardWorkspace>>();
+  const forBoard: BoardWorkspacesShape["forBoard"] = (boardId) => {
+    const existing = boardWorkspaces.get(boardId);
+    if (existing !== undefined) return existing;
+    const made = makeLocalBoardWorkspace(deps, boardWorktreeOwnerOf(boardId));
+    boardWorkspaces.set(boardId, made);
+    return made;
+  };
   const { path: pathService } = deps;
 
   const localProject = (projectId: ProjectId) =>
@@ -136,7 +144,7 @@ export function makeBoardWorkspaces(
 
   const centralMayDeleteBranch: BoardWorkspacesShape["centralMayDeleteBranch"] = Effect.fn(
     "BoardWorkspaces.centralMayDeleteBranch",
-  )(function* (projectId, branch) {
+  )(function* (projectId, branch, boardId) {
     if (!(yield* centralMayUseBranch(branch))) return false;
     const cwd = yield* deps.projectRoot(projectId);
     if (cwd === null) return false;
@@ -152,7 +160,9 @@ export function makeBoardWorkspaces(
     if (listed === null || listed.exitCode !== 0) return false;
     for (const worktree of parseRegisteredWorktrees(listed.stdout)) {
       if (worktree.branch !== branch || worktree.prunable) continue;
-      if ((yield* boardWorktreeOwner(deps, worktree.path)) !== "central") return false;
+      if ((yield* boardWorktreeOwner(deps, worktree.path)) !== boardWorktreeOwnerOf(boardId)) {
+        return false;
+      }
     }
     return true;
   });
@@ -172,7 +182,7 @@ export function makeBoardWorkspaces(
 
   return {
     local,
-    forCentral,
+    forBoard,
     ownsWorktreePath,
     centralMayDeleteBranch,
     centralMayUseBranch,

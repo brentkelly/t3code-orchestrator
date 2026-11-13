@@ -216,10 +216,11 @@ export interface BoardWorkspacePlacement {
 export interface BoardWorkspacesShape {
   /** This server's own workspace. */
   readonly local: BoardWorkspace;
-  /** The same workspace as the central server that dialed this one sees it:
-      the checkouts it provisions are marked as the central board's, and its
-      orphan sweep lists only those (`BoardWorktreeOwner`). */
-  readonly forCentral: BoardWorkspace;
+  /** The same workspace as a board that dialed this one sees it: the
+      checkouts it provisions are marked with that board's environment id, and
+      its orphan sweep lists only those (`BoardWorktreeOwner`). The board id
+      comes from the calling session's `t3o-board:<id>` subject. */
+  readonly forBoard: (boardId: string) => BoardWorkspace;
   /**
    * Whether `path` is one of `projectId`'s worktrees on this server (never the
    * checkout itself). With `owner`, a checkout still on disk must be that board's,
@@ -232,11 +233,15 @@ export interface BoardWorkspacesShape {
     owner?: BoardWorktreeOwner,
   ) => Effect.Effect<boolean>;
   /**
-   * Whether a central server may delete `branch` here: not on this server's own
-   * board's cards, and not checked out in a worktree the central board didn't
-   * make. `deleteCardBranch` names no path for `ownsWorktreePath` to check.
+   * Whether board `boardId` may delete `branch` here: not on this server's own
+   * board's cards, and not checked out in a worktree that board didn't make.
+   * `deleteCardBranch` names no path for `ownsWorktreePath` to check.
    */
-  readonly centralMayDeleteBranch: (projectId: ProjectId, branch: string) => Effect.Effect<boolean>;
+  readonly centralMayDeleteBranch: (
+    projectId: ProjectId,
+    branch: string,
+    boardId: string,
+  ) => Effect.Effect<boolean>;
   /**
    * Whether a central server may build on `branch` here: not a branch on this
    * server's own board's cards. Both boards name branches `board/<key>`, so a

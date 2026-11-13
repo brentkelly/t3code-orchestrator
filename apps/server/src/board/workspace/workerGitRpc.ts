@@ -16,12 +16,14 @@ import {
   type BoardWorkerGitPayload,
   type BoardWorkerGitSuccess,
   type ProjectId,
+  boardIdOfBoardSubject,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 
 import type { AuthenticatedSession } from "../../auth/EnvironmentAuth.ts";
 import type { BoardWorkspacesShape } from "./BoardWorkspace.ts";
+import { boardWorktreeOwnerOf } from "./LocalBoardWorkspace.ts";
 import { decodeGitPayload, encodeGitSuccess } from "./gitWire.ts";
 
 export type BoardWorkerGitHandlers = {
@@ -51,10 +53,15 @@ const guardPaths = (
   operation: BoardWorkerGitOperation,
   projectId: ProjectId,
   paths: ReadonlyArray<string>,
+  boardId: string,
 ) =>
   Effect.forEach(paths, (path) =>
     workspaces
-      .ownsWorktreePath(projectId, path, WRITES_TO_PATH.has(operation) ? "central" : undefined)
+      .ownsWorktreePath(
+        projectId,
+        path,
+        WRITES_TO_PATH.has(operation) ? boardWorktreeOwnerOf(boardId) : undefined,
+      )
       .pipe(
         Effect.flatMap((owned) =>
           owned
@@ -85,10 +92,11 @@ const guardBranch = Effect.fn("BoardWorkerGitRpc.guardBranch")(function* (
   operation: BoardWorkerGitOperation,
   projectId: ProjectId,
   input: Record<string, unknown>,
+  boardId: string,
 ) {
   const branch = String(input["branch"]);
   if (operation === "deleteCardBranch") {
-    if (yield* workspaces.centralMayDeleteBranch(projectId, branch)) return;
+    if (yield* workspaces.centralMayDeleteBranch(projectId, branch, boardId)) return;
     return yield* new BoardWorkerGitError({
       operation,
       detail: `${branch} belongs to this server's own board or a checkout the board didn't make.`,
@@ -120,10 +128,19 @@ const boardWorkerGitRpcHandlers = (
           }),
         );
       }
+      const boardId = boardIdOfBoardSubject(currentSession.subject);
+      if (boardId === null) {
+        return Effect.fail(
+          new EnvironmentAuthorizationError({
+            message: "Only a board's own session may call this on a worker.",
+            requiredScope,
+          }),
+        );
+      }
       return Effect.gen(function* () {
-        yield* guardPaths(workspaces, op, input.projectId, pathsOf(input));
-        yield* guardBranch(workspaces, op, input.projectId, input);
-        const run = workspaces.forCentral[op] as (
+        yield* guardPaths(workspaces, op, input.projectId, pathsOf(input), boardId);
+        yield* guardBranch(workspaces, op, input.projectId, input, boardId);
+        const run = workspaces.forBoard(boardId)[op] as (
           payload: unknown,
         ) => Effect.Effect<unknown, BoardWorkerGitError | { readonly _tag: "WorkerUnavailable" }>;
         return yield* run(input);
