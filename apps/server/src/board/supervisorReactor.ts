@@ -3456,6 +3456,17 @@ const make = Effect.gen(function* () {
       } else {
         // T3o: finishing beats starting: a placed card short of room holds its own worker
         // (T3O-87). It can go nowhere else.
+        // A wait on anything but room (quota, setup, an offline worker) must not keep its
+        // worker closed to every board, so its grow hold goes.
+        if (
+          hold.queuedBy !== "capacity" &&
+          placedOn !== null &&
+          growHeld &&
+          Option.isSome(capacityClient)
+        ) {
+          yield* capacityClient.value.releaseHold(placedOn, String(card.id));
+          forgetHold(String(card.id), placedOn);
+        }
         const grown =
           hold.queuedBy === "capacity" && placedOn !== null && Option.isSome(capacityClient)
             ? yield* askGrowHold(card, placedOn, state.providerInstanceId)

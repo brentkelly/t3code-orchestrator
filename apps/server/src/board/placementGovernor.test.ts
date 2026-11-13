@@ -670,6 +670,41 @@ it.effect("a full worker queues its cards without holding up another worker's (T
   }),
 );
 
+it.effect("a grow hold goes when its card waits on something other than room (T3O-87)", () =>
+  Effect.gen(function* () {
+    const { placement } = yield* makePlacement(workersState([workerView(W1)]));
+    const capacity = yield* w1RoomForOne();
+    const cards = [placedBuildingCard("card-a", "a", W1), placedBuildingCard("card-b", "b", W1)];
+    yield* withGovernor(
+      {
+        board: { cards, nextCardNumberByProject: {}, workers: registered },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 8 }),
+        placement,
+        capacity,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          for (const [index, building] of cards.entries()) {
+            yield* h.pumpDomain(movedToBuilding(building, index + 1));
+          }
+          assert.strictEqual((yield* step(h, "card-b"))?.queuedBy, "holding");
+          // W1 stops answering: card-b now waits on the worker, not on room.
+          capacity.unreachable.add(W1);
+          yield* h.reactor.sweep;
+          assert.strictEqual((yield* step(h, "card-b"))?.queuedBy, "worker-offline");
+          assert.deepStrictEqual(
+            capacity.releasedHolds.filter((entry) => entry.cardId === "card-b"),
+            [{ workerId: W1, cardId: "card-b" }],
+          );
+          const asked = capacity.holds.length;
+          yield* h.reactor.sweep;
+          // Forgotten, so the sweep's refresh no longer re-asks it.
+          assert.strictEqual(capacity.holds.length, asked);
+        }),
+    );
+  }),
+);
+
 it.effect(
   "after a restart, a running card's grant reaches its worker before anything is placed there",
   () =>
