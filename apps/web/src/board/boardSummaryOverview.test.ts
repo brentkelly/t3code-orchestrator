@@ -218,18 +218,18 @@ describe("deriveBoardSummaryOverview", () => {
     });
   });
 
-  it("names up to four areas on What was built and counts the rest as +N", () => {
+  it("names up to four distinct areas on What was built and counts the rest as +N", () => {
     const summary = built({
       lead: "x",
       notes: [],
       checks: [],
-      areas: ["Data", "API", "Panel", "Docs", "Tests", "Evals", "Empty"].map((name) => ({
+      areas: ["Data", "API", "API", "Panel", "Docs", "Tests", "Evals", "Empty"].map((name) => ({
         name,
         items: name === "Empty" ? [] : [`${name} item`],
       })),
     });
     const section = overview(summary).sections.find((entry) => entry.id === "built");
-    expect(section?.count).toBe("6 changes · 6 areas");
+    expect(section?.count).toBe("7 changes · 7 areas");
     expect(section?.chips.map((chip) => chip.label)).toEqual([
       "Data",
       "API",

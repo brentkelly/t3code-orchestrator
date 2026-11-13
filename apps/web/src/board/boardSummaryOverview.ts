@@ -374,6 +374,8 @@ export function deriveBoardSummaryOverview(input: {
   const children = build.children !== null && build.children.total > 0 ? build.children : null;
   if (children !== null || build.areaCount > 0) {
     const areas = (structured?.areas ?? []).filter((area) => area.items.length > 0);
+    // Agents can repeat an area name; a chip is a label, so each name shows once.
+    const areaNames = [...new Set(areas.map((area) => area.name))];
     const count = [
       children === null ? null : `${children.done} of ${children.total} plans done`,
       build.areaCount > 0
@@ -385,11 +387,11 @@ export function deriveBoardSummaryOverview(input: {
       name: BOARD_SUMMARY_SECTION_NAMES.built,
       count: count.join(" · "),
       chips: [
-        ...areas
+        ...areaNames
           .slice(0, MAX_AREA_CHIPS)
-          .map((area) => ({ label: area.name, tone: "neutral" as const })),
-        ...(areas.length > MAX_AREA_CHIPS
-          ? [{ label: `+${areas.length - MAX_AREA_CHIPS}`, tone: "neutral" as const }]
+          .map((name) => ({ label: name, tone: "neutral" as const })),
+        ...(areaNames.length > MAX_AREA_CHIPS
+          ? [{ label: `+${areaNames.length - MAX_AREA_CHIPS}`, tone: "neutral" as const }]
           : []),
       ],
     });

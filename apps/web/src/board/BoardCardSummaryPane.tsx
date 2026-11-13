@@ -730,8 +730,8 @@ export function BoardCardSummaryPane({
                 </span>
                 <span className="flex-1" />
                 <span className="flex flex-wrap justify-end gap-1.25">
-                  {section.chips.map((chip, chipIndex) => (
-                    <Chip chip={chip} key={`${chipIndex}:${chip.label}`} />
+                  {section.chips.map((chip) => (
+                    <Chip chip={chip} key={chip.label} />
                   ))}
                 </span>
               </button>
