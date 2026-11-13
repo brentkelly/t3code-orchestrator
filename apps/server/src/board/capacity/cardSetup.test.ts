@@ -62,7 +62,7 @@ it.effect("runs the setup script once per worktree, and only the script on Retry
       ],
     );
     assert.isTrue(NodeFS.existsSync(NodePath.join(gitDir, SETUP_DONE_MARKER)));
-    assert.match(commands[0]!, /T3CODE_WORKTREE_PATH='\/w\/card-1' pnpm install$/);
+    assert.strictEqual(commands[0], "pnpm install");
     // A second provision of the same worktree runs nothing.
     yield* collect(setup.run(input));
     assert.lengthOf(commands, 1);
@@ -70,6 +70,26 @@ it.effect("runs the setup script once per worktree, and only the script on Retry
     // Retry runs the script again, and only the script.
     yield* collect(setup.run({ ...input, retry: true }));
     assert.lengthOf(commands, 2);
+  }),
+);
+
+// Variables prefixed to the command text reached only its first simple command.
+it.live("every command of a compound setup script sees the worktree and project variables", () =>
+  Effect.gen(function* () {
+    const gitDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-setup-"));
+    const worktreePath = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-setup-wt-"));
+    const setup = makeCardSetup({
+      gitDir: () => Effect.succeed(gitDir),
+      script: () =>
+        Effect.succeed({
+          command: 'true && printf "%s|%s" "$T3CODE_WORKTREE_PATH" "$T3CODE_PROJECT_ROOT"',
+          async: true,
+          env: { T3CODE_PROJECT_ROOT: "/repo" },
+        }),
+    });
+    const last = (yield* collect(setup.run({ ...input, worktreePath }))).at(-1)!;
+    assert.strictEqual(last.status, "succeeded");
+    assert.include(last.tail ?? "", `${worktreePath}|/repo`);
   }),
 );
 

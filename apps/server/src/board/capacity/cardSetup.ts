@@ -55,8 +55,6 @@ export interface CardSetupDeps {
 /** The meter key a card's setup run is measured under on its worker. */
 export const boardSetupActualsKey = (worktreePath: string) => `setup:${worktreePath}`;
 
-const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
-
 const stagesWith = (
   current: BoardCardSetupStage,
   status: "running" | "failed" | "done",
@@ -170,14 +168,9 @@ export const makeCardSetup = (deps: CardSetupDeps) => {
           ...extra,
         });
         yield* Queue.offer(queue, progress("running", "running"));
-        const env = Object.entries({
-          ...script.env,
-          T3CODE_WORKTREE_PATH: input.worktreePath,
-        })
-          .map(([key, value]) => `${key}=${shellQuote(value)}`)
-          .join(" ");
         const fiber = yield* runStep({
-          command: `${env} ${script.command}`,
+          command: script.command,
+          env: { ...script.env, T3CODE_WORKTREE_PATH: input.worktreePath },
           cwd: input.worktreePath,
           timeoutMs: input.timeoutMinutes * 60_000,
           tail,
