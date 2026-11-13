@@ -67,13 +67,15 @@ export function boardCardCapacityView(input: {
         }`
       : (planner?.reason ?? null);
   let tooBig: string | null = null;
-  if (!input.placed && input.worker !== null) {
+  // An unpinned card goes to any ready worker: only a pin ties it to this one's capacity.
+  if (!input.placed && input.pinned && input.worker !== null) {
+    const worker = input.worker;
     const dimension = BOARD_RESOURCE_DIMENSIONS.find(
       (candidate) =>
         boardResourceProfileValue(requested, candidate) >
-        boardResourceProfileValue(input.worker!.declared, candidate),
+        boardResourceProfileValue(worker.declared, candidate),
     );
-    if (dimension !== undefined) tooBig = tooBigMessage(dimension, size, requested, input);
+    if (dimension !== undefined) tooBig = tooBigMessage(dimension, size, requested, worker);
   }
   const grant = input.resources?.grant ?? null;
   const granted =
@@ -101,12 +103,8 @@ function tooBigMessage(
   dimension: BoardResourceDimension,
   size: BoardCardSize,
   requested: BoardResourceProfile,
-  input: {
-    readonly pinned: boolean;
-    readonly worker: { readonly label: string; readonly declared: BoardResourceProfile } | null;
-  },
+  worker: { readonly label: string; readonly declared: BoardResourceProfile },
 ): string {
-  const worker = input.worker!;
   const need = round(boardResourceProfileValue(requested, dimension));
   const has = round(boardResourceProfileValue(worker.declared, dimension));
   // The card's own size at M still too big means the baseline is the cause.
@@ -114,9 +112,7 @@ function tooBigMessage(
     size[dimension] === "M" || size[dimension] === "S"
       ? "Lower the project's baseline"
       : "Lower the size";
-  return `${NAMES[dimension]} ${size[dimension]} needs ${need} ${UNITS[dimension]}; ${worker.label} has ${has}. ${cause}${
-    input.pinned ? ", or unpin" : ""
-  }.`;
+  return `${NAMES[dimension]} ${size[dimension]} needs ${need} ${UNITS[dimension]}; ${worker.label} has ${has}. ${cause}, or unpin.`;
 }
 
 /** "6m 12s", "48s". */

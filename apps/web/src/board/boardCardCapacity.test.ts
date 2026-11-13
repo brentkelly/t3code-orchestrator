@@ -36,7 +36,7 @@ describe("boardCardCapacityView", () => {
     expect(view.canReset).toBe(true);
   });
 
-  it("is too big for the card's worker only before it is placed, and says what to do", () => {
+  it("is too big for a pinned card's worker only before it is placed, and says what to do", () => {
     const tooBig = (size: "XL" | "M", placed: boolean, pinned: boolean) =>
       boardCardCapacityView({
         resources: resources({
@@ -50,14 +50,13 @@ describe("boardCardCapacityView", () => {
         pinned,
         worker: { label: "build-02", declared: { cpuCores: 16, ramGiB: 64, diskGB: 500 } },
       }).tooBig;
-    expect(tooBig("XL", false, false)).toBe(
-      "CPU XL needs 18 cores; build-02 has 16. Lower the size.",
-    );
+    // Unpinned, any ready worker may take it: this one's capacity doesn't decide.
+    expect(tooBig("XL", false, false)).toBeNull();
     expect(tooBig("XL", false, true)).toBe(
       "CPU XL needs 18 cores; build-02 has 16. Lower the size, or unpin.",
     );
-    expect(tooBig("XL", true, false)).toBeNull();
-    expect(tooBig("M", false, false)).toBeNull();
+    expect(tooBig("XL", true, true)).toBeNull();
+    expect(tooBig("M", false, true)).toBeNull();
   });
 
   it("says a placed card runs at the size it was granted", () => {

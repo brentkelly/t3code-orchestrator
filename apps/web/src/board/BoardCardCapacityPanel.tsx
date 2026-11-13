@@ -202,7 +202,7 @@ export function BoardCardCapacityPanelHost(props: {
   const placed =
     card.worktree !== null &&
     (card.worktree.status === "ready" || card.worktree.status === "provisioning");
-  // Where it holds a worktree, else its pin, else the default: never a stale placement.
+  // Where it holds a worktree, else its pin: never a stale placement.
   const workerId = boardCardEffectiveWorkerId(card);
   const capacityResult = useAtomValue(boardEnvironment.capacityAtom({ environmentId, input: {} }));
   const snapshot = AsyncResult.isSuccess(capacityResult)
