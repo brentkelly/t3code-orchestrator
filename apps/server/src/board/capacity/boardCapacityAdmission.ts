@@ -4,6 +4,7 @@
  */
 import {
   BOARD_LOCAL_WORKER_ID,
+  boardStepWaitsForRoom,
   boardCardEffectiveWorkerId,
   boardCardRequestedProfile,
   boardProjectStageConfig,
@@ -381,12 +382,7 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
       (board.stepStates ?? []).find((state) => state.cardId === cardId) ?? null;
     const waitingWorkers = new Set(
       (board.stepStates ?? [])
-        .filter(
-          (state) =>
-            state.status === "queued" &&
-            state.queuedBy === "capacity" &&
-            state.queuedDetail?.workerId !== undefined,
-        )
+        .filter(boardStepWaitsForRoom)
         .map((state) => state.queuedDetail!.workerId!),
     );
     const idle: Array<{ readonly card: BoardCard; readonly since: number }> = [];
@@ -450,12 +446,9 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     // Every pass first tells each worker what the board holds there: a card deleted or
     // reclaimed since gives its room back at once. Unchanged state sends nothing.
     yield* syncAll();
-    const waitingSteps = states.filter(
-      (state) =>
-        state.status === "queued" &&
-        state.queuedBy === "capacity" &&
-        state.queuedDetail?.workerId !== undefined,
-    );
+    // Only a wait room could end: a Too-big card never fits, and one queued behind another
+    // waits on that card, so neither may evict an idle card's tail.
+    const waitingSteps = states.filter(boardStepWaitsForRoom);
     const waiting = new Set<BoardWorkerId>(
       waitingSteps.map((state) => state.queuedDetail!.workerId!),
     );

@@ -2754,7 +2754,7 @@ const make = Effect.gen(function* () {
         // Too big for its worker: amber, not a candidate, and it holds up no one.
         const tooBig = tooBigDimension(profile, snapshot);
         if (tooBig !== null) {
-          yield* holdQueued(state, "capacity", { workerId, dimension: tooBig });
+          yield* holdQueued(state, "capacity", { workerId, dimension: tooBig, tooBig: true });
           return;
         }
         const ahead = blocked.get(workerId);

@@ -513,6 +513,7 @@ export const BoardCardCapacityView = Schema.Struct({
       workerId: Schema.optionalKey(TrimmedNonEmptyString),
       dimension: Schema.optionalKey(BoardResourceDimension),
       behindCardId: Schema.optionalKey(TrimmedNonEmptyString),
+      tooBig: Schema.optionalKey(Schema.Boolean),
     }),
   ),
 });

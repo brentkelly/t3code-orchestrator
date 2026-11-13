@@ -2414,8 +2414,27 @@ export const BoardStepQueuedDetail = Schema.Struct({
   workerId: Schema.optionalKey(BoardWorkerId),
   dimension: Schema.optionalKey(BoardResourceDimension),
   behindCardId: Schema.optionalKey(BoardCardId),
+  /** The card's profile exceeds the worker's declared capacity: no room will ever free. */
+  tooBig: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardStepQueuedDetail = typeof BoardStepQueuedDetail.Type;
+
+/**
+ * A step held for room a release could free: a capacity wait on a named worker that is
+ * neither Too big for it nor queued behind another of this board's cards.
+ */
+export function boardStepWaitsForRoom(
+  state: Pick<BoardCardStepState, "status" | "queuedBy" | "queuedDetail">,
+): boolean {
+  const detail = state.queuedDetail;
+  return (
+    state.status === "queued" &&
+    state.queuedBy === "capacity" &&
+    detail?.workerId !== undefined &&
+    detail.behindCardId === undefined &&
+    detail.tooBig !== true
+  );
+}
 
 export const BoardCardStepState = Schema.Struct({
   cardId: BoardCardId,

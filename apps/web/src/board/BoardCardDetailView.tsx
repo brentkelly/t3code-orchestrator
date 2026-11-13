@@ -2908,7 +2908,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               docs/t3o/status-colours.md. */}
           {props.queueInfo != null ? (
             <BoardHint label={props.queueInfo.detail}>
-              <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-1.75 text-board-11 font-medium text-muted-foreground">
+              <span
+                className={cn(
+                  "inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md px-1.75 text-board-11 font-medium",
+                  props.queueInfo.blocked === true
+                    ? "bg-warning/14 text-board-amber-text"
+                    : "bg-muted text-muted-foreground",
+                )}
+              >
                 <ClockIcon className="size-2.5" />
                 {props.queueInfo.label}
               </span>

@@ -254,6 +254,8 @@ export type BoardQueueReason =
       readonly dimension: "cpu" | "ram" | "disk" | null;
       /** The card ahead in this board's queue on that worker, by key. */
       readonly behind: string | null;
+      /** Bigger than the worker declares: no room will ever free there. */
+      readonly tooBig: boolean;
     }
   | { readonly kind: "quota"; readonly worker: string }
   | { readonly kind: "agent-cap"; readonly worker: string }
@@ -301,6 +303,7 @@ export function boardQueueReason(input: {
           detail?.behindCardId === undefined
             ? null
             : (input.cardKeys.get(detail.behindCardId) ?? null),
+        tooBig: detail?.tooBig === true,
       };
     case "quota":
       return { kind: "quota", worker };

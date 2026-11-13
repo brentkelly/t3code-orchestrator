@@ -224,6 +224,29 @@ it.effect("the tail is cut short for an idle card when this board waits on capac
   }),
 );
 
+it.effect("a Too-big card, or one queued behind another, evicts no idle card's tail", () =>
+  Effect.gen(function* () {
+    const now = { ms: T0 };
+    for (const detail of [
+      { workerId: BOARD_LOCAL_WORKER_ID, dimension: "cpu" as const, tooBig: true },
+      { workerId: BOARD_LOCAL_WORKER_ID, behindCardId: BoardCardId.make("c") },
+    ]) {
+      const waiting = {
+        ...step("b", "queued"),
+        queuedBy: "capacity" as const,
+        queuedDetail: detail,
+      };
+      const h = yield* harness(
+        boardWith([granted("a"), { ...buildingCard("b", "b"), worktree: null }], [waiting]),
+        now,
+      );
+      yield* h.admission.sweep();
+      yield* h.admission.releaseForWaiting();
+      assert.isTrue((yield* h.grantOf("a"))?.heavy, JSON.stringify(detail));
+    }
+  }),
+);
+
 it.effect("a grant settles when its first heavy step ends, or two hours after placement", () =>
   Effect.gen(function* () {
     const now = { ms: T0 };

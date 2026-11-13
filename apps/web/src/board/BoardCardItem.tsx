@@ -606,7 +606,14 @@ export function BoardCardContent({
           // waiting — and that it will start on its own — is readable without
           // opening it.
           <BoardHint label={`${queueSlot.headline}. ${queueSlot.detail}`}>
-            <span className="inline-flex shrink-0 items-center rounded bg-muted px-1.5 text-board-10 font-medium text-muted-foreground">
+            <span
+              className={cn(
+                "inline-flex shrink-0 items-center rounded px-1.5 text-board-10 font-medium",
+                queueSlot.blocked === true
+                  ? "bg-warning/14 text-board-amber-text"
+                  : "bg-muted text-muted-foreground",
+              )}
+            >
               {queueSlot.label}
             </span>
           </BoardHint>

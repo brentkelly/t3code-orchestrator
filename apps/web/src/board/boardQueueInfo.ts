@@ -20,6 +20,8 @@ export interface BoardQueueInfo {
   readonly detail: string;
   /** Waiting for its worker's checkout: no limit to start past. */
   readonly waitingForCheckout?: boolean;
+  /** Held for good until a human acts (Too big): amber, not a wait. */
+  readonly blocked?: boolean;
 }
 
 /**
@@ -71,6 +73,17 @@ function withQueueReason(
   const n = slot.position;
   switch (reason.kind) {
     case "capacity":
+      if (reason.tooBig) {
+        return {
+          ...base,
+          blocked: true,
+          label: `Too big for ${reason.worker}`,
+          headline: `Too big for ${reason.worker}`,
+          detail: `This card needs more ${
+            reason.dimension === null ? "room" : DIMENSION_NAMES[reason.dimension]
+          } than ${reason.worker} declares, so it won't start there. Lower its size or the project's baseline, raise the worker's capacity, or pin another worker.`,
+        };
+      }
       return {
         ...base,
         label:

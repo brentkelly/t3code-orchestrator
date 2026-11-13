@@ -258,7 +258,13 @@ describe("queue reasons and move notices", () => {
         cardKeys,
         projectName: "advisor",
       }),
-    ).toEqual({ kind: "capacity", worker: "linux-box", dimension: null, behind: "T3O-90" });
+    ).toEqual({
+      kind: "capacity",
+      worker: "linux-box",
+      dimension: null,
+      behind: "T3O-90",
+      tooBig: false,
+    });
     // A board with no remote workers says it too: the worker is this server.
     expect(
       boardQueueReason({

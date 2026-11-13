@@ -50,13 +50,36 @@ describe("boardQueueInfo with worker capacity (T3O-86)", () => {
     const info = boardQueueInfo({
       slot: slot(2, 3),
       running: 5,
-      reason: { kind: "capacity", worker: "build-01", dimension: "cpu", behind: "T3O-90" },
+      reason: {
+        kind: "capacity",
+        worker: "build-01",
+        dimension: "cpu",
+        behind: "T3O-90",
+        tooBig: false,
+      },
     })!;
     expect(info.label).toBe("Queued #2 · behind T3O-90");
     expect(info.headline).toBe("Waiting behind T3O-90 on build-01");
     expect(info.detail).toBe(
       "build-01 has too little CPU free for this card right now. build-01 decides what it offers. Run `pnpm t3o-worker status` there to see what holds the rest.",
     );
+  });
+
+  it("reads a Too-big card as held, not as a wait for room", () => {
+    const info = boardQueueInfo({
+      slot: slot(1, 3),
+      running: 5,
+      reason: {
+        kind: "capacity",
+        worker: "build-01",
+        dimension: "ram",
+        behind: null,
+        tooBig: true,
+      },
+    })!;
+    expect(info.blocked).toBe(true);
+    expect(info.label).toBe("Too big for build-01");
+    expect(info.detail).not.toContain("right now");
   });
 
   it("names quota, the agent cap and a worker that needs updating", () => {
