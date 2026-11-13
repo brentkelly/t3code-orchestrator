@@ -242,7 +242,7 @@ function notesTile(notes: ReadonlyArray<BoardBuildSummaryNote> | null): BoardSum
       suffix: null,
       sub: "Nothing to flag",
       bar: [],
-      tone: "success",
+      tone: "none",
       tooltip: null,
       available: false,
     });

@@ -152,7 +152,8 @@ describe("deriveBoardSummaryOverview", () => {
       const finished = overview(built({ lead: "x", notes: [], checks: [], areas: [] }), {
         pastBuild: true,
       }).tiles.find((tile) => tile.label === "Heads-up");
-      expect(finished).toMatchObject({ value: "0 notes", sub: "Nothing to flag", tone: "success" });
+      expect(finished).toMatchObject({ value: "0 notes", sub: "Nothing to flag", tone: "none" });
+      expect(finished?.ariaLabel).toBe("Heads-up, Nothing to flag.");
     });
 
     it("shows Review as round 1 on the review stage before any completion", () => {
