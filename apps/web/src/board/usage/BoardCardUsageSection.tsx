@@ -187,7 +187,7 @@ export function BoardCardUsageSection({ breakdown }: { readonly breakdown: Board
 
   return (
     <div
-      className="flex flex-col overflow-hidden rounded-xl border border-border bg-card"
+      className="flex shrink-0 flex-col rounded-xl border border-border bg-card"
       data-board-usage-section
     >
       <div className="flex flex-col gap-2.5 px-3.5 py-3">

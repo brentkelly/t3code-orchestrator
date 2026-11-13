@@ -165,7 +165,7 @@ export function BoardCardSummaryPane({
           Back to thread
         </button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-6.5 overflow-y-auto px-5.5 pb-8 pt-5 text-board-13">
+      <div className="flex min-h-0 flex-1 flex-col gap-6.5 overflow-y-auto px-5.5 pb-8 pt-5 text-board-13 *:shrink-0">
         <div className="flex flex-col gap-2.5">
           {lead !== null ? (
             <p className="text-board-15/normal font-medium text-pretty text-foreground">
