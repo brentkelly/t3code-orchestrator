@@ -293,12 +293,12 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
           service.refreshInstance(instanceId as ProviderInstanceId).pipe(Effect.asVoid),
       }),
     // Section 5: no checkout of the repository is not set up; then its readiness script.
-    notReady: (repositoryKey) =>
+    notReady: (boardId, repositoryKey) =>
       repositoryKey === null
-        ? Effect.succeed(readiness.notReady(null))
+        ? Effect.succeed(readiness.notReady(boardId, null))
         : repositoryKeys.pipe(
             Effect.map((keys) =>
-              keys.has(repositoryKey) ? readiness.notReady(repositoryKey) : "not-set-up",
+              keys.has(repositoryKey) ? readiness.notReady(boardId, repositoryKey) : "not-set-up",
             ),
           ),
     readiness: (boardId) => Effect.sync(() => readiness.forBoard(boardId)),

@@ -62,7 +62,7 @@ it.effect("runs the committed script with the checkout named, and reads its exit
     // The full output is fetched on demand, never in the snapshot.
     assert.include(readiness.output(input.repositoryKey, input.path) ?? "", "checking docker");
     assert.notInclude(JSON.stringify(readiness.forBoard("board-a")), "checking docker");
-    assert.strictEqual(readiness.notReady(input.repositoryKey), "not-ready");
+    assert.strictEqual(readiness.notReady("board-a", input.repositoryKey), "not-ready");
   }),
 );
 
@@ -135,5 +135,59 @@ it.effect("a re-check a human asked for counts at once", () =>
     state.exits.push({ status: "failed", exitCode: 1 });
     const result = yield* readiness.check("board-a", { ...input, requested: true });
     assert.strictEqual(result.state, "not-ready");
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect(
+  "readiness gates each board at its own path, and a path no board holds gates nothing",
+  () =>
+    Effect.gen(function* () {
+      const { state, readiness } = makeHarness();
+      state.exits.push({ status: "failed", exitCode: 1 });
+      yield* readiness.check("board-b", { ...input, path: "other/ready.sh" });
+      yield* readiness.check("board-a", input);
+      // board-b's failing path never blocks board-a.
+      assert.isNull(readiness.notReady("board-a", input.repositoryKey));
+      assert.strictEqual(readiness.notReady("board-b", input.repositoryKey), "not-ready");
+      // board-b moves to a passing path: its old failure stops gating it.
+      yield* readiness.check("board-b", input);
+      assert.isNull(readiness.notReady("board-b", input.repositoryKey));
+      assert.lengthOf(readiness.forBoard("board-b"), 1);
+      // A board that left gates nothing.
+      state.exits.push({ status: "failed", exitCode: 1 });
+      yield* readiness.check("board-c", { ...input, path: "c/ready.sh" });
+      readiness.forgetBoard("board-c");
+      assert.isNull(readiness.notReady("board-c", input.repositoryKey));
+    }),
+);
+
+it.effect("a caller that joined a run is answered when the run is interrupted", () =>
+  Effect.gen(function* () {
+    const { state, readiness } = makeHarness();
+    state.gate = yield* Deferred.make<void>();
+    const first = yield* Effect.forkChild(readiness.check("board-a", input));
+    yield* Effect.yieldNow;
+    const joined = yield* Effect.forkChild(readiness.check("board-b", input));
+    yield* Effect.yieldNow;
+    yield* Fiber.interrupt(first);
+    assert.strictEqual((yield* Fiber.join(joined)).state, "checking");
+    // The entry isn't stuck: the next check runs.
+    state.gate = null;
+    yield* TestClock.adjust(60_000);
+    assert.strictEqual((yield* readiness.check("board-a", input)).state, "ready");
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("a failed fetch on a not-ready project still reads not-ready, not checking", () =>
+  Effect.gen(function* () {
+    const { state, readiness } = makeHarness();
+    state.exits.push({ status: "failed", exitCode: 1 });
+    yield* readiness.check("board-a", input);
+    yield* TestClock.adjust(60_000);
+    state.fetchOk = false;
+    assert.deepInclude(yield* readiness.check("board-a", input), {
+      state: "not-ready",
+      fetchFailed: true,
+    });
   }).pipe(Effect.provide(TestClock.layer())),
 );

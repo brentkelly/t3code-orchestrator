@@ -78,7 +78,10 @@ export interface WorkerCapacityPorts {
   readonly providers: Effect.Effect<ReadonlyArray<ServerProvider>>;
   readonly refreshProviderUsage: (instanceId: string) => Effect.Effect<void>;
   /** Null when the worker is ready for the repository, else why not (section 5). */
-  readonly notReady: (repositoryKey: string | null) => Effect.Effect<string | null>;
+  readonly notReady: (
+    boardId: string,
+    repositoryKey: string | null,
+  ) => Effect.Effect<string | null>;
   /** Readiness of the projects this board asked about (section 5). */
   readonly readiness: (boardId: string) => Effect.Effect<ReadonlyArray<BoardWorkerReadiness>>;
   /** Whether a listed worktree is this board's here, adopting a legacy marker. */
@@ -388,7 +391,7 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     const settings = yield* ports.settings;
     const providers = yield* ports.providers;
     const threads = yield* ports.threads;
-    const notReady = yield* ports.notReady(input.repositoryKey);
+    const notReady = yield* ports.notReady(boardId, input.repositoryKey);
     return decideClaim(state, input, {
       boardId,
       declared: yield* declared,

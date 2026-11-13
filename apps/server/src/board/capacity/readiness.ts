@@ -57,6 +57,8 @@ export const makeReadiness = (deps: {
 }) => {
   const runStep = deps.runStep ?? runBoardCiStep;
   const entries = new Map<string, Entry>();
+  /** Per board, the entry it last asked about for each repository: the path it uses now. */
+  const asked = new Map<string, Map<string | null, string>>();
   const keyOf = (repositoryKey: string | null, path: string) => `${repositoryKey ?? ""}\0${path}`;
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -87,7 +89,29 @@ export const makeReadiness = (deps: {
     return entry;
   };
 
-  const execute = Effect.fn("Readiness.execute")(function* (entry: Entry, requested: boolean) {
+  /** A board's current entry for a repository, dropping its claim on a path it moved off. */
+  const noteAsked = (boardId: string, entry: Entry) => {
+    const byRepository = asked.get(boardId) ?? new Map<string | null, string>();
+    const before = byRepository.get(entry.readiness.repositoryKey);
+    if (before !== undefined && before !== entry.key) release(boardId, before);
+    byRepository.set(entry.readiness.repositoryKey, entry.key);
+    asked.set(boardId, byRepository);
+    entry.boards.add(boardId);
+  };
+
+  /** No board holds an entry any more: it is forgotten, so it can block nothing. */
+  const release = (boardId: string, key: string) => {
+    const entry = entries.get(key);
+    if (entry === undefined) return;
+    entry.boards.delete(boardId);
+    if (entry.boards.size === 0 && entry.inFlight === null) entries.delete(key);
+  };
+
+  const execute = Effect.fn("Readiness.execute")(function* (
+    entry: Entry,
+    requested: boolean,
+    before: BoardWorkerReadiness,
+  ) {
     const { repositoryKey, path } = entry.readiness;
     const checkout = yield* deps.git.checkout(repositoryKey);
     if (checkout === null) {
@@ -97,9 +121,9 @@ export const makeReadiness = (deps: {
     const fetched = yield* deps.git.fetch(checkout);
     const committed = yield* deps.git.committed(checkout, path);
     const checkedAt = yield* nowIso;
-    if (!fetched && entry.readiness.checkedAt !== null) {
+    if (!fetched && before.checkedAt !== null) {
       // A failed fetch is not a result: the last one stands.
-      entry.readiness = { ...entry.readiness, fetchFailed: true };
+      entry.readiness = { ...before, fetchFailed: true };
       return entry.readiness;
     }
     if (committed === null) {
@@ -116,7 +140,7 @@ export const makeReadiness = (deps: {
       };
       return entry.readiness;
     }
-    const previous = entry.readiness;
+    const previous = before;
     if (previous.state === "ready" && previous.version !== committed.version) {
       entry.readiness = { ...previous, pendingVersion: committed.version };
     }
@@ -171,25 +195,28 @@ export const makeReadiness = (deps: {
     input: BoardWorkerCheckReadinessInput,
   ) {
     const entry = entryFor(input);
-    entry.boards.add(boardId);
+    noteAsked(boardId, entry);
     if (entry.inFlight !== null) return yield* Deferred.await(entry.inFlight);
     const now = yield* Clock.currentTimeMillis;
     if (entry.lastRunAt !== null && now - entry.lastRunAt < REUSE_MS) return entry.readiness;
     const deferred = yield* Deferred.make<BoardWorkerReadiness>();
     entry.inFlight = deferred;
-    if (entry.readiness.checkedAt !== null && entry.readiness.state !== "ready") {
-      entry.readiness = { ...entry.readiness, state: "checking" };
+    const before = entry.readiness;
+    if (before.checkedAt !== null && before.state !== "ready") {
+      entry.readiness = { ...before, state: "checking" };
     }
-    const result = yield* execute(entry, input.requested === true).pipe(
-      Effect.ensuring(
+    // Whatever ends the run (a result, a defect, the caller going away), every caller that
+    // joined it gets an answer: an unfinished run leaves the last result standing.
+    return yield* execute(entry, input.requested === true, before).pipe(
+      Effect.onExit((exit) =>
         Effect.gen(function* () {
+          if (exit._tag === "Failure") entry.readiness = before;
           entry.lastRunAt = yield* Clock.currentTimeMillis;
           entry.inFlight = null;
+          yield* Deferred.succeed(deferred, entry.readiness);
         }),
       ),
     );
-    yield* Deferred.succeed(deferred, result);
-    return result;
   });
 
   /** Re-check what is due: hourly when passing, every 15 minutes when failing. */
@@ -219,18 +246,18 @@ export const makeReadiness = (deps: {
       [...entries.values()]
         .filter((entry) => entry.boards.has(boardId))
         .map((entry) => entry.readiness),
-    /** Why the worker isn't ready for a repository, or null. Only what a board asked counts. */
-    notReady: (repositoryKey: string | null): string | null => {
-      const states = [...entries.values()].filter(
-        (entry) => entry.readiness.repositoryKey === repositoryKey,
-      );
-      const blocking = states.find((entry) => entry.readiness.state !== "ready");
-      return blocking === undefined ? null : blocking.readiness.state;
+    /** Why the worker isn't ready for this board's project, at the path this board uses, or
+        null. Another board's path for the same repository never counts. */
+    notReady: (boardId: string, repositoryKey: string | null): string | null => {
+      const key = asked.get(boardId)?.get(repositoryKey);
+      const state = key === undefined ? undefined : entries.get(key)?.readiness.state;
+      return state === undefined || state === "ready" ? null : state;
     },
     output: (repositoryKey: string | null, path: string) =>
       entries.get(keyOf(repositoryKey, path))?.output ?? null,
     forgetBoard: (boardId: string) => {
-      for (const entry of entries.values()) entry.boards.delete(boardId);
+      for (const key of asked.get(boardId)?.values() ?? []) release(boardId, key);
+      asked.delete(boardId);
     },
   };
 };
