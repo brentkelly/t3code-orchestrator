@@ -126,6 +126,7 @@ describe("failure parsing", () => {
     const output = [
       " FAIL  |server| src/project/ProjectService.test.ts > ProjectService > retries",
       " FAIL  scripts/check-changed.test.ts > compares",
+      " FAIL  |root| scripts/t3o-ci.test.ts > parses",
       " FAIL  |server| src/project/ProjectService.test.ts > ProjectService > other",
       " FAIL  |unit| src/ambiguous.test.ts > a",
       " ✓ src/ok.test.ts",
@@ -134,6 +135,7 @@ describe("failure parsing", () => {
       "apps/server/src/project/ProjectService.test.ts",
       "apps/web/src/ambiguous.test.ts",
       "packages/shared/src/ambiguous.test.ts",
+      "scripts/t3o-ci.test.ts",
     ]);
     const files = failedTestFiles(
       output,
@@ -146,6 +148,7 @@ describe("failure parsing", () => {
         file: "apps/server/src/project/ProjectService.test.ts",
       },
       { name: "scripts/check-changed.test.ts", file: "scripts/check-changed.test.ts" },
+      { name: "scripts/t3o-ci.test.ts", file: "scripts/t3o-ci.test.ts" },
       { name: "|unit| src/ambiguous.test.ts" },
     ]);
   });
@@ -159,6 +162,7 @@ describe("failure parsing", () => {
       "  FAIL  lint  4.0s",
       "  TIMEOUT  typecheck (3 packages)  killed after 900s",
       "  FAIL  test (4 files)  30.2s",
+      "  FAIL  node --test (1 files)  1.2s",
       "  FAIL  react compiler (2 files)  3.0s",
       "  TIMEOUT: ran past 900s and was killed; this is not a check failure.",
     ].join("\n");
@@ -166,6 +170,7 @@ describe("failure parsing", () => {
       { title: "[lint] lint" },
       { title: "[typecheck] typecheck (3 packages)", detail: "timed out" },
       { title: "[test] |server| src/a.test.ts" },
+      { title: "[test] node --test (1 files)" },
     ]);
   });
 

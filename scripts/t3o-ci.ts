@@ -100,12 +100,11 @@ export function failedTestFiles(
       found.set(key, { name: path!, file: path! });
       continue;
     }
-    const owners = packageDirs().filter((dir) => exists(`${dir}/${path}`));
+    // A package project's path is package-relative; the `|root|` project's is repo-relative.
+    const owners = [...packageDirs().map((dir) => `${dir}/${path}`), path!].filter(exists);
     found.set(
       key,
-      owners.length === 1
-        ? { name: `${owners[0]}/${path}`, file: `${owners[0]}/${path}` }
-        : { name: `|${label}| ${path}` },
+      owners.length === 1 ? { name: owners[0]!, file: owners[0]! } : { name: `|${label}| ${path}` },
     );
   }
   return [...found.values()];
@@ -132,9 +131,10 @@ export function checkChangedFailures(output: string): Array<Failure> {
   const step = /^ {2}(FAIL|TIMEOUT) {2}(.+?) {2}(?:\S+|killed after \S+)\s*$/gm;
   for (const [, outcome, name] of summary.matchAll(step)) {
     const kind = stepKind(name!);
-    // vitest's FAIL lines cannot say which step printed them, so the first failed test step
-    // reports every file and the rest add nothing unless they timed out.
-    if (kind === "test" && outcome === "FAIL") {
+    // vitest's FAIL lines cannot say which step printed them, so the first failed vitest step
+    // reports every file and the rest add nothing unless they timed out. `node --test` prints
+    // no FAIL lines, so its failure is always reported as a step.
+    if (kind === "test" && outcome === "FAIL" && !name!.startsWith("node --test")) {
       if (testFiles === undefined) {
         testFiles = failedTestFiles(output);
         for (const { name, file } of testFiles) {
@@ -513,7 +513,7 @@ async function install(base: Base | undefined, tier: Tier | undefined) {
 async function changed(base: Base, tier: Tier) {
   const args = ["scripts/check-changed.ts", base.ref, ...(tier.full ? ["--no-tests"] : [])];
   progress(
-    `check:changed against ${base.ref}${tier.full ? " (no tests: the full step runs them)" : ""}`,
+    `check:changed against ${base.ref}${tier.full ? " (no tests: the suite steps run server, web and package tests; desktop, mobile and .github/scripts tests are not run)" : ""}`,
   );
   const result = await run("node", args);
   if (result.code === 0)

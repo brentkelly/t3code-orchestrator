@@ -243,7 +243,10 @@ and run the normal checks for whatever the merge touched. Two things the root sc
 - The CI step picks **tier: full** because the branch's `git merge main` brings in more than 50
   commits `t3o` lacks; `--full` or `T3O_CI_FULL=1` forces it. Before merging, check the card's CI
   tab says **tier: full**. If it says tier B, run `node scripts/t3o-ci.ts full --full` in the
-  card's worktree by hand before merging.
+  card's worktree by hand before merging. On tier full, `check:changed` runs with `--no-tests`
+  and the suite steps run the server, web and package tests; changed `apps/desktop`,
+  `apps/mobile` and `.github/scripts` tests are not run, so run those by hand if the sync
+  touched them.
 - A person's escape hatch: `node scripts/t3o-ci.ts full --full` (the full step alone), or
   `vp run t3o:test-full` (every suite but mobile, desktop and marketing; writes
   `.t3/test-full/summary.json`).
