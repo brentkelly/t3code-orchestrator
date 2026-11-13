@@ -76,11 +76,15 @@ export function ComposerCommandMenuLayer(props: {
   }, [props.anchor]);
 
   if (!props.anchor || !position) return null;
+  // T3o: inside a modal (the card sheet) a body portal sits under its backdrop, aria-hidden; join
+  // the dialog's untransformed viewport, flagged as a nested portal so the modal keeps it exposed.
+  const container = props.anchor.closest('[role="dialog"]')?.parentElement ?? null;
 
   return createPortal(
     <div
       className="pointer-events-auto fixed z-40 flex flex-col"
       data-composer-drawer-layer="true"
+      {...(container ? { "data-base-ui-portal": "" } : {})}
       style={{
         bottom: position.bottom,
         left: position.left,
@@ -90,6 +94,6 @@ export function ComposerCommandMenuLayer(props: {
     >
       {props.children}
     </div>,
-    document.body,
+    container ?? document.body,
   );
 }
