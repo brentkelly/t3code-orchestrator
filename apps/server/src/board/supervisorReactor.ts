@@ -147,6 +147,7 @@ import {
   boardCardActiveChildren,
   boardCardAncestors,
   boardCardGroupOf,
+  boardCardHoldsWorktree,
   boardCardInheritedDependsOn,
   boardCardDisplayPullRequest,
   boardCardEffectivePriority,
@@ -12079,11 +12080,22 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             if (pending) return;
             const board = yield* readBoard;
+            // An unplaced card can take any worker its pin allows, whichever one its wait names.
+            const couldTake = (cardId: BoardCardId) => {
+              const card = board.cards.find((candidate) => candidate.id === cardId);
+              return (
+                card !== undefined &&
+                !boardCardHoldsWorktree(card) &&
+                (card.pinnedWorkerId === null || card.pinnedWorkerId === workerId)
+              );
+            };
             const waiting =
               (board.stepStates ?? []).some(
                 (state) =>
                   state.status === "queued" &&
-                  (state.queuedDetail?.workerId === workerId || state.queuedBy === "agent-cap"),
+                  (state.queuedDetail?.workerId === workerId ||
+                    state.queuedBy === "agent-cap" ||
+                    (state.mode === "build" && couldTake(state.cardId))),
               ) || [...ciWaitingForRoom.values()].some((ci) => ci.workerId === workerId);
             if (!waiting) return;
             pending = true;

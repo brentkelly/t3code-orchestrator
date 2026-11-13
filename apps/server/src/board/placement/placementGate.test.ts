@@ -21,6 +21,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 
 import { makeFakeCapacity, type FakeCapacity } from "../capacity/capacityClient.testkit.ts";
 import {
@@ -590,6 +591,32 @@ describe("holds at build start (T3O-87)", () => {
             }),
         );
       }),
+  );
+
+  // Its wait names only the worker it holds, but an unplaced card can take any worker.
+  it.effect("room freed on a worker the waiting card doesn't name starts it at once", () =>
+    Effect.gen(function* () {
+      const capacity = yield* capacityOf([
+        [W1, FULL],
+        [W2, FULL],
+      ]);
+      capacity.external.set(W1, CPU_RAM_TAKEN);
+      capacity.external.set(W2, CPU_RAM_TAKEN);
+      const card = unplaced("card-1", "a");
+      yield* run({ cards: [card], capacity, git: newWorkerGit() }, (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(card, 1));
+          const waiting = boardCardStepState(yield* h.board, BoardCardId.make("card-1"));
+          const named = waiting?.queuedDetail?.workerId;
+          const other = named === W1 ? W2 : W1;
+          capacity.external.delete(other);
+          yield* capacity.publish(other);
+          yield* TestClock.adjust("2 seconds");
+          yield* h.reactor.drain;
+          assert.strictEqual((yield* cardIn(h, "card-1")).placedWorkerId, other);
+        }),
+      );
+    }),
   );
 
   it.effect("a later card's hold gives way to an earlier card that can use the worker", () =>
