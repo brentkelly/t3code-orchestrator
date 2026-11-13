@@ -32,6 +32,7 @@ const draftOf = (patch: Partial<BoardCardDraft> = {}): BoardCardDraft => ({
   labelIds: [],
   dependsOn: [],
   scheduledStartAt: null,
+  priority: "normal",
   attachments: [],
   ...patch,
 });

@@ -375,11 +375,9 @@ export function snapBoardCardDropOrder(input: {
 }
 
 /**
- * Assignments realizing a drop within or into a stage column, over `planPinnedReorder`.
- * Callers dispatch `board.card.reorder` per assignment, or `board.card.move` with the moved
- * card's key when the drop crossed stages. With `priorityByCardId` the key is planned among
- * the moved card's own level only, every other card's key reserved, since the column sorts by
- * priority before key (`snapBoardCardDropOrder` gives the order the column will show).
+ * Assignments realizing a drop, over `planPinnedReorder`: dispatched as `board.card.reorder`,
+ * or `board.card.move` when the drop crossed stages. With `priorityByCardId` the key is
+ * planned within the moved card's level, every other card's key reserved.
  */
 export function planBoardCardReorder(input: {
   /** Card ids in the desired visual order (after the move). */
@@ -565,6 +563,9 @@ export interface BoardQueueSlot {
   /** Cards that will be admitted before this one. */
   readonly ahead: number;
   readonly startsNext: boolean;
+  /** A Low card with a higher-priority card ahead of it: it has no fixed place in line,
+      because anything higher that arrives goes first. Absent otherwise. */
+  readonly afterHigherPriority?: true;
 }
 
 /**
@@ -602,13 +603,19 @@ export function boardBuildQueue(
       (left.cardId < right.cardId ? -1 : left.cardId > right.cardId ? 1 : 0),
   );
   const queue = new Map<string, BoardQueueSlot>();
+  let highestAhead = -1;
   ordered.forEach((card, index) => {
+    const rank = boardCardPriorityRank(boardCardEffectivePriority(card));
     queue.set(card.cardId, {
       position: index + 1,
       total: ordered.length,
       ahead: index,
       startsNext: index === 0,
+      ...(rank === boardCardPriorityRank("low") && highestAhead > rank
+        ? { afterHigherPriority: true as const }
+        : {}),
     });
+    highestAhead = Math.max(highestAhead, rank);
   });
   return queue;
 }

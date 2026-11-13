@@ -1367,6 +1367,18 @@ describe("boardBuildQueue", () => {
         (id) => queue.get(id)?.position,
       ),
     ).toEqual([1, 2, 3, 4]);
+    expect(queue.get("card-low")?.afterHigherPriority).toBe(true);
+    expect(queue.get("card-normal")?.afterHigherPriority).toBeUndefined();
+    // A Low card with only Low cards ahead keeps its plain position.
+    const lows = boardBuildQueue(
+      [
+        { ...queuedCard("low-a", BOARD_SEED_STAGE_IDS.building, "a"), priority: "low" as const },
+        { ...queuedCard("low-b", BOARD_SEED_STAGE_IDS.building, "b"), priority: "low" as const },
+      ],
+      BOARD_SEED_STAGES,
+      NOW_MS,
+    );
+    expect(lows.get("low-b")?.afterHigherPriority).toBeUndefined();
   });
 
   it("leaves out a card held for its offline worker: it waits on no slot (T3O-66)", () => {
