@@ -228,7 +228,7 @@ const accountOf = (provider: ServerProvider): BoardWorkerProviderCapacity["accou
 };
 
 /** Whether two snapshots differ enough to push the later one. */
-export function snapshotChanged(
+function snapshotChanged(
   previous: BoardWorkerCapacitySnapshot,
   next: BoardWorkerCapacitySnapshot,
 ): boolean {

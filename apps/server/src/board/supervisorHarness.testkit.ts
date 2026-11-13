@@ -447,7 +447,7 @@ export interface HarnessHeldSteps {
   readonly heldOnWorker: (workerId: BoardWorkerId) => Effect.Effect<number>;
 }
 
-export const HARNESS_CI_INSTANCE = "board-ci";
+const HARNESS_CI_INSTANCE = "board-ci";
 
 export type Harness = {
   readonly slots: HarnessHeldSteps;

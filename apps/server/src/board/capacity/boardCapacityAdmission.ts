@@ -65,7 +65,7 @@ export const stepQueuedInWorktree = (state: BoardCardStepState | null) =>
   state.mode === "build" &&
   (state.status === "queued" || state.status === "pending");
 
-export const ciActive = (card: BoardCard) =>
+const ciActive = (card: BoardCard) =>
   card.ci !== null && (card.ci.phase === "queued" || card.ci.phase === "running");
 
 /**
@@ -87,7 +87,7 @@ export function desiredHeavy(input: {
 }
 
 /** The worker a card's worktree is on, or would be cut on. */
-export const cardWorkerOf = (board: BoardState, card: BoardCard): BoardWorkerId =>
+const cardWorkerOf = (board: BoardState, card: BoardCard): BoardWorkerId =>
   boardCardEffectiveWorkerId(card, board.defaultWorkerId);
 
 /** The card's reservation if it were placed now. */

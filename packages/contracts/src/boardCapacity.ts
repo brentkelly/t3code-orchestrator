@@ -61,7 +61,7 @@ export const BoardCardSize = Schema.Struct({
 });
 export type BoardCardSize = typeof BoardCardSize.Type;
 
-export const DEFAULT_BOARD_CARD_SIZE: BoardCardSize = { cpu: "M", ram: "M", disk: "M" };
+const DEFAULT_BOARD_CARD_SIZE: BoardCardSize = { cpu: "M", ram: "M", disk: "M" };
 
 /** Who set a card's size: the planner's proposal, or an edit over it. An agent's edit is
     not a human override, so card detail never says "Edited by you" for it. */
@@ -103,17 +103,6 @@ export function boardResourceProfileValue(
   return profile[BOARD_RESOURCE_PROFILE_KEYS[dimension]];
 }
 
-/** Whether `inner` fits within `outer` on every dimension. */
-export function boardResourceProfileFits(
-  inner: BoardResourceProfile,
-  outer: BoardResourceProfile,
-): boolean {
-  return BOARD_RESOURCE_DIMENSIONS.every(
-    (dimension) =>
-      boardResourceProfileValue(inner, dimension) <= boardResourceProfileValue(outer, dimension),
-  );
-}
-
 /** The first dimension where `inner` exceeds `outer`, or null when it fits. */
 export function boardResourceProfileOverflow(
   inner: BoardResourceProfile,
@@ -135,9 +124,9 @@ export const BoardProjectBaseline = Schema.Struct({
 });
 export type BoardProjectBaseline = typeof BoardProjectBaseline.Type;
 
-export const DEFAULT_BOARD_SETUP_TIMEOUT_MINUTES = 30;
+const DEFAULT_BOARD_SETUP_TIMEOUT_MINUTES = 30;
 export const DEFAULT_BOARD_READINESS_SCRIPT_PATH = ".t3/ready.sh";
-export const DEFAULT_BOARD_READINESS_TIMEOUT_SECONDS = 120;
+const DEFAULT_BOARD_READINESS_TIMEOUT_SECONDS = 120;
 
 /** A project's Resources settings. Every field null follows its default. */
 export const BoardProjectResources = Schema.Struct({
@@ -306,7 +295,7 @@ export type BoardCardPhase = typeof BoardCardPhase.Type;
 
 /** Why a placement can't go ahead on a worker. Open to extension: a peer reads an unknown
     reason as a plain denial. */
-export const BOARD_CLAIM_DENIAL_REASONS = ["capacity", "quota", "not-ready"] as const;
+const BOARD_CLAIM_DENIAL_REASONS = ["capacity", "quota", "not-ready"] as const;
 export type BoardClaimDenialReason = (typeof BOARD_CLAIM_DENIAL_REASONS)[number];
 
 export const BoardCapacityClaimInput = Schema.Struct({

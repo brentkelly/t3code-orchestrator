@@ -15,6 +15,8 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { EllipsisIcon, PlusIcon } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
 import { useState, type ReactNode } from "react";
 
 import { Badge } from "../../components/ui/badge";
@@ -28,6 +30,7 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import { toastManager } from "../../components/ui/toast";
+import { cn } from "../../lib/utils";
 import { boardEnvironment } from "../../state/board";
 import { useEnvironment } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -47,6 +50,7 @@ import {
   type WorkerStatusPresentation,
   type WorkerTone,
 } from "./workerCopy";
+import { boardWorkerCapacityLines } from "./workerCapacity";
 import { CopyCommand, WorkerAbbreviationBadge } from "./workerUi";
 
 const TONE_BADGE: Record<WorkerTone, "outline" | "info" | "warning" | "success"> = {
@@ -233,6 +237,7 @@ export function WorkersSection(props: {
           isDefault={state.defaultWorkerId === BOARD_LOCAL_WORKER_ID}
           subline={`${localVersion === null ? "" : `T3o ${localVersion} · `}runs planning`}
           status={{ label: "Connected", detail: null, tone: "neutral", tooltip: null }}
+          extra={<WorkerCapacity environmentId={environmentId} workerId={BOARD_LOCAL_WORKER_ID} />}
           actions={
             <>
               <BoardHint label="The server hosting the board can't be removed.">
@@ -270,7 +275,9 @@ export function WorkersSection(props: {
                     </span>
                     <CopyCommand command={T3O_UPDATE_COMMAND} target="update command" />
                   </div>
-                ) : null
+                ) : (
+                  <WorkerCapacity environmentId={environmentId} workerId={worker.id} />
+                )
               }
               actions={
                 <WorkerMenu
@@ -348,6 +355,66 @@ export function WorkersSection(props: {
         onConfirm={(worker) => void confirmRemove(worker)}
       />
     </>
+  );
+}
+
+/** A worker's free capacity, agents, quota and readiness, from its latest snapshot. */
+function WorkerCapacity(props: {
+  readonly environmentId: EnvironmentId;
+  readonly workerId: BoardWorkerId;
+}) {
+  const result = useAtomValue(
+    boardEnvironment.capacityAtom({ environmentId: props.environmentId, input: {} }),
+  );
+  const capacityAction = useAtomCommand(boardEnvironment.capacityAction);
+  const snapshot = AsyncResult.isSuccess(result) ? result.value.get(props.workerId) : undefined;
+  if (snapshot === undefined) return null;
+  const lines = boardWorkerCapacityLines(snapshot, clockTime);
+  return (
+    <div className="flex w-full max-w-72 flex-col gap-1 text-board-11-5 text-muted-foreground">
+      {lines.bars.map((bar) => (
+        <div key={bar.label} className="grid grid-cols-[2.5rem_1fr] items-center gap-2">
+          <span>{bar.label}</span>
+          <BoardHint label={bar.text}>
+            <span className="h-1.5 overflow-hidden rounded-full bg-accent" aria-label={bar.text}>
+              <span
+                className={cn(
+                  "block h-full rounded-full",
+                  bar.used >= 1 ? "bg-warning" : "bg-muted-foreground",
+                )}
+                style={{ width: `${Math.round(bar.used * 100)}%` }}
+              />
+            </span>
+          </BoardHint>
+        </div>
+      ))}
+      <span>{lines.agents}</span>
+      {lines.over === null ? null : <span className="text-warning-foreground">{lines.over}</span>}
+      {lines.quota.map((line) => (
+        <span key={line} className="text-warning-foreground">
+          {line}
+        </span>
+      ))}
+      {lines.readiness === null ? null : (
+        <span className="flex items-center gap-2">
+          <span className={lines.notReady > 0 ? "text-warning-foreground" : undefined}>
+            {lines.readiness}
+          </span>
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() =>
+              void capacityAction({
+                environmentId: props.environmentId,
+                input: { action: "recheck", workerId: props.workerId, projectId: null },
+              })
+            }
+          >
+            Re-check all
+          </Button>
+        </span>
+      )}
+    </div>
   );
 }
 

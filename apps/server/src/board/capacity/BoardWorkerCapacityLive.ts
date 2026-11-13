@@ -76,7 +76,7 @@ const encodeRecords = Schema.encodeEffect(RecordJson);
 
 /** Whether a thread's turn counts as running for capacity: a turn or background work, but
     never a thread held on a human's question or permission prompt. */
-export const capacityThreadRunning = (state: {
+const capacityThreadRunning = (state: {
   readonly activeTurnRef: string | null;
   readonly backgroundWork: string | null;
   readonly waitingOnBackground: boolean;
@@ -87,7 +87,7 @@ export const capacityThreadRunning = (state: {
   !state.awaitingUserInput &&
   !state.awaitingPermission;
 
-export const makeBoardWorkerCapacityLive = Effect.gen(function* () {
+const makeBoardWorkerCapacityLive = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const sql = yield* SqlClient.SqlClient;
   const local = yield* LocalThreadGateway;

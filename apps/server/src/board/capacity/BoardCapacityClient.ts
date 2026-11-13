@@ -114,7 +114,7 @@ export class BoardCapacityClient extends Context.Service<
 const canonical = (cards: ReadonlyArray<BoardSyncedCard>) =>
   JSON.stringify([...cards].sort((left, right) => left.cardId.localeCompare(right.cardId)));
 
-export const makeBoardCapacityClient = Effect.gen(function* () {
+const makeBoardCapacityClient = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const localCapacity = yield* BoardWorkerCapacity;
   const connections = yield* Effect.serviceOption(WorkerConnections);

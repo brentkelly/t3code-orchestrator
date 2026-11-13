@@ -15,7 +15,7 @@ import { request, subscribeDynamic } from "../rpc/client.ts";
 
 export type BoardCapacityView = ReadonlyMap<string, BoardWorkerCapacitySnapshot>;
 
-export const EMPTY_BOARD_CAPACITY_VIEW: BoardCapacityView = new Map();
+const EMPTY_BOARD_CAPACITY_VIEW: BoardCapacityView = new Map();
 
 /** Every worker's latest snapshot, folded from the stream. */
 export const boardCapacityViewStream = () =>

@@ -36,7 +36,7 @@ export interface BoardCardSetupDeps {
 }
 
 /** Whether the card has finished a Building step: its worktree already works. */
-export const cardBuiltOnce = (board: BoardState, cardId: BoardCardId) => {
+const cardBuiltOnce = (board: BoardState, cardId: BoardCardId) => {
   const build = boardStageWithRole(board, "build");
   return (
     build !== null &&
@@ -56,7 +56,7 @@ export function setupHold(card: BoardCard, workerId: BoardWorkerId): CapacityHol
   return { queuedBy: "setup", detail: { workerId }, blocksWorker: false };
 }
 
-export const toSetupResult = (
+const toSetupResult = (
   progress: BoardCardSetupProgress,
   workerId: BoardWorkerId,
 ): BoardCardSetupResult => ({

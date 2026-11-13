@@ -79,7 +79,7 @@ export interface BoardCapacityUpgradeDeps {
   readonly nowIso: Effect.Effect<string>;
 }
 
-export const capacityUpgradeDone = (sql: SqlClient.SqlClient) =>
+const capacityUpgradeDone = (sql: SqlClient.SqlClient) =>
   sql<{ readonly id: string }>`
     SELECT id FROM board_capacity_upgrade WHERE id = ${UPGRADE_ID}
   `.pipe(

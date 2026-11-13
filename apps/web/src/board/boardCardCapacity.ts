@@ -23,7 +23,7 @@ const NAMES = { cpu: "CPU", ram: "RAM", disk: "Disk" } as const;
 const round = (value: number) => Math.round(value * 10) / 10;
 
 /** "4.5 cores · 12 GiB · 56 GB". */
-export function boardProfileLine(profile: BoardResourceProfile): string {
+function boardProfileLine(profile: BoardResourceProfile): string {
   return BOARD_RESOURCE_DIMENSIONS.map(
     (dimension) => `${round(boardResourceProfileValue(profile, dimension))} ${UNITS[dimension]}`,
   ).join(" · ");
@@ -120,7 +120,7 @@ function tooBigMessage(
 }
 
 /** "6m 12s", "48s". */
-export function boardDurationLabel(ms: number): string {
+function boardDurationLabel(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000));
   const minutes = Math.floor(seconds / 60);
   return minutes === 0 ? `${seconds}s` : `${minutes}m ${seconds % 60}s`;

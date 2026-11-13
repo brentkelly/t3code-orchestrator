@@ -22,7 +22,7 @@ import { BoardCiTail, runBoardCiStep } from "../ci/BoardCiRunner.ts";
 /** A result asked for within this long of the last one is that one. */
 const REUSE_MS = 30_000;
 export const READINESS_PASSING_INTERVAL_MS = 60 * 60_000;
-export const READINESS_FAILING_INTERVAL_MS = 15 * 60_000;
+const READINESS_FAILING_INTERVAL_MS = 15 * 60_000;
 const LAST_LINE_CHARS = 200;
 
 /** Git reads of the project's checkout, so tests supply a repository of their own. */

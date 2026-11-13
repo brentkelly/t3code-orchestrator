@@ -52,7 +52,7 @@ export function boardQueueInfo(input: {
 const DIMENSION_NAMES = { cpu: "CPU", ram: "RAM", disk: "disk space" } as const;
 
 /** The hint a capacity wait carries: the worker decides what it offers. */
-export const boardCapacityHint = (worker: string) =>
+const boardCapacityHint = (worker: string) =>
   `${worker} decides what it offers. Run \`pnpm t3o-worker status\` there to see what holds the rest.`;
 
 /** The queued story when the card's worker holds it, naming why (T3O-86). */

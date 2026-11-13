@@ -539,24 +539,22 @@ const withoutEmptyResources = (resources: BoardCardResources): BoardCardResource
     : resources;
 
 /** T3o: a card's resources changed (T3O-86), carrying the whole card. */
-export const cardResourcesRecordedEvent = Effect.fn("cardResourcesRecordedEvent")(
-  function* (input: {
-    readonly card: BoardCard;
-    readonly resources: BoardCard["resources"];
-    readonly command: Pick<BoardCommand, "commandId" | "createdAt">;
-  }) {
-    const card: BoardCard = { ...input.card, resources: input.resources };
-    return {
-      ...(yield* makeBoardEventBase({
-        cardId: card.id,
-        occurredAt: input.command.createdAt,
-        commandId: input.command.commandId,
-      })),
-      type: "board.card-resources-recorded" as const,
-      payload: { cardId: card.id, card },
-    } satisfies PlannedBoardEvent;
-  },
-);
+const cardResourcesRecordedEvent = Effect.fn("cardResourcesRecordedEvent")(function* (input: {
+  readonly card: BoardCard;
+  readonly resources: BoardCard["resources"];
+  readonly command: Pick<BoardCommand, "commandId" | "createdAt">;
+}) {
+  const card: BoardCard = { ...input.card, resources: input.resources };
+  return {
+    ...(yield* makeBoardEventBase({
+      cardId: card.id,
+      occurredAt: input.command.createdAt,
+      commandId: input.command.commandId,
+    })),
+    type: "board.card-resources-recorded" as const,
+    payload: { cardId: card.id, card },
+  } satisfies PlannedBoardEvent;
+});
 
 /** The planner's size for a card proposed one plan, or null when nothing changes. A split's
     sizes reach each child at approval instead. */

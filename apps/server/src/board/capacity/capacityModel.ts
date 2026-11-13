@@ -19,9 +19,9 @@ import {
 /** How long an unconsumed claim holds its load. */
 export const CLAIM_TTL_MS = 60_000;
 /** A card that went heavy this recently has not yet taken the RAM it reserved. */
-export const RECENT_HEAVY_MS = 10 * 60_000;
+const RECENT_HEAVY_MS = 10 * 60_000;
 /** A planning thread's load while its turn runs. */
-export const PLANNING_THREAD_LOAD: BoardResourceProfile = { cpuCores: 0.5, ramGiB: 1, diskGB: 0 };
+const PLANNING_THREAD_LOAD: BoardResourceProfile = { cpuCores: 0.5, ramGiB: 1, diskGB: 0 };
 
 export interface CapacityRecord {
   readonly boardId: string;
@@ -98,7 +98,7 @@ const clean = (profile: BoardResourceProfile): BoardResourceProfile => ({
   diskGB: round2(profile.diskGB),
 });
 
-export const liveReservations = (state: CapacityState, now: number) =>
+const liveReservations = (state: CapacityState, now: number) =>
   state.reservations.filter((reservation) => reservation.expiresAt > now);
 
 /** Whether the worker counts the record's CPU and RAM: heavy, or a turn running there. */
@@ -107,13 +107,10 @@ export const recordIsHeavy = (record: CapacityRecord, activity: CapacityActivity
   (record.worktreePath !== null && activity.runningWorktrees.has(record.worktreePath));
 
 /** The disk a record holds: its profile, or for a backfilled record its measured size. */
-export const recordDiskGB = (record: CapacityRecord) =>
+const recordDiskGB = (record: CapacityRecord) =>
   record.diskFromMeasurement ? Math.ceil(record.measuredDiskGB ?? 0) : record.profile.diskGB;
 
-export const recordLoad = (
-  record: CapacityRecord,
-  activity: CapacityActivity,
-): BoardResourceProfile => {
+const recordLoad = (record: CapacityRecord, activity: CapacityActivity): BoardResourceProfile => {
   const heavy = recordIsHeavy(record, activity);
   return {
     cpuCores: heavy ? record.profile.cpuCores : 0,
@@ -123,7 +120,7 @@ export const recordLoad = (
 };
 
 /** Everything the worker holds, across every board it serves. */
-export function heldLoad(
+function heldLoad(
   state: CapacityState,
   activity: CapacityActivity,
   now: number,
@@ -156,7 +153,7 @@ export function heldByBoard(
 
 /** Disk the burst of recent placements will still fill: unsettled records' unfilled
     profile, plus unconsumed placement claims. */
-export function pendingDiskGB(state: CapacityState, now: number): number {
+function pendingDiskGB(state: CapacityState, now: number): number {
   let pending = 0;
   for (const record of state.records) {
     if (record.settled || record.diskFromMeasurement) continue;
@@ -169,11 +166,7 @@ export function pendingDiskGB(state: CapacityState, now: number): number {
 }
 
 /** RAM reserved by cards that went heavy in the last ten minutes, not yet in use. */
-export function recentHeavyRamGiB(
-  state: CapacityState,
-  activity: CapacityActivity,
-  now: number,
-): number {
+function recentHeavyRamGiB(state: CapacityState, activity: CapacityActivity, now: number): number {
   let recent = 0;
   for (const record of state.records) {
     if (!recordIsHeavy(record, activity)) continue;
@@ -401,7 +394,7 @@ export function decideClaim(
 
 /** Force skips declared capacity, never the machine: less free disk than the card's disk
     profile, or less available RAM than half its RAM profile, refuses it. */
-export function physicalShortfall(
+function physicalShortfall(
   profile: BoardResourceProfile,
   machine: MachineReading,
 ): { readonly dimension: BoardResourceDimension; readonly detail: string } | null {

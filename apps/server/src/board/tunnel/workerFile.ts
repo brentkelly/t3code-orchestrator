@@ -111,7 +111,7 @@ export function findWorkerConfigKey(key: string) {
   );
 }
 
-export const DEFAULT_QUOTA_THRESHOLD_PERCENT = 95;
+const DEFAULT_QUOTA_THRESHOLD_PERCENT = 95;
 
 /** The capacity settings `worker.json` declares; absent keys fall to the machine defaults. */
 export interface WorkerCapacitySettings {

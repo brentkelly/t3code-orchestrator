@@ -2405,13 +2405,6 @@ export const BoardStepQueuedBy = Schema.Literals([
 ]);
 export type BoardStepQueuedBy = typeof BoardStepQueuedBy.Type;
 
-/** Legacy queue reasons: shown as plain "Queued". */
-export const LEGACY_BOARD_STEP_QUEUED_BY: ReadonlySet<BoardStepQueuedBy> = new Set([
-  "board",
-  "worker",
-  "provider",
-]);
-
 /**
  * What a queue reason waits on, beside the literal `queuedBy` (T3O-86): the worker, the
  * dimension, and the card ahead in this board's queue. Never an amount, so a waiting card

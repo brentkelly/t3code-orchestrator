@@ -63,7 +63,7 @@ function SetupStages({ setup }: { readonly setup: BoardCardSetupView }) {
   );
 }
 
-export function BoardCardCapacityPanel(props: {
+function BoardCardCapacityPanel(props: {
   readonly capacity: BoardCardCapacityView;
   readonly setup: BoardCardSetupView;
   readonly projectId: string;

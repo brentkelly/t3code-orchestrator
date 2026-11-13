@@ -1,6 +1,7 @@
 import {
   BoardCardId,
   BOARD_LOCAL_WORKER_ID,
+  BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
   EnvironmentId,
   PositiveInt,
   ProjectId,
@@ -139,7 +140,7 @@ describe("the worker picker (prototype 4.2)", () => {
       ["mbp-brent", false, "No checkout of advisor"],
       ["gpu-rig", false, "Offline"],
       ["ci-runner-2", false, "Reconnecting"],
-      ["old-mini", false, "Needs T3o 0.0.45+"],
+      ["old-mini", false, `Needs T3o ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION}+`],
     ]);
     expect(rows[2]?.canSetUp).toBe(true);
     expect(rows[3]?.tooltip).toBe("gpu-rig is offline. Pin it once it reconnects.");
@@ -546,6 +547,9 @@ describe("worker trouble (T3O-66)", () => {
       ]),
     );
     expect(mixed?.label).toBe("2 workers need attention");
-    expect(mixed?.rows.map((row) => row.status)).toEqual(["Offline", "Needs T3o 0.0.45 or newer"]);
+    expect(mixed?.rows.map((row) => row.status)).toEqual([
+      "Offline",
+      `Needs T3o ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION} or newer`,
+    ]);
   });
 });
