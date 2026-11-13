@@ -1,6 +1,6 @@
 /**
  * Board migration 074: placement is cleared on cards without a worktree, and kept on cards
- * with one or with an integration branch (T3O-87).
+ * with one, with an integration branch, or reclaimed (T3O-87).
  */
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -59,7 +59,7 @@ it.effect("clears placement on cards without a worktree, and keeps the rest", ()
       { cardId: "no-worktree", placed: null },
       { cardId: "provisioning", placed: "env-w1" },
       { cardId: "ready", placed: "env-w1" },
-      { cardId: "reclaimed", placed: null },
+      { cardId: "reclaimed", placed: "env-w1" },
     ]);
     // Re-running is a no-op rather than an error.
     yield* migration[2];

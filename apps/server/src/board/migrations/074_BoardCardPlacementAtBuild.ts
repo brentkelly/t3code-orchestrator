@@ -1,6 +1,7 @@
 // T3o: placement is recorded only at build start (T3O-87). A card placed on a worker with no
 // worktree there was placed by a planning spawn: clear it so the gate ranks the card again.
-// Cards holding a worktree, and integration branches (`branch-only`), keep theirs.
+// Cards holding a worktree, integration branches (`branch-only`), and reclaimed cards (their
+// placement is the worker holding their commits) keep theirs.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -12,7 +13,7 @@ export default Effect.gen(function* () {
     WHERE placed_worker_id IS NOT NULL
       AND (
         worktree IS NULL
-        OR json_extract(worktree, '$.status') NOT IN ('provisioning', 'ready', 'branch-only')
+        OR json_extract(worktree, '$.status') NOT IN ('provisioning', 'ready', 'branch-only', 'reclaimed')
       )
   `;
 });
