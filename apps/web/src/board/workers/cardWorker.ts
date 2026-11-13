@@ -4,6 +4,7 @@
  * colour; worker trouble goes in the card's notice slot.
  */
 import {
+  boardReadinessIsFor,
   BOARD_LOCAL_WORKER_ID,
   BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
   resolveBoardWorkerCheckout,
@@ -174,7 +175,8 @@ export function boardWorkerChoices(input: {
         .get(worker.id)
         ?.readiness.some(
           (entry) =>
-            entry.repositoryKey === input.projectRepositoryKey && entry.state === "not-ready",
+            boardReadinessIsFor(entry, input.projectRepositoryKey, input.projectId) &&
+            entry.state === "not-ready",
         );
       // Like a clone in progress: the card can be pinned, and waits until the check passes.
       return notReady === true

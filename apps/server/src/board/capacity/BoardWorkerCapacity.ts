@@ -83,6 +83,7 @@ export interface WorkerCapacityPorts {
   readonly notReady: (
     boardId: string,
     repositoryKey: string | null,
+    projectId: string | undefined,
   ) => Effect.Effect<string | null>;
   /** Readiness of the projects this board asked about (section 5). */
   readonly readiness: (boardId: string) => Effect.Effect<ReadonlyArray<BoardWorkerReadiness>>;
@@ -407,7 +408,7 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     const settings = yield* ports.settings;
     const providers = yield* ports.providers;
     const threads = yield* ports.threads;
-    const notReady = yield* ports.notReady(boardId, input.repositoryKey);
+    const notReady = yield* ports.notReady(boardId, input.repositoryKey, input.projectId);
     return decideClaim(state, input, {
       boardId,
       declared: yield* declared,

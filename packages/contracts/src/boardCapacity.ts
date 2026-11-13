@@ -306,6 +306,8 @@ export const BoardCapacityClaimInput = Schema.Struct({
   seq: Schema.Int,
   cardId: TrimmedNonEmptyString,
   repositoryKey: Schema.NullOr(TrimmedNonEmptyString),
+  /** The worker's project, for a repository with no remote (its readiness is its own). */
+  projectId: Schema.optionalKey(TrimmedNonEmptyString),
   kind: Schema.Literals(["placement", "grow"]),
   profile: BoardResourceProfile,
   providerInstanceId: Schema.NullOr(TrimmedNonEmptyString),
@@ -380,6 +382,8 @@ export type BoardWorkerReadinessState = typeof BoardWorkerReadinessState.Type;
 
 export const BoardWorkerReadiness = Schema.Struct({
   repositoryKey: Schema.NullOr(TrimmedNonEmptyString),
+  /** The worker's project, for a repository with no remote: each such project is its own. */
+  projectId: Schema.optionalKey(TrimmedNonEmptyString),
   path: TrimmedNonEmptyString,
   state: BoardWorkerReadinessState,
   /** The script's blob id the last result ran, or null with no script or no result. */
@@ -397,6 +401,17 @@ export const BoardWorkerReadiness = Schema.Struct({
   cloneProgress: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
 });
 export type BoardWorkerReadiness = typeof BoardWorkerReadiness.Type;
+
+/** Whether a readiness entry is this project's. With no remote each project is its own; an
+    entry from a worker that names no project still matches. */
+export function boardReadinessIsFor(
+  entry: { readonly repositoryKey: string | null; readonly projectId?: string },
+  repositoryKey: string | null,
+  projectId: string,
+): boolean {
+  if (entry.repositoryKey !== repositoryKey) return false;
+  return repositoryKey !== null || entry.projectId === undefined || entry.projectId === projectId;
+}
 
 export const BoardWorkerProviderCapacity = Schema.Struct({
   instanceId: TrimmedNonEmptyString,

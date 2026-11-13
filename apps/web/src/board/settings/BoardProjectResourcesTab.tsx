@@ -91,6 +91,7 @@ export function BoardProjectResourcesTab(props: {
     }),
     snapshots,
     repositoryKey: boardRepositoryGroupingKey(project?.repositoryIdentity),
+    projectId: props.projectId,
     readinessPath: settings.readinessPath,
   });
   const hardToPlace = boardProjectHardToPlace(

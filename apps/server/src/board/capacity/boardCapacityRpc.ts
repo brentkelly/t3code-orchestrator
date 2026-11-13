@@ -3,6 +3,7 @@
  * pin picker and a queued card open, and the actions a human takes on readiness and setup.
  */
 import {
+  boardReadinessIsFor,
   BOARD_LOCAL_WORKER_ID,
   BoardWorkerActionError,
   boardCardBoundWorkerId,
@@ -184,13 +185,17 @@ export function boardPinReadinessRefusal(
   snapshot: {
     readonly readiness: ReadonlyArray<{
       readonly repositoryKey: string | null;
+      readonly projectId?: string;
       readonly state: string;
     }>;
   } | null,
   repositoryKey: string | null,
   workerLabel: string,
+  projectId = "",
 ): string | null {
-  const entry = snapshot?.readiness.find((candidate) => candidate.repositoryKey === repositoryKey);
+  const entry = snapshot?.readiness.find((candidate) =>
+    boardReadinessIsFor(candidate, repositoryKey, projectId),
+  );
   if (entry === undefined || entry.state === "ready") return null;
   return `${workerLabel} isn't ready for this project yet (${entry.state}). Set it up or re-check it first.`;
 }
@@ -216,5 +221,6 @@ export const boardPinRefusal = Effect.fn("BoardCapacityRpc.pinRefusal")(function
     yield* client.latest(workerId),
     boardRepositoryGroupingKey(project?.repositoryIdentity),
     label,
+    card.projectId,
   );
 });

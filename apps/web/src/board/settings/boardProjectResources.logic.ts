@@ -3,6 +3,7 @@
  * readiness there, and whether the project's cards fit the workers ready for it.
  */
 import {
+  boardReadinessIsFor,
   BOARD_CARD_SIZE_LETTERS,
   BOARD_CARD_SIZE_MULTIPLIERS,
   BOARD_RESOURCE_DIMENSIONS,
@@ -34,6 +35,7 @@ export function boardProjectWorkerRows(input: {
   readonly workers: ReadonlyArray<{ readonly workerId: BoardWorkerId; readonly label: string }>;
   readonly snapshots: ReadonlyMap<string, BoardWorkerCapacitySnapshot>;
   readonly repositoryKey: string | null;
+  readonly projectId: string;
   readonly readinessPath: string;
 }): ReadonlyArray<BoardProjectWorkerRow> {
   return input.workers.flatMap(({ workerId, label }) => {
@@ -42,7 +44,8 @@ export function boardProjectWorkerRows(input: {
     const readiness =
       snapshot.readiness.find(
         (entry) =>
-          entry.repositoryKey === input.repositoryKey && entry.path === input.readinessPath,
+          boardReadinessIsFor(entry, input.repositoryKey, input.projectId) &&
+          entry.path === input.readinessPath,
       ) ?? null;
     return [
       {

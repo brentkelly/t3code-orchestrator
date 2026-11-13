@@ -301,10 +301,13 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
     const board = yield* deps.readBoard;
     const profile = requestedProfileOf(board, card);
     const claimId = claimIdFor(card);
+    const repositoryKey = yield* deps.repositoryKey(card.projectId);
     const answer = yield* claimOn(workerId, {
       claimId,
       cardId: card.id,
-      repositoryKey: yield* deps.repositoryKey(card.projectId),
+      repositoryKey,
+      // No remote means this server's own checkout: the board's project is the worker's.
+      ...(repositoryKey === null ? { projectId: String(card.projectId) } : {}),
       kind: "placement",
       profile,
       providerInstanceId,

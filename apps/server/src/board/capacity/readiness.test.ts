@@ -60,9 +60,12 @@ it.effect("runs the committed script with the checkout named, and reads its exit
     });
     assert.match(state.runs[0]!, /^T3O_READY_CHECKOUT='\/repo' sh '/);
     // The full output is fetched on demand, never in the snapshot.
-    assert.include(readiness.output(input.repositoryKey, input.path) ?? "", "checking docker");
+    assert.include(
+      readiness.output(input.repositoryKey, undefined, input.path) ?? "",
+      "checking docker",
+    );
     assert.notInclude(JSON.stringify(readiness.forBoard("board-a")), "checking docker");
-    assert.strictEqual(readiness.notReady("board-a", input.repositoryKey), "not-ready");
+    assert.strictEqual(readiness.notReady("board-a", input.repositoryKey, undefined), "not-ready");
   }),
 );
 
@@ -147,17 +150,27 @@ it.effect(
       yield* readiness.check("board-b", { ...input, path: "other/ready.sh" });
       yield* readiness.check("board-a", input);
       // board-b's failing path never blocks board-a.
-      assert.isNull(readiness.notReady("board-a", input.repositoryKey));
-      assert.strictEqual(readiness.notReady("board-b", input.repositoryKey), "not-ready");
+      assert.isNull(readiness.notReady("board-a", input.repositoryKey, undefined));
+      assert.strictEqual(
+        readiness.notReady("board-b", input.repositoryKey, undefined),
+        "not-ready",
+      );
       // board-b moves to a passing path: its old failure stops gating it.
       yield* readiness.check("board-b", input);
-      assert.isNull(readiness.notReady("board-b", input.repositoryKey));
+      assert.isNull(readiness.notReady("board-b", input.repositoryKey, undefined));
       assert.lengthOf(readiness.forBoard("board-b"), 1);
       // A board that left gates nothing.
       state.exits.push({ status: "failed", exitCode: 1 });
       yield* readiness.check("board-c", { ...input, path: "c/ready.sh" });
       readiness.forgetBoard("board-c");
-      assert.isNull(readiness.notReady("board-c", input.repositoryKey));
+      assert.isNull(readiness.notReady("board-c", input.repositoryKey, undefined));
+      // Two projects with no remote are two entries: one's failure never gates the other.
+      const local = { ...input, repositoryKey: null };
+      state.exits.push({ status: "failed", exitCode: 1 });
+      yield* readiness.check("board-a", { ...local, projectId: "p-fails" });
+      yield* readiness.check("board-a", { ...local, projectId: "p-passes" });
+      assert.strictEqual(readiness.notReady("board-a", null, "p-fails"), "not-ready");
+      assert.isNull(readiness.notReady("board-a", null, "p-passes"));
     }),
 );
 

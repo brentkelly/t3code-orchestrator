@@ -28,7 +28,10 @@ const LAST_LINE_CHARS = 200;
 /** Git reads of the project's checkout, so tests supply a repository of their own. */
 export interface ReadinessGit {
   /** The checkout of a repository on this worker, or null when there is none. */
-  readonly checkout: (repositoryKey: string | null) => Effect.Effect<string | null>;
+  readonly checkout: (
+    repositoryKey: string | null,
+    projectId: string | undefined,
+  ) => Effect.Effect<string | null>;
   /** Fetch the default branch; false when the fetch failed. True with no `origin`. */
   readonly fetch: (checkout: string) => Effect.Effect<boolean>;
   /** The script's blob id and text on the default branch, or null when it isn't there. */
@@ -51,6 +54,15 @@ interface Entry {
   readonly boards: Set<string>;
 }
 
+/** A repository by its key; with no remote, the project is the repository. */
+export const repositoryIdentity = (repositoryKey: string | null, projectId: string | undefined) =>
+  repositoryKey ?? `project:${projectId ?? ""}`;
+
+const whose = (repositoryKey: string | null, projectId: string | undefined) => ({
+  repositoryKey,
+  ...(repositoryKey === null && projectId !== undefined ? { projectId } : {}),
+});
+
 export const makeReadiness = (deps: {
   readonly git: ReadinessGit;
   readonly runStep?: typeof runBoardCiStep;
@@ -58,12 +70,13 @@ export const makeReadiness = (deps: {
   const runStep = deps.runStep ?? runBoardCiStep;
   const entries = new Map<string, Entry>();
   /** Per board, the entry it last asked about for each repository: the path it uses now. */
-  const asked = new Map<string, Map<string | null, string>>();
-  const keyOf = (repositoryKey: string | null, path: string) => `${repositoryKey ?? ""}\0${path}`;
+  const asked = new Map<string, Map<string, string>>();
+  const keyOf = (repositoryKey: string | null, projectId: string | undefined, path: string) =>
+    `${repositoryIdentity(repositoryKey, projectId)}\0${path}`;
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
   const entryFor = (input: BoardWorkerCheckReadinessInput) => {
-    const key = keyOf(input.repositoryKey, input.path);
+    const key = keyOf(input.repositoryKey, input.projectId, input.path);
     const existing = entries.get(key);
     if (existing !== undefined) {
       existing.timeoutSeconds = input.timeoutSeconds;
@@ -72,7 +85,7 @@ export const makeReadiness = (deps: {
     const entry: Entry = {
       key,
       readiness: {
-        repositoryKey: input.repositoryKey,
+        ...whose(input.repositoryKey, input.projectId),
         path: input.path,
         state: "checking",
         version: null,
@@ -91,10 +104,11 @@ export const makeReadiness = (deps: {
 
   /** A board's current entry for a repository, dropping its claim on a path it moved off. */
   const noteAsked = (boardId: string, entry: Entry) => {
-    const byRepository = asked.get(boardId) ?? new Map<string | null, string>();
-    const before = byRepository.get(entry.readiness.repositoryKey);
+    const byRepository = asked.get(boardId) ?? new Map<string, string>();
+    const identity = repositoryIdentity(entry.readiness.repositoryKey, entry.readiness.projectId);
+    const before = byRepository.get(identity);
     if (before !== undefined && before !== entry.key) release(boardId, before);
-    byRepository.set(entry.readiness.repositoryKey, entry.key);
+    byRepository.set(identity, entry.key);
     asked.set(boardId, byRepository);
     entry.boards.add(boardId);
   };
@@ -112,8 +126,8 @@ export const makeReadiness = (deps: {
     requested: boolean,
     before: BoardWorkerReadiness,
   ) {
-    const { repositoryKey, path } = entry.readiness;
-    const checkout = yield* deps.git.checkout(repositoryKey);
+    const { repositoryKey, projectId, path } = entry.readiness;
+    const checkout = yield* deps.git.checkout(repositoryKey, projectId);
     if (checkout === null) {
       entry.readiness = { ...entry.readiness, state: "not-set-up" };
       return entry.readiness;
@@ -130,7 +144,7 @@ export const makeReadiness = (deps: {
       // No script: a checkout counts as ready.
       entry.failures = 0;
       entry.readiness = {
-        repositoryKey,
+        ...whose(repositoryKey, projectId),
         path,
         state: "ready",
         version: null,
@@ -173,7 +187,7 @@ export const makeReadiness = (deps: {
     entry.readiness = holdReady
       ? { ...previous, checkedAt, pendingVersion: null }
       : {
-          repositoryKey,
+          ...whose(repositoryKey, projectId),
           path,
           state: passed ? "ready" : "not-ready",
           version: committed.version,
@@ -231,7 +245,7 @@ export const makeReadiness = (deps: {
       const board = entry.boards.values().next().value;
       if (board === undefined) continue;
       yield* check(board, {
-        repositoryKey: entry.readiness.repositoryKey,
+        ...whose(entry.readiness.repositoryKey, entry.readiness.projectId),
         path: entry.readiness.path,
         timeoutSeconds: entry.timeoutSeconds,
       });
@@ -248,13 +262,17 @@ export const makeReadiness = (deps: {
         .map((entry) => entry.readiness),
     /** Why the worker isn't ready for this board's project, at the path this board uses, or
         null. Another board's path for the same repository never counts. */
-    notReady: (boardId: string, repositoryKey: string | null): string | null => {
-      const key = asked.get(boardId)?.get(repositoryKey);
+    notReady: (
+      boardId: string,
+      repositoryKey: string | null,
+      projectId: string | undefined,
+    ): string | null => {
+      const key = asked.get(boardId)?.get(repositoryIdentity(repositoryKey, projectId));
       const state = key === undefined ? undefined : entries.get(key)?.readiness.state;
       return state === undefined || state === "ready" ? null : state;
     },
-    output: (repositoryKey: string | null, path: string) =>
-      entries.get(keyOf(repositoryKey, path))?.output ?? null,
+    output: (repositoryKey: string | null, projectId: string | undefined, path: string) =>
+      entries.get(keyOf(repositoryKey, projectId, path))?.output ?? null,
     forgetBoard: (boardId: string) => {
       for (const key of asked.get(boardId)?.values() ?? []) release(boardId, key);
       asked.delete(boardId);

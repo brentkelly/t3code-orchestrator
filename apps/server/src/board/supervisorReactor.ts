@@ -84,6 +84,7 @@ import {
   boardStepErrorSummary,
   boardStageIndex,
   boardCardHasLiveBranch,
+  boardReadinessIsFor,
   boardStageWithRole,
   parseReviewStepId,
   resolveBoardCardEffectiveBase,
@@ -10925,7 +10926,9 @@ const make = Effect.gen(function* () {
           boardProjectStageConfig(board, projectId)?.resources ?? null,
         );
         const known = snapshot.readiness.some(
-          (entry) => entry.repositoryKey === repositoryKey && entry.path === settings.readinessPath,
+          (entry) =>
+            boardReadinessIsFor(entry, repositoryKey, projectId) &&
+            entry.path === settings.readinessPath,
         );
         const key = `${workerId}\0${repositoryKey ?? projectId}\0${settings.readinessPath}`;
         if (known || readinessAsked.has(key)) continue;

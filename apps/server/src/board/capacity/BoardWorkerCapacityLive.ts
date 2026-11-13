@@ -226,11 +226,9 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
     ]))?.trim();
     return originHead !== undefined && originHead.startsWith("origin/") ? originHead : "HEAD";
   });
-  let readinessProjects = new Map<string, string | undefined>();
   const readiness = makeReadiness({
     git: {
-      checkout: (repositoryKey) =>
-        checkoutOf(repositoryKey, readinessProjects.get(repositoryKey ?? "")),
+      checkout: (repositoryKey, projectId) => checkoutOf(repositoryKey, projectId),
       fetch: Effect.fn("BoardWorkerCapacity.readinessFetch")(function* (checkout: string) {
         const remote = yield* git
           .resolvePrimaryRemoteName(checkout)
@@ -291,12 +289,14 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
           service.refreshInstance(instanceId as ProviderInstanceId).pipe(Effect.asVoid),
       }),
     // Section 5: no checkout of the repository is not set up; then its readiness script.
-    notReady: (boardId, repositoryKey) =>
+    notReady: (boardId, repositoryKey, projectId) =>
       repositoryKey === null
-        ? Effect.succeed(readiness.notReady(boardId, null))
+        ? Effect.succeed(readiness.notReady(boardId, null, projectId))
         : repositoryKeys.pipe(
             Effect.map((keys) =>
-              keys.has(repositoryKey) ? readiness.notReady(boardId, repositoryKey) : "not-set-up",
+              keys.has(repositoryKey)
+                ? readiness.notReady(boardId, repositoryKey, undefined)
+                : "not-set-up",
             ),
           ),
     readiness: (boardId) => Effect.sync(() => readiness.forBoard(boardId)),
@@ -374,25 +374,19 @@ const makeBoardWorkerCapacityLive = Effect.gen(function* () {
     setupState: setup.state,
     cancelSetup: setup.cancel,
     readSetupLog: setup.readLog,
-    checkReadiness: (boardId, input) => {
-      if (input.projectId !== undefined) {
-        readinessProjects = new Map(readinessProjects).set(
-          input.repositoryKey ?? "",
-          input.projectId,
-        );
-      }
-      return readiness
+    checkReadiness: (boardId, input) =>
+      readiness
         .check(boardId, input)
-        .pipe(Effect.provideService(HostProcess.Environment, hostEnvironment));
-    },
+        .pipe(Effect.provideService(HostProcess.Environment, hostEnvironment)),
     readinessOutput: (boardId, repositoryKey, scriptPath) =>
-      Effect.sync(() =>
-        readiness
+      Effect.sync(() => {
+        const entry = readiness
           .forBoard(boardId)
-          .some((entry) => entry.repositoryKey === repositoryKey && entry.path === scriptPath)
-          ? readiness.output(repositoryKey, scriptPath)
-          : null,
-      ),
+          .find((entry) => entry.repositoryKey === repositoryKey && entry.path === scriptPath);
+        return entry === undefined
+          ? null
+          : readiness.output(repositoryKey, entry.projectId, scriptPath);
+      }),
     forgetBoard: (boardId) =>
       made.service
         .forgetBoard(boardId)
