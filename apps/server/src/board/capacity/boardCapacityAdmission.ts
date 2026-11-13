@@ -471,8 +471,9 @@ export const makeBoardCapacityAdmission = (deps: BoardCapacityAdmissionDeps) => 
           }
         }
       }
-      // A light card holds no CPU or RAM: its larger profile is what its next grow claims.
-      const next = grows && !grant.heavy ? want : shrunk;
+      // A light card holds no CPU or RAM, so a larger CPU or RAM is what its next grow claims.
+      // It does hold disk: more is recorded only once a claim, as a heavy card, grants it.
+      const next = grows && !grant.heavy ? { ...want, diskGB: shrunk.diskGB } : shrunk;
       if (
         BOARD_RESOURCE_DIMENSIONS.every(
           (dimension) =>

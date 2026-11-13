@@ -375,11 +375,12 @@ it.effect("a size change reaches a placed card: grows in the background, shrinks
       ramGiB: 4,
       diskGB: 3.75,
     });
-    // A light card holds no CPU: its next grow claims the larger profile.
+    // A light card holds no CPU: its next grow claims the larger CPU. Its disk is held, so
+    // the extra waits for a claim to grant it.
     assert.deepStrictEqual((yield* h.grantOf("idle"))?.profile, {
       cpuCores: 2.5,
       ramGiB: 4,
-      diskGB: 6.25,
+      diskGB: 5,
     });
     // Room frees: the next pass grows it.
     h.fake.external.delete(BOARD_LOCAL_WORKER_ID);
@@ -389,11 +390,22 @@ it.effect("a size change reaches a placed card: grows in the background, shrinks
       ramGiB: 4,
       diskGB: 5,
     });
+    // Made heavy by a claim at its granted profile, the light card's extra disk is then claimed.
+    const idle = (yield* Ref.get(h.board)).cards.find((card) => card.id === "idle")!;
+    assert.isNull(yield* h.admission.ensureHeavy(idle, "codex", false));
+    yield* h.admission.resizeGrants();
+    assert.deepStrictEqual((yield* h.grantOf("idle"))?.profile, {
+      cpuCores: 2.5,
+      ramGiB: 4,
+      diskGB: 6.25,
+    });
     assert.deepStrictEqual(
-      h.fake.claims.map((claim) => [claim.cardId, claim.kind]),
+      h.fake.claims.map((claim) => [claim.cardId, claim.kind, claim.profile.diskGB]),
       [
-        ["big", "grow"],
-        ["big", "grow"],
+        ["big", "grow", 5],
+        ["big", "grow", 5],
+        ["idle", "grow", 5],
+        ["idle", "grow", 6.25],
       ],
     );
   }),
