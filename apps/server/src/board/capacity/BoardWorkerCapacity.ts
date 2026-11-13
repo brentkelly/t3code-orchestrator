@@ -1021,14 +1021,15 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
     for (const record of due) {
       const bytes = yield* machine.diskUsageBytes(record.worktreePath!);
       if (bytes === null) continue;
-      // Measured outside the lock: the record may since have been replaced or forgotten.
-      const landed = yield* lock.withPermits(1)(
-        Effect.sync(() => {
+      // Measured outside the lock: the record may since have been replaced or forgotten. It
+      // persists under the lock too, so a forget can't run between the update and the save.
+      yield* lock.withPermits(1)(
+        Effect.gen(function* () {
           const same = (candidate: CapacityRecord) =>
             candidate.boardId === record.boardId &&
             candidate.cardId === record.cardId &&
             candidate.worktreePath === record.worktreePath;
-          if (!state.records.some(same)) return false;
+          if (!state.records.some(same)) return;
           state = {
             ...state,
             records: state.records.map((candidate) =>
@@ -1037,10 +1038,9 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
                 : candidate,
             ),
           };
-          return true;
+          yield* persistBoard(record.boardId);
         }),
       );
-      if (landed) yield* persistBoard(record.boardId);
     }
   }).pipe(Effect.withSpan("BoardWorkerCapacity.measure"));
 
