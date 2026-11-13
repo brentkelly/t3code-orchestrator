@@ -5,12 +5,14 @@ import {
   AuthOrchestrationOperateScope,
   CommandId,
   ProjectId,
+  type BoardGatewayCall,
   type BoardMcpRelayRequest,
   AuthOrchestrationReadScope,
   AuthSessionId,
   EnvironmentId,
   ProviderInstanceId,
   ThreadId,
+  t3oBoardSubject,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -236,6 +238,77 @@ it.effect("a board's relay belongs to the session that claimed it, not to whoeve
       const outcome = { _tag: "success", value: 3 } as const;
       yield* board["boardWorker.mcpRelayRespond"]({ callId: request.callId, outcome }).pipe(onHost);
       assert.deepStrictEqual(yield* Fiber.join(forwarded), outcome);
+    }),
+  ),
+);
+
+it.effect("a shared worker lets a board act only on the threads and worktrees it placed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const env = yield* makeInProcessWorker();
+      const threadId = ThreadId.make("thread-board-a");
+      yield* Ref.update(env.threads.states, (states) =>
+        new Map(states).set(threadId, aliveThread(threadId)),
+      );
+      yield* env.relayStore.store.recordRelayedThread(threadId, CENTRAL);
+      const boardSession = (board: string): AuthenticatedSession => ({
+        ...session([AuthOrchestrationOperateScope], `session-${board}`),
+        subject: t3oBoardSubject(board),
+      });
+      const owner = workerGatewayRpcHandlers(boardSession(CENTRAL));
+      const other = workerGatewayRpcHandlers(boardSession("env-other-board"));
+      const onHost = Effect.provideService(WorkerGatewayHost, env.host);
+      const target = { commandId: CommandId.make("server:board:target"), threadId };
+      const refusedFor = (handlers: typeof other, call: BoardGatewayCall) =>
+        handlers["boardWorker.gateway.call"](call).pipe(
+          onHost,
+          Effect.as("answered"),
+          Effect.catch((error) =>
+            Effect.succeed(error._tag === "BoardWorkerGatewayError" ? error.kind : error._tag),
+          ),
+        );
+
+      for (const call of [
+        { _tag: "interrupt", input: target },
+        { _tag: "stopSession", input: target },
+        { _tag: "settle", input: { ...target, auto: false } },
+        { _tag: "delete", input: target },
+        { _tag: "armLimitRecovery", input: target },
+        { _tag: "answerPendingInput", input: { ...target, text: "yes" } },
+        {
+          _tag: "send",
+          input: {
+            ...target,
+            text: "steer",
+            attachments: [],
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          },
+        },
+      ] satisfies ReadonlyArray<BoardGatewayCall>) {
+        assert.strictEqual(yield* refusedFor(other, call), "refused", call._tag);
+      }
+      assert.deepStrictEqual(yield* env.threads.calls, []);
+      // The worker's own threads are no board's to drive either.
+      const own = ThreadId.make("thread-worker-own");
+      yield* Ref.update(env.threads.states, (states) => new Map(states).set(own, aliveThread(own)));
+      assert.strictEqual(
+        yield* refusedFor(owner, { _tag: "interrupt", input: { ...target, threadId: own } }),
+        "refused",
+      );
+
+      assert.strictEqual(
+        yield* refusedFor(owner, { _tag: "interrupt", input: target }),
+        "answered",
+      );
+
+      // Nor may it run CI in, or read CI logs from, a worktree it doesn't hold here.
+      const ci = yield* other["boardWorker.gateway.runCi"]({
+        runId: "run-1",
+        worktreePath: "/home/worker/repo",
+        steps: [{ name: "test", command: "true", timeoutMinutes: 1 }],
+      }).pipe(Stream.runCollect, onHost, Effect.flip);
+      assert.strictEqual(ci._tag, "BoardWorkerGatewayError");
     }),
   ),
 );
