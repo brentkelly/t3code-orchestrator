@@ -6,6 +6,7 @@
    docs/t3o/status-colours.md. */
 
 @theme {
+  --text-board-9: 9px;
   --text-board-9-5: 9.5px;
   --text-board-10: 10px;
   --text-board-10-5: 10.5px;
@@ -18,6 +19,7 @@
   --text-board-15: 15px;
   --text-board-17: 17px;
   --text-board-21: 21px;
+  --text-board-22: 22px;
 
   --leading-board-1-3: 1.3;
   --leading-board-1-35: 1.35;
@@ -27,6 +29,7 @@
   --leading-board-1-6: 1.6;
   --leading-board-1-7: 1.7;
 
+  --tracking-board-n2: -0.02em;
   --tracking-board-n1-5: -0.015em;
   --tracking-board-n1: -0.01em;
   --tracking-board-2: 0.02em;

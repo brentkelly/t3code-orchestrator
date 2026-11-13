@@ -33,7 +33,7 @@ const shade = (index: number) =>
 
 function Tag({ tag, tooltip }: { readonly tag: BoardUsageTag; readonly tooltip?: string }) {
   const chip = (
-    <span className="inline-flex h-[15px] items-center whitespace-nowrap rounded-[4px] border border-border bg-muted px-[5px] text-[9.5px] font-medium tracking-[0.02em] text-muted-foreground">
+    <span className="inline-flex h-[15px] items-center whitespace-nowrap rounded-sm border border-border bg-muted px-1.25 text-board-9-5 font-medium tracking-board-2 text-muted-foreground">
       {tag}
     </span>
   );
@@ -56,7 +56,7 @@ function NumberCells({
 }) {
   const known = columns.known !== false;
   const cell = cn(
-    "text-right font-mono text-[11px] tabular-nums",
+    "text-right font-mono text-board-11 tabular-nums",
     weight === "normal" ? "font-normal" : weight === "medium" ? "font-medium" : "font-semibold",
   );
   return (
@@ -73,7 +73,7 @@ function NumberCells({
         </span>
         {weight === "normal" && known && columns.reasoning > 0 ? (
           <BoardHint label="Reasoning tokens, included in output">
-            <span className="whitespace-nowrap font-mono text-[9.5px] text-muted-foreground">
+            <span className="whitespace-nowrap font-mono text-board-9-5 text-muted-foreground">
               {formatBoardTokens(columns.reasoning)} rsn
             </span>
           </BoardHint>
@@ -103,18 +103,20 @@ function StageRows({
         onClick={onToggle}
         type="button"
       >
-        <span className="flex min-w-0 items-center gap-[5px]">
+        <span className="flex min-w-0 items-center gap-1.25">
           <ChevronRightIcon
             className={cn("size-3 shrink-0 text-muted-foreground", open && "rotate-90")}
           />
-          <span className="truncate text-[12px] font-semibold text-foreground">{stage.label}</span>
+          <span className="truncate text-board-12 font-semibold text-foreground">
+            {stage.label}
+          </span>
         </span>
-        <span className="truncate text-[11px] text-muted-foreground">{stage.models}</span>
+        <span className="truncate text-board-11 text-muted-foreground">{stage.models}</span>
         <NumberCells columns={stage} weight="medium" />
         <BoardHint
           label={stage.running ? "Includes a running step. Grows as turns finish." : figure.tooltip}
         >
-          <span className="whitespace-nowrap text-right font-mono text-[11.5px] font-semibold tabular-nums text-foreground">
+          <span className="whitespace-nowrap text-right font-mono text-board-11-5 font-semibold tabular-nums text-foreground">
             {figure.text}
             {stage.running ? "*" : ""}
           </span>
@@ -125,7 +127,7 @@ function StageRows({
             <div
               className={cn(
                 GRID,
-                "items-start border-t border-border/60 bg-foreground/[0.015] px-3.5 pb-[7px] pt-1.5",
+                "items-start border-t border-border/60 bg-foreground/[0.015] px-3.5 pb-1.75 pt-1.5",
                 hover?.stepId === line.stepId && "bg-accent",
               )}
               data-usage-line={line.stepId}
@@ -133,21 +135,21 @@ function StageRows({
               onMouseEnter={() => hover?.onHover(line.stepId)}
               onMouseLeave={() => hover?.onHover(null)}
             >
-              <span className="flex min-w-0 items-center gap-1.5 pl-[17px] pt-px">
+              <span className="flex min-w-0 items-center gap-1.5 pl-4.25 pt-px">
                 {line.running ? (
                   <BoardHint label="Running">
                     <span className="size-[7px] shrink-0 rounded-full bg-info-foreground" />
                   </BoardHint>
                 ) : null}
-                <span className="truncate font-mono text-[11.5px] font-medium text-foreground">
+                <span className="truncate font-mono text-board-11-5 font-medium text-foreground">
                   {line.stepId}
                 </span>
               </span>
               <span className="flex min-w-0 flex-col gap-px">
-                <span className="truncate text-[11.5px] font-medium text-foreground">
+                <span className="truncate text-board-11-5 font-medium text-foreground">
                   {line.model}
                 </span>
-                <span className="truncate text-[10.5px] text-muted-foreground">
+                <span className="truncate text-board-10-5 text-muted-foreground">
                   {line.provider}
                 </span>
               </span>
@@ -155,7 +157,7 @@ function StageRows({
               <span className="flex flex-col items-end gap-0.5 pt-px">
                 <span
                   className={cn(
-                    "whitespace-nowrap font-mono text-[11px] font-medium tabular-nums",
+                    "whitespace-nowrap font-mono text-board-11 font-medium tabular-nums",
                     line.costKnown ? "text-foreground" : "text-muted-foreground",
                   )}
                 >
@@ -196,7 +198,7 @@ export function BoardCardUsageSection({
   const knownStages = breakdown.stages.filter((stage) => stage.summary.costKnown === true);
   const segmentButton = (active: boolean) =>
     cn(
-      "inline-flex h-5 items-center whitespace-nowrap rounded-[7px] border px-[9px] text-[11px] font-medium",
+      "inline-flex h-5 items-center whitespace-nowrap rounded-board-7 border px-2.25 text-board-11 font-medium",
       active
         ? "border-input bg-card text-foreground shadow-xs"
         : "border-transparent text-muted-foreground hover:text-foreground",
@@ -211,7 +213,7 @@ export function BoardCardUsageSection({
         <div className="flex items-center gap-2">
           <button
             aria-expanded={open}
-            className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.07em] text-muted-foreground hover:text-foreground"
+            className="inline-flex items-center gap-1 text-board-11 font-semibold uppercase tracking-board-7 text-muted-foreground hover:text-foreground"
             onClick={() => setOpen(!open)}
             type="button"
           >
@@ -240,7 +242,7 @@ export function BoardCardUsageSection({
             </div>
           ) : (
             <BoardHint label={figure.tooltip}>
-              <span className="font-mono text-[12px] font-semibold tabular-nums text-foreground">
+              <span className="font-mono text-board-12 font-semibold tabular-nums text-foreground">
                 {figure.text}
                 {breakdown.running ? (
                   <span className="font-sans font-normal text-muted-foreground"> so far</span>
@@ -253,14 +255,14 @@ export function BoardCardUsageSection({
           <>
             <div className="flex flex-wrap items-baseline gap-2.5">
               <BoardHint label={figure.tooltip}>
-                <span className="font-mono text-[22px] font-semibold tabular-nums tracking-[-0.02em] text-foreground">
+                <span className="font-mono text-board-22 font-semibold tabular-nums tracking-board-n2 text-foreground">
                   {figure.text}
                 </span>
               </BoardHint>
               {breakdown.running ? (
-                <span className="text-[12px] font-medium text-muted-foreground">so far</span>
+                <span className="text-board-12 font-medium text-muted-foreground">so far</span>
               ) : null}
-              <span className="text-[11.5px] text-muted-foreground">
+              <span className="text-board-11-5 text-muted-foreground">
                 {formatBoardTokens(tokens)} tokens · {breakdown.threadCount}{" "}
                 {breakdown.threadCount === 1 ? "thread" : "threads"} · {breakdown.providerCount}{" "}
                 {breakdown.providerCount === 1 ? "provider" : "providers"}
@@ -271,7 +273,7 @@ export function BoardCardUsageSection({
                 <div aria-hidden="true" className="flex h-1.5 gap-0.5">
                   {knownStages.map((stage, index) => (
                     <span
-                      className="min-w-[3px] rounded-[2px]"
+                      className="min-w-[3px] rounded-xs"
                       key={stage.stageId}
                       style={{
                         flex: `${Math.max(stage.summary.costUsd, 0.02)} 1 0`,
@@ -280,17 +282,17 @@ export function BoardCardUsageSection({
                     />
                   ))}
                   {breakdown.missing.length > 0 ? (
-                    <span className="flex-[0_0_22px] rounded-[2px] border border-dashed border-input" />
+                    <span className="flex-[0_0_22px] rounded-xs border border-dashed border-input" />
                   ) : null}
                 </div>
                 <div className="flex flex-wrap gap-x-3 gap-y-1">
                   {knownStages.map((stage, index) => (
                     <span
-                      className="inline-flex items-center gap-[5px] text-[10.5px] text-muted-foreground"
+                      className="inline-flex items-center gap-1.25 text-board-10-5 text-muted-foreground"
                       key={stage.stageId}
                     >
                       <span
-                        className="size-2 shrink-0 rounded-[2px]"
+                        className="size-2 shrink-0 rounded-xs"
                         style={{ background: shade(index) }}
                       />
                       {stage.label}{" "}
@@ -300,8 +302,8 @@ export function BoardCardUsageSection({
                     </span>
                   ))}
                   {breakdown.missing.length > 0 ? (
-                    <span className="inline-flex items-center gap-[5px] text-[10.5px] text-muted-foreground">
-                      <span className="size-2 shrink-0 rounded-[2px] border border-dashed border-muted-foreground" />
+                    <span className="inline-flex items-center gap-1.25 text-board-10-5 text-muted-foreground">
+                      <span className="size-2 shrink-0 rounded-xs border border-dashed border-muted-foreground" />
                       Unknown{" "}
                       <span className="font-mono text-foreground">
                         {breakdown.partialSteps.length}{" "}
@@ -313,29 +315,30 @@ export function BoardCardUsageSection({
               </>
             ) : null}
             {breakdown.missing.length > 0 ? (
-              <div className="flex gap-[9px] rounded-[9px] border border-dashed border-input bg-muted px-2.5 py-2">
+              <div className="flex gap-2.25 rounded-board-9 border border-dashed border-input bg-muted px-2.5 py-2">
                 <span
                   aria-hidden="true"
-                  className="mt-px inline-flex size-[15px] flex-none items-center justify-center rounded-full border-[1.4px] border-muted-foreground text-[9px] font-bold text-muted-foreground"
+                  // oxlint-disable-next-line shadcn/no-arbitrary-values -- the prototype's 1.4px ring; no border-width scale has it
+                  className="mt-px inline-flex size-[15px] flex-none items-center justify-center rounded-full border-[1.4px] border-muted-foreground text-board-9 font-bold text-muted-foreground"
                 >
                   ?
                 </span>
-                <div className="flex min-w-0 flex-col gap-[3px]">
-                  <span className="text-[11.5px] font-medium text-foreground">
+                <div className="flex min-w-0 flex-col gap-0.75">
+                  <span className="text-board-11-5 font-medium text-foreground">
                     Partial total: {breakdown.partialSteps.length}{" "}
                     {breakdown.partialSteps.length === 1 ? "step isn't" : "steps aren't"} in{" "}
                     {figure.text}
                   </span>
                   {breakdown.missing.map((entry) => (
                     <span
-                      className="text-[11px]/[1.5] text-pretty text-muted-foreground"
+                      className="text-board-11/[1.5] text-pretty text-muted-foreground"
                       key={`${entry.stepId}|${entry.text}`}
                     >
                       <span className="font-mono text-foreground">{entry.stepId}</span> ·{" "}
                       {entry.text}
                     </span>
                   ))}
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-board-11 text-muted-foreground">
                     <Link className="font-medium text-info-foreground hover:underline" to="/usage">
                       Add a price
                     </Link>{" "}
@@ -352,7 +355,7 @@ export function BoardCardUsageSection({
           <div
             className={cn(
               GRID,
-              "border-t border-border bg-muted px-3.5 py-1.5 text-[9.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground",
+              "border-t border-border bg-muted px-3.5 py-1.5 text-board-9-5 font-semibold uppercase tracking-board-6 text-muted-foreground",
             )}
           >
             <span>{view === "stage" ? "Stage · step" : "Model"}</span>
@@ -388,12 +391,14 @@ export function BoardCardUsageSection({
                     key={model.key}
                   >
                     <span className="flex min-w-0 flex-col gap-px">
-                      <span className="truncate text-[12px] font-semibold text-foreground">
+                      <span className="truncate text-board-12 font-semibold text-foreground">
                         {model.model}
                       </span>
-                      <span className="text-[10.5px] text-muted-foreground">{model.provider}</span>
+                      <span className="text-board-10-5 text-muted-foreground">
+                        {model.provider}
+                      </span>
                     </span>
-                    <span className="font-mono text-[11px]/[1.45] text-pretty text-muted-foreground">
+                    <span className="font-mono text-board-11/[1.45] text-pretty text-muted-foreground">
                       {model.steps.map((step, index) => (
                         <Fragment key={step}>
                           {index > 0 ? " " : null}
@@ -408,7 +413,7 @@ export function BoardCardUsageSection({
                     <span className="flex flex-col items-end gap-0.5">
                       <span
                         className={cn(
-                          "whitespace-nowrap font-mono text-[11px] font-medium tabular-nums",
+                          "whitespace-nowrap font-mono text-board-11 font-medium tabular-nums",
                           modelFigure.known ? "text-foreground" : "text-muted-foreground",
                         )}
                       >
@@ -422,18 +427,18 @@ export function BoardCardUsageSection({
                 );
               })}
           <div className={cn(GRID, "border-t border-border bg-muted px-3.5 py-2")}>
-            <span className="text-[11.5px] font-semibold text-foreground">Card total</span>
-            <span className="text-[10.5px] text-muted-foreground">
+            <span className="text-board-11-5 font-semibold text-foreground">Card total</span>
+            <span className="text-board-10-5 text-muted-foreground">
               {breakdown.totals.reasoning > 0
                 ? `${formatBoardTokens(breakdown.totals.reasoning)} reasoning in output`
                 : ""}
             </span>
             <NumberCells columns={breakdown.totals} weight="semibold" />
-            <span className="whitespace-nowrap text-right font-mono text-[11.5px] font-bold tabular-nums text-foreground">
+            <span className="whitespace-nowrap text-right font-mono text-board-11-5 font-bold tabular-nums text-foreground">
               {figure.text}
             </span>
           </div>
-          <p className="border-t border-border px-3.5 py-2 text-[10.5px]/[1.5] text-pretty text-muted-foreground">
+          <p className="border-t border-border px-3.5 py-2 text-board-10-5/[1.5] text-pretty text-muted-foreground">
             {breakdown.estimatedSteps.length > 0
               ? "≈ priced from the model price table on the Usage page; your own prices there count as exact. "
               : "Priced with your own prices from the Usage page. "}
