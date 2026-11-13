@@ -54,6 +54,24 @@ interface Entry {
   readonly boards: Set<string>;
 }
 
+/** A log file's last `BOARD_CAPACITY_LOG_MAX_BYTES`, or null when it can't be read. */
+const readLogTail = (logPath: string): string | null => {
+  try {
+    const size = NodeFS.statSync(logPath).size;
+    const length = Math.min(size, BOARD_CAPACITY_LOG_MAX_BYTES);
+    const buffer = Buffer.alloc(length);
+    const fd = NodeFS.openSync(logPath, "r");
+    try {
+      NodeFS.readSync(fd, buffer, 0, length, size - length);
+    } finally {
+      NodeFS.closeSync(fd);
+    }
+    return buffer.toString("utf8");
+  } catch {
+    return null;
+  }
+};
+
 /** A repository by its key; with no remote, the project is the repository. */
 export const repositoryIdentity = (repositoryKey: string | null, projectId: string | undefined) =>
   repositoryKey ?? `project:${projectId ?? ""}`;
@@ -164,20 +182,22 @@ export const makeReadiness = (deps: {
     const tail = new BoardCiTail(400);
     const started = yield* Clock.currentTimeMillis;
     const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
-    const exit = yield* runStep({
+    const logPath = NodePath.join(dir, "ready.log");
+    const { exit, full } = yield* runStep({
       command: `T3O_READY_CHECKOUT=${quote(checkout)} sh ${quote(scriptPath)}`,
       cwd: checkout,
       timeoutMs: entry.timeoutSeconds * 1000,
       tail,
-      logPath: NodePath.join(dir, "ready.log"),
+      logPath,
       resultPath: NodePath.join(dir, "ready.result.json"),
     }).pipe(
+      // The full output is the log's last 64 KB, read before the directory goes.
+      Effect.map((exit) => ({ exit, full: readLogTail(logPath) })),
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true }))),
     );
     const durationMs = (yield* Clock.currentTimeMillis) - started;
     const text = tail.text();
-    entry.output =
-      text.length > BOARD_CAPACITY_LOG_MAX_BYTES ? text.slice(-BOARD_CAPACITY_LOG_MAX_BYTES) : text;
+    entry.output = full ?? text;
     const lastLine = (text.trimEnd().split("\n").at(-1) ?? "").slice(0, LAST_LINE_CHARS);
     const passed = exit.status === "passed";
     entry.failures = passed ? 0 : entry.failures + 1;

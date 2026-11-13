@@ -1,8 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off - the fake script writes a real log file.
 /**
  * A project's readiness on a worker (T3O-86): the committed script, one run shared by every
  * board, a failed fetch keeping the last result, a new version keeping a ready worker ready
  * until it has run, and two scheduled failures before not-ready.
  */
+import * as NodeFS from "node:fs";
+
+import { BOARD_CAPACITY_LOG_MAX_BYTES } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -27,6 +31,8 @@ const makeHarness = () => {
     exits: [] as Array<StepExit>,
     runs: [] as Array<string>,
     gate: null as Deferred.Deferred<void> | null,
+    /** What the script writes to its log file, beyond the tail. */
+    log: null as string | null,
   };
   const readiness = makeReadiness({
     git: {
@@ -34,9 +40,16 @@ const makeHarness = () => {
       fetch: () => Effect.sync(() => state.fetchOk),
       committed: () => Effect.sync(() => state.script),
     },
-    runStep: ((input: { readonly command: string; readonly tail: { push(text: string): void } }) =>
+    runStep: ((input: {
+      readonly command: string;
+      readonly tail: { push(text: string): void };
+      readonly logPath?: string;
+    }) =>
       Effect.gen(function* () {
         state.runs.push(input.command);
+        if (state.log !== null && input.logPath !== undefined) {
+          NodeFS.writeFileSync(input.logPath, state.log);
+        }
         if (state.gate !== null) yield* Deferred.await(state.gate);
         input.tail.push("checking docker\nDocker is not running\n");
         return state.exits.shift() ?? { status: "passed", exitCode: 0 };
@@ -66,6 +79,12 @@ it.effect("runs the committed script with the checkout named, and reads its exit
     );
     assert.notInclude(JSON.stringify(readiness.forBoard("board-a")), "checking docker");
     assert.strictEqual(readiness.notReady("board-a", input.repositoryKey, undefined), "not-ready");
+    // A long log keeps its last 64 KB, read from the run's log file.
+    state.log = `${"x".repeat(70_000)}the end`;
+    yield* readiness.check("board-b", { ...input, path: "b/ready.sh" });
+    const output = readiness.output(input.repositoryKey, undefined, "b/ready.sh") ?? "";
+    assert.strictEqual(output.length, BOARD_CAPACITY_LOG_MAX_BYTES);
+    assert.isTrue(output.endsWith("the end"));
   }),
 );
 
