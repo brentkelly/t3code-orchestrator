@@ -75,8 +75,9 @@ interface SourceState {
 export class ActualsAccumulator {
   private readonly sources = new Map<string, SourceState>();
   private readonly cpuSeries: Array<{ readonly atMs: number; readonly cpuUsec: number }> = [];
-  private firstAtMs: number | null = null;
-  private lastAtMs: number | null = null;
+  // The first CPU point: a fresh group's figure there includes time before it was sampled.
+  private cpuOrigin: { readonly atMs: number; readonly cpuUsec: number } | null = null;
+  private lastCpuAtMs: number | null = null;
   private peakWindowCores: number | null = null;
   private peakRamBytes: number | null = null;
   private sampleCount = 0;
@@ -111,12 +112,12 @@ export class ActualsAccumulator {
     }
     if (!any) return;
     this.sampleCount += 1;
-    this.firstAtMs ??= atMs;
-    this.lastAtMs = atMs;
     if (ramNow !== null) this.peakRamBytes = Math.max(this.peakRamBytes ?? 0, ramNow);
     const cpuUsec = this.cpuUsec();
     if (cpuUsec === null) return;
     this.cpuSeries.push({ atMs, cpuUsec });
+    this.cpuOrigin ??= { atMs, cpuUsec };
+    this.lastCpuAtMs = atMs;
     // The newest point a full window before now, and nothing older than it.
     let reference: { readonly atMs: number; readonly cpuUsec: number } | null = null;
     while (
@@ -178,9 +179,13 @@ export class ActualsAccumulator {
         samples: 0,
       };
     }
-    const elapsedSeconds = ((this.lastAtMs ?? 0) - (this.firstAtMs ?? 0)) / 1000;
+    const origin = this.cpuOrigin;
+    const elapsedSeconds =
+      origin === null || this.lastCpuAtMs === null ? 0 : (this.lastCpuAtMs - origin.atMs) / 1000;
     const wholeStep =
-      cpuUsec === null || elapsedSeconds <= 0 ? null : cpuUsec / 1e6 / elapsedSeconds;
+      cpuUsec === null || origin === null || elapsedSeconds <= 0
+        ? null
+        : (cpuUsec - origin.cpuUsec) / 1e6 / elapsedSeconds;
     const io = this.io();
     return {
       measured: true,

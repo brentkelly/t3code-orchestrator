@@ -56,6 +56,15 @@ describe("ActualsAccumulator", () => {
     accumulator.addTick(0, new Map([["a", sample(0)]]));
     accumulator.addTick(20_000, new Map([["a", sample(40)]]));
     expect(accumulator.reading(NOT_MEASURED).peakCpuCores).toBe(2);
+
+    // A fresh group created ~1 s before its first sample at one core: its first figure covers
+    // time before that sample, so the average runs from that sample, not from 0.
+    const fresh = new ActualsAccumulator();
+    fresh.addTick(1_000, new Map([["ci", sample(1)]]), new Set(["ci"]));
+    fresh.addTick(3_000, new Map([["ci", sample(3)]]), new Set(["ci"]));
+    const reading = fresh.reading(NOT_MEASURED);
+    expect(reading.cpuCoreSeconds).toBe(3);
+    expect(reading.peakCpuCores).toBe(1);
   });
 
   it("peaks memory across groups alive together, and sums CPU and IO rises per group", () => {
