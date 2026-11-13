@@ -13,6 +13,7 @@ import { resolveWorkerCapacitySettings } from "../tunnel/workerFile.ts";
 import {
   makeBoardWorkerCapacity,
   providerQuota,
+  provisionUnderClaim,
   SNAPSHOT_INTERVAL_MS,
   SNAPSHOT_SETTLE_MS,
   type CapacityThread,
@@ -451,6 +452,47 @@ it.effect("a disk measurement finishing after its board left doesn't bring it ba
     }),
   );
 });
+
+it.effect(
+  "a provision keeps its room reserved past the claim's TTL until it records or fails",
+  () => {
+    const fakes = makeFakes();
+    return Effect.gen(function* () {
+      const { service } = yield* makeBoardWorkerCapacity(portsOver(fakes));
+      const claim = {
+        claimId: "c1",
+        seq: 1,
+        cardId: "card-1",
+        repositoryKey: null,
+        profile: { cpuCores: 10, ramGiB: 8, diskGB: 20 },
+        providerInstanceId: null,
+      };
+      const rival = { ...claim, claimId: "c2", cardId: "card-2", kind: "placement" as const };
+      assert.strictEqual(
+        (yield* service.claim("board-a", { ...claim, kind: "placement" })).outcome,
+        "granted",
+      );
+      assert.strictEqual((yield* service.checkProvision("board-a", claim)).outcome, "granted");
+      // The worktree takes longer to cut than a claim lives: board-b still finds no room.
+      yield* TestClock.adjust(120_000);
+      assert.deepInclude(yield* service.claim("board-b", rival), {
+        outcome: "denied",
+        reason: "capacity",
+      });
+      // The worktree add fails: its room goes back.
+      const failed = yield* provisionUnderClaim(
+        service,
+        "board-a",
+        "provisionWorktree",
+        claim,
+        "board/card-1",
+        Effect.fail("git worktree add failed"),
+      ).pipe(Effect.flip);
+      assert.strictEqual(failed, "git worktree add failed");
+      assert.strictEqual((yield* service.claim("board-b", rival)).outcome, "granted");
+    }).pipe(withMachine(fakes), Effect.provide(TestClock.layer()));
+  },
+);
 
 it.effect("a provision whose claim expired is checked again as a fresh claim", () => {
   const fakes = makeFakes();

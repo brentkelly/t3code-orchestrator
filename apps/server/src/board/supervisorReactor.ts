@@ -2148,10 +2148,14 @@ const make = Effect.gen(function* () {
         ? null
         : { ...claim, seq: yield* capacityClient.value.nextSeq(workerId) };
     const provisionInput = { ...slice, ...(stamped === null ? {} : { claim: stamped }) };
+    const cut = fromRemote
+      ? workspace.provisionWorktreeFromRemoteBranch(provisionInput)
+      : workspace.provisionWorktree(provisionInput);
+    // This server's own capacity checks, holds and records the claim in-process (T3O-86).
     const provisioned = yield* (
-      fromRemote
-        ? workspace.provisionWorktreeFromRemoteBranch(provisionInput)
-        : workspace.provisionWorktree(provisionInput)
+      stamped !== null && workerId === BOARD_LOCAL_WORKER_ID && Option.isSome(capacityClient)
+        ? capacityClient.value.provisionLocally(stamped, slice.branch, cut)
+        : cut
     ).pipe(
       Effect.map((worktree): Provisioned => ({ kind: "ok", path: worktree.path })),
       Effect.catch((error): Effect.Effect<Provisioned> =>
@@ -2194,13 +2198,6 @@ const make = Effect.gen(function* () {
     if (provisioned.kind === "failed") {
       yield* failWorktree(card, "git worktree add failed; retry the build.");
       return { kind: "transient", reason: "git worktree add failed." } as WorktreeOutcome;
-    }
-    // This server's own capacity records the provision in-process (T3O-86).
-    if (stamped !== null && workerId === BOARD_LOCAL_WORKER_ID && Option.isSome(capacityClient)) {
-      yield* capacityClient.value.recordLocalProvision(stamped, {
-        branch: slice.branch,
-        worktreePath: provisioned.path,
-      });
     }
     yield* dispatch({
       type: "board.card.record-worktree",

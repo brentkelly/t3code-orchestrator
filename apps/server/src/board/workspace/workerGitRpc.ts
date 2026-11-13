@@ -23,7 +23,10 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 
 import type { AuthenticatedSession } from "../../auth/EnvironmentAuth.ts";
-import type { BoardWorkerCapacityShape } from "../capacity/BoardWorkerCapacity.ts";
+import {
+  provisionUnderClaim,
+  type BoardWorkerCapacityShape,
+} from "../capacity/BoardWorkerCapacity.ts";
 import type { BoardWorkspacesShape } from "./BoardWorkspace.ts";
 import { boardWorktreeOwnerOf } from "./LocalBoardWorkspace.ts";
 import { decodeGitPayload, encodeGitSuccess } from "./gitWire.ts";
@@ -137,24 +140,7 @@ const withProvisionClaim = <A extends { readonly path: string }>(
       }),
     );
   }
-  return Effect.gen(function* () {
-    const checked = yield* capacity.checkProvision(boardId, claim);
-    if (checked.outcome !== "granted") {
-      return yield* new BoardWorkerGitError({
-        operation,
-        detail: `No room on this worker any more${
-          checked.dimension === undefined ? "" : ` (${checked.dimension})`
-        }.`,
-        refusal: "claim-expired",
-      });
-    }
-    const provisioned = yield* run;
-    yield* capacity.recordProvision(boardId, claim, {
-      branch: String(input["branch"]),
-      worktreePath: provisioned.path,
-    });
-    return provisioned;
-  });
+  return provisionUnderClaim(capacity, boardId, operation, claim, String(input["branch"]), run);
 };
 
 const PROVISIONS_WORKTREE: ReadonlySet<BoardWorkerGitOperation> = new Set([

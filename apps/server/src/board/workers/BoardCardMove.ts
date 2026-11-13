@@ -482,24 +482,17 @@ const makeBoardCardMover = Effect.gen(function* () {
     const { card, stamp } = input;
     const worktree = card.worktree!;
     const target = yield* workspaces.forWorker(input.toWorkerId, card.projectId);
-    const provisioned = yield* target
-      .provisionWorktreeFromRemoteBranch({
-        branch: worktree.branch,
-        baseRefName: worktree.baseRefName,
-        ...(input.claim === null ? {} : { claim: input.claim }),
-      })
-      .pipe(Effect.result);
-    if (
-      provisioned._tag === "Success" &&
-      input.claim !== null &&
-      input.toWorkerId === BOARD_LOCAL_WORKER_ID &&
-      Option.isSome(capacity)
-    ) {
-      yield* capacity.value.recordLocalProvision(input.claim, {
-        branch: worktree.branch,
-        worktreePath: provisioned.success.path,
-      });
-    }
+    const cut = target.provisionWorktreeFromRemoteBranch({
+      branch: worktree.branch,
+      baseRefName: worktree.baseRefName,
+      ...(input.claim === null ? {} : { claim: input.claim }),
+    });
+    // T3o: `local` checks, holds and records the claim in-process (T3O-86).
+    const provisioned = yield* (
+      input.claim !== null && input.toWorkerId === BOARD_LOCAL_WORKER_ID && Option.isSome(capacity)
+        ? capacity.value.provisionLocally(input.claim, worktree.branch, cut)
+        : cut
+    ).pipe(Effect.result);
     if (provisioned._tag === "Failure") {
       const detail =
         provisioned.failure._tag === "WorkerUnavailable"

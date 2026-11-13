@@ -14,6 +14,7 @@ import {
   type BoardWorkerSetupState,
   type BoardSyncedCard,
   type BoardWorkerCapacitySnapshot,
+  type BoardWorkerGitError,
   type BoardWorkerId,
   type EnvironmentId,
   type BoardCapacityHoldInput,
@@ -33,7 +34,7 @@ import * as Stream from "effect/Stream";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import type { WorkerGatewayRpc } from "../workers/gatewayWire.ts";
 import { WorkerConnections } from "../workers/WorkerConnections.ts";
-import { BoardWorkerCapacity } from "./BoardWorkerCapacity.ts";
+import { BoardWorkerCapacity, provisionUnderClaim } from "./BoardWorkerCapacity.ts";
 
 /** A claim the worker didn't answer: it is offline, or took longer than the time-box. */
 export type BoardClaimAnswer = BoardCapacityClaimResult | { readonly outcome: "unavailable" };
@@ -75,11 +76,13 @@ export interface BoardCapacityClientShape {
   readonly all: Effect.Effect<ReadonlyMap<BoardWorkerId, BoardWorkerCapacitySnapshot>>;
   /** Ticks with the worker whose snapshot changed. Each access subscribes. */
   readonly changes: Stream.Stream<BoardWorkerId>;
-  /** A provision on `local` consumed its claim. */
-  readonly recordLocalProvision: (
+  /** A provision on `local` under its claim: checked, its room kept while `run` cuts the
+      worktree, then recorded, or given back when `run` fails (`provisionUnderClaim`). */
+  readonly provisionLocally: <A extends { readonly path: string }, E>(
     claim: BoardProvisionClaim,
-    worktree: { readonly branch: string; readonly worktreePath: string },
-  ) => Effect.Effect<void>;
+    branch: string,
+    run: Effect.Effect<A, E>,
+  ) => Effect.Effect<A, E | BoardWorkerGitError>;
   /** Why a board-started turn can't start on `local` now (its agent cap), or null; admitted,
       the thread counts against the cap at once. */
   readonly localAgentCapRefusal: (
@@ -337,8 +340,8 @@ const makeBoardCapacityClient = Effect.gen(function* () {
     changes: Stream.fromPubSub(pubsub),
     localAgentCapRefusal: (threadId, providerInstanceId) =>
       localCapacity.reserveAgent(threadId, providerInstanceId),
-    recordLocalProvision: (claim, worktree) =>
-      localCapacity.recordProvision(localBoardId, claim, worktree),
+    provisionLocally: (claim, branch, run) =>
+      provisionUnderClaim(localCapacity, localBoardId, "provisionWorktree", claim, branch, run),
     runSetup: (workerId, input) =>
       workerId === BOARD_LOCAL_WORKER_ID
         ? localCapacity.runSetup(input)

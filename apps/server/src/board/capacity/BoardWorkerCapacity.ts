@@ -7,6 +7,7 @@
 import {
   BOARD_RESOURCE_DIMENSIONS,
   boardResourceProfileValue,
+  BoardWorkerGitError,
   type BoardCapacityClaimInput,
   type BoardCapacityClaimResult,
   type BoardProvisionClaim,
@@ -37,10 +38,13 @@ import {
   applySyncCards,
   computeHeadroom,
   consumePlacement,
+  dropPlacement,
+  extendPlacement,
   decideClaim,
   EMPTY_CAPACITY_STATE,
   firstShort,
   forgetBoard,
+  PROVISION_TTL_MS,
   heldByBoard,
   recordIsHeavy,
   type CapacityActivity,
@@ -134,6 +138,42 @@ export interface WorkerCapacityPorts {
   };
 }
 
+/**
+ * A provision under a placement claim: the claim must still be held, or fit again now
+ * (`claim-expired`). Its room stays reserved while `run` cuts the worktree, then the claim
+ * becomes the card's record; a provision that fails gives the room back.
+ */
+export const provisionUnderClaim = Effect.fn("BoardWorkerCapacity.provisionUnderClaim")(function* <
+  A extends { readonly path: string },
+  E,
+>(
+  capacity: Pick<
+    BoardWorkerCapacityShape,
+    "checkProvision" | "abandonProvision" | "recordProvision"
+  >,
+  boardId: string,
+  operation: string,
+  claim: BoardProvisionClaim,
+  branch: string,
+  run: Effect.Effect<A, E>,
+): Effect.fn.Return<A, E | BoardWorkerGitError> {
+  const checked = yield* capacity.checkProvision(boardId, claim);
+  if (checked.outcome !== "granted") {
+    return yield* new BoardWorkerGitError({
+      operation,
+      detail: `No room on this worker any more${
+        checked.dimension === undefined ? "" : ` (${checked.dimension})`
+      }.`,
+      refusal: "claim-expired",
+    });
+  }
+  const provisioned = yield* run.pipe(
+    Effect.onError(() => capacity.abandonProvision(boardId, claim)),
+  );
+  yield* capacity.recordProvision(boardId, claim, { branch, worktreePath: provisioned.path });
+  return provisioned;
+});
+
 export interface BoardWorkerCapacityShape {
   readonly claim: (
     boardId: string,
@@ -148,6 +188,8 @@ export interface BoardWorkerCapacityShape {
     boardId: string,
     claim: BoardProvisionClaim,
   ) => Effect.Effect<BoardCapacityClaimResult>;
+  /** A provision that failed or was abandoned: its placement is given back. */
+  readonly abandonProvision: (boardId: string, claim: BoardProvisionClaim) => Effect.Effect<void>;
   /** After a provision: its claim is consumed into the card's record. */
   readonly recordProvision: (
     boardId: string,
@@ -651,14 +693,32 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
                   reservation.kind === "placement" &&
                   reservation.expiresAt > now,
               );
-            if (held) return { outcome: "granted" } satisfies BoardCapacityClaimResult;
             // Unknown or expired (a slow board, or a worker restart): checked again now.
-            const decision = yield* decide(boardId, { ...provisionClaim, kind: "placement" });
-            state = decision.state;
+            const decision = held
+              ? { state, result: { outcome: "granted" } satisfies BoardCapacityClaimResult }
+              : yield* decide(boardId, { ...provisionClaim, kind: "placement" });
+            // The worktree is cut outside the lock: the room stays reserved until it records.
+            state =
+              decision.result.outcome === "granted"
+                ? extendPlacement(
+                    decision.state,
+                    boardId,
+                    provisionClaim.claimId,
+                    now + PROVISION_TTL_MS,
+                  )
+                : decision.state;
             return decision.result;
           }),
         ),
       ),
+    );
+
+  const abandonProvision: BoardWorkerCapacityShape["abandonProvision"] = (
+    boardId,
+    provisionClaim,
+  ) =>
+    lock.withPermits(1)(
+      Effect.sync(() => void (state = dropPlacement(state, boardId, provisionClaim.claimId))),
     );
 
   const recordProvision: BoardWorkerCapacityShape["recordProvision"] = (
@@ -1004,6 +1064,7 @@ export const makeBoardWorkerCapacity = Effect.fn("makeBoardWorkerCapacity")(func
       claim,
       syncCards,
       checkProvision,
+      abandonProvision,
       recordProvision,
       agentCapRefusal,
       reserveAgent,
